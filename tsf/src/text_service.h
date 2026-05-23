@@ -71,6 +71,7 @@ private:
     cxxime::IpcClient _client;
     uint32_t _sessionId = 0;
     bool _composing = false;
+    bool _chinese_mode = true;
     cxxime::CandidateWindow _candidateWindow;
 };
 

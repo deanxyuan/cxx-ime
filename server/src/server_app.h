@@ -11,7 +11,7 @@
 
 class ServerApp {
 public:
-    bool initialize();
+    bool initialize(const std::string& dict_path = "", const std::string& config_path = "");
     void run();
     void finalize();
 
@@ -24,6 +24,7 @@ private:
     HWND hwnd_ = nullptr;
     NOTIFYICONDATAW nid_ = {};
     std::string dict_path_;
+    std::string config_path_;
 };
 
 #endif // CXXIME_SERVER_APP_H_

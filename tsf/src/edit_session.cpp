@@ -46,7 +46,15 @@ void EditSession::set_action(Action action, const std::wstring& text) {
 STDMETHODIMP EditSession::DoEditSession(TfEditCookie ec) {
     if (_action == Action::INSERT_TEXT && !_text.empty()) {
         ITfRange* pRange = nullptr;
-        if (SUCCEEDED(_context->GetStart(ec, &pRange))) {
+        // Get current cursor/selection position
+        TF_SELECTION sel = {};
+        ULONG fetched = 0;
+        if (SUCCEEDED(_context->GetSelection(ec, TF_DEFAULT_SELECTION, 1, &sel, &fetched)) && fetched > 0) {
+            pRange = sel.range;
+        } else if (SUCCEEDED(_context->GetStart(ec, &pRange))) {
+            // Fallback to document start
+        }
+        if (pRange) {
             pRange->SetText(ec, TF_ST_CORRECTION, _text.c_str(), (LONG)_text.length());
             pRange->Release();
         }

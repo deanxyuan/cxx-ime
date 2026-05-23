@@ -12,6 +12,7 @@ void Context::reset() {
     pinyin_buffer.clear();
     committed_text.clear();
     candidates = {};
+    page_index = 0;
 }
 
 std::string Context::commit() {

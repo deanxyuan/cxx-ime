@@ -40,6 +40,24 @@ ProcessResult PinyinProcessor::process_key(const KeyEvent& event, Context& conte
         return ProcessResult::REJECTED;
     }
 
+    // Up/Down arrows: navigate candidates
+    if (vk == VK_UP || vk == VK_DOWN) {
+        if (context.is_composing() && !context.candidates.candidates.empty()) {
+            int count = (int)context.candidates.candidates.size();
+            if (vk == VK_DOWN) {
+                context.candidates.highlighted++;
+                if (context.candidates.highlighted >= count)
+                    context.candidates.highlighted = 0;
+            } else {
+                context.candidates.highlighted--;
+                if (context.candidates.highlighted < 0)
+                    context.candidates.highlighted = count - 1;
+            }
+            return ProcessResult::ACCEPTED;
+        }
+        return ProcessResult::REJECTED;
+    }
+
     // Enter: commit pinyin as raw text
     if (vk == VK_RETURN) {
         if (context.is_composing()) {
@@ -67,7 +85,19 @@ ProcessResult PinyinProcessor::process_key(const KeyEvent& event, Context& conte
 
     // Page Up / Page Down: pagination
     if (vk == VK_PRIOR || vk == VK_NEXT) {
-        if (context.is_composing()) {
+        if (context.is_composing() && !context.candidates.candidates.empty()) {
+            int total = context.candidates.total_count;
+            int page_size = context.candidates.page_size;
+            int max_page = (total > 0 && page_size > 0) ? (total + page_size - 1) / page_size - 1 : 0;
+            if (max_page < 0) max_page = 0;
+
+            if (vk == VK_NEXT) {  // Page Down
+                if (context.page_index < max_page)
+                    context.page_index++;
+            } else {  // Page Up
+                if (context.page_index > 0)
+                    context.page_index--;
+            }
             return ProcessResult::ACCEPTED;
         }
         return ProcessResult::REJECTED;

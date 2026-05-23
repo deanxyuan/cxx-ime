@@ -27,7 +27,7 @@ ProcessResult Engine::process_key(const KeyEvent& event) {
 
     // After processing, update candidates if still composing
     if (result == ProcessResult::ACCEPTED && context_.is_composing()) {
-        auto page = translator_.translate(context_.pinyin_buffer, 0, config_.page_size);
+        auto page = translator_.translate(context_.pinyin_buffer, context_.page_index, config_.page_size);
         context_.update_candidates(std::move(page));
     }
 
@@ -65,6 +65,7 @@ std::string Engine::get_commit_text() {
     context_.pinyin_buffer.clear();
     context_.committed_text.clear();
     context_.candidates = {};
+    context_.page_index = 0;
     return text;
 }
 
