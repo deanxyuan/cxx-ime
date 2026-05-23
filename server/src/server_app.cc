@@ -223,14 +223,33 @@ LRESULT CALLBACK ServerApp::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             POINT pt;
             GetCursorPos(&pt);
             HMENU hMenu = CreatePopupMenu();
-            AppendMenuW(hMenu, MF_STRING, 1, L"About CxxIME");
-            AppendMenuW(hMenu, MF_STRING, 2, L"Exit");
+            AppendMenuW(hMenu, MF_STRING, 1, L"Settings...");
+            AppendMenuW(hMenu, MF_STRING, 2, L"View Log");
+            AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
+            AppendMenuW(hMenu, MF_STRING, 3, L"About CxxIME");
+            AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
+            AppendMenuW(hMenu, MF_STRING, 4, L"Exit");
             SetForegroundWindow(hwnd);
             int cmd = TrackPopupMenu(hMenu, TPM_RETURNCMD, pt.x, pt.y, 0, hwnd, nullptr);
             DestroyMenu(hMenu);
             if (cmd == 1) {
-                MessageBoxW(hwnd, L"CxxIME - Lightweight Input Method\nVersion 0.1.0", L"About", MB_OK);
+                // Open config file in default editor
+                if (app && !app->config_path_.empty()) {
+                    ShellExecuteW(hwnd, L"open", std::wstring(app->config_path_.begin(), app->config_path_.end()).c_str(),
+                                  nullptr, nullptr, SW_SHOWNORMAL);
+                } else {
+                    MessageBoxW(hwnd, L"Config file not found.", L"CxxIME", MB_OK | MB_ICONWARNING);
+                }
             } else if (cmd == 2) {
+                // Open DebugView or show log hint
+                MessageBoxW(hwnd,
+                    L"Use DebugView (Sysinternals) to view logs.\n"
+                    L"Download: https://learn.microsoft.com/en-us/sysinternals/downloads/debugview\n\n"
+                    L"Filter: [CxxIME]",
+                    L"View Log", MB_OK | MB_ICONINFORMATION);
+            } else if (cmd == 3) {
+                MessageBoxW(hwnd, L"CxxIME - Lightweight Pinyin Input Method\nVersion 0.1.0", L"About", MB_OK);
+            } else if (cmd == 4) {
                 PostQuitMessage(0);
             }
         }
