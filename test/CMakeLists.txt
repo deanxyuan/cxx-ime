@@ -1,26 +1,20 @@
 project(cxxime-test CXX)
 
-add_executable(cxxime-test
-    test_main.cc
-    util/testutil.cc
-    engine_test.cc
-    segmentor_test.cc
-    dict_test.cc
-    config_test.cc
-    layout_test.cc
-    preedit_mode_test.cc
-    ipc_test.cc
-)
+set(TEST_COMMON_SOURCES util/testutil.cc)
+set(TEST_COMMON_DEPS cxxime-shared cxxime-engine cxxime-ui cxxime-ipc)
+set(TEST_INCLUDE_DIRS ${CMAKE_SOURCE_DIR}/tsf/src)
 
-target_include_directories(cxxime-test PRIVATE
-    ${CMAKE_SOURCE_DIR}/tsf/src
-)
+function(add_cxxime_test name)
+    add_executable(${name} ${name}.cc ${TEST_COMMON_SOURCES})
+    target_include_directories(${name} PRIVATE ${TEST_INCLUDE_DIRS})
+    target_link_libraries(${name} PRIVATE ${TEST_COMMON_DEPS})
+    add_test(NAME ${name} COMMAND ${name})
+endfunction()
 
-target_link_libraries(cxxime-test PRIVATE
-    cxxime-shared
-    cxxime-engine
-    cxxime-ui
-    cxxime-ipc
-)
-
-add_test(NAME cxxime-test COMMAND cxxime-test)
+add_cxxime_test(engine_test)
+add_cxxime_test(segmentor_test)
+add_cxxime_test(dict_test)
+add_cxxime_test(config_test)
+add_cxxime_test(layout_test)
+add_cxxime_test(preedit_mode_test)
+add_cxxime_test(ipc_test)

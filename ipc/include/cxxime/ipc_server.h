@@ -6,7 +6,10 @@
 #include <functional>
 #include <string>
 #include <thread>
+#include <vector>
+#include <mutex>
 #include <atomic>
+#include <set>
 #include <cxxime/ipc_protocol.h>
 
 namespace cxxime {
@@ -28,7 +31,15 @@ private:
 
     std::wstring pipe_name_;
     RequestHandler handler_;
+    std::mutex handler_mutex_;
+
     std::thread listen_thread_;
+    std::vector<std::thread> client_threads_;
+    std::mutex threads_mutex_;
+
+    std::set<void*> active_pipes_;
+    std::mutex pipes_mutex_;
+
     std::atomic<bool> running_{false};
     void* stop_event_ = nullptr;
 };

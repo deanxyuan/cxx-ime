@@ -70,3 +70,5 @@ TEST(PreeditMode, preview_all_no_candidates) {
     ASSERT_EQ(d.inline_text, L"nihao");
     ASSERT_TRUE(!d.show_preedit_in_popup);
 }
+
+RUN_ALL_TESTS()
