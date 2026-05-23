@@ -2,8 +2,8 @@
 build/
 dist/
 
-# Generated dictionary (large, created by fetch_dict.py)
-data/pinyin.dict.db
+# Generated dictionary backup (original is committed)
+data/pinyin.dict.db.bak
 
 # Archives
 *.zip
