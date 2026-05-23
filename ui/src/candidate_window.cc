@@ -69,6 +69,10 @@ void CandidateWindow::set_position(int x, int y) {
         SetWindowPos(hwnd_, nullptr, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
+void CandidateWindow::set_click_callback(ClickCallback cb) {
+    click_cb_ = std::move(cb);
+}
+
 LRESULT CALLBACK CandidateWindow::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
     case WM_PAINT: {
@@ -118,6 +122,18 @@ LRESULT CALLBACK CandidateWindow::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM
         }
 
         EndPaint(hwnd, &ps);
+        return 0;
+    }
+    case WM_LBUTTONDOWN: {
+        auto* self = reinterpret_cast<CandidateWindow*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+        if (self && !self->page_.candidates.empty()) {
+            int y = (int)(short)HIWORD(lp);
+            int row_height = 24;
+            int index = (y - 4) / row_height;
+            if (index >= 0 && index < (int)self->page_.candidates.size() && self->click_cb_) {
+                self->click_cb_(index);
+            }
+        }
         return 0;
     }
     case WM_ERASEBKGND:

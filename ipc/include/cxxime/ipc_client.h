@@ -28,7 +28,10 @@ public:
     bool focus_out(uint32_t session_id);
 
 private:
+    bool try_reconnect();
     void* pipe_handle_ = nullptr;
+    std::wstring pipe_name_;
+    int timeout_ms_ = 3000;
 };
 
 } // namespace cxxime
