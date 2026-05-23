@@ -1,0 +1,209 @@
+// Copyright (c) 2026 CxxIME Contributors. MIT License.
+
+#include "server_app.h"
+#include <cxxime/logging.h>
+#include <cstring>
+
+#define WM_TRAYICON (WM_USER + 1)
+
+bool ServerApp::initialize() {
+    // Resolve dictionary path
+    char exe_path[MAX_PATH] = {};
+    GetModuleFileNameA(nullptr, exe_path, MAX_PATH);
+    std::string path = exe_path;
+    auto pos = path.find_last_of("\\/");
+    std::string dir = (pos != std::string::npos) ? path.substr(0, pos + 1) : "";
+    dict_path_ = dir + "pinyin.dict.db";
+
+    // Create hidden window for tray icon messages
+    WNDCLASSEXW wc = {};
+    wc.cbSize = sizeof(wc);
+    wc.lpfnWndProc = WndProc;
+    wc.hInstance = GetModuleHandle(nullptr);
+    wc.lpszClassName = L"CxxIMEServerClass";
+    RegisterClassExW(&wc);
+
+    hwnd_ = CreateWindowExW(0, L"CxxIMEServerClass", L"CxxIME Server", 0, 0, 0, 0, 0,
+                            HWND_MESSAGE, nullptr, GetModuleHandle(nullptr), this);
+    if (!hwnd_)
+        return false;
+
+    SetWindowLongPtrW(hwnd_, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(this));
+
+    // Create tray icon
+    nid_.cbSize = sizeof(nid_);
+    nid_.hWnd = hwnd_;
+    nid_.uID = 1;
+    nid_.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+    nid_.uCallbackMessage = WM_TRAYICON;
+    nid_.hIcon = LoadIcon(nullptr, IDI_APPLICATION);
+    wcscpy_s(nid_.szTip, L"CxxIME Server");
+    Shell_NotifyIconW(NIM_ADD, &nid_);
+
+    // Start IPC server
+    ipc_server_.set_handler([this](const cxxime::IPCRequest& req) { return handle_request(req); });
+    if (!ipc_server_.start()) {
+        MessageBoxW(nullptr, L"Failed to start IPC server.", L"CxxIME Server", MB_OK | MB_ICONERROR);
+        return false;
+    }
+
+    return true;
+}
+
+void ServerApp::run() {
+    MSG msg;
+    while (GetMessageW(&msg, nullptr, 0, 0)) {
+        TranslateMessage(&msg);
+        DispatchMessageW(&msg);
+    }
+}
+
+void ServerApp::finalize() {
+    ipc_server_.stop();
+
+    if (hwnd_) {
+        Shell_NotifyIconW(NIM_DELETE, &nid_);
+        DestroyWindow(hwnd_);
+        hwnd_ = nullptr;
+    }
+}
+
+cxxime::IPCResponse ServerApp::handle_request(const cxxime::IPCRequest& request) {
+    CXXIME_LOG(L"handle_request: cmd=%u, session=%u", (uint32_t)request.command, request.session_id);
+
+    cxxime::IPCResponse response = {};
+    memset(&response, 0, sizeof(response));
+
+    switch (request.command) {
+    case cxxime::IPCCommand::START_SESSION: {
+        uint32_t id = session_mgr_.create_session(dict_path_);
+        response.status = id;  // 0 = failure, non-zero = session_id
+        CXXIME_LOG(L"START_SESSION: new session=%u", id);
+        break;
+    }
+
+    case cxxime::IPCCommand::END_SESSION:
+        session_mgr_.destroy_session(request.session_id);
+        response.status = 0;
+        CXXIME_LOG(L"END_SESSION: session=%u", request.session_id);
+        break;
+
+    case cxxime::IPCCommand::PROCESS_KEY: {
+        auto* engine = session_mgr_.get_engine(request.session_id);
+        if (!engine) {
+            response.status = 1;
+            break;
+        }
+
+        cxxime::KeyEvent event;
+        event.keycode = request.key_code;
+        event.modifiers = request.modifiers;
+        event.is_key_up = false;
+
+        auto result = engine->process_key(event);
+
+        if (result == cxxime::ProcessResult::COMMITTED) {
+            std::string commit = engine->get_commit_text();
+            strncpy_s(response.commit_text, commit.c_str(), sizeof(response.commit_text) - 1);
+            response.status = 0;
+        } else if (result == cxxime::ProcessResult::ACCEPTED) {
+            const auto& ctx = engine->context();
+            strncpy_s(response.preedit, ctx.pinyin_buffer.c_str(), sizeof(response.preedit) - 1);
+            response.candidate_count = (uint32_t)ctx.candidates.candidates.size();
+            for (uint32_t i = 0; i < response.candidate_count && i < 10; ++i) {
+                strncpy_s(response.candidates[i], ctx.candidates.candidates[i].text.c_str(),
+                          sizeof(response.candidates[i]) - 1);
+            }
+            response.highlighted = (uint32_t)ctx.candidates.highlighted;
+            response.status = 0;
+        } else {
+            response.status = 1; // Not eaten
+        }
+        break;
+    }
+
+    case cxxime::IPCCommand::SELECT_CANDIDATE: {
+        auto* engine = session_mgr_.get_engine(request.session_id);
+        if (!engine) {
+            response.status = 1;
+            break;
+        }
+        if (engine->select_candidate(request.candidate_index)) {
+            std::string commit = engine->get_commit_text();
+            strncpy_s(response.commit_text, commit.c_str(), sizeof(response.commit_text) - 1);
+            response.status = 0;
+        } else {
+            response.status = 1;
+        }
+        break;
+    }
+
+    case cxxime::IPCCommand::COMMIT_COMPOSITION: {
+        auto* engine = session_mgr_.get_engine(request.session_id);
+        if (engine) {
+            std::string commit = engine->get_commit_text();
+            strncpy_s(response.commit_text, commit.c_str(), sizeof(response.commit_text) - 1);
+            engine->clear();
+            response.status = 0;
+        } else {
+            response.status = 1;
+        }
+        break;
+    }
+
+    case cxxime::IPCCommand::CLEAR_COMPOSITION: {
+        auto* engine = session_mgr_.get_engine(request.session_id);
+        if (engine) {
+            engine->clear();
+            response.status = 0;
+        } else {
+            response.status = 1;
+        }
+        break;
+    }
+
+    case cxxime::IPCCommand::FOCUS_IN:
+        response.status = 0;
+        break;
+
+    case cxxime::IPCCommand::FOCUS_OUT: {
+        auto* engine = session_mgr_.get_engine(request.session_id);
+        if (engine) {
+            engine->clear();
+        }
+        response.status = 0;
+        break;
+    }
+
+    default:
+        response.status = 0;
+        break;
+    }
+
+    return response;
+}
+
+LRESULT CALLBACK ServerApp::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    ServerApp* app = reinterpret_cast<ServerApp*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+
+    if (msg == WM_TRAYICON) {
+        if (lp == WM_RBUTTONUP) {
+            POINT pt;
+            GetCursorPos(&pt);
+            HMENU hMenu = CreatePopupMenu();
+            AppendMenuW(hMenu, MF_STRING, 1, L"About CxxIME");
+            AppendMenuW(hMenu, MF_STRING, 2, L"Exit");
+            SetForegroundWindow(hwnd);
+            int cmd = TrackPopupMenu(hMenu, TPM_RETURNCMD, pt.x, pt.y, 0, hwnd, nullptr);
+            DestroyMenu(hMenu);
+            if (cmd == 1) {
+                MessageBoxW(hwnd, L"CxxIME - Lightweight Input Method\nVersion 0.1.0", L"About", MB_OK);
+            } else if (cmd == 2) {
+                PostQuitMessage(0);
+            }
+        }
+        return 0;
+    }
+
+    return DefWindowProcW(hwnd, msg, wp, lp);
+}
