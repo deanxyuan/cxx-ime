@@ -1,32 +1,29 @@
-# Prerequisites
-*.d
+# Build output
+build/
+dist/
 
-# Compiled Object files
-*.slo
-*.lo
+# Generated dictionary (large, created by fetch_dict.py)
+data/pinyin.dict.db
+
+# Archives
+*.zip
+
+# IDE / Editor
+.vs/
+.vscode/
+*.user
+*.suo
+
+# Compiled objects (in-source, should not happen)
 *.o
 *.obj
+*.slo
+*.lo
 
-# Precompiled Headers
-*.gch
-*.pch
+# Python
+__pycache__/
+*.pyc
 
-# Compiled Dynamic libraries
-*.so
-*.dylib
-*.dll
-
-# Fortran module files
-*.mod
-*.smod
-
-# Compiled Static libraries
-*.lai
-*.la
-*.a
-*.lib
-
-# Executables
-*.exe
-*.out
-*.app
+# OS
+Thumbs.db
+Desktop.ini

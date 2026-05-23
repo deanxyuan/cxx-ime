@@ -1,0 +1,19 @@
+{
+    "schema": {
+        "name": "CxxIME",
+        "version": "1.0",
+        "description": "CxxIME default pinyin schema"
+    },
+    "engine": {
+        "page_size": 9,
+        "max_pinyin_length": 64
+    },
+    "style": {
+        "font_face": "Microsoft YaHei UI",
+        "font_point": 14,
+        "layout": "horizontal",
+        "candidate_count": 9,
+        "inline_preedit": true
+    },
+    "theme": "light"
+}

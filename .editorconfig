@@ -1,0 +1,27 @@
+root = true
+[*.{h,c,cc}]
+charset = utf-8
+indent_size = 4
+indent_style = space
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.sh]
+indent_style = tab
+indent_size = 4
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.md]
+trim_trailing_whitespace = false
+insert_final_newline = true
+
+[*.bat]
+end_of_line = crlf
+
+[CMakeLists.txt]
+indent_size = 4
+indent_style = space
+end_of_line = lf
+insert_final_newline = true
