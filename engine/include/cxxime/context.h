@@ -13,6 +13,7 @@ public:
     std::string pinyin_buffer;
     CandidatePage candidates;
     std::string committed_text;
+    int page_index = 0;
 
     bool is_composing() const;
     void reset();

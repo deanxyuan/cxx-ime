@@ -131,6 +131,21 @@ STDMETHODIMP TextService::OnTestKeyUp(ITfContext* pic, WPARAM wParam, LPARAM lPa
 STDMETHODIMP TextService::OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM lParam, BOOL* pfEaten) {
     *pfEaten = FALSE;
 
+    // Shift key alone toggles Chinese/English mode (when not composing)
+    if ((wParam == VK_SHIFT || wParam == VK_LSHIFT || wParam == VK_RSHIFT) && !_composing) {
+        _chinese_mode = !_chinese_mode;
+        CXXIME_LOG(L"Mode toggled: %s", _chinese_mode ? L"Chinese" : L"English");
+        return S_OK;
+    }
+
+    // Ctrl+Space also toggles mode
+    if (wParam == VK_SPACE && (GetKeyState(VK_CONTROL) & 0x8000) && !_composing) {
+        _chinese_mode = !_chinese_mode;
+        CXXIME_LOG(L"Mode toggled (Ctrl+Space): %s", _chinese_mode ? L"Chinese" : L"English");
+        *pfEaten = TRUE;
+        return S_OK;
+    }
+
     uint32_t modifiers = _get_modifiers();
     CXXIME_LOG(L"OnKeyDown: vk=%u, mods=%u, composing=%d", wParam, modifiers, _composing);
 
@@ -184,6 +199,12 @@ STDMETHODIMP TextService::OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM lPara
             } else {
                 _candidateWindow.hide();
             }
+        } else {
+            // Server returned ACCEPTED but no commit and no preedit
+            // This happens on Escape (clear) — end the composition
+            _candidateWindow.hide();
+            _end_composition(pic);
+            *pfEaten = TRUE;
         }
     }
 
@@ -355,7 +376,19 @@ bool TextService::_should_eat_key(WPARAM vk) const {
             return false;
     }
 
-    // When composing, eat keys that the IME handles
+    // In English mode, only eat keys when already composing
+    // (user started composing then switched — let them finish)
+    if (!_chinese_mode) {
+        if (_composing) {
+            if (vk == VK_ESCAPE || vk == VK_BACK || vk == VK_SPACE || vk == VK_RETURN)
+                return true;
+            if (vk >= '1' && vk <= '9')
+                return true;
+        }
+        return false;
+    }
+
+    // Chinese mode: when composing, eat keys that the IME handles
     if (_composing) {
         if (vk == VK_ESCAPE || vk == VK_BACK || vk == VK_SPACE || vk == VK_RETURN)
             return true;
@@ -363,9 +396,11 @@ bool TextService::_should_eat_key(WPARAM vk) const {
             return true;
         if (vk == VK_PRIOR || vk == VK_NEXT)
             return true;
+        if (vk == VK_UP || vk == VK_DOWN)
+            return true;
     }
 
-    // Always eat letter keys to start/continue composition
+    // Chinese mode: eat letter keys to start/continue composition
     if (vk >= 'A' && vk <= 'Z')
         return true;
 

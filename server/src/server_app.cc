@@ -6,14 +6,46 @@
 
 #define WM_TRAYICON (WM_USER + 1)
 
-bool ServerApp::initialize() {
-    // Resolve dictionary path
+bool ServerApp::initialize(const std::string& dict_path, const std::string& config_path) {
+    // Resolve exe directory for auto-detection
     char exe_path[MAX_PATH] = {};
     GetModuleFileNameA(nullptr, exe_path, MAX_PATH);
     std::string path = exe_path;
     auto pos = path.find_last_of("\\/");
     std::string dir = (pos != std::string::npos) ? path.substr(0, pos + 1) : "";
-    dict_path_ = dir + "pinyin.dict.db";
+
+    // Resolve dictionary path: explicit arg > exe dir > ../data/
+    if (!dict_path.empty()) {
+        dict_path_ = dict_path;
+    } else {
+        std::string candidate1 = dir + "pinyin.dict.db";
+        std::string candidate2 = dir + "..\\data\\pinyin.dict.db";
+        DWORD attr1 = GetFileAttributesA(candidate1.c_str());
+        DWORD attr2 = GetFileAttributesA(candidate2.c_str());
+        if (attr1 != INVALID_FILE_ATTRIBUTES)
+            dict_path_ = candidate1;
+        else if (attr2 != INVALID_FILE_ATTRIBUTES)
+            dict_path_ = candidate2;
+        else
+            dict_path_ = candidate1;  // fallback
+    }
+
+    // Resolve config path: explicit arg > exe dir > ../data/
+    std::string cfg = config_path;
+    if (cfg.empty()) {
+        std::string candidate1 = dir + "default.json";
+        std::string candidate2 = dir + "..\\data\\default.json";
+        DWORD attr1 = GetFileAttributesA(candidate1.c_str());
+        DWORD attr2 = GetFileAttributesA(candidate2.c_str());
+        if (attr1 != INVALID_FILE_ATTRIBUTES)
+            cfg = candidate1;
+        else if (attr2 != INVALID_FILE_ATTRIBUTES)
+            cfg = candidate2;
+    }
+    config_path_ = cfg;
+
+    CXXIME_LOG(L"Dictionary path: %S", dict_path_.c_str());
+    CXXIME_LOG(L"Config path: %S", config_path_.c_str());
 
     // Create hidden window for tray icon messages
     WNDCLASSEXW wc = {};
@@ -76,7 +108,7 @@ cxxime::IPCResponse ServerApp::handle_request(const cxxime::IPCRequest& request)
 
     switch (request.command) {
     case cxxime::IPCCommand::START_SESSION: {
-        uint32_t id = session_mgr_.create_session(dict_path_);
+        uint32_t id = session_mgr_.create_session(dict_path_, config_path_);
         response.status = id;  // 0 = failure, non-zero = session_id
         CXXIME_LOG(L"START_SESSION: new session=%u", id);
         break;
