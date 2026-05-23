@@ -12,6 +12,7 @@ set "DEFAULT_DIR=%ProgramFiles%\CxxIME"
 set "TSF_DLL=cxxime_tsf.dll"
 set "SERVER_EXE=cxxime-server.exe"
 set "TEST_EXE=cxxime-test.exe"
+set "LOG_FILE=%TEMP%\cxxime_install.log"
 
 :: ── Banner ───────────────────────────────────────────────────────────────────
 echo.
@@ -31,27 +32,53 @@ if errorlevel 1 (
     exit /b 1
 )
 
+:: ── Locate script directory ──────────────────────────────────────────────────
+:: Admin elevation may change cwd to System32, so we must use %~dp0
+set "SCRIPT_DIR=%~dp0"
+cd /d "%SCRIPT_DIR%" 2>nul
+if errorlevel 1 (
+    echo  ERROR: Cannot access script directory: %SCRIPT_DIR%
+    echo.
+    pause
+    exit /b 1
+)
+
 :: ── Parse arguments ──────────────────────────────────────────────────────────
 set "INSTALL_DIR=%~1"
 if "%INSTALL_DIR%"=="" set "INSTALL_DIR=%DEFAULT_DIR%"
 
-set "SCRIPT_DIR=%~dp0"
 set "BIN_DIR=%SCRIPT_DIR%bin"
 set "DATA_DIR=%SCRIPT_DIR%data"
+
+:: ── Diagnostic output ───────────────────────────────────────────────────────
+echo  Script dir  : %SCRIPT_DIR%
+echo  Install dir : %INSTALL_DIR%
+echo  Log file    : %LOG_FILE%
+echo.
+
+echo [%date% %time%] CxxIME Installer v%VERSION% > "%LOG_FILE%"
+echo [%date% %time%] Script dir: %SCRIPT_DIR% >> "%LOG_FILE%"
+echo [%date% %time%] Install dir: %INSTALL_DIR% >> "%LOG_FILE%"
 
 :: ── Step 1: Verify source files ─────────────────────────────────────────────
 echo  [1/6] Verifying source files...
 set "MISSING="
-if not exist "%BIN_DIR%\%TSF_DLL%" set "MISSING=%TSF_DLL%"
-if not exist "%BIN_DIR%\%SERVER_EXE%" set "MISSING=%SERVER_EXE%"
+if not exist "%BIN_DIR%\%TSF_DLL%" set "MISSING=%BIN_DIR%\%TSF_DLL%"
+if not exist "%BIN_DIR%\%SERVER_EXE%" set "MISSING=%BIN_DIR%\%SERVER_EXE%"
 if not "%MISSING%"=="" (
     echo  ERROR: Required file not found: %MISSING%
-    echo  Run package.bat first to prepare distribution files.
+    echo [%date% %time%] ERROR: Missing file: %MISSING% >> "%LOG_FILE%"
+    echo.
+    echo  Files in %BIN_DIR%:
+    dir /b "%BIN_DIR%" 2>nul
+    echo.
+    echo  Please run package.bat first or ensure you extracted the full zip.
     echo.
     pause
     exit /b 1
 )
 echo         All required files found.
+echo [%date% %time%] Source files verified >> "%LOG_FILE%"
 
 :: ── Step 2: Stop existing server ─────────────────────────────────────────────
 echo  [2/6] Stopping existing server...
@@ -85,6 +112,7 @@ if not exist "%INSTALL_DIR%\data" mkdir "%INSTALL_DIR%\data"
 copy /y "%BIN_DIR%\%TSF_DLL%" "%INSTALL_DIR%\bin\" >nul
 if errorlevel 1 (
     echo  ERROR: Failed to copy %TSF_DLL%.
+    echo [%date% %time%] ERROR: Failed to copy %TSF_DLL% >> "%LOG_FILE%"
     pause
     exit /b 1
 )
@@ -92,6 +120,7 @@ if errorlevel 1 (
 copy /y "%BIN_DIR%\%SERVER_EXE%" "%INSTALL_DIR%\bin\" >nul
 if errorlevel 1 (
     echo  ERROR: Failed to copy %SERVER_EXE%.
+    echo [%date% %time%] ERROR: Failed to copy %SERVER_EXE% >> "%LOG_FILE%"
     pause
     exit /b 1
 )
@@ -106,6 +135,7 @@ if exist "%DATA_DIR%\pinyin.dict.db" (
     echo         WARNING: pinyin.dict.db not found. IME requires a dictionary.
 )
 echo         Files installed.
+echo [%date% %time%] Files installed to %INSTALL_DIR% >> "%LOG_FILE%"
 
 :: ── Step 5: Register TSF DLL ────────────────────────────────────────────────
 echo  [5/6] Registering TSF text service...
@@ -113,12 +143,16 @@ regsvr32 /s "%INSTALL_DIR%\bin\%TSF_DLL%"
 if errorlevel 1 (
     echo  ERROR: Failed to register %TSF_DLL%.
     echo  The IME will not appear in the input method list.
-    echo  Try running: regsvr32 "%INSTALL_DIR%\bin\%TSF_DLL%"
+    echo [%date% %time%] ERROR: regsvr32 failed for %TSF_DLL% >> "%LOG_FILE%"
+    echo.
+    echo  Try running manually:
+    echo    regsvr32 "%INSTALL_DIR%\bin\%TSF_DLL%"
     echo.
     pause
     exit /b 1
 )
 echo         TSF DLL registered.
+echo [%date% %time%] TSF DLL registered >> "%LOG_FILE%"
 
 :: ── Step 6: Configure auto-start and start server ───────────────────────────
 echo  [6/6] Configuring auto-start and starting server...
@@ -136,8 +170,10 @@ timeout /t 1 /nobreak >nul 2>&1
 tasklist /fi "imagename eq %SERVER_EXE%" 2>nul | find /i "%SERVER_EXE%" >nul 2>&1
 if not errorlevel 1 (
     echo         Server started.
+    echo [%date% %time%] Server started >> "%LOG_FILE%"
 ) else (
     echo         WARNING: Server may not have started. Check Event Viewer.
+    echo [%date% %time%] WARNING: Server may not have started >> "%LOG_FILE%"
 )
 
 :: ── Done ─────────────────────────────────────────────────────────────────────
@@ -154,6 +190,7 @@ echo    2. Press Ctrl+Space or Win+Space to switch input method
 echo    3. Type pinyin letters to start composing
 echo.
 echo  To uninstall: Run uninstall.bat as administrator
+echo  Install log:  %LOG_FILE%
 echo.
 
 endlocal
