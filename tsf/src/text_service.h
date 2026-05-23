@@ -56,6 +56,7 @@ public:
 private:
     HRESULT _register_key_event_sink();
     HRESULT _unregister_key_event_sink();
+    HRESULT _register_preserved_key();
     HRESULT _start_composition(ITfContext* pic);
     HRESULT _end_composition(ITfContext* pic);
     HRESULT _update_composition_text(ITfContext* pic, const std::wstring& text, TfEditCookie ec);

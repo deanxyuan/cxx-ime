@@ -12,6 +12,8 @@ IpcClient::~IpcClient() {
 
 bool IpcClient::connect(const std::wstring& pipe_name, int timeout_ms) {
     disconnect();
+    pipe_name_ = pipe_name;
+    timeout_ms_ = timeout_ms;
 
     if (WaitNamedPipeW(pipe_name.c_str(), timeout_ms)) {
         pipe_handle_ = CreateFileW(pipe_name.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
@@ -27,6 +29,13 @@ bool IpcClient::connect(const std::wstring& pipe_name, int timeout_ms) {
     return false;
 }
 
+bool IpcClient::try_reconnect() {
+    disconnect();
+    if (pipe_name_.empty())
+        return false;
+    return connect(pipe_name_, timeout_ms_);
+}
+
 void IpcClient::disconnect() {
     if (pipe_handle_) {
         CloseHandle((HANDLE)pipe_handle_);
@@ -39,24 +48,30 @@ bool IpcClient::is_connected() const {
 }
 
 bool IpcClient::send_request(const IPCRequest& request, IPCResponse& response) {
-    if (!is_connected())
-        return false;
+    // Try once; on failure, reconnect and retry once
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        if (!is_connected()) {
+            if (!try_reconnect())
+                return false;
+        }
 
-    DWORD bytes_written = 0;
-    if (!WriteFile((HANDLE)pipe_handle_, &request, sizeof(request), &bytes_written, nullptr) ||
-        bytes_written != sizeof(request)) {
-        disconnect();
-        return false;
+        DWORD bytes_written = 0;
+        if (!WriteFile((HANDLE)pipe_handle_, &request, sizeof(request), &bytes_written, nullptr) ||
+            bytes_written != sizeof(request)) {
+            disconnect();
+            continue;  // retry with reconnect
+        }
+
+        DWORD bytes_read = 0;
+        if (!ReadFile((HANDLE)pipe_handle_, &response, sizeof(response), &bytes_read, nullptr) ||
+            bytes_read != sizeof(response)) {
+            disconnect();
+            continue;  // retry with reconnect
+        }
+
+        return true;
     }
-
-    DWORD bytes_read = 0;
-    if (!ReadFile((HANDLE)pipe_handle_, &response, sizeof(response), &bytes_read, nullptr) ||
-        bytes_read != sizeof(response)) {
-        disconnect();
-        return false;
-    }
-
-    return true;
+    return false;
 }
 
 bool IpcClient::start_session(uint32_t& session_id) {

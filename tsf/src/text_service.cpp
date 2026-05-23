@@ -62,9 +62,37 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
     _activateFlags = dwFlags;
 
     _register_key_event_sink();
+    _register_preserved_key();
 
     // Create candidate window (use HWND_MESSAGE parent since TSF runs in-app)
     _candidateWindow.create(nullptr);
+    _candidateWindow.set_click_callback([this](int index) {
+        cxxime::IPCResponse resp = {};
+        if (_client.select_candidate(_sessionId, index, resp)) {
+            if (resp.commit_text[0] != '\0') {
+                std::wstring commit_text;
+                int len = MultiByteToWideChar(CP_UTF8, 0, resp.commit_text, -1, nullptr, 0);
+                if (len > 0) {
+                    commit_text.resize(len - 1);
+                    MultiByteToWideChar(CP_UTF8, 0, resp.commit_text, -1, &commit_text[0], len);
+                }
+                if (!commit_text.empty()) {
+                    insert_text(commit_text);
+                    // Need ITfContext to end composition — get from thread manager
+                    ITfDocumentMgr* pDocMgr = nullptr;
+                    if (SUCCEEDED(_threadMgr->GetFocus(&pDocMgr)) && pDocMgr) {
+                        ITfContext* pContext = nullptr;
+                        if (SUCCEEDED(pDocMgr->GetBase(&pContext)) && pContext) {
+                            _end_composition(pContext);
+                            pContext->Release();
+                        }
+                        pDocMgr->Release();
+                    }
+                }
+            }
+            _candidateWindow.hide();
+        }
+    });
 
     // Connect to server
     if (_client.connect()) {
@@ -147,10 +175,21 @@ STDMETHODIMP TextService::OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM lPara
     }
 
     uint32_t modifiers = _get_modifiers();
-    CXXIME_LOG(L"OnKeyDown: vk=%u, mods=%u, composing=%d", wParam, modifiers, _composing);
+    CXXIME_LOG(L"OnKeyDown: vk=%u, mods=%u, composing=%d", (unsigned int)wParam, modifiers, _composing);
 
     cxxime::IPCResponse response = {};
-    if (_client.process_key(_sessionId, (uint32_t)wParam, modifiers, response)) {
+    bool ok = _client.process_key(_sessionId, (uint32_t)wParam, modifiers, response);
+
+    // If IPC failed, try to reconnect and re-create session
+    if (!ok) {
+        if (_client.connect()) {
+            _client.start_session(_sessionId);
+            CXXIME_LOG(L"Reconnected, new sessionId=%u", _sessionId);
+            ok = _client.process_key(_sessionId, (uint32_t)wParam, modifiers, response);
+        }
+    }
+
+    if (ok) {
         if (response.commit_text[0] != '\0') {
             // Commit text
             _candidateWindow.hide();
@@ -217,7 +256,13 @@ STDMETHODIMP TextService::OnKeyUp(ITfContext* pic, WPARAM wParam, LPARAM lParam,
 }
 
 STDMETHODIMP TextService::OnPreservedKey(ITfContext* pic, REFGUID rguid, BOOL* pfEaten) {
-    *pfEaten = FALSE;
+    if (IsEqualGUID(rguid, c_guidPreservedKey_Toggle) && !_composing) {
+        _chinese_mode = !_chinese_mode;
+        CXXIME_LOG(L"Mode toggled (preserved key): %s", _chinese_mode ? L"Chinese" : L"English");
+        *pfEaten = TRUE;
+    } else {
+        *pfEaten = FALSE;
+    }
     return S_OK;
 }
 
@@ -330,6 +375,29 @@ HRESULT TextService::_unregister_key_event_sink() {
         return E_FAIL;
 
     HRESULT hr = pKeystrokeMgr->UnadviseKeyEventSink(_clientId);
+    pKeystrokeMgr->Release();
+    return hr;
+}
+
+HRESULT TextService::_register_preserved_key() {
+    if (!_threadMgr)
+        return E_FAIL;
+
+    ITfKeystrokeMgr* pKeystrokeMgr = nullptr;
+    if (FAILED(_threadMgr->QueryInterface(IID_ITfKeystrokeMgr, (void**)&pKeystrokeMgr)))
+        return E_FAIL;
+
+    // Register Ctrl+Space as preserved key for mode toggle
+    TF_PRESERVEDKEY prekey = {};
+    prekey.uVKey = VK_SPACE;
+    prekey.uModifiers = TF_MOD_CONTROL;
+    HRESULT hr = pKeystrokeMgr->PreserveKey(
+        _clientId,
+        c_guidPreservedKey_Toggle,
+        &prekey,
+        L"Toggle Chinese/English",
+        (ULONG)wcslen(L"Toggle Chinese/English"));
+
     pKeystrokeMgr->Release();
     return hr;
 }
