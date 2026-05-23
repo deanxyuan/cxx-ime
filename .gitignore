@@ -2,11 +2,9 @@
 build/
 dist/
 
-# Generated dictionary backup (original is committed)
+# Raw dictionary databases (too large for git; committed as .zip)
+data/*.dict.db
 data/pinyin.dict.db.bak
-
-# Archives
-*.zip
 
 # IDE / Editor
 .vs/
