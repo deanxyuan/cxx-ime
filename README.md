@@ -43,7 +43,7 @@ build.bat clean        # 清理构建目录
 构建产物在 `build/<config>/` 目录下：
 - `cxxime_tsf.dll` — TSF 文本服务 DLL
 - `cxxime-server.exe` — 后台服务进程
-- `cxxime-test.exe` — 测试套件
+- `test/` — 测试可执行文件（每个测试文件一个 exe）
 
 ## 获取词典
 
@@ -141,23 +141,23 @@ setup.bat
 
 ```cmd
 cd build
-ctest -C Release
+ctest -C Debug
 ```
 
-或直接运行：`build\test\Release\cxxime-test.exe`
+或单独运行某个测试：`build\test\Debug\ipc_test.exe`
 
 ## 项目状态
 
 当前已完成：
 - TSF 文本服务框架集成
 - 按键处理与拼音组合
-- 命名管道 IPC 通信
+- 命名管道 IPC 通信（支持多客户端并发）
 - 多会话管理
 - 候选窗口显示
 - JSON 配置加载
 - 词典下载与转换工具
 - 安装/卸载/打包脚本
-- 单元测试（17 个）
+- 单元测试（64 个，7 个独立 exe）
 
 ## 许可证
 

@@ -68,3 +68,5 @@ TEST(Layout, vertical_width_max) {
 
     ASSERT_LE(lr.width, 600);
 }
+
+RUN_ALL_TESTS()

@@ -38,3 +38,5 @@ TEST(Segmentor, single_syllable) {
     ASSERT_EQ(result.size(), 1u);
     ASSERT_EQ(result[0], "a");
 }
+
+RUN_ALL_TESTS()

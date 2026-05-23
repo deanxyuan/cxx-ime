@@ -263,6 +263,70 @@ TEST(IPC, send_request) {
 }
 
 // ============================================================
+// Multi-Client Tests
+// ============================================================
+
+TEST(MultiClient, two_clients_simultaneous) {
+    TestServer ts;
+    ASSERT_TRUE(ts.start([](const cxxime::IPCRequest& req) -> cxxime::IPCResponse {
+        cxxime::IPCResponse resp = {};
+        resp.status = req.session_id * 10;
+        return resp;
+    }));
+
+    cxxime::IpcClient client1;
+    cxxime::IpcClient client2;
+    ASSERT_TRUE(client1.connect(cxxime::IPC_PIPE_NAME, 2000));
+    ASSERT_TRUE(client2.connect(cxxime::IPC_PIPE_NAME, 2000));
+
+    cxxime::IPCResponse resp1 = {};
+    cxxime::IPCResponse resp2 = {};
+    ASSERT_TRUE(client1.process_key(1, 'A', 0, resp1));
+    ASSERT_TRUE(client2.process_key(2, 'B', 0, resp2));
+    ASSERT_EQ(resp1.status, (uint32_t)10);
+    ASSERT_EQ(resp2.status, (uint32_t)20);
+
+    client1.disconnect();
+    client2.disconnect();
+}
+
+TEST(MultiClient, sequential_sessions) {
+    // Ensure previous test's server is fully cleaned up
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    cxxime::IpcServer server;
+    int call_count = 0;
+    server.set_handler([&](const cxxime::IPCRequest& req) -> cxxime::IPCResponse {
+        cxxime::IPCResponse resp = {};
+        if (req.command == cxxime::IPCCommand::START_SESSION) {
+            ++call_count;
+            resp.status = (uint32_t)call_count;
+        } else {
+            resp.status = 0;
+        }
+        return resp;
+    });
+    ASSERT_TRUE(server.start());
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+    cxxime::IpcClient client;
+    ASSERT_TRUE(client.connect(cxxime::IPC_PIPE_NAME, 2000));
+
+    uint32_t sid1 = 0;
+    ASSERT_TRUE(client.start_session(sid1));
+    ASSERT_EQ(sid1, (uint32_t)1);
+    ASSERT_TRUE(client.end_session(sid1));
+
+    uint32_t sid2 = 0;
+    ASSERT_TRUE(client.start_session(sid2));
+    ASSERT_EQ(sid2, (uint32_t)2);
+    ASSERT_TRUE(client.end_session(sid2));
+
+    client.disconnect();
+    server.stop();
+}
+
+// ============================================================
 // Reconnection Tests
 // ============================================================
 
@@ -289,3 +353,5 @@ TEST(Reconnect, server_restart) {
         ASSERT_TRUE(client.process_key(1, 'A', 0, resp));
     }
 }
+
+RUN_ALL_TESTS()

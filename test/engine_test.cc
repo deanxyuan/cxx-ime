@@ -188,3 +188,5 @@ static bool _engine_init = []() {
     GetTempPathA(MAX_PATH, temp_path);
     return true;
 }();
+
+RUN_ALL_TESTS()

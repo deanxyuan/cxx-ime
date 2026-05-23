@@ -111,3 +111,5 @@ TEST(Config, preedit_type_invalid_fallback) {
 
     std::remove(path);
 }
+
+RUN_ALL_TESTS()
