@@ -13,7 +13,8 @@
         "font_point": 14,
         "layout": "horizontal",
         "candidate_count": 9,
-        "inline_preedit": true
+        "inline_preedit": true,
+        "preedit_type": "composition"
     },
     "theme": "light"
 }

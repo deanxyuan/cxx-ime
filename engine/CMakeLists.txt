@@ -3,7 +3,9 @@ project(cxxime-engine CXX)
 add_library(cxxime-engine STATIC
     src/context.cc
     src/pinyin_segmentor.cc
-    src/sqlite_dict.cc
+    src/dict.cc
+    src/spellings_index.cc
+    src/syllabifier.cc
     src/pinyin_translator.cc
     src/pinyin_processor.cc
     src/config.cc

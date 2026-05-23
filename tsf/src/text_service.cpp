@@ -1,11 +1,13 @@
-// Copyright (c) 2026 CxxIME Contributors. MIT License.
+// Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
 #include "text_service.h"
 #include "globals.h"
 #include "edit_session.h"
 #include "display_attribute.h"
 #include <cxxime/logging.h>
+#include "preedit_mode.h"
 #include <cstring>
+#include <shellapi.h>
 
 TextService::TextService() {}
 
@@ -56,6 +58,8 @@ STDMETHODIMP TextService::Activate(ITfThreadMgr* ptim, TfClientId tid) {
 STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD dwFlags) {
     CXXIME_LOG(L"ActivateEx: clientId=%u, flags=%u", tid, dwFlags);
 
+    _load_config();
+
     _threadMgr = ptim;
     _threadMgr->AddRef();
     _clientId = tid;
@@ -66,6 +70,7 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
 
     // Create candidate window (use HWND_MESSAGE parent since TSF runs in-app)
     _candidateWindow.create(nullptr);
+    _candidateWindow.set_layout(_config.layout);
     _candidateWindow.set_click_callback([this](int index) {
         cxxime::IPCResponse resp = {};
         if (_client.select_candidate(_sessionId, index, resp)) {
@@ -88,8 +93,10 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
                         }
                         pDocMgr->Release();
                     }
+                    _composing = false;
                 }
             }
+            _candidateWindow.set_preedit("");
             _candidateWindow.hide();
         }
     });
@@ -193,6 +200,7 @@ STDMETHODIMP TextService::OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM lPara
         if (response.commit_text[0] != '\0') {
             // Commit text
             _candidateWindow.hide();
+            _candidateWindow.set_preedit("");
             std::wstring commit_text;
             int len = MultiByteToWideChar(CP_UTF8, 0, response.commit_text, -1, nullptr, 0);
             if (len > 0) {
@@ -202,23 +210,43 @@ STDMETHODIMP TextService::OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM lPara
             if (!commit_text.empty()) {
                 insert_text(commit_text);
                 _end_composition(pic);
+                _composing = false;
                 *pfEaten = TRUE;
             }
         } else if (response.preedit[0] != '\0') {
-            // Update preedit
+            // Decode preedit
             std::wstring preedit;
             int len = MultiByteToWideChar(CP_UTF8, 0, response.preedit, -1, nullptr, 0);
             if (len > 0) {
                 preedit.resize(len - 1);
                 MultiByteToWideChar(CP_UTF8, 0, response.preedit, -1, &preedit[0], len);
             }
-            if (!_composing) {
-                _start_composition(pic);
+
+            // Decode candidates
+            std::vector<std::wstring> candidate_texts;
+            for (uint32_t i = 0; i < response.candidate_count && i < 10; ++i) {
+                int clen = MultiByteToWideChar(CP_UTF8, 0, response.candidates[i], -1, nullptr, 0);
+                if (clen > 0) {
+                    std::wstring ct(clen - 1, L'\0');
+                    MultiByteToWideChar(CP_UTF8, 0, response.candidates[i], -1, &ct[0], clen);
+                    candidate_texts.push_back(std::move(ct));
+                }
             }
-            update_composition(pic, preedit);
+
+            auto decision = cxxime_tsf::decide_preedit(
+                _config.inline_preedit, _config.preedit_type, preedit, candidate_texts);
+
+            if (decision.start_composition) {
+                if (!_composing) _start_composition(pic);
+                update_composition(pic, decision.inline_text);
+            } else {
+                if (_composing && _composition) _end_composition(pic);
+                _composing = true;
+            }
             *pfEaten = TRUE;
 
-            // Update candidate window
+            _candidateWindow.set_preedit(decision.show_preedit_in_popup ? response.preedit : "");
+
             if (response.candidate_count > 0) {
                 cxxime::CandidatePage page;
                 page.highlighted = (int)response.highlighted;
@@ -229,7 +257,6 @@ STDMETHODIMP TextService::OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM lPara
                 }
                 _candidateWindow.update(page);
 
-                // Position near caret
                 POINT pt = {};
                 GetCaretPos(&pt);
                 ClientToScreen(GetFocus(), &pt);
@@ -242,7 +269,9 @@ STDMETHODIMP TextService::OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM lPara
             // Server returned ACCEPTED but no commit and no preedit
             // This happens on Escape (clear) — end the composition
             _candidateWindow.hide();
+            _candidateWindow.set_preedit("");
             _end_composition(pic);
+            _composing = false;
             *pfEaten = TRUE;
         }
     }
@@ -487,4 +516,23 @@ uint32_t TextService::_get_modifiers() const {
             mods |= 0x04;
     }
     return mods;
+}
+
+void TextService::_load_config() {
+    wchar_t dll_path[MAX_PATH] = {};
+    GetModuleFileNameW(g_hInst, dll_path, MAX_PATH);
+    // Navigate from bin/cxxime_tsf.dll to data/default.json
+    std::wstring path(dll_path);
+    auto pos = path.find_last_of(L"\\/");
+    if (pos != std::wstring::npos) {
+        std::wstring dir = path.substr(0, pos);  // bin/
+        pos = dir.find_last_of(L"\\/");
+        if (pos != std::wstring::npos) {
+            std::wstring root = dir.substr(0, pos);  // install root
+            std::wstring config_path = root + L"\\data\\default.json";
+            char narrow[MAX_PATH] = {};
+            WideCharToMultiByte(CP_UTF8, 0, config_path.c_str(), -1, narrow, MAX_PATH, nullptr, nullptr);
+            _config.load(narrow);
+        }
+    }
 }

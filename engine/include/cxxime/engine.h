@@ -1,4 +1,4 @@
-// Copyright (c) 2026 CxxIME Contributors. MIT License.
+// Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
 #ifndef CXXIME_ENGINE_H_
 #define CXXIME_ENGINE_H_
@@ -29,7 +29,7 @@ private:
     PinyinProcessor processor_;
     PinyinTranslator translator_;
     PinyinSegmentor segmentor_;
-    SqliteDict dict_;
+    Dict dict_;
     Context context_;
     Config config_;
 };

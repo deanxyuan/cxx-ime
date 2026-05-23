@@ -1,4 +1,4 @@
-// Copyright (c) 2026 CxxIME Contributors. MIT License.
+// Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
 #include "edit_session.h"
 #include "text_service.h"
@@ -61,8 +61,13 @@ STDMETHODIMP EditSession::DoEditSession(TfEditCookie ec) {
     } else if (_action == Action::START_COMPOSITION) {
         ITfContextComposition* pCtxComp = nullptr;
         if (SUCCEEDED(_context->QueryInterface(IID_ITfContextComposition, (void**)&pCtxComp))) {
+            TF_SELECTION sel = {};
+            ULONG fetched = 0;
             ITfRange* pRange = nullptr;
-            if (SUCCEEDED(_context->GetStart(ec, &pRange))) {
+            if (SUCCEEDED(_context->GetSelection(ec, TF_DEFAULT_SELECTION, 1, &sel, &fetched)) && fetched > 0) {
+                pRange = sel.range;
+            }
+            if (pRange) {
                 ITfComposition* pComposition = nullptr;
                 HRESULT hr = pCtxComp->StartComposition(ec, pRange, _service, &pComposition);
                 if (SUCCEEDED(hr)) {
