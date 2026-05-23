@@ -1,4 +1,4 @@
-// Copyright (c) 2026 CxxIME Contributors. MIT License.
+// Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
 #include "globals.h"
 #include "class_factory.h"

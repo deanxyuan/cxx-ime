@@ -1,4 +1,4 @@
-// Copyright (c) 2026 CxxIME Contributors. MIT License.
+// Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
 #ifndef CXXIME_IPC_SERVER_H_
 #define CXXIME_IPC_SERVER_H_

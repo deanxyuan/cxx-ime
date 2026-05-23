@@ -1,0 +1,9 @@
+// Copyright (c) 2026 CxxIME Contributors. MIT License.
+// Resource file for CxxIME TSF DLL
+
+#include "resource.h"
+
+// Icons - paths relative to project root (set via /i flag in CMake)
+IDI_CXXIME  ICON    "resource\\cxxime.ico"
+IDI_EN      ICON    "resource\\en.ico"
+IDI_ZH      ICON    "resource\\zh.ico"

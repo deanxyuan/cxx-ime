@@ -21,6 +21,7 @@ target_link_libraries(cxxime-tsf PRIVATE
     cxxime-shared
     cxxime-ipc
     cxxime-ui
+    cxxime-engine
     ole32
     oleaut32
     uuid

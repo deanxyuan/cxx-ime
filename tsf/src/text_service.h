@@ -1,4 +1,4 @@
-// Copyright (c) 2026 CxxIME Contributors. MIT License.
+// Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
 #ifndef CXXIME_TSF_TEXT_SERVICE_H_
 #define CXXIME_TSF_TEXT_SERVICE_H_
@@ -7,6 +7,7 @@
 #include <cxxime/ipc_client.h>
 #include <cxxime/ipc_protocol.h>
 #include <cxxime/candidate_window.h>
+#include <cxxime/config.h>
 
 class TextService : public ITfTextInputProcessorEx,
                     public ITfKeyEventSink,
@@ -62,6 +63,7 @@ private:
     HRESULT _update_composition_text(ITfContext* pic, const std::wstring& text, TfEditCookie ec);
     bool _should_eat_key(WPARAM vk) const;
     uint32_t _get_modifiers() const;
+    void _load_config();
 
     LONG _cRef = 1;
     ITfThreadMgr* _threadMgr = nullptr;
@@ -74,6 +76,7 @@ private:
     bool _composing = false;
     bool _chinese_mode = true;
     cxxime::CandidateWindow _candidateWindow;
+    cxxime::Config _config;
 };
 
 #endif // CXXIME_TSF_TEXT_SERVICE_H_

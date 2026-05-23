@@ -9,6 +9,7 @@ if(WIN32)
     add_definitions(-DUNICODE -D_UNICODE -DWIN32_LEAN_AND_MEAN -D_CRT_SECURE_NO_WARNINGS -DNOMINMAX)
     # Static link VC++ runtime — no vcredist dependency on target machines
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    add_compile_options(/utf-8)
 endif()
 
 option(CXXIME_BUILD_TESTS "Build tests" ON)

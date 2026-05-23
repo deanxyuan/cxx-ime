@@ -1,4 +1,4 @@
-// Copyright (c) 2026 CxxIME Contributors. MIT License.
+// Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
 #include <cxxime/config.h>
 #include <json.hpp>
@@ -31,6 +31,14 @@ bool Config::load(const std::string& path) {
                 font_size = style["font_point"].get<int>();
             if (style.contains("layout") && style["layout"].is_string())
                 layout = style["layout"].get<std::string>();
+            if (style.contains("inline_preedit") && style["inline_preedit"].is_boolean())
+                inline_preedit = style["inline_preedit"].get<bool>();
+            if (style.contains("preedit_type") && style["preedit_type"].is_string()) {
+                preedit_type = style["preedit_type"].get<std::string>();
+                if (preedit_type != "composition" && preedit_type != "preview" &&
+                    preedit_type != "preview_all")
+                    preedit_type = "composition";
+            }
         }
 
         if (j.contains("theme") && j["theme"].is_string())

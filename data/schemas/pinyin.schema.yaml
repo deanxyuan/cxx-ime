@@ -1,0 +1,19 @@
+# CxxIME 拼音方案配置
+# 规则语法与 librime schema YAML 兼容
+# 规则类型: abbrev, fuzz, derive, xform, erase, xlit
+
+speller:
+  algebra:
+    # 缩写: 取每个音节的辅音声母 (首字母)
+    - abbrev/^(.+).$/$1/
+    # 模糊拼音: zh↔z, ch↔c, sh↔s
+    - derive/^([zcs])h/$1/
+    # 模糊拼音: n↔l
+    - fuzz/^n(.*)/l$1/
+    - fuzz/^l(.*)/n$1/
+    # 模糊拼音: eng↔en
+    - derive/^(.*)eng$/$1en/
+    # 模糊拼音: ing↔in
+    - derive/^(.*)ing$/$1in/
+    # 模糊拼音: ang↔an
+    - derive/^(.*)ang$/$1an/
