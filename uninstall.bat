@@ -1,24 +1,22 @@
 @echo off
 setlocal enabledelayedexpansion
 
-:: ── CxxIME Uninstaller ───────────────────────────────────────────────────────
-:: Requires administrator privileges. Right-click -> Run as administrator.
+:: CxxIME Uninstaller
+:: Requires administrator privileges. Right-click -^> Run as administrator.
 
-:: ── Configuration ────────────────────────────────────────────────────────────
 set "PRODUCT=CxxIME"
 set "DEFAULT_DIR=%ProgramFiles%\CxxIME"
 set "TSF_DLL=cxxime_tsf.dll"
 set "SERVER_EXE=cxxime-server.exe"
 set "TSF_CLSID={6A4B85B0-3D02-4B3A-9E69-715725DA7706}"
 
-:: ── Banner ───────────────────────────────────────────────────────────────────
 echo.
 echo  ====================================================
 echo         CxxIME Uninstaller
 echo  ====================================================
 echo.
 
-:: ── Admin check ──────────────────────────────────────────────────────────────
+:: Admin check
 net session >nul 2>&1
 if errorlevel 1 (
     echo  ERROR: Administrator privileges required.
@@ -28,15 +26,15 @@ if errorlevel 1 (
     exit /b 1
 )
 
-:: ── Parse arguments ──────────────────────────────────────────────────────────
+:: Parse arguments
 set "INSTALL_DIR=%~1"
 if "%INSTALL_DIR%"=="" set "INSTALL_DIR=%DEFAULT_DIR%"
 
-:: ── Confirmation ─────────────────────────────────────────────────────────────
+:: Confirmation
 echo  This will completely remove %PRODUCT% from your system.
 echo  Install directory: %INSTALL_DIR%
 echo.
-set /p "CONFIRM=  Continue? (Y/N): "
+set /p "CONFIRM=  Continue? [Y/N]: "
 if /i not "%CONFIRM%"=="Y" (
     echo  Cancelled.
     exit /b 0
@@ -45,7 +43,7 @@ echo.
 
 set "HAD_ERRORS=0"
 
-:: ── Step 1: Stop server ─────────────────────────────────────────────────────
+:: Step 1: Stop server
 echo  [1/5] Stopping server...
 tasklist /fi "imagename eq %SERVER_EXE%" 2>nul | find /i "%SERVER_EXE%" >nul 2>&1
 if not errorlevel 1 (
@@ -56,7 +54,7 @@ if not errorlevel 1 (
     echo         No running server found.
 )
 
-:: ── Step 2: Unregister TSF DLL ──────────────────────────────────────────────
+:: Step 2: Unregister TSF DLL
 echo  [2/5] Unregistering TSF text service...
 set "DLL_PATH="
 if exist "%INSTALL_DIR%\bin\%TSF_DLL%" set "DLL_PATH=%INSTALL_DIR%\bin\%TSF_DLL%"
@@ -71,10 +69,10 @@ if not "%DLL_PATH%"=="" (
         echo         TSF DLL unregistered.
     )
 ) else (
-    echo         TSF DLL not found (already removed).
+    echo         TSF DLL not found - already removed.
 )
 
-:: ── Step 3: Remove auto-start ───────────────────────────────────────────────
+:: Step 3: Remove auto-start
 echo  [3/5] Removing auto-start entry...
 reg query "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" /v "CxxIMEServer" >nul 2>&1
 if not errorlevel 1 (
@@ -84,7 +82,7 @@ if not errorlevel 1 (
     echo         No auto-start entry found.
 )
 
-:: ── Step 4: Clean TSF registry ──────────────────────────────────────────────
+:: Step 4: Clean TSF registry
 echo  [4/5] Cleaning TSF registry entries...
 set "TIP_KEY=HKLM\SOFTWARE\Microsoft\CTF\TIP\%TSF_CLSID%"
 reg query "%TIP_KEY%" >nul 2>&1
@@ -95,7 +93,7 @@ if not errorlevel 1 (
     echo         No TSF TIP entry found.
 )
 
-:: ── Step 5: Remove files ────────────────────────────────────────────────────
+:: Step 5: Remove files
 echo  [5/5] Removing files...
 if exist "%INSTALL_DIR%" (
     timeout /t 1 /nobreak >nul 2>&1
@@ -112,7 +110,7 @@ if exist "%INSTALL_DIR%" (
     echo         Installation directory not found.
 )
 
-:: ── Done ─────────────────────────────────────────────────────────────────────
+:: Done
 echo.
 if "%HAD_ERRORS%"=="1" (
     echo  ====================================================
@@ -128,7 +126,7 @@ if "%HAD_ERRORS%"=="1" (
     echo  ====================================================
 )
 echo.
-echo  Please log off and log back in (or restart) for changes to take effect.
+echo  Please log off and log back in or restart for changes to take effect.
 echo.
 
 endlocal
