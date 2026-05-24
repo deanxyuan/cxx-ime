@@ -4,33 +4,49 @@
 
 namespace cxxime {
 
+// Self-contained: owns all resources (tests/tools).
 bool Engine::initialize(const std::string& dict_path, const std::string& config_path) {
-    if (!dict_.open(dict_path))
+    if (!owned_dict_.open(dict_path))
         return false;
 
-    translator_.set_dict(&dict_);
-
     if (!config_path.empty()) {
-        config_.load(config_path);
+        owned_config_.load(config_path);
     }
 
-    ascii_composer_.load_config(config_);
-
-    // Load spellings index for abbreviation expansion
-    std::string spellings_path = derive_spellings_path(dict_path);
-    if (!spellings_path.empty()) {
-        spellings_.load(spellings_path);
-        if (spellings_.has_spellings()) {
-            syllabifier_ = std::make_unique<Syllabifier>(spellings_);
-            translator_.set_syllabifier(syllabifier_.get());
-        }
+    std::string sp_path = derive_spellings_path(dict_path);
+    if (!sp_path.empty() && owned_spellings_.load(sp_path) && owned_spellings_.has_spellings()) {
+        owned_syllabifier_ = std::make_unique<Syllabifier>(owned_spellings_);
     }
 
+    return initialize(owned_dict_, owned_spellings_,
+                      owned_syllabifier_.get(), owned_config_);
+}
+
+// Shared-resource: references pre-loaded data (server sessions).
+bool Engine::initialize(Dict& dict, SpellingsIndex& spellings,
+                        Syllabifier* syllabifier, const Config& config) {
+    dict_ = &dict;
+    spellings_ = &spellings;
+    syllabifier_ = syllabifier;
+    config_ = &config;
+
+    translator_.set_dict(dict_);
+    if (syllabifier_) {
+        translator_.set_syllabifier(syllabifier_);
+    }
+
+    init_per_session(config);
     return true;
 }
 
+void Engine::init_per_session(const Config& config) {
+    ascii_composer_.load_config(config);
+}
+
 void Engine::finalize() {
-    dict_.close();
+    if (dict_ == &owned_dict_) {
+        owned_dict_.close();
+    }
     context_.reset();
 }
 
@@ -79,7 +95,7 @@ ProcessResult Engine::process_key(const KeyEvent& event) {
 
     // After processing, update candidates if still composing
     if (result == ProcessResult::ACCEPTED && context_.is_composing()) {
-        auto page = translator_.translate(context_.pinyin_buffer, context_.page_index, config_.page_size);
+        auto page = translator_.translate(context_.pinyin_buffer, context_.page_index, config_->page_size);
         context_.update_candidates(std::move(page));
     }
 
@@ -87,9 +103,9 @@ ProcessResult Engine::process_key(const KeyEvent& event) {
     if (result == ProcessResult::COMMITTED && !context_.committed_text.empty()) {
         std::string code = context_.pinyin_buffer;
         if (code.empty()) {
-            code = dict_.reverse_lookup(context_.committed_text);
+            code = dict_->reverse_lookup(context_.committed_text);
         }
-        dict_.update_frequency(context_.committed_text, code);
+        dict_->update_frequency(context_.committed_text, code);
     }
 
     return result;
@@ -112,9 +128,9 @@ bool Engine::select_candidate(int index) {
 
     std::string code = context_.pinyin_buffer;
     if (code.empty())
-        code = dict_.reverse_lookup(context_.committed_text);
+        code = dict_->reverse_lookup(context_.committed_text);
     if (!code.empty())
-        dict_.update_frequency(context_.committed_text, code);
+        dict_->update_frequency(context_.committed_text, code);
 
     return true;
 }
