@@ -153,6 +153,7 @@ static std::vector<SpellingMatch> trie_prefix_search(
                               *(const uint32_t*)(sp + 4));
             m.type = *(const uint8_t*)(sp + 8);
             m.credibility = *(const float*)(sp + 10);
+            m.input_key_len = key_len;
             results.push_back(std::move(m));
             sp += SPELLING_SIZE;
         }
@@ -213,6 +214,7 @@ static std::vector<SpellingMatch> flat_prefix_search(
         m.syllable.assign(strings + e.syllable_offset, e.syllable_len);
         m.type = e.type;
         m.credibility = e.credibility;
+        m.input_key_len = e.key_len;
         results.push_back(std::move(m));
     }
 

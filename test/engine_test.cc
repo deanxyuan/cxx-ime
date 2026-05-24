@@ -348,7 +348,7 @@ TEST(Engine, translate_mixed_zhg) {
     });
 
     ASSERT_TRUE(cxxime::SpellingsIndex::create_test_trie(spellings_path, {
-        {"zh", "zhong", 0, 0.0f},
+        {"zh", "zhong", 2, 0.0f},
         {"g",  "guo",   2, -0.693f},
     }));
 
