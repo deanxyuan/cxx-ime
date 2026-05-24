@@ -556,6 +556,10 @@ bool Dict::load_id_index(const std::string& dict_bin_path) {
     if (!base) { CloseHandle(hMap); CloseHandle(hFile); return false; }
 
     // Header: magic(8) version(4) syl_count(4) syl_str_size(4) idx_count(4) idx_data_size(4) = 28
+    if (std::memcmp(base, "CXIDX\0\0\0\0", 8) != 0) {
+        UnmapViewOfFile(base); CloseHandle(hMap); CloseHandle(hFile);
+        return false;
+    }
     const uint32_t* h = (const uint32_t*)(base + 8);
     uint32_t ver = h[0], syl_count = h[1], syl_str_size = h[2];
     uint32_t idx_count = h[3], idx_data_size = h[4];
@@ -793,6 +797,7 @@ std::vector<Candidate> Dict::lookup_by_ids(const std::vector<uint32_t>& query_id
 
     if ((int)results.size() > limit)
         results.resize(limit);
+
     return results;
 }
 
