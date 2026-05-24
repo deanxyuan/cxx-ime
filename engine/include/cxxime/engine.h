@@ -18,7 +18,13 @@ namespace cxxime {
 
 class Engine {
 public:
+    // Self-contained init: Engine owns all resources (tests/tools use this).
     bool initialize(const std::string& dict_path, const std::string& config_path = "");
+
+    // Shared-resource init: Engine references pre-loaded resources (server sessions).
+    bool initialize(Dict& dict, SpellingsIndex& spellings,
+                    Syllabifier* syllabifier, const Config& config);
+
     void finalize();
 
     ProcessResult process_key(const KeyEvent& event);
@@ -31,17 +37,27 @@ public:
     const AsciiComposer& ascii_composer() const { return ascii_composer_; }
     AsciiComposer& ascii_composer() { return ascii_composer_; }
 
+    static std::string derive_spellings_path(const std::string& dict_path);
+
 private:
-    std::string derive_spellings_path(const std::string& dict_path);
+    void init_per_session(const Config& config);
 
     PinyinProcessor processor_;
     PinyinTranslator translator_;
-    Dict dict_;
     Context context_;
-    Config config_;
     AsciiComposer ascii_composer_;
-    SpellingsIndex spellings_;
-    std::unique_ptr<Syllabifier> syllabifier_;
+
+    // Self-contained resources (owned when initialized from file paths).
+    Dict owned_dict_;
+    SpellingsIndex owned_spellings_;
+    Config owned_config_;
+    std::unique_ptr<Syllabifier> owned_syllabifier_;
+
+    // Active resource references (point to owned_* or shared_* depending on init path).
+    Dict* dict_ = nullptr;
+    SpellingsIndex* spellings_ = nullptr;
+    Syllabifier* syllabifier_ = nullptr;
+    const Config* config_ = nullptr;
 };
 
 } // namespace cxxime
