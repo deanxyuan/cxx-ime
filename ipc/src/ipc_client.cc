@@ -79,7 +79,7 @@ bool IpcClient::send_request(const IPCRequest& request, IPCResponse& response) {
 
         HANDLE pipe = (HANDLE)pipe_handle_;
 
-        // Synchronous WriteFile + FlushFileBuffers
+        // Synchronous WriteFile — no FlushFileBuffers needed for message-mode pipe
         // Reference: weasel PipeChannelBase::_WritePipe
         DWORD bytes_written = 0;
         if (!WriteFile(pipe, &request, sizeof(request), &bytes_written, nullptr) ||
@@ -87,8 +87,6 @@ bool IpcClient::send_request(const IPCRequest& request, IPCResponse& response) {
             disconnect();
             continue;
         }
-        FlushFileBuffers(pipe);
-
         // Synchronous ReadFile
         // Reference: weasel PipeChannelBase::_Receive
         DWORD bytes_read = 0;
