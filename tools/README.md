@@ -1,4 +1,4 @@
-# CxxIME 测试工具
+# CxxIME 开发工具
 
 以下命令基于 `cxx-ime/` 目录，可直接拷贝执行。
 
@@ -12,14 +12,35 @@ build.bat debug
 
 ## dict_query — 词典查询工具
 
+拼音模式（需 `.bin` + `.spellings.bin`）：
+
 ```cmd
-.\build\tools\dict_query\Debug\dict_query.exe --mode pinyin
+.\build\tools\dict_query\Debug\dict_query.exe --mode pinyin --dict .\data\pinyin.dict.bin --spellings .\data\pinyin.spellings.bin
+```
+
+五笔模式（需 `.bin`）：
+
+```cmd
+.\build\tools\dict_query\Debug\dict_query.exe --mode wubi --dict .\data\wubi86.dict.bin
 ```
 
 | 输入 | 说明 |
 |------|------|
-| `nihao` | 拼音查候选词 |
-| `:s nihao` | 查看音节切分 |
+| `sdf` | 查候选词 |
+| `:s sdf` | 查看音节切分（仅拼音模式） |
+| `:q` | 退出 |
+
+---
+
+## sqlite_query — SQLite .db 直读工具
+
+```cmd
+.\build\tools\sqlite_query\Debug\sqlite_query.exe .\data\wubi86.dict.db
+```
+
+| 输入 | 说明 |
+|------|------|
+| `sdf` | 按 code 前缀查词 |
 | `:q` | 退出 |
 
 ---
