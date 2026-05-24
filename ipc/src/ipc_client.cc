@@ -34,7 +34,19 @@ bool IpcClient::connect(const std::wstring& pipe_name, int timeout_ms) {
     pipe_name_ = make_pipe_name(pipe_name);
     timeout_ms_ = timeout_ms;
 
-    if (WaitNamedPipeW(pipe_name_.c_str(), timeout_ms)) {
+    // Retry loop: WaitNamedPipeW returns TRUE for ALL waiting threads when
+    // ONE pipe instance becomes available, but CreateFileW only succeeds for
+    // one caller. On CreateFileW failure, re-enter the wait for the next instance.
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+    while (true) {
+        auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+            deadline - std::chrono::steady_clock::now()).count();
+        if (remaining <= 0)
+            break;
+
+        if (!WaitNamedPipeW(pipe_name_.c_str(), (DWORD)remaining))
+            break;  // pipe not available within timeout
+
         pipe_handle_ = CreateFileW(pipe_name_.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
                                    OPEN_EXISTING, 0, nullptr);
         if (pipe_handle_ != INVALID_HANDLE_VALUE) {
@@ -42,6 +54,7 @@ bool IpcClient::connect(const std::wstring& pipe_name, int timeout_ms) {
             SetNamedPipeHandleState((HANDLE)pipe_handle_, &mode, nullptr, nullptr);
             return true;
         }
+        // Instance consumed by another thread — retry WaitNamedPipeW for next instance
     }
 
     pipe_handle_ = nullptr;
