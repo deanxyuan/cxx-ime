@@ -81,7 +81,7 @@ void Syllabifier::enumerate_paths(
     SyllablePath& current,
     std::vector<std::pair<SyllablePath, float>>& results) const {
 
-    static const size_t kMaxPaths = 5000;
+    static const size_t kMaxPaths = 10000;
     if (results.size() >= kMaxPaths)
         return;
 
@@ -94,12 +94,24 @@ void Syllabifier::enumerate_paths(
     if (it == graph.end())
         return;
 
-    for (auto& [next_pos, edges] : it->second) {
-        for (auto& edge : edges) {
+    // Sort edges by credibility descending so the best paths are explored first.
+    // This ensures common syllables (higher cred) are found before rare ones when
+    // the path cap is reached.
+    std::vector<std::pair<size_t, std::vector<SyllableEdge>>> sorted_edges(
+        it->second.begin(), it->second.end());
+    for (auto& se : sorted_edges) {
+        std::sort(se.second.begin(), se.second.end(),
+            [](const SyllableEdge& a, const SyllableEdge& b) {
+                return a.credibility > b.credibility;
+            });
+    }
+
+    for (auto& se : sorted_edges) {
+        for (auto& edge : se.second) {
             current.push_back(edge.syllable);
             float cred = edge.credibility;
             size_t before = results.size();
-            enumerate_paths(graph, next_pos, end_pos, current, results);
+            enumerate_paths(graph, se.first, end_pos, current, results);
             if (before < results.size()) {
                 for (size_t i = before; i < results.size(); ++i)
                     results[i].second += cred;
