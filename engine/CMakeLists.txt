@@ -19,6 +19,5 @@ target_include_directories(cxxime-engine PUBLIC
 
 target_link_libraries(cxxime-engine PUBLIC
     cxxime-shared
-    sqlite3
     nlohmann_json
 )
