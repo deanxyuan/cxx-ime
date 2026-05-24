@@ -1,12 +1,12 @@
 # CxxIME
 
-轻量级 Windows TSF 拼音输入法
+轻量级 Windows TSF 输入法（拼音 / 五笔）
 
-A lightweight Windows TSF (Text Services Framework) pinyin input method.
+A lightweight Windows TSF (Text Services Framework) input method (Pinyin + Wubi).
 
 ## 项目简介
 
-CxxIME 是一个基于 Windows TSF (Text Services Framework) 的拼音输入法，采用客户端/服务端架构设计。TSF DLL 负责捕获按键并通过 IPC 与后台服务端通信，服务端执行拼音解析、词典查询和候选生成。
+CxxIME 是一个基于 Windows TSF (Text Services Framework) 的输入法，支持拼音和五笔两种模式，采用客户端/服务端架构设计。TSF DLL 负责捕获按键并通过 IPC 与后台服务端通信，服务端执行拼音解析、词典查询和候选生成。
 
 ## 架构
 
@@ -190,16 +190,16 @@ ctest -C Debug
 
 当前已完成：
 - TSF 文本服务框架集成
-- 拼音处理引擎（Syllabifier + Segmentor + Translator）
+- 拼音/五笔处理引擎（Syllabifier + Segmentor + Translator）
 - IOCP 高性能 IPC（< 1ms 延迟，支持多客户端并发）
 - 多会话管理（共享 Dict/SpellingsIndex/Config，session 瞬时创建）
 - 候选窗口（GDI 渲染）
 - 内存用户词典（TSV 持久化，shared_mutex 并发读写）
-- 拼音缩写与模糊音支持
+- 拼音缩写/模糊音 + 五笔简码支持
 - 词典下载与二进制构建工具
 - 安装/卸载/打包脚本
 - 单元测试（87 个，8 个独立 exe）
 
 ## 许可证
 
-MIT License. Copyright (c) 2026 CxxIME Contributors.
+Apache License 2.0. Copyright (c) 2026 CxxIME Contributors.
