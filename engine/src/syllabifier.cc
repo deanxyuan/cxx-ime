@@ -44,26 +44,17 @@ SyllableGraph Syllabifier::build_graph(const std::string& input) const {
                        m.syllable == remaining.substr(0, m.syllable.size())) {
                 // Syllable is a prefix of remaining input (normal match)
                 input_len = m.syllable.size();
-            } else {
-                // Abbreviation: input key is a prefix of remaining, syllable is different
-                // Find the input key length by checking what prefix_search matched
-                // For abbreviations, the input key is shorter than the syllable
-                // We consume input key length characters
-                input_len = m.syllable.size();
-                // But the input consumed is the matched prefix, not the syllable length
-                // We need to find the actual input key that matched
-                // Since prefix_search returns all matches where input is prefix of remaining,
-                // the input key length is the length of the matched prefix
-                // For now, use the smaller of syllable length and remaining length
+            } else if (m.type == kAbbreviation || m.type == kFuzzySpelling) {
+                // Abbreviation or fuzzy: input key is shorter than or different
+                // from the full syllable. Use input_key_len from the match.
+                input_len = m.input_key_len > 0 ? m.input_key_len : 1;
                 if (input_len > remaining.size())
                     input_len = remaining.size();
-                // For abbreviation matches like "d" → "da", consume 1 char
-                // The input key is the prefix that matched, which is shorter than the syllable
-                // We can't know the exact input key from SpellingMatch alone,
-                // so we use a heuristic: if type is abbreviation, consume 1 char
-                if (m.type == kAbbreviation) {
-                    input_len = 1;
-                }
+            } else {
+                // Normal spelling that doesn't match the start of remaining input.
+                // prefix_search returns all keys sharing a common prefix, but for
+                // normal spellings only exact matches are valid graph edges.
+                continue;
             }
 
             size_t end_pos = pos + input_len;
@@ -90,6 +81,10 @@ void Syllabifier::enumerate_paths(
     SyllablePath& current,
     std::vector<std::pair<SyllablePath, float>>& results) const {
 
+    static const size_t kMaxPaths = 5000;
+    if (results.size() >= kMaxPaths)
+        return;
+
     if (pos >= end_pos) {
         results.push_back({current, 0.0f});
         return;
@@ -105,9 +100,13 @@ void Syllabifier::enumerate_paths(
             float cred = edge.credibility;
             size_t before = results.size();
             enumerate_paths(graph, next_pos, end_pos, current, results);
-            for (size_t i = before; i < results.size(); ++i)
-                results[i].second += cred;
+            if (before < results.size()) {
+                for (size_t i = before; i < results.size(); ++i)
+                    results[i].second += cred;
+            }
             current.pop_back();
+            if (results.size() >= kMaxPaths)
+                return;
         }
     }
 }
@@ -133,7 +132,9 @@ std::vector<SyllablePath> Syllabifier::segment(const std::string& input) const {
     if (farthest == 0)
         return result;
 
-    // Enumerate all paths from 0 to farthest
+    // Enumerate paths from 0 to farthest.
+    // enumerate_paths bails out at kMaxPaths to prevent exponential blowup
+    // from dense abbreviation graphs.
     std::vector<std::pair<SyllablePath, float>> scored;
     SyllablePath current;
     enumerate_paths(graph, 0, farthest, current, scored);

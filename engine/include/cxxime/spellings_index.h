@@ -22,6 +22,7 @@ struct SpellingMatch {
     std::string syllable;
     int type = kNormalSpelling;
     float credibility = 0.0f;
+    uint32_t input_key_len = 0;  // length of input key that produced this match
 };
 
 #pragma pack(push, 1)
