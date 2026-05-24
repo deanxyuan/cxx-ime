@@ -9,7 +9,6 @@
 #include <vector>
 #include <mutex>
 #include <atomic>
-#include <set>
 #include <cxxime/ipc_protocol.h>
 
 namespace cxxime {
@@ -21,7 +20,7 @@ public:
     IpcServer() = default;
     ~IpcServer();
 
-    bool start(const std::wstring& pipe_name = IPC_PIPE_NAME);
+    bool start(const std::wstring& pipe_name = IPC_PIPE_BASE_NAME);
     void stop();
     void set_handler(RequestHandler handler);
 
@@ -37,11 +36,7 @@ private:
     std::vector<std::thread> client_threads_;
     std::mutex threads_mutex_;
 
-    std::set<void*> active_pipes_;
-    std::mutex pipes_mutex_;
-
     std::atomic<bool> running_{false};
-    void* stop_event_ = nullptr;
 };
 
 } // namespace cxxime

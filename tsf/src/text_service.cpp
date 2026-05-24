@@ -260,7 +260,7 @@ STDMETHODIMP TextService::OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM lPara
             } else {
                 _candidateWindow.hide();
             }
-        } else if (response.status == 0) {
+        } else if (response.status == cxxime::IPCStatus::OK) {
             // Server accepted but no commit and no preedit
             // (e.g. Escape cleared the buffer)
             _candidateWindow.hide();

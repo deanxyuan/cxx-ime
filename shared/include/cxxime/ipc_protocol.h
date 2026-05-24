@@ -7,7 +7,7 @@
 
 namespace cxxime {
 
-constexpr wchar_t IPC_PIPE_NAME[] = L"\\\\.\\pipe\\CxxIME";
+constexpr wchar_t IPC_PIPE_BASE_NAME[] = L"\\\\.\\pipe\\CxxIME";
 
 enum class IPCCommand : uint32_t {
     START_SESSION = 1,
@@ -20,6 +20,15 @@ enum class IPCCommand : uint32_t {
     FOCUS_OUT = 8,
 };
 
+enum class IPCStatus : uint32_t {
+    OK = 0,
+    ERR_UNKNOWN_COMMAND = 1,
+    ERR_INVALID_SESSION = 2,
+    ERR_ENGINE_NOT_INITIALIZED = 100,
+    ERR_ENGINE_PROCESS_FAILED = 101,
+};
+
+#pragma pack(push, 1)
 struct IPCRequest {
     IPCCommand command;
     uint32_t session_id = 0;
@@ -30,7 +39,7 @@ struct IPCRequest {
 };
 
 struct IPCResponse {
-    uint32_t status = 0;
+    IPCStatus status = IPCStatus::OK;
     char commit_text[256] = {};
     char preedit[256] = {};
     uint32_t candidate_count = 0;
@@ -39,6 +48,7 @@ struct IPCResponse {
     bool ascii_mode = false;
     bool composing = false;
 };
+#pragma pack(pop)
 
 } // namespace cxxime
 

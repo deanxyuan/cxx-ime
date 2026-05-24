@@ -406,33 +406,34 @@ src/config.cc
 
 ### 8.1 测试框架
 
-自定义轻量级测试宏，无外部依赖：
+自定义轻量级测试框架 (`test/util/testutil.h`)，无外部依赖：
 
 ```cpp
-#define TEST(name) static void name()
-#define ASSERT(cond) do { if (!(cond)) { ...; return; } } while(0)
-#define RUN_TEST(name) do { name(); tests_passed++; } while(0)
+TEST(SuiteName, TestName) { ... }          // 自注册测试用例
+ASSERT_TRUE(cond) / ASSERT_EQ(a, b) / ...  // 断言宏（fatal）
+RUN_ALL_TESTS()                            // main 入口，自动发现并运行
 ```
 
 ### 8.2 测试覆盖
 
-| 测试组 | 用例数 | 测试内容 |
-|--------|--------|----------|
-| Protocol | 4 | IPC 协议结构体大小、字段对齐 |
-| Server | 3 | 服务启停、管道创建 |
-| Client | 3 | 连接、断开、重连 |
-| IPC | 8 | 命令收发、会话管理 |
-| MultiClient | 2 | 多客户端并发 |
-| Reconnect | 1 | 服务重启后重连 |
-| Engine | 9 | 按键处理、候选提交 |
-| Segmentor | 5 | 拼音分词 |
-| Dict | 6 | 词典查询、用户词典 |
-| Config | 6 | 配置加载 |
-| **合计** | **48** | |
+每个测试文件编译为独立的可执行文件（8 个 exe）：
+
+| 测试文件 | 用例数 | 测试内容 |
+|----------|--------|----------|
+| `engine_test` | 13 | 按键处理（字母/退格/空格/数字/ESC）、集成翻译（"shurufa"/"nihao"/简拼"dd""bj""srf"/混合拼音"zhg""zguo"/模糊音"zongguo""cifan"） |
+| `segmentor_test` | 5 | 标准拼音切分（"nihao"/"xian"/"zhongguo"/"a"/空输入） |
+| `dict_test` | 6 | 词典打开/前缀查找/音节查找/空查询/反查/用户词频更新 |
+| `config_test` | 6 | 默认值/JSON加载/缺失文件/无效JSON/preedit模式/回退 |
+| `layout_test` | 6 | 文本宽度估算（空/ASCII/CJK）/水平布局/换行/空列表/垂直布局 |
+| `preedit_mode_test` | 6 | 合成模式/预览模式/预览全部/无内联/无候选回退 |
+| `ipc_test` | 14 | 协议结构体/服务器启停/客户端连接断开/会话管理/按键处理/候选选择/多客户端并发/服务器重启重连 |
+| `wubi_test` | 8 | Wubi86 基本查找/前缀匹配/去重/不存在编码/边界/频率排序 |
+| **合计** | **64** | |
 
 ### 8.3 运行测试
 
 ```bash
-cmake --build build --config Debug
-./build/test/Debug/cxxime-test.exe
+cd build
+ctest -C Debug                          # 运行全部测试
+build\test\Debug\engine_test.exe        # 单独运行某个测试
 ```
