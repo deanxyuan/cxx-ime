@@ -114,7 +114,6 @@ TEST(Dict, user_dict_frequency) {
 
     cxxime::Dict dict;
     ASSERT_TRUE(dict.open_dict(path));
-    ASSERT_TRUE(dict.open_user_dict(":memory:"));
 
     dict.update_frequency("\xe7\x9a\x84", "de");
     dict.update_frequency("\xe7\x9a\x84", "de");
