@@ -18,6 +18,7 @@ cxx-ime/
 ├── server/          后台服务进程（系统托盘）
 ├── tsf/             TSF 文本服务 DLL（由 Windows 加载）
 ├── ui/              候选窗口（GDI 绘制）
+├── docs/            设计文档
 ├── data/            词典工具和默认配置
 ├── test/            测试套件
 └── third_party/     sqlite3, nlohmann/json
@@ -29,7 +30,7 @@ cxx-ime/
 
 - Windows 10/11
 - Visual Studio 2022（或 Build Tools），需要 C++ 工作负载
-- CMake 3.16+
+- CMake 3.15+
 - Python 3.6+（用于词典下载工具，可选）
 
 ## 构建
@@ -186,14 +187,15 @@ ctest -C Debug
 
 当前已完成：
 - TSF 文本服务框架集成
-- 按键处理与拼音组合
-- 命名管道 IPC 通信（支持多客户端并发）
-- 多会话管理
-- 候选窗口显示
-- JSON 配置加载
-- 词典下载与转换工具
+- 拼音处理引擎（Syllabifier + Segmentor + Translator）
+- IOCP 高性能 IPC（< 1ms 延迟，支持多客户端并发）
+- 多会话管理（共享 Dict/SpellingsIndex/Config，session 瞬时创建）
+- 候选窗口（GDI 渲染）
+- 内存用户词典（TSV 持久化，shared_mutex 并发读写）
+- 拼音缩写与模糊音支持
+- 词典下载与二进制构建工具
 - 安装/卸载/打包脚本
-- 单元测试（64 个，7 个独立 exe）
+- 单元测试（87 个，8 个独立 exe）
 
 ## 许可证
 
