@@ -19,7 +19,8 @@ cxx-ime/
 ├── tsf/             TSF 文本服务 DLL（由 Windows 加载）
 ├── ui/              候选窗口（GDI 绘制）
 ├── docs/            设计文档
-├── data/            词典工具和默认配置
+├── data/            词典文件、Python 工具和默认配置
+├── tools/           开发工具（dict_query, sqlite_query, ipc_tool）
 ├── test/            测试套件
 └── third_party/     sqlite3, nlohmann/json
 ```
@@ -48,7 +49,7 @@ build.bat clean        # 清理构建目录
 
 ## 获取词典
 
-CxxIME 使用 SQLite 格式的拼音词典。可以从 [rime-ice](https://github.com/iDvel/rime-ice)（雾凇拼音）自动下载：
+CxxIME 使用 SQLite 格式的拼音词典作为**源数据**，运行时通过 `build_binary.py` 转换为内存映射（mmap）二进制格式。可以从 [rime-ice](https://github.com/iDvel/rime-ice)（雾凇拼音）自动下载：
 
 ```cmd
 cd data
@@ -148,14 +149,6 @@ uninstall.bat "D:\MyPath\CxxIME"    # 自定义路径
 
 也提供 PowerShell 卸载脚本（可选）：`uninstall.ps1`
 
-## 交互式安装
-
-提供菜单式安装体验：
-
-```cmd
-setup.bat
-```
-
 ## 配置
 
 编辑安装目录下的 `data/default.json`：
@@ -173,6 +166,16 @@ setup.bat
     "theme": "light"
 }
 ```
+
+## 开发工具
+
+构建后在 `build/tools/<name>/Debug/` 下：
+
+| 工具 | 用途 |
+|------|------|
+| `dict_query` | 拼音/五笔查词（`--mode pinyin\|wubi`，binary 词典） |
+| `sqlite_query` | 直读 `.db` 文件调试 |
+| `ipc_tool` | IPC 交互测试（connect / key / bench / stress 等） |
 
 ## 测试
 
