@@ -9,6 +9,7 @@ data/pinyin.dict.db.bak
 # Generated binary dictionaries (build artifacts from build_binary.py)
 data/*.dict.bin
 data/*.spellings.bin
+data/*.dict.idx
 
 # IDE / Editor
 .vs/
