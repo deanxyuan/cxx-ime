@@ -127,7 +127,7 @@ STDMETHODIMP TextService::Deactivate() {
                     MultiByteToWideChar(CP_UTF8, 0, resp.commit_text, -1, &commit_text[0], len);
                 }
                 if (!commit_text.empty())
-                    insert_text(commit_text);
+                    insert_text(commit_text, true);  // sync for Deactivate
             }
             _composing = false;
         }
@@ -138,6 +138,7 @@ STDMETHODIMP TextService::Deactivate() {
 
     _candidateWindow.destroy();
     _unregister_key_event_sink();
+    _unregister_preserved_key();
 
     if (_threadMgr) {
         _threadMgr->Release();
@@ -166,21 +167,6 @@ STDMETHODIMP TextService::OnTestKeyUp(ITfContext* pic, WPARAM wParam, LPARAM lPa
 STDMETHODIMP TextService::OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM lParam, BOOL* pfEaten) {
     *pfEaten = FALSE;
 
-    // Shift key alone toggles Chinese/English mode (when not composing)
-    if ((wParam == VK_SHIFT || wParam == VK_LSHIFT || wParam == VK_RSHIFT) && !_composing) {
-        _chinese_mode = !_chinese_mode;
-        CXXIME_LOG(L"Mode toggled: %s", _chinese_mode ? L"Chinese" : L"English");
-        return S_OK;
-    }
-
-    // Ctrl+Space also toggles mode
-    if (wParam == VK_SPACE && (GetKeyState(VK_CONTROL) & 0x8000) && !_composing) {
-        _chinese_mode = !_chinese_mode;
-        CXXIME_LOG(L"Mode toggled (Ctrl+Space): %s", _chinese_mode ? L"Chinese" : L"English");
-        *pfEaten = TRUE;
-        return S_OK;
-    }
-
     uint32_t modifiers = _get_modifiers();
     CXXIME_LOG(L"OnKeyDown: vk=%u, mods=%u, composing=%d", (unsigned int)wParam, modifiers, _composing);
 
@@ -197,6 +183,8 @@ STDMETHODIMP TextService::OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM lPara
     }
 
     if (ok) {
+        _chinese_mode = !response.ascii_mode;
+
         if (response.commit_text[0] != '\0') {
             // Commit text
             _candidateWindow.hide();
@@ -258,16 +246,23 @@ STDMETHODIMP TextService::OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM lPara
                 _candidateWindow.update(page);
 
                 POINT pt = {};
-                GetCaretPos(&pt);
-                ClientToScreen(GetFocus(), &pt);
+                GUITHREADINFO gti = { sizeof(gti) };
+                if (GetGUIThreadInfo(GetCurrentThreadId(), &gti)) {
+                    pt.x = gti.rcCaret.left;
+                    pt.y = gti.rcCaret.top;
+                    ClientToScreen(gti.hwndCaret, &pt);
+                } else {
+                    GetCaretPos(&pt);
+                    ClientToScreen(GetFocus(), &pt);
+                }
                 _candidateWindow.set_position(pt.x, pt.y + 20);
                 _candidateWindow.show();
             } else {
                 _candidateWindow.hide();
             }
-        } else {
-            // Server returned ACCEPTED but no commit and no preedit
-            // This happens on Escape (clear) — end the composition
+        } else if (response.status == 0) {
+            // Server accepted but no commit and no preedit
+            // (e.g. Escape cleared the buffer)
             _candidateWindow.hide();
             _candidateWindow.set_preedit("");
             _end_composition(pic);
@@ -281,6 +276,7 @@ STDMETHODIMP TextService::OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM lPara
 
 STDMETHODIMP TextService::OnKeyUp(ITfContext* pic, WPARAM wParam, LPARAM lParam, BOOL* pfEaten) {
     *pfEaten = FALSE;
+    _send_modifier_key_up(wParam);
     return S_OK;
 }
 
@@ -298,7 +294,10 @@ STDMETHODIMP TextService::OnPreservedKey(ITfContext* pic, REFGUID rguid, BOOL* p
 // ITfCompositionSink
 STDMETHODIMP TextService::OnCompositionTerminated(TfEditCookie ecWrite, ITfComposition* pComposition) {
     _composing = false;
-    _composition = nullptr;
+    if (_composition) {
+        _composition->Release();
+        _composition = nullptr;
+    }
     return S_OK;
 }
 
@@ -334,7 +333,7 @@ STDMETHODIMP TextService::GetDisplayAttributeInfo(REFGUID rguid, ITfDisplayAttri
 }
 
 // Helpers
-HRESULT TextService::insert_text(const std::wstring& text) {
+HRESULT TextService::insert_text(const std::wstring& text, bool sync) {
     if (!_threadMgr || text.empty())
         return E_FAIL;
 
@@ -358,7 +357,8 @@ HRESULT TextService::insert_text(const std::wstring& text) {
     pEditSession->set_action(EditSession::Action::INSERT_TEXT, text);
 
     HRESULT hr = E_FAIL;
-    pContext->RequestEditSession(_clientId, pEditSession, TF_ES_READWRITE | TF_ES_ASYNC, &hr);
+    DWORD flags = sync ? (TF_ES_READWRITE | TF_ES_ASYNCDONTCARE) : (TF_ES_READWRITE | TF_ES_ASYNC);
+    pContext->RequestEditSession(_clientId, pEditSession, flags, &hr);
 
     pEditSession->Release();
     pContext->Release();
@@ -427,6 +427,19 @@ HRESULT TextService::_register_preserved_key() {
         L"Toggle Chinese/English",
         (ULONG)wcslen(L"Toggle Chinese/English"));
 
+    pKeystrokeMgr->Release();
+    return hr;
+}
+
+HRESULT TextService::_unregister_preserved_key() {
+    if (!_threadMgr)
+        return E_FAIL;
+
+    ITfKeystrokeMgr* pKeystrokeMgr = nullptr;
+    if (FAILED(_threadMgr->QueryInterface(IID_ITfKeystrokeMgr, (void**)&pKeystrokeMgr)))
+        return E_FAIL;
+
+    HRESULT hr = pKeystrokeMgr->UnpreserveKey(c_guidPreservedKey_Toggle, nullptr);
     pKeystrokeMgr->Release();
     return hr;
 }
@@ -535,4 +548,21 @@ void TextService::_load_config() {
             _config.load(narrow);
         }
     }
+}
+
+void TextService::_send_modifier_key_up(WPARAM wParam) {
+    if (!_sessionId)
+        return;
+
+    bool is_modifier = (wParam == VK_LSHIFT || wParam == VK_RSHIFT || wParam == VK_SHIFT ||
+                        wParam == VK_LCONTROL || wParam == VK_RCONTROL || wParam == VK_CONTROL ||
+                        wParam == VK_CAPITAL);
+    if (!is_modifier)
+        return;
+
+    cxxime::IPCResponse resp = {};
+    _client.process_key(_sessionId, (uint32_t)wParam, 0, resp, true);
+
+    // Sync ascii_mode state from engine
+    _chinese_mode = !resp.ascii_mode;
 }

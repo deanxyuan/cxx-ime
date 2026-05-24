@@ -96,12 +96,13 @@ bool IpcClient::end_session(uint32_t session_id) {
 }
 
 bool IpcClient::process_key(uint32_t session_id, uint32_t key_code, uint32_t modifiers,
-                            IPCResponse& response) {
+                            IPCResponse& response, bool is_key_up) {
     IPCRequest req = {};
     req.command = IPCCommand::PROCESS_KEY;
     req.session_id = session_id;
     req.key_code = key_code;
     req.modifiers = modifiers;
+    req.is_key_up = is_key_up;
     return send_request(req, response);
 }
 

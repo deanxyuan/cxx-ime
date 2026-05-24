@@ -4,6 +4,7 @@
 #define CXXIME_CONFIG_H_
 
 #include <string>
+#include <unordered_map>
 
 namespace cxxime {
 
@@ -19,6 +20,10 @@ public:
     bool auto_commit = true;
     bool inline_preedit = true;
     std::string preedit_type = "composition";
+
+    // ascii_composer settings
+    std::unordered_map<std::string, std::string> ascii_switch_key;
+    bool good_old_caps_lock = false;
 };
 
 } // namespace cxxime

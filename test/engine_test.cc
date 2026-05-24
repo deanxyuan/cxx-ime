@@ -183,6 +183,314 @@ TEST(Engine, number_selects_candidate) {
     ASSERT_EQ(ctx.committed_text, "\xe5\x9c\xb0");
 }
 
+// Verify that raw VK constants used in engine (to avoid <windows.h> dependency)
+// match the actual Windows definitions.
+TEST(Engine, vk_constants_match_windows) {
+    ASSERT_EQ(0xA0, (uint32_t)VK_LSHIFT);
+    ASSERT_EQ(0xA1, (uint32_t)VK_RSHIFT);
+    ASSERT_EQ(0xA2, (uint32_t)VK_LCONTROL);
+    ASSERT_EQ(0xA3, (uint32_t)VK_RCONTROL);
+    ASSERT_EQ(0x14, (uint32_t)VK_CAPITAL);
+    ASSERT_EQ(0x20, (uint32_t)VK_SPACE);
+    ASSERT_EQ(0x0D, (uint32_t)VK_RETURN);
+}
+
+// --- Short phrase matching (full pinyin) ---
+
+TEST(Engine, translate_shurufa) {
+    std::string dict_path = make_temp_path("test_shurufa_dict.bin");
+    std::string spellings_path = make_temp_path("test_shurufa_spellings.bin");
+
+    cxxime::Dict::create_test_dict(dict_path, {
+        {"shu:ru:fa", "\xe8\xbe\x93\xe5\x85\xa5\xe6\xb3\x95", 1000}, // 输入法
+    });
+
+    ASSERT_TRUE(cxxime::SpellingsIndex::create_test_trie(spellings_path, {
+        {"shu",  "shu", 0, 0.0f},
+        {"ru",   "ru",  0, 0.0f},
+        {"fa",   "fa",  0, 0.0f},
+    }));
+
+    cxxime::Dict dict;
+    ASSERT_TRUE(dict.open_dict(dict_path));
+    cxxime::SpellingsIndex spellings;
+    ASSERT_TRUE(spellings.load(spellings_path));
+    cxxime::Syllabifier syllabifier(spellings);
+    cxxime::PinyinTranslator translator;
+    translator.set_dict(&dict);
+    translator.set_syllabifier(&syllabifier);
+
+    auto page = translator.translate("shurufa", 0, 10);
+    ASSERT_GE(page.candidates.size(), 1u);
+    bool found = false;
+    for (auto& c : page.candidates)
+        if (c.text == "\xe8\xbe\x93\xe5\x85\xa5\xe6\xb3\x95") found = true;
+    ASSERT_TRUE(found);
+
+    dict.close();
+    DeleteFileA(dict_path.c_str());
+    DeleteFileA(spellings_path.c_str());
+}
+
+TEST(Engine, translate_nihao) {
+    std::string dict_path = make_temp_path("test_nihao_dict.bin");
+    std::string spellings_path = make_temp_path("test_nihao_spellings.bin");
+
+    cxxime::Dict::create_test_dict(dict_path, {
+        {"ni:hao", "\xe4\xbd\xa0\xe5\xa5\xbd", 1000}, // 你好
+        {"ni",     "\xe4\xbd\xa0", 500},                // 你
+    });
+
+    ASSERT_TRUE(cxxime::SpellingsIndex::create_test_trie(spellings_path, {
+        {"ni",  "ni",  0, 0.0f},
+        {"hao", "hao", 0, 0.0f},
+    }));
+
+    cxxime::Dict dict;
+    ASSERT_TRUE(dict.open_dict(dict_path));
+    cxxime::SpellingsIndex spellings;
+    ASSERT_TRUE(spellings.load(spellings_path));
+    cxxime::Syllabifier syllabifier(spellings);
+    cxxime::PinyinTranslator translator;
+    translator.set_dict(&dict);
+    translator.set_syllabifier(&syllabifier);
+
+    auto page = translator.translate("nihao", 0, 10);
+    ASSERT_GE(page.candidates.size(), 1u);
+    ASSERT_EQ(page.candidates[0].text, "\xe4\xbd\xa0\xe5\xa5\xbd");
+
+    dict.close();
+    DeleteFileA(dict_path.c_str());
+    DeleteFileA(spellings_path.c_str());
+}
+
+// --- First-letter abbreviation matching (全简拼) ---
+
+TEST(Engine, translate_abbrev_bj) {
+    std::string dict_path = make_temp_path("test_abbrev_bj_dict.bin");
+    std::string spellings_path = make_temp_path("test_abbrev_bj_spellings.bin");
+
+    cxxime::Dict::create_test_dict(dict_path, {
+        {"bei:jing", "\xe5\x8c\x97\xe4\xba\xac", 1000}, // 北京
+    });
+
+    ASSERT_TRUE(cxxime::SpellingsIndex::create_test_trie(spellings_path, {
+        {"b", "bei",  2, -0.693f},
+        {"j", "jing", 2, -0.693f},
+        {"bei", "bei",   0, 0.0f},
+        {"jing", "jing", 0, 0.0f},
+    }));
+
+    cxxime::Dict dict;
+    ASSERT_TRUE(dict.open_dict(dict_path));
+    cxxime::SpellingsIndex spellings;
+    ASSERT_TRUE(spellings.load(spellings_path));
+    cxxime::Syllabifier syllabifier(spellings);
+    cxxime::PinyinTranslator translator;
+    translator.set_dict(&dict);
+    translator.set_syllabifier(&syllabifier);
+
+    auto page = translator.translate("bj", 0, 10);
+    ASSERT_GE(page.candidates.size(), 1u);
+    bool found = false;
+    for (auto& c : page.candidates)
+        if (c.text == "\xe5\x8c\x97\xe4\xba\xac") found = true;
+    ASSERT_TRUE(found);
+
+    dict.close();
+    DeleteFileA(dict_path.c_str());
+    DeleteFileA(spellings_path.c_str());
+}
+
+TEST(Engine, translate_abbrev_srf) {
+    std::string dict_path = make_temp_path("test_abbrev_srf_dict.bin");
+    std::string spellings_path = make_temp_path("test_abbrev_srf_spellings.bin");
+
+    cxxime::Dict::create_test_dict(dict_path, {
+        {"shu:ru:fa", "\xe8\xbe\x93\xe5\x85\xa5\xe6\xb3\x95", 1000}, // 输入法
+    });
+
+    ASSERT_TRUE(cxxime::SpellingsIndex::create_test_trie(spellings_path, {
+        {"s", "shu", 2, -0.693f},
+        {"r", "ru",  2, -0.693f},
+        {"f", "fa",  2, -0.693f},
+    }));
+
+    cxxime::Dict dict;
+    ASSERT_TRUE(dict.open_dict(dict_path));
+    cxxime::SpellingsIndex spellings;
+    ASSERT_TRUE(spellings.load(spellings_path));
+    cxxime::Syllabifier syllabifier(spellings);
+    cxxime::PinyinTranslator translator;
+    translator.set_dict(&dict);
+    translator.set_syllabifier(&syllabifier);
+
+    auto page = translator.translate("srf", 0, 10);
+    ASSERT_GE(page.candidates.size(), 1u);
+    bool found = false;
+    for (auto& c : page.candidates)
+        if (c.text == "\xe8\xbe\x93\xe5\x85\xa5\xe6\xb3\x95") found = true;
+    ASSERT_TRUE(found);
+
+    dict.close();
+    DeleteFileA(dict_path.c_str());
+    DeleteFileA(spellings_path.c_str());
+}
+
+// --- Mixed abbreviation (混合简拼) ---
+
+TEST(Engine, translate_mixed_zhg) {
+    std::string dict_path = make_temp_path("test_mixed_zhg_dict.bin");
+    std::string spellings_path = make_temp_path("test_mixed_zhg_spellings.bin");
+
+    cxxime::Dict::create_test_dict(dict_path, {
+        {"zhong:guo", "\xe4\xb8\xad\xe5\x9b\xbd", 1000}, // 中国
+    });
+
+    ASSERT_TRUE(cxxime::SpellingsIndex::create_test_trie(spellings_path, {
+        {"zh", "zhong", 0, 0.0f},
+        {"g",  "guo",   2, -0.693f},
+    }));
+
+    cxxime::Dict dict;
+    ASSERT_TRUE(dict.open_dict(dict_path));
+    cxxime::SpellingsIndex spellings;
+    ASSERT_TRUE(spellings.load(spellings_path));
+    cxxime::Syllabifier syllabifier(spellings);
+    cxxime::PinyinTranslator translator;
+    translator.set_dict(&dict);
+    translator.set_syllabifier(&syllabifier);
+
+    auto page = translator.translate("zhg", 0, 10);
+    ASSERT_GE(page.candidates.size(), 1u);
+    bool found = false;
+    for (auto& c : page.candidates)
+        if (c.text == "\xe4\xb8\xad\xe5\x9b\xbd") found = true;
+    ASSERT_TRUE(found);
+
+    dict.close();
+    DeleteFileA(dict_path.c_str());
+    DeleteFileA(spellings_path.c_str());
+}
+
+TEST(Engine, translate_mixed_zguo) {
+    std::string dict_path = make_temp_path("test_mixed_zguo_dict.bin");
+    std::string spellings_path = make_temp_path("test_mixed_zguo_spellings.bin");
+
+    cxxime::Dict::create_test_dict(dict_path, {
+        {"zhong:guo", "\xe4\xb8\xad\xe5\x9b\xbd", 1000}, // 中国
+    });
+
+    ASSERT_TRUE(cxxime::SpellingsIndex::create_test_trie(spellings_path, {
+        {"z",   "zhong", 2, -0.693f},
+        {"guo", "guo",   0, 0.0f},
+    }));
+
+    cxxime::Dict dict;
+    ASSERT_TRUE(dict.open_dict(dict_path));
+    cxxime::SpellingsIndex spellings;
+    ASSERT_TRUE(spellings.load(spellings_path));
+    cxxime::Syllabifier syllabifier(spellings);
+    cxxime::PinyinTranslator translator;
+    translator.set_dict(&dict);
+    translator.set_syllabifier(&syllabifier);
+
+    auto page = translator.translate("zguo", 0, 10);
+    ASSERT_GE(page.candidates.size(), 1u);
+    bool found = false;
+    for (auto& c : page.candidates)
+        if (c.text == "\xe4\xb8\xad\xe5\x9b\xbd") found = true;
+    ASSERT_TRUE(found);
+
+    dict.close();
+    DeleteFileA(dict_path.c_str());
+    DeleteFileA(spellings_path.c_str());
+}
+
+// --- Fuzzy pinyin (模糊音) ---
+
+TEST(Engine, translate_fuzzy_zongguo) {
+    std::string dict_path = make_temp_path("test_fuzzy_zongguo_dict.bin");
+    std::string spellings_path = make_temp_path("test_fuzzy_zongguo_spellings.bin");
+
+    cxxime::Dict::create_test_dict(dict_path, {
+        {"zhong:guo", "\xe4\xb8\xad\xe5\x9b\xbd", 1000}, // 中国
+    });
+
+    ASSERT_TRUE(cxxime::SpellingsIndex::create_test_trie(spellings_path, {
+        {"zong", "zhong", 1, -0.693f},
+        {"guo",  "guo",   0, 0.0f},
+    }));
+
+    cxxime::Dict dict;
+    ASSERT_TRUE(dict.open_dict(dict_path));
+    cxxime::SpellingsIndex spellings;
+    ASSERT_TRUE(spellings.load(spellings_path));
+    cxxime::Syllabifier syllabifier(spellings);
+    cxxime::PinyinTranslator translator;
+    translator.set_dict(&dict);
+    translator.set_syllabifier(&syllabifier);
+
+    auto page = translator.translate("zongguo", 0, 10);
+    ASSERT_GE(page.candidates.size(), 1u);
+    bool found = false;
+    for (auto& c : page.candidates)
+        if (c.text == "\xe4\xb8\xad\xe5\x9b\xbd") found = true;
+    ASSERT_TRUE(found);
+
+    dict.close();
+    DeleteFileA(dict_path.c_str());
+    DeleteFileA(spellings_path.c_str());
+}
+
+TEST(Engine, translate_fuzzy_cifan) {
+    std::string dict_path = make_temp_path("test_fuzzy_cifan_dict.bin");
+    std::string spellings_path = make_temp_path("test_fuzzy_cifan_spellings.bin");
+
+    cxxime::Dict::create_test_dict(dict_path, {
+        {"chi:fan", "\xe5\x90\x83\xe9\xa5\xad", 1000}, // 吃饭
+    });
+
+    ASSERT_TRUE(cxxime::SpellingsIndex::create_test_trie(spellings_path, {
+        {"ci",  "chi", 1, -0.693f},
+        {"fan", "fan", 0, 0.0f},
+    }));
+
+    cxxime::Dict dict;
+    ASSERT_TRUE(dict.open_dict(dict_path));
+    cxxime::SpellingsIndex spellings;
+    ASSERT_TRUE(spellings.load(spellings_path));
+    cxxime::Syllabifier syllabifier(spellings);
+    cxxime::PinyinTranslator translator;
+    translator.set_dict(&dict);
+    translator.set_syllabifier(&syllabifier);
+
+    auto page = translator.translate("cifan", 0, 10);
+    ASSERT_GE(page.candidates.size(), 1u);
+    bool found = false;
+    for (auto& c : page.candidates)
+        if (c.text == "\xe5\x90\x83\xe9\xa5\xad") found = true;
+    ASSERT_TRUE(found);
+
+    dict.close();
+    DeleteFileA(dict_path.c_str());
+    DeleteFileA(spellings_path.c_str());
+}
+
+// --- Edge cases ---
+
+TEST(Engine, translate_empty_input) {
+    cxxime::PinyinTranslator translator;
+    auto page = translator.translate("", 0, 10);
+    ASSERT_EQ(page.candidates.size(), 0u);
+}
+
+TEST(Engine, translate_no_match) {
+    cxxime::PinyinTranslator translator;
+    auto page = translator.translate("xyz", 0, 10);
+    ASSERT_EQ(page.candidates.size(), 0u);
+}
+
 // Initialize temp_path before tests run
 static bool _engine_init = []() {
     GetTempPathA(MAX_PATH, temp_path);

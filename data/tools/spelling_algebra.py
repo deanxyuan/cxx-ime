@@ -348,6 +348,64 @@ def parse_rules_simple(rules_list):
 
 # Self-test
 if __name__ == "__main__":
+    import os
+
+    # CLI mode: spelling_algebra.py <dict.db> [schema.yaml]
+    if len(sys.argv) >= 2:
+        db_path = sys.argv[1]
+        schema_path = sys.argv[2] if len(sys.argv) > 2 else os.path.join(
+            os.path.dirname(__file__), "..", "schemas", "pinyin.schema.yaml")
+
+        if not os.path.exists(schema_path):
+            print(f"Schema not found: {schema_path}", file=sys.stderr)
+            sys.exit(1)
+
+        # Load distinct syllables from dict table
+        import sqlite3
+        conn = sqlite3.connect(db_path)
+        cur = conn.cursor()
+        cur.execute("SELECT DISTINCT syllable_ids FROM dict")
+        syllabary = set()
+        for (sid,) in cur.fetchall():
+            if sid:
+                for s in sid.split(":"):
+                    if s:
+                        syllabary.add(s)
+        conn.close()
+        print(f"Loaded {len(syllabary)} unique syllables")
+
+        # Apply spelling algebra
+        script = Script()
+        for s in sorted(syllabary):
+            script.add_syllable(s)
+        rules = parse_rules_from_yaml(schema_path)
+        print(f"Loaded {len(rules)} rules from {schema_path}")
+        SpellingAlgebra(rules).apply(script)
+
+        # Write spellings table to SQLite
+        conn = sqlite3.connect(db_path)
+        cur = conn.cursor()
+        cur.execute("DROP TABLE IF EXISTS spellings")
+        cur.execute("""
+            CREATE TABLE spellings (
+                input TEXT NOT NULL,
+                syllable TEXT NOT NULL,
+                type INTEGER NOT NULL,
+                credibility REAL NOT NULL
+            )
+        """)
+        rows = []
+        for input_str, spellings_list in sorted(script.items()):
+            for sp in spellings_list:
+                rows.append((input_str, sp.syllable, sp.type, sp.credibility))
+        cur.executemany(
+            "INSERT INTO spellings (input, syllable, type, credibility) VALUES (?, ?, ?, ?)",
+            rows)
+        conn.commit()
+        print(f"Wrote {len(rows)} spellings entries to {db_path}")
+        conn.close()
+        sys.exit(0)
+
     print("=== Spelling Algebra Self-Test ===")
 
     # Test 1: Abbreviation

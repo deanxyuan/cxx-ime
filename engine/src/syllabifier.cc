@@ -103,9 +103,10 @@ void Syllabifier::enumerate_paths(
         for (auto& edge : edges) {
             current.push_back(edge.syllable);
             float cred = edge.credibility;
+            size_t before = results.size();
             enumerate_paths(graph, next_pos, end_pos, current, results);
-            if (!results.empty())
-                results.back().second += cred;
+            for (size_t i = before; i < results.size(); ++i)
+                results[i].second += cred;
             current.pop_back();
         }
     }
@@ -137,14 +138,9 @@ std::vector<SyllablePath> Syllabifier::segment(const std::string& input) const {
     SyllablePath current;
     enumerate_paths(graph, 0, farthest, current, scored);
 
-    // Sort by quality: paths with better (lower) max type first,
-    // then by total credibility (higher is better)
+    // Sort by quality: paths with higher credibility first (fewer abbreviations)
     std::sort(scored.begin(), scored.end(),
         [](const auto& a, const auto& b) {
-            // Compare max type in each path
-            int max_a = 0, max_b = 0;
-            // We don't store types per-path here, use credibility as proxy
-            // Higher credibility = better (fewer abbreviations)
             return a.second > b.second;
         });
 

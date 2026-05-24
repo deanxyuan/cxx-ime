@@ -6,7 +6,6 @@ add_library(cxxime-tsf SHARED
     src/class_factory.cpp
     src/text_service.cpp
     src/key_event_sink.cpp
-    src/composition.cpp
     src/edit_session.cpp
     src/display_attribute.cpp
     src/register.cpp

@@ -4,12 +4,15 @@
 #define CXXIME_ENGINE_H_
 
 #include <string>
+#include <memory>
 #include <cxxime/processor.h>
 #include <cxxime/translator.h>
-#include <cxxime/segmentor.h>
 #include <cxxime/dict.h>
 #include <cxxime/context.h>
 #include <cxxime/config.h>
+#include <cxxime/ascii_composer.h>
+#include <cxxime/spellings_index.h>
+#include <cxxime/syllabifier.h>
 
 namespace cxxime {
 
@@ -25,13 +28,20 @@ public:
     std::string get_commit_text();
     void clear();
 
+    const AsciiComposer& ascii_composer() const { return ascii_composer_; }
+    AsciiComposer& ascii_composer() { return ascii_composer_; }
+
 private:
+    std::string derive_spellings_path(const std::string& dict_path);
+
     PinyinProcessor processor_;
     PinyinTranslator translator_;
-    PinyinSegmentor segmentor_;
     Dict dict_;
     Context context_;
     Config config_;
+    AsciiComposer ascii_composer_;
+    SpellingsIndex spellings_;
+    std::unique_ptr<Syllabifier> syllabifier_;
 };
 
 } // namespace cxxime

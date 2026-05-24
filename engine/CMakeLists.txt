@@ -10,6 +10,7 @@ add_library(cxxime-engine STATIC
     src/pinyin_processor.cc
     src/config.cc
     src/engine.cc
+    src/ascii_composer.cc
 )
 
 target_include_directories(cxxime-engine PUBLIC

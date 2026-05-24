@@ -25,10 +25,13 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
 
-    std::string dict_path = get_arg(argc, argv, L"--dict");
-    std::string config_path = get_arg(argc, argv, L"--config");
-
-    if (argv) LocalFree(argv);
+    std::string dict_path;
+    std::string config_path;
+    if (argv) {
+        dict_path = get_arg(argc, argv, L"--dict");
+        config_path = get_arg(argc, argv, L"--config");
+        LocalFree(argv);
+    }
 
     ServerApp app;
     if (!app.initialize(dict_path, config_path))

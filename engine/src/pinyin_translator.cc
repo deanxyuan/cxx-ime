@@ -3,6 +3,7 @@
 #include <cxxime/translator.h>
 #include <cxxime/syllabifier.h>
 #include <algorithm>
+#include <set>
 #include <unordered_set>
 
 namespace cxxime {
@@ -13,15 +14,6 @@ void PinyinTranslator::set_dict(Dict* dict) {
 
 void PinyinTranslator::set_syllabifier(Syllabifier* syllabifier) {
     syllabifier_ = syllabifier;
-}
-
-static std::string join_syllables(const std::vector<std::string>& syllables) {
-    std::string result;
-    for (size_t i = 0; i < syllables.size(); ++i) {
-        if (i > 0) result += ":";
-        result += syllables[i];
-    }
-    return result;
 }
 
 CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_index, int page_size) {
@@ -35,53 +27,65 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
     int offset = page_index * page_size;
     int fetch_limit = page_size;
 
-    // Collect all candidate code prefixes to try
-    std::vector<std::string> code_prefixes;
+    // Collect syllable ID sequences to try
+    std::vector<std::vector<uint32_t>> id_sequences;
+
+    auto add_path = [&](const std::vector<std::string>& syllables) {
+        if (syllables.empty()) return;
+        std::vector<uint32_t> ids;
+        for (auto& s : syllables) {
+            uint32_t id = dict_->syllable_to_id(s);
+            if (id == UINT32_MAX) return;  // unknown syllable, skip
+            ids.push_back(id);
+        }
+        id_sequences.push_back(std::move(ids));
+    };
 
     // 1. Try normal segmentation
-    auto syllables = segmentor_.segment_best(pinyin);
-    if (!syllables.empty()) {
-        code_prefixes.push_back(join_syllables(syllables));
-    }
+    add_path(segmentor_.segment_best(pinyin));
 
     // 2. Try syllabifier for abbreviation expansion
     if (syllabifier_) {
         auto paths = syllabifier_->segment(pinyin);
-        for (auto& path : paths) {
-            std::string prefix = join_syllables(path);
-            // Avoid duplicates with normal segmentation
-            if (std::find(code_prefixes.begin(), code_prefixes.end(), prefix) == code_prefixes.end()) {
-                code_prefixes.push_back(std::move(prefix));
-            }
-        }
+        for (auto& path : paths)
+            add_path(path);
     }
 
-    // Query dict with each code prefix and merge results
+    // Filter: only keep paths that actually have dict entries
+    std::vector<std::vector<uint32_t>> live_ids;
+    for (auto& ids : id_sequences) {
+        if (dict_->has_prefix(ids))
+            live_ids.push_back(std::move(ids));
+    }
+
+    // Dedup and query
     std::vector<Candidate> merged;
-    std::unordered_set<std::string> seen;
+    std::unordered_set<std::string> seen_text;
+    std::set<std::vector<uint32_t>> seen_ids;
 
-    for (auto& code_prefix : code_prefixes) {
-        auto candidates = dict_->lookup(code_prefix, offset + fetch_limit);
+    for (auto& ids : live_ids) {
+        if (!seen_ids.insert(ids).second)
+            continue;
+        auto candidates = dict_->lookup_by_ids(ids, offset + fetch_limit);
         for (auto& c : candidates) {
-            if (seen.find(c.text) == seen.end()) {
-                seen.insert(c.text);
+            if (seen_text.insert(c.text).second)
                 merged.push_back(std::move(c));
-            }
         }
     }
+
+    // Sort merged results by frequency (cross-path merge)
+    std::sort(merged.begin(), merged.end(),
+        [](const Candidate& a, const Candidate& b) { return a.frequency > b.frequency; });
 
     // Apply pagination
-    if (offset > 0 && offset < (int)merged.size()) {
+    if (offset > 0 && offset < (int)merged.size())
         merged.erase(merged.begin(), merged.begin() + offset);
-    }
-    if ((int)merged.size() > fetch_limit) {
+    if ((int)merged.size() > fetch_limit)
         merged.resize(fetch_limit);
-    }
 
     page.candidates = std::move(merged);
-    if (!page.candidates.empty()) {
+    if (!page.candidates.empty())
         page.highlighted = 0;
-    }
 
     return page;
 }
