@@ -51,6 +51,7 @@ public:
                                  const std::vector<std::tuple<std::string, std::string, int>>& entries);
 
 private:
+    void ensure_id_index();
     void build_syllabary();
     void build_id_index();
 

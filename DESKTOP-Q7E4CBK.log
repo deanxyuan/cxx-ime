@@ -1,0 +1,174 @@
+00000001	0.00000000	8332	[CxxIME] ActivateEx: clientId=10, flags=0	
+00000002	0.00052140	8332	[CxxIME] AdviseSink called, riid=?	
+00000003	0.00053870	8332	[CxxIME] AdviseSink: OK, sink=0x000001C8C8558530	
+00000004	0.00056890	8332	[CxxIME] ImeButton::AdviseSink called	
+00000005	0.00063550	8332	[CxxIME] ImeButton::AdviseSink: OK, sink=0x000001C8C8558590	
+00000006	0.00066460	8332	[CxxIME] _register_language_bar: langBar=0x000001C8C853BC20, imeBar=0x000001C8C851A610, hr=0x00000000	
+00000007	0.00075390	8332	[CxxIME] update_icon: old=ZH, new=ZH, sink=0x000001C8C8558530	
+00000008	0.00079020	8332	[CxxIME] update_icon: OnUpdate(TF_LBI_ICON) called	
+00000009	0.00090590	8332	[CxxIME] ActivateEx: language bar icon initialized, chinese_mode=1	
+00000010	0.00126470	8332	[CxxIME] IpcClient::connect: pipe=\\.\pipe\CxxIME, timeout=3000	
+00000011	0.00129940	8332	[CxxIME] IpcClient::connect: WaitNamedPipeW returned 1, error=0	
+00000012	0.00133880	8332	[CxxIME] IpcClient::connect: CreateFileW handle=0x000000000000044C, error=0	
+00000013	0.00142290	8332	[CxxIME] IpcClient::connect: SUCCESS	
+00000014	0.00151340	8004	[CxxIME] handle_request: cmd=1, session=0	
+00000015	0.00157330	8004	[CxxIME] SessionManager::create_session dict=C:\Program Files\CxxIME\bin\..\data\pinyin.dict.db config=C:\Program Files\CxxIME\bin\..\data\default.json	
+00000016	0.00163560	8004	[CxxIME] Engine::initialize dict=C:\Program Files\CxxIME\bin\..\data\pinyin.dict.db	
+00000017	0.00168070	8004	[CxxIME] SqliteDict::open path=C:\Program Files\CxxIME\bin\..\data\pinyin.dict.db	
+00000018	0.00264560	8004	[CxxIME] SqliteDict::open OK (read-only)	
+00000019	0.00397600	8004	[CxxIME] SqliteDict::open user db OK	
+00000020	0.00463170	8004	[CxxIME] Engine::initialize OK	
+00000021	0.00463810	8004	[CxxIME] SessionManager::create_session success id=1	
+00000022	0.00465970	8004	[CxxIME] START_SESSION: new session=1	
+00000023	0.00470990	8332	[CxxIME] Connected to server, sessionId=1 (attempt 1)	
+00000024	0.07892780	8332	[CxxIME] GetIcon: mode=ZH, cx=16, cy=16, hIcon=0x00000000000104C5	
+00000025	0.07898790	8332	[CxxIME] ImeButton::GetIcon called	
+00000026	1.76685858	8332	[CxxIME] _ProcessKeyEvent: vk=68(0x44), mods=0, composing=0, session=1	
+00000027	1.76691759	8004	[CxxIME] handle_request: cmd=3, session=1	
+00000028	1.84089780	8332	[CxxIME] _ProcessKeyEvent: key eaten, preedit=d, commit=, candidates=7	
+00000029	1.84092295	8332	[CxxIME] DoEditSession: ec=1393577997 composing=0 commit[0]=0 preedit[0]=100 cand=7 composing_state=0	
+00000030	1.84095442	8332	[CxxIME] update_icon: old=ZH, new=ZH, sink=0x000001C8C8558530	
+00000031	1.84095836	8332	[CxxIME] update_icon: OnUpdate(TF_LBI_ICON) called	
+00000032	1.84099519	8332	[CxxIME] _DirectStartComposition: OK	
+00000033	1.90676320	8332	[CxxIME] GetIcon: mode=ZH, cx=16, cy=16, hIcon=0x0000000000060127	
+00000034	1.90680921	8332	[CxxIME] ImeButton::GetIcon called	
+00000035	2.28989434	8332	[CxxIME] _ProcessKeyEvent: vk=32(0x20), mods=0, composing=1, session=1	
+00000036	2.28995872	8004	[CxxIME] handle_request: cmd=3, session=1	
+00000037	2.29169488	8332	[CxxIME] _ProcessKeyEvent: key eaten, preedit=, commit=???, candidates=0	
+00000038	2.29171944	8332	[CxxIME] DoEditSession: ec=1393578003 composing=0 commit[0]=-25 preedit[0]=0 cand=0 composing_state=1	
+00000039	2.29173660	8332	[CxxIME] update_icon: old=ZH, new=ZH, sink=0x000001C8C8558530	
+00000040	2.29176521	8332	[CxxIME] update_icon: OnUpdate(TF_LBI_ICON) called	
+00000041	2.29178047	8332	[CxxIME] DoEditSession: commit path, composing=1	
+00000042	2.29179549	8332	[CxxIME] DoEditSession: after start, composing=1	
+00000043	2.29182434	8332	[CxxIME] _DirectEndComposition: OK, clear=0	
+00000044	2.29185367	8332	[CxxIME] DoEditSession: commit done, composing=0	
+00000045	2.34456730	8332	[CxxIME] GetIcon: mode=ZH, cx=16, cy=16, hIcon=0x00000000000802AB	
+00000046	2.34459424	8332	[CxxIME] ImeButton::GetIcon called	
+00000047	2.84181857	8332	[CxxIME] _ProcessKeyEvent: vk=188(0xBC), mods=0, composing=0, session=1	
+00000048	2.84188509	8004	[CxxIME] handle_request: cmd=3, session=1	
+00000049	2.87366724	8332	[CxxIME] _ProcessKeyEvent: key eaten, preedit=, commit=???, candidates=0	
+00000050	2.87369132	8332	[CxxIME] DoEditSession: ec=1393578010 composing=0 commit[0]=-17 preedit[0]=0 cand=0 composing_state=0	
+00000051	2.87370920	8332	[CxxIME] update_icon: old=ZH, new=ZH, sink=0x000001C8C8558530	
+00000052	2.87374115	8332	[CxxIME] update_icon: OnUpdate(TF_LBI_ICON) called	
+00000053	2.87375617	8332	[CxxIME] DoEditSession: commit path, composing=0	
+00000054	2.87377834	8332	[CxxIME] _DirectStartComposition: OK	
+00000055	2.87379432	8332	[CxxIME] DoEditSession: after start, composing=1	
+00000056	2.87382483	8332	[CxxIME] _DirectEndComposition: OK, clear=0	
+00000057	2.87384033	8332	[CxxIME] DoEditSession: commit done, composing=0	
+00000058	2.92302608	8332	[CxxIME] GetIcon: mode=ZH, cx=16, cy=16, hIcon=0x0000000000540423	
+00000059	2.92306471	8332	[CxxIME] ImeButton::GetIcon called	
+00000060	4.57493591	8332	[CxxIME] _ProcessKeyEvent: vk=68(0x44), mods=0, composing=0, session=1	
+00000061	4.57511711	8004	[CxxIME] handle_request: cmd=3, session=1	
+00000062	4.64875698	8332	[CxxIME] _ProcessKeyEvent: key eaten, preedit=d, commit=, candidates=7	
+00000063	4.64877844	8332	[CxxIME] DoEditSession: ec=1393578018 composing=0 commit[0]=0 preedit[0]=100 cand=7 composing_state=0	
+00000064	4.64879227	8332	[CxxIME] update_icon: old=ZH, new=ZH, sink=0x000001C8C8558530	
+00000065	4.64883900	8332	[CxxIME] update_icon: OnUpdate(TF_LBI_ICON) called	
+00000066	4.64886141	8332	[CxxIME] _DirectStartComposition: OK	
+00000067	4.72105598	8332	[CxxIME] GetIcon: mode=ZH, cx=16, cy=16, hIcon=0x000000000031006B	
+00000068	4.72327662	8332	[CxxIME] ImeButton::GetIcon called	
+00000069	4.78089857	8332	[CxxIME] _ProcessKeyEvent: vk=68(0x44), mods=0, composing=1, session=1	
+00000070	4.78095913	8004	[CxxIME] handle_request: cmd=3, session=1	
+00000071	4.85227633	8332	[CxxIME] _ProcessKeyEvent: key eaten, preedit=dd, commit=, candidates=0	
+00000072	4.85229969	8332	[CxxIME] DoEditSession: ec=1393578024 composing=0 commit[0]=0 preedit[0]=100 cand=0 composing_state=1	
+00000073	4.85231876	8332	[CxxIME] update_icon: old=ZH, new=ZH, sink=0x000001C8C8558530	
+00000074	4.85235023	8332	[CxxIME] update_icon: OnUpdate(TF_LBI_ICON) called	
+00000075	4.90691423	8332	[CxxIME] GetIcon: mode=ZH, cx=16, cy=16, hIcon=0x0000000000070441	
+00000076	4.90694094	8332	[CxxIME] ImeButton::GetIcon called	
+00000077	6.91385603	8332	[CxxIME] _ProcessKeyEvent: vk=32(0x20), mods=0, composing=1, session=1	
+00000078	6.91392469	8004	[CxxIME] handle_request: cmd=3, session=1	
+00000079	6.91397667	8332	[CxxIME] _ProcessKeyEvent: key eaten, preedit=, commit=, candidates=0	
+00000080	6.91400003	8332	[CxxIME] DoEditSession: ec=1393578029 composing=0 commit[0]=0 preedit[0]=0 cand=0 composing_state=1	
+00000081	6.91400719	8332	[CxxIME] update_icon: old=ZH, new=ZH, sink=0x000001C8C8558530	
+00000082	6.91403294	8332	[CxxIME] update_icon: OnUpdate(TF_LBI_ICON) called	
+00000083	6.91407108	8332	[CxxIME] _DirectEndComposition: OK, clear=1	
+00000084	6.96906471	8332	[CxxIME] GetIcon: mode=ZH, cx=16, cy=16, hIcon=0x0000000000070417	
+00000085	6.96909618	8332	[CxxIME] ImeButton::GetIcon called	
+00000086	9.10588551	8332	[CxxIME] _ProcessKeyEvent: vk=68(0x44), mods=0, composing=0, session=1	
+00000087	9.10594368	8004	[CxxIME] handle_request: cmd=3, session=1	
+00000088	9.17314243	8332	[CxxIME] _ProcessKeyEvent: key eaten, preedit=d, commit=, candidates=7	
+00000089	9.17322826	8332	[CxxIME] DoEditSession: ec=1393578033 composing=0 commit[0]=0 preedit[0]=100 cand=7 composing_state=0	
+00000090	9.17328262	8332	[CxxIME] update_icon: old=ZH, new=ZH, sink=0x000001C8C8558530	
+00000091	9.17333889	8332	[CxxIME] update_icon: OnUpdate(TF_LBI_ICON) called	
+00000092	9.17339039	8332	[CxxIME] _DirectStartComposition: OK	
+00000093	9.23719597	8332	[CxxIME] GetIcon: mode=ZH, cx=16, cy=16, hIcon=0x00000000000B0481	
+00000094	9.24038601	8332	[CxxIME] ImeButton::GetIcon called	
+00000095	9.29093647	8332	[CxxIME] _ProcessKeyEvent: vk=68(0x44), mods=0, composing=1, session=1	
+00000096	9.29101372	8004	[CxxIME] handle_request: cmd=3, session=1	
+00000097	9.35702801	8332	[CxxIME] _ProcessKeyEvent: key eaten, preedit=dd, commit=, candidates=0	
+00000098	9.35705566	8332	[CxxIME] DoEditSession: ec=1393578039 composing=0 commit[0]=0 preedit[0]=100 cand=0 composing_state=1	
+00000099	9.35708523	8332	[CxxIME] update_icon: old=ZH, new=ZH, sink=0x000001C8C8558530	
+00000100	9.35709000	8332	[CxxIME] update_icon: OnUpdate(TF_LBI_ICON) called	
+00000101	9.40747833	8332	[CxxIME] GetIcon: mode=ZH, cx=16, cy=16, hIcon=0x00000000000E0481	
+00000102	9.40753937	8332	[CxxIME] ImeButton::GetIcon called	
+00000103	10.22390556	8332	[CxxIME] Shift: composing with no candidates, will commit raw pinyin	
+00000104	10.36893845	8332	[CxxIME] Shift: committing raw pinyin 'dd'	
+00000105	11.42195892	8332	[CxxIME] _ProcessKeyEvent: vk=68(0x44), mods=0, composing=0, session=1	
+00000106	11.42203140	8004	[CxxIME] handle_request: cmd=3, session=1	
+00000107	11.48938370	8332	[CxxIME] _ProcessKeyEvent: key eaten, preedit=ddd, commit=, candidates=0	
+00000108	11.48943710	8332	[CxxIME] DoEditSession: ec=1393578055 composing=0 commit[0]=0 preedit[0]=100 cand=0 composing_state=0	
+00000109	11.48950481	8332	[CxxIME] update_icon: old=ZH, new=ZH, sink=0x000001C8C8558530	
+00000110	11.48952103	8332	[CxxIME] update_icon: OnUpdate(TF_LBI_ICON) called	
+00000111	11.48956013	8332	[CxxIME] _DirectStartComposition: OK	
+00000112	11.54771519	8332	[CxxIME] GetIcon: mode=ZH, cx=16, cy=16, hIcon=0x00000000000C0417	
+00000113	11.54778576	8332	[CxxIME] ImeButton::GetIcon called	
+00000114	11.62289143	8332	[CxxIME] _ProcessKeyEvent: vk=68(0x44), mods=0, composing=1, session=1	
+00000115	11.62295437	8004	[CxxIME] handle_request: cmd=3, session=1	
+00000116	11.68842030	8332	[CxxIME] _ProcessKeyEvent: key eaten, preedit=dddd, commit=, candidates=0	
+00000117	11.68844414	8332	[CxxIME] DoEditSession: ec=1393578061 composing=0 commit[0]=0 preedit[0]=100 cand=0 composing_state=1	
+00000118	11.68846416	8332	[CxxIME] update_icon: old=ZH, new=ZH, sink=0x000001C8C8558530	
+00000119	11.68848515	8332	[CxxIME] update_icon: OnUpdate(TF_LBI_ICON) called	
+00000120	11.75382710	8332	[CxxIME] GetIcon: mode=ZH, cx=16, cy=16, hIcon=0x00000000000F0417	
+00000121	11.75722694	8332	[CxxIME] ImeButton::GetIcon called	
+00000122	12.56103325	8332	[CxxIME] Shift: composing with no candidates, will commit raw pinyin	
+00000123	12.72195911	8332	[CxxIME] Shift: committing raw pinyin 'dddd'	
+00000124	12.81990433	8332	[CxxIME] _ProcessKeyEvent: vk=68(0x44), mods=0, composing=0, session=1	
+00000125	12.81998825	8004	[CxxIME] handle_request: cmd=3, session=1	
+00000126	12.88560486	8332	[CxxIME] _ProcessKeyEvent: key eaten, preedit=ddddd, commit=, candidates=0	
+00000127	12.88568020	8332	[CxxIME] DoEditSession: ec=1393578079 composing=0 commit[0]=0 preedit[0]=100 cand=0 composing_state=0	
+00000128	12.88574123	8332	[CxxIME] update_icon: old=ZH, new=ZH, sink=0x000001C8C8558530	
+00000129	12.88579750	8332	[CxxIME] update_icon: OnUpdate(TF_LBI_ICON) called	
+00000130	12.88584805	8332	[CxxIME] _DirectStartComposition: OK	
+00000131	12.95392036	8332	[CxxIME] GetIcon: mode=ZH, cx=16, cy=16, hIcon=0x0000000000030421	
+00000132	12.95398998	8332	[CxxIME] ImeButton::GetIcon called	
+00000133	13.09992313	8332	[CxxIME] _ProcessKeyEvent: vk=68(0x44), mods=0, composing=1, session=1	
+00000134	13.09998608	8004	[CxxIME] handle_request: cmd=3, session=1	
+00000135	13.16550446	8332	[CxxIME] _ProcessKeyEvent: key eaten, preedit=dddddd, commit=, candidates=0	
+00000136	13.16553307	8332	[CxxIME] DoEditSession: ec=1393578085 composing=0 commit[0]=0 preedit[0]=100 cand=0 composing_state=1	
+00000137	13.16556358	8332	[CxxIME] update_icon: old=ZH, new=ZH, sink=0x000001C8C8558530	
+00000138	13.16556835	8332	[CxxIME] update_icon: OnUpdate(TF_LBI_ICON) called	
+00000139	13.22000885	8332	[CxxIME] GetIcon: mode=ZH, cx=16, cy=16, hIcon=0x0000000000060421	
+00000140	13.22005081	8332	[CxxIME] ImeButton::GetIcon called	
+00000141	13.67798233	8332	[CxxIME] Shift: composing with no candidates, will commit raw pinyin	
+00000142	13.82791519	8332	[CxxIME] Shift: committing raw pinyin 'dddddd'	
+00000143	13.97890282	8332	[CxxIME] _ProcessKeyEvent: vk=68(0x44), mods=0, composing=0, session=1	
+00000144	13.97897911	8004	[CxxIME] handle_request: cmd=3, session=1	
+00000145	14.04520035	8332	[CxxIME] _ProcessKeyEvent: key eaten, preedit=ddddddd, commit=, candidates=0	
+00000146	14.04523659	8332	[CxxIME] DoEditSession: ec=1393578105 composing=0 commit[0]=0 preedit[0]=100 cand=0 composing_state=0	
+00000147	14.04524136	8332	[CxxIME] update_icon: old=ZH, new=ZH, sink=0x000001C8C8558530	
+00000148	14.04528999	8332	[CxxIME] update_icon: OnUpdate(TF_LBI_ICON) called	
+00000149	14.04533291	8332	[CxxIME] _DirectStartComposition: OK	
+00000150	14.09496975	8332	[CxxIME] GetIcon: mode=ZH, cx=16, cy=16, hIcon=0x00000000000903E9	
+00000151	14.09507084	8332	[CxxIME] ImeButton::GetIcon called	
+00000152	14.16095352	8332	[CxxIME] _ProcessKeyEvent: vk=68(0x44), mods=0, composing=1, session=1	
+00000153	14.16103172	8004	[CxxIME] handle_request: cmd=3, session=1	
+00000154	14.23939514	8332	[CxxIME] _ProcessKeyEvent: key eaten, preedit=dddddddd, commit=, candidates=0	
+00000155	14.23941612	8332	[CxxIME] DoEditSession: ec=1393578111 composing=0 commit[0]=0 preedit[0]=100 cand=0 composing_state=1	
+00000156	14.23947239	8332	[CxxIME] update_icon: old=ZH, new=ZH, sink=0x000001C8C8558530	
+00000157	14.23952293	8332	[CxxIME] update_icon: OnUpdate(TF_LBI_ICON) called	
+00000158	14.31341743	8332	[CxxIME] GetIcon: mode=ZH, cx=16, cy=16, hIcon=0x00000000000C03E9	
+00000159	14.31347656	8332	[CxxIME] ImeButton::GetIcon called	
+00000160	14.80595398	8332	[CxxIME] Shift: composing with no candidates, will commit raw pinyin	
+00000161	14.95294094	8332	[CxxIME] Shift: committing raw pinyin 'dddddddd'	
+00000162	15.09294891	8332	[CxxIME] _ProcessKeyEvent: vk=68(0x44), mods=0, composing=0, session=1	
+00000163	15.09302521	8004	[CxxIME] handle_request: cmd=3, session=1	
+00000164	15.16152287	8332	[CxxIME] _ProcessKeyEvent: key eaten, preedit=ddddddddd, commit=, candidates=0	
+00000165	15.16154099	8332	[CxxIME] DoEditSession: ec=1393578133 composing=0 commit[0]=0 preedit[0]=100 cand=0 composing_state=0	
+00000166	15.16156197	8332	[CxxIME] update_icon: old=ZH, new=ZH, sink=0x000001C8C8558530	
+00000167	15.16159344	8332	[CxxIME] update_icon: OnUpdate(TF_LBI_ICON) called	
+00000168	15.16161442	8332	[CxxIME] _DirectStartComposition: OK	
+00000169	15.23536491	8332	[CxxIME] GetIcon: mode=ZH, cx=16, cy=16, hIcon=0x000000000015037F	
+00000170	15.23542595	8332	[CxxIME] ImeButton::GetIcon called	
+00000171	19.16015625	8332	[CxxIME] OnCompositionTerminated	
+00000172	19.16017532	8332	[CxxIME] Deactivate: sessionId=1	
+00000173	19.16024590	8004	[CxxIME] handle_request: cmd=2, session=1	
+00000174	19.16054726	8004	[CxxIME] END_SESSION: session=1	
