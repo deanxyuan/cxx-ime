@@ -3,11 +3,11 @@
 #include <cxxime/dict.h>
 #include "binary_format.h"
 #include <cstring>
+#include <cstdio>
 #include <algorithm>
 #include <unordered_set>
 #include <windows.h>
 #include <shlobj.h>
-#include <sqlite3.h>
 #include <cxxime/logging.h>
 
 static const char DICT_MAGIC_V1[] = "CXDIC\x01\x00\x00";
@@ -22,7 +22,7 @@ Dict::~Dict() {
 bool Dict::open(const std::string& dict_path, const std::string& user_dict_path) {
     if (!open_dict(dict_path))
         return false;
-    open_user_dict(user_dict_path);
+    load_user_dict(user_dict_path);
     return true;
 }
 
@@ -107,72 +107,75 @@ bool Dict::open_dict(const std::string& bin_path) {
     return true;
 }
 
-bool Dict::open_user_dict(const std::string& db_path) {
-    if (user_db_) {
-        sqlite3_close(user_db_);
-        user_db_ = nullptr;
-    }
+// ─── User dictionary: in-memory + TSV persistence ───────────────────
 
-    if (db_path == ":memory:") {
-        int rc = sqlite3_open(":memory:", &user_db_);
-        if (rc != SQLITE_OK) {
-            CXXIME_LOG(L"Dict::open_user_dict :memory: FAILED");
-            user_db_ = nullptr;
-            return false;
-        }
-    } else {
-        wchar_t appdata[MAX_PATH] = {};
-        std::wstring path;
-        if (db_path.empty()) {
-            if (SHGetFolderPathW(nullptr, CSIDL_LOCAL_APPDATA, nullptr, 0, appdata) != S_OK) {
-                CXXIME_LOG(L"Dict::open_user_dict SHGetFolderPathW FAILED");
-                return false;
-            }
-            std::wstring user_dir = std::wstring(appdata) + L"\\CxxIME";
-            CreateDirectoryW(user_dir.c_str(), nullptr);
-            path = user_dir + L"\\user.dict.db";
-        } else {
-            int wlen = MultiByteToWideChar(CP_UTF8, 0, db_path.c_str(), -1, nullptr, 0);
-            if (wlen > 0) {
-                path.resize(wlen - 1);
-                MultiByteToWideChar(CP_UTF8, 0, db_path.c_str(), -1, &path[0], wlen);
-            }
-        }
+static std::string default_user_dict_path() {
+    wchar_t appdata[MAX_PATH] = {};
+    if (SHGetFolderPathW(nullptr, CSIDL_LOCAL_APPDATA, nullptr, 0, appdata) != S_OK)
+        return {};
+    std::wstring user_dir = std::wstring(appdata) + L"\\CxxIME";
+    CreateDirectoryW(user_dir.c_str(), nullptr);
+    std::wstring path = user_dir + L"\\user.tsv";
+    char path_utf8[MAX_PATH * 3] = {};
+    WideCharToMultiByte(CP_UTF8, 0, path.c_str(), -1, path_utf8, sizeof(path_utf8), nullptr, nullptr);
+    return path_utf8;
+}
 
-        char path_utf8[MAX_PATH] = {};
-        WideCharToMultiByte(CP_UTF8, 0, path.c_str(), -1, path_utf8, MAX_PATH, nullptr, nullptr);
+bool Dict::load_user_dict(const std::string& path) {
+    std::unique_lock<std::shared_mutex> lock(user_mutex_);
+    user_entries_.clear();
+    user_text_index_.clear();
 
-        int rc = sqlite3_open(path_utf8, &user_db_);
-        if (rc != SQLITE_OK) {
-            CXXIME_LOG(L"Dict::open_user_dict FAILED rc=%d", rc);
-            user_db_ = nullptr;
-            return false;
-        }
-    }
-
-    const char* schema =
-        "CREATE TABLE IF NOT EXISTS user_dict ("
-        "id INTEGER PRIMARY KEY, "
-        "text TEXT NOT NULL, "
-        "code TEXT NOT NULL, "
-        "frequency INTEGER DEFAULT 1, "
-        "last_used TIMESTAMP DEFAULT CURRENT_TIMESTAMP, "
-        "UNIQUE(text, code));"
-        "CREATE INDEX IF NOT EXISTS idx_user_code ON user_dict(code);";
-
-    char* err = nullptr;
-    int rc = sqlite3_exec(user_db_, schema, nullptr, nullptr, &err);
-    if (err) {
-        CXXIME_LOG(L"Dict::open_user_dict schema error: %S", err);
-        sqlite3_free(err);
-    }
-    if (rc != SQLITE_OK) {
-        sqlite3_close(user_db_);
-        user_db_ = nullptr;
+    user_dict_path_ = path.empty() ? default_user_dict_path() : path;
+    if (user_dict_path_.empty())
         return false;
-    }
 
-    CXXIME_LOG(L"Dict::open_user_dict OK");
+    FILE* f = fopen(user_dict_path_.c_str(), "r");
+    if (!f)
+        return true;  // First run, no file yet
+
+    char line[4096];
+    while (fgets(line, sizeof(line), f)) {
+        char* text = strtok(line, "\t");
+        char* code = strtok(nullptr, "\t");
+        char* freq = strtok(nullptr, "\t\n");
+        if (!text || !code) continue;
+
+        UserEntry e;
+        e.text = text;
+        e.code = code;
+        e.frequency = freq ? atoi(freq) : 1;
+        if (e.frequency < 1) e.frequency = 1;
+
+        size_t idx = user_entries_.size();
+        user_entries_.push_back(std::move(e));
+        user_text_index_[text] = idx;
+    }
+    fclose(f);
+
+    CXXIME_LOG(L"Dict::load_user_dict loaded %zu entries", user_entries_.size());
+    return true;
+}
+
+bool Dict::save_user_dict() {
+    std::shared_lock<std::shared_mutex> lock(user_mutex_);
+    if (!user_dirty_.load() || user_dict_path_.empty())
+        return true;
+
+    lock.unlock();
+    std::unique_lock<std::shared_mutex> wlock(user_mutex_);
+
+    FILE* f = fopen(user_dict_path_.c_str(), "w");
+    if (!f)
+        return false;
+
+    for (auto& e : user_entries_) {
+        fprintf(f, "%s\t%s\t%d\n", e.text.c_str(), e.code.c_str(), e.frequency);
+    }
+    fclose(f);
+    user_dirty_ = false;
+
+    CXXIME_LOG(L"Dict::save_user_dict saved %zu entries", user_entries_.size());
     return true;
 }
 
@@ -197,11 +200,8 @@ void Dict::unload_dict() {
 }
 
 void Dict::close() {
+    save_user_dict();
     unload_dict();
-    if (user_db_) {
-        sqlite3_close(user_db_);
-        user_db_ = nullptr;
-    }
 }
 
 std::vector<Candidate> Dict::lookup_by_syllables(
@@ -254,25 +254,21 @@ std::vector<Candidate> Dict::lookup_by_syllables(
     }
 
     // Also query user dict by concatenated code
-    if (user_db_ && (int)results.size() < limit) {
+    if ((int)results.size() < limit) {
         std::string concat_code;
         for (auto& s : syllables) concat_code += s;
 
-        const char* sql = "SELECT text, code, frequency FROM user_dict "
-                          "WHERE code = ?1 ORDER BY frequency DESC LIMIT ?2";
-        sqlite3_stmt* stmt = nullptr;
-        if (sqlite3_prepare_v2(user_db_, sql, -1, &stmt, nullptr) == SQLITE_OK) {
-            sqlite3_bind_text(stmt, 1, concat_code.c_str(), -1, SQLITE_TRANSIENT);
-            sqlite3_bind_int(stmt, 2, limit);
-            while (sqlite3_step(stmt) == SQLITE_ROW && (int)results.size() < limit) {
+        std::shared_lock<std::shared_mutex> lock(user_mutex_);
+        for (auto& e : user_entries_) {
+            if (e.code == concat_code) {
                 Candidate c;
-                const char* text = (const char*)sqlite3_column_text(stmt, 0);
-                c.text = text ? text : "";
-                c.frequency = sqlite3_column_int(stmt, 2);
+                c.text = e.text;
+                c.frequency = e.frequency;
                 if (seen.insert(c.text).second)
                     results.push_back(std::move(c));
+                if ((int)results.size() >= limit)
+                    break;
             }
-            sqlite3_finalize(stmt);
         }
     }
 
@@ -336,23 +332,19 @@ std::vector<Candidate> Dict::lookup(const std::string& code_prefix, int limit) {
     }
 
     // Query user dict
-    if (user_db_) {
-        std::string pattern = code_prefix + "%";
-        const char* sql = "SELECT text, code, frequency FROM user_dict "
-                          "WHERE code LIKE ?1 ORDER BY frequency DESC LIMIT ?2";
-        sqlite3_stmt* stmt = nullptr;
-        if (sqlite3_prepare_v2(user_db_, sql, -1, &stmt, nullptr) == SQLITE_OK) {
-            sqlite3_bind_text(stmt, 1, pattern.c_str(), -1, SQLITE_TRANSIENT);
-            sqlite3_bind_int(stmt, 2, limit);
-            while (sqlite3_step(stmt) == SQLITE_ROW && (int)results.size() < limit) {
+    {
+        std::shared_lock<std::shared_mutex> lock(user_mutex_);
+        for (auto& e : user_entries_) {
+            if (e.code.size() >= prefix_len &&
+                std::memcmp(e.code.data(), prefix_data, prefix_len) == 0) {
                 Candidate c;
-                const char* text = (const char*)sqlite3_column_text(stmt, 0);
-                c.text = text ? text : "";
-                c.frequency = sqlite3_column_int(stmt, 2);
+                c.text = e.text;
+                c.frequency = e.frequency + 50000;  // user entries boost below exact matches
                 if (seen.insert(c.text).second)
                     results.push_back(std::move(c));
+                if ((int)results.size() >= limit)
+                    break;
             }
-            sqlite3_finalize(stmt);
         }
     }
 
@@ -400,15 +392,12 @@ int Dict::count(const std::string& code_prefix) {
         ++lo;
     }
 
-    if (user_db_) {
-        std::string pattern = code_prefix + "%";
-        const char* sql = "SELECT COUNT(*) FROM user_dict WHERE code LIKE ?1";
-        sqlite3_stmt* stmt = nullptr;
-        if (sqlite3_prepare_v2(user_db_, sql, -1, &stmt, nullptr) == SQLITE_OK) {
-            sqlite3_bind_text(stmt, 1, pattern.c_str(), -1, SQLITE_TRANSIENT);
-            if (sqlite3_step(stmt) == SQLITE_ROW)
-                result += sqlite3_column_int(stmt, 0);
-            sqlite3_finalize(stmt);
+    {
+        std::shared_lock<std::shared_mutex> lock(user_mutex_);
+        for (auto& e : user_entries_) {
+            if (e.code.size() >= prefix_len &&
+                std::memcmp(e.code.data(), prefix_data, prefix_len) == 0)
+                ++result;
         }
     }
 
@@ -416,10 +405,18 @@ int Dict::count(const std::string& code_prefix) {
 }
 
 std::string Dict::reverse_lookup(const std::string& text) {
+    // Check user dict first (O(1) via text index)
+    {
+        std::shared_lock<std::shared_mutex> lock(user_mutex_);
+        auto it = user_text_index_.find(text);
+        if (it != user_text_index_.end() && it->second < user_entries_.size())
+            return user_entries_[it->second].code;
+    }
+
     if (!dict_entries_)
         return {};
 
-    // Linear scan for text match (dict.bin is sorted by syllable_ids, not text)
+    // Linear scan in binary dict
     for (uint32_t i = 0; i < dict_entry_count_; ++i) {
         const auto& e = dict_entries_[i];
         if (e.text_len == text.size() &&
@@ -431,20 +428,21 @@ std::string Dict::reverse_lookup(const std::string& text) {
 }
 
 void Dict::update_frequency(const std::string& text, const std::string& code) {
-    if (!user_db_)
-        return;
+    std::unique_lock<std::shared_mutex> lock(user_mutex_);
 
-    const char* sql = "INSERT INTO user_dict (text, code, frequency) VALUES (?1, ?2, 1) "
-                      "ON CONFLICT(text, code) DO UPDATE SET frequency = frequency + 1, "
-                      "last_used = CURRENT_TIMESTAMP";
-
-    sqlite3_stmt* stmt = nullptr;
-    if (sqlite3_prepare_v2(user_db_, sql, -1, &stmt, nullptr) == SQLITE_OK) {
-        sqlite3_bind_text(stmt, 1, text.c_str(), -1, SQLITE_TRANSIENT);
-        sqlite3_bind_text(stmt, 2, code.c_str(), -1, SQLITE_TRANSIENT);
-        sqlite3_step(stmt);
-        sqlite3_finalize(stmt);
+    auto it = user_text_index_.find(text);
+    if (it != user_text_index_.end() && it->second < user_entries_.size()) {
+        user_entries_[it->second].frequency++;
+    } else {
+        UserEntry e;
+        e.text = text;
+        e.code = code;
+        e.frequency = 1;
+        size_t idx = user_entries_.size();
+        user_entries_.push_back(std::move(e));
+        user_text_index_[text] = idx;
     }
+    user_dirty_ = true;
 }
 
 bool Dict::create_test_dict(const std::string& path,
