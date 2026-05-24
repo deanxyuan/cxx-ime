@@ -34,3 +34,6 @@ DESKTOP-Q7E4CBK.log
 cxxime-v0.1.0-win64.zip
 verify.bat
 verify_result.txt
+
+# Prevent accidental doc file additions — docs belong in workspace-level D:\gitee\docs\
+docs/
