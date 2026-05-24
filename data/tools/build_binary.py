@@ -256,7 +256,7 @@ def resolve_input(path: str) -> tuple:
 
 
 def build_id_index_file(db_path: str, output_path: str) -> int:
-    """Build syllabary + ID index and serialize to .dict.idx file."""
+    """Build syllabary + ID index with offset table (v3, zero-copy)."""
     import sqlite3
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
@@ -274,21 +274,17 @@ def build_id_index_file(db_path: str, output_path: str) -> int:
                     syl_to_id[s] = len(syllabary)
                     syllabary.append(s)
 
-    # Build ID index
-    id_entries = []  # list of (ids_list, entry_index)
-    for idx, (sid,) in enumerate(rows):
+    # Build sorted ID index
+    id_entries = []
+    for entry_idx, (sid,) in enumerate(rows):
         if not sid:
             continue
-        ids = []
-        for s in sid.split(":"):
-            if s:
-                ids.append(syl_to_id[s])
+        ids = [syl_to_id[s] for s in sid.split(":") if s]
         if ids:
-            id_entries.append((ids, idx))
-
+            id_entries.append((ids, entry_idx))
     id_entries.sort(key=lambda x: x[0])
 
-    # Serialize syllabary
+    # Serialize syllabary strings
     syl_data = bytearray()
     syl_offsets = []
     for s in syllabary:
@@ -296,28 +292,33 @@ def build_id_index_file(db_path: str, output_path: str) -> int:
         syl_data.extend(s.encode("utf-8"))
         syl_data.append(0)
 
-    # Serialize ID index
-    idx_data = bytearray()
+    # Serialize ID entries with offset table (v3 zero-copy format)
+    id_data = bytearray()
+    id_offsets = []
     for ids, entry_idx in id_entries:
-        idx_data.extend(struct.pack("<I", len(ids)))
+        id_offsets.append(len(id_data))
+        id_data.extend(struct.pack("<I", len(ids)))
         for i in ids:
-            idx_data.extend(struct.pack("<I", i))
-        idx_data.extend(struct.pack("<I", entry_idx))
+            id_data.extend(struct.pack("<I", i))
+        id_data.extend(struct.pack("<I", entry_idx))
 
-    # Header: magic "CXIDX\x02\0\0" + 4*uint32
-    header = b"CXIDX\x02\x00\x00"
+    # Header v3
+    header = b"CXIDX\x03\x00\x00"
     header += struct.pack("<IIII",
         len(syllabary), len(syl_data),
-        len(id_entries), len(idx_data))
+        len(id_entries), len(id_data))
 
     with open(output_path, "wb") as f:
         f.write(header)
         f.write(struct.pack(f"<{len(syl_offsets)}I", *syl_offsets))
         f.write(bytes(syl_data))
-        f.write(bytes(idx_data))
+        f.write(struct.pack(f"<{len(id_offsets)}I", *id_offsets))
+        f.write(bytes(id_data))
 
     size_mb = os.path.getsize(output_path) / (1024 * 1024)
-    print(f"  dict.idx: {len(syllabary)} syllables, {len(id_entries)} entries, {size_mb:.1f} MB")
+    offsets_size = len(id_offsets) * 4 / (1024 * 1024)
+    print(f"  dict.idx: {len(syllabary)} syl, {len(id_entries)} entries, "
+          f"{size_mb:.1f} MB (offsets {offsets_size:.1f} MB)")
     return len(id_entries)
 
 
