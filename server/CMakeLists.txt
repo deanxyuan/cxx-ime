@@ -4,7 +4,6 @@ add_executable(cxxime-server WIN32
     src/main.cc
     src/server_app.cc
     src/session_manager.cc
-    src/tray_icon.cc
 )
 
 target_include_directories(cxxime-server PRIVATE

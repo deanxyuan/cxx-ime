@@ -186,6 +186,7 @@ STDMETHODIMP CLangBarItemButton::AdviseSink(REFIID riid, IUnknown* punk, DWORD* 
 STDMETHODIMP CLangBarItemButton::UnadviseSink(DWORD dwCookie) {
     if (dwCookie != LANGBARITEMSINK_COOKIE || _pSink == nullptr)
         return CONNECT_E_NOCONNECTION;
+    _pSink->Release();
     _pSink = nullptr;
     return S_OK;
 }
@@ -338,6 +339,7 @@ STDMETHODIMP CLangBarImeButton::AdviseSink(REFIID riid, IUnknown* punk, DWORD* p
 STDMETHODIMP CLangBarImeButton::UnadviseSink(DWORD dwCookie) {
     if (dwCookie != LANGBARITEMSINK_COOKIE || _pSink == nullptr)
         return CONNECT_E_NOCONNECTION;
+    _pSink->Release();
     _pSink = nullptr;
     return S_OK;
 }

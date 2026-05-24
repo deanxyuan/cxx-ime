@@ -76,11 +76,31 @@ bool Dict::open_dict(const std::string& bin_path) {
         return false;
     }
 
+    // Bounds validation: ensure header fields don't point outside the file
+    uint32_t version = hdr->version;
+    if (version != 1 && version != 2) {
+        CXXIME_LOG(L"Dict::open_dict bad version=%u", version);
+        unload_dict();
+        return false;
+    }
+    if (hdr->entries_offset > dict_data_size_ ||
+        hdr->strings_offset > dict_data_size_ ||
+        hdr->entry_count > (dict_data_size_ / sizeof(DictEntry)) ||
+        hdr->entries_offset + (uint64_t)hdr->entry_count * sizeof(DictEntry) > dict_data_size_ ||
+        hdr->strings_offset + (uint64_t)hdr->string_data_size > dict_data_size_) {
+        CXXIME_LOG(L"Dict::open_dict bounds check FAILED");
+        unload_dict();
+        return false;
+    }
+
     dict_entry_count_ = hdr->entry_count;
     dict_entries_ = (const DictEntry*)(dict_data_ + hdr->entries_offset);
     dict_strings_ = dict_data_ + hdr->strings_offset;
 
     CXXIME_LOG(L"Dict::open_dict OK entries=%u", dict_entry_count_);
+
+    build_syllabary();
+    build_id_index();
     return true;
 }
 
@@ -109,7 +129,11 @@ bool Dict::open_user_dict(const std::string& db_path) {
             CreateDirectoryW(user_dir.c_str(), nullptr);
             path = user_dir + L"\\user.dict.db";
         } else {
-            path = std::wstring(db_path.begin(), db_path.end());
+            int wlen = MultiByteToWideChar(CP_UTF8, 0, db_path.c_str(), -1, nullptr, 0);
+            if (wlen > 0) {
+                path.resize(wlen - 1);
+                MultiByteToWideChar(CP_UTF8, 0, db_path.c_str(), -1, &path[0], wlen);
+            }
         }
 
         char path_utf8[MAX_PATH] = {};
@@ -276,15 +300,17 @@ std::vector<Candidate> Dict::lookup(const std::string& code_prefix, int limit) {
         uint32_t mid = lo + (hi - lo) / 2;
         const auto& e = dict_entries_[mid];
         const char* sid = dict_strings_ + e.syllable_ids_offset;
-        int cmp = std::memcmp(sid, prefix_data, std::min(e.syllable_ids_len, prefix_len));
-        if (cmp < 0) {
+        uint32_t cmp_len = std::min(e.syllable_ids_len, prefix_len);
+        int cmp = std::memcmp(sid, prefix_data, cmp_len);
+        if (cmp < 0 || (cmp == 0 && e.syllable_ids_len < prefix_len)) {
             lo = mid + 1;
         } else {
             hi = mid;
         }
     }
 
-    // Scan forward collecting prefix matches
+    // Scan forward collecting prefix matches.
+    // Exact matches (same code length) get boosted so they sort before prefix matches.
     std::unordered_set<std::string> seen;
     while (lo < dict_entry_count_ && (int)results.size() < limit) {
         const auto& e = dict_entries_[lo];
@@ -295,7 +321,11 @@ std::vector<Candidate> Dict::lookup(const std::string& code_prefix, int limit) {
 
         Candidate c;
         c.text.assign(dict_strings_ + e.text_offset, e.text_len);
-        c.frequency = e.frequency;
+        // Exact match first, then shorter codes before longer codes,
+        // then by original frequency. Encode as: exact*100000 + (100-len)*100 + freq
+        c.frequency = (e.syllable_ids_len == prefix_len ? 100000 : 0)
+                    + (100 - (int)e.syllable_ids_len) * 100
+                    + e.frequency;
         if (seen.insert(c.text).second)
             results.push_back(std::move(c));
         ++lo;
@@ -347,8 +377,9 @@ int Dict::count(const std::string& code_prefix) {
         uint32_t mid = lo + (hi - lo) / 2;
         const auto& e = dict_entries_[mid];
         const char* sid = dict_strings_ + e.syllable_ids_offset;
-        int cmp = std::memcmp(sid, prefix_data, std::min(e.syllable_ids_len, prefix_len));
-        if (cmp < 0) {
+        uint32_t cmp_len = std::min(e.syllable_ids_len, prefix_len);
+        int cmp = std::memcmp(sid, prefix_data, cmp_len);
+        if (cmp < 0 || (cmp == 0 && e.syllable_ids_len < prefix_len)) {
             lo = mid + 1;
         } else {
             hi = mid;
@@ -471,6 +502,144 @@ bool Dict::create_test_dict(const std::string& path,
     WriteFile(hFile, strings.data(), (DWORD)strings.size(), &written, nullptr);
     CloseHandle(hFile);
     return true;
+}
+
+// ─── Syllable ID index (librime-style integer-ID lookup) ─────────────
+
+void Dict::build_syllabary() {
+    syllabary_.clear();
+    syllable_to_id_.clear();
+
+    for (uint32_t i = 0; i < dict_entry_count_; ++i) {
+        const auto& e = dict_entries_[i];
+        const char* sid = dict_strings_ + e.syllable_ids_offset;
+        uint32_t len = e.syllable_ids_len;
+
+        // Split by ':'
+        uint32_t start = 0;
+        for (uint32_t j = 0; j <= len; ++j) {
+            if (j == len || sid[j] == ':') {
+                if (j > start) {
+                    std::string syl(sid + start, j - start);
+                    if (syllable_to_id_.find(syl) == syllable_to_id_.end()) {
+                        syllable_to_id_[syl] = (uint32_t)syllabary_.size();
+                        syllabary_.push_back(syl);
+                    }
+                }
+                start = j + 1;
+            }
+        }
+    }
+
+    CXXIME_LOG(L"Dict::build_syllabary %zu syllables", syllabary_.size());
+}
+
+void Dict::build_id_index() {
+    id_index_.clear();
+    id_index_.reserve(dict_entry_count_);
+
+    for (uint32_t i = 0; i < dict_entry_count_; ++i) {
+        const auto& e = dict_entries_[i];
+        const char* sid = dict_strings_ + e.syllable_ids_offset;
+        uint32_t len = e.syllable_ids_len;
+
+        IdEntry entry;
+        entry.index = i;
+
+        uint32_t start = 0;
+        for (uint32_t j = 0; j <= len; ++j) {
+            if (j == len || sid[j] == ':') {
+                if (j > start) {
+                    std::string syl(sid + start, j - start);
+                    auto it = syllable_to_id_.find(syl);
+                    if (it != syllable_to_id_.end())
+                        entry.ids.push_back(it->second);
+                }
+                start = j + 1;
+            }
+        }
+
+        id_index_.push_back(std::move(entry));
+    }
+
+    std::sort(id_index_.begin(), id_index_.end(),
+        [](const IdEntry& a, const IdEntry& b) { return a.ids < b.ids; });
+
+    CXXIME_LOG(L"Dict::build_id_index %zu entries", id_index_.size());
+}
+
+uint32_t Dict::syllable_to_id(const std::string& syllable) const {
+    auto it = syllable_to_id_.find(syllable);
+    return it != syllable_to_id_.end() ? it->second : UINT32_MAX;
+}
+
+bool Dict::has_prefix(const std::vector<uint32_t>& query_ids) const {
+    if (query_ids.empty() || id_index_.empty())
+        return false;
+    uint32_t lo = 0, hi = (uint32_t)id_index_.size();
+    while (lo < hi) {
+        uint32_t mid = lo + (hi - lo) / 2;
+        if (id_index_[mid].ids < query_ids)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    if (lo >= (uint32_t)id_index_.size())
+        return false;
+    const auto& ids = id_index_[lo].ids;
+    if (ids.size() < query_ids.size())
+        return false;
+    return std::equal(query_ids.begin(), query_ids.end(), ids.begin());
+}
+
+std::vector<Candidate> Dict::lookup_by_ids(const std::vector<uint32_t>& query_ids, int limit) {
+    std::vector<Candidate> results;
+    if (query_ids.empty() || id_index_.empty())
+        return results;
+
+    // Binary search for first match (exact or prefix)
+    uint32_t lo = 0, hi = (uint32_t)id_index_.size();
+    while (lo < hi) {
+        uint32_t mid = lo + (hi - lo) / 2;
+        if (id_index_[mid].ids < query_ids)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+
+    std::unordered_set<std::string> seen;
+
+    // First pass: collect ALL exact matches (no limit — need frequency sort)
+    uint32_t pos = lo;
+    while (pos < (uint32_t)id_index_.size() && id_index_[pos].ids == query_ids) {
+        const auto& e = dict_entries_[id_index_[pos].index];
+        Candidate c;
+        c.text.assign(dict_strings_ + e.text_offset, e.text_len);
+        c.frequency = e.frequency + 100000;  // exact match boost
+        if (seen.insert(c.text).second)
+            results.push_back(std::move(c));
+        ++pos;
+    }
+
+    // Second pass: prefix matches
+    while (pos < (uint32_t)id_index_.size()
+           && id_index_[pos].ids.size() >= query_ids.size()
+           && std::equal(query_ids.begin(), query_ids.end(), id_index_[pos].ids.begin())) {
+        const auto& e = dict_entries_[id_index_[pos].index];
+        Candidate c;
+        c.text.assign(dict_strings_ + e.text_offset, e.text_len);
+        c.frequency = e.frequency;
+        if (seen.insert(c.text).second)
+            results.push_back(std::move(c));
+        ++pos;
+    }
+
+    std::sort(results.begin(), results.end(),
+        [](const Candidate& a, const Candidate& b) { return a.frequency > b.frequency; });
+
+    if ((int)results.size() > limit)
+        results.resize(limit);
+    return results;
 }
 
 } // namespace cxxime

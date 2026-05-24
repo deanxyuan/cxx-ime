@@ -48,7 +48,7 @@ public:
     STDMETHODIMP GetDisplayAttributeInfo(REFGUID rguid, ITfDisplayAttributeInfo** ppInfo) override;
 
     // Helper
-    HRESULT insert_text(const std::wstring& text);
+    HRESULT insert_text(const std::wstring& text, bool sync = false);
     void update_composition(ITfContext* pic, const std::wstring& preedit);
     ITfComposition* get_composition() const { return _composition; }
     void set_composition(ITfComposition* comp) { _composition = comp; }
@@ -58,12 +58,14 @@ private:
     HRESULT _register_key_event_sink();
     HRESULT _unregister_key_event_sink();
     HRESULT _register_preserved_key();
+    HRESULT _unregister_preserved_key();
     HRESULT _start_composition(ITfContext* pic);
     HRESULT _end_composition(ITfContext* pic);
     HRESULT _update_composition_text(ITfContext* pic, const std::wstring& text, TfEditCookie ec);
     bool _should_eat_key(WPARAM vk) const;
     uint32_t _get_modifiers() const;
     void _load_config();
+    void _send_modifier_key_up(WPARAM wParam);
 
     LONG _cRef = 1;
     ITfThreadMgr* _threadMgr = nullptr;

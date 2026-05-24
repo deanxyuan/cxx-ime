@@ -130,9 +130,12 @@ cxxime::IPCResponse ServerApp::handle_request(const cxxime::IPCRequest& request)
         cxxime::KeyEvent event;
         event.keycode = request.key_code;
         event.modifiers = request.modifiers;
-        event.is_key_up = false;
+        event.is_key_up = request.is_key_up;
 
         auto result = engine->process_key(event);
+
+        response.ascii_mode = engine->ascii_composer().is_ascii_mode();
+        response.composing = engine->context().is_composing();
 
         if (result == cxxime::ProcessResult::COMMITTED) {
             std::string commit = engine->get_commit_text();
@@ -235,7 +238,10 @@ LRESULT CALLBACK ServerApp::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (cmd == 1) {
                 // Open config file in default editor
                 if (app && !app->config_path_.empty()) {
-                    ShellExecuteW(hwnd, L"open", std::wstring(app->config_path_.begin(), app->config_path_.end()).c_str(),
+                    int wlen = MultiByteToWideChar(CP_UTF8, 0, app->config_path_.c_str(), -1, nullptr, 0);
+                    std::wstring wpath(wlen - 1, L'\0');
+                    MultiByteToWideChar(CP_UTF8, 0, app->config_path_.c_str(), -1, &wpath[0], wlen);
+                    ShellExecuteW(hwnd, L"open", wpath.c_str(),
                                   nullptr, nullptr, SW_SHOWNORMAL);
                 } else {
                     MessageBoxW(hwnd, L"Config file not found.", L"CxxIME", MB_OK | MB_ICONWARNING);

@@ -154,14 +154,19 @@ def create_sqlite_db(output_path, entries, limit=0):
             id INTEGER PRIMARY KEY,
             text TEXT NOT NULL,
             code TEXT NOT NULL,
-            frequency INTEGER DEFAULT 0
+            frequency INTEGER DEFAULT 0,
+            syllable_ids TEXT
         )
     """)
     cur.execute("CREATE INDEX idx_code ON dict(code)")
 
+    from fix_syllable_ids import load_syllables, segment_code
+    syllables = load_syllables()
+
     cur.executemany(
-        "INSERT INTO dict (text, code, frequency) VALUES (?, ?, ?)",
-        [(text, code, freq) for (text, code), freq in sorted_entries],
+        "INSERT INTO dict (text, code, frequency, syllable_ids) VALUES (?, ?, ?, ?)",
+        [(text, code, freq, ":".join(segment_code(code, syllables)))
+         for (text, code), freq in sorted_entries],
     )
 
     conn.commit()

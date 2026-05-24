@@ -26,6 +26,7 @@ struct IPCRequest {
     uint32_t key_code = 0;
     uint32_t modifiers = 0;
     uint32_t candidate_index = 0;
+    bool is_key_up = false;
 };
 
 struct IPCResponse {
@@ -35,6 +36,8 @@ struct IPCResponse {
     uint32_t candidate_count = 0;
     char candidates[10][64] = {};
     uint32_t highlighted = 0;
+    bool ascii_mode = false;
+    bool composing = false;
 };
 
 } // namespace cxxime

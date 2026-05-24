@@ -6,16 +6,19 @@ uint32_t SessionManager::create_session(const std::string& dict_path, const std:
     auto engine = std::make_unique<cxxime::Engine>();
     if (!engine->initialize(dict_path, config_path))
         return 0;
+    std::lock_guard<std::mutex> lock(mutex_);
     uint32_t id = next_id_++;
     sessions_[id] = std::move(engine);
     return id;
 }
 
 void SessionManager::destroy_session(uint32_t id) {
+    std::lock_guard<std::mutex> lock(mutex_);
     sessions_.erase(id);
 }
 
 cxxime::Engine* SessionManager::get_engine(uint32_t id) {
+    std::lock_guard<std::mutex> lock(mutex_);
     auto it = sessions_.find(id);
     return it != sessions_.end() ? it->second.get() : nullptr;
 }

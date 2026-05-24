@@ -28,6 +28,7 @@ std::string Context::commit() {
     pinyin_buffer.clear();
     committed_text.clear();
     candidates = {};
+    page_index = 0;
     return text;
 }
 

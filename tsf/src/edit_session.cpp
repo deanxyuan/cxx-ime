@@ -82,6 +82,7 @@ STDMETHODIMP EditSession::DoEditSession(TfEditCookie ec) {
         ITfComposition* pComp = _service->get_composition();
         if (pComp) {
             pComp->EndComposition(ec);
+            pComp->Release();
             _service->set_composition(nullptr);
             _service->set_composing(false);
         }

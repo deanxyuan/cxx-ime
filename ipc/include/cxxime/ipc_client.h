@@ -21,7 +21,8 @@ public:
 
     bool start_session(uint32_t& session_id);
     bool end_session(uint32_t session_id);
-    bool process_key(uint32_t session_id, uint32_t key_code, uint32_t modifiers, IPCResponse& response);
+    bool process_key(uint32_t session_id, uint32_t key_code, uint32_t modifiers, IPCResponse& response,
+                     bool is_key_up = false);
     bool select_candidate(uint32_t session_id, int index, IPCResponse& response);
     bool commit_composition(uint32_t session_id, IPCResponse& response);
     bool focus_in(uint32_t session_id);

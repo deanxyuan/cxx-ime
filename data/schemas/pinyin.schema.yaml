@@ -1,19 +1,22 @@
 # CxxIME 拼音方案配置
-# 规则语法与 librime schema YAML 兼容
+# 规则语法与 librime schema YAML 兼容 (参考 luna_pinyin.schema.yaml)
 # 规则类型: abbrev, fuzz, derive, xform, erase, xlit
 
 speller:
   algebra:
-    # 缩写: 取每个音节的辅音声母 (首字母)
-    - abbrev/^(.+).$/$1/
-    # 模糊拼音: zh↔z, ch↔c, sh↔s
-    - derive/^([zcs])h/$1/
-    # 模糊拼音: n↔l
-    - fuzz/^n(.*)/l$1/
-    - fuzz/^l(.*)/n$1/
-    # 模糊拼音: eng↔en
-    - derive/^(.*)eng$/$1en/
-    # 模糊拼音: ing↔in
-    - derive/^(.*)ing$/$1in/
-    # 模糊拼音: ang↔an
-    - derive/^(.*)ang$/$1an/
+    # 同 librime: 缩写规则
+    - abbrev/^([a-z]).+$/$1/              # 单字母简拼: d→di, f→fang
+    - abbrev/^([zcs]h).+$/$1/            # zh/ch/sh 双字母简拼
+
+    # 同 librime: 拼写派生规则
+    - derive/^([nl])ve$/$1ue/             # nve→nue, lve→lue
+    - derive/^([jqxy])u/$1v/              # ju→jv, qu→qv, xu→xv, yu→yv
+    - derive/un$/uen/                     # un→uen
+    - derive/ui$/uei/                     # ui→uei
+    - derive/iu$/iou/                     # iu→iou
+    - derive/([aeiou])ng$/$1gn/           # ang→agn 等
+
+    # 模糊音 (可选扩展, librime 默认未启用)
+    # - derive/^([zcs])h/$1/              # zh↔z
+    # - fuzz/^n(.*)/l$1/                  # n↔l
+    # - derive/^(.*)eng$/$1en/            # eng↔en

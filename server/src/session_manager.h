@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <unordered_map>
 #include <cxxime/engine.h>
 
@@ -17,6 +18,7 @@ public:
 private:
     std::unordered_map<uint32_t, std::unique_ptr<cxxime::Engine>> sessions_;
     uint32_t next_id_ = 1;
+    std::mutex mutex_;
 };
 
 #endif // CXXIME_SESSION_MANAGER_H_

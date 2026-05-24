@@ -14,6 +14,18 @@ bool Engine::initialize(const std::string& dict_path, const std::string& config_
         config_.load(config_path);
     }
 
+    ascii_composer_.load_config(config_);
+
+    // Load spellings index for abbreviation expansion
+    std::string spellings_path = derive_spellings_path(dict_path);
+    if (!spellings_path.empty()) {
+        spellings_.load(spellings_path);
+        if (spellings_.has_spellings()) {
+            syllabifier_ = std::make_unique<Syllabifier>(spellings_);
+            translator_.set_syllabifier(syllabifier_.get());
+        }
+    }
+
     return true;
 }
 
@@ -23,7 +35,47 @@ void Engine::finalize() {
 }
 
 ProcessResult Engine::process_key(const KeyEvent& event) {
+    // Let AsciiComposer track modifier key state (may toggle ascii_mode)
+    ascii_composer_.process_key(event.keycode, event.is_key_up, context_);
+
+    // If in ASCII mode, handle letters/space directly
+    if (ascii_composer_.is_ascii_mode() && !event.is_key_up) {
+        uint32_t vk = event.keycode;
+
+        // Letter keys (A-Z): commit as single ASCII char
+        if (vk >= 'A' && vk <= 'Z') {
+            context_.committed_text = std::string(1, static_cast<char>(vk - 'A' + 'a'));
+            if (ascii_composer_.is_temporary_ascii()) {
+                ascii_composer_.set_ascii_mode(false);
+            }
+            return ProcessResult::COMMITTED;
+        }
+
+        // Space: commit a space
+        if (vk == 0x20) {  // VK_SPACE
+            context_.committed_text = " ";
+            return ProcessResult::COMMITTED;
+        }
+
+        // Enter: commit pending text and newline
+        if (vk == 0x0D) {  // VK_RETURN
+            context_.committed_text = "\r\n";
+            if (ascii_composer_.is_temporary_ascii()) {
+                ascii_composer_.set_ascii_mode(false);
+            }
+            return ProcessResult::COMMITTED;
+        }
+
+        // Other keys: reject (pass through to app)
+        return ProcessResult::REJECTED;
+    }
+
     auto result = processor_.process_key(event, context_);
+
+    // Auto-restore from temporary inline_ascii when composition ends
+    if (result == ProcessResult::COMMITTED && ascii_composer_.is_temporary_ascii()) {
+        ascii_composer_.set_ascii_mode(false);
+    }
 
     // After processing, update candidates if still composing
     if (result == ProcessResult::ACCEPTED && context_.is_composing()) {
@@ -57,6 +109,13 @@ bool Engine::select_candidate(int index) {
 
     context_.candidates.highlighted = index;
     context_.committed_text = context_.candidates.candidates[index].text;
+
+    std::string code = context_.pinyin_buffer;
+    if (code.empty())
+        code = dict_.reverse_lookup(context_.committed_text);
+    if (!code.empty())
+        dict_.update_frequency(context_.committed_text, code);
+
     return true;
 }
 
@@ -71,6 +130,32 @@ std::string Engine::get_commit_text() {
 
 void Engine::clear() {
     context_.reset();
+}
+
+std::string Engine::derive_spellings_path(const std::string& dict_path) {
+    // pinyin.dict.bin → pinyin.spellings.bin
+    // pinyin.dict.db  → pinyin.spellings.bin
+    static const char kDictBinExt[] = ".dict.bin";
+    static const char kDictDbExt[] = ".dict.db";
+    static const char kSpellingsExt[] = ".spellings.bin";
+
+    std::string path = dict_path;
+    auto replace_ext = [&](const char* from, const char* to) {
+        size_t pos = path.rfind(from);
+        if (pos != std::string::npos && pos + strlen(from) == path.size()) {
+            path.replace(pos, strlen(from), to);
+            return true;
+        }
+        return false;
+    };
+
+    if (replace_ext(kDictBinExt, kSpellingsExt))
+        return path;
+    if (replace_ext(kDictDbExt, kSpellingsExt))
+        return path;
+
+    // Unknown extension — append .spellings.bin
+    return path + kSpellingsExt;
 }
 
 } // namespace cxxime

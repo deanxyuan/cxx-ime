@@ -16,5 +16,14 @@
         "inline_preedit": true,
         "preedit_type": "composition"
     },
+    "ascii_composer": {
+        "switch_key": {
+            "Shift_L": "inline_ascii",
+            "Shift_R": "commit_text",
+            "Control_L": "noop",
+            "Control_R": "noop"
+        },
+        "good_old_caps_lock": false
+    },
     "theme": "light"
 }
