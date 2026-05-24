@@ -199,19 +199,21 @@ ctest -C Debug
 
 或单独运行某个测试：`build\test\Debug\ipc_test.exe`
 
-## 项目状态
+## 模块状态
 
-当前已完成：
-- TSF 文本服务框架集成
-- 拼音/五笔处理引擎（Syllabifier + Segmentor + Translator）
-- IOCP 高性能 IPC（< 1ms 延迟，支持多客户端并发）
-- 多会话管理（共享 Dict/SpellingsIndex/Config，session 瞬时创建）
-- 候选窗口（GDI 渲染）
-- 内存用户词典（TSV 持久化，shared_mutex 并发读写）
-- 拼音缩写/模糊音 + 五笔简码支持
-- 词典下载与二进制构建工具
-- 安装/卸载/打包脚本
-- 单元测试（87 个，8 个独立 exe）
+| 模块 | 状态 | 说明 |
+|------|------|------|
+| 词典 | ✅ 就绪 | mmap 二进制词典、Patricia trie 拼写索引、音节 ID 索引、拼音/五笔双模式 |
+| Engine | ✅ 就绪 | Syllabifier + Segmentor + Translator，缩写/模糊音/五笔简码 |
+| IPC | ✅ 就绪 | IOCP 高性能命名管道，< 1ms 延迟，多客户端并发 |
+| 会话管理 | ✅ 就绪 | 共享资源预加载，session 瞬时创建 |
+| 用户词典 | ✅ 就绪 | 内存数据结构 + TSV 持久化，shared_mutex 并发读写 |
+| TSF DLL | ⚠️ 基础可用 | 按键捕获、编辑会话、候选上屏；composition 显示和窗口定位待完善 |
+| 候选窗口 | ⚠️ 基础可用 | GDI 渲染；D2D 渲染器已实现未启用，多布局类型待完善 |
+| 安装部署 | ⚠️ 基础可用 | install/uninstall/package 脚本可用，需管理员权限 |
+| 配置系统 | ⚠️ 基础可用 | JSON 配置（page_size, font, theme），可配置项有限 |
+
+> 单元测试：87 个用例，8 个独立 exe，`ctest -C Debug` 全部通过。
 
 ## 许可证
 
