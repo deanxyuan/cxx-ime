@@ -66,8 +66,8 @@ python tools/dict_convert.py input.yaml output.db
 
 | 文件 | 来源 | 是否提交 | 说明 |
 |------|------|----------|------|
-| `pinyin.dict.db` | `fetch_dict.py` 下载 | 否（`.gitignore`） | SQLite 源词典，**唯一数据源** |
-| `pinyin.dict.db.zip` | 手动压缩 `.db` | **是** | 仓库中的分发副本 |
+| `pinyin.dict.db.zip` | `fetch_dict.py` 下载后压缩 | **是** | **提交到仓库的分发副本** |
+| `pinyin.dict.db` | 解压 `.zip` 得到 | 否（`.gitignore`） | SQLite 源词典 |
 | `pinyin.dict.bin` | `build_binary.py` 生成 | 否 | 二进制 mmap 词典（运行时） |
 | `pinyin.spellings.bin` | `build_binary.py` 生成 | 否 | Patricia trie 拼写索引（运行时） |
 | `pinyin.dict.idx` | `build_binary.py` 生成 | 否 | 音节 ID 索引（运行时） |
@@ -75,23 +75,28 @@ python tools/dict_convert.py input.yaml output.db
 
 ### 词典维护
 
-当修改 `schemas/pinyin.schema.yaml` 拼写规则或修复 dict 脏数据后，**必须重建所有派生文件**：
+数据来源链路：**zip → db → algebra → bin/idx/spellings**
 
 ```cmd
-# 1. 重新生成拼写表（应用 schema 中的 algebra 规则）
+# 0. 拉取后先解压（仅首次）
+cd data && python -c "
+import zipfile; zf = zipfile.ZipFile('pinyin.dict.db.zip'); zf.extractall()
+"
+
+# 1. 生成拼写表（spellings 表，应用 schema 拼写代数规则）
 python data/tools/spelling_algebra.py data/pinyin.dict.db
 
-# 2. 重新生成全部二进制文件（spellings + dict + ID index）
+# 2. 生成全部二进制文件（.bin + .idx + .spellings.bin）
 python data/tools/build_binary.py --input data/pinyin.dict.db --output data/pinyin
 
-# 3. 更新 zip 分发包
+# 3. 如果修改了 .db（修复脏数据等），更新 zip
 cd data && del pinyin.dict.db.zip && python -c "
 import zipfile; zf = zipfile.ZipFile('pinyin.dict.db.zip', 'w', zipfile.ZIP_DEFLATED)
 zf.write('pinyin.dict.db'); zf.close()
 "
 ```
 
-> **注意：** `.db`、`.bin`、`.idx`、`.spellings.bin` 均在 `.gitignore` 中。仅 `.db.zip` 提交到仓库。其他开发者拉取后需解压 `.zip` 并执行步骤 2 生成本地二进制文件。
+> **注意：** `.db`、`.bin`、`.idx`、`.spellings.bin` 均在 `.gitignore` 中。仅 `.db.zip` 提交到仓库。其他开发者拉取后从步骤 0 开始。
 
 ## 打包
 
