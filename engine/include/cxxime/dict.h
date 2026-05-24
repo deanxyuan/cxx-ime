@@ -73,8 +73,9 @@ private:
     // Integer ID index (librime-style syllable ID lookup)
     std::vector<std::string> syllabary_;
     std::unordered_map<std::string, uint32_t> syllable_to_id_;
-    struct IdEntry { std::vector<uint32_t> ids; uint32_t index; };
+    struct IdEntry { const uint32_t* ids; uint32_t count; uint32_t index; };
     std::vector<IdEntry> id_index_;
+    std::vector<std::vector<uint32_t>> runtime_ids_;  // backing for build_id_index
 };
 
 } // namespace cxxime
