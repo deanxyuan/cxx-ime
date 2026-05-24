@@ -9,13 +9,12 @@
 #include <cstring>
 #include <string>
 #include <windows.h>
-#include <sqlite3.h>
 
 static void print_usage() {
     std::puts("Usage: dict_query --mode pinyin|wubi [--dict <path>] [--spellings <path>]");
     std::puts("");
     std::puts("  --mode pinyin   Load dict + spellings trie, use PinyinTranslator");
-    std::puts("  --mode wubi     Load dict (binary) or SQLite directly");
+    std::puts("  --mode wubi     Load dict (binary). Use sqlite_query to read .db directly");
     std::puts("  --dict <path>   Dictionary file path");
     std::puts("  --spellings <path>  Spellings trie path (pinyin mode only)");
     std::puts("");
@@ -26,61 +25,6 @@ static void print_usage() {
 }
 
 static std::string to_utf8(const std::string& s) { return s; }
-
-// ─── Wubi mode (SQLite direct) ────────────────────────────────────────
-
-static void run_wubi_sqlite(const std::string& db_path) {
-    sqlite3* db = nullptr;
-    int rc = sqlite3_open_v2(db_path.c_str(), &db,
-                              SQLITE_OPEN_READONLY, nullptr);
-    if (rc != SQLITE_OK) {
-        std::fprintf(stderr, "ERROR: Cannot open %s: %s\n",
-                     db_path.c_str(), sqlite3_errmsg(db));
-        return;
-    }
-
-    std::puts("Wubi mode (SQLite). Type :q to quit.\n");
-
-    char line[256];
-    for (;;) {
-        std::fputs("> ", stdout);
-        std::fflush(stdout);
-        if (!std::fgets(line, (int)sizeof(line), stdin))
-            break;
-
-        std::string input(line);
-        while (!input.empty() && (input.back() == '\n' || input.back() == '\r'))
-            input.pop_back();
-        if (input.empty())
-            continue;
-        if (input == ":q")
-            break;
-
-        const char* sql =
-            "SELECT text, code, frequency FROM dict "
-            "WHERE code LIKE ?1 "
-            "ORDER BY frequency DESC LIMIT 20";
-        sqlite3_stmt* stmt = nullptr;
-        std::string pattern = input + "%";
-        rc = sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
-        if (rc != SQLITE_OK)
-            continue;
-        sqlite3_bind_text(stmt, 1, pattern.c_str(), -1, SQLITE_TRANSIENT);
-
-        int idx = 0;
-        while (sqlite3_step(stmt) == SQLITE_ROW) {
-            const char* text = (const char*)sqlite3_column_text(stmt, 0);
-            const char* code = (const char*)sqlite3_column_text(stmt, 1);
-            int freq = sqlite3_column_int(stmt, 2);
-            std::printf("[%d] %s  (%s, %d)\n", idx++,
-                        text ? text : "?", code ? code : "?", freq);
-        }
-        if (idx == 0)
-            std::puts("  (no matches)");
-        sqlite3_finalize(stmt);
-    }
-    sqlite3_close(db);
-}
 
 // ─── Wubi mode (binary dict) ──────────────────────────────────────────
 
@@ -252,12 +196,7 @@ int main(int argc, char* argv[]) {
         run_pinyin(dict_path, spellings_path);
     } else if (mode == "wubi") {
         dict_path = resolve_path(dict_path, "wubi86.dict.bin");
-        if (GetFileAttributesA(dict_path.c_str()) != INVALID_FILE_ATTRIBUTES) {
-            run_wubi_binary(dict_path);
-        } else {
-            std::string db_path = resolve_path("", "wubi86.dict.db");
-            run_wubi_sqlite(db_path);
-        }
+        run_wubi_binary(dict_path);
     } else {
         std::fprintf(stderr, "ERROR: Unknown mode '%s'. Use pinyin or wubi.\n", mode.c_str());
         return 1;
