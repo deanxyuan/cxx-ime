@@ -8,9 +8,9 @@
 #include <vector>
 #include <tuple>
 #include <unordered_map>
+#include <shared_mutex>
+#include <atomic>
 #include <cxxime/candidate.h>
-
-struct sqlite3;
 
 namespace cxxime {
 
@@ -23,14 +23,13 @@ public:
     Dict(const Dict&) = delete;
     Dict& operator=(const Dict&) = delete;
 
-    // Convenience: load main dict (.bin) + open user dict (SQLite)
+    // Convenience: load main dict (.bin) + open user dict (TSV file)
     bool open(const std::string& dict_path, const std::string& user_dict_path = "");
-    void close();
+    void close();   // saves user dict before closing
     bool is_open() const;
 
     // Low-level
     bool open_dict(const std::string& bin_path);
-    bool open_user_dict(const std::string& db_path = "");
     void unload_dict();
 
     // Queries
@@ -41,6 +40,10 @@ public:
     int count(const std::string& code_prefix);
     std::string reverse_lookup(const std::string& text);
     void update_frequency(const std::string& text, const std::string& code);
+
+    // User dictionary persistence
+    bool load_user_dict(const std::string& path);
+    bool save_user_dict();
 
     // Syllable ID mapping (for pinyin integer-ID lookup path)
     uint32_t syllable_to_id(const std::string& syllable) const;
@@ -63,7 +66,6 @@ private:
     const DictEntry* dict_entries_ = nullptr;
     const char* dict_strings_ = nullptr;
     uint32_t dict_entry_count_ = 0;
-    sqlite3* user_db_ = nullptr;
 
     // Integer ID index (.dict.idx mmap)
     void* idx_file_handle_ = nullptr;
@@ -76,6 +78,20 @@ private:
     struct IdEntry { const uint32_t* ids; uint32_t count; uint32_t index; };
     std::vector<IdEntry> id_index_;
     std::vector<std::vector<uint32_t>> runtime_ids_;  // backing for build_id_index
+
+    // User dictionary: in-memory structure with TSV persistence.
+    // Replaces SQLite — user dict is small (< 1MB), this is simpler and avoids
+    // all SQLite concurrency issues. shared_mutex for concurrent reads.
+    struct UserEntry {
+        std::string text;
+        std::string code;
+        int frequency = 1;
+    };
+    std::vector<UserEntry> user_entries_;
+    std::unordered_map<std::string, size_t> user_text_index_; // text → entries_ index
+    mutable std::shared_mutex user_mutex_;
+    std::atomic<bool> user_dirty_{false};
+    std::string user_dict_path_;
 };
 
 } // namespace cxxime
