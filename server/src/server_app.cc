@@ -15,19 +15,18 @@ bool ServerApp::initialize(const std::string& dict_path, const std::string& conf
     std::string dir = (pos != std::string::npos) ? path.substr(0, pos + 1) : "";
 
     // Resolve dictionary path: explicit arg > exe dir > ../data/
-    if (!dict_path.empty()) {
-        dict_path_ = dict_path;
-    } else {
+    std::string resolved_dict = dict_path;
+    if (resolved_dict.empty()) {
         std::string candidate1 = dir + "pinyin.dict.db";
         std::string candidate2 = dir + "..\\data\\pinyin.dict.db";
         DWORD attr1 = GetFileAttributesA(candidate1.c_str());
         DWORD attr2 = GetFileAttributesA(candidate2.c_str());
         if (attr1 != INVALID_FILE_ATTRIBUTES)
-            dict_path_ = candidate1;
+            resolved_dict = candidate1;
         else if (attr2 != INVALID_FILE_ATTRIBUTES)
-            dict_path_ = candidate2;
+            resolved_dict = candidate2;
         else
-            dict_path_ = candidate1;  // fallback
+            resolved_dict = candidate1;
     }
 
     // Resolve config path: explicit arg > exe dir > ../data/
@@ -44,8 +43,16 @@ bool ServerApp::initialize(const std::string& dict_path, const std::string& conf
     }
     config_path_ = cfg;
 
-    CXXIME_LOG(L"Dictionary path: %S", dict_path_.c_str());
+    CXXIME_LOG(L"Dictionary path: %S", resolved_dict.c_str());
     CXXIME_LOG(L"Config path: %S", config_path_.c_str());
+
+    // Pre-load shared resources (Dict, SpellingsIndex, Config) once at startup.
+    // Session creation will reference these instead of opening files again.
+    if (!session_mgr_.initialize(resolved_dict, config_path_)) {
+        MessageBoxW(nullptr, L"Failed to initialize session manager.", L"CxxIME Server",
+                    MB_OK | MB_ICONERROR);
+        return false;
+    }
 
     // Create hidden window for tray icon messages
     WNDCLASSEXW wc = {};
@@ -72,7 +79,7 @@ bool ServerApp::initialize(const std::string& dict_path, const std::string& conf
     wcscpy_s(nid_.szTip, L"CxxIME Server");
     Shell_NotifyIconW(NIM_ADD, &nid_);
 
-    // Start IPC server with heartbeat (60s timeout)
+    // Start IPC server
     ipc_server_.set_handler([this](const cxxime::IPCRequest& req) { return handle_request(req); });
 
     if (!ipc_server_.start(cxxime::IPC_PIPE_BASE_NAME)) {
@@ -111,7 +118,7 @@ cxxime::IPCResponse ServerApp::handle_request(const cxxime::IPCRequest& request)
 
     switch (request.command) {
     case cxxime::IPCCommand::START_SESSION: {
-        uint32_t id = session_mgr_.create_session(dict_path_, config_path_);
+        uint32_t id = session_mgr_.create_session();
         if (id == 0) {
             response.status = cxxime::IPCStatus::ERR_ENGINE_NOT_INITIALIZED;
             response.highlighted = 0;

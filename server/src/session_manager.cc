@@ -1,10 +1,32 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
 #include "session_manager.h"
+#include <windows.h>
+#include <cxxime/logging.h>
 
-uint32_t SessionManager::create_session(const std::string& dict_path, const std::string& config_path) {
+bool SharedResources::load(const std::string& dict_path, const std::string& config_path) {
+    if (!dict.open(dict_path)) {
+        CXXIME_LOG(L"SharedResources: dict.open FAILED");
+        return false;
+    }
+    if (!config_path.empty()) {
+        config.load(config_path);
+    }
+    std::string sp_path = cxxime::Engine::derive_spellings_path(dict_path);
+    if (!sp_path.empty() && spellings.load(sp_path) && spellings.has_spellings()) {
+        syllabifier = std::make_unique<cxxime::Syllabifier>(spellings);
+    }
+    return true;
+}
+
+bool SessionManager::initialize(const std::string& dict_path, const std::string& config_path) {
+    return shared_.load(dict_path, config_path);
+}
+
+uint32_t SessionManager::create_session() {
     auto engine = std::make_unique<cxxime::Engine>();
-    if (!engine->initialize(dict_path, config_path))
+    if (!engine->initialize(shared_.dict, shared_.spellings,
+                            shared_.syllabifier.get(), shared_.config))
         return 0;
     std::lock_guard<std::mutex> lock(mutex_);
     uint32_t id = next_id_++;

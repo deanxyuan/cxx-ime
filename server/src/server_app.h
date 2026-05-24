@@ -23,8 +23,7 @@ private:
     cxxime::IpcServer ipc_server_;
     HWND hwnd_ = nullptr;
     NOTIFYICONDATAW nid_ = {};
-    std::string dict_path_;
-    std::string config_path_;
+    std::string config_path_;  // Kept for tray "Settings..." menu
 };
 
 #endif // CXXIME_SERVER_APP_H_
