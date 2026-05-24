@@ -255,6 +255,72 @@ def resolve_input(path: str) -> tuple:
     sys.exit(1)
 
 
+def build_id_index_file(db_path: str, output_path: str) -> int:
+    """Build syllabary + ID index and serialize to .dict.idx file."""
+    import sqlite3
+    conn = sqlite3.connect(db_path)
+    cur = conn.cursor()
+    cur.execute("SELECT syllable_ids FROM dict ORDER BY syllable_ids")
+    rows = cur.fetchall()
+    conn.close()
+
+    # Build syllabary
+    syl_to_id = {}
+    syllabary = []
+    for (sid,) in rows:
+        if sid:
+            for s in sid.split(":"):
+                if s and s not in syl_to_id:
+                    syl_to_id[s] = len(syllabary)
+                    syllabary.append(s)
+
+    # Build ID index
+    id_entries = []  # list of (ids_list, entry_index)
+    for idx, (sid,) in enumerate(rows):
+        if not sid:
+            continue
+        ids = []
+        for s in sid.split(":"):
+            if s:
+                ids.append(syl_to_id[s])
+        if ids:
+            id_entries.append((ids, idx))
+
+    id_entries.sort(key=lambda x: x[0])
+
+    # Serialize syllabary
+    syl_data = bytearray()
+    syl_offsets = []
+    for s in syllabary:
+        syl_offsets.append(len(syl_data))
+        syl_data.extend(s.encode("utf-8"))
+        syl_data.append(0)
+
+    # Serialize ID index
+    idx_data = bytearray()
+    for ids, entry_idx in id_entries:
+        idx_data.extend(struct.pack("<I", len(ids)))
+        for i in ids:
+            idx_data.extend(struct.pack("<I", i))
+        idx_data.extend(struct.pack("<I", entry_idx))
+
+    # Header: magic "CXIDX\x02\0\0" + 4*uint32
+    header = b"CXIDX\x02\x00\x00"
+    header += struct.pack("<IIII",
+        len(syllabary), len(syl_data),
+        len(id_entries), len(idx_data))
+
+    with open(output_path, "wb") as f:
+        f.write(header)
+        f.write(struct.pack(f"<{len(syl_offsets)}I", *syl_offsets))
+        f.write(bytes(syl_data))
+        f.write(bytes(idx_data))
+
+    size_mb = os.path.getsize(output_path) / (1024 * 1024)
+    print(f"  dict.idx: {len(syllabary)} syllables, {len(id_entries)} entries, {size_mb:.1f} MB")
+    return len(id_entries)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Convert SQLite dict.db to binary format")
     parser.add_argument("--input", "-i", required=True,
@@ -271,6 +337,7 @@ def main():
             build_spellings_trie(db_path, args.output + ".spellings.bin")
         if not args.spellings_only:
             build_dict_bin(db_path, args.output + ".dict.bin")
+            build_id_index_file(db_path, args.output + ".dict.idx")
         print("Done.")
     finally:
         cleanup()

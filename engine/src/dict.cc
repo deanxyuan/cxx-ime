@@ -98,6 +98,12 @@ bool Dict::open_dict(const std::string& bin_path) {
     dict_strings_ = dict_data_ + hdr->strings_offset;
 
     CXXIME_LOG(L"Dict::open_dict OK entries=%u", dict_entry_count_);
+
+    // Try to load pre-built ID index (.dict.idx); build from scratch if absent
+    if (!load_id_index(bin_path)) {
+        build_syllabary();
+        build_id_index();
+    }
     return true;
 }
 
@@ -171,6 +177,7 @@ bool Dict::open_user_dict(const std::string& db_path) {
 }
 
 void Dict::unload_dict() {
+    unload_id_index();
     if (dict_data_) {
         UnmapViewOfFile(dict_data_);
         dict_data_ = nullptr;
@@ -503,11 +510,111 @@ bool Dict::create_test_dict(const std::string& path,
 
 // ─── Syllable ID index (librime-style integer-ID lookup) ─────────────
 
-void Dict::ensure_id_index() {
-    if (!syllable_to_id_.empty())
-        return;
-    build_syllabary();
-    build_id_index();
+void Dict::unload_id_index() {
+    if (idx_data_) {
+        UnmapViewOfFile(idx_data_);
+        idx_data_ = nullptr;
+    }
+    if (idx_mapping_handle_) {
+        CloseHandle(idx_mapping_handle_);
+        idx_mapping_handle_ = nullptr;
+    }
+    if (idx_file_handle_) {
+        CloseHandle(idx_file_handle_);
+        idx_file_handle_ = nullptr;
+    }
+    syllabary_.clear();
+    syllable_to_id_.clear();
+    id_index_.clear();
+}
+
+bool Dict::load_id_index(const std::string& dict_bin_path) {
+    // Derive .dict.idx path from .dict.bin path
+    std::string idx_path = dict_bin_path;
+    auto pos = idx_path.rfind(".dict.bin");
+    if (pos == std::string::npos) {
+        pos = idx_path.rfind(".dict.db");
+        if (pos == std::string::npos)
+            return false;
+    }
+    idx_path.replace(pos, std::string::npos, ".dict.idx");
+
+    HANDLE hFile = CreateFileA(idx_path.c_str(), GENERIC_READ, FILE_SHARE_READ,
+                               nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (hFile == INVALID_HANDLE_VALUE)
+        return false;
+
+    LARGE_INTEGER li;
+    if (!GetFileSizeEx(hFile, &li) || li.QuadPart < 28) {
+        CloseHandle(hFile);
+        return false;
+    }
+    size_t file_size = (size_t)li.QuadPart;
+
+    HANDLE hMap = CreateFileMappingW(hFile, nullptr, PAGE_READONLY, 0, 0, nullptr);
+    if (!hMap) {
+        CloseHandle(hFile);
+        return false;
+    }
+
+    const char* data = (const char*)MapViewOfFile(hMap, FILE_MAP_READ, 0, 0, 0);
+    if (!data) {
+        CloseHandle(hMap);
+        CloseHandle(hFile);
+        return false;
+    }
+
+    // Validate header
+    if (std::memcmp(data, "CXIDX\x02\0\0", 8) != 0) {
+        UnmapViewOfFile(data);
+        CloseHandle(hMap);
+        CloseHandle(hFile);
+        return false;
+    }
+
+    const uint32_t* hdr = (const uint32_t*)(data + 8);
+    uint32_t syl_count    = hdr[0];
+    uint32_t syl_str_size = hdr[1];
+    uint32_t idx_count    = hdr[2];
+    uint32_t idx_data_size = hdr[3];
+
+    // Syllabary section
+    const uint32_t* syl_offsets = (const uint32_t*)(data + 24);
+    const char* syl_strings = (const char*)(syl_offsets + syl_count);
+
+    syllabary_.resize(syl_count);
+    syllable_to_id_.clear();
+    for (uint32_t i = 0; i < syl_count; ++i) {
+        const char* s = syl_strings + syl_offsets[i];
+        syllabary_[i] = s;
+        syllable_to_id_[s] = i;
+    }
+
+    // ID index section
+    const uint8_t* idx_data = (const uint8_t*)(syl_strings + syl_str_size);
+    const uint8_t* idx_end  = idx_data + idx_data_size;
+
+    id_index_.clear();
+    id_index_.reserve(idx_count);
+    const uint8_t* p = idx_data;
+    for (uint32_t i = 0; i < idx_count && p < idx_end; ++i) {
+        uint32_t cnt = *(const uint32_t*)p; p += 4;
+        if (p + cnt * 4 + 4 > idx_end)
+            break;
+        IdEntry e;
+        e.ids.assign((const uint32_t*)p, (const uint32_t*)p + cnt);
+        p += cnt * 4;
+        e.index = *(const uint32_t*)p; p += 4;
+        id_index_.push_back(std::move(e));
+    }
+
+    idx_file_handle_ = hFile;
+    idx_mapping_handle_ = hMap;
+    idx_data_ = data;
+
+    CXXIME_LOG(L"Dict::load_id_index OK syllables=%u idx=%zu size=%zu",
+               syl_count, id_index_.size(), file_size);
+    return true;
 }
 
 void Dict::build_syllabary() {
@@ -573,13 +680,11 @@ void Dict::build_id_index() {
 }
 
 uint32_t Dict::syllable_to_id(const std::string& syllable) const {
-    const_cast<Dict*>(this)->ensure_id_index();
     auto it = syllable_to_id_.find(syllable);
     return it != syllable_to_id_.end() ? it->second : UINT32_MAX;
 }
 
 bool Dict::has_prefix(const std::vector<uint32_t>& query_ids) const {
-    const_cast<Dict*>(this)->ensure_id_index();
     if (query_ids.empty() || id_index_.empty())
         return false;
     uint32_t lo = 0, hi = (uint32_t)id_index_.size();
@@ -600,7 +705,6 @@ bool Dict::has_prefix(const std::vector<uint32_t>& query_ids) const {
 
 std::vector<Candidate> Dict::lookup_by_ids(const std::vector<uint32_t>& query_ids, int limit) {
     std::vector<Candidate> results;
-    const_cast<Dict*>(this)->ensure_id_index();
     if (query_ids.empty() || id_index_.empty())
         return results;
 
