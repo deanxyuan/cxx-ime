@@ -51,9 +51,10 @@ public:
                                  const std::vector<std::tuple<std::string, std::string, int>>& entries);
 
 private:
-    void ensure_id_index();
+    bool load_id_index(const std::string& dict_bin_path);
     void build_syllabary();
     void build_id_index();
+    void unload_id_index();
 
     void* dict_file_handle_ = nullptr;
     void* dict_mapping_handle_ = nullptr;
@@ -63,6 +64,11 @@ private:
     const char* dict_strings_ = nullptr;
     uint32_t dict_entry_count_ = 0;
     sqlite3* user_db_ = nullptr;
+
+    // Integer ID index (.dict.idx mmap)
+    void* idx_file_handle_ = nullptr;
+    void* idx_mapping_handle_ = nullptr;
+    const char* idx_data_ = nullptr;
 
     // Integer ID index (librime-style syllable ID lookup)
     std::vector<std::string> syllabary_;
