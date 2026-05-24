@@ -72,9 +72,10 @@ bool ServerApp::initialize(const std::string& dict_path, const std::string& conf
     wcscpy_s(nid_.szTip, L"CxxIME Server");
     Shell_NotifyIconW(NIM_ADD, &nid_);
 
-    // Start IPC server
+    // Start IPC server with heartbeat (60s timeout)
     ipc_server_.set_handler([this](const cxxime::IPCRequest& req) { return handle_request(req); });
-    if (!ipc_server_.start()) {
+
+    if (!ipc_server_.start(cxxime::IPC_PIPE_BASE_NAME)) {
         MessageBoxW(nullptr, L"Failed to start IPC server.", L"CxxIME Server", MB_OK | MB_ICONERROR);
         return false;
     }
@@ -101,29 +102,35 @@ void ServerApp::finalize() {
 }
 
 cxxime::IPCResponse ServerApp::handle_request(const cxxime::IPCRequest& request) {
-    CXXIME_LOG(L"handle_request: cmd=%u, session=%u", (uint32_t)request.command, request.session_id);
+    CXXIME_LOG(L"handle_request: cmd=%u, session=%u",
+               (uint32_t)request.command, request.session_id);
 
     cxxime::IPCResponse response = {};
     memset(&response, 0, sizeof(response));
+    response.status = cxxime::IPCStatus::OK;
 
     switch (request.command) {
     case cxxime::IPCCommand::START_SESSION: {
         uint32_t id = session_mgr_.create_session(dict_path_, config_path_);
-        response.status = id;  // 0 = failure, non-zero = session_id
+        if (id == 0) {
+            response.status = cxxime::IPCStatus::ERR_ENGINE_NOT_INITIALIZED;
+            response.highlighted = 0;
+        } else {
+            response.highlighted = id;
+        }
         CXXIME_LOG(L"START_SESSION: new session=%u", id);
         break;
     }
 
     case cxxime::IPCCommand::END_SESSION:
         session_mgr_.destroy_session(request.session_id);
-        response.status = 0;
         CXXIME_LOG(L"END_SESSION: session=%u", request.session_id);
         break;
 
     case cxxime::IPCCommand::PROCESS_KEY: {
         auto* engine = session_mgr_.get_engine(request.session_id);
         if (!engine) {
-            response.status = 1;
+            response.status = cxxime::IPCStatus::ERR_INVALID_SESSION;
             break;
         }
 
@@ -140,7 +147,6 @@ cxxime::IPCResponse ServerApp::handle_request(const cxxime::IPCRequest& request)
         if (result == cxxime::ProcessResult::COMMITTED) {
             std::string commit = engine->get_commit_text();
             strncpy_s(response.commit_text, commit.c_str(), sizeof(response.commit_text) - 1);
-            response.status = 0;
         } else if (result == cxxime::ProcessResult::ACCEPTED) {
             const auto& ctx = engine->context();
             strncpy_s(response.preedit, ctx.pinyin_buffer.c_str(), sizeof(response.preedit) - 1);
@@ -150,9 +156,8 @@ cxxime::IPCResponse ServerApp::handle_request(const cxxime::IPCRequest& request)
                           sizeof(response.candidates[i]) - 1);
             }
             response.highlighted = (uint32_t)ctx.candidates.highlighted;
-            response.status = 0;
         } else {
-            response.status = 1; // Not eaten
+            response.status = cxxime::IPCStatus::ERR_ENGINE_PROCESS_FAILED;
         }
         break;
     }
@@ -160,15 +165,14 @@ cxxime::IPCResponse ServerApp::handle_request(const cxxime::IPCRequest& request)
     case cxxime::IPCCommand::SELECT_CANDIDATE: {
         auto* engine = session_mgr_.get_engine(request.session_id);
         if (!engine) {
-            response.status = 1;
+            response.status = cxxime::IPCStatus::ERR_INVALID_SESSION;
             break;
         }
         if (engine->select_candidate(request.candidate_index)) {
             std::string commit = engine->get_commit_text();
             strncpy_s(response.commit_text, commit.c_str(), sizeof(response.commit_text) - 1);
-            response.status = 0;
         } else {
-            response.status = 1;
+            response.status = cxxime::IPCStatus::ERR_ENGINE_PROCESS_FAILED;
         }
         break;
     }
@@ -179,9 +183,8 @@ cxxime::IPCResponse ServerApp::handle_request(const cxxime::IPCRequest& request)
             std::string commit = engine->get_commit_text();
             strncpy_s(response.commit_text, commit.c_str(), sizeof(response.commit_text) - 1);
             engine->clear();
-            response.status = 0;
         } else {
-            response.status = 1;
+            response.status = cxxime::IPCStatus::ERR_INVALID_SESSION;
         }
         break;
     }
@@ -190,15 +193,13 @@ cxxime::IPCResponse ServerApp::handle_request(const cxxime::IPCRequest& request)
         auto* engine = session_mgr_.get_engine(request.session_id);
         if (engine) {
             engine->clear();
-            response.status = 0;
         } else {
-            response.status = 1;
+            response.status = cxxime::IPCStatus::ERR_INVALID_SESSION;
         }
         break;
     }
 
     case cxxime::IPCCommand::FOCUS_IN:
-        response.status = 0;
         break;
 
     case cxxime::IPCCommand::FOCUS_OUT: {
@@ -206,12 +207,11 @@ cxxime::IPCResponse ServerApp::handle_request(const cxxime::IPCRequest& request)
         if (engine) {
             engine->clear();
         }
-        response.status = 0;
         break;
     }
 
     default:
-        response.status = 0;
+        response.status = cxxime::IPCStatus::ERR_UNKNOWN_COMMAND;
         break;
     }
 
@@ -236,7 +236,6 @@ LRESULT CALLBACK ServerApp::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             int cmd = TrackPopupMenu(hMenu, TPM_RETURNCMD, pt.x, pt.y, 0, hwnd, nullptr);
             DestroyMenu(hMenu);
             if (cmd == 1) {
-                // Open config file in default editor
                 if (app && !app->config_path_.empty()) {
                     int wlen = MultiByteToWideChar(CP_UTF8, 0, app->config_path_.c_str(), -1, nullptr, 0);
                     std::wstring wpath(wlen - 1, L'\0');
@@ -247,7 +246,6 @@ LRESULT CALLBACK ServerApp::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     MessageBoxW(hwnd, L"Config file not found.", L"CxxIME", MB_OK | MB_ICONWARNING);
                 }
             } else if (cmd == 2) {
-                // Open DebugView or show log hint
                 MessageBoxW(hwnd,
                     L"Use DebugView (Sysinternals) to view logs.\n"
                     L"Download: https://learn.microsoft.com/en-us/sysinternals/downloads/debugview\n\n"
