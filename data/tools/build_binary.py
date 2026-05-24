@@ -302,9 +302,9 @@ def build_id_index_file(db_path: str, output_path: str) -> int:
             id_data.extend(struct.pack("<I", i))
         id_data.extend(struct.pack("<I", entry_idx))
 
-    # Header v3
-    header = b"CXIDX\x03\x00\x00"
-    header += struct.pack("<IIII",
+    # Header: magic(8) + version(4) + 4*uint32 = 28 bytes
+    header = b"CXIDX\0\0\0"
+    header += struct.pack("<IIIII", 3,
         len(syllabary), len(syl_data),
         len(id_entries), len(id_data))
 

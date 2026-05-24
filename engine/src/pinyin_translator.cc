@@ -35,24 +35,28 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
         std::vector<uint32_t> ids;
         for (auto& s : syllables) {
             uint32_t id = dict_->syllable_to_id(s);
-            if (id == UINT32_MAX) return;  // unknown syllable, skip
+            if (id == UINT32_MAX) return;
             ids.push_back(id);
         }
         id_sequences.push_back(std::move(ids));
     };
 
-    // 1. Try normal segmentation
-    add_path(segmentor_.segment_best(pinyin));
-
-    // 2. Try syllabifier for abbreviation expansion
+    // 1. Syllabifier for abbreviation expansion (reserve first)
     if (syllabifier_) {
         auto paths = syllabifier_->segment(pinyin);
+        id_sequences.reserve(paths.size() + 1);
         for (auto& path : paths)
             add_path(path);
+    } else {
+        id_sequences.reserve(2);
     }
+
+    // 2. Normal segmentation
+    add_path(segmentor_.segment_best(pinyin));
 
     // Filter: only keep paths that actually have dict entries
     std::vector<std::vector<uint32_t>> live_ids;
+    live_ids.reserve(id_sequences.size());
     for (auto& ids : id_sequences) {
         if (dict_->has_prefix(ids))
             live_ids.push_back(std::move(ids));
@@ -60,6 +64,7 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
 
     // Dedup and query
     std::vector<Candidate> merged;
+    merged.reserve(live_ids.size() * (size_t)fetch_limit);
     std::unordered_set<std::string> seen_text;
     std::set<std::vector<uint32_t>> seen_ids;
 
