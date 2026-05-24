@@ -98,9 +98,6 @@ bool Dict::open_dict(const std::string& bin_path) {
     dict_strings_ = dict_data_ + hdr->strings_offset;
 
     CXXIME_LOG(L"Dict::open_dict OK entries=%u", dict_entry_count_);
-
-    build_syllabary();
-    build_id_index();
     return true;
 }
 
@@ -506,6 +503,13 @@ bool Dict::create_test_dict(const std::string& path,
 
 // ─── Syllable ID index (librime-style integer-ID lookup) ─────────────
 
+void Dict::ensure_id_index() {
+    if (!syllable_to_id_.empty())
+        return;
+    build_syllabary();
+    build_id_index();
+}
+
 void Dict::build_syllabary() {
     syllabary_.clear();
     syllable_to_id_.clear();
@@ -569,11 +573,13 @@ void Dict::build_id_index() {
 }
 
 uint32_t Dict::syllable_to_id(const std::string& syllable) const {
+    const_cast<Dict*>(this)->ensure_id_index();
     auto it = syllable_to_id_.find(syllable);
     return it != syllable_to_id_.end() ? it->second : UINT32_MAX;
 }
 
 bool Dict::has_prefix(const std::vector<uint32_t>& query_ids) const {
+    const_cast<Dict*>(this)->ensure_id_index();
     if (query_ids.empty() || id_index_.empty())
         return false;
     uint32_t lo = 0, hi = (uint32_t)id_index_.size();
@@ -594,6 +600,7 @@ bool Dict::has_prefix(const std::vector<uint32_t>& query_ids) const {
 
 std::vector<Candidate> Dict::lookup_by_ids(const std::vector<uint32_t>& query_ids, int limit) {
     std::vector<Candidate> results;
+    const_cast<Dict*>(this)->ensure_id_index();
     if (query_ids.empty() || id_index_.empty())
         return results;
 
