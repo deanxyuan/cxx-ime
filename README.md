@@ -49,16 +49,27 @@ build.bat clean        # 清理构建目录
 
 ## 获取词典
 
-CxxIME 使用 SQLite 格式的拼音词典作为**源数据**，运行时通过 `build_binary.py` 转换为内存映射（mmap）二进制格式。可以从 [rime-ice](https://github.com/iDvel/rime-ice)（雾凇拼音）自动下载：
+CxxIME 使用 SQLite 格式的词典作为**源数据**，运行时通过 `build_binary.py` 转换为内存映射（mmap）二进制格式。
+
+### 拼音词典
+
+来源：[rime-ice](https://github.com/iDvel/rime-ice)（雾凇拼音，约 190 万词条）
 
 ```cmd
 cd data
-python tools/fetch_dict.py
+python tools/fetch_dict.py          # 下载 → data/pinyin.dict.db（约 90 MB）
 ```
 
-这会下载约 190 万词条的拼音词典（约 90 MB），保存为 `data/pinyin.dict.db`。
+### 五笔词典
 
-也可以手动使用 `data/tools/dict_convert.py` 转换 RIME 格式词典：
+来源：[KyleBing/rime-wubi86-jidian](https://github.com/KyleBing/rime-wubi86-jidian)（五笔 86 极点版）
+
+```cmd
+cd data
+python tools/fetch_wubi.py          # 下载 → data/wubi86.dict.db
+```
+
+也可以手动用 `dict_convert.py` 转换其他 RIME 格式词典：
 
 ```cmd
 python tools/dict_convert.py input.yaml output.db
@@ -68,12 +79,14 @@ python tools/dict_convert.py input.yaml output.db
 
 | 文件 | 来源 | 是否提交 | 说明 |
 |------|------|----------|------|
-| `pinyin.dict.db.zip` | `fetch_dict.py` 下载后压缩 | **是** | **提交到仓库的分发副本** |
-| `pinyin.dict.db` | 解压 `.zip` 得到 | 否（`.gitignore`） | SQLite 源词典 |
-| `pinyin.dict.bin` | `build_binary.py` 生成 | 否 | 二进制 mmap 词典（运行时） |
+| `pinyin.dict.db.zip` | `fetch_dict.py` 下载后压缩 | **是** | 拼音词典分发副本 |
+| `wubi86.dict.db.zip` | `fetch_wubi.py` 下载后压缩 | **是** | 五笔词典分发副本 |
+| `pinyin.dict.db` | 解压 `.zip` 得到 | 否 | 拼音 SQLite 源词典 |
+| `wubi86.dict.db` | 解压 `.zip` 得到 | 否 | 五笔 SQLite 源词典 |
+| `pinyin.dict.bin` | `build_binary.py` 生成 | 否 | 拼音二进制 mmap 词典（运行时） |
 | `pinyin.spellings.bin` | `build_binary.py` 生成 | 否 | Patricia trie 拼写索引（运行时） |
 | `pinyin.dict.idx` | `build_binary.py` 生成 | 否 | 音节 ID 索引（运行时） |
-| `wubi86.dict.db` | `fetch_wubi.py` 下载 | 否 | Wubi86 SQLite 源词典 |
+| `wubi86.dict.bin` | `build_binary.py` 生成 | 否 | 五笔二进制 mmap 词典（运行时） |
 
 ### 词典维护
 
