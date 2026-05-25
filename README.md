@@ -189,8 +189,17 @@ uninstall.bat "D:\MyPath\CxxIME"    # 自定义路径
 | `dict_query` | 拼音/五笔查词（`--mode pinyin\|wubi`，binary 词典） |
 | `sqlite_query` | 直读 `.db` 文件调试 |
 | `ipc_tool` | IPC 交互测试（connect / key / bench / stress 等） |
+| `candidate_window_tool` | 候选窗口可视化测试（主题/布局/D2D/preedit 切换） |
 
 ## 测试
+
+开发构建需要指定数据目录：
+
+```cmd
+cmake .. -DCXXIME_PRODUCTION_BUILD=OFF
+```
+
+测试：
 
 ```cmd
 cd build
@@ -209,11 +218,11 @@ ctest -C Debug
 | 会话管理 | ✅ 就绪 | 共享资源预加载，session 瞬时创建 |
 | 用户词典 | ✅ 就绪 | 内存数据结构 + TSV 持久化，shared_mutex 并发读写 |
 | TSF DLL | ⚠️ 基础可用 | 按键捕获、编辑会话、候选上屏；composition 显示和窗口定位待完善 |
-| 候选窗口 | ⚠️ 基础可用 | GDI 渲染；D2D 渲染器已实现未启用，多布局类型待完善 |
+| 候选窗口 | ✅ 就绪 | Weasel 风格布局，GDI/D2D 双渲染器，14 套配色，DPI 缩放，圆角窗口 |
 | 安装部署 | ⚠️ 基础可用 | install/uninstall/package 脚本可用，需管理员权限 |
-| 配置系统 | ⚠️ 基础可用 | JSON 配置（page_size, font, theme），可配置项有限 |
+| 配置系统 | ✅ 就绪 | JSON 配置（page_size, font, theme, layout spacing/padding） |
 
-> 单元测试：87 个用例，8 个独立 exe，`ctest -C Debug` 全部通过。
+> 单元测试：95 个用例，9 个独立 exe，`ctest -C Debug` 全部通过。
 
 ## 许可证
 
