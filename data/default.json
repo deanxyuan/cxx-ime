@@ -12,6 +12,7 @@
         "font_face": "Microsoft YaHei UI",
         "font_point": 14,
         "layout": "horizontal",
+        "render_backend": "gdi",
         "candidate_count": 7,
         "inline_preedit": true,
         "preedit_type": "composition"
