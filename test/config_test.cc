@@ -11,7 +11,7 @@ TEST(Config, defaults) {
     ASSERT_EQ(cfg.font_size, 14);
     ASSERT_TRUE(cfg.font_name == "Microsoft YaHei UI");
     ASSERT_TRUE(cfg.layout == "horizontal");
-    ASSERT_TRUE(cfg.theme == "light");
+    ASSERT_TRUE(cfg.theme == "azure");
 }
 
 TEST(Config, load_valid_json) {
