@@ -26,6 +26,7 @@ bool CandidateWindow::create(HWND parent, const Config& config) {
     if (hwnd_) {
         SetWindowLongPtrW(hwnd_, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(this));
         theme_ = build_theme_from_config(config);
+        if (config.render_backend != "gdi") set_render_backend(RenderBackend::D2D);
         // DPI scale (like Weasel's dpiScaleLayout = dpi / 96)
         HDC dc = GetDC(hwnd_);
         dpi_scale_ = GetDeviceCaps(dc, LOGPIXELSX) / 96.0f;
