@@ -1,7 +1,7 @@
 {
     "preset_color_schemes": {
         "aqua": {
-            "name": "碧水／Aqua",
+            "name": "碧水",
             "author": "佛振",
             "back_color": 15528174,
             "border_color": 14737632,
@@ -13,7 +13,7 @@
             "hilited_candidate_back_color": 16398858
         },
         "azure": {
-            "name": "青天／Azure",
+            "name": "青天",
             "author": "佛振",
             "back_color": 9130497,
             "border_color": 9130497,
@@ -26,7 +26,7 @@
             "comment_text_color": 13014628
         },
         "luna": {
-            "name": "明月／Luna",
+            "name": "明月",
             "author": "佛振",
             "back_color": 16777215,
             "border_color": 13421772,
@@ -38,7 +38,7 @@
             "hilited_candidate_back_color": 0
         },
         "dark_temple": {
-            "name": "暗堂／Dark Temple",
+            "name": "暗堂",
             "author": "佛振",
             "back_color": 2236962,
             "border_color": 2236962,
@@ -51,7 +51,7 @@
             "comment_text_color": 6329982
         },
         "lost_temple": {
-            "name": "孤寺／Lost Temple",
+            "name": "孤寺",
             "author": "佛振",
             "back_color": 4473924,
             "border_color": 4473924,
@@ -63,7 +63,7 @@
             "hilited_candidate_back_color": 8576714
         },
         "starcraft": {
-            "name": "星際／StarCraft",
+            "name": "星際",
             "author": "Contralisk",
             "back_color": 0,
             "border_color": 10502416,
@@ -75,7 +75,7 @@
             "hilited_candidate_back_color": 0
         },
         "google": {
-            "name": "谷歌／Google",
+            "name": "谷歌",
             "author": "skoj",
             "back_color": 16777215,
             "border_color": 14876418,
@@ -87,7 +87,7 @@
             "hilited_candidate_back_color": 13579544
         },
         "solarized_rock": {
-            "name": "曬經石／Solarized Rock",
+            "name": "曬經石",
             "author": "Aben",
             "back_color": 3554048,
             "border_color": 3554048,
@@ -99,7 +99,7 @@
             "hilited_candidate_back_color": 8561732
         },
         "ps4": {
-            "name": "遊驛四／PS4",
+            "name": "遊驛四",
             "author": "Patricivs",
             "back_color": 0,
             "border_color": 0,
@@ -123,7 +123,7 @@
             "hilited_candidate_back_color": 1611289
         },
         "modern_warfare": {
-            "name": "現代戰爭／Modern Warfare",
+            "name": "現代戰爭",
             "author": "P1461",
             "back_color": 662285,
             "border_color": 4971397,
@@ -147,7 +147,7 @@
             "hilited_candidate_back_color": 5845569
         },
         "metroblue": {
-            "name": "现代蓝／Metro Blue",
+            "name": "现代蓝",
             "author": "Prcuvu",
             "back_color": 16777215,
             "border_color": 14137688,
