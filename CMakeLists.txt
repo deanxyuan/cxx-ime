@@ -14,6 +14,15 @@ endif()
 
 option(CXXIME_BUILD_TESTS "Build tests" ON)
 
+# Data directory resolution:
+#   Production (default): CXXIME_PRODUCTION_BUILD=ON  → %APPDATA%/CxxIME/
+#   Development:          CXXIME_PRODUCTION_BUILD=OFF → ${CMAKE_SOURCE_DIR}/data/
+option(CXXIME_PRODUCTION_BUILD "Build for production install" ON)
+
+if(NOT CXXIME_PRODUCTION_BUILD)
+    add_compile_definitions(CXXIME_DATA_DIR="${CMAKE_SOURCE_DIR}/data/")
+endif()
+
 add_subdirectory(third_party/sqlite3)
 add_subdirectory(third_party/nlohmann)
 add_subdirectory(shared)
@@ -31,3 +40,4 @@ endif()
 add_subdirectory(tools/dict_query)
 add_subdirectory(tools/sqlite_query)
 add_subdirectory(tools/ipc_test)
+add_subdirectory(tools/candidate_window_tool)
