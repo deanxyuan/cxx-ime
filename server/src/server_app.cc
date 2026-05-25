@@ -2,52 +2,19 @@
 
 #include "server_app.h"
 #include <cxxime/logging.h>
+#include <cxxime/data_path.h>
 #include <cstring>
 
 #define WM_TRAYICON (WM_USER + 1)
 
 bool ServerApp::initialize(const std::string& dict_path, const std::string& config_path) {
-    // Resolve exe directory for auto-detection
-    char exe_path[MAX_PATH] = {};
-    GetModuleFileNameA(nullptr, exe_path, MAX_PATH);
-    std::string path = exe_path;
-    auto pos = path.find_last_of("\\/");
-    std::string dir = (pos != std::string::npos) ? path.substr(0, pos + 1) : "";
-
-    // Resolve dictionary path: explicit arg > exe dir > ../data/
-    std::string resolved_dict = dict_path;
-    if (resolved_dict.empty()) {
-        std::string candidate1 = dir + "pinyin.dict.db";
-        std::string candidate2 = dir + "..\\data\\pinyin.dict.db";
-        DWORD attr1 = GetFileAttributesA(candidate1.c_str());
-        DWORD attr2 = GetFileAttributesA(candidate2.c_str());
-        if (attr1 != INVALID_FILE_ATTRIBUTES)
-            resolved_dict = candidate1;
-        else if (attr2 != INVALID_FILE_ATTRIBUTES)
-            resolved_dict = candidate2;
-        else
-            resolved_dict = candidate1;
-    }
-
-    // Resolve config path: explicit arg > exe dir > ../data/
-    std::string cfg = config_path;
-    if (cfg.empty()) {
-        std::string candidate1 = dir + "default.json";
-        std::string candidate2 = dir + "..\\data\\default.json";
-        DWORD attr1 = GetFileAttributesA(candidate1.c_str());
-        DWORD attr2 = GetFileAttributesA(candidate2.c_str());
-        if (attr1 != INVALID_FILE_ATTRIBUTES)
-            cfg = candidate1;
-        else if (attr2 != INVALID_FILE_ATTRIBUTES)
-            cfg = candidate2;
-    }
+    std::string resolved_dict = dict_path.empty() ? cxxime::data_path("pinyin.dict.db") : dict_path;
+    std::string cfg = config_path.empty() ? cxxime::data_path("default.json") : config_path;
     config_path_ = cfg;
 
     CXXIME_LOG(L"Dictionary path: %S", resolved_dict.c_str());
     CXXIME_LOG(L"Config path: %S", config_path_.c_str());
 
-    // Pre-load shared resources (Dict, SpellingsIndex, Config) once at startup.
-    // Session creation will reference these instead of opening files again.
     if (!session_mgr_.initialize(resolved_dict, config_path_)) {
         MessageBoxW(nullptr, L"Failed to initialize session manager.", L"CxxIME Server",
                     MB_OK | MB_ICONERROR);

@@ -5,6 +5,7 @@
 #include "edit_session.h"
 #include "display_attribute.h"
 #include <cxxime/logging.h>
+#include <cxxime/data_path.h>
 #include "preedit_mode.h"
 #include <cstring>
 #include <shellapi.h>
@@ -69,7 +70,7 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
     _register_preserved_key();
 
     // Create candidate window (use HWND_MESSAGE parent since TSF runs in-app)
-    _candidateWindow.create(nullptr);
+    _candidateWindow.create(nullptr, _config);
     _candidateWindow.set_layout(_config.layout);
     _candidateWindow.set_click_callback([this](int index) {
         cxxime::IPCResponse resp = {};
@@ -532,22 +533,7 @@ uint32_t TextService::_get_modifiers() const {
 }
 
 void TextService::_load_config() {
-    wchar_t dll_path[MAX_PATH] = {};
-    GetModuleFileNameW(g_hInst, dll_path, MAX_PATH);
-    // Navigate from bin/cxxime_tsf.dll to data/default.json
-    std::wstring path(dll_path);
-    auto pos = path.find_last_of(L"\\/");
-    if (pos != std::wstring::npos) {
-        std::wstring dir = path.substr(0, pos);  // bin/
-        pos = dir.find_last_of(L"\\/");
-        if (pos != std::wstring::npos) {
-            std::wstring root = dir.substr(0, pos);  // install root
-            std::wstring config_path = root + L"\\data\\default.json";
-            char narrow[MAX_PATH] = {};
-            WideCharToMultiByte(CP_UTF8, 0, config_path.c_str(), -1, narrow, MAX_PATH, nullptr, nullptr);
-            _config.load(narrow);
-        }
-    }
+    _config.load(cxxime::data_path("default.json"));
 }
 
 void TextService::_send_modifier_key_up(WPARAM wParam) {
