@@ -26,10 +26,10 @@ TEST(Layout, horizontal_single_row) {
     auto lr = cxxime::calculate_horizontal_layout(widths, 24, 8, 600, 8);
 
     ASSERT_EQ(lr.rects.size(), 3u);
-    ASSERT_EQ(lr.rects[0].rc.top, lr.rects[1].rc.top);
-    ASSERT_EQ(lr.rects[1].rc.top, lr.rects[2].rc.top);
-    ASSERT_TRUE(lr.rects[0].rc.left < lr.rects[1].rc.left);
-    ASSERT_TRUE(lr.rects[1].rc.left < lr.rects[2].rc.left);
+    ASSERT_EQ(lr.rects[0].highlight_rect.top, lr.rects[1].highlight_rect.top);
+    ASSERT_EQ(lr.rects[1].highlight_rect.top, lr.rects[2].highlight_rect.top);
+    ASSERT_TRUE(lr.rects[0].highlight_rect.left < lr.rects[1].highlight_rect.left);
+    ASSERT_TRUE(lr.rects[1].highlight_rect.left < lr.rects[2].highlight_rect.left);
 }
 
 TEST(Layout, horizontal_wrap) {
@@ -37,8 +37,8 @@ TEST(Layout, horizontal_wrap) {
     auto lr = cxxime::calculate_horizontal_layout(widths, 24, 8, 200, 8);
 
     ASSERT_EQ(lr.rects.size(), 3u);
-    ASSERT_EQ(lr.rects[0].rc.top, lr.rects[1].rc.top);
-    ASSERT_TRUE(lr.rects[2].rc.top > lr.rects[1].rc.top);
+    ASSERT_EQ(lr.rects[0].highlight_rect.top, lr.rects[1].highlight_rect.top);
+    ASSERT_TRUE(lr.rects[2].highlight_rect.top > lr.rects[1].highlight_rect.top);
 }
 
 TEST(Layout, horizontal_empty) {
@@ -55,8 +55,8 @@ TEST(Layout, vertical_basic) {
     auto lr = cxxime::calculate_vertical_layout(widths, 24, 600, 8);
 
     ASSERT_EQ(lr.rects.size(), 3u);
-    ASSERT_TRUE(lr.rects[0].rc.top < lr.rects[1].rc.top);
-    ASSERT_TRUE(lr.rects[1].rc.top < lr.rects[2].rc.top);
+    ASSERT_TRUE(lr.rects[0].highlight_rect.top < lr.rects[1].highlight_rect.top);
+    ASSERT_TRUE(lr.rects[1].highlight_rect.top < lr.rects[2].highlight_rect.top);
     ASSERT_EQ(lr.rects[0].index, 0);
     ASSERT_EQ(lr.rects[1].index, 1);
     ASSERT_EQ(lr.rects[2].index, 2);
