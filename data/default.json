@@ -5,16 +5,34 @@
         "description": "CxxIME default pinyin schema"
     },
     "engine": {
-        "page_size": 9,
+        "page_size": 7,
         "max_pinyin_length": 64
     },
     "style": {
         "font_face": "Microsoft YaHei UI",
         "font_point": 14,
         "layout": "horizontal",
-        "candidate_count": 9,
+        "candidate_count": 7,
         "inline_preedit": true,
         "preedit_type": "composition"
+    },
+    "layout": {
+        "min_width": 160,
+        "max_width": 0,
+        "min_height": 0,
+        "max_height": 0,
+        "margin_x": 12,
+        "margin_y": 12,
+        "spacing": 10,
+        "candidate_spacing": 11,
+        "hilite_spacing": 4,
+        "hilite_padding_x": 5,
+        "hilite_padding_y": 2,
+        "round_corner": 4,
+        "round_corner_ex": 4,
+        "label_font_point": 0,
+        "border_width": 1,
+        "align_type": "center"
     },
     "ascii_composer": {
         "switch_key": {
@@ -25,5 +43,5 @@
         },
         "good_old_caps_lock": false
     },
-    "theme": "light"
+    "theme": "azure"
 }

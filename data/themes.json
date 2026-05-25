@@ -1,0 +1,163 @@
+{
+    "preset_color_schemes": {
+        "aqua": {
+            "name": "碧水／Aqua",
+            "author": "佛振",
+            "back_color": 15528174,
+            "border_color": 14737632,
+            "text_color": 0,
+            "candidate_text_color": 0,
+            "hilited_text_color": 0,
+            "hilited_back_color": 13937108,
+            "hilited_candidate_text_color": 16777215,
+            "hilited_candidate_back_color": 16398858
+        },
+        "azure": {
+            "name": "青天／Azure",
+            "author": "佛振",
+            "back_color": 9130497,
+            "border_color": 9130497,
+            "text_color": 16775888,
+            "candidate_text_color": 16775406,
+            "hilited_text_color": 16775406,
+            "hilited_back_color": 9130497,
+            "hilited_candidate_text_color": 8388351,
+            "hilited_candidate_back_color": 11107841,
+            "comment_text_color": 13014628
+        },
+        "luna": {
+            "name": "明月／Luna",
+            "author": "佛振",
+            "back_color": 16777215,
+            "border_color": 13421772,
+            "text_color": 0,
+            "candidate_text_color": 0,
+            "hilited_text_color": 0,
+            "hilited_back_color": 8388607,
+            "hilited_candidate_text_color": 16777215,
+            "hilited_candidate_back_color": 0
+        },
+        "dark_temple": {
+            "name": "暗堂／Dark Temple",
+            "author": "佛振",
+            "back_color": 2236962,
+            "border_color": 2236962,
+            "text_color": 9632503,
+            "candidate_text_color": 15131367,
+            "hilited_text_color": 10153609,
+            "hilited_back_color": 2236962,
+            "hilited_candidate_text_color": 9632474,
+            "hilited_candidate_back_color": 3355443,
+            "comment_text_color": 6329982
+        },
+        "lost_temple": {
+            "name": "孤寺／Lost Temple",
+            "author": "佛振",
+            "back_color": 4473924,
+            "border_color": 4473924,
+            "text_color": 15258486,
+            "candidate_text_color": 15258486,
+            "hilited_text_color": 8576714,
+            "hilited_back_color": 2236962,
+            "hilited_candidate_text_color": 0,
+            "hilited_candidate_back_color": 8576714
+        },
+        "starcraft": {
+            "name": "星際／StarCraft",
+            "author": "Contralisk",
+            "back_color": 0,
+            "border_color": 10502416,
+            "text_color": 13421256,
+            "candidate_text_color": 3193660,
+            "hilited_text_color": 16695958,
+            "hilited_back_color": 0,
+            "hilited_candidate_text_color": 6357179,
+            "hilited_candidate_back_color": 0
+        },
+        "google": {
+            "name": "谷歌／Google",
+            "author": "skoj",
+            "back_color": 16777215,
+            "border_color": 14876418,
+            "text_color": 6710886,
+            "candidate_text_color": 0,
+            "hilited_text_color": 0,
+            "hilited_back_color": 16777215,
+            "hilited_candidate_text_color": 16777215,
+            "hilited_candidate_back_color": 13579544
+        },
+        "solarized_rock": {
+            "name": "曬經石／Solarized Rock",
+            "author": "Aben",
+            "back_color": 3554048,
+            "border_color": 3554048,
+            "text_color": 3781509,
+            "candidate_text_color": 9876612,
+            "hilited_text_color": 2796074,
+            "hilited_back_color": 3554048,
+            "hilited_candidate_text_color": 16777215,
+            "hilited_candidate_back_color": 8561732
+        },
+        "ps4": {
+            "name": "遊驛四／PS4",
+            "author": "Patricivs",
+            "back_color": 0,
+            "border_color": 0,
+            "text_color": 16777215,
+            "candidate_text_color": 16777215,
+            "label_text_color": 16777215,
+            "hilited_candidate_text_color": 16777215,
+            "hilited_candidate_back_color": 15245056
+        },
+        "dota_2": {
+            "name": "DOTA 2",
+            "author": "Patricivs",
+            "back_color": 1183504,
+            "border_color": 1183504,
+            "text_color": 16777215,
+            "label_color": 6057588,
+            "candidate_text_color": 6057588,
+            "hilited_text_color": 1611289,
+            "hilited_back_color": 1183504,
+            "hilited_candidate_text_color": 16777215,
+            "hilited_candidate_back_color": 1611289
+        },
+        "modern_warfare": {
+            "name": "現代戰爭／Modern Warfare",
+            "author": "P1461",
+            "back_color": 662285,
+            "border_color": 4971397,
+            "text_color": 1359036,
+            "candidate_text_color": 11263788,
+            "comment_text_color": 16571892,
+            "hilited_text_color": 16515067,
+            "hilited_back_color": 197122,
+            "hilited_candidate_text_color": 11263788,
+            "hilited_candidate_back_color": 6775811
+        },
+        "steam": {
+            "name": "Steam",
+            "author": "Patricivs",
+            "back_color": 1318420,
+            "border_color": 3489608,
+            "text_color": 13470898,
+            "candidate_text_color": 16777215,
+            "comment_text_color": 11016143,
+            "hilited_candidate_text_color": 16777215,
+            "hilited_candidate_back_color": 5845569
+        },
+        "metroblue": {
+            "name": "现代蓝／Metro Blue",
+            "author": "Prcuvu",
+            "back_color": 16777215,
+            "border_color": 14137688,
+            "text_color": 0,
+            "label_color": 8619907,
+            "candidate_text_color": 0,
+            "comment_text_color": 0,
+            "hilited_candidate_text_color": 16777215,
+            "hilited_candidate_back_color": 14137688,
+            "hilited_label_color": 16777215
+        }
+    }
+}
