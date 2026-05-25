@@ -3,6 +3,7 @@
 #include "session_manager.h"
 #include <windows.h>
 #include <cxxime/logging.h>
+#include <cxxime/data_path.h>
 
 bool SharedResources::load(const std::string& dict_path, const std::string& config_path) {
     if (!dict.open(dict_path)) {
@@ -11,6 +12,7 @@ bool SharedResources::load(const std::string& dict_path, const std::string& conf
     }
     if (!config_path.empty()) {
         config.load(config_path);
+        config.load_themes(cxxime::data_path("themes.json"));
     }
     std::string sp_path = cxxime::Engine::derive_spellings_path(dict_path);
     if (!sp_path.empty() && spellings.load(sp_path) && spellings.has_spellings()) {

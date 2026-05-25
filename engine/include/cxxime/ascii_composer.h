@@ -11,7 +11,7 @@
 namespace cxxime {
 
 class Context;
-class Config;
+struct Config;
 
 enum class AsciiModeSwitchStyle {
     NOOP,
