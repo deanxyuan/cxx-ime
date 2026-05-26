@@ -1,9 +1,10 @@
 @echo off
 setlocal enabledelayedexpansion
 
-set ROOT=%~dp0
-set BUILD_DIR=%ROOT%build
-set DIST_DIR=%ROOT%dist
+set SCRIPT_DIR=%~dp0
+set ROOT=%SCRIPT_DIR%..
+set BUILD_DIR=%ROOT%\build
+set DIST_DIR=%ROOT%\dist
 set CONFIG=Release
 set VERSION=0.1.0
 
@@ -28,11 +29,12 @@ if exist "%DIST_DIR%" rmdir /s /q "%DIST_DIR%"
 mkdir "%DIST_DIR%"
 mkdir "%DIST_DIR%\data"
 
-echo [1/5] Copying binaries...
+echo [1/6] Copying binaries...
 copy /y "%BUILD_DIR%\tsf\%CONFIG%\cxxime_tsf.dll" "%DIST_DIR%\" >nul
 copy /y "%BUILD_DIR%\server\%CONFIG%\cxxime-server.exe" "%DIST_DIR%\" >nul
+copy /y "%BUILD_DIR%\settings\%CONFIG%\cxxime-settings.exe" "%DIST_DIR%\" >nul
 
-echo [2/5] Copying config and themes...
+echo [2/6] Copying config and themes...
 copy /y "%ROOT%data\default.json" "%DIST_DIR%\data\" >nul
 if exist "%ROOT%data\themes.json" (
     copy /y "%ROOT%data\themes.json" "%DIST_DIR%\data\" >nul
@@ -41,7 +43,7 @@ if exist "%ROOT%data\themes.json" (
     echo        WARNING: themes.json not found.
 )
 
-echo [3/5] Generating dictionary binaries...
+echo [3/6] Generating dictionary binaries...
 set "HAS_DICT=0"
 
 :: Pinyin dictionary
@@ -76,26 +78,29 @@ if "!HAS_DICT!"=="0" (
     echo        The IME will not function without a dictionary.
 )
 
-echo [4/5] Copying installer scripts...
-copy /y "%ROOT%install.bat" "%DIST_DIR%\" >nul
-copy /y "%ROOT%uninstall.bat" "%DIST_DIR%\" >nul
-copy /y "%ROOT%install.ps1" "%DIST_DIR%\" >nul 2>&1
-copy /y "%ROOT%uninstall.ps1" "%DIST_DIR%\" >nul 2>&1
+echo [4/6] Copying installer scripts...
+copy /y "%SCRIPT_DIR%install.bat" "%DIST_DIR%\" >nul
+copy /y "%SCRIPT_DIR%uninstall.bat" "%DIST_DIR%\" >nul
+copy /y "%SCRIPT_DIR%install.ps1" "%DIST_DIR%\" >nul 2>&1
+copy /y "%SCRIPT_DIR%uninstall.ps1" "%DIST_DIR%\" >nul 2>&1
 
-echo [5/5] Creating archive...
-set ARCHIVE=%ROOT%cxxime-v%VERSION%-win64.zip
-if exist "%ARCHIVE%" del /f "%ARCHIVE%"
+echo [5/6] Building NSIS installer...
+copy /y "%SCRIPT_DIR%cxxime-setup.nsi" "%DIST_DIR%\" >nul
+copy /y "%ROOT%\license.txt" "%DIST_DIR%\" >nul
 
-where powershell >nul 2>&1
+where makensis >nul 2>&1
 if not errorlevel 1 (
-    powershell -Command "Compress-Archive -Path '%DIST_DIR%\*' -DestinationPath '%ARCHIVE%' -Force" 2>nul
+    pushd "%DIST_DIR%"
+    makensis cxxime-setup.nsi
     if not errorlevel 1 (
-        echo        Archive created: %ARCHIVE%
+        move /y "cxxime-v%VERSION%-setup.exe" "%ROOT%" >nul
+        echo        Installer created: %ROOT%cxxime-v%VERSION%-setup.exe
     ) else (
-        echo        Zip creation failed. Distribution files are in: %DIST_DIR%
+        echo        ERROR: NSIS compilation failed.
     )
+    popd
 ) else (
-    echo        PowerShell not available. Skipping zip creation.
+    echo        WARNING: makensis not found in PATH. Install NSIS 3.x.
     echo        Distribution files are in: %DIST_DIR%
 )
 
@@ -106,6 +111,7 @@ echo Distribution contents:
 echo   %DIST_DIR%\
 echo     cxxime_tsf.dll         TSF text service DLL
 echo     cxxime-server.exe      Background server process
+echo     cxxime-settings.exe    Configuration editor
 echo     data\
 echo       default.json         Default configuration
 echo       themes.json          Color themes (14 schemes^)
