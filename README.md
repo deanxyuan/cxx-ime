@@ -219,9 +219,9 @@ ctest -C Debug
 | IPC | ✅ 就绪 | IOCP 高性能命名管道，< 1ms 延迟，多客户端并发 |
 | 会话管理 | ✅ 就绪 | 共享资源预加载，session 瞬时创建 |
 | 用户词典 | ✅ 就绪 | 内存数据结构 + TSV 持久化，shared_mutex 并发读写 |
-| TSF DLL | ⚠️ 基础可用 | 按键捕获、编辑会话、候选上屏、候选窗口定位；composition 显示待完善 |
-| 候选窗口 | ✅ 就绪 | D2D 渲染（默认），可切换 GDI，14 套配色，DPI 缩放，圆角窗口 |
-| 安装部署 | ⚠️ 基础可用 | install/uninstall/package 脚本可用，需管理员权限 |
+| TSF DLL | ✅ 就绪 | 按键捕获、编辑会话、候选上屏、候选窗口定位（GetTextExt 四层降级链）、DisplayAttributeProvider |
+| 候选窗口 | ✅ 就绪 | D2D 渲染（默认），可切换 GDI，14 套配色，DPI 缩放，屏幕边缘 clamp，圆角窗口 |
+| 安装部署 | ⚠️ 待改进 | 存在关键问题：词典文件未转换为运行时格式、路径解析不一致、uninstall 中 CLSID 错误，详见下文 |
 | 配置系统 | ✅ 就绪 | JSON 配置（page_size, font, theme, layout spacing/padding） |
 
 > 单元测试：95 个用例，9 个独立 exe，`ctest -C Debug` 全部通过。

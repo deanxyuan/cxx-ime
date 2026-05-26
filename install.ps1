@@ -3,7 +3,7 @@
 # Requires Administrator privileges.
 
 param(
-    [string]$InstallDir = "$env:ProgramFiles\CxxIME",
+    [string]$DataDir = "$env:USERPROFILE\cxxime",
     [switch]$Silent
 )
 
@@ -59,8 +59,8 @@ function Request-Elevation {
         if (-not $scriptPath) { $scriptPath = $PSCommandPath }
         $args = "-ExecutionPolicy Bypass -File `"$scriptPath`""
         if ($Silent) { $args += " -Silent" }
-        if ($InstallDir -ne "$env:ProgramFiles\CxxIME") {
-            $args += " -InstallDir `"$InstallDir`""
+        if ($DataDir -ne "$env:USERPROFILE\cxxime") {
+            $args += " -DataDir `"$DataDir`""
         }
         try {
             Start-Process powershell -Verb RunAs -ArgumentList $args -Wait
@@ -77,7 +77,7 @@ function Request-Elevation {
 Write-Banner
 Request-Elevation
 
-$TotalSteps = 7
+$TotalSteps = 5
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 if (-not $ScriptDir) { $ScriptDir = Get-Location }
 
@@ -85,12 +85,9 @@ if (-not $ScriptDir) { $ScriptDir = Get-Location }
 
 Write-Step 1 $TotalSteps "Verifying source files..."
 
-$BinDir = Join-Path $ScriptDir "bin"
-$DataDir = Join-Path $ScriptDir "data"
-
 $RequiredFiles = @(
-    (Join-Path $BinDir $TsfDllName),
-    (Join-Path $BinDir $ServerExeName)
+    (Join-Path $ScriptDir $TsfDllName),
+    (Join-Path $ScriptDir $ServerExeName)
 )
 
 foreach ($f in $RequiredFiles) {
@@ -102,12 +99,12 @@ foreach ($f in $RequiredFiles) {
 }
 Write-OK "All required files found."
 
-$HasDict = Test-Path (Join-Path $DataDir "pinyin.dict.db")
-if (-not $HasDict) {
-    Write-Warn "pinyin.dict.db not found. IME will not function without a dictionary."
+$DictBin = Join-Path $ScriptDir "data\pinyin.dict.bin"
+if (-not (Test-Path $DictBin)) {
+    Write-Warn "pinyin.dict.bin not found. IME will not function without a dictionary."
 }
 
-# ── Step 2: Stop existing installation ────────────────────────────────────────
+# ── Step 2: Stop existing server ────────────────────────────────────────
 
 Write-Step 2 $TotalSteps "Stopping existing server (if running)..."
 $existing = Get-Process -Name "cxxime-server" -ErrorAction SilentlyContinue
@@ -122,7 +119,7 @@ if ($existing) {
 # ── Step 3: Unregister existing TSF DLL ──────────────────────────────────────
 
 Write-Step 3 $TotalSteps "Cleaning previous installation..."
-$existingDll = Join-Path $InstallDir $TsfDllName
+$existingDll = Join-Path $DataDir $TsfDllName
 if (Test-Path $existingDll) {
     try {
         Start-Process regsvr32 -ArgumentList "/u /s `"$existingDll`"" -Wait -NoNewWindow -ErrorAction SilentlyContinue
@@ -136,33 +133,34 @@ if (Test-Path $existingDll) {
 
 # ── Step 4: Install files ────────────────────────────────────────────────────
 
-Write-Step 4 $TotalSteps "Installing files to $InstallDir..."
+Write-Step 4 $TotalSteps "Installing files to $DataDir..."
 
 try {
-    if (-not (Test-Path $InstallDir)) {
-        New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
+    if (-not (Test-Path $DataDir)) {
+        New-Item -ItemType Directory -Path $DataDir -Force | Out-Null
     }
 
-    $InstallBinDir = Join-Path $InstallDir "bin"
-    $InstallDataDir = Join-Path $InstallDir "data"
-    if (-not (Test-Path $InstallBinDir)) { New-Item -ItemType Directory -Path $InstallBinDir -Force | Out-Null }
-    if (-not (Test-Path $InstallDataDir)) { New-Item -ItemType Directory -Path $InstallDataDir -Force | Out-Null }
+    # Core binaries
+    Copy-Item (Join-Path $ScriptDir $TsfDllName) $DataDir -Force
+    Copy-Item (Join-Path $ScriptDir $ServerExeName) $DataDir -Force
 
-    # Copy binaries
-    Copy-Item (Join-Path $BinDir $TsfDllName) $InstallBinDir -Force
-    Copy-Item (Join-Path $BinDir $ServerExeName) $InstallBinDir -Force
-
-    # Copy data
-    if (Test-Path (Join-Path $DataDir "default.json")) {
-        Copy-Item (Join-Path $DataDir "default.json") $InstallDataDir -Force
+    # Config + themes
+    $srcDataDir = Join-Path $ScriptDir "data"
+    if (Test-Path (Join-Path $srcDataDir "default.json")) {
+        Copy-Item (Join-Path $srcDataDir "default.json") $DataDir -Force
     }
-    if ($HasDict) {
-        Copy-Item (Join-Path $DataDir "pinyin.dict.db") $InstallDataDir -Force
+    if (Test-Path (Join-Path $srcDataDir "themes.json")) {
+        Copy-Item (Join-Path $srcDataDir "themes.json") $DataDir -Force
     }
 
-    # Copy test suite and scripts for diagnostics
-    if (Test-Path (Join-Path $BinDir "cxxime-test.exe")) {
-        Copy-Item (Join-Path $BinDir "cxxime-test.exe") $InstallBinDir -Force
+    # Dictionary files (binary runtime + source)
+    foreach ($name in @("pinyin", "wubi86")) {
+        foreach ($ext in @("dict.bin", "dict.idx", "spellings.bin", "dict.db")) {
+            $src = Join-Path $srcDataDir "$name.$ext"
+            if (Test-Path $src) {
+                Copy-Item $src $DataDir -Force
+            }
+        }
     }
 
     Write-OK "Files installed."
@@ -171,11 +169,12 @@ try {
     exit 1
 }
 
-# ── Step 5: Register TSF DLL ─────────────────────────────────────────────────
+# ── Step 5: Register TSF DLL and start server ────────────────────────────────
 
-Write-Step 5 $TotalSteps "Registering TSF text service..."
-$TsfDllPath = Join-Path $InstallBinDir $TsfDllName
+Write-Step 5 $TotalSteps "Registering TSF text service and starting server..."
+$TsfDllPath = Join-Path $DataDir $TsfDllName
 
+# Register
 try {
     $proc = Start-Process regsvr32 -ArgumentList "/s `"$TsfDllPath`"" -Wait -PassThru -NoNewWindow
     if ($proc.ExitCode -ne 0) {
@@ -185,26 +184,19 @@ try {
 } catch {
     Write-Err "Failed to register TSF DLL: $_"
     Write-Host "  The IME will not appear in the input method list." -ForegroundColor Red
-    # Continue — server can still work standalone
 }
 
-# ── Step 6: Configure auto-start ─────────────────────────────────────────────
-
-Write-Step 6 $TotalSteps "Configuring auto-start..."
-$ServerPath = Join-Path $InstallBinDir $ServerExeName
+# Auto-start
+$ServerPath = Join-Path $DataDir $ServerExeName
 $RegPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run"
-
 try {
     Set-ItemProperty -Path $RegPath -Name "CxxIMEServer" -Value "`"$ServerPath`"" -Force
     Write-OK "Auto-start registered."
 } catch {
     Write-Warn "Could not set auto-start: $_"
-    Write-Host "  You may need to start cxxime-server.exe manually." -ForegroundColor DarkYellow
 }
 
-# ── Step 7: Start server ─────────────────────────────────────────────────────
-
-Write-Step 7 $TotalSteps "Starting server..."
+# Start server
 try {
     Start-Process $ServerPath -WindowStyle Hidden
     Start-Sleep -Milliseconds 500
@@ -217,7 +209,6 @@ try {
     }
 } catch {
     Write-Warn "Could not start server: $_"
-    Write-Host "  Start it manually: `"$ServerPath`"" -ForegroundColor DarkYellow
 }
 
 # ── Done ──────────────────────────────────────────────────────────────────────
@@ -227,7 +218,7 @@ Write-Host "  ╔═════════════════════
 Write-Host "  ║       Installation Complete!          ║" -ForegroundColor Green
 Write-Host "  ╚══════════════════════════════════════╝" -ForegroundColor Green
 Write-Host ""
-Write-Host "  Installed to: $InstallDir" -ForegroundColor White
+Write-Host "  Data directory: $DataDir" -ForegroundColor White
 Write-Host ""
 Write-Host "  Next steps:" -ForegroundColor White
 Write-Host "    1. Log off and log back in (or restart)" -ForegroundColor Gray

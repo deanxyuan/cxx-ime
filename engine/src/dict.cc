@@ -110,10 +110,10 @@ bool Dict::open_dict(const std::string& bin_path) {
 // ─── User dictionary: in-memory + TSV persistence ───────────────────
 
 static std::string default_user_dict_path() {
-    wchar_t appdata[MAX_PATH] = {};
-    if (SHGetFolderPathW(nullptr, CSIDL_LOCAL_APPDATA, nullptr, 0, appdata) != S_OK)
+    wchar_t profile[MAX_PATH] = {};
+    if (SHGetFolderPathW(nullptr, CSIDL_PROFILE, nullptr, 0, profile) != S_OK)
         return {};
-    std::wstring user_dir = std::wstring(appdata) + L"\\CxxIME";
+    std::wstring user_dir = std::wstring(profile) + L"\\cxxime";
     CreateDirectoryW(user_dir.c_str(), nullptr);
     std::wstring path = user_dir + L"\\user.tsv";
     char path_utf8[MAX_PATH * 3] = {};
