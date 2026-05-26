@@ -29,6 +29,7 @@ struct LayoutConfig {
 struct Config {
     bool load(const std::string& path);
     bool load_themes(const std::string& path);  // load themes.json separately
+    bool save(const std::string& path) const;
 
     // engine
     int page_size = 9;
