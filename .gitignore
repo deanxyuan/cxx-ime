@@ -27,6 +27,10 @@ data/*.dict.idx
 __pycache__/
 *.pyc
 
+# Claude Code
+CLAUDE.md
+.claude/
+
 # OS
 Thumbs.db
 Desktop.ini
