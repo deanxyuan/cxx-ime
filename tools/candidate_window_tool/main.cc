@@ -57,7 +57,8 @@ static void handle_click(int index) {
 static void update_display() {
     g_window.set_page_info(g_page_idx + 1, g_total_pages);
     g_window.update(g_page);
-    g_window.set_position(200, 200);
+    RECT fakeCaret = {400, 300, 400, 320};
+    g_window.move_to_caret(fakeCaret);
     g_window.show();
     wchar_t title[256];
     swprintf(title, 256, L"Candidate Window Tool [%s] 主题:%S 布局:%S 字体:%dpx",

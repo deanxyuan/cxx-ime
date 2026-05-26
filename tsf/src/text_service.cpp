@@ -246,17 +246,8 @@ STDMETHODIMP TextService::OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM lPara
                 }
                 _candidateWindow.update(page);
 
-                POINT pt = {};
-                GUITHREADINFO gti = { sizeof(gti) };
-                if (GetGUIThreadInfo(GetCurrentThreadId(), &gti)) {
-                    pt.x = gti.rcCaret.left;
-                    pt.y = gti.rcCaret.top;
-                    ClientToScreen(gti.hwndCaret, &pt);
-                } else {
-                    GetCaretPos(&pt);
-                    ClientToScreen(GetFocus(), &pt);
-                }
-                _candidateWindow.set_position(pt.x, pt.y + 20);
+                RECT caretRect = _resolve_caret_rect(pic);
+                _candidateWindow.move_to_caret(caretRect);
                 _candidateWindow.show();
             } else {
                 _candidateWindow.hide();
@@ -534,6 +525,43 @@ uint32_t TextService::_get_modifiers() const {
 
 void TextService::_load_config() {
     _config.load(cxxime::data_path("default.json"));
+}
+
+RECT TextService::_resolve_caret_rect(ITfContext* pic) {
+    RECT rc = {};
+
+    // L1: TSF GetTextExt
+    if (_caretRect.left != 0 || _caretRect.top != 0 ||
+        _caretRect.right != 0 || _caretRect.bottom != 0) {
+        rc = _caretRect;
+        _caretRect = {};
+        return rc;
+    }
+
+    // L2: GetGUIThreadInfo
+    GUITHREADINFO gti = { sizeof(gti) };
+    if (GetGUIThreadInfo(GetCurrentThreadId(), &gti) && gti.hwndCaret) {
+        POINT pt = { gti.rcCaret.left, gti.rcCaret.top };
+        ClientToScreen(gti.hwndCaret, &pt);
+        SetRect(&rc, pt.x, pt.y, pt.x, pt.y + 20);
+        return rc;
+    }
+
+    // L3: GetCaretPos
+    POINT pt = {};
+    if (GetCaretPos(&pt)) {
+        HWND focus = GetFocus();
+        if (focus) ClientToScreen(focus, &pt);
+        SetRect(&rc, pt.x, pt.y, pt.x, pt.y + 20);
+        return rc;
+    }
+
+    // L4: GetCursorPos
+    if (GetCursorPos(&pt)) {
+        SetRect(&rc, pt.x, pt.y, pt.x, pt.y + 20);
+    }
+
+    return rc;
 }
 
 void TextService::_send_modifier_key_up(WPARAM wParam) {
