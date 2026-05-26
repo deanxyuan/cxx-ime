@@ -3,15 +3,13 @@ setlocal enabledelayedexpansion
 
 :: CxxIME Installer
 :: Requires administrator privileges. Right-click -^> Run as administrator.
-:: Usage: install.bat [install_dir]
+:: Usage: install.bat [data_dir]
+::   data_dir defaults to %%USERPROFILE%%\cxxime
 
 set "PRODUCT=CxxIME"
 set "VERSION=0.1.0"
-set "DEFAULT_DIR=%ProgramFiles%\CxxIME"
 set "TSF_DLL=cxxime_tsf.dll"
 set "SERVER_EXE=cxxime-server.exe"
-set "TEST_EXE=cxxime-test.exe"
-set "LOG_FILE=%TEMP%\cxxime_install.log"
 
 echo.
 echo  ====================================================
@@ -40,46 +38,34 @@ if errorlevel 1 (
     exit /b 1
 )
 
-:: Parse arguments
-set "INSTALL_DIR=%~1"
-if "%INSTALL_DIR%"=="" set "INSTALL_DIR=%DEFAULT_DIR%"
+:: Parse arguments - data directory
+set "DATA_DIR=%~1"
+if "%DATA_DIR%"=="" set "DATA_DIR=%USERPROFILE%\cxxime"
 
-set "BIN_DIR=%SCRIPT_DIR%bin"
-set "DATA_DIR=%SCRIPT_DIR%data"
-
-echo  Script dir  : %SCRIPT_DIR%
-echo  Install dir : %INSTALL_DIR%
-echo  Log file    : %LOG_FILE%
+echo  Script dir : %SCRIPT_DIR%
+echo  Data dir   : %DATA_DIR%
 echo.
 
-echo [%date% %time%] CxxIME Installer v%VERSION% > "%LOG_FILE%"
-echo [%date% %time%] Script dir: %SCRIPT_DIR% >> "%LOG_FILE%"
-echo [%date% %time%] Install dir: %INSTALL_DIR% >> "%LOG_FILE%"
-
 :: Step 1: Verify source files
-echo  [1/6] Verifying source files...
+echo  [1/5] Verifying source files...
 
-if not exist "%BIN_DIR%\%TSF_DLL%" (
-    echo  ERROR: Required file not found: %BIN_DIR%\%TSF_DLL%
-    echo [%date% %time%] ERROR: Missing %TSF_DLL% >> "%LOG_FILE%"
-    echo.
-    echo  Please run package.bat first or ensure you extracted the full zip.
+if not exist "%SCRIPT_DIR%%TSF_DLL%" (
+    echo  ERROR: Required file not found: %SCRIPT_DIR%%TSF_DLL%
+    echo  Please run package.bat first.
     echo.
     pause
     exit /b 1
 )
-if not exist "%BIN_DIR%\%SERVER_EXE%" (
-    echo  ERROR: Required file not found: %BIN_DIR%\%SERVER_EXE%
-    echo [%date% %time%] ERROR: Missing %SERVER_EXE% >> "%LOG_FILE%"
+if not exist "%SCRIPT_DIR%%SERVER_EXE%" (
+    echo  ERROR: Required file not found: %SCRIPT_DIR%%SERVER_EXE%
     echo.
     pause
     exit /b 1
 )
-echo         All required files found.
-echo [%date% %time%] Source files verified OK >> "%LOG_FILE%"
+echo         Required files found.
 
 :: Step 2: Stop existing server
-echo  [2/6] Stopping existing server...
+echo  [2/5] Stopping existing server...
 tasklist /fi "imagename eq %SERVER_EXE%" 2>nul | find /i "%SERVER_EXE%" >nul 2>&1
 if not errorlevel 1 (
     taskkill /f /im "%SERVER_EXE%" >nul 2>&1
@@ -89,88 +75,80 @@ if not errorlevel 1 (
     echo         No running server found.
 )
 
-:: Step 3: Unregister previous TSF DLL
-echo  [3/6] Cleaning previous installation...
-if exist "%INSTALL_DIR%\bin\%TSF_DLL%" (
-    regsvr32 /u /s "%INSTALL_DIR%\bin\%TSF_DLL%" >nul 2>&1
-    echo         Previous TSF DLL unregistered.
-) else if exist "%INSTALL_DIR%\%TSF_DLL%" (
-    regsvr32 /u /s "%INSTALL_DIR%\%TSF_DLL%" >nul 2>&1
+:: Step 3: Unregister previous TSF DLL (from any location)
+echo  [3/5] Cleaning previous installation...
+regsvr32 /u /s "%DATA_DIR%\%TSF_DLL%" >nul 2>&1
+if not errorlevel 1 (
     echo         Previous TSF DLL unregistered.
 ) else (
     echo         No previous installation found.
 )
 
 :: Step 4: Install files
-echo  [4/6] Installing files to %INSTALL_DIR%...
+echo  [4/5] Installing files to %DATA_DIR%...
 
-if not exist "%INSTALL_DIR%\bin" mkdir "%INSTALL_DIR%\bin"
-if not exist "%INSTALL_DIR%\data" mkdir "%INSTALL_DIR%\data"
+if not exist "%DATA_DIR%" mkdir "%DATA_DIR%"
 
-copy /y "%BIN_DIR%\%TSF_DLL%" "%INSTALL_DIR%\bin\" >nul
+:: Core binaries
+copy /y "%SCRIPT_DIR%%TSF_DLL%" "%DATA_DIR%\" >nul
 if errorlevel 1 (
     echo  ERROR: Failed to copy %TSF_DLL%.
-    echo [%date% %time%] ERROR: copy %TSF_DLL% failed >> "%LOG_FILE%"
     pause
     exit /b 1
 )
-copy /y "%BIN_DIR%\%SERVER_EXE%" "%INSTALL_DIR%\bin\" >nul
+copy /y "%SCRIPT_DIR%%SERVER_EXE%" "%DATA_DIR%\" >nul
 if errorlevel 1 (
     echo  ERROR: Failed to copy %SERVER_EXE%.
-    echo [%date% %time%] ERROR: copy %SERVER_EXE% failed >> "%LOG_FILE%"
     pause
     exit /b 1
 )
-copy /y "%BIN_DIR%\%TEST_EXE%" "%INSTALL_DIR%\bin\" >nul 2>&1
-if exist "%DATA_DIR%\default.json" copy /y "%DATA_DIR%\default.json" "%INSTALL_DIR%\data\" >nul
-if exist "%DATA_DIR%\pinyin.dict.db" (
-    copy /y "%DATA_DIR%\pinyin.dict.db" "%INSTALL_DIR%\data\" >nul
-    echo         Dictionary installed.
-) else (
-    echo         WARNING: pinyin.dict.db not found.
-)
-echo         Files installed.
-echo [%date% %time%] Files installed to %INSTALL_DIR% >> "%LOG_FILE%"
 
-:: Step 5: Register TSF DLL
-echo  [5/6] Registering TSF text service...
-echo         Running: regsvr32 /s "%INSTALL_DIR%\bin\%TSF_DLL%"
-regsvr32 /s "%INSTALL_DIR%\bin\%TSF_DLL%"
+:: Config files
+if exist "%SCRIPT_DIR%data\default.json" copy /y "%SCRIPT_DIR%data\default.json" "%DATA_DIR%\" >nul
+if exist "%SCRIPT_DIR%data\themes.json" copy /y "%SCRIPT_DIR%data\themes.json" "%DATA_DIR%\" >nul
+
+:: Dictionary files (binary + source)
+for %%f in (pinyin wubi86) do (
+    for %%e in (dict.bin dict.idx spellings.bin dict.db) do (
+        if exist "%SCRIPT_DIR%data\%%f.%%e" (
+            copy /y "%SCRIPT_DIR%data\%%f.%%e" "%DATA_DIR%\" >nul
+        )
+    )
+)
+
+echo         Files installed.
+
+:: Step 5: Register TSF DLL and set auto-start
+echo  [5/5] Registering TSF text service and configuring auto-start...
+
+regsvr32 /s "%DATA_DIR%\%TSF_DLL%"
 if errorlevel 1 (
-    echo.
     echo  ERROR: Failed to register %TSF_DLL%.
-    echo  The IME will not appear in the input method list.
-    echo [%date% %time%] ERROR: regsvr32 failed >> "%LOG_FILE%"
-    echo.
     echo  Try running manually:
-    echo    regsvr32 "%INSTALL_DIR%\bin\%TSF_DLL%"
+    echo    regsvr32 "%DATA_DIR%\%TSF_DLL%"
     echo.
     pause
     exit /b 1
 )
 echo         TSF DLL registered.
-echo [%date% %time%] TSF DLL registered OK >> "%LOG_FILE%"
 
-:: Step 6: Auto-start and start server
-echo  [6/6] Configuring auto-start and starting server...
-
-reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" /v "CxxIMEServer" /t REG_SZ /d "\"%INSTALL_DIR%\bin\%SERVER_EXE%\"" /f >nul 2>&1
+:: Auto-start via registry
+reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" /v "CxxIMEServer" /t REG_SZ /d "\"%DATA_DIR%\%SERVER_EXE%\"" /f >nul 2>&1
 if errorlevel 1 (
-    echo         WARNING: Could not set auto-start. Start server manually.
+    echo         WARNING: Could not set auto-start.
 ) else (
     echo         Auto-start configured.
 )
 
-start "" "%INSTALL_DIR%\bin\%SERVER_EXE%"
+:: Start server
+start "" "%DATA_DIR%\%SERVER_EXE%"
 timeout /t 1 /nobreak >nul 2>&1
 
 tasklist /fi "imagename eq %SERVER_EXE%" 2>nul | find /i "%SERVER_EXE%" >nul 2>&1
 if not errorlevel 1 (
     echo         Server started.
-    echo [%date% %time%] Server started >> "%LOG_FILE%"
 ) else (
-    echo         WARNING: Server may not have started.
-    echo [%date% %time%] WARNING: Server start uncertain >> "%LOG_FILE%"
+    echo         WARNING: Server may not have started. Check Event Viewer.
 )
 
 :: Done
@@ -179,7 +157,7 @@ echo  ====================================================
 echo         Installation Complete!
 echo  ====================================================
 echo.
-echo  Installed to: %INSTALL_DIR%
+echo  Data directory: %DATA_DIR%
 echo.
 echo  Next steps:
 echo    1. Log off and log back in or restart
@@ -187,7 +165,6 @@ echo    2. Press Ctrl+Space or Win+Space to switch input method
 echo    3. Type pinyin letters to start composing
 echo.
 echo  To uninstall: Run uninstall.bat as administrator
-echo  Install log:  %LOG_FILE%
 echo.
 
 endlocal
