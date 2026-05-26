@@ -3,7 +3,7 @@
 # Requires Administrator privileges.
 
 param(
-    [string]$InstallDir = "$env:ProgramFiles\CxxIME",
+    [string]$DataDir = "$env:USERPROFILE\cxxime",
     [switch]$Silent
 )
 
@@ -11,6 +11,8 @@ $ErrorActionPreference = "Stop"
 $ProductName = "CxxIME"
 $TsfDllName = "cxxime_tsf.dll"
 $ServerExeName = "cxxime-server.exe"
+# CLSID from tsf/src/globals.h — must match c_clsidTextService
+$TsfClsid = "{B7E1E5A2-8F3D-4A9C-B6E7-2C4D8F1A3B5E}"
 
 # ── Helper functions ──────────────────────────────────────────────────────────
 
@@ -57,8 +59,8 @@ function Request-Elevation {
         if (-not $scriptPath) { $scriptPath = $PSCommandPath }
         $args = "-ExecutionPolicy Bypass -File `"$scriptPath`""
         if ($Silent) { $args += " -Silent" }
-        if ($InstallDir -ne "$env:ProgramFiles\CxxIME") {
-            $args += " -InstallDir `"$InstallDir`""
+        if ($DataDir -ne "$env:USERPROFILE\cxxime") {
+            $args += " -DataDir `"$DataDir`""
         }
         try {
             Start-Process powershell -Verb RunAs -ArgumentList $args -Wait
@@ -75,14 +77,14 @@ function Request-Elevation {
 Write-Banner
 Request-Elevation
 
-$TotalSteps = 5
+$TotalSteps = 6
 $HadErrors = $false
 
 # ── Confirmation ──────────────────────────────────────────────────────────────
 
 if (-not $Silent) {
     Write-Host "  This will completely remove $ProductName from your system." -ForegroundColor White
-    Write-Host "  Install directory: $InstallDir" -ForegroundColor Gray
+    Write-Host "  Data directory: $DataDir" -ForegroundColor Gray
     Write-Host ""
     $confirm = Read-Host "  Continue? (Y/N)"
     if ($confirm -notin @("Y", "y", "yes", "Yes")) {
@@ -112,11 +114,7 @@ if ($existing) {
 # ── Step 2: Unregister TSF DLL ───────────────────────────────────────────────
 
 Write-Step 2 $TotalSteps "Unregistering TSF text service..."
-$TsfDllPath = Join-Path $InstallDir "bin" $TsfDllName
-if (-not (Test-Path $TsfDllPath)) {
-    $TsfDllPath = Join-Path $InstallDir $TsfDllName
-}
-
+$TsfDllPath = Join-Path $DataDir $TsfDllName
 if (Test-Path $TsfDllPath) {
     try {
         $proc = Start-Process regsvr32 -ArgumentList "/u /s `"$TsfDllPath`"" -Wait -PassThru -NoNewWindow
@@ -131,7 +129,7 @@ if (Test-Path $TsfDllPath) {
         $HadErrors = $true
     }
 } else {
-    Write-OK "TSF DLL not found (already removed or different location)."
+    Write-OK "TSF DLL not found (already removed)."
 }
 
 # ── Step 3: Remove auto-start ────────────────────────────────────────────────
@@ -151,42 +149,53 @@ try {
     $HadErrors = $true
 }
 
-# ── Step 4: Remove files ─────────────────────────────────────────────────────
+# ── Step 4: Clean TSF COM registration ──────────────────────────────────────
 
-Write-Step 4 $TotalSteps "Removing files..."
-if (Test-Path $InstallDir) {
+Write-Step 4 $TotalSteps "Cleaning TSF COM registration..."
+$ClsidPath = "Registry::HKEY_CLASSES_ROOT\CLSID\$TsfClsid"
+try {
+    if (Test-Path $ClsidPath) {
+        Remove-Item $ClsidPath -Recurse -Force
+        Write-OK "CLSID registration removed."
+    } else {
+        Write-OK "No CLSID registration found."
+    }
+} catch {
+    Write-Warn "Could not clean CLSID: $_"
+    $HadErrors = $true
+}
+
+# ── Step 5: Clean TSF TIP profile ──────────────────────────────────────────
+
+Write-Step 5 $TotalSteps "Cleaning TSF TIP registry entries..."
+$TipPath = "Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\CTF\TIP\$TsfClsid"
+try {
+    if (Test-Path $TipPath) {
+        Remove-Item $TipPath -Recurse -Force
+        Write-OK "TSF TIP entry removed."
+    } else {
+        Write-OK "No TSF TIP entry found."
+    }
+} catch {
+    Write-Warn "Could not clean TSF TIP: $_"
+    $HadErrors = $true
+}
+
+# ── Step 6: Remove data files ────────────────────────────────────────────────
+
+Write-Step 6 $TotalSteps "Removing data files..."
+if (Test-Path $DataDir) {
     try {
-        # Give a moment for any lingering handles to release
         Start-Sleep -Milliseconds 300
-        Remove-Item $InstallDir -Recurse -Force -ErrorAction Stop
-        Write-OK "Installation directory removed."
+        Remove-Item $DataDir -Recurse -Force -ErrorAction Stop
+        Write-OK "Data directory removed."
     } catch {
         Write-Warn "Could not remove all files: $_"
         Write-Host "  Some files may be in use. Restart and try again." -ForegroundColor DarkYellow
         $HadErrors = $true
     }
 } else {
-    Write-OK "Installation directory not found (already removed)."
-}
-
-# ── Step 5: Clean up registry (TSF profile) ──────────────────────────────────
-
-Write-Step 5 $TotalSteps "Cleaning TSF registry entries..."
-$TsfTipPath = "HKLM:\SOFTWARE\Microsoft\CTF\TIP"
-$ClsidGuid = "{6A4B85B0-3D02-4B3A-9E69-715725DA7706}"
-
-try {
-    # Remove the TIP profile entry
-    $tipKey = Join-Path $TsfTipPath $ClsidGuid
-    if (Test-Path $tipKey) {
-        Remove-Item $tipKey -Recurse -Force -ErrorAction SilentlyContinue
-        Write-OK "TSF TIP registry entry removed."
-    } else {
-        Write-OK "No TSF TIP entry found."
-    }
-} catch {
-    Write-Warn "Could not clean TSF registry: $_"
-    $HadErrors = $true
+    Write-OK "Data directory not found (already removed)."
 }
 
 # ── Done ──────────────────────────────────────────────────────────────────────
@@ -199,7 +208,7 @@ if ($HadErrors) {
     Write-Host ""
     Write-Host "  Some steps had warnings. You may need to:" -ForegroundColor White
     Write-Host "    - Restart your computer to fully unload the TSF DLL" -ForegroundColor Gray
-    Write-Host "    - Manually delete: $InstallDir" -ForegroundColor Gray
+    Write-Host "    - Manually delete: $DataDir" -ForegroundColor Gray
 } else {
     Write-Host "  ╔══════════════════════════════════════╗" -ForegroundColor Green
     Write-Host "  ║      Uninstall Complete!              ║" -ForegroundColor Green
@@ -207,7 +216,7 @@ if ($HadErrors) {
 }
 
 Write-Host ""
-Write-Host "  Please log off and log back in (or restart) for changes to take effect." -ForegroundColor White
+Write-Host "  Log off and log back in (or restart) for changes to take effect." -ForegroundColor White
 Write-Host ""
 
 if (-not $Silent) {
