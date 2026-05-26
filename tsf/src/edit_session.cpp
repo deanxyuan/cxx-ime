@@ -92,8 +92,20 @@ STDMETHODIMP EditSession::DoEditSession(TfEditCookie ec) {
             ITfRange* pRange = nullptr;
             if (SUCCEEDED(pComp->GetRange(&pRange))) {
                 pRange->SetText(ec, TF_ST_CORRECTION, _text.c_str(), (LONG)_text.length());
-                // Collapse to end so next update overwrites correctly
-                pRange->Collapse(ec, TF_ANCHOR_END);
+                // Capture caret screen position via TSF GetTextExt
+                ITfContextView* pView = nullptr;
+                if (SUCCEEDED(_context->GetActiveView(&pView)) && pView) {
+                    RECT rc = {};
+                    BOOL clipped = FALSE;
+                    pRange->Collapse(ec, TF_ANCHOR_START);
+                    if (SUCCEEDED(pView->GetTextExt(ec, pRange, &rc, &clipped)))
+                        _service->set_caret_rect(rc);
+                    else
+                        pRange->Collapse(ec, TF_ANCHOR_END);
+                    pView->Release();
+                } else {
+                    pRange->Collapse(ec, TF_ANCHOR_END);
+                }
                 pRange->Release();
             }
         }

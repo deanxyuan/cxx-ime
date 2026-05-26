@@ -76,8 +76,31 @@ void CandidateWindow::set_page_info(int cur, int tot) { page_current_ = cur; pag
 void CandidateWindow::set_preedit(const std::string& p) { preedit_text_ = p; }
 void CandidateWindow::set_layout(const std::string& l) { layout_orientation_ = l; }
 void CandidateWindow::set_click_callback(ClickCallback cb) { click_cb_ = std::move(cb); }
-void CandidateWindow::set_position(int x, int y) {
-    if (hwnd_) SetWindowPos(hwnd_, nullptr, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+void CandidateWindow::move_to_caret(const RECT& caretRect) {
+    if (!hwnd_) return;
+
+    HMONITOR hMon = MonitorFromRect(&caretRect, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO mi = { sizeof(mi) };
+    if (!GetMonitorInfo(hMon, &mi)) return;
+
+    RECT wr = {};
+    GetWindowRect(hwnd_, &wr);
+    int ww = wr.right - wr.left;
+    int wh = wr.bottom - wr.top;
+
+    int x = caretRect.left;
+    int y = caretRect.bottom + 4;
+
+    if (x + ww > mi.rcWork.right) x = mi.rcWork.right - ww;
+    if (x < mi.rcWork.left)       x = mi.rcWork.left;
+
+    if (y + wh > mi.rcWork.bottom) {
+        y = caretRect.top - wh - 4;
+        if (y < mi.rcWork.top) y = mi.rcWork.top;
+    }
+    if (y < mi.rcWork.top) y = mi.rcWork.top;
+
+    SetWindowPos(hwnd_, HWND_TOPMOST, x, y, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE);
 }
 
 void CandidateWindow::rebuild_render_context(const LayoutConfig& cfg) {

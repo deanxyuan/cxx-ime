@@ -28,7 +28,7 @@ public:
     void update(const CandidatePage& page);
     void set_preedit(const std::string& preedit);
     void set_layout(const std::string& layout);
-    void set_position(int x, int y);
+    void move_to_caret(const RECT& caretRect);
     void set_click_callback(ClickCallback cb);
     void set_theme(const Theme& theme);
     void set_render_backend(RenderBackend backend);

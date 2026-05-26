@@ -53,6 +53,8 @@ public:
     ITfComposition* get_composition() const { return _composition; }
     void set_composition(ITfComposition* comp) { _composition = comp; }
     void set_composing(bool val) { _composing = val; }
+    void set_caret_rect(const RECT& rc) { _caretRect = rc; }
+    RECT _resolve_caret_rect(ITfContext* pic);
 
 private:
     HRESULT _register_key_event_sink();
@@ -79,6 +81,8 @@ private:
     bool _chinese_mode = true;
     cxxime::CandidateWindow _candidateWindow;
     cxxime::Config _config;
+
+    RECT _caretRect = {};
 };
 
 #endif // CXXIME_TSF_TEXT_SERVICE_H_
