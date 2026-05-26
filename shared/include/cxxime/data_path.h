@@ -30,7 +30,25 @@ inline std::string data_dir() {
 #ifdef CXXIME_DATA_DIR
     return CXXIME_DATA_DIR;
 #else
-    // Production: %USERPROFILE%/cxxime/
+    // 3. Portable mode: <exe_dir>\data\ exists
+    wchar_t modPath[MAX_PATH];
+    if (GetModuleFileNameW(nullptr, modPath, MAX_PATH)) {
+        std::wstring dataDir(modPath);
+        dataDir.erase(dataDir.rfind(L'\\') + 1);
+        dataDir += L"data\\";
+        DWORD attr = GetFileAttributesW(dataDir.c_str());
+        if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY)) {
+            std::string result;
+            int len = WideCharToMultiByte(CP_UTF8, 0, dataDir.c_str(), -1, nullptr, 0, nullptr, nullptr);
+            if (len > 1) {
+                result.resize(len - 1);
+                WideCharToMultiByte(CP_UTF8, 0, dataDir.c_str(), -1, &result[0], len, nullptr, nullptr);
+            }
+            return result;
+        }
+    }
+
+    // 4. Fallback: %USERPROFILE%/cxxime/
     wchar_t profile[MAX_PATH];
     if (SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_PROFILE, nullptr, 0, profile))) {
         std::string dir;
