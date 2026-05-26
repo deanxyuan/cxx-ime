@@ -45,6 +45,7 @@ build.bat clean        # 清理构建目录
 构建产物在 `build/<config>/` 目录下：
 - `cxxime_tsf.dll` — TSF 文本服务 DLL
 - `cxxime-server.exe` — 后台服务进程
+- `cxxime-settings.exe` — 配置编辑器
 - `test/` — 测试可执行文件（每个测试文件一个 exe）
 
 ## 获取词典
@@ -115,52 +116,30 @@ zf.write('pinyin.dict.db'); zf.close()
 
 ## 打包
 
-将构建产物、词典、脚本收集到发布目录：
+构建 + 词典转换 + NSIS 安装程序编译：
 
 ```cmd
-package.bat
+scripts\package.bat              # Release 打包 → cxxime-v0.1.0-setup.exe
+scripts\package.bat debug        # Debug 打包
 ```
 
-生成 `dist/` 目录，包含二进制文件、数据文件和安装脚本。如有 PowerShell 还会创建 zip 压缩包。
+需要预先安装 [NSIS 3.x](https://nsis.sourceforge.io/) 并确保 `makensis.exe` 在 PATH 中。如果未安装 NSIS，`package.bat` 会跳过安装程序生成，`dist/` 目录中保留原始分发文件。
+
+`package.bat` 执行流程：构建 → 词典转换（`.db` → `.bin`）→ NSIS 编译 → 输出单文件安装程序。
 
 ## 安装
 
-以管理员身份运行（双击或命令行）：
+运行 `cxxime-v0.1.0-setup.exe`，按向导提示操作：
 
-```cmd
-install.bat                         # 默认安装到 %ProgramFiles%\CxxIME
-install.bat "D:\MyPath\CxxIME"      # 自定义安装目录
-```
-
-安装程序会：
-1. 停止正在运行的服务端
-2. 注销已有的 TSF DLL（升级时）
-3. 复制文件到安装目录
-4. 通过 `regsvr32` 注册 TSF DLL
-5. 配置开机自启动
-6. 启动服务端
-
-安装完成后需要注销并重新登录（或重启），输入法才会出现在系统输入法列表中。
-
-也提供 PowerShell 安装脚本（可选）：`install.ps1`
+1. 选择安装模式：用户目录（默认 `%USERPROFILE%\cxxime\`）或程序目录
+2. 程序目录模式下可自定义安装路径，数据文件将放在安装目录下的 `data\` 子目录
+3. 安装程序自动注册 TSF DLL、配置自启动、创建开始菜单快捷方式
+4. 安装完成后**注销并重新登录**即可使用
 
 ## 卸载
 
-以管理员身份运行：
-
-```cmd
-uninstall.bat                       # 从默认位置卸载
-uninstall.bat "D:\MyPath\CxxIME"    # 自定义路径
-```
-
-卸载程序会：
-1. 停止服务端
-2. 注销 TSF DLL
-3. 移除开机自启动项
-4. 清理 TSF 注册表项
-5. 删除已安装文件
-
-也提供 PowerShell 卸载脚本（可选）：`uninstall.ps1`
+- 开始菜单 → CxxIME → 卸载 CxxIME
+- 或控制面板 → 添加/删除程序 → CxxIME
 
 ## 配置
 
@@ -221,7 +200,8 @@ ctest -C Debug
 | 用户词典 | ✅ 就绪 | 内存数据结构 + TSV 持久化，shared_mutex 并发读写 |
 | TSF DLL | ✅ 就绪 | 按键捕获、编辑会话、候选上屏、候选窗口定位（GetTextExt 四层降级链）、DisplayAttributeProvider |
 | 候选窗口 | ✅ 就绪 | D2D 渲染（默认），可切换 GDI，14 套配色，DPI 缩放，屏幕边缘 clamp，圆角窗口 |
-| 安装部署 | ⚠️ 待改进 | 存在关键问题：词典文件未转换为运行时格式、路径解析不一致、uninstall 中 CLSID 错误，详见下文 |
+| 安装部署 | ✅ 就绪 | NSIS 安装程序，支持用户目录/程序目录两种模式，开始菜单快捷方式，控制面板卸载 |
+| 配置编辑器 | ✅ 就绪 | Win32 原生 GUI，左侧导航 + 右侧面板，支持所有配置项 |
 | 配置系统 | ✅ 就绪 | JSON 配置（page_size, font, theme, layout spacing/padding） |
 
 > 单元测试：95 个用例，9 个独立 exe，`ctest -C Debug` 全部通过。
