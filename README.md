@@ -17,7 +17,7 @@ cxx-ime/
 ├── ipc/             命名管道 IPC 客户端/服务端
 ├── server/          后台服务进程（系统托盘）
 ├── tsf/             TSF 文本服务 DLL（由 Windows 加载）
-├── ui/              候选窗口（GDI 绘制）
+├── ui/              候选窗口（D2D / GDI 双后端渲染）
 ├── docs/            设计文档
 ├── data/            词典文件、Python 工具和默认配置
 ├── tools/           开发工具（dict_query, sqlite_query, ipc_tool）
@@ -174,9 +174,10 @@ uninstall.bat "D:\MyPath\CxxIME"    # 自定义路径
     "style": {
         "font_face": "Microsoft YaHei UI",
         "font_point": 14,
-        "layout": "horizontal"
+        "layout": "horizontal",
+        "render_backend": "d2d"
     },
-    "theme": "light"
+    "theme": "azure"
 }
 ```
 
@@ -218,7 +219,7 @@ ctest -C Debug
 | 会话管理 | ✅ 就绪 | 共享资源预加载，session 瞬时创建 |
 | 用户词典 | ✅ 就绪 | 内存数据结构 + TSV 持久化，shared_mutex 并发读写 |
 | TSF DLL | ⚠️ 基础可用 | 按键捕获、编辑会话、候选上屏；composition 显示和窗口定位待完善 |
-| 候选窗口 | ✅ 就绪 | GDI 渲染（默认），可切换 D2D，14 套配色，DPI 缩放，圆角窗口 |
+| 候选窗口 | ✅ 就绪 | D2D 渲染（默认），可切换 GDI，14 套配色，DPI 缩放，圆角窗口 |
 | 安装部署 | ⚠️ 基础可用 | install/uninstall/package 脚本可用，需管理员权限 |
 | 配置系统 | ✅ 就绪 | JSON 配置（page_size, font, theme, layout spacing/padding） |
 
