@@ -45,6 +45,28 @@ build.bat debug
 
 ---
 
+## candidate_window_tool — 候选窗口可视化测试
+
+```cmd
+.\build\tools\candidate_window_tool\Debug\candidate_window_tool.exe
+```
+
+| 按键 | 说明 |
+|------|------|
+| `1-9` | 选择候选词 |
+| `Space` | 提交高亮候选 |
+| `Esc` | 隐藏候选窗口 |
+| `PageUp/Down` | 翻页 |
+| `T` | 循环切换主题（13 套配色） |
+| `L` | 切换水平/垂直布局 |
+| `D` | 切换 D2D/GDI 渲染后端 |
+| `F` | 循环切换字体大小（12/14/16/18/20） |
+| `P` | 切换 preedit 显示 |
+
+窗口标题栏实时显示当前渲染器、主题、布局和字体大小。
+
+---
+
 ## ipc_tool — IPC 测试工具
 
 ### 启动服务端

@@ -41,7 +41,10 @@ void CandidateWindow::init_gdi_renderer() {
 }
 void CandidateWindow::init_d2d_renderer() {
     d2d_renderer_ = new D2DRenderer();
-    if (!d2d_renderer_->initialize(hwnd_)) { delete d2d_renderer_; d2d_renderer_ = nullptr; backend_ = RenderBackend::GDI; }
+    auto wname = std::wstring(config_->font_name.begin(), config_->font_name.end());
+    if (!d2d_renderer_->initialize(hwnd_, config_->font_size, wname.c_str())) {
+        delete d2d_renderer_; d2d_renderer_ = nullptr; backend_ = RenderBackend::GDI;
+    }
 }
 void CandidateWindow::destroy() {
     if (gdi_renderer_) { gdi_renderer_->finalize(); delete gdi_renderer_; gdi_renderer_ = nullptr; }
@@ -167,6 +170,7 @@ void CandidateWindow::update(const CandidatePage& page) {
     if (page_total_ > 1 && render_ctx_.next_button_rect.right > lr.width)
         lr.width = render_ctx_.next_button_rect.right + config_->layout_config.margin_x;
     SetWindowPos(hwnd_, nullptr, 0, 0, lr.width, lr.height, SWP_NOMOVE | SWP_NOZORDER);
+    if (d2d_renderer_) d2d_renderer_->resize(lr.width, lr.height);
     // Rounded window corners (like Weasel's round_corner_ex)
     if (hrgn_) DeleteObject(hrgn_);
     int wr = config_->layout_config.round_corner_ex;

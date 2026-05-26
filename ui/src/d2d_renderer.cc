@@ -25,7 +25,7 @@ static IDWriteTextFormat* mkfmt(IDWriteFactory* f, const wchar_t* name, float sz
     return fmt;
 }
 
-bool D2DRenderer::initialize(HWND hwnd) {
+bool D2DRenderer::initialize(HWND hwnd, int font_size, const wchar_t* font_name) {
     HRESULT hr = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &d2d_factory_);
     if (FAILED(hr)) return false;
     RECT rc; GetClientRect(hwnd, &rc);
@@ -43,10 +43,15 @@ bool D2DRenderer::initialize(HWND hwnd) {
     render_target_->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Gray), &nav_brush_);
     hr = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), reinterpret_cast<IUnknown**>(&dwrite_factory_));
     if (FAILED(hr)) return false;
-    fmt_left_   = mkfmt(dwrite_factory_, L"Microsoft YaHei UI", 14.0f, DWRITE_TEXT_ALIGNMENT_LEADING);
-    fmt_right_  = mkfmt(dwrite_factory_, L"Microsoft YaHei UI", 14.0f, DWRITE_TEXT_ALIGNMENT_LEADING);
-    fmt_preedit_ = mkfmt(dwrite_factory_, L"Microsoft YaHei UI", 12.0f, DWRITE_TEXT_ALIGNMENT_LEADING);
-    fmt_small_  = mkfmt(dwrite_factory_, L"Microsoft YaHei UI", 10.0f, DWRITE_TEXT_ALIGNMENT_CENTER);
+    HDC dc = GetDC(hwnd);
+    float dpi = (float)GetDeviceCaps(dc, LOGPIXELSY);
+    ReleaseDC(hwnd, dc);
+    float fsize = (float)font_size * dpi / 72.0f;  // pt→px, match GDI's MulDiv(font_size, dpi, 72)
+    float psize = font_size > 2 ? (float)(font_size - 2) * dpi / 72.0f : fsize;  // preedit: font_size-2 pt
+    fmt_left_   = mkfmt(dwrite_factory_, font_name, fsize, DWRITE_TEXT_ALIGNMENT_LEADING);
+    fmt_right_  = mkfmt(dwrite_factory_, font_name, fsize, DWRITE_TEXT_ALIGNMENT_LEADING);
+    fmt_preedit_ = mkfmt(dwrite_factory_, font_name, psize, DWRITE_TEXT_ALIGNMENT_LEADING);
+    fmt_small_  = mkfmt(dwrite_factory_, font_name, 9.0f * dpi / 72.0f, DWRITE_TEXT_ALIGNMENT_CENTER);
     return fmt_left_ && fmt_right_ && fmt_preedit_ && fmt_small_;
 }
 
@@ -75,6 +80,10 @@ void D2DRenderer::render(const RenderContext& ctx) {
         preedit_brush_->SetColor(c2d(ctx.theme->preedit_text));
         label_brush_->SetColor(c2d(ctx.theme->label_text));
         nav_brush_->SetColor(c2d(ctx.theme->prev_page));
+        D2D1::ColorF hover_col((ctx.theme->background.r + ctx.theme->hilited_back.r) / 2.0f / 255.0f,
+                                (ctx.theme->background.g + ctx.theme->hilited_back.g) / 2.0f / 255.0f,
+                                (ctx.theme->background.b + ctx.theme->hilited_back.b) / 2.0f / 255.0f, 1.0f);
+        hover_brush_->SetColor(hover_col);
     }
 
     D2D1_SIZE_F sz = render_target_->GetSize();
