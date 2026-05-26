@@ -18,7 +18,7 @@ if not exist "%BUILD_DIR%" mkdir "%BUILD_DIR%"
 cd /d "%BUILD_DIR%"
 
 echo [1/2] Configuring CMake...
-cmake .. -DCMAKE_BUILD_TYPE=%CONFIG%
+cmake .. -DCMAKE_BUILD_TYPE=%CONFIG% -DCXXIME_PRODUCTION_BUILD=OFF
 if errorlevel 1 (
     echo ERROR: CMake configuration failed.
     exit /b 1

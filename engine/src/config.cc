@@ -129,4 +129,58 @@ bool Config::load_themes(const std::string& path) {
     return true;
 }
 
+bool Config::save(const std::string& path) const {
+    if (path.empty()) return false;
+
+    nlohmann::json j;
+    j["schema"]["name"] = "CxxIME";
+    j["schema"]["version"] = "1.0";
+    j["schema"]["description"] = "CxxIME default pinyin schema";
+
+    j["engine"]["page_size"] = page_size;
+    j["engine"]["max_pinyin_length"] = 64;
+
+    j["style"]["font_face"] = font_name;
+    j["style"]["font_point"] = font_size;
+    j["style"]["layout"] = layout;
+    j["style"]["render_backend"] = render_backend;
+    j["style"]["inline_preedit"] = inline_preedit;
+    j["style"]["preedit_type"] = preedit_type;
+
+    j["layout"]["min_width"] = layout_config.min_width;
+    j["layout"]["max_width"] = layout_config.max_width;
+    j["layout"]["max_height"] = layout_config.max_height;
+    j["layout"]["margin_x"] = layout_config.margin_x;
+    j["layout"]["margin_y"] = layout_config.margin_y;
+    j["layout"]["spacing"] = layout_config.spacing;
+    j["layout"]["candidate_spacing"] = layout_config.candidate_spacing;
+    j["layout"]["hilite_spacing"] = layout_config.hilite_spacing;
+    j["layout"]["hilite_padding_x"] = layout_config.hilite_padding_x;
+    j["layout"]["hilite_padding_y"] = layout_config.hilite_padding_y;
+    j["layout"]["round_corner"] = layout_config.round_corner;
+    j["layout"]["round_corner_ex"] = layout_config.round_corner_ex;
+    j["layout"]["label_font_point"] = layout_config.label_font_point;
+    j["layout"]["border_width"] = layout_config.border_width;
+    j["layout"]["align_type"] = layout_config.align_type;
+
+    j["theme"] = theme;
+
+    nlohmann::json ac;
+    ac["good_old_caps_lock"] = good_old_caps_lock;
+    nlohmann::json sk;
+    for (auto& [k, v] : ascii_switch_key)
+        sk[k] = v;
+    ac["switch_key"] = sk;
+    j["ascii_composer"] = ac;
+
+    try {
+        std::ofstream file(path);
+        if (!file.is_open()) return false;
+        file << j.dump(4) << std::endl;
+    } catch (const std::exception&) {
+        return false;
+    }
+    return true;
+}
+
 } // namespace cxxime
