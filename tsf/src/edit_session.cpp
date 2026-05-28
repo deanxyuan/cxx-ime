@@ -88,26 +88,44 @@ STDMETHODIMP EditSession::DoEditSession(TfEditCookie ec) {
         }
     } else if (_action == Action::UPDATE_COMPOSITION) {
         ITfComposition* pComp = _service->get_composition();
-        if (pComp && !_text.empty()) {
-            ITfRange* pRange = nullptr;
-            if (SUCCEEDED(pComp->GetRange(&pRange))) {
+        ITfRange* pRange = nullptr;
+        bool own_range = false;
+        if (pComp && SUCCEEDED(pComp->GetRange(&pRange))) {
+            if (!_text.empty())
                 pRange->SetText(ec, TF_ST_CORRECTION, _text.c_str(), (LONG)_text.length());
-                // Capture caret screen position via TSF GetTextExt
-                ITfContextView* pView = nullptr;
-                if (SUCCEEDED(_context->GetActiveView(&pView)) && pView) {
-                    RECT rc = {};
-                    BOOL clipped = FALSE;
-                    pRange->Collapse(ec, TF_ANCHOR_START);
-                    if (SUCCEEDED(pView->GetTextExt(ec, pRange, &rc, &clipped)))
-                        _service->set_caret_rect(rc);
-                    else
-                        pRange->Collapse(ec, TF_ANCHOR_END);
-                    pView->Release();
-                } else {
-                    pRange->Collapse(ec, TF_ANCHOR_END);
-                }
-                pRange->Release();
+            pRange->Collapse(ec, TF_ANCHOR_END);
+        } else {
+            TF_SELECTION sel = {};
+            ULONG fetched = 0;
+            if (SUCCEEDED(_context->GetSelection(ec, TF_DEFAULT_SELECTION, 1, &sel, &fetched)) && fetched > 0)
+                pRange = sel.range;
+        }
+        if (pRange) {
+            ITfContextView* pView = nullptr;
+            if (SUCCEEDED(_context->GetActiveView(&pView)) && pView) {
+                RECT rc = {};
+                BOOL clipped = FALSE;
+                if (SUCCEEDED(pView->GetTextExt(ec, pRange, &rc, &clipped)))
+                    _service->set_caret_rect(rc);
+                pView->Release();
             }
+            pRange->Release();
+        }
+    } else if (_action == Action::QUERY_CARET) {
+        TF_SELECTION sel = {};
+        ULONG fetched = 0;
+        if (SUCCEEDED(_context->GetSelection(ec, TF_DEFAULT_SELECTION, 1, &sel, &fetched)) && fetched > 0) {
+            sel.range->Collapse(ec, TF_ANCHOR_END);
+            ITfContextView* pView = nullptr;
+            if (SUCCEEDED(_context->GetActiveView(&pView)) && pView) {
+                BOOL clipped = FALSE;
+                if (SUCCEEDED(pView->GetTextExt(ec, sel.range, &_resultRect, &clipped))) {
+                    _resultValid = true;
+                    _service->set_caret_rect(_resultRect);
+                }
+                pView->Release();
+            }
+            sel.range->Release();
         }
     }
     return S_OK;
