@@ -90,7 +90,17 @@ void D2DRenderer::render(const RenderContext& ctx) {
     render_target_->FillRectangle(D2D1::RectF(0,0,sz.width,sz.height), bg_brush_);
 
     if (!ctx.rects || ctx.rects->empty()) {
-        render_target_->DrawText(L"CxxIME", 6, fmt_left_, D2D1::RectF(0,0,sz.width,sz.height), preedit_brush_);
+        // No candidates — show preedit if available, otherwise placeholder
+        if (!ctx.preedit.empty() && ctx.preedit_rect.right > ctx.preedit_rect.left) {
+            auto wp = dec(ctx.preedit);
+            if (!wp.empty()) {
+                D2D1_RECT_F pr = {(float)ctx.preedit_rect.left, (float)ctx.preedit_rect.top,
+                                  (float)ctx.preedit_rect.right, (float)ctx.preedit_rect.bottom};
+                render_target_->DrawText(wp.c_str(), (UINT32)wp.length(), fmt_preedit_, pr, preedit_brush_);
+            }
+        } else {
+            render_target_->DrawText(L"CxxIME", 6, fmt_left_, D2D1::RectF(0,0,sz.width,sz.height), preedit_brush_);
+        }
         render_target_->EndDraw(); return;
     }
 
