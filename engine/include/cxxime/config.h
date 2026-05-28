@@ -39,8 +39,8 @@ struct Config {
     int font_size = 14;
     std::string layout = "horizontal";  // horizontal | vertical
     std::string render_backend = "d2d";  // gdi | d2d
-    bool inline_preedit = true;
-    std::string preedit_type = "composition";
+    bool inline_preedit = false;
+    std::string preedit_type = "preview";
 
     // theme
     std::string theme = "azure";

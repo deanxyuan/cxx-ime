@@ -20,8 +20,9 @@ public:
     // ITfEditSession
     STDMETHODIMP DoEditSession(TfEditCookie ec) override;
 
-    enum class Action { INSERT_TEXT, START_COMPOSITION, END_COMPOSITION, UPDATE_COMPOSITION };
+    enum class Action { INSERT_TEXT, START_COMPOSITION, END_COMPOSITION, UPDATE_COMPOSITION, QUERY_CARET };
     void set_action(Action action, const std::wstring& text = L"");
+    bool get_caret_rect(RECT& out) const { if (_resultValid) { out = _resultRect; return true; } return false; }
 
 private:
     LONG _cRef = 1;
@@ -29,6 +30,8 @@ private:
     ITfContext* _context;
     Action _action = Action::INSERT_TEXT;
     std::wstring _text;
+    RECT _resultRect = {};
+    bool _resultValid = false;
 };
 
 #endif // CXXIME_TSF_EDIT_SESSION_H_
