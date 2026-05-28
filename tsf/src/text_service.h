@@ -13,6 +13,7 @@ class TextService : public ITfTextInputProcessorEx,
                     public ITfKeyEventSink,
                     public ITfCompositionSink,
                     public ITfThreadFocusSink,
+                    public ITfThreadMgrEventSink,
                     public ITfDisplayAttributeProvider {
 public:
     TextService();
@@ -42,6 +43,13 @@ public:
     // ITfThreadFocusSink
     STDMETHODIMP OnSetThreadFocus() override;
     STDMETHODIMP OnKillThreadFocus() override;
+
+    // ITfThreadMgrEventSink
+    STDMETHODIMP OnInitDocumentMgr(ITfDocumentMgr* pDocMgr) override;
+    STDMETHODIMP OnUninitDocumentMgr(ITfDocumentMgr* pDocMgr) override;
+    STDMETHODIMP OnSetFocus(ITfDocumentMgr* pDocMgrFocus, ITfDocumentMgr* pDocMgrPrevFocus) override;
+    STDMETHODIMP OnPushContext(ITfContext* pic) override;
+    STDMETHODIMP OnPopContext(ITfContext* pic) override;
 
     // ITfDisplayAttributeProvider
     STDMETHODIMP EnumDisplayAttributeInfo(IEnumTfDisplayAttributeInfo** ppEnum) override;
@@ -74,6 +82,8 @@ private:
     TfClientId _clientId = TF_CLIENTID_NULL;
     ITfComposition* _composition = nullptr;
     DWORD _activateFlags = 0;
+    DWORD _dwThreadFocusCookie = TF_INVALID_COOKIE;
+    DWORD _dwThreadMgrEventCookie = TF_INVALID_COOKIE;
 
     cxxime::IpcClient _client;
     uint32_t _sessionId = 0;
