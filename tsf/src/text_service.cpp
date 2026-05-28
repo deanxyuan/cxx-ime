@@ -152,6 +152,7 @@ STDMETHODIMP TextService::Deactivate() {
 
 // ITfKeyEventSink
 STDMETHODIMP TextService::OnSetFocus(BOOL fForeground) {
+    _load_config();
     return S_OK;
 }
 
@@ -167,6 +168,8 @@ STDMETHODIMP TextService::OnTestKeyUp(ITfContext* pic, WPARAM wParam, LPARAM lPa
 
 STDMETHODIMP TextService::OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM lParam, BOOL* pfEaten) {
     *pfEaten = FALSE;
+
+    _load_config();
 
     uint32_t modifiers = _get_modifiers();
     CXXIME_LOG(L"OnKeyDown: vk=%u, mods=%u, composing=%d", (unsigned int)wParam, modifiers, _composing);
@@ -231,6 +234,7 @@ STDMETHODIMP TextService::OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM lPara
             } else {
                 if (_composing && _composition) _end_composition(pic);
                 _composing = true;
+                update_composition(pic, L"");
             }
             *pfEaten = TRUE;
 
@@ -359,7 +363,7 @@ HRESULT TextService::insert_text(const std::wstring& text, bool sync) {
 }
 
 void TextService::update_composition(ITfContext* pic, const std::wstring& preedit) {
-    if (!_composing || !pic)
+    if (!pic)
         return;
 
     EditSession* pSession = new (std::nothrow) EditSession(this, pic);
@@ -369,7 +373,7 @@ void TextService::update_composition(ITfContext* pic, const std::wstring& preedi
     pSession->set_action(EditSession::Action::UPDATE_COMPOSITION, preedit);
 
     HRESULT hr = E_FAIL;
-    pic->RequestEditSession(_clientId, pSession, TF_ES_READWRITE | TF_ES_ASYNC, &hr);
+    pic->RequestEditSession(_clientId, pSession, TF_ES_READWRITE | TF_ES_ASYNCDONTCARE, &hr);
 
     pSession->Release();
 }
@@ -525,20 +529,17 @@ uint32_t TextService::_get_modifiers() const {
 
 void TextService::_load_config() {
     _config.load(cxxime::data_path("default.json"));
+    _config.load(cxxime::user_data_path("default.json"));
 }
 
 RECT TextService::_resolve_caret_rect(ITfContext* pic) {
-    RECT rc = {};
-
-    // L1: TSF GetTextExt
-    if (_caretRect.left != 0 || _caretRect.top != 0 ||
-        _caretRect.right != 0 || _caretRect.bottom != 0) {
-        rc = _caretRect;
-        _caretRect = {};
-        return rc;
+    if (_caretRect.left != 0 || _caretRect.right != 0 ||
+        _caretRect.top != 0 || _caretRect.bottom != 0) {
+        return _caretRect;
     }
 
-    // L2: GetGUIThreadInfo
+    RECT rc = {};
+
     GUITHREADINFO gti = { sizeof(gti) };
     if (GetGUIThreadInfo(GetCurrentThreadId(), &gti) && gti.hwndCaret) {
         POINT pt = { gti.rcCaret.left, gti.rcCaret.top };
@@ -547,7 +548,6 @@ RECT TextService::_resolve_caret_rect(ITfContext* pic) {
         return rc;
     }
 
-    // L3: GetCaretPos
     POINT pt = {};
     if (GetCaretPos(&pt)) {
         HWND focus = GetFocus();
@@ -556,7 +556,6 @@ RECT TextService::_resolve_caret_rect(ITfContext* pic) {
         return rc;
     }
 
-    // L4: GetCursorPos
     if (GetCursorPos(&pt)) {
         SetRect(&rc, pt.x, pt.y, pt.x, pt.y + 20);
     }
