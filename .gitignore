@@ -1,5 +1,6 @@
 # Build output
 build/
+build_debug/
 dist/
 
 # Raw dictionary databases (too large for git; committed as .zip)
