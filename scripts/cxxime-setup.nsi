@@ -98,11 +98,22 @@ Section "Uninstall"
         SetRegView 64
     ${EndIf}
 
+    ; Stop server
     nsExec::Exec 'taskkill /im cxxime-server.exe'
     Sleep 1500
     nsExec::Exec 'taskkill /f /im cxxime-server.exe'
-    nsExec::Exec '"$WINDIR\Sysnative\regsvr32.exe" /u /s "$INSTDIR\cxxime_tsf.dll"'
 
+    ; Switch system keyboard to English to trigger TSF to unload CxxIME from all processes
+    DeleteRegValue HKCU "Keyboard Layout\Preload" "1"
+    WriteRegStr HKCU "Keyboard Layout\Preload" "1" "00000409"
+    System::Call 'user32::SendMessageTimeout(i 0xFFFF, i 0x0050, i 0, i 0, i 0, i 2000, *i .r0)'
+    Sleep 1000
+
+    ; Unregister TSF DLL and wait for TSF to notify processes
+    nsExec::Exec '"$WINDIR\Sysnative\regsvr32.exe" /u /s "$INSTDIR\cxxime_tsf.dll"'
+    Sleep 3000
+
+    ; Remove registry entries
     DeleteRegValue HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Run" "CxxIMEServer"
     nsExec::Exec '"$WINDIR\Sysnative\reg.exe" delete "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" /v CxxIMEServer /f'
     nsExec::Exec '"$SYSDIR\reg.exe" delete "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" /v CxxIMEServer /f'
@@ -118,7 +129,13 @@ Section "Uninstall"
 
     RMDir /r "$SMPROGRAMS\CxxIME"
 
+    ; Delete TSF DLL - try immediate delete, rename-and-schedule if locked
     Delete "$INSTDIR\cxxime_tsf.dll"
+    IfFileExists "$INSTDIR\cxxime_tsf.dll" 0 dll_deleted
+        Rename "$INSTDIR\cxxime_tsf.dll" "$INSTDIR\cxxime_tsf.dll.old"
+        System::Call 'kernel32::MoveFileEx(t "$INSTDIR\cxxime_tsf.dll.old", t "", i 0x8) i.r0'
+    dll_deleted:
+
     Delete "$INSTDIR\cxxime-server.exe"
     Delete "$INSTDIR\cxxime-settings.exe"
     Delete "$INSTDIR\data\default.json"
@@ -129,7 +146,7 @@ Section "Uninstall"
     Delete "$INSTDIR\data\wubi86.dict.bin"
     Delete "$INSTDIR\uninstall.exe"
     RMDir /r "$INSTDIR\data"
-    RMDir "$INSTDIR"
+    RMDir /REBOOTOK "$INSTDIR"
 
     Delete "$APPDATA\CxxIME\default.json"
     Delete "$APPDATA\CxxIME\themes.json"
@@ -139,4 +156,6 @@ Section "Uninstall"
     Delete "$APPDATA\CxxIME\wubi86.dict.bin"
     Delete "$APPDATA\CxxIME\user.tsv"
     RMDir "$APPDATA\CxxIME"
+
+    SetRebootFlag true
 SectionEnd
