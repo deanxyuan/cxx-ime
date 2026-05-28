@@ -54,6 +54,10 @@ ProcessResult Engine::process_key(const KeyEvent& event) {
     // Let AsciiComposer track modifier key state (may toggle ascii_mode)
     ascii_composer_.process_key(event.keycode, event.is_key_up, context_);
 
+    // Check if AsciiComposer committed text (e.g. Shift toggle with commit_text)
+    if (!context_.committed_text.empty())
+        return ProcessResult::COMMITTED;
+
     // If in ASCII mode, handle letters/space directly
     if (ascii_composer_.is_ascii_mode() && !event.is_key_up) {
         uint32_t vk = event.keycode;
