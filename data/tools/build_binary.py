@@ -181,7 +181,14 @@ def trie_serialize_nodes(data: bytes) -> list:
 def build_dict_bin(db_path: str, output_path: str) -> int:
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
-    cur.execute("SELECT text, code, frequency, syllable_ids FROM dict ORDER BY syllable_ids, frequency DESC")
+    # Detect schema: use syllable_ids if available, otherwise fall back to code
+    cur.execute("PRAGMA table_info(dict)")
+    columns = {row[1] for row in cur.fetchall()}
+    if 'syllable_ids' in columns:
+        cur.execute("SELECT text, code, frequency, syllable_ids FROM dict ORDER BY syllable_ids, frequency DESC")
+    else:
+        print("  Note: no syllable_ids column, using code as syllable_ids")
+        cur.execute("SELECT text, code, frequency, code FROM dict ORDER BY code, frequency DESC")
     rows = cur.fetchall()
     conn.close()
     if not rows:
@@ -243,16 +250,27 @@ def resolve_input(path: str) -> tuple:
         for name in names:
             if name.endswith(".dict.db"):
                 extracted = os.path.join(tmpdir, name)
-                return extracted, lambda: (
-                    os.remove(extracted),
-                    os.rmdir(tmpdir),
-                )
+                return extracted, lambda: _cleanup_temp(extracted, tmpdir)
         # Fallback: use first extracted file
         extracted = os.path.join(tmpdir, names[0])
-        return extracted, lambda: (os.remove(extracted), os.rmdir(tmpdir))
+        return extracted, lambda: _cleanup_temp(extracted, tmpdir)
 
     print(f"Error: {path} not found (also checked {zip_path})", file=sys.stderr)
     sys.exit(1)
+
+
+def _cleanup_temp(db_path: str, tmpdir: str):
+    """Clean up temp files, ignoring errors on Windows (SQLite file handles)."""
+    import gc
+    gc.collect()
+    try:
+        os.remove(db_path)
+    except OSError:
+        pass
+    try:
+        os.rmdir(tmpdir)
+    except OSError:
+        pass
 
 
 def build_id_index_file(db_path: str, output_path: str) -> int:
@@ -260,7 +278,13 @@ def build_id_index_file(db_path: str, output_path: str) -> int:
     import sqlite3
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
-    cur.execute("SELECT syllable_ids FROM dict ORDER BY syllable_ids")
+    # Detect schema: use syllable_ids if available, otherwise fall back to code
+    cur.execute("PRAGMA table_info(dict)")
+    columns = {row[1] for row in cur.fetchall()}
+    if 'syllable_ids' in columns:
+        cur.execute("SELECT syllable_ids FROM dict ORDER BY syllable_ids")
+    else:
+        cur.execute("SELECT code FROM dict ORDER BY code")
     rows = cur.fetchall()
     conn.close()
 
@@ -329,6 +353,8 @@ def main():
     parser.add_argument("--output", "-o", required=True)
     parser.add_argument("--spellings-only", action="store_true")
     parser.add_argument("--dict-only", action="store_true")
+    parser.add_argument("--skip-idx", action="store_true",
+                        help="Skip building .dict.idx file (for wubi)")
     args = parser.parse_args()
 
     db_path, cleanup = resolve_input(args.input)
@@ -338,7 +364,8 @@ def main():
             build_spellings_trie(db_path, args.output + ".spellings.bin")
         if not args.spellings_only:
             build_dict_bin(db_path, args.output + ".dict.bin")
-            build_id_index_file(db_path, args.output + ".dict.idx")
+            if not args.skip_idx:
+                build_id_index_file(db_path, args.output + ".dict.idx")
         print("Done.")
     finally:
         cleanup()

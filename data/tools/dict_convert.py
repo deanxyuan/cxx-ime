@@ -69,14 +69,15 @@ def create_system_db(output_path, entries):
             id INTEGER PRIMARY KEY,
             text TEXT NOT NULL,
             code TEXT NOT NULL,
-            frequency INTEGER DEFAULT 0
+            frequency INTEGER DEFAULT 0,
+            syllable_ids TEXT
         )
     ''')
     cur.execute('CREATE INDEX IF NOT EXISTS idx_code ON dict(code)')
 
     cur.executemany(
-        'INSERT INTO dict (text, code, frequency) VALUES (?, ?, ?)',
-        [(text, syllable, freq) for syllable, text, freq in entries]
+        'INSERT INTO dict (text, code, frequency, syllable_ids) VALUES (?, ?, ?, ?)',
+        [(text, syllable, freq, syllable) for syllable, text, freq in entries]
     )
 
     conn.commit()

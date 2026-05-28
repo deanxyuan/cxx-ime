@@ -4,7 +4,6 @@
 #define CXXIME_SERVER_APP_H_
 
 #include <windows.h>
-#include <shellapi.h>
 #include <cxxime/ipc_server.h>
 #include <cxxime/ipc_protocol.h>
 #include "session_manager.h"
@@ -22,8 +21,7 @@ private:
     SessionManager session_mgr_;
     cxxime::IpcServer ipc_server_;
     HWND hwnd_ = nullptr;
-    NOTIFYICONDATAW nid_ = {};
-    std::string config_path_;  // Kept for tray "Settings..." menu
+    std::string config_path_;
 };
 
 #endif // CXXIME_SERVER_APP_H_
