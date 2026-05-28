@@ -30,6 +30,8 @@ STDMETHODIMP TextService::QueryInterface(REFIID riid, void** ppvObj) {
         *ppvObj = static_cast<ITfCompositionSink*>(this);
     else if (IsEqualIID(riid, IID_ITfThreadFocusSink))
         *ppvObj = static_cast<ITfThreadFocusSink*>(this);
+    else if (IsEqualIID(riid, IID_ITfThreadMgrEventSink))
+        *ppvObj = static_cast<ITfThreadMgrEventSink*>(this);
     else if (IsEqualIID(riid, IID_ITfDisplayAttributeProvider))
         *ppvObj = static_cast<ITfDisplayAttributeProvider*>(this);
 
@@ -68,6 +70,18 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
 
     _register_key_event_sink();
     _register_preserved_key();
+
+    // Register thread focus sink to detect window/app switches
+    {
+        ITfSource* pSource = nullptr;
+        if (SUCCEEDED(_threadMgr->QueryInterface(IID_ITfSource, (void**)&pSource))) {
+            pSource->AdviseSink(IID_ITfThreadFocusSink,
+                                static_cast<ITfThreadFocusSink*>(this), &_dwThreadFocusCookie);
+            pSource->AdviseSink(IID_ITfThreadMgrEventSink,
+                                static_cast<ITfThreadMgrEventSink*>(this), &_dwThreadMgrEventCookie);
+            pSource->Release();
+        }
+    }
 
     // Create candidate window (use HWND_MESSAGE parent since TSF runs in-app)
     _candidateWindow.create(nullptr, _config);
@@ -138,6 +152,21 @@ STDMETHODIMP TextService::Deactivate() {
     _client.disconnect();
 
     _candidateWindow.destroy();
+
+    // Unregister thread focus sink and event sink
+    if (_threadMgr) {
+        ITfSource* pSource = nullptr;
+        if (SUCCEEDED(_threadMgr->QueryInterface(IID_ITfSource, (void**)&pSource))) {
+            if (_dwThreadFocusCookie != TF_INVALID_COOKIE)
+                pSource->UnadviseSink(_dwThreadFocusCookie);
+            if (_dwThreadMgrEventCookie != TF_INVALID_COOKIE)
+                pSource->UnadviseSink(_dwThreadMgrEventCookie);
+            pSource->Release();
+        }
+        _dwThreadFocusCookie = TF_INVALID_COOKIE;
+        _dwThreadMgrEventCookie = TF_INVALID_COOKIE;
+    }
+
     _unregister_key_event_sink();
     _unregister_preserved_key();
 
@@ -238,19 +267,42 @@ STDMETHODIMP TextService::OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM lPara
             }
             *pfEaten = TRUE;
 
-            _candidateWindow.set_preedit(decision.show_preedit_in_popup ? response.preedit : "");
+            std::string popup_preedit = decision.show_preedit_in_popup ? response.preedit : "";
+            _candidateWindow.set_preedit(popup_preedit);
 
-            if (response.candidate_count > 0) {
-                cxxime::CandidatePage page;
-                page.highlighted = (int)response.highlighted;
-                for (uint32_t i = 0; i < response.candidate_count && i < 10; ++i) {
-                    cxxime::Candidate c;
-                    c.text = response.candidates[i];
-                    page.candidates.push_back(std::move(c));
+            bool has_candidates = response.candidate_count > 0;
+            bool has_preedit = !popup_preedit.empty();
+
+            if (has_candidates || has_preedit) {
+                if (has_candidates) {
+                    cxxime::CandidatePage page;
+                    page.highlighted = (int)response.highlighted;
+                    for (uint32_t i = 0; i < response.candidate_count && i < 10; ++i) {
+                        cxxime::Candidate c;
+                        c.text = response.candidates[i];
+                        page.candidates.push_back(std::move(c));
+                    }
+                    _candidateWindow.update(page);
+                } else {
+                    _candidateWindow.update({});
                 }
-                _candidateWindow.update(page);
 
-                RECT caretRect = _resolve_caret_rect(pic);
+                // Query caret position via synchronous TSF edit session
+                RECT caretRect = {};
+                bool caretResolved = false;
+                EditSession* pCaretSession = new (std::nothrow) EditSession(this, pic);
+                if (pCaretSession) {
+                    pCaretSession->set_action(EditSession::Action::QUERY_CARET);
+                    HRESULT hr = E_FAIL;
+                    pic->RequestEditSession(_clientId, pCaretSession,
+                                            TF_ES_READ | TF_ES_SYNC, &hr);
+                    if (SUCCEEDED(hr))
+                        caretResolved = pCaretSession->get_caret_rect(caretRect);
+                    pCaretSession->Release();
+                }
+                if (!caretResolved)
+                    caretRect = _resolve_caret_rect(pic);
+
                 _candidateWindow.move_to_caret(caretRect);
                 _candidateWindow.show();
             } else {
@@ -303,6 +355,60 @@ STDMETHODIMP TextService::OnSetThreadFocus() {
 }
 
 STDMETHODIMP TextService::OnKillThreadFocus() {
+    // Thread losing focus — hide candidate window and clear preedit state
+    _candidateWindow.hide();
+    _candidateWindow.set_preedit("");
+    if (_composing) {
+        // Notify server to clear composition state
+        _client.focus_out(_sessionId);
+        // End composition in TSF
+        ITfDocumentMgr* pDocMgr = nullptr;
+        if (_threadMgr && SUCCEEDED(_threadMgr->GetFocus(&pDocMgr)) && pDocMgr) {
+            ITfContext* pContext = nullptr;
+            if (SUCCEEDED(pDocMgr->GetBase(&pContext)) && pContext) {
+                _end_composition(pContext);
+                pContext->Release();
+            }
+            pDocMgr->Release();
+        }
+        _composing = false;
+    }
+    return S_OK;
+}
+
+// ITfThreadMgrEventSink
+STDMETHODIMP TextService::OnInitDocumentMgr(ITfDocumentMgr* pDocMgr) {
+    return S_OK;
+}
+
+STDMETHODIMP TextService::OnUninitDocumentMgr(ITfDocumentMgr* pDocMgr) {
+    return S_OK;
+}
+
+STDMETHODIMP TextService::OnSetFocus(ITfDocumentMgr* pDocMgrFocus, ITfDocumentMgr* pDocMgrPrevFocus) {
+    // Document focus changed — hide candidate window if switching away
+    if (_composing) {
+        _candidateWindow.hide();
+        _candidateWindow.set_preedit("");
+        _client.focus_out(_sessionId);
+        // End composition in the previous context
+        if (pDocMgrPrevFocus) {
+            ITfContext* pContext = nullptr;
+            if (SUCCEEDED(pDocMgrPrevFocus->GetBase(&pContext)) && pContext) {
+                _end_composition(pContext);
+                pContext->Release();
+            }
+        }
+        _composing = false;
+    }
+    return S_OK;
+}
+
+STDMETHODIMP TextService::OnPushContext(ITfContext* pic) {
+    return S_OK;
+}
+
+STDMETHODIMP TextService::OnPopContext(ITfContext* pic) {
     return S_OK;
 }
 
@@ -556,10 +662,6 @@ RECT TextService::_resolve_caret_rect(ITfContext* pic) {
         return rc;
     }
 
-    if (GetCursorPos(&pt)) {
-        SetRect(&rc, pt.x, pt.y, pt.x, pt.y + 20);
-    }
-
     return rc;
 }
 
@@ -578,4 +680,30 @@ void TextService::_send_modifier_key_up(WPARAM wParam) {
 
     // Sync ascii_mode state from engine
     _chinese_mode = !resp.ascii_mode;
+
+    // Handle committed text (e.g. Shift toggle with commit_text)
+    if (resp.commit_text[0] != '\0') {
+        std::wstring commit_text;
+        int len = MultiByteToWideChar(CP_UTF8, 0, resp.commit_text, -1, nullptr, 0);
+        if (len > 0) {
+            commit_text.resize(len - 1);
+            MultiByteToWideChar(CP_UTF8, 0, resp.commit_text, -1, &commit_text[0], len);
+        }
+        if (!commit_text.empty()) {
+            insert_text(commit_text);
+            // End composition in TSF
+            ITfDocumentMgr* pDocMgr = nullptr;
+            if (_threadMgr && SUCCEEDED(_threadMgr->GetFocus(&pDocMgr)) && pDocMgr) {
+                ITfContext* pContext = nullptr;
+                if (SUCCEEDED(pDocMgr->GetBase(&pContext)) && pContext) {
+                    _end_composition(pContext);
+                    pContext->Release();
+                }
+                pDocMgr->Release();
+            }
+            _composing = false;
+            _candidateWindow.hide();
+            _candidateWindow.set_preedit("");
+        }
+    }
 }
