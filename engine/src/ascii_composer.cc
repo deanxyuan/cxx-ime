@@ -123,10 +123,17 @@ void AsciiComposer::toggle_mode(uint32_t key_code, Context& ctx) {
         return;
 
     case AsciiModeSwitchStyle::COMMIT_TEXT:
-        if (composing && !ctx.candidates.candidates.empty()) {
-            int idx = ctx.candidates.highlighted;
-            if (idx >= 0 && idx < (int)ctx.candidates.candidates.size())
-                ctx.committed_text = ctx.candidates.candidates[idx].text;
+        if (composing) {
+            if (!ctx.candidates.candidates.empty()) {
+                int idx = ctx.candidates.highlighted;
+                if (idx >= 0 && idx < (int)ctx.candidates.candidates.size())
+                    ctx.committed_text = ctx.candidates.candidates[idx].text;
+            } else if (!ctx.pinyin_buffer.empty()) {
+                ctx.committed_text = ctx.pinyin_buffer;
+            }
+            ctx.pinyin_buffer.clear();
+            ctx.candidates = {};
+            ctx.page_index = 0;
         }
         ascii_mode_ = !ascii_mode_;
         temporary_ascii_ = false;
