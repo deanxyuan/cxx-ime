@@ -58,8 +58,19 @@ void GdiRenderer::render(HDC hdc, const RECT& clip, const RenderContext& ctx) {
     int corner = cfg ? cfg->round_corner : 4;
 
     if (!ctx.rects || ctx.rects->empty()) {
-        SetBkMode(hdc, TRANSPARENT); SetTextColor(hdc, preedit_color_);
-        DrawTextW(hdc, L"CxxIME", -1, const_cast<RECT*>(&clip), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        // No candidates — show preedit if available, otherwise placeholder
+        if (!ctx.preedit.empty() && ctx.preedit_rect.right > ctx.preedit_rect.left && preedit_font_) {
+            SelectObject(hdc, preedit_font_);
+            std::wstring wp = to_wstr(ctx.preedit);
+            if (!wp.empty()) {
+                SetBkMode(hdc, TRANSPARENT); SetTextColor(hdc, preedit_color_);
+                DrawTextW(hdc, wp.c_str(), -1, const_cast<RECT*>(&ctx.preedit_rect),
+                          DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+            }
+        } else {
+            SetBkMode(hdc, TRANSPARENT); SetTextColor(hdc, preedit_color_);
+            DrawTextW(hdc, L"CxxIME", -1, const_cast<RECT*>(&clip), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        }
         return;
     }
 
