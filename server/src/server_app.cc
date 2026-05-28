@@ -5,10 +5,8 @@
 #include <cxxime/data_path.h>
 #include <cstring>
 
-#define WM_TRAYICON (WM_USER + 1)
-
 bool ServerApp::initialize(const std::string& dict_path, const std::string& config_path) {
-    std::string resolved_dict = dict_path.empty() ? cxxime::data_path("pinyin.dict.db") : dict_path;
+    std::string resolved_dict = dict_path.empty() ? cxxime::data_path("pinyin.dict.bin") : dict_path;
     std::string cfg = config_path.empty() ? cxxime::data_path("default.json") : config_path;
     config_path_ = cfg;
 
@@ -16,12 +14,21 @@ bool ServerApp::initialize(const std::string& dict_path, const std::string& conf
     CXXIME_LOG(L"Config path: %S", config_path_.c_str());
 
     if (!session_mgr_.initialize(resolved_dict, config_path_)) {
-        MessageBoxW(nullptr, L"Failed to initialize session manager.", L"CxxIME Server",
-                    MB_OK | MB_ICONERROR);
+        std::wstring msg = L"Failed to initialize session manager.\n\n";
+        msg += L"Dict: ";
+        msg += std::wstring(resolved_dict.begin(), resolved_dict.end());
+        msg += L"\nConfig: ";
+        msg += std::wstring(config_path_.begin(), config_path_.end());
+        msg += L"\nData dir: ";
+        std::string dd = cxxime::data_dir();
+        msg += std::wstring(dd.begin(), dd.end());
+        msg += L"\nUser data dir: ";
+        std::string udd = cxxime::user_data_dir();
+        msg += std::wstring(udd.begin(), udd.end());
+        MessageBoxW(nullptr, msg.c_str(), L"CxxIME Server", MB_OK | MB_ICONERROR);
         return false;
     }
 
-    // Create hidden window for tray icon messages
     WNDCLASSEXW wc = {};
     wc.cbSize = sizeof(wc);
     wc.lpfnWndProc = WndProc;
@@ -36,17 +43,6 @@ bool ServerApp::initialize(const std::string& dict_path, const std::string& conf
 
     SetWindowLongPtrW(hwnd_, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(this));
 
-    // Create tray icon
-    nid_.cbSize = sizeof(nid_);
-    nid_.hWnd = hwnd_;
-    nid_.uID = 1;
-    nid_.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
-    nid_.uCallbackMessage = WM_TRAYICON;
-    nid_.hIcon = LoadIcon(nullptr, IDI_APPLICATION);
-    wcscpy_s(nid_.szTip, L"CxxIME Server");
-    Shell_NotifyIconW(NIM_ADD, &nid_);
-
-    // Start IPC server
     ipc_server_.set_handler([this](const cxxime::IPCRequest& req) { return handle_request(req); });
 
     if (!ipc_server_.start(cxxime::IPC_PIPE_BASE_NAME)) {
@@ -69,7 +65,6 @@ void ServerApp::finalize() {
     ipc_server_.stop();
 
     if (hwnd_) {
-        Shell_NotifyIconW(NIM_DELETE, &nid_);
         DestroyWindow(hwnd_);
         hwnd_ = nullptr;
     }
@@ -193,44 +188,12 @@ cxxime::IPCResponse ServerApp::handle_request(const cxxime::IPCRequest& request)
 }
 
 LRESULT CALLBACK ServerApp::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
-    ServerApp* app = reinterpret_cast<ServerApp*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
-
-    if (msg == WM_TRAYICON) {
-        if (lp == WM_RBUTTONUP) {
-            POINT pt;
-            GetCursorPos(&pt);
-            HMENU hMenu = CreatePopupMenu();
-            AppendMenuW(hMenu, MF_STRING, 1, L"Settings...");
-            AppendMenuW(hMenu, MF_STRING, 2, L"View Log");
-            AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
-            AppendMenuW(hMenu, MF_STRING, 3, L"About CxxIME");
-            AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
-            AppendMenuW(hMenu, MF_STRING, 4, L"Exit");
-            SetForegroundWindow(hwnd);
-            int cmd = TrackPopupMenu(hMenu, TPM_RETURNCMD, pt.x, pt.y, 0, hwnd, nullptr);
-            DestroyMenu(hMenu);
-            if (cmd == 1) {
-                if (app && !app->config_path_.empty()) {
-                    int wlen = MultiByteToWideChar(CP_UTF8, 0, app->config_path_.c_str(), -1, nullptr, 0);
-                    std::wstring wpath(wlen - 1, L'\0');
-                    MultiByteToWideChar(CP_UTF8, 0, app->config_path_.c_str(), -1, &wpath[0], wlen);
-                    ShellExecuteW(hwnd, L"open", wpath.c_str(),
-                                  nullptr, nullptr, SW_SHOWNORMAL);
-                } else {
-                    MessageBoxW(hwnd, L"Config file not found.", L"CxxIME", MB_OK | MB_ICONWARNING);
-                }
-            } else if (cmd == 2) {
-                MessageBoxW(hwnd,
-                    L"Use DebugView (Sysinternals) to view logs.\n"
-                    L"Download: https://learn.microsoft.com/en-us/sysinternals/downloads/debugview\n\n"
-                    L"Filter: [CxxIME]",
-                    L"View Log", MB_OK | MB_ICONINFORMATION);
-            } else if (cmd == 3) {
-                MessageBoxW(hwnd, L"CxxIME - Lightweight Pinyin Input Method\nVersion 0.1.0", L"About", MB_OK);
-            } else if (cmd == 4) {
-                PostQuitMessage(0);
-            }
+    if (msg == WM_DESTROY) {
+        ServerApp* app = reinterpret_cast<ServerApp*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+        if (app) {
+            app->hwnd_ = nullptr;
         }
+        PostQuitMessage(0);
         return 0;
     }
 

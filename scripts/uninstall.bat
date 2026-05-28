@@ -45,20 +45,24 @@ echo.
 set "HAD_ERRORS=0"
 
 :: Step 1: Stop server
-echo  [1/6] Stopping server...
+echo  [1/7] Stopping server...
 tasklist /fi "imagename eq %SERVER_EXE%" 2>nul | find /i "%SERVER_EXE%" >nul 2>&1
 if not errorlevel 1 (
-    taskkill /f /im "%SERVER_EXE%" >nul 2>&1
-    timeout /t 1 /nobreak >nul 2>&1
+    taskkill /im "%SERVER_EXE%" >nul 2>&1
+    timeout /t 2 /nobreak >nul 2>&1
+    tasklist /fi "imagename eq %SERVER_EXE%" 2>nul | find /i "%SERVER_EXE%" >nul 2>&1
+    if not errorlevel 1 (
+        taskkill /f /im "%SERVER_EXE%" >nul 2>&1
+    )
     echo         Server stopped.
 ) else (
     echo         No running server found.
 )
 
 :: Step 2: Unregister TSF DLL
-echo  [2/6] Unregistering TSF text service...
+echo  [2/7] Unregistering TSF text service...
 if exist "%DATA_DIR%\%TSF_DLL%" (
-    regsvr32 /u /s "%DATA_DIR%\%TSF_DLL%" >nul 2>&1
+    %SystemRoot%\System32\regsvr32 /u /s "%DATA_DIR%\%TSF_DLL%" >nul 2>&1
     if errorlevel 1 (
         echo         WARNING: Could not unregister TSF DLL. May still be in use.
         set "HAD_ERRORS=1"
@@ -70,7 +74,7 @@ if exist "%DATA_DIR%\%TSF_DLL%" (
 )
 
 :: Step 3: Remove auto-start
-echo  [3/6] Removing auto-start entry...
+echo  [3/7] Removing auto-start entry...
 reg query "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" /v "CxxIMEServer" >nul 2>&1
 if not errorlevel 1 (
     reg delete "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" /v "CxxIMEServer" /f >nul 2>&1
@@ -80,7 +84,7 @@ if not errorlevel 1 (
 )
 
 :: Step 4: Clean TSF registry (CLSID registration)
-echo  [4/6] Cleaning TSF COM registration...
+echo  [4/7] Cleaning TSF COM registration...
 set "CLSID_KEY=HKLM\SOFTWARE\Classes\CLSID\%TSF_CLSID%"
 reg query "%CLSID_KEY%" >nul 2>&1
 if not errorlevel 1 (
@@ -91,7 +95,7 @@ if not errorlevel 1 (
 )
 
 :: Step 5: Clean TSF TIP profile
-echo  [5/6] Cleaning TSF TIP registry entries...
+echo  [5/7] Cleaning TSF TIP registry entries...
 set "TIP_KEY=HKLM\SOFTWARE\Microsoft\CTF\TIP\%TSF_CLSID%"
 reg query "%TIP_KEY%" >nul 2>&1
 if not errorlevel 1 (
@@ -101,8 +105,19 @@ if not errorlevel 1 (
     echo         No TSF TIP entry found.
 )
 
-:: Step 6: Remove data files
-echo  [6/6] Removing data files...
+:: Step 6: Clean Add/Remove Programs entry
+echo  [6/7] Cleaning Add/Remove Programs entry...
+set "UNINSTALL_KEY=HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\CxxIME"
+reg query "%UNINSTALL_KEY%" >nul 2>&1
+if not errorlevel 1 (
+    reg delete "%UNINSTALL_KEY%" /f >nul 2>&1
+    echo         Uninstall entry removed.
+) else (
+    echo         No uninstall entry found.
+)
+
+:: Step 7: Remove data files
+echo  [7/7] Removing data files...
 if exist "%DATA_DIR%" (
     timeout /t 1 /nobreak >nul 2>&1
     rmdir /s /q "%DATA_DIR%" 2>nul

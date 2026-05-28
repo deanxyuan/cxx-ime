@@ -6,12 +6,15 @@
 #include <cxxime/data_path.h>
 
 bool SharedResources::load(const std::string& dict_path, const std::string& config_path) {
-    if (!dict.open(dict_path)) {
+    std::string user_dict_path = cxxime::user_data_path("user.tsv");
+    if (!dict.open(dict_path, user_dict_path)) {
         CXXIME_LOG(L"SharedResources: dict.open FAILED");
         return false;
     }
     if (!config_path.empty()) {
         config.load(config_path);
+        // Overlay user config from %APPDATA%
+        config.load(cxxime::user_data_path("default.json"));
         config.load_themes(cxxime::data_path("themes.json"));
     }
     std::string sp_path = cxxime::Engine::derive_spellings_path(dict_path);
