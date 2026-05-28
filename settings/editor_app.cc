@@ -363,7 +363,9 @@ void EditorApp::show_panel(int idx) {
 
 void EditorApp::load_config() {
     config_ = {};
+    // Load defaults from program directory, then overlay user config from %APPDATA%
     config_.load(cxxime::data_path("default.json"));
+    config_.load(cxxime::user_data_path("default.json"));
     config_.load_themes(cxxime::data_path("themes.json"));
 
     // Populate controls
@@ -480,7 +482,7 @@ void EditorApp::save_config() {
         }
     }
 
-    config_.save(cxxime::data_path("default.json"));
+    config_.save(cxxime::user_data_path("default.json"));
 }
 
 // ─── Window proc ───────────────────────────────────────────────────────

@@ -52,30 +52,37 @@ HRESULT unregister_server() {
 }
 
 HRESULT register_profiles() {
-    ITfInputProcessorProfileMgr* pProfileMgr = nullptr;
+    ITfInputProcessorProfiles* pProfiles = nullptr;
     HRESULT hr = CoCreateInstance(CLSID_TF_InputProcessorProfiles, nullptr, CLSCTX_INPROC_SERVER,
-                                  IID_ITfInputProcessorProfileMgr, (void**)&pProfileMgr);
+                                  IID_ITfInputProcessorProfiles, (void**)&pProfiles);
     if (FAILED(hr))
         return hr;
 
-    hr = pProfileMgr->RegisterProfile(c_clsidTextService, MAKELANGID(LANG_CHINESE, SUBLANG_CHINESE_SIMPLIFIED),
-                                       c_guidProfile, TEXTSERVICE_DESC, (ULONG)wcslen(TEXTSERVICE_DESC),
-                                       nullptr, 0, 0, nullptr, 0, 0, 0);
-    pProfileMgr->Release();
+    hr = pProfiles->Register(c_clsidTextService);
+    if (SUCCEEDED(hr)) {
+        hr = pProfiles->AddLanguageProfile(c_clsidTextService,
+                                           MAKELANGID(LANG_CHINESE, SUBLANG_CHINESE_SIMPLIFIED),
+                                           c_guidProfile, TEXTSERVICE_DESC,
+                                           (ULONG)wcslen(TEXTSERVICE_DESC),
+                                           nullptr, 0, 0);
+    }
+    pProfiles->Release();
     return hr;
 }
 
 HRESULT unregister_profiles() {
-    ITfInputProcessorProfileMgr* pProfileMgr = nullptr;
+    ITfInputProcessorProfiles* pProfiles = nullptr;
     HRESULT hr = CoCreateInstance(CLSID_TF_InputProcessorProfiles, nullptr, CLSCTX_INPROC_SERVER,
-                                  IID_ITfInputProcessorProfileMgr, (void**)&pProfileMgr);
+                                  IID_ITfInputProcessorProfiles, (void**)&pProfiles);
     if (FAILED(hr))
         return hr;
 
-    hr = pProfileMgr->UnregisterProfile(c_clsidTextService, MAKELANGID(LANG_CHINESE, SUBLANG_CHINESE_SIMPLIFIED),
-                                          c_guidProfile, 0);
-    pProfileMgr->Release();
-    return hr;
+    pProfiles->RemoveLanguageProfile(c_clsidTextService,
+                                     MAKELANGID(LANG_CHINESE, SUBLANG_CHINESE_SIMPLIFIED),
+                                     c_guidProfile);
+    pProfiles->Unregister(c_clsidTextService);
+    pProfiles->Release();
+    return S_OK;
 }
 
 HRESULT register_categories() {

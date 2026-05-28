@@ -100,7 +100,7 @@ void CandidateWindow::move_to_caret(const RECT& caretRect) {
     }
     if (y < mi.rcWork.top) y = mi.rcWork.top;
 
-    SetWindowPos(hwnd_, HWND_TOPMOST, x, y, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE);
+    SetWindowPos(hwnd_, nullptr, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
 void CandidateWindow::rebuild_render_context(const LayoutConfig& cfg) {

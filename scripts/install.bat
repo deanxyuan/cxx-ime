@@ -68,8 +68,12 @@ echo         Required files found.
 echo  [2/5] Stopping existing server...
 tasklist /fi "imagename eq %SERVER_EXE%" 2>nul | find /i "%SERVER_EXE%" >nul 2>&1
 if not errorlevel 1 (
-    taskkill /f /im "%SERVER_EXE%" >nul 2>&1
-    timeout /t 1 /nobreak >nul 2>&1
+    taskkill /im "%SERVER_EXE%" >nul 2>&1
+    timeout /t 2 /nobreak >nul 2>&1
+    tasklist /fi "imagename eq %SERVER_EXE%" 2>nul | find /i "%SERVER_EXE%" >nul 2>&1
+    if not errorlevel 1 (
+        taskkill /f /im "%SERVER_EXE%" >nul 2>&1
+    )
     echo         Server stopped.
 ) else (
     echo         No running server found.
@@ -77,7 +81,7 @@ if not errorlevel 1 (
 
 :: Step 3: Unregister previous TSF DLL (from any location)
 echo  [3/5] Cleaning previous installation...
-regsvr32 /u /s "%DATA_DIR%\%TSF_DLL%" >nul 2>&1
+%SystemRoot%\System32\regsvr32 /u /s "%DATA_DIR%\%TSF_DLL%" >nul 2>&1
 if not errorlevel 1 (
     echo         Previous TSF DLL unregistered.
 ) else (
@@ -121,7 +125,7 @@ echo         Files installed.
 :: Step 5: Register TSF DLL and set auto-start
 echo  [5/5] Registering TSF text service and configuring auto-start...
 
-regsvr32 /s "%DATA_DIR%\%TSF_DLL%"
+%SystemRoot%\System32\regsvr32 /s "%DATA_DIR%\%TSF_DLL%"
 if errorlevel 1 (
     echo  ERROR: Failed to register %TSF_DLL%.
     echo  Try running manually:

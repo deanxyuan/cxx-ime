@@ -63,6 +63,31 @@ inline std::string data_path(const char* filename) {
     return data_dir() + filename;
 }
 
+// User data directory (%APPDATA%\CxxIME\) — per-user writable data
+// Used for: user dictionary (user.tsv), user config overrides
+inline std::string user_data_dir() {
+    static std::string dir;
+    if (dir.empty()) {
+        wchar_t appdata[MAX_PATH];
+        if (SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, 0, appdata))) {
+            int len = WideCharToMultiByte(CP_UTF8, 0, appdata, -1, nullptr, 0, nullptr, nullptr);
+            if (len > 1) {
+                dir.resize(len - 1);
+                WideCharToMultiByte(CP_UTF8, 0, appdata, -1, &dir[0], len, nullptr, nullptr);
+            }
+            dir += "\\CxxIME\\";
+            // Ensure directory exists
+            std::wstring wdir(dir.begin(), dir.end());
+            CreateDirectoryW(wdir.c_str(), nullptr);
+        }
+    }
+    return dir;
+}
+
+inline std::string user_data_path(const char* filename) {
+    return user_data_dir() + filename;
+}
+
 } // namespace cxxime
 
 #endif
