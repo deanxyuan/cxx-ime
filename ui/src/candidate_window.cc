@@ -150,7 +150,6 @@ void CandidateWindow::update(const CandidatePage& page) {
         lr = calculate_horizontal_layout(hdc, page.candidates, config_->font_name, config_->font_size, cfg);
     else
         lr = calculate_vertical_layout(hdc, page.candidates, config_->font_name, config_->font_size, cfg);
-    ReleaseDC(hwnd_, hdc);
 
     // Preedit: measure actual text height, same as Weasel's GetPreeditSize
     if (!preedit_text_.empty()) {
@@ -172,27 +171,35 @@ void CandidateWindow::update(const CandidatePage& page) {
             SelectObject(hdc, old);
             DeleteObject(hf);
         }
-        int preedit_h = (ps.cy > 0 ? ps.cy : lr.row_height) + cfg.spacing;
+        int row_h = lr.row_height > 0 ? lr.row_height : (ps.cy > 0 ? ps.cy : cfg.margin_y * 2);
+        int preedit_h = (ps.cy > 0 ? ps.cy : row_h) + cfg.spacing;
         for (auto& cr : lr.rects) {
             cr.label_rect.top += preedit_h;      cr.label_rect.bottom += preedit_h;
             cr.text_rect.top += preedit_h;        cr.text_rect.bottom += preedit_h;
             cr.highlight_rect.top += preedit_h;   cr.highlight_rect.bottom += preedit_h;
         }
+        // When no candidates, size window to fit preedit text
+        if (page.candidates.empty()) {
+            int preedit_w = (ps.cx > 0 ? ps.cx : 0) + cfg.margin_x * 2;
+            if (preedit_w > lr.width) lr.width = preedit_w;
+        }
         render_ctx_.preedit_rect = {cfg.margin_x, cfg.margin_y,
-                                    lr.width - cfg.margin_x, cfg.margin_y + (ps.cy > 0 ? ps.cy : lr.row_height)};
+                                    lr.width - cfg.margin_x, cfg.margin_y + (ps.cy > 0 ? ps.cy : row_h)};
         // Store preedit text height for separator positioning
-        render_ctx_.preedit_text_height = (ps.cy > 0 ? ps.cy : lr.row_height);
+        render_ctx_.preedit_text_height = (ps.cy > 0 ? ps.cy : row_h);
+        lr.row_height = row_h;
         lr.height += preedit_h;
     } else {
         render_ctx_.preedit_rect = {};
     }
+    ReleaseDC(hwnd_, hdc);
 
     candidate_rects_ = std::move(lr.rects);
     rebuild_render_context(cfg);
     // Extend width for page nav buttons if present
     if (page_total_ > 1 && render_ctx_.next_button_rect.right > lr.width)
         lr.width = render_ctx_.next_button_rect.right + config_->layout_config.margin_x;
-    SetWindowPos(hwnd_, nullptr, 0, 0, lr.width, lr.height, SWP_NOMOVE | SWP_NOZORDER);
+    SetWindowPos(hwnd_, nullptr, 0, 0, lr.width, lr.height, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
     if (d2d_renderer_) d2d_renderer_->resize(lr.width, lr.height);
     // Rounded window corners (like Weasel's round_corner_ex)
     if (hrgn_) DeleteObject(hrgn_);
@@ -266,6 +273,7 @@ LRESULT CALLBACK CandidateWindow::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM
     case WM_MOUSELEAVE:
         if (self) { self->render_ctx_.hovered_index = -1; InvalidateRect(hwnd, nullptr, FALSE); }
         return 0;
+    case WM_MOUSEACTIVATE: return MA_NOACTIVATE;  // prevent focus theft on click
     case WM_NCHITTEST: return HTCLIENT;  // prevent resize cursor at edges
     case WM_ERASEBKGND: return 1;
     }
