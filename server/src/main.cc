@@ -2,6 +2,7 @@
 
 #include "server_app.h"
 #include <cxxime/data_path.h>
+#include <cxxime/query_trace.h>
 #include <string>
 #include <shellapi.h>
 
@@ -44,5 +45,9 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
         return 1;
     app.run();
     app.finalize();
+
+    // Shutdown async trace writer (flush remaining entries)
+    cxxime::QueryTrace::shutdown();
+
     return 0;
 }

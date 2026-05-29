@@ -12,6 +12,8 @@
 #include <cxxime/translator.h>
 #include <cxxime/spellings_index.h>
 #include <cxxime/syllabifier.h>
+#include <cxxime/query_budget.h>
+#include <cxxime/query_trace.h>
 
 static char temp_path[MAX_PATH] = {};
 
@@ -649,5 +651,161 @@ static bool _engine_init = []() {
     GetTempPathA(MAX_PATH, temp_path);
     return true;
 }();
+
+// --- Deadline and QueryBudget tests ---
+
+TEST(QueryBudget, no_deadline_means_never_expired) {
+    cxxime::QueryBudget budget;
+    budget.deadline_us = 0;
+    ASSERT_TRUE(!budget.expired());
+}
+
+TEST(QueryBudget, expired_after_deadline) {
+    cxxime::QueryBudget budget;
+    budget.deadline_us = 1000;  // 1ms
+    budget.start_qpc = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count() - 2000;  // 2ms ago
+    ASSERT_TRUE(budget.expired());
+}
+
+TEST(QueryBudget, not_expired_before_deadline) {
+    cxxime::QueryBudget budget;
+    budget.deadline_us = 100000;  // 100ms
+    budget.start_qpc = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+    ASSERT_TRUE(!budget.expired());
+}
+
+TEST(Deadline, expired_deadline_sets_trace_flags) {
+    std::string dict_path = make_temp_path("test_deadline_dict.bin");
+    cxxime::Dict::create_test_dict(dict_path, {
+        {"de", "\xe7\x9a\x84", 1000},
+        {"de:dao", "\xe5\xbe\x97\xe5\x88\xb0", 300},
+    });
+
+    cxxime::Dict dict;
+    ASSERT_TRUE(dict.open_dict(dict_path));
+
+    cxxime::QueryTrace trace = {};
+    cxxime::QueryBudget budget;
+    budget.deadline_us = 1;  // 1us — will expire immediately
+    budget.start_qpc = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count() - 1000;  // 1ms ago
+
+    std::vector<uint32_t> ids = {0};  // dummy ID
+    dict.lookup_by_ids(ids, 10, &trace, &budget);
+
+    ASSERT_TRUE(trace.deadline_exceeded);
+    ASSERT_TRUE(trace.truncated);
+
+    dict.close();
+    DeleteFileA(dict_path.c_str());
+}
+
+TEST(Deadline, normal_query_no_deadline_flags) {
+    std::string dict_path = make_temp_path("test_no_deadline_dict.bin");
+    cxxime::Dict::create_test_dict(dict_path, {
+        {"de", "\xe7\x9a\x84", 1000},
+    });
+
+    cxxime::Dict dict;
+    ASSERT_TRUE(dict.open_dict(dict_path));
+
+    cxxime::QueryTrace trace = {};
+    // No budget — deadline_us defaults to 0
+    std::vector<uint32_t> ids = {0};
+    dict.lookup_by_ids(ids, 10, &trace, nullptr);
+
+    ASSERT_TRUE(!trace.deadline_exceeded);
+    ASSERT_TRUE(!trace.truncated);
+
+    dict.close();
+    DeleteFileA(dict_path.c_str());
+}
+
+TEST(Deadline, scan_budget_limits_scanning) {
+    std::string dict_path = make_temp_path("test_scan_budget_dict.bin");
+
+    // Create a dict with many entries sharing the same syllable ID
+    std::vector<std::tuple<std::string, std::string, int>> entries;
+    for (int i = 0; i < 100; ++i) {
+        char text[16];
+        snprintf(text, sizeof(text), "test%d", i);
+        entries.push_back({"de", text, i});
+    }
+    cxxime::Dict::create_test_dict(dict_path, entries);
+
+    cxxime::Dict dict;
+    ASSERT_TRUE(dict.open_dict(dict_path));
+
+    cxxime::QueryTrace trace = {};
+    cxxime::QueryBudget budget;
+    budget.max_exact_scan = 10;  // Only allow 10 scans
+
+    std::vector<uint32_t> ids = {0};
+    auto results = dict.lookup_by_ids(ids, 100, &trace, &budget);
+
+    // Should have truncated due to scan budget
+    ASSERT_TRUE(trace.truncated);
+    // Should have scanned at most max_exact_scan entries
+    ASSERT_TRUE(trace.exact_scan_count <= 10);
+
+    dict.close();
+    DeleteFileA(dict_path.c_str());
+}
+
+TEST(Deadline, engine_sets_trace_deadline_from_budget) {
+    std::string dict_path = make_temp_path("test_engine_deadline_dict.bin");
+    cxxime::Dict::create_test_dict(dict_path, {
+        {"de", "\xe7\x9a\x84", 1000},
+        {"de:dao", "\xe5\xbe\x97\xe5\x88\xb0", 300},
+    });
+
+    cxxime::Engine engine;
+    ASSERT_TRUE(engine.initialize(dict_path));
+
+    // Set a very tight deadline
+    cxxime::QueryBudget budget;
+    budget.deadline_us = 1;  // 1us
+    engine.set_query_budget(budget);
+    engine.set_trace_enabled(true);
+
+    // Type 'd'
+    cxxime::KeyEvent event;
+    event.keycode = 'D';
+    event.is_key_up = false;
+    engine.process_key(event);
+
+    const auto& trace = engine.last_trace();
+    // With 1us deadline, should be expired before translate
+    ASSERT_TRUE(trace.deadline_exceeded);
+    ASSERT_TRUE(trace.truncated);
+
+    engine.finalize();
+    DeleteFileA(dict_path.c_str());
+}
+
+TEST(Deadline, engine_no_budget_means_no_deadline) {
+    std::string dict_path = make_temp_path("test_engine_no_budget_dict.bin");
+    cxxime::Dict::create_test_dict(dict_path, {
+        {"de", "\xe7\x9a\x84", 1000},
+    });
+
+    cxxime::Engine engine;
+    ASSERT_TRUE(engine.initialize(dict_path));
+    engine.set_trace_enabled(true);
+
+    // Type 'd' without setting budget
+    cxxime::KeyEvent event;
+    event.keycode = 'D';
+    event.is_key_up = false;
+    engine.process_key(event);
+
+    const auto& trace = engine.last_trace();
+    ASSERT_TRUE(!trace.deadline_exceeded);
+
+    engine.finalize();
+    DeleteFileA(dict_path.c_str());
+}
 
 RUN_ALL_TESTS()
