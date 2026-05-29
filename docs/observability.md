@@ -1,4 +1,4 @@
-# Phase 0 详细设计：可观测性与 Benchmark
+# 可观测性与 Benchmark
 
 ## 目标
 
@@ -13,39 +13,11 @@
 
 ## QueryTrace 数据模型
 
-新增轻量 trace 结构，位于 engine 层，例如 `cxx-ime/engine/src/query_trace.h`
+轻量 trace 结构，定义在 `shared/include/cxxime/query_trace.h`，包含状态字段（`deadline_exceeded`、`truncated`、`cache_hit`、`cancelled`）、计数字段和耗时字段。
 
-```cpp
-struct QueryTrace {
-    uint64_t query_id = 0;          // 单调递增，全局唯一
-    uint32_t session_id = 0;
-    uint64_t revision = 0;          // 词典版本号，用于检测过期
-    std::string raw_input;          // 原始输入（最多 128 字节）
-    int page_index = 0;
-    int page_size = 0;
+`should_log()` 在 `deadline_exceeded` 时强制记录日志（不受采样率限制）。
 
-    int syllable_path_count = 0;
-    int live_path_count = 0;
-    int candidate_count = 0;
-
-    uint32_t exact_scan_count = 0;
-    uint32_t prefix_scan_count = 0;
-    uint32_t user_scan_count = 0;
-
-    bool cache_hit = false;
-    bool deadline_exceeded = false;
-    bool cancelled = false;
-    bool truncated = false;
-
-    int64_t processor_us = 0;
-    int64_t translate_us = 0;
-    int64_t lookup_us = 0;
-    int64_t merge_us = 0;
-    int64_t total_us = 0;
-
-    std::array<int64_t, 8> producer_us = {};
-};
-```
+详见 [查询预算与 Deadline](query-budget.md)。
 
 要求：
 
@@ -115,7 +87,7 @@ struct QueryTrace {
 
 ```cmd
 query_bench.exe --data cxx-ime\data --input s,sd,sdf,sddf,bj,srf,shrf,zguo,nihaoshijie --repeat 1000
-query_bench.exe --data cxx-ime\data --file cases.txt --json trace.jsonlnihaoshijie --repeat 1000
+query_bench.exe --data cxx-ime\data --file cases.txt --json trace.jsonl --repeat 1000
 ```
 
 输出：
@@ -158,3 +130,37 @@ woxiangshuruyiduanhenchangdepinyin
 - 每个输入可输出 P50/P95/P99
 - trace 能定位 `s` 和 `sddf` 的路径数、扫描量和候选来源
 - 插桩开启后性能开销 P95 < 3%
+
+## 性能基线
+
+新功能开发或重构后，对比以下基线确认无回归。
+
+### 查询延迟（query_bench，repeat=500，deadline=30ms）
+
+| 输入 | 类型 | 路径数 | 候选 | e2e P50 | e2e P99 | 查询 P50 | 查询 P99 |
+|------|------|--------|------|---------|---------|----------|----------|
+| `s` | 单字母 | 8 | 7 | 789 us | 1100 us | 785 us | 921 us |
+| `sd` | 双字母缩写 | 4 | 7 | 936 us | 1379 us | 199 us | 269 us |
+| `sdf` | 三字母缩写 | 0 | 0 | 2889 us | 3902 us | 1924 us | 2291 us |
+| `sddf` | 四字母缩写 | 0 | 0 | 6059 us | 7740 us | 2939 us | 3514 us |
+| `bj` | 双字母缩写 | 8 | 7 | 2067 us | 2612 us | 118 us | 128 us |
+| `srf` | 三字母缩写 | 0 | 0 | 2143 us | 2670 us | 1243 us | 1437 us |
+| `shrf` | 四字母缩写 | 0 | 0 | 6462 us | 7720 us | 2979 us | 3501 us |
+| `zguo` | 混合拼音 | 2 | 7 | 1912 us | 2387 us | 486 us | 566 us |
+| `nihao` | 全拼 | 2 | 7 | 3814 us | 4488 us | 1500 us | 1705 us |
+| `nihaoshijie` | 长输入 | 1 | 1 | 25911 us | 30351 us | 4139 us | 4985 us |
+
+> 路径数=0 表示缩写无词典匹配（预期行为），查询耗时主要花在 Syllabifier 路径枚举。
+
+### 重跑基准
+
+```cmd
+# 离线查询 benchmark（无需 server）
+build\tools\query_bench\Release\query_bench.exe --data data --input s,sd,sdf,sddf,bj,srf,shrf,zguo,nihao,nihaoshijie --repeat 500
+
+# IPC 端到端 benchmark（需先启动 server）
+scripts\benchmark.bat
+
+# 单元 benchmark
+build\test\Release\benchmark_test.exe
+```

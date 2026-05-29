@@ -12,6 +12,9 @@ data/*.dict.bin
 data/*.spellings.bin
 data/*.dict.idx
 
+# Benchmark output
+*.jsonl
+
 # IDE / Editor
 .vs/
 .vscode/
@@ -35,8 +38,3 @@ CLAUDE.md
 # OS
 Thumbs.db
 Desktop.ini
-DESKTOP-Q7E4CBK.log
-cxxime-v0.1.0-win64.zip
-verify.bat
-verify_result.txt
-

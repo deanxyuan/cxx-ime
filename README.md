@@ -50,7 +50,7 @@ build.bat clean        # 清理构建目录
 
 ## 获取词典
 
-CxxIME 使用 SQLite 格式的词典作为**源数据**，运行时通过 `build_binary.py` 转换为内存映射（mmap）二进制格式。
+CxxIME 使用 SQLite 格式的词典作为**源数据**，运行时通过 `build_binary.py` 转换为二进制格式（一次性读入内存）。
 
 ### 拼音词典
 
@@ -84,10 +84,10 @@ python tools/dict_convert.py input.yaml output.db
 | `wubi86.dict.db.zip` | `fetch_wubi.py` 下载后压缩 | **是** | 五笔词典分发副本 |
 | `pinyin.dict.db` | 解压 `.zip` 得到 | 否 | 拼音 SQLite 源词典 |
 | `wubi86.dict.db` | 解压 `.zip` 得到 | 否 | 五笔 SQLite 源词典 |
-| `pinyin.dict.bin` | `build_binary.py` 生成 | 否 | 拼音二进制 mmap 词典（运行时） |
+| `pinyin.dict.bin` | `build_binary.py` 生成 | 否 | 拼音二进制词典（运行时） |
 | `pinyin.spellings.bin` | `build_binary.py` 生成 | 否 | Patricia trie 拼写索引（运行时） |
 | `pinyin.dict.idx` | `build_binary.py` 生成 | 否 | 音节 ID 索引（运行时） |
-| `wubi86.dict.bin` | `build_binary.py` 生成 | 否 | 五笔二进制 mmap 词典（运行时） |
+| `wubi86.dict.bin` | `build_binary.py` 生成 | 否 | 五笔二进制词典（运行时） |
 
 ### 词典维护
 
@@ -193,7 +193,7 @@ ctest -C Debug
 
 | 模块 | 状态 | 说明 |
 |------|------|------|
-| 词典 | ✅ 就绪 | mmap 二进制词典、Patricia trie 拼写索引、音节 ID 索引、拼音/五笔双模式 |
+| 词典 | ✅ 就绪 | 二进制堆加载词典、Patricia trie 拼写索引、音节 ID 索引、拼音/五笔双模式 |
 | Engine | ✅ 就绪 | Syllabifier + Segmentor + Translator，缩写/模糊音/五笔简码 |
 | IPC | ✅ 就绪 | IOCP 高性能命名管道，< 1ms 延迟，多客户端并发 |
 | 会话管理 | ✅ 就绪 | 共享资源预加载，session 瞬时创建 |
@@ -204,7 +204,7 @@ ctest -C Debug
 | 配置编辑器 | ✅ 就绪 | Win32 原生 GUI，左侧导航 + 右侧面板，支持所有配置项 |
 | 配置系统 | ✅ 就绪 | JSON 配置（page_size, font, theme, layout spacing/padding） |
 
-> 单元测试：95 个用例，9 个独立 exe，`ctest -C Debug` 全部通过。
+> 单元测试：64+ 个用例，10 个独立 exe，`ctest -C Debug` 全部通过。
 
 ## 许可证
 
