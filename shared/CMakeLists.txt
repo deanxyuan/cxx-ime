@@ -2,6 +2,7 @@ project(cxxime-shared CXX)
 
 add_library(cxxime-shared STATIC
     src/key_event.cc
+    src/query_trace_log.cc
 )
 
 target_include_directories(cxxime-shared PUBLIC

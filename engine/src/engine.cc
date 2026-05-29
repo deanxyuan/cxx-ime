@@ -7,6 +7,24 @@
 
 namespace cxxime {
 
+// Static member for global query ID generation
+uint64_t Engine::next_query_id_ = 0;
+
+// Deterministic sampling for release builds (1% rate)
+static inline uint64_t mix64(uint64_t x) {
+    x ^= x >> 30;
+    x *= 0xbf58476d1ce4e5b9ULL;
+    x ^= x >> 27;
+    x *= 0x94d049bb133111ebULL;
+    x ^= x >> 31;
+    return x;
+}
+
+static bool should_sample(uint64_t session_id, uint64_t revision) {
+    uint64_t h = mix64((session_id << 32) ^ revision);
+    return (h % 100) == 0; // 1%
+}
+
 // Self-contained: owns all resources (tests/tools).
 bool Engine::initialize(const std::string& dict_path, const std::string& config_path) {
     if (!owned_dict_.open(dict_path))
@@ -57,14 +75,36 @@ ProcessResult Engine::process_key(const KeyEvent& event) {
     CXXIME_LOG(L"Engine::process_key: vk=%u, is_key_up=%d, composing=%d",
                event.keycode, event.is_key_up, context_.is_composing());
 
+    // Initialize trace for this query (only if tracing enabled)
+    // Preserve session_id/revision set by caller (server) before this call.
+    std::chrono::steady_clock::time_point total_start;
+    if (trace_enabled_) {
+        uint32_t saved_session_id = trace_.session_id;
+        uint64_t saved_revision = trace_.revision;
+        trace_ = QueryTrace{};
+        trace_.query_id = next_query_id_++;
+        trace_.session_id = saved_session_id;
+        trace_.revision = saved_revision;
+        total_start = std::chrono::steady_clock::now();
+    }
+
+    // Set budget start time for deadline checking (microseconds)
+    budget_.start_qpc = std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+
     // Let AsciiComposer track modifier key state (may toggle ascii_mode)
     ascii_composer_.process_key(event.keycode, event.is_key_up, context_);
 
     CXXIME_LOG(L"Engine::process_key: after ascii_composer, committed_text='%S'", context_.committed_text.c_str());
 
     // Check if AsciiComposer committed text (e.g. Shift toggle with commit_text)
-    if (!context_.committed_text.empty())
+    if (!context_.committed_text.empty()) {
+        if (trace_enabled_) {
+            auto total_end = std::chrono::steady_clock::now();
+            trace_.total_us = std::chrono::duration_cast<std::chrono::microseconds>(total_end - total_start).count();
+        }
         return ProcessResult::COMMITTED;
+    }
 
     // If in ASCII mode, handle letters/space directly
     if (ascii_composer_.is_ascii_mode() && !event.is_key_up) {
@@ -76,12 +116,20 @@ ProcessResult Engine::process_key(const KeyEvent& event) {
             if (ascii_composer_.is_temporary_ascii()) {
                 ascii_composer_.set_ascii_mode(false);
             }
+            if (trace_enabled_) {
+                auto total_end = std::chrono::steady_clock::now();
+                trace_.total_us = std::chrono::duration_cast<std::chrono::microseconds>(total_end - total_start).count();
+            }
             return ProcessResult::COMMITTED;
         }
 
         // Space: commit a space
         if (vk == 0x20) {  // VK_SPACE
             context_.committed_text = " ";
+            if (trace_enabled_) {
+                auto total_end = std::chrono::steady_clock::now();
+                trace_.total_us = std::chrono::duration_cast<std::chrono::microseconds>(total_end - total_start).count();
+            }
             return ProcessResult::COMMITTED;
         }
 
@@ -91,16 +139,39 @@ ProcessResult Engine::process_key(const KeyEvent& event) {
             if (ascii_composer_.is_temporary_ascii()) {
                 ascii_composer_.set_ascii_mode(false);
             }
+            if (trace_enabled_) {
+                auto total_end = std::chrono::steady_clock::now();
+                trace_.total_us = std::chrono::duration_cast<std::chrono::microseconds>(total_end - total_start).count();
+            }
             return ProcessResult::COMMITTED;
         }
 
         // Other keys: reject (pass through to app)
+        if (trace_enabled_) {
+            auto total_end = std::chrono::steady_clock::now();
+            trace_.total_us = std::chrono::duration_cast<std::chrono::microseconds>(total_end - total_start).count();
+        }
         return ProcessResult::REJECTED;
     }
 
-    auto t0 = std::chrono::steady_clock::now();
+    std::chrono::steady_clock::time_point t0, t1, t2;
+    if (trace_enabled_) {
+        t0 = std::chrono::steady_clock::now();
+    }
     auto result = processor_.process_key(event, context_);
-    auto t1 = std::chrono::steady_clock::now();
+    if (trace_enabled_) {
+        t1 = std::chrono::steady_clock::now();
+        trace_.processor_us = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
+
+        // Record raw_input AFTER processor updates the buffer (captures current state, not stale)
+        if (result == ProcessResult::ACCEPTED) {
+            size_t input_len = context_.pinyin_buffer.size();
+            if (input_len >= sizeof(trace_.raw_input))
+                input_len = sizeof(trace_.raw_input) - 1;
+            std::memcpy(trace_.raw_input, context_.pinyin_buffer.data(), input_len);
+            trace_.raw_input[input_len] = '\0';
+        }
+    }
 
     // Auto-restore from temporary inline_ascii when composition ends
     if (result == ProcessResult::COMMITTED && ascii_composer_.is_temporary_ascii()) {
@@ -109,14 +180,31 @@ ProcessResult Engine::process_key(const KeyEvent& event) {
 
     // After processing, update candidates if still composing
     if (result == ProcessResult::ACCEPTED && context_.is_composing()) {
-        auto page = translator_.translate(context_.pinyin_buffer, context_.page_index, config_->page_size);
-        context_.update_candidates(std::move(page));
+        if (trace_enabled_) {
+            trace_.page_index = context_.page_index;
+            trace_.page_size = config_->page_size;
+        }
+        // Skip translate if deadline already expired (e.g. slow ascii_composer/processor)
+        if (budget_.deadline_us > 0 && budget_.expired()) {
+            if (trace_enabled_) {
+                trace_.deadline_exceeded = true;
+                trace_.truncated = true;
+            }
+        } else {
+            auto page = translator_.translate(context_.pinyin_buffer, context_.page_index, config_->page_size,
+                                              trace_enabled_ ? &trace_ : nullptr, &budget_);
+            context_.update_candidates(std::move(page));
+        }
+        if (trace_enabled_) {
+            trace_.candidate_count = (int)context_.candidates.candidates.size();
+        }
     }
-    auto t2 = std::chrono::steady_clock::now();
+    if (trace_enabled_) {
+        t2 = std::chrono::steady_clock::now();
+        trace_.translate_us = std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count();
+    }
 
-    CXXIME_LOG(L"Engine::process_key: processor=%lldms, translate=%lldms, result=%d, buf='%S'",
-               std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count(),
-               std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count(),
+    CXXIME_LOG(L"Engine::process_key: result=%d, buf='%S'",
                (int)result, context_.pinyin_buffer.c_str());
 
     // If committed, update user frequency
@@ -126,6 +214,17 @@ ProcessResult Engine::process_key(const KeyEvent& event) {
             code = dict_->reverse_lookup(context_.committed_text);
         }
         dict_->update_frequency(context_.committed_text, code);
+    }
+
+    // Finalize trace
+    if (trace_enabled_) {
+        auto total_end = std::chrono::steady_clock::now();
+        trace_.total_us = std::chrono::duration_cast<std::chrono::microseconds>(total_end - total_start).count();
+
+        // Only log slow queries and sampled queries (async, non-blocking)
+        if (trace_.should_log()) {
+            trace_.log();
+        }
     }
 
     return result;

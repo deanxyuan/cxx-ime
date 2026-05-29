@@ -15,6 +15,8 @@
 namespace cxxime {
 
 struct DictEntry;
+struct QueryTrace;
+struct QueryBudget;
 
 class Dict {
 public:
@@ -33,11 +35,12 @@ public:
     void unload_dict();
 
     // Queries
-    std::vector<Candidate> lookup(const std::string& code_prefix, int limit = 10);
-    std::vector<Candidate> lookup_by_syllables(const std::vector<std::string>& syllables, int limit = 10);
-    std::vector<Candidate> lookup_by_ids(const std::vector<uint32_t>& ids, int limit = 10);
-    bool has_prefix(const std::vector<uint32_t>& ids) const;
-    int count(const std::string& code_prefix);
+    std::vector<Candidate> lookup(const std::string& code_prefix, int limit = 10, QueryTrace* trace = nullptr);
+    std::vector<Candidate> lookup_by_syllables(const std::vector<std::string>& syllables, int limit = 10, QueryTrace* trace = nullptr);
+    std::vector<Candidate> lookup_by_ids(const std::vector<uint32_t>& ids, int limit = 10,
+                                         QueryTrace* trace = nullptr, const QueryBudget* budget = nullptr);
+    bool has_prefix(const std::vector<uint32_t>& ids, QueryTrace* trace = nullptr) const;
+    int count(const std::string& code_prefix, QueryTrace* trace = nullptr);
     std::string reverse_lookup(const std::string& text);
     void update_frequency(const std::string& text, const std::string& code);
 
@@ -89,6 +92,7 @@ private:
     mutable std::shared_mutex user_mutex_;
     std::atomic<bool> user_dirty_{false};
     std::string user_dict_path_;
+
 };
 
 } // namespace cxxime
