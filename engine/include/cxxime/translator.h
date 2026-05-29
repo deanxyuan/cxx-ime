@@ -11,12 +11,15 @@
 namespace cxxime {
 
 class Syllabifier;
+struct QueryTrace;
+struct QueryBudget;
 
 class PinyinTranslator {
 public:
     void set_dict(Dict* dict);
     void set_syllabifier(Syllabifier* syllabifier);
-    CandidatePage translate(const std::string& pinyin, int page_index = 0, int page_size = 9);
+    CandidatePage translate(const std::string& pinyin, int page_index = 0, int page_size = 9,
+                            QueryTrace* trace = nullptr, const QueryBudget* budget = nullptr);
 
 private:
     Dict* dict_ = nullptr;

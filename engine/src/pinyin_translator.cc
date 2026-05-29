@@ -2,6 +2,8 @@
 
 #include <cxxime/translator.h>
 #include <cxxime/syllabifier.h>
+#include <cxxime/query_trace.h>
+#include <cxxime/query_budget.h>
 #include <algorithm>
 #include <set>
 #include <unordered_set>
@@ -16,7 +18,8 @@ void PinyinTranslator::set_syllabifier(Syllabifier* syllabifier) {
     syllabifier_ = syllabifier;
 }
 
-CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_index, int page_size) {
+CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_index, int page_size,
+                                           QueryTrace* trace, const QueryBudget* budget) {
     CandidatePage page;
     page.page_index = page_index;
     page.page_size = page_size;
@@ -43,26 +46,61 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
 
     // 1. Syllabifier for abbreviation expansion (reserve first)
     // Limit paths to avoid CPU cache thrashing on short inputs (e.g. single letter 's')
+    // Skip syllabifier if deadline is tight (< 10ms) — it doesn't check deadline internally
     static constexpr size_t kMaxPaths = 8;
-    if (syllabifier_) {
-        auto paths = syllabifier_->segment(pinyin);
-        id_sequences.reserve(std::min(paths.size(), kMaxPaths) + 1);
-        for (size_t i = 0; i < paths.size() && i < kMaxPaths; ++i)
-            add_path(paths[i]);
+    static constexpr int64_t kMinBudgetForSyllabifierUs = 10000;  // 10ms
+    bool deadline_hit = false;
+    bool skip_syllabifier = budget && budget->deadline_us > 0 && budget->deadline_us < kMinBudgetForSyllabifierUs;
+    if (syllabifier_ && !skip_syllabifier) {
+        // Check deadline before syllabifier (it can be slow on long inputs)
+        if (budget && budget->expired()) {
+            deadline_hit = true;
+        } else {
+            auto paths = syllabifier_->segment(pinyin);
+            id_sequences.reserve(std::min(paths.size(), kMaxPaths) + 1);
+            for (size_t i = 0; i < paths.size() && i < kMaxPaths; ++i)
+                add_path(paths[i]);
+        }
     } else {
         id_sequences.reserve(2);
     }
 
-    // 2. Normal segmentation
-    add_path(segmentor_.segment_best(pinyin));
+    // 2. Normal segmentation (skip if deadline already hit)
+    if (!deadline_hit)
+        add_path(segmentor_.segment_best(pinyin));
+
+    // If deadline hit, return empty page with trace flags
+    if (deadline_hit) {
+        if (trace) {
+            trace->deadline_exceeded = true;
+            trace->truncated = true;
+        }
+        return page;
+    }
+
+    // Record syllable path count
+    if (trace)
+        trace->syllable_path_count = (int)id_sequences.size();
 
     // Filter: only keep paths that actually have dict entries
     std::vector<std::vector<uint32_t>> live_ids;
     live_ids.reserve(id_sequences.size());
     for (auto& ids : id_sequences) {
-        if (dict_->has_prefix(ids))
+        // Check deadline before each has_prefix (syllabifier may have consumed most of the budget)
+        if (budget && budget->expired()) {
+            if (trace) {
+                trace->deadline_exceeded = true;
+                trace->truncated = true;
+            }
+            break;
+        }
+        if (dict_->has_prefix(ids, trace))
             live_ids.push_back(std::move(ids));
     }
+
+    // Record live path count
+    if (trace)
+        trace->live_path_count = (int)live_ids.size();
 
     // Dedup and query
     std::vector<Candidate> merged;
@@ -73,7 +111,15 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
     for (auto& ids : live_ids) {
         if (!seen_ids.insert(ids).second)
             continue;
-        auto candidates = dict_->lookup_by_ids(ids, offset + fetch_limit);
+        // Check deadline before each lookup_by_ids
+        if (budget && budget->expired()) {
+            if (trace) {
+                trace->deadline_exceeded = true;
+                trace->truncated = true;
+            }
+            break;
+        }
+        auto candidates = dict_->lookup_by_ids(ids, offset + fetch_limit, trace, budget);
         for (auto& c : candidates) {
             if (seen_text.insert(c.text).second)
                 merged.push_back(std::move(c));
