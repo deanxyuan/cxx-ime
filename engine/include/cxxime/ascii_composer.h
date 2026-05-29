@@ -4,7 +4,6 @@
 #define CXXIME_ASCII_COMPOSER_H_
 
 #include <cstdint>
-#include <chrono>
 #include <string>
 #include <unordered_map>
 
@@ -47,10 +46,6 @@ private:
     bool alt_pressed_ = false;
     bool win_pressed_ = false;
 
-    using Clock = std::chrono::steady_clock;
-    using TimePoint = Clock::time_point;
-    TimePoint toggle_expired_{};
-    static constexpr int TOGGLE_TIMEOUT_MS = 200;
 };
 
 } // namespace cxxime

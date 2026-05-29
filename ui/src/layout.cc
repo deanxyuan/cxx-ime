@@ -48,7 +48,8 @@ LayoutResult calculate_horizontal_layout(HDC hdc,
     LayoutResult result;
     if (candidates.empty()) {
         result.width = cfg.min_width;
-        result.height = cfg.margin_y * 2;
+        result.row_height = get_font_height(hdc, font_name, font_size);
+        result.height = result.row_height + cfg.margin_y * 2;
         return result;
     }
 
@@ -105,7 +106,8 @@ LayoutResult calculate_vertical_layout(HDC hdc,
     LayoutResult result;
     if (candidates.empty()) {
         result.width = cfg.min_width;
-        result.height = cfg.margin_y * 2;
+        result.row_height = get_font_height(hdc, font_name, font_size);
+        result.height = result.row_height + cfg.margin_y * 2;
         return result;
     }
 

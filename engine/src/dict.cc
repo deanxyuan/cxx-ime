@@ -49,24 +49,22 @@ bool Dict::open_dict(const std::string& bin_path) {
     }
     dict_data_size_ = (size_t)li.QuadPart;
 
-    HANDLE hMap = CreateFileMappingA(hFile, nullptr, PAGE_READONLY, 0, 0, nullptr);
-    if (!hMap) {
+    // Load entire file into heap memory (no mmap — avoids page-out latency)
+    dict_data_ = new (std::nothrow) char[dict_data_size_];
+    if (!dict_data_) {
         CloseHandle(hFile);
-        CXXIME_LOG(L"Dict::open_dict CreateFileMappingA FAILED");
+        CXXIME_LOG(L"Dict::open_dict allocation failed (%zu bytes)", dict_data_size_);
         return false;
     }
 
-    void* base = MapViewOfFile(hMap, FILE_MAP_READ, 0, 0, 0);
-    if (!base) {
-        CloseHandle(hMap);
-        CloseHandle(hFile);
-        CXXIME_LOG(L"Dict::open_dict MapViewOfFile FAILED");
+    DWORD bytes_read = 0;
+    BOOL ok = ReadFile(hFile, dict_data_, (DWORD)dict_data_size_, &bytes_read, nullptr);
+    CloseHandle(hFile);
+    if (!ok || bytes_read != dict_data_size_) {
+        CXXIME_LOG(L"Dict::open_dict ReadFile FAILED");
+        unload_dict();
         return false;
     }
-
-    dict_file_handle_ = hFile;
-    dict_mapping_handle_ = hMap;
-    dict_data_ = (const char*)base;
 
     auto* hdr = (const DictHeader*)dict_data_;
     if (std::memcmp(hdr->magic, DICT_MAGIC_V1, 8) != 0 &&
@@ -181,18 +179,8 @@ bool Dict::save_user_dict() {
 
 void Dict::unload_dict() {
     unload_id_index();
-    if (dict_data_) {
-        UnmapViewOfFile(dict_data_);
-        dict_data_ = nullptr;
-    }
-    if (dict_mapping_handle_) {
-        CloseHandle(dict_mapping_handle_);
-        dict_mapping_handle_ = nullptr;
-    }
-    if (dict_file_handle_ && dict_file_handle_ != INVALID_HANDLE_VALUE) {
-        CloseHandle(dict_file_handle_);
-        dict_file_handle_ = nullptr;
-    }
+    delete[] dict_data_;
+    dict_data_ = nullptr;
     dict_entries_ = nullptr;
     dict_strings_ = nullptr;
     dict_entry_count_ = 0;
@@ -509,18 +497,9 @@ bool Dict::create_test_dict(const std::string& path,
 // ─── Syllable ID index (zero-copy mmap, v3 format) ────────────────────
 
 void Dict::unload_id_index() {
-    if (idx_data_) {
-        UnmapViewOfFile(idx_data_);
-        idx_data_ = nullptr;
-    }
-    if (idx_mapping_handle_) {
-        CloseHandle(idx_mapping_handle_);
-        idx_mapping_handle_ = nullptr;
-    }
-    if (idx_file_handle_) {
-        CloseHandle(idx_file_handle_);
-        idx_file_handle_ = nullptr;
-    }
+    delete[] idx_data_;
+    idx_data_ = nullptr;
+    idx_data_size_ = 0;
     syllabary_.clear();
     syllable_to_id_.clear();
     id_index_.clear();
@@ -546,23 +525,37 @@ bool Dict::load_id_index(const std::string& dict_bin_path) {
         CloseHandle(hFile);
         return false;
     }
+    size_t file_size = (size_t)li.QuadPart;
 
-    HANDLE hMap = CreateFileMappingW(hFile, nullptr, PAGE_READONLY, 0, 0, nullptr);
-    if (!hMap) { CloseHandle(hFile); return false; }
+    // Load entire file into heap memory
+    idx_data_ = new (std::nothrow) char[file_size];
+    if (!idx_data_) {
+        CloseHandle(hFile);
+        return false;
+    }
 
-    const char* base = (const char*)MapViewOfFile(hMap, FILE_MAP_READ, 0, 0, 0);
-    if (!base) { CloseHandle(hMap); CloseHandle(hFile); return false; }
+    DWORD bytes_read = 0;
+    BOOL ok = ReadFile(hFile, idx_data_, (DWORD)file_size, &bytes_read, nullptr);
+    CloseHandle(hFile);
+    if (!ok || bytes_read != file_size) {
+        delete[] idx_data_;
+        idx_data_ = nullptr;
+        return false;
+    }
+    idx_data_size_ = file_size;
+
+    const char* base = idx_data_;
 
     // Header: magic(8) version(4) syl_count(4) syl_str_size(4) idx_count(4) idx_data_size(4) = 28
     if (std::memcmp(base, "CXIDX\0\0\0\0", 8) != 0) {
-        UnmapViewOfFile(base); CloseHandle(hMap); CloseHandle(hFile);
+        unload_id_index();
         return false;
     }
     const uint32_t* h = (const uint32_t*)(base + 8);
     uint32_t ver = h[0], syl_count = h[1], syl_str_size = h[2];
     uint32_t idx_count = h[3], idx_data_size = h[4];
     if (ver < 2 || ver > 3) {
-        UnmapViewOfFile(base); CloseHandle(hMap); CloseHandle(hFile);
+        unload_id_index();
         return false;
     }
 
@@ -593,7 +586,7 @@ bool Dict::load_id_index(const std::string& dict_bin_path) {
                                  *(const uint32_t*)(e + 4 + cnt * 4)});
         }
     } else {
-        // v2: parse variable-length entries (backward compat, allocates)
+        // v2: parse variable-length entries (backward compat)
         id_index_.clear();
         id_index_.reserve(idx_count);
         const uint8_t* p = after_syl;
@@ -603,16 +596,9 @@ bool Dict::load_id_index(const std::string& dict_bin_path) {
             if (p + cnt * 4 + 4 > end) break;
             const uint32_t* ids = (const uint32_t*)p; p += cnt * 4;
             uint32_t idx = *(const uint32_t*)p; p += 4;
-            // v2: copy IDs (mmap will be unmapped later? No — idx_data_ stays mapped)
-            // Actually v2 has no separate idx_data_ mapping. IDs are in the main .idx mmap.
-            // We can use pointers into the mmap too! The mmap stays alive until close().
             id_index_.push_back({ids, cnt, idx});
         }
     }
-
-    idx_file_handle_ = hFile;
-    idx_mapping_handle_ = hMap;
-    idx_data_ = base;
 
     CXXIME_LOG(L"Dict::load_id_index v%u syllables=%u idx=%zu",
                ver, syl_count, id_index_.size());

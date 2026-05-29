@@ -2,6 +2,7 @@
 
 #include <cxxime/engine.h>
 #include <windows.h>
+#include <chrono>
 #include <cxxime/logging.h>
 
 namespace cxxime {
@@ -97,7 +98,9 @@ ProcessResult Engine::process_key(const KeyEvent& event) {
         return ProcessResult::REJECTED;
     }
 
+    auto t0 = std::chrono::steady_clock::now();
     auto result = processor_.process_key(event, context_);
+    auto t1 = std::chrono::steady_clock::now();
 
     // Auto-restore from temporary inline_ascii when composition ends
     if (result == ProcessResult::COMMITTED && ascii_composer_.is_temporary_ascii()) {
@@ -109,6 +112,12 @@ ProcessResult Engine::process_key(const KeyEvent& event) {
         auto page = translator_.translate(context_.pinyin_buffer, context_.page_index, config_->page_size);
         context_.update_candidates(std::move(page));
     }
+    auto t2 = std::chrono::steady_clock::now();
+
+    CXXIME_LOG(L"Engine::process_key: processor=%lldms, translate=%lldms, result=%d, buf='%S'",
+               std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count(),
+               std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count(),
+               (int)result, context_.pinyin_buffer.c_str());
 
     // If committed, update user frequency
     if (result == ProcessResult::COMMITTED && !context_.committed_text.empty()) {
