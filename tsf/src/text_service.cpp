@@ -9,10 +9,219 @@
 #include "preedit_mode.h"
 #include <cstring>
 #include <shellapi.h>
+#include <shlobj.h>
+
+// Slow query thresholds (microseconds)
+static constexpr int64_t kSlowIpcUs = 2000;       // IPC round-trip >= 2ms
+static constexpr int64_t kSlowWindowUs = 5000;    // candidate window >= 5ms
+static constexpr int64_t kSlowTotalUs = 10000;    // PROCESS_KEY total >= 10ms
+
+// Async queue configuration
+static constexpr int kTsfQueueCapacity = 128;
+static constexpr int kTsfBatchSize = 16;
+static constexpr auto kTsfFlushInterval = std::chrono::milliseconds(200);
+
+static const char* tsf_result_str(TextService::TsfResult r) {
+    switch (r) {
+        case TextService::TsfResult::IPC_FAILED: return "ipc_failed";
+        case TextService::TsfResult::COMMITTED:  return "committed";
+        case TextService::TsfResult::PREEDIT:    return "preedit";
+        case TextService::TsfResult::CLEARED:    return "cleared";
+        case TextService::TsfResult::REJECTED:   return "rejected";
+        default: return "unknown";
+    }
+}
+
+int TextService::TsfTrace::to_json(char* buf, int size) const {
+    return snprintf(buf, size,
+        "{\"vk\":%u,\"mod\":%u,\"result\":\"%s\",\"cands\":%u,\"preedit_len\":%u,"
+        "\"total_us\":%lld,\"ipc_us\":%lld,\"window_us\":%lld,\"slow\":%s}",
+        vk, modifiers, tsf_result_str(result),
+        candidate_count, preedit_len,
+        (long long)total_us, (long long)ipc_us, (long long)window_us,
+        slow ? "true" : "false");
+}
+
+bool TextService::TsfTrace::should_log() const {
+    if (result == TsfResult::IPC_FAILED) return true;
+    if (slow) return true;
+    return false;
+}
+
+// ─── Async trace queue (bounded, single writer thread) ───────────────
+
+struct TsfTraceEntry {
+    char json[512];
+    int len = 0;
+};
+
+static TsfTraceEntry g_tsf_queue[kTsfQueueCapacity];
+static std::atomic<int> g_tsf_head{0};
+static std::atomic<int> g_tsf_tail{0};
+static std::atomic<int> g_tsf_dropped{0};
+
+static std::thread g_tsf_writer_thread;
+static std::mutex g_tsf_shutdown_mutex;
+static std::condition_variable g_tsf_shutdown_cv;
+static std::atomic<bool> g_tsf_shutdown{false};
+static std::atomic<bool> g_tsf_writer_started{false};
+
+static bool tsf_queue_try_push(const TsfTraceEntry& entry) {
+    int head = g_tsf_head.load(std::memory_order_relaxed);
+    int next = (head + 1) % kTsfQueueCapacity;
+    if (next == g_tsf_tail.load(std::memory_order_acquire)) {
+        g_tsf_dropped.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    g_tsf_queue[head] = entry;
+    g_tsf_head.store(next, std::memory_order_release);
+    return true;
+}
+
+static int tsf_queue_pop_batch(TsfTraceEntry* batch, int max) {
+    int count = 0;
+    while (count < max) {
+        int tail = g_tsf_tail.load(std::memory_order_relaxed);
+        if (tail == g_tsf_head.load(std::memory_order_acquire))
+            break;
+        batch[count++] = g_tsf_queue[tail];
+        g_tsf_tail.store((tail + 1) % kTsfQueueCapacity, std::memory_order_release);
+    }
+    return count;
+}
+
+static std::string tsf_get_log_dir() {
+    wchar_t buf[MAX_PATH] = {};
+    if (FAILED(SHGetFolderPathW(nullptr, CSIDL_LOCAL_APPDATA, nullptr, 0, buf)))
+        return {};
+    std::wstring dir = std::wstring(buf) + L"\\CxxIME\\logs";
+    CreateDirectoryW((std::wstring(buf) + L"\\CxxIME").c_str(), nullptr);
+    CreateDirectoryW(dir.c_str(), nullptr);
+    char utf8[MAX_PATH * 3] = {};
+    WideCharToMultiByte(CP_UTF8, 0, dir.c_str(), -1, utf8, sizeof(utf8), nullptr, nullptr);
+    return utf8;
+}
+
+static void tsf_rotate_log(FILE*& file, size_t& file_size, const std::string& path) {
+    if (file) { fclose(file); file = nullptr; }
+    DeleteFileA((path + ".3").c_str());
+    MoveFileA((path + ".2").c_str(), (path + ".3").c_str());
+    MoveFileA((path + ".1").c_str(), (path + ".2").c_str());
+    MoveFileA(path.c_str(), (path + ".1").c_str());
+    file_size = 0;
+}
+
+static void tsf_writer_thread_func() {
+    std::string dir = tsf_get_log_dir();
+    if (dir.empty()) return;
+
+    char pid_str[32];
+    snprintf(pid_str, sizeof(pid_str), "tsf-%d-trace.jsonl", (int)GetCurrentProcessId());
+    std::string path = dir + "\\" + pid_str;
+
+    FILE* file = nullptr;
+    size_t file_size = 0;
+    static constexpr size_t kMaxFileSize = 64 * 1024 * 1024; // 64 MiB
+
+    file = fopen(path.c_str(), "a");
+    if (file) {
+        fseek(file, 0, SEEK_END);
+        file_size = ftell(file);
+    }
+
+    TsfTraceEntry batch[kTsfBatchSize];
+    auto last_flush = std::chrono::steady_clock::now();
+
+    while (!g_tsf_shutdown.load(std::memory_order_relaxed)) {
+        {
+            std::unique_lock<std::mutex> lock(g_tsf_shutdown_mutex);
+            g_tsf_shutdown_cv.wait_for(lock, kTsfFlushInterval, [] {
+                return g_tsf_shutdown.load(std::memory_order_relaxed);
+            });
+        }
+
+        int count = tsf_queue_pop_batch(batch, kTsfBatchSize);
+        if (count == 0) {
+            auto now = std::chrono::steady_clock::now();
+            if (file && (now - last_flush) >= kTsfFlushInterval) {
+                fflush(file);
+                last_flush = now;
+            }
+            continue;
+        }
+
+        if (!file) {
+            file = fopen(path.c_str(), "a");
+            if (!file) continue;
+            fseek(file, 0, SEEK_END);
+            file_size = ftell(file);
+        }
+
+        for (int i = 0; i < count; ++i) {
+            if (file_size + batch[i].len + 1 > kMaxFileSize) {
+                tsf_rotate_log(file, file_size, path);
+                file = fopen(path.c_str(), "a");
+                if (!file) break;
+            }
+            fwrite(batch[i].json, 1, batch[i].len, file);
+            fputc('\n', file);
+            file_size += batch[i].len + 1;
+        }
+
+        if (file) {
+            fflush(file);
+            last_flush = std::chrono::steady_clock::now();
+        }
+    }
+
+    // Final drain on shutdown
+    if (file) {
+        TsfTraceEntry entry;
+        while (tsf_queue_pop_batch(&entry, 1) == 1) {
+            if (file_size + entry.len + 1 > kMaxFileSize) {
+                tsf_rotate_log(file, file_size, path);
+                file = fopen(path.c_str(), "a");
+                if (!file) break;
+            }
+            fwrite(entry.json, 1, entry.len, file);
+            fputc('\n', file);
+            file_size += entry.len + 1;
+        }
+        fclose(file);
+    }
+}
+
+static void tsf_ensure_writer_started() {
+    if (g_tsf_writer_started.exchange(true)) return;
+    g_tsf_writer_thread = std::thread(tsf_writer_thread_func);
+}
+
+void TextService::_enqueue_trace(const TsfTrace& trace) {
+    if (!trace.should_log()) return;
+
+    TsfTraceEntry entry;
+    entry.len = trace.to_json(entry.json, sizeof(entry.json));
+    if (entry.len <= 0) return;
+
+    tsf_ensure_writer_started();
+    tsf_queue_try_push(entry);  // Drop if full — never block hot path
+}
+
+// ─── TextService lifecycle ───────────────────────────────────────────
 
 TextService::TextService() {}
 
 TextService::~TextService() {}
+
+// Called from DllMain(DLL_PROCESS_DETACH) via globals.cpp
+void TextService::shutdown_trace() {
+    if (!g_tsf_writer_started.exchange(false))
+        return;
+    g_tsf_shutdown.store(true, std::memory_order_relaxed);
+    g_tsf_shutdown_cv.notify_all();
+    if (g_tsf_writer_thread.joinable())
+        g_tsf_writer_thread.join();
+}
 
 // IUnknown
 STDMETHODIMP TextService::QueryInterface(REFIID riid, void** ppvObj) {
@@ -248,23 +457,43 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
 
     _load_config();
 
+    // Record key event start time
+    _key_event_start = std::chrono::steady_clock::now();
+
     uint32_t modifiers = _get_modifiers();
     CXXIME_LOG(L"_ProcessKeyEvent: vk=%u, mods=%u, composing=%d", (unsigned int)wParam, modifiers, _composing);
 
     cxxime::IPCResponse response = {};
+    auto ipc_start = std::chrono::steady_clock::now();
     bool ok = _client.process_key(_sessionId, (uint32_t)wParam, modifiers, response);
+    auto ipc_end = std::chrono::steady_clock::now();
+    _last_ipc_us = std::chrono::duration_cast<std::chrono::microseconds>(ipc_end - ipc_start).count();
 
     // If IPC failed, try to reconnect and re-create session
     if (!ok) {
         if (_client.connect()) {
             _client.start_session(_sessionId);
             CXXIME_LOG(L"Reconnected, new sessionId=%u", _sessionId);
+            ipc_start = std::chrono::steady_clock::now();
             ok = _client.process_key(_sessionId, (uint32_t)wParam, modifiers, response);
+            ipc_end = std::chrono::steady_clock::now();
+            _last_ipc_us = std::chrono::duration_cast<std::chrono::microseconds>(ipc_end - ipc_start).count();
         }
     }
 
+    // Build trace (populated at all exit paths)
+    TsfTrace trace;
+    trace.vk = (uint32_t)wParam;
+    trace.modifiers = modifiers;
+    trace.ipc_us = _last_ipc_us;
+
     if (!ok) {
         CXXIME_LOG(L"_ProcessKeyEvent: IPC FAILED for vk=%u, sessionId=%u", (unsigned int)wParam, _sessionId);
+        trace.result = TsfResult::IPC_FAILED;
+        auto total_end = std::chrono::steady_clock::now();
+        trace.total_us = std::chrono::duration_cast<std::chrono::microseconds>(total_end - _key_event_start).count();
+        trace.slow = (trace.ipc_us >= kSlowIpcUs) || (trace.total_us >= kSlowTotalUs);
+        _enqueue_trace(trace);
         return false;
     }
 
@@ -290,6 +519,8 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
             _composing = false;
             *pfEaten = TRUE;
         }
+        trace.result = TsfResult::COMMITTED;
+        trace.candidate_count = response.candidate_count;
     } else if (response.preedit[0] != '\0') {
         // Decode preedit
         std::wstring preedit;
@@ -336,6 +567,8 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
         CXXIME_LOG(L"_ProcessKeyEvent: has_cand=%d, has_preedit=%d, cand_count=%u",
                    has_candidates, has_preedit, response.candidate_count);
 
+        auto window_start = std::chrono::steady_clock::now();
+
         if (has_candidates || has_preedit) {
             if (has_candidates) {
                 cxxime::CandidatePage page;
@@ -368,10 +601,19 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
 
             _candidateWindow.move_to_caret(caretRect);
             _candidateWindow.show();
-            CXXIME_LOG(L"_ProcessKeyEvent: candidate window shown");
         } else {
             _candidateWindow.hide();
         }
+
+        auto window_end = std::chrono::steady_clock::now();
+        _last_window_update_us = std::chrono::duration_cast<std::chrono::microseconds>(window_end - window_start).count();
+
+        trace.result = TsfResult::PREEDIT;
+        trace.candidate_count = response.candidate_count;
+        trace.preedit_len = (uint32_t)strlen(response.preedit);
+        trace.window_us = _last_window_update_us;
+
+        CXXIME_LOG(L"_ProcessKeyEvent: window_us=%lld, ipc_us=%lld", _last_window_update_us, _last_ipc_us);
     } else if (response.status == cxxime::IPCStatus::OK) {
         // Server accepted but no commit and no preedit (e.g. Escape cleared the buffer)
         _candidateWindow.hide();
@@ -379,7 +621,16 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
         _end_composition(pic);
         _composing = false;
         *pfEaten = TRUE;
+        trace.result = TsfResult::CLEARED;
+    } else {
+        trace.result = TsfResult::REJECTED;
     }
+
+    // Finalize and enqueue trace (async, non-blocking)
+    auto total_end = std::chrono::steady_clock::now();
+    trace.total_us = std::chrono::duration_cast<std::chrono::microseconds>(total_end - _key_event_start).count();
+    trace.slow = (trace.ipc_us >= kSlowIpcUs) || (trace.window_us >= kSlowWindowUs) || (trace.total_us >= kSlowTotalUs);
+    _enqueue_trace(trace);
 
     return *pfEaten != FALSE;
 }

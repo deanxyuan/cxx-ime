@@ -8,6 +8,10 @@
 #include <cxxime/ipc_protocol.h>
 #include <cxxime/candidate_window.h>
 #include <cxxime/config.h>
+#include <chrono>
+#include <cstdint>
+#include <cstdio>
+#include <mutex>
 
 class TextService : public ITfTextInputProcessorEx,
                     public ITfKeyEventSink,
@@ -64,6 +68,32 @@ public:
     void set_caret_rect(const RECT& rc) { _caretRect = rc; }
     RECT _resolve_caret_rect(ITfContext* pic);
 
+    // TSF layer trace (lightweight, no cross-module QueryTrace dependency)
+    enum class TsfResult : uint8_t {
+        IPC_FAILED = 0,
+        COMMITTED,
+        PREEDIT,
+        CLEARED,
+        REJECTED,
+    };
+
+    struct TsfTrace {
+        uint32_t vk = 0;
+        uint32_t modifiers = 0;
+        TsfResult result = TsfResult::REJECTED;
+        uint32_t candidate_count = 0;
+        uint32_t preedit_len = 0;
+        int64_t total_us = 0;
+        int64_t ipc_us = 0;
+        int64_t window_us = 0;
+        bool slow = false;
+
+        int to_json(char* buf, int size) const;
+        bool should_log() const;
+    };
+
+    static void shutdown_trace();  // Call on DLL_PROCESS_DETACH
+
 private:
     HRESULT _register_key_event_sink();
     HRESULT _unregister_key_event_sink();
@@ -96,6 +126,13 @@ private:
     cxxime::Config _config;
 
     RECT _caretRect = {};
+
+    std::chrono::steady_clock::time_point _key_event_start;
+    int64_t _last_ipc_us = 0;
+    int64_t _last_window_update_us = 0;
+
+    // Async trace writer (bounded queue, writer thread, batch flush)
+    void _enqueue_trace(const TsfTrace& trace);
 };
 
 #endif // CXXIME_TSF_TEXT_SERVICE_H_

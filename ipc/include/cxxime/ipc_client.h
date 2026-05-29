@@ -9,6 +9,8 @@
 
 namespace cxxime {
 
+struct QueryTrace;
+
 class IpcClient {
 public:
     IpcClient() = default;
@@ -30,6 +32,10 @@ public:
     bool focus_in(uint32_t session_id);
     bool focus_out(uint32_t session_id);
 
+    // Query trace
+    void set_trace(QueryTrace* trace) { trace_ = trace; }
+    int64_t last_ipc_us() const { return last_ipc_us_; }
+
 private:
     bool try_reconnect();
     static std::wstring make_pipe_name(const std::wstring& base_name);
@@ -37,6 +43,10 @@ private:
     void* pipe_handle_ = nullptr;
     std::wstring pipe_name_;
     int timeout_ms_ = 3000;
+
+    // IPC trace
+    QueryTrace* trace_ = nullptr;
+    int64_t last_ipc_us_ = 0;
 };
 
 } // namespace cxxime
