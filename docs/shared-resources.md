@@ -1,11 +1,11 @@
-# 并发 Engine::initialize 优化
+# 共享资源预加载
 
 ## Context
 
 当前每个 session 创建时都执行 `Engine::initialize(dict_path, config_path)`，包含：
-- `CreateFileA` + `CreateFileMappingA` + `MapViewOfFile` 打开 `pinyin.dict.bin`（~73MB）
-- `CreateFileA` + mmap 打开 `pinyin.dict.idx`（~48MB）
-- `CreateFileA` + mmap 打开 `pinyin.spellings.bin`
+- `CreateFileA` + `ReadFile` 读取 `pinyin.dict.bin`（~73MB）
+- `CreateFileA` + `ReadFile` 读取 `pinyin.dict.idx`（~48MB）
+- `CreateFileA` + `ReadFile` 读取 `pinyin.spellings.bin`
 - SQLite 打开 `%APPDATA%\CxxIME\user.db`
 
 多个 worker 线程并发创建 session 时，同时打开同一 .bin 文件偶尔失败（防病毒/文件系统过滤驱动干扰），导致 session 创建失败。
@@ -107,7 +107,7 @@ cxxime::IPCResponse ServerApp::handle_request(const cxxime::IPCRequest& request)
 ## 验证
 
 1. `build.bat debug` ✅ 编译通过
-2. `ctest -C Debug` ✅ 全部 8 项通过
+2. `ctest -C Debug` ✅ 全部 10 项通过
 3. session 创建不再需要文件 I/O，变为纯内存操作（瞬时）
-4. 内存占用降低：N 个 session 共享同一份 Dict/SpellingsIndex mmap（不再各加载一份）
+4. 内存占用降低：N 个 session 共享同一份 Dict/SpellingsIndex 内存缓冲区（不再各加载一份）
 5. 并发 session 创建的间歇性文件打开失败消除；完整的并发可靠性还需要 `IpcClient::connect()` 重试循环（见 IPC 重新设计文档）

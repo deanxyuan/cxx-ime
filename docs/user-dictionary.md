@@ -73,7 +73,7 @@ text\tcode\tfrequency
 | `ipc/CMakeLists.txt` | 可选：移除 sqlite3 链接（如 dict 是唯一使用者） |
 
 **不修改：**
-- `Dict::open_dict` / mmap 相关代码 — 主词典不变
+- `Dict::open_dict` / 二进制加载相关代码 — 主词典不变
 - `pinyin.dict.db` — 仍是主词典的源数据格式（SQLite），仅 build_binary.py 使用
 - `third_party/sqlite3` — 保留，dict_query 等工具可能仍需
 - 所有测试
@@ -85,7 +85,7 @@ text\tcode\tfrequency
 ## 验证
 
 1. `build.bat debug` ✅ 编译通过
-2. `ctest -C Debug` ✅ 8/8 通过
+2. `ctest -C Debug` ✅ 10/10 通过
 3. Preedit 延迟 ~50us（提升 2.2x），Commit 延迟 ~22us（提升 354x），消除了 SQLite INSERT 开销
 4. `stress 6 1`（串行）✅ 3/3 全成功，频率数据正常
 5. `stress 6 3`（并发）✅ 大部分通过；并发连接层的残余竞态已由 `IpcClient::connect()` 重试循环修复
