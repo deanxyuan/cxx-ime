@@ -3,6 +3,7 @@
 #include "globals.h"
 #include "class_factory.h"
 #include "register.h"
+#include "text_service.h"
 
 // Forward declarations for DllRegisterServer/DllUnregisterServer
 STDAPI DllUnregisterServer();
@@ -15,6 +16,7 @@ BOOL WINAPI DllMain(HINSTANCE hInst, DWORD dwReason, LPVOID) {
         InitializeCriticalSection(&g_cs);
         break;
     case DLL_PROCESS_DETACH:
+        TextService::shutdown_trace();  // Flush and close trace writer thread
         DeleteCriticalSection(&g_cs);
         break;
     }

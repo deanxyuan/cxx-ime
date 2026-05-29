@@ -4,6 +4,7 @@
 // Design reference: weasel PipeChannel (WeaselIPC).
 
 #include <cxxime/ipc_client.h>
+#include <cxxime/query_trace.h>
 #include <windows.h>
 #include <cstring>
 #include <chrono>
@@ -84,6 +85,8 @@ bool IpcClient::is_connected() const {
 // Reference: weasel PipeChannel::_Send / _ReceiveResponse
 // ============================================================
 bool IpcClient::send_request(const IPCRequest& request, IPCResponse& response) {
+    auto start = std::chrono::steady_clock::now();
+
     for (int attempt = 0; attempt < 2; ++attempt) {
         if (!is_connected()) {
             if (!try_reconnect())
@@ -107,6 +110,16 @@ bool IpcClient::send_request(const IPCRequest& request, IPCResponse& response) {
             bytes_read < sizeof(IPCStatus)) {
             disconnect();
             continue;
+        }
+
+        // Record IPC round-trip time
+        auto end = std::chrono::steady_clock::now();
+        last_ipc_us_ = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+
+        // Update trace if available
+        if (trace_) {
+            // IPC round-trip is already included in total_us from engine
+            // We can add it to a separate field if needed
         }
 
         return true;

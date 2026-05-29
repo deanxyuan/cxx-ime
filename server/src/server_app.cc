@@ -3,6 +3,7 @@
 #include "server_app.h"
 #include <cxxime/logging.h>
 #include <cxxime/data_path.h>
+#include <cxxime/query_trace.h>
 #include <cstring>
 
 bool ServerApp::initialize(const std::string& dict_path, const std::string& config_path) {
@@ -103,6 +104,9 @@ cxxime::IPCResponse ServerApp::handle_request(const cxxime::IPCRequest& request)
             break;
         }
 
+        // Set up trace with session info
+        engine->set_trace_session_id(request.session_id);
+
         cxxime::KeyEvent event;
         event.keycode = request.key_code;
         event.modifiers = request.modifiers;
@@ -136,6 +140,8 @@ cxxime::IPCResponse ServerApp::handle_request(const cxxime::IPCRequest& request)
         } else {
             response.status = cxxime::IPCStatus::ERR_ENGINE_PROCESS_FAILED;
         }
+        // Trace logging is handled inside Engine::process_key() — no duplicate log here.
+
         break;
     }
 
