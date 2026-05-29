@@ -90,15 +90,12 @@ public:
                                  const std::vector<std::tuple<std::string, std::string, int, float>>& entries);
 
 private:
-    const char* data_ = nullptr;
+    char* data_ = nullptr;             // heap-allocated buffer
     size_t data_size_ = 0;
     const char* nodes_ = nullptr;      // raw node data
     const char* strings_ = nullptr;
     uint32_t node_count_ = 0;
     uint32_t nodes_size_ = 0;          // total bytes of node data
-
-    void* file_handle_ = nullptr;
-    void* mapping_handle_ = nullptr;
 
     // Pre-built offset table for O(1) node access (v2 trie)
     std::unique_ptr<uint32_t[]> node_offsets_;

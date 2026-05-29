@@ -16,14 +16,16 @@ if "%1"=="Debug" set CONFIG=Debug
 echo === CxxIME Packager v%VERSION% (%CONFIG%) ===
 echo.
 
-:: Check build exists
+:: Build with PRODUCTION=ON (packaging always uses production data paths)
 if not exist "%BUILD_DIR%\tsf\%CONFIG%\cxxime_tsf.dll" (
-    echo Build artifacts not found. Building %CONFIG% first...
-    if "%CONFIG%"=="Debug" (
-        call "%ROOT%\build.bat" debug
-    ) else (
-        call "%ROOT%\build.bat" release
+    echo Build artifacts not found. Building %CONFIG% with PRODUCTION=ON...
+    if not exist "%BUILD_DIR%" mkdir "%BUILD_DIR%"
+    cmake -S "%ROOT%" -B "%BUILD_DIR%" -G "Visual Studio 17 2022" -A x64 -DCXXIME_PRODUCTION_BUILD=ON
+    if errorlevel 1 (
+        echo ERROR: CMake configuration failed.
+        exit /b 1
     )
+    cmake --build "%BUILD_DIR%" --config %CONFIG%
     if errorlevel 1 (
         echo ERROR: Build failed. Cannot package.
         exit /b 1

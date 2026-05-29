@@ -36,22 +36,21 @@ bool SpellingsIndex::load(const std::string& bin_path) {
     }
     data_size_ = (size_t)li.QuadPart;
 
-    HANDLE hMap = CreateFileMappingA(hFile, nullptr, PAGE_READONLY, 0, 0, nullptr);
-    if (!hMap) {
+    // Load entire file into heap memory (no mmap — consistent with Dict)
+    data_ = new (std::nothrow) char[data_size_];
+    if (!data_) {
         CloseHandle(hFile);
         return false;
     }
 
-    void* base = MapViewOfFile(hMap, FILE_MAP_READ, 0, 0, 0);
-    if (!base) {
-        CloseHandle(hMap);
-        CloseHandle(hFile);
+    DWORD bytes_read = 0;
+    BOOL ok = ReadFile(hFile, data_, (DWORD)data_size_, &bytes_read, nullptr);
+    CloseHandle(hFile);
+    if (!ok || bytes_read != data_size_) {
+        CXXIME_LOG(L"SpellingsIndex::load ReadFile FAILED");
+        unload();
         return false;
     }
-
-    file_handle_ = hFile;
-    mapping_handle_ = hMap;
-    data_ = (const char*)base;
 
     // Detect format version
     if (std::memcmp(data_, SPELLINGS_MAGIC_V2, 8) == 0) {
@@ -96,18 +95,8 @@ bool SpellingsIndex::load(const std::string& bin_path) {
 }
 
 void SpellingsIndex::unload() {
-    if (data_) {
-        UnmapViewOfFile(data_);
-        data_ = nullptr;
-    }
-    if (mapping_handle_) {
-        CloseHandle(mapping_handle_);
-        mapping_handle_ = nullptr;
-    }
-    if (file_handle_ && file_handle_ != INVALID_HANDLE_VALUE) {
-        CloseHandle(file_handle_);
-        file_handle_ = nullptr;
-    }
+    delete[] data_;
+    data_ = nullptr;
     nodes_ = nullptr;
     strings_ = nullptr;
     node_count_ = 0;

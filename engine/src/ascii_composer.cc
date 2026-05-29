@@ -110,14 +110,8 @@ bool AsciiComposer::process_key(uint32_t key_code, bool is_key_up, Context& ctx)
         if (is_key_up) {
             CXXIME_LOG(L"AsciiComposer::process_key: modifier key up, shift_pressed_=%d", shift_pressed_);
             if (shift_pressed_ || ctrl_pressed_ || alt_pressed_ || win_pressed_) {
-                auto now = Clock::now();
-                bool timeout = now >= toggle_expired_;
-                CXXIME_LOG(L"AsciiComposer::process_key: timeout=%d, remaining_ms=%lld",
-                           timeout, std::chrono::duration_cast<std::chrono::milliseconds>(toggle_expired_ - now).count());
-                if (!timeout) {
-                    CXXIME_LOG(L"AsciiComposer::process_key: calling toggle_mode");
-                    toggle_mode(key_code, ctx);
-                }
+                CXXIME_LOG(L"AsciiComposer::process_key: calling toggle_mode");
+                toggle_mode(key_code, ctx);
                 shift_pressed_ = false;
                 ctrl_pressed_ = false;
                 alt_pressed_ = false;
@@ -130,8 +124,6 @@ bool AsciiComposer::process_key(uint32_t key_code, bool is_key_up, Context& ctx)
                 if (is_ctrl)  ctrl_pressed_ = true;
                 if (is_alt)   alt_pressed_ = true;
                 if (is_win)   win_pressed_ = true;
-                toggle_expired_ = Clock::now() + std::chrono::milliseconds(TOGGLE_TIMEOUT_MS);
-                CXXIME_LOG(L"AsciiComposer::process_key: set toggle_expired_, shift_pressed_=%d", shift_pressed_);
             }
         }
         return false;

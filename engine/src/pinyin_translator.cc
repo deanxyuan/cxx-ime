@@ -42,11 +42,13 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
     };
 
     // 1. Syllabifier for abbreviation expansion (reserve first)
+    // Limit paths to avoid CPU cache thrashing on short inputs (e.g. single letter 's')
+    static constexpr size_t kMaxPaths = 8;
     if (syllabifier_) {
         auto paths = syllabifier_->segment(pinyin);
-        id_sequences.reserve(paths.size() + 1);
-        for (auto& path : paths)
-            add_path(path);
+        id_sequences.reserve(std::min(paths.size(), kMaxPaths) + 1);
+        for (size_t i = 0; i < paths.size() && i < kMaxPaths; ++i)
+            add_path(paths[i]);
     } else {
         id_sequences.reserve(2);
     }
