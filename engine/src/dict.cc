@@ -1,6 +1,8 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
 #include <cxxime/dict.h>
+#include <cxxime/query_trace.h>
+#include <cxxime/query_budget.h>
 #include "binary_format.h"
 #include <cstring>
 #include <cstdio>
@@ -193,7 +195,7 @@ void Dict::close() {
 }
 
 std::vector<Candidate> Dict::lookup_by_syllables(
-    const std::vector<std::string>& syllables, int limit) {
+    const std::vector<std::string>& syllables, int limit, QueryTrace* trace) {
     std::vector<Candidate> results;
     if (!dict_entries_ || syllables.empty())
         return results;
@@ -248,6 +250,8 @@ std::vector<Candidate> Dict::lookup_by_syllables(
 
         std::shared_lock<std::shared_mutex> lock(user_mutex_);
         for (auto& e : user_entries_) {
+            if (trace)
+                ++trace->user_scan_count;
             if (e.code == concat_code) {
                 Candidate c;
                 c.text = e.text;
@@ -272,7 +276,7 @@ std::vector<Candidate> Dict::lookup_by_syllables(
     return results;
 }
 
-std::vector<Candidate> Dict::lookup(const std::string& code_prefix, int limit) {
+std::vector<Candidate> Dict::lookup(const std::string& code_prefix, int limit, QueryTrace* trace) {
     std::vector<Candidate> results;
     if (!dict_entries_)
         return results;
@@ -323,6 +327,8 @@ std::vector<Candidate> Dict::lookup(const std::string& code_prefix, int limit) {
     {
         std::shared_lock<std::shared_mutex> lock(user_mutex_);
         for (auto& e : user_entries_) {
+            if (trace)
+                ++trace->user_scan_count;
             if (e.code.size() >= prefix_len &&
                 std::memcmp(e.code.data(), prefix_data, prefix_len) == 0) {
                 Candidate c;
@@ -347,7 +353,7 @@ std::vector<Candidate> Dict::lookup(const std::string& code_prefix, int limit) {
     return results;
 }
 
-int Dict::count(const std::string& code_prefix) {
+int Dict::count(const std::string& code_prefix, QueryTrace* trace) {
     if (!dict_entries_)
         return 0;
 
@@ -383,6 +389,8 @@ int Dict::count(const std::string& code_prefix) {
     {
         std::shared_lock<std::shared_mutex> lock(user_mutex_);
         for (auto& e : user_entries_) {
+            if (trace)
+                ++trace->user_scan_count;
             if (e.code.size() >= prefix_len &&
                 std::memcmp(e.code.data(), prefix_data, prefix_len) == 0)
                 ++result;
@@ -684,7 +692,7 @@ uint32_t Dict::syllable_to_id(const std::string& syllable) const {
     return it != syllable_to_id_.end() ? it->second : UINT32_MAX;
 }
 
-bool Dict::has_prefix(const std::vector<uint32_t>& query_ids) const {
+bool Dict::has_prefix(const std::vector<uint32_t>& query_ids, QueryTrace* trace) const {
     if (query_ids.empty() || id_index_.empty())
         return false;
     auto ids_less = [&](const IdEntry& e, const std::vector<uint32_t>& q) {
@@ -696,8 +704,10 @@ bool Dict::has_prefix(const std::vector<uint32_t>& query_ids) const {
         return e.count < q.size();
     };
     uint32_t lo = 0, hi = (uint32_t)id_index_.size();
+    uint32_t steps = 0;
     while (lo < hi) {
         uint32_t mid = lo + (hi - lo) / 2;
+        ++steps;
         if (ids_less(id_index_[mid], query_ids))
             lo = mid + 1;
         else
@@ -710,10 +720,15 @@ bool Dict::has_prefix(const std::vector<uint32_t>& query_ids) const {
         return false;
     for (size_t k = 0; k < query_ids.size(); ++k)
         if (e.ids[k] != query_ids[k]) return false;
+
+    if (trace)
+        trace->prefix_scan_count += steps;
+
     return true;
 }
 
-std::vector<Candidate> Dict::lookup_by_ids(const std::vector<uint32_t>& query_ids, int limit) {
+std::vector<Candidate> Dict::lookup_by_ids(const std::vector<uint32_t>& query_ids, int limit,
+                                            QueryTrace* trace, const QueryBudget* budget) {
     std::vector<Candidate> results;
     if (query_ids.empty() || id_index_.empty())
         return results;
@@ -738,6 +753,7 @@ std::vector<Candidate> Dict::lookup_by_ids(const std::vector<uint32_t>& query_id
     }
 
     std::unordered_set<std::string> seen;
+    bool deadline_hit = false;
 
     // First pass: collect ALL exact matches (no limit — need frequency sort)
     auto ids_eq = [&](const IdEntry& e) {
@@ -748,7 +764,24 @@ std::vector<Candidate> Dict::lookup_by_ids(const std::vector<uint32_t>& query_id
     };
 
     uint32_t pos = lo;
+    uint32_t exact_count = 0;
     while (pos < (uint32_t)id_index_.size() && ids_eq(id_index_[pos])) {
+        // Check scan budget
+        if (budget && exact_count >= budget->max_exact_scan) {
+            if (trace) {
+                trace->truncated = true;
+            }
+            break;
+        }
+        // Check deadline every 64 entries
+        if (budget && (exact_count & 63) == 0 && budget->expired()) {
+            deadline_hit = true;
+            if (trace) {
+                trace->deadline_exceeded = true;
+                trace->truncated = true;
+            }
+            break;
+        }
         const auto& e = dict_entries_[id_index_[pos].index];
         Candidate c;
         c.text.assign(dict_strings_ + e.text_offset, e.text_len);
@@ -756,24 +789,49 @@ std::vector<Candidate> Dict::lookup_by_ids(const std::vector<uint32_t>& query_id
         if (seen.insert(c.text).second)
             results.push_back(std::move(c));
         ++pos;
+        ++exact_count;
     }
 
-    // Second pass: prefix matches
-    auto ids_prefix = [&](const IdEntry& e) {
-        if (e.count < query_ids.size()) return false;
-        for (size_t k = 0; k < query_ids.size(); ++k)
-            if (e.ids[k] != query_ids[k]) return false;
-        return true;
-    };
+    // Second pass: prefix matches (skip if deadline already hit)
+    uint32_t prefix_count = 0;
+    if (!deadline_hit) {
+        auto ids_prefix = [&](const IdEntry& e) {
+            if (e.count < query_ids.size()) return false;
+            for (size_t k = 0; k < query_ids.size(); ++k)
+                if (e.ids[k] != query_ids[k]) return false;
+            return true;
+        };
 
-    while (pos < (uint32_t)id_index_.size() && ids_prefix(id_index_[pos])) {
-        const auto& e = dict_entries_[id_index_[pos].index];
-        Candidate c;
-        c.text.assign(dict_strings_ + e.text_offset, e.text_len);
-        c.frequency = e.frequency;
-        if (seen.insert(c.text).second)
-            results.push_back(std::move(c));
-        ++pos;
+        while (pos < (uint32_t)id_index_.size() && ids_prefix(id_index_[pos])) {
+            // Check scan budget
+            if (budget && prefix_count >= budget->max_prefix_scan) {
+                if (trace) {
+                    trace->truncated = true;
+                }
+                break;
+            }
+            // Check deadline every 64 entries
+            if (budget && (prefix_count & 63) == 0 && budget->expired()) {
+                if (trace) {
+                    trace->deadline_exceeded = true;
+                    trace->truncated = true;
+                }
+                break;
+            }
+            const auto& e = dict_entries_[id_index_[pos].index];
+            Candidate c;
+            c.text.assign(dict_strings_ + e.text_offset, e.text_len);
+            c.frequency = e.frequency;
+            if (seen.insert(c.text).second)
+                results.push_back(std::move(c));
+            ++pos;
+            ++prefix_count;
+        }
+    }
+
+    if (trace) {
+        trace->exact_scan_count += exact_count;
+        trace->prefix_scan_count += prefix_count;
     }
 
     std::sort(results.begin(), results.end(),

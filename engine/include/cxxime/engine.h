@@ -13,6 +13,8 @@
 #include <cxxime/ascii_composer.h>
 #include <cxxime/spellings_index.h>
 #include <cxxime/syllabifier.h>
+#include <cxxime/query_trace.h>
+#include <cxxime/query_budget.h>
 
 namespace cxxime {
 
@@ -37,6 +39,21 @@ public:
     const AsciiComposer& ascii_composer() const { return ascii_composer_; }
     AsciiComposer& ascii_composer() { return ascii_composer_; }
 
+    // Query trace access
+    const QueryTrace& last_trace() const { return trace_; }
+    void set_trace_enabled(bool enabled) { trace_enabled_ = enabled; }
+    void set_trace_session_id(uint32_t id) { trace_.session_id = id; }
+
+    // Override config page_size (only for self-contained init)
+    void set_config_page_size(int size) {
+        if (config_ == &owned_config_)
+            owned_config_.page_size = size;
+    }
+
+    // Query budget (deadline + scan limits)
+    void set_query_budget(const QueryBudget& budget) { budget_ = budget; }
+    const QueryBudget& query_budget() const { return budget_; }
+
     static std::string derive_spellings_path(const std::string& dict_path);
 
 private:
@@ -58,6 +75,14 @@ private:
     SpellingsIndex* spellings_ = nullptr;
     Syllabifier* syllabifier_ = nullptr;
     const Config* config_ = nullptr;
+
+    // Query trace (explicit ownership, not thread_local - see TraceContext constraints)
+    QueryTrace trace_;
+    bool trace_enabled_ = true;
+    static uint64_t next_query_id_;
+
+    // Query budget (deadline + scan limits)
+    QueryBudget budget_;
 };
 
 } // namespace cxxime
