@@ -3,15 +3,11 @@
 #ifndef CXXIME_LOGGING_H_
 #define CXXIME_LOGGING_H_
 
-#ifdef _DEBUG
 #define CXXIME_LOG(fmt, ...)                                                                       \
     do {                                                                                           \
         wchar_t _buf[512];                                                                        \
         _snwprintf_s(_buf, _countof(_buf), _TRUNCATE, L"[CxxIME] " fmt L"\n", __VA_ARGS__);       \
         OutputDebugStringW(_buf);                                                                  \
     } while (0)
-#else
-#define CXXIME_LOG(fmt, ...) ((void)0)
-#endif
 
 #endif // CXXIME_LOGGING_H_
