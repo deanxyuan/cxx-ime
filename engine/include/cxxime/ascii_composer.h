@@ -44,12 +44,13 @@ private:
     bool temporary_ascii_ = false;
     bool shift_pressed_ = false;
     bool ctrl_pressed_ = false;
-    bool caps_lock_pressed_ = false;
+    bool alt_pressed_ = false;
+    bool win_pressed_ = false;
 
     using Clock = std::chrono::steady_clock;
     using TimePoint = Clock::time_point;
     TimePoint toggle_expired_{};
-    static constexpr int TOGGLE_TIMEOUT_MS = 500;
+    static constexpr int TOGGLE_TIMEOUT_MS = 200;
 };
 
 } // namespace cxxime

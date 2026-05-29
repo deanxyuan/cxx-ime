@@ -48,7 +48,24 @@ inline std::string data_dir() {
         }
     }
 
-    // 4. Fallback: %USERPROFILE%/cxxime/
+    // 4. Fallback: %APPDATA%\CxxIME\ (installer-created directory)
+    wchar_t appdata[MAX_PATH];
+    if (SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, 0, appdata))) {
+        std::wstring wdir(appdata);
+        wdir += L"\\CxxIME\\";
+        DWORD attr = GetFileAttributesW(wdir.c_str());
+        if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY)) {
+            std::string result;
+            int len = WideCharToMultiByte(CP_UTF8, 0, wdir.c_str(), -1, nullptr, 0, nullptr, nullptr);
+            if (len > 1) {
+                result.resize(len - 1);
+                WideCharToMultiByte(CP_UTF8, 0, wdir.c_str(), -1, &result[0], len, nullptr, nullptr);
+            }
+            return result;
+        }
+    }
+
+    // 5. Legacy fallback: %USERPROFILE%/cxxime/
     wchar_t profile[MAX_PATH];
     if (SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_PROFILE, nullptr, 0, profile))) {
         std::string dir;

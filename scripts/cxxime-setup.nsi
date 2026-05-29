@@ -44,7 +44,6 @@ Function FinishPage
     Pop $1
     ${NSD_CreateCheckbox} 20u 50u 100% 20u "Launch CxxIME Settings"
     Pop $1
-    ${NSD_Check} $1
     nsDialogs::Show
 FunctionEnd
 
@@ -75,6 +74,9 @@ Section "Install"
     File /nonfatal "data\wubi86.dict.bin"
 
     CreateDirectory "$APPDATA\CxxIME"
+    SetOutPath "$APPDATA\CxxIME"
+    File "data\default.json"
+    File "data\themes.json"
 
     nsExec::Exec '"$WINDIR\Sysnative\regsvr32.exe" /s "$INSTDIR\cxxime_tsf.dll"'
 

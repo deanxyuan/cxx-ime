@@ -491,6 +491,159 @@ TEST(Engine, translate_no_match) {
     ASSERT_EQ(page.candidates.size(), 0u);
 }
 
+// --- AsciiComposer Shift/Ctrl toggle tests ---
+
+TEST(AsciiComposer, shift_l_commit_text_toggles_and_commits) {
+    cxxime::Config config;
+    config.ascii_switch_key["Shift_L"] = "commit_text";
+    config.ascii_switch_key["Shift_R"] = "set_ascii_mode";
+
+    cxxime::AsciiComposer ac;
+    ac.load_config(config);
+    cxxime::Context ctx;
+
+    // Simulate composing state with pinyin
+    ctx.pinyin_buffer = "ni";
+    ASSERT_TRUE(!ac.is_ascii_mode());
+
+    // Press Shift_L (key-down)
+    ac.process_key(0xA0, false, ctx);
+
+    // Release Shift_L (key-up) — should commit and toggle to ascii mode
+    ac.process_key(0xA0, true, ctx);
+
+    ASSERT_TRUE(ac.is_ascii_mode());
+    ASSERT_TRUE(!ctx.committed_text.empty());
+}
+
+TEST(AsciiComposer, shift_r_set_ascii_mode_toggles_no_commit) {
+    cxxime::Config config;
+    config.ascii_switch_key["Shift_L"] = "commit_text";
+    config.ascii_switch_key["Shift_R"] = "set_ascii_mode";
+
+    cxxime::AsciiComposer ac;
+    ac.load_config(config);
+    cxxime::Context ctx;
+
+    ctx.pinyin_buffer = "ni";
+    ASSERT_TRUE(!ac.is_ascii_mode());
+
+    // Press and release Shift_R
+    ac.process_key(0xA1, false, ctx);
+    ac.process_key(0xA1, true, ctx);
+
+    // set_ascii_mode toggles but does not commit
+    ASSERT_TRUE(ac.is_ascii_mode());
+    ASSERT_TRUE(ctx.committed_text.empty());
+}
+
+TEST(AsciiComposer, shift_no_binding_does_nothing) {
+    cxxime::Config config;
+    // No Shift bindings
+
+    cxxime::AsciiComposer ac;
+    ac.load_config(config);
+    cxxime::Context ctx;
+
+    // Press and release Shift_L
+    ac.process_key(0xA0, false, ctx);
+    ac.process_key(0xA0, true, ctx);
+
+    ASSERT_TRUE(!ac.is_ascii_mode());
+}
+
+TEST(AsciiComposer, shift_toggle_back_to_chinese) {
+    cxxime::Config config;
+    config.ascii_switch_key["Shift_L"] = "commit_text";
+
+    cxxime::AsciiComposer ac;
+    ac.load_config(config);
+    cxxime::Context ctx;
+
+    ASSERT_TRUE(!ac.is_ascii_mode());
+
+    // First Shift: Chinese -> English (commit_text toggles)
+    ac.process_key(0xA0, false, ctx);
+    ac.process_key(0xA0, true, ctx);
+    ASSERT_TRUE(ac.is_ascii_mode());
+
+    // Second Shift: English -> Chinese (commit_text toggles back)
+    cxxime::Context ctx2;
+    ac.process_key(0xA0, false, ctx2);
+    ac.process_key(0xA0, true, ctx2);
+    ASSERT_TRUE(!ac.is_ascii_mode());
+}
+
+TEST(AsciiComposer, set_ascii_mode_is_one_way) {
+    cxxime::Config config;
+    config.ascii_switch_key["Shift_L"] = "set_ascii_mode";
+
+    cxxime::AsciiComposer ac;
+    ac.load_config(config);
+    cxxime::Context ctx;
+
+    // First Shift: Chinese -> English
+    ac.process_key(0xA0, false, ctx);
+    ac.process_key(0xA0, true, ctx);
+    ASSERT_TRUE(ac.is_ascii_mode());
+
+    // Second Shift: stays English (set_ascii_mode is one-way)
+    cxxime::Context ctx2;
+    ac.process_key(0xA0, false, ctx2);
+    ac.process_key(0xA0, true, ctx2);
+    ASSERT_TRUE(ac.is_ascii_mode());
+}
+
+TEST(AsciiComposer, alt_l_supported) {
+    cxxime::Config config;
+    config.ascii_switch_key["Alt_L"] = "set_ascii_mode";
+
+    cxxime::AsciiComposer ac;
+    ac.load_config(config);
+    cxxime::Context ctx;
+
+    ASSERT_TRUE(!ac.is_ascii_mode());
+
+    // Press and release Alt_L
+    ac.process_key(0xA4, false, ctx);
+    ac.process_key(0xA4, true, ctx);
+
+    ASSERT_TRUE(ac.is_ascii_mode());
+}
+
+TEST(AsciiComposer, super_l_supported) {
+    cxxime::Config config;
+    config.ascii_switch_key["Super_L"] = "set_ascii_mode";
+
+    cxxime::AsciiComposer ac;
+    ac.load_config(config);
+    cxxime::Context ctx;
+
+    ASSERT_TRUE(!ac.is_ascii_mode());
+
+    // Press and release Super_L
+    ac.process_key(0x5B, false, ctx);
+    ac.process_key(0x5B, true, ctx);
+
+    ASSERT_TRUE(ac.is_ascii_mode());
+}
+
+TEST(AsciiComposer, capslock_downgrade) {
+    cxxime::Config config;
+    config.ascii_switch_key["Caps_Lock"] = "inline_ascii";
+
+    cxxime::AsciiComposer ac;
+    ac.load_config(config);
+    cxxime::Context ctx;
+
+    // CapsLock should work as toggle (downgraded from inline_ascii to clear)
+    ASSERT_TRUE(!ac.is_ascii_mode());
+    ac.process_key(0x14, false, ctx);  // VK_CAPITAL down
+    ASSERT_TRUE(ac.is_ascii_mode());
+    ac.process_key(0x14, false, ctx);  // VK_CAPITAL down again
+    ASSERT_TRUE(!ac.is_ascii_mode());
+}
+
 // Initialize temp_path before tests run
 static bool _engine_init = []() {
     GetTempPathA(MAX_PATH, temp_path);
