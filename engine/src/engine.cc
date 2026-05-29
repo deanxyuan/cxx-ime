@@ -1,6 +1,8 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
 #include <cxxime/engine.h>
+#include <windows.h>
+#include <cxxime/logging.h>
 
 namespace cxxime {
 
@@ -51,8 +53,13 @@ void Engine::finalize() {
 }
 
 ProcessResult Engine::process_key(const KeyEvent& event) {
+    CXXIME_LOG(L"Engine::process_key: vk=%u, is_key_up=%d, composing=%d",
+               event.keycode, event.is_key_up, context_.is_composing());
+
     // Let AsciiComposer track modifier key state (may toggle ascii_mode)
     ascii_composer_.process_key(event.keycode, event.is_key_up, context_);
+
+    CXXIME_LOG(L"Engine::process_key: after ascii_composer, committed_text='%S'", context_.committed_text.c_str());
 
     // Check if AsciiComposer committed text (e.g. Shift toggle with commit_text)
     if (!context_.committed_text.empty())

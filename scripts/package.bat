@@ -19,7 +19,11 @@ echo.
 :: Check build exists
 if not exist "%BUILD_DIR%\tsf\%CONFIG%\cxxime_tsf.dll" (
     echo Build artifacts not found. Building %CONFIG% first...
-    call "%ROOT%\build.bat" release
+    if "%CONFIG%"=="Debug" (
+        call "%ROOT%\build.bat" debug
+    ) else (
+        call "%ROOT%\build.bat" release
+    )
     if errorlevel 1 (
         echo ERROR: Build failed. Cannot package.
         exit /b 1

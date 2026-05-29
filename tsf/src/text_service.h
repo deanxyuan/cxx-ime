@@ -72,10 +72,11 @@ private:
     HRESULT _start_composition(ITfContext* pic);
     HRESULT _end_composition(ITfContext* pic);
     HRESULT _update_composition_text(ITfContext* pic, const std::wstring& text, TfEditCookie ec);
-    bool _should_eat_key(WPARAM vk) const;
+    bool _ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam, BOOL* pfEaten);
+    void _ProcessKeyUp(WPARAM wParam);
+    void _AbortComposition();
     uint32_t _get_modifiers() const;
     void _load_config();
-    void _send_modifier_key_up(WPARAM wParam);
 
     LONG _cRef = 1;
     ITfThreadMgr* _threadMgr = nullptr;
@@ -89,6 +90,8 @@ private:
     uint32_t _sessionId = 0;
     bool _composing = false;
     bool _chinese_mode = true;
+    bool _fTestKeyDownPending = false;
+    bool _fTestKeyUpPending = false;
     cxxime::CandidateWindow _candidateWindow;
     cxxime::Config _config;
 

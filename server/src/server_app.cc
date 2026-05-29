@@ -108,14 +108,22 @@ cxxime::IPCResponse ServerApp::handle_request(const cxxime::IPCRequest& request)
         event.modifiers = request.modifiers;
         event.is_key_up = request.is_key_up;
 
+        CXXIME_LOG(L"PROCESS_KEY: vk=%u, is_key_up=%d, composing=%d",
+                   request.key_code, request.is_key_up, engine->context().is_composing());
+
         auto result = engine->process_key(event);
 
         response.ascii_mode = engine->ascii_composer().is_ascii_mode();
         response.composing = engine->context().is_composing();
 
+        CXXIME_LOG(L"PROCESS_KEY: result=%d, ascii_mode=%d, composing=%d, committed_text='%S'",
+                   (int)result, response.ascii_mode, response.composing,
+                   engine->context().committed_text.c_str());
+
         if (result == cxxime::ProcessResult::COMMITTED) {
             std::string commit = engine->get_commit_text();
             strncpy_s(response.commit_text, commit.c_str(), sizeof(response.commit_text) - 1);
+            CXXIME_LOG(L"PROCESS_KEY: COMMITTED, commit_text='%S'", response.commit_text);
         } else if (result == cxxime::ProcessResult::ACCEPTED) {
             const auto& ctx = engine->context();
             strncpy_s(response.preedit, ctx.pinyin_buffer.c_str(), sizeof(response.preedit) - 1);
