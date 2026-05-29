@@ -1,7 +1,5 @@
 # 候选词选词算法
 
-日期：2026-05-24
-
 ## 整体流程
 
 ```
@@ -119,3 +117,14 @@ Syllabifier(拼写图) → Segmentor(切分) → Translator(查词+排序)
 - **Translator**：基于音节 ID 的词典二分查找 + 频率排序
 - Filter/Formatter 层未实现（目前不需要繁简转换、注释等）
 - 候选按主词典频率降序排列，用户词典匹配项额外加分
+
+## 查询预算（Deadline & Scan Budget）
+
+查询管道在多个检查点支持 deadline 超时和扫描条目数限制，通过 `QueryBudget` 结构传递：
+
+- **Syllabifier 入口**：`deadline_us < 10ms` 时跳过（Syllabifier 内部不检查 deadline）
+- **has_prefix 前**：每条路径检查 deadline
+- **lookup_by_ids 前**：每条路径检查 deadline
+- **lookup_by_ids 内部**：每 64 条检查 deadline + 扫描上限（`max_exact_scan` / `max_prefix_scan`）
+
+任一触发都会设置 `QueryTrace::deadline_exceeded` 和 `truncated`。详见 [查询预算与 Deadline](query-budget.md)。

@@ -1,4 +1,4 @@
-# IPC 高性能重新设计
+# IPC 架构设计
 
 ## Context
 
@@ -62,6 +62,18 @@ stop():
 ### 线程数
 
 Worker 线程数 = clamp(hardware_concurrency, 2, 4)。IME server 通常 1-2 个活跃 client，2-4 个 worker 足够，避免过多空闲线程。
+
+### 管道命名
+
+每用户隔离：`\\.\pipe\<username>\CxxIME`。`make_pipe_name()` 读取 Windows 用户名拼接到路径中，多用户同时登录时互不干扰。
+
+### 管道安全
+
+SDDL ACL（`security_attributes.h`）：允许 SYSTEM、Everyone、UWP AppContainer 访问。
+
+### 协议约定
+
+`START_SESSION` 响应中，`IPCResponse.highlighted` 字段复用为返回的 session_id。这是协议层面的约定，文档化在此。
 
 ### Client 改动
 
