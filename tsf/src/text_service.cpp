@@ -313,6 +313,10 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
         auto decision = cxxime_tsf::decide_preedit(
             _config.inline_preedit, _config.preedit_type, preedit, candidate_texts);
 
+        CXXIME_LOG(L"_ProcessKeyEvent: start_comp=%d, _composing=%d, _composition=%d, inline='%S'",
+                   decision.start_composition, _composing, _composition != nullptr,
+                   decision.inline_text.c_str());
+
         if (decision.start_composition) {
             if (!_composing) _start_composition(pic);
             update_composition(pic, decision.inline_text);
@@ -328,6 +332,9 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
 
         bool has_candidates = response.candidate_count > 0;
         bool has_preedit = !popup_preedit.empty();
+
+        CXXIME_LOG(L"_ProcessKeyEvent: has_cand=%d, has_preedit=%d, cand_count=%u",
+                   has_candidates, has_preedit, response.candidate_count);
 
         if (has_candidates || has_preedit) {
             if (has_candidates) {
@@ -361,6 +368,7 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
 
             _candidateWindow.move_to_caret(caretRect);
             _candidateWindow.show();
+            CXXIME_LOG(L"_ProcessKeyEvent: candidate window shown");
         } else {
             _candidateWindow.hide();
         }
@@ -399,6 +407,7 @@ void TextService::_ProcessKeyUp(WPARAM wParam) {
 
     if (ok) {
         _chinese_mode = !response.ascii_mode;
+        CXXIME_LOG(L"_ProcessKeyUp: _chinese_mode=%d, _composing=%d", _chinese_mode, _composing);
 
         // Handle committed text from toggle (e.g. Shift with commit_text style)
         if (response.commit_text[0] != '\0') {
