@@ -777,15 +777,26 @@ std::vector<Candidate> Dict::lookup_by_ids(const std::vector<uint32_t>& query_id
 
     uint32_t pos = lo;
     uint32_t exact_count = 0;
-    while (pos < (uint32_t)id_index_.size() && ids_eq(id_index_[pos])) {
+    uint32_t check_interval = budget ? budget->deadline.check_interval : 64;
+
+    // Phase 3: check deadline before entering scan loop (upstream may have already exhausted budget)
+    if (budget && budget->deadline.enabled && budget->deadline.expired()) {
+        deadline_hit = true;
+        if (trace) {
+            trace->deadline_exceeded = true;
+            trace->truncated = true;
+        }
+    }
+
+    while (!deadline_hit && pos < (uint32_t)id_index_.size() && ids_eq(id_index_[pos])) {
         // Check scan budget
         if (budget && exact_count >= budget->max_exact_scan) {
             if (trace)
                 trace->truncated = true;
             break;
         }
-        // Check deadline every 64 entries
-        if (budget && (exact_count & 63) == 0 && budget->expired()) {
+        // Phase 3: check deadline every check_interval entries
+        if (budget && exact_count > 0 && exact_count % check_interval == 0 && budget->deadline.expired()) {
             deadline_hit = true;
             if (trace) {
                 trace->deadline_exceeded = true;
@@ -810,6 +821,16 @@ std::vector<Candidate> Dict::lookup_by_ids(const std::vector<uint32_t>& query_id
     // Second pass: prefix matches (skip if deadline already hit or seen set already full)
     uint32_t prefix_count = 0;
     if (!deadline_hit && seen.size() < seen_max) {
+        // Phase 3: check deadline before entering prefix scan
+        if (budget && budget->deadline.enabled && budget->deadline.expired()) {
+            deadline_hit = true;
+            if (trace) {
+                trace->deadline_exceeded = true;
+                trace->truncated = true;
+            }
+        }
+    }
+    if (!deadline_hit && seen.size() < seen_max) {
         auto ids_prefix = [&](const IdEntry& e) {
             if (e.count < query_ids.size()) return false;
             for (size_t k = 0; k < query_ids.size(); ++k)
@@ -824,8 +845,8 @@ std::vector<Candidate> Dict::lookup_by_ids(const std::vector<uint32_t>& query_id
                     trace->truncated = true;
                 break;
             }
-            // Check deadline every 64 entries
-            if (budget && (prefix_count & 63) == 0 && budget->expired()) {
+            // Phase 3: check deadline every check_interval entries
+            if (budget && prefix_count > 0 && prefix_count % check_interval == 0 && budget->deadline.expired()) {
                 if (trace) {
                     trace->deadline_exceeded = true;
                     trace->truncated = true;

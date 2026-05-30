@@ -47,20 +47,26 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
 
     // 1. Syllabifier for abbreviation expansion (reserve first)
     // Limit paths to avoid CPU cache thrashing on short inputs (e.g. single letter 's')
-    // Skip syllabifier if deadline is tight (< 10ms) — it doesn't check deadline internally
+    // Phase 3: syllabifier now has internal deadline checking, no need to skip
     static constexpr size_t kMaxPaths = 8;
-    static constexpr int64_t kMinBudgetForSyllabifierUs = 10000;  // 10ms
     bool deadline_hit = false;
-    bool skip_syllabifier = budget && budget->deadline_us > 0 && budget->deadline_us < kMinBudgetForSyllabifierUs;
-    if (syllabifier_ && !skip_syllabifier) {
+    if (syllabifier_) {
         // Check deadline before syllabifier (it can be slow on long inputs)
-        if (budget && budget->expired()) {
+        if (budget && budget->deadline.expired()) {
             deadline_hit = true;
         } else {
-            auto paths = syllabifier_->segment(pinyin);
-            id_sequences.reserve(std::min(paths.size(), kMaxPaths) + 1);
-            for (size_t i = 0; i < paths.size() && i < kMaxPaths; ++i)
-                add_path(paths[i]);
+            // Phase 3: pass deadline to syllabifier for internal checking
+            auto seg_result = syllabifier_->segment(pinyin, budget ? &budget->deadline : nullptr);
+            id_sequences.reserve(std::min(seg_result.paths.size(), kMaxPaths) + 1);
+            for (size_t i = 0; i < seg_result.paths.size() && i < kMaxPaths; ++i)
+                add_path(seg_result.paths[i]);
+            if (seg_result.deadline_exceeded) {
+                deadline_hit = true;
+                if (trace) {
+                    trace->deadline_exceeded = true;
+                    trace->truncated = true;
+                }
+            }
         }
     } else {
         id_sequences.reserve(2);
@@ -88,7 +94,7 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
     live_ids.reserve(id_sequences.size());
     for (auto& ids : id_sequences) {
         // Check deadline before each has_prefix (syllabifier may have consumed most of the budget)
-        if (budget && budget->expired()) {
+        if (budget && budget->deadline.expired()) {
             if (trace) {
                 trace->deadline_exceeded = true;
                 trace->truncated = true;
@@ -115,7 +121,7 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
         if (!seen_ids.insert(ids).second)
             continue;
         // Check deadline before each lookup_by_ids
-        if (budget && budget->expired()) {
+        if (budget && budget->deadline.expired()) {
             if (trace) {
                 trace->deadline_exceeded = true;
                 trace->truncated = true;

@@ -1,6 +1,7 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
 #include <cxxime/syllabifier.h>
+#include <cxxime/query_budget.h>
 #include <algorithm>
 #include <queue>
 #include <set>
@@ -75,24 +76,34 @@ SyllableGraph Syllabifier::build_graph(const std::string& input) const {
     return graph;
 }
 
-void Syllabifier::enumerate_paths(
+bool Syllabifier::enumerate_paths(
     const SyllableGraph& graph,
     size_t pos, size_t end_pos,
     SyllablePath& current,
-    std::vector<std::pair<SyllablePath, float>>& results) const {
+    std::vector<std::pair<SyllablePath, float>>& results,
+    const QueryDeadline* deadline,
+    uint32_t& path_count) const {
 
     static const size_t kMaxPaths = 10000;
     if (results.size() >= kMaxPaths)
-        return;
+        return false;
+
+    // Phase 3: check deadline every check_interval paths
+    // Also check on first entry (path_count == 0) to catch already-expired deadlines
+    if (deadline && deadline->enabled) {
+        if (deadline->expired() && (path_count == 0 || path_count % deadline->check_interval == 0))
+            return true;  // deadline expired
+    }
 
     if (pos >= end_pos) {
         results.push_back({current, 0.0f});
-        return;
+        ++path_count;
+        return false;
     }
 
     auto it = graph.find(pos);
     if (it == graph.end())
-        return;
+        return false;
 
     // Sort edges by credibility descending so the best paths are explored first.
     // This ensures common syllables (higher cred) are found before rare ones when
@@ -111,20 +122,23 @@ void Syllabifier::enumerate_paths(
             current.push_back(edge.syllable);
             float cred = edge.credibility;
             size_t before = results.size();
-            enumerate_paths(graph, se.first, end_pos, current, results);
+            bool expired = enumerate_paths(graph, se.first, end_pos, current, results, deadline, path_count);
+            if (expired)
+                return true;  // propagate deadline expiration up
             if (before < results.size()) {
                 for (size_t i = before; i < results.size(); ++i)
                     results[i].second += cred;
             }
             current.pop_back();
             if (results.size() >= kMaxPaths)
-                return;
+                return false;
         }
     }
+    return false;
 }
 
-std::vector<SyllablePath> Syllabifier::segment(const std::string& input) const {
-    std::vector<SyllablePath> result;
+SegmentResult Syllabifier::segment(const std::string& input, const QueryDeadline* deadline) const {
+    SegmentResult result;
     if (input.empty())
         return result;
 
@@ -147,9 +161,16 @@ std::vector<SyllablePath> Syllabifier::segment(const std::string& input) const {
     // Enumerate paths from 0 to farthest.
     // enumerate_paths bails out at kMaxPaths to prevent exponential blowup
     // from dense abbreviation graphs.
+    // Phase 3: pass deadline for internal checking during DFS.
     std::vector<std::pair<SyllablePath, float>> scored;
     SyllablePath current;
-    enumerate_paths(graph, 0, farthest, current, scored);
+    uint32_t path_count = 0;
+    bool deadline_expired = enumerate_paths(graph, 0, farthest, current, scored, deadline, path_count);
+
+    if (deadline_expired) {
+        result.deadline_exceeded = true;
+        result.truncated = true;
+    }
 
     // Sort by quality: paths with higher credibility first (fewer abbreviations)
     std::sort(scored.begin(), scored.end(),
@@ -163,7 +184,7 @@ std::vector<SyllablePath> Syllabifier::segment(const std::string& input) const {
         std::string key;
         for (auto& s : path) key += s + ":";
         if (seen.insert(key).second) {
-            result.push_back(std::move(path));
+            result.paths.push_back(std::move(path));
         }
     }
 

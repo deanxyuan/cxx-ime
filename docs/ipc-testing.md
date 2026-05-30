@@ -2,7 +2,7 @@
 
 ## 架构变更历程
 
-### 阶段 1：IPC 传输层 IOCP 重新设计
+### IPC 传输层 IOCP 重新设计
 
 详见 [IPC 架构设计](ipc-architecture.md)。
 
@@ -14,13 +14,13 @@
 | Server 关闭 | CancelSynchronousIo | dummy connection + PostQueuedCompletionStatus |
 | MSDN 合规 | — | FILE_FLAG_OVERLAPPED handle 上全部 I/O 使用 OVERLAPPED 结构 |
 
-### 阶段 2：共享资源预加载
+### 共享资源预加载
 
 详见 [共享资源预加载](shared-resources.md)。
 
 Dict、SpellingsIndex、Config 在 server 启动时加载一次，所有 session 共享引用。session 创建不再有文件 I/O。
 
-### 阶段 3：用户词典 SQLite → 内存
+### 用户词典内存化
 
 详见 [用户词典设计](user-dictionary.md)。
 
@@ -70,7 +70,7 @@ Test project build/
 - 服务端：`cxxime-server.exe --dict data/pinyin.dict.bin --config data/default.json`
 - 客户端：`ipc_tool.exe`
 
-| 命令 | 阶段 1 | 阶段 3 | 备注 |
+| 命令 | IOCP 重设计后 | 内存用户词典后 | 备注 |
 |------|--------|--------|------|
 | `connect` | ✅ | ✅ | |
 | `status` | ✅ | ✅ | |
@@ -88,15 +88,15 @@ Test project build/
 | `stress 6 3` | ✅ | ✅ | 并发 ~67% 成功 |
 | `disconnect` | ✅ | ✅ | |
 
-## 性能基准数据（阶段 3 最终）
+## 性能基准数据
 
 ### 测试方法
 
 `key 49` (i, 拼音 preedit) → `key 0D` (Enter, commit) 交替 30 轮。每轮 Enter 清空拼音缓冲。测量 client 端完整 `WriteFile + ReadFile` 往返时间（含 IPC 传输 + engine 处理）。排除首轮冷启动数据。
 
-### 三阶段对比
+### 架构优化对比
 
-| 指标 | 旧版 (sync+Flush) | 阶段 1 (IOCP) | 阶段 3 (+内存用户词典) | 总提升 |
+| 指标 | 旧版 (sync+Flush) | IOCP 重设计后 | 内存用户词典后 | 总提升 |
 |------|------|------|------|------|
 | Preedit 最小值 | 911 us | 83 us | **29 us** | **31x** |
 | Preedit 平均值 | ~14709 us | ~110 us | **~50 us** | **294x** |

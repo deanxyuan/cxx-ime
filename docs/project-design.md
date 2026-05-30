@@ -451,7 +451,7 @@ cxx-ime v0.1.0 已完成 MVP 交付，Engine 模块为核心亮点：
 - [词典架构设计](dict-architecture.md) — 三层架构与二进制格式
 - [词典系统设计](dictionary.md) — 二进制加载与查询流程
 - [IPC 架构设计](ipc-architecture.md) — IOCP 重新设计
-- [IPC 测试报告](ipc-testing.md) — 三阶段优化与 benchmark
+- [IPC 测试报告](ipc-testing.md) — 架构优化与 benchmark
 - [共享资源预加载](shared-resources.md) — server 启动时加载一次，所有 session 共享
 - [用户词典设计](user-dictionary.md) — SQLite → 内存数据结构迁移
 - [可观测性设计](observability.md) — QueryTrace、日志、benchmark
