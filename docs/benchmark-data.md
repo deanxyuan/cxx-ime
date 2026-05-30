@@ -131,24 +131,24 @@ build\tools\query_bench\Release\query_bench.exe --data data --input s,sd,sdf,sdd
 
 | 输入 | 类型 | 路径 | 候选 | e2e P50 | e2e P99 | 查询 P50 | 查询 P99 | exact_scan | prefix_scan | cache_hit | trunc% | deadline% |
 |------|------|------|------|---------|---------|----------|----------|------------|-------------|-----------|--------|-----------|
-| `s` | 单字母 | 0 | 7 | 1 us | 1 us | 1 us | 1 us | 0 | 0 | ✅ | 0% | 0% |
-| `sd` | 双字母缩写 | 0 | 7 | 0 us | 1 us | 0 us | 1 us | 0 | 0 | ✅ | 0% | 0% |
-| `sdf` | 三字母缩写 | 0 | 7 | 0 us | 1 us | 0 us | 1 us | 0 | 0 | ✅ | 0% | 0% |
-| `sddf` | 四字母缩写 | 0 | 7 | 0 us | 1 us | 0 us | 1 us | 0 | 0 | ✅ | 0% | 0% |
+| `s` | 单字母 | 0 | 7 | 0 us | 1 us | 1 us | 1 us | 0 | 0 | ✅ | 0% | 0% |
+| `sd` | 双字母缩写 | 0 | 7 | 0 us | 1 us | 1 us | 1 us | 0 | 0 | ✅ | 0% | 0% |
+| `sdf` | 三字母缩写 | 0 | 7 | 0 us | 1 us | 1 us | 1 us | 0 | 0 | ✅ | 0% | 0% |
+| `sddf` | 四字母缩写 | 0 | 7 | 0 us | 1 us | 1 us | 1 us | 0 | 0 | ✅ | 0% | 0% |
 | `bj` | 双字母缩写 | 0 | 7 | 0 us | 1 us | 0 us | 1 us | 0 | 0 | ✅ | 0% | 0% |
-| `srf` | 三字母缩写 | 0 | 7 | 0 us | 1 us | 0 us | 1 us | 0 | 0 | ✅ | 0% | 0% |
+| `srf` | 三字母缩写 | 0 | 7 | 0 us | 1 us | 1 us | 1 us | 0 | 0 | ✅ | 0% | 0% |
 | `shrf` | 声母增强简拼 | 0 | 7 | 0 us | 1 us | 0 us | 1 us | 0 | 0 | ✅ | 0% | 0% |
-| `zguo` | 混合拼音 | 0 | 7 | 0 us | 1 us | 0 us | 1 us | 0 | 0 | ✅ | 0% | 0% |
-| `nihao` | 全拼 | 0 | 7 | 0 us | 1 us | 0 us | 1 us | 0 | 0 | ✅ | 0% | 0% |
-| `nihaoshijie` | 长输入 | 1 | 1 | 53401 us | 57825 us | 55769 us | 91843 us | 0 | 1 | — | 100% | 100% |
+| `zguo` | 混合拼音 | 0 | 7 | 0 us | 1 us | 1 us | 1 us | 0 | 0 | ✅ | 0% | 0% |
+| `nihao` | 全拼 | 0 | 7 | 0 us | 1 us | 1 us | 1 us | 0 | 0 | ✅ | 0% | 0% |
+| `nihaoshijie` | 长输入 | 1 | 1 | 170 us | 249 us | 205 us | 230 us | 1 | 21 | — | 0% | 0% |
 
-**vs 用户词索引基线：** `shrf` 从 3133μs（无 cache，syllabifier 回退）降至 0μs（cache 命中），**-100%**。其余短输入持平。核心收益是 mixed code generator 覆盖了声母增强简拼，消除了 `shrf` 的 syllabifier 回退路径。所有短输入 cache_hit = 100%，exact/prefix_scan = 0，syllabifier 完全跳过。`nihaoshijie` 长输入不走快速路径，行为与前版一致。
+**vs 用户词索引基线：** `shrf` 从 3133μs（无 cache，syllabifier 回退）降至 0μs（cache 命中），**-100%**。其余短输入持平。核心收益是 mixed code generator 覆盖了声母增强简拼，消除了 `shrf` 的 syllabifier 回退路径。所有短输入 cache_hit = 100%，exact/prefix_scan = 0，syllabifier 完全跳过。`nihaoshijie` 长输入不走快速路径，DFS 路径上限 256 后查询延迟从 ~55ms 降至 ~205μs（**-99.6%**），不再触发 deadline 保护。
 
 ## 版本对比总表
 
 | 输入 | 原始 e2e P50 | TopK e2e P50 | deadline e2e P50 | ShortCache e2e P50 | 索引 e2e P50 | Mixed优化 e2e P50 | 总提升 |
 |------|--------------|--------------|------------------|--------------------|--------------|-------------------|--------|
-| `s` | 789 us | 97 us | 36 us | 12 us | 12 us | 1 us | **-99.9%** |
+| `s` | 789 us | 97 us | 36 us | 12 us | 12 us | 0 us | **-100%** |
 | `sd` | 936 us | 335 us | 258 us | 24 us | 24 us | 0 us | **-100%** |
 | `sdf` | 2889 us | 2233 us | 2233 us | 36 us | 35 us | 0 us | **-100%** |
 | `sddf` | 6059 us | 5477 us | 5593 us | 48 us | 48 us | 0 us | **-100%** |
@@ -157,9 +157,9 @@ build\tools\query_bench\Release\query_bench.exe --data data --input s,sd,sdf,sdd
 | `shrf` | 6462 us | 5763 us | 5949 us | 3161 us | 3133 us | 0 us | **-100%** |
 | `zguo` | 1912 us | 1085 us | 1061 us | 48 us | 48 us | 0 us | **-100%** |
 | `nihao` | 3814 us | 2494 us | 2508 us | 59 us | 60 us | 0 us | **-100%** |
-| `nihaoshijie` | 25911 us | 24439 us | 25898 us | 21000 us | 29279 us | 53401 us | ~波动 |
+| `nihaoshijie` | 25911 us | 24439 us | 25898 us | 21000 us | 29279 us | 170 us | **-99.3%** |
 
-> 短输入快速路径覆盖了 1–6 字母的全拼和简拼场景，查询延迟从微秒级降至个位数微秒。长输入（>6 字母）不走快速路径，行为与 deadline 基线一致。Mixed code 优化后 `shrf` 等增强简拼 key 全部命中 cache，短输入 P50 稳定在 0–1μs。
+> 短输入快速路径覆盖了 1–6 字母的全拼和简拼场景，查询延迟从微秒级降至个位数微秒。长输入（>6 字母）不走快速路径，DFS 路径上限 256 后查询延迟从 ~25ms 降至 ~170μs。Mixed code 优化后 `shrf` 等增强简拼 key 全部命中 cache，短输入 P50 稳定在 0μs。
 
 ## 重跑基准
 

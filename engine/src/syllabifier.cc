@@ -83,17 +83,22 @@ bool Syllabifier::enumerate_paths(
     std::vector<std::pair<SyllablePath, float>>& results,
     const QueryDeadline* deadline,
     uint32_t& path_count,
-    std::vector<std::pair<size_t, std::vector<SyllableEdge>>>& sorted_scratch) const {
+    std::vector<std::pair<size_t, std::vector<SyllableEdge>>>& sorted_scratch,
+    uint32_t& call_count) const {
 
-    static const size_t kMaxPaths = 10000;
+    // Cap at 256 paths — translator only needs kMaxPaths=8, and dense abbreviation
+    // graphs (150+ edges) can produce 10K+ paths which wastes CPU on sorting/dedup.
+    static const size_t kMaxPaths = 256;
     if (results.size() >= kMaxPaths)
         return false;
 
-    // Phase 3: check deadline every check_interval paths
-    // Also check on first entry (path_count == 0) to catch already-expired deadlines
+    // Check deadline every 32 recursion calls (not per-call — Clock::now() overhead
+    // accumulates when DFS explores millions of partial paths in dense graphs).
+    // Also check on first entry (call_count == 0) to catch already-expired deadlines.
+    ++call_count;
     if (deadline && deadline->enabled) {
-        if (deadline->expired() && (path_count == 0 || path_count % deadline->check_interval == 0))
-            return true;  // deadline expired
+        if (deadline->expired() && (call_count <= 1 || (call_count & 31) == 0))
+            return true;
     }
 
     if (pos >= end_pos) {
@@ -126,7 +131,7 @@ bool Syllabifier::enumerate_paths(
         for (auto& edge : se.second) {
             current.push_back(edge.syllable);  // copy, not move
             size_t before = results.size();
-            bool expired = enumerate_paths(graph, se.first, end_pos, current, results, deadline, path_count, sorted_scratch);
+            bool expired = enumerate_paths(graph, se.first, end_pos, current, results, deadline, path_count, sorted_scratch, call_count);
             if (expired)
                 return true;  // propagate deadline expiration up
             if (before < results.size()) {
@@ -170,7 +175,8 @@ SegmentResult Syllabifier::segment(const std::string& input, const QueryDeadline
     std::vector<std::pair<size_t, std::vector<SyllableEdge>>> sorted_scratch;
     SyllablePath current;
     uint32_t path_count = 0;
-    bool deadline_expired = enumerate_paths(graph, 0, farthest, current, scored, deadline, path_count, sorted_scratch);
+    uint32_t call_count = 0;
+    bool deadline_expired = enumerate_paths(graph, 0, farthest, current, scored, deadline, path_count, sorted_scratch, call_count);
 
     if (deadline_expired) {
         result.deadline_exceeded = true;

@@ -109,7 +109,7 @@ Engine::process_key()
   ▼
 PinyinTranslator::translate(budget, trace)
   │ 检查 deadline → 超时则跳过 Syllabifier
-  │ Syllabifier::segment(deadline) — 内部 DFS 每 check_interval 路径检查
+  │ Syllabifier::segment(deadline) — DFS 路径上限 256 + 每 32 次递归检查 deadline
   │ 检查 deadline → 每条路径 has_prefix 前检查
   │ has_prefix 路径过滤
   │ 检查 deadline → 每条路径 lookup 前检查
@@ -130,7 +130,7 @@ Dict::lookup_by_ids(budget, trace)
 | 检查点 | 位置 | 超时行为 | 截断行为 |
 |--------|------|----------|----------|
 | Engine 入口 | `engine.cc` | 跳过 translate，返回空候选 | 设置 `deadline_exceeded` + `truncated` |
-| Syllabifier DFS | `syllabifier.cc` 每 check_interval 路径 | 中断路径枚举，返回已生成路径 | 设置 `deadline_exceeded` + `truncated` |
+| Syllabifier DFS | `syllabifier.cc` 每 32 次递归 + 路径上限 256 | 中断路径枚举，返回已生成路径 | 设置 `deadline_exceeded` + `truncated` |
 | has_prefix 前 | `pinyin_translator.cc` | 跳过当前路径及后续路径 | 设置 `deadline_exceeded` + `truncated` |
 | lookup 前 | `pinyin_translator.cc` | 跳过当前路径及后续路径 | 设置 `deadline_exceeded` + `truncated` |
 | Dict 循环前 | `dict.cc` | 跳过扫描 | 设置 `deadline_exceeded` + `truncated` |
@@ -139,6 +139,15 @@ Dict::lookup_by_ids(budget, trace)
 | 用户词索引扫描中 | `dict.cc` lookup_user_* 方法 | 中断扫描 | 设置 `deadline_exceeded` + `truncated` |
 
 > deadline 到期时**同时设置** `deadline_exceeded=true` 和 `truncated=true`。
+
+### Syllabifier 路径限制
+
+`Syllabifier::enumerate_paths()` 有两个互斥的终止条件：
+
+1. **路径数上限**：`kMaxPaths = 256`。DFS 生成 256 条完整路径后立即停止。
+2. **Deadline**：每 32 次递归调用检查一次 `deadline->expired()`，过期时中断。
+
+路径上限的依据：`PinyinTranslator::translate()` 只取前 `kMaxPaths = 8` 条路径（见 `pinyin_translator.cc`），256 条已留出 32 倍余量。密集缩写图（如 11 字符全拼产生 154 条边）在无上限时可生成 10,000+ 条路径，DFS 递归调用达 7,000+ 次，耗时 50ms+。降至 256 后同一输入 <1ms 完成。
 
 ## 扫描流程
 
@@ -246,8 +255,8 @@ Scan budget 和 TopK 由 `make_budget()` 自动管理，无需手动设置。Dea
 
 详见 [候选词选词算法](candidate-selection.md)。Deadline 检查点嵌入在四步流程的每一步之间：
 
-1. **拼写图构建** — Syllabifier 内部 DFS 每 `check_interval` 路径检查 deadline
-2. **路径枚举** — Syllabifier 到期时返回已生成路径，标记 `deadline_exceeded` + `truncated`
+1. **拼写图构建** — Syllabifier `build_graph()` 无 deadline 检查（BFS 阶段耗时稳定，非瓶颈）
+2. **路径枚举** — `enumerate_paths()` 路径上限 256 + 每 32 次递归检查 deadline，过期时返回已生成路径
 3. **路径过滤** — 每条路径 `has_prefix` 前检查 deadline
 4. **候选查找** — 循环前检查 + 每条路径 `lookup_by_ids` 前检查 + 扫描中每 `check_interval` 条检查
 
