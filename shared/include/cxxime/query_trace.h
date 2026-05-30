@@ -53,7 +53,7 @@ struct QueryTrace {
     bool should_log() const;
 
     // Deterministic sampling: returns true with probability 1/rate
-    static bool should_sample(uint32_t session_id, uint64_t revision, int rate);
+    static bool should_sample(uint32_t session_id, uint64_t revision, uint64_t query_id, int rate);
 
     // Log to async queue (non-blocking, drops if queue full)
     void log() const;

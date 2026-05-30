@@ -55,7 +55,7 @@ TEST(QueryTrace, should_log_fast_normal_not_logged) {
     for (uint64_t i = 0; i < 10000; ++i) {
         t.query_id = i;
         t.session_id = 1;
-        t.revision = i;
+        t.revision = 0;  // fixed — query_id provides the variation
         if (t.should_log())
             ++logged_count;
     }
@@ -76,7 +76,7 @@ TEST(QueryTrace, should_log_truncated_sampled) {
     for (uint64_t i = 0; i < 10000; ++i) {
         t.query_id = i;
         t.session_id = 1;
-        t.revision = i;
+        t.revision = 0;  // fixed — query_id provides the variation
         if (t.should_log())
             ++logged_count;
     }
@@ -89,8 +89,8 @@ TEST(QueryTrace, should_log_truncated_sampled) {
 
 TEST(QueryTrace, should_sample_deterministic) {
     // Same inputs always produce same result
-    bool r1 = cxxime::QueryTrace::should_sample(42, 100, 1000);
-    bool r2 = cxxime::QueryTrace::should_sample(42, 100, 1000);
+    bool r1 = cxxime::QueryTrace::should_sample(42, 100, 0, 1000);
+    bool r2 = cxxime::QueryTrace::should_sample(42, 100, 0, 1000);
     ASSERT_EQ(r1, r2);
 }
 
@@ -98,7 +98,7 @@ TEST(QueryTrace, should_sample_rate_distribution) {
     // Rate=1000 should give ~0.1% true
     int hits = 0;
     for (uint64_t i = 0; i < 100000; ++i) {
-        if (cxxime::QueryTrace::should_sample(1, i, 1000))
+        if (cxxime::QueryTrace::should_sample(1, 0, i, 1000))
             ++hits;
     }
     // Expect ~100 hits. Allow 20-300.

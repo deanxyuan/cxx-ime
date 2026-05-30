@@ -42,9 +42,12 @@ public:
     bool open_dict(const std::string& bin_path);
     void unload_dict();
 
-    // Queries
+    // Queries (non-budget versions — for tools/tests, not hot path)
     std::vector<Candidate> lookup(const std::string& code_prefix, int limit = 10, QueryTrace* trace = nullptr);
     std::vector<Candidate> lookup_by_syllables(const std::vector<std::string>& syllables, int limit = 10, QueryTrace* trace = nullptr);
+    // Budget-aware versions (hot path — with deadline and scan limits)
+    std::vector<Candidate> lookup(const std::string& code_prefix, int limit, const QueryBudget& budget, QueryTrace* trace = nullptr);
+    std::vector<Candidate> lookup_by_syllables(const std::vector<std::string>& syllables, int limit, const QueryBudget& budget, QueryTrace* trace = nullptr);
     std::vector<Candidate> lookup_by_ids(const std::vector<uint32_t>& ids, int limit = 10,
                                          QueryTrace* trace = nullptr, const QueryBudget* budget = nullptr);
     bool has_prefix(const std::vector<uint32_t>& ids, QueryTrace* trace = nullptr) const;

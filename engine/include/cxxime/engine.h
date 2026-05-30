@@ -37,12 +37,14 @@ public:
     bool select_candidate(int index);
     std::string get_commit_text();
     void clear();
+    void clear_composition();  // clear composing state only, preserve session recent cache
 
     const AsciiComposer& ascii_composer() const { return ascii_composer_; }
     AsciiComposer& ascii_composer() { return ascii_composer_; }
 
     // Query trace access
     const QueryTrace& last_trace() const { return trace_; }
+    bool has_short_cache() const { return dict_ && dict_->has_short_cache(); }
     void set_trace_enabled(bool enabled) { trace_enabled_ = enabled; }
     void set_trace_session_id(uint32_t id) { trace_.session_id = id; }
 
