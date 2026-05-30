@@ -127,4 +127,4 @@ Syllabifier(拼写图) → Segmentor(切分) → Translator(查词+排序)
 - **lookup_by_ids 前**：每条路径检查 deadline
 - **lookup_by_ids 内部**：每 64 条检查 deadline + 扫描上限（`max_exact_scan` / `max_prefix_scan`）
 
-任一触发都会设置 `QueryTrace::deadline_exceeded` 和 `truncated`。详见 [查询预算与 Deadline](query-budget.md)。
+任一触发都会设置 `QueryTrace::deadline_exceeded` 和 `truncated`。详见 [查询预算与候选收集](query-control.md)。

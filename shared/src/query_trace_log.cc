@@ -335,6 +335,10 @@ static void writer_thread_func() {
 static void ensure_writer_started() {
     if (g_writer_started.exchange(true)) return;
     g_writer_thread = std::thread(writer_thread_func);
+    // Ensure graceful shutdown even if caller forgets to call QueryTrace::shutdown().
+    // atexit handlers run before global destructors, so the thread is joined
+    // before its std::thread destructor runs (which would call std::terminate).
+    std::atexit(QueryTrace::shutdown);
 }
 
 // ─── Public API ──────────────────────────────────────────────

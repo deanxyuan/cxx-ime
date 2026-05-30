@@ -191,8 +191,12 @@ ProcessResult Engine::process_key(const KeyEvent& event) {
                 trace_.truncated = true;
             }
         } else {
+            // Create a budget tuned for this input length, inheriting deadline from external budget
+            QueryBudget effective_budget = make_budget((int)context_.pinyin_buffer.size(), config_->page_size);
+            effective_budget.deadline_us = budget_.deadline_us;
+            effective_budget.start_qpc = budget_.start_qpc;
             auto page = translator_.translate(context_.pinyin_buffer, context_.page_index, config_->page_size,
-                                              trace_enabled_ ? &trace_ : nullptr, &budget_);
+                                              trace_enabled_ ? &trace_ : nullptr, &effective_budget);
             context_.update_candidates(std::move(page));
         }
         if (trace_enabled_) {

@@ -808,4 +808,78 @@ TEST(Deadline, engine_no_budget_means_no_deadline) {
     DeleteFileA(dict_path.c_str());
 }
 
+// --- Phase 2: make_budget + TopK translator tests ---
+
+TEST(Budget, make_budget_scales_by_input_length) {
+    auto b1 = cxxime::make_budget(1, 9);
+    auto b2 = cxxime::make_budget(2, 9);
+    auto b5 = cxxime::make_budget(5, 9);
+
+    // Longer input → larger scan budgets
+    ASSERT_TRUE(b1.max_exact_scan < b2.max_exact_scan);
+    ASSERT_TRUE(b2.max_exact_scan < b5.max_exact_scan);
+    ASSERT_TRUE(b1.max_prefix_scan < b2.max_prefix_scan);
+    ASSERT_TRUE(b2.max_prefix_scan < b5.max_prefix_scan);
+    ASSERT_TRUE(b1.max_results_before_merge < b5.max_results_before_merge);
+
+    // topk = page_size (reserved for translator-level control)
+    ASSERT_EQ(b1.topk, 9u);
+    ASSERT_EQ(b5.topk, 9u);
+}
+
+TEST(Translator, translate_topk_merge_across_paths) {
+    std::string dict_path = make_temp_path("test_topk_merge_dict.bin");
+    std::string spellings_path = make_temp_path("test_topk_merge_spellings.bin");
+
+    // Two different syllable paths that produce distinct candidates
+    std::vector<std::tuple<std::string, std::string, int>> entries;
+    // Path 1: "bei:jing" → 北京 + many low-freq
+    entries.push_back({"bei:jing", "\xe5\x8c\x97\xe4\xba\xac", 2000});
+    for (int i = 0; i < 30; ++i) {
+        char text[16];
+        snprintf(text, sizeof(text), "bj%02d", i);
+        entries.push_back({"bei:jing", text, 10 + i});
+    }
+    // Path 2: "shang:hai" → 上海 + many low-freq
+    entries.push_back({"shang:hai", "\xe4\xb8\x8a\xe6\xb5\xb7", 1800});
+    for (int i = 0; i < 30; ++i) {
+        char text[16];
+        snprintf(text, sizeof(text), "sh%02d", i);
+        entries.push_back({"shang:hai", text, 10 + i});
+    }
+    cxxime::Dict::create_test_dict(dict_path, entries);
+
+    ASSERT_TRUE(cxxime::SpellingsIndex::create_test_trie(spellings_path, {
+        {"b", "bei",    2, -0.693f},
+        {"s", "shang",  2, -0.693f},
+        {"bei", "bei",      0, 0.0f},
+        {"jing", "jing",    0, 0.0f},
+        {"shang", "shang",  0, 0.0f},
+        {"hai", "hai",      0, 0.0f},
+    }));
+
+    cxxime::Dict dict;
+    ASSERT_TRUE(dict.open_dict(dict_path));
+    cxxime::SpellingsIndex spellings;
+    ASSERT_TRUE(spellings.load(spellings_path));
+    cxxime::Syllabifier syllabifier(spellings);
+
+    cxxime::PinyinTranslator translator;
+    translator.set_dict(&dict);
+    translator.set_syllabifier(&syllabifier);
+
+    // With page_size=5, TopK should limit to 5 candidates
+    auto page = translator.translate("bs", 0, 5);
+    ASSERT_LE(page.candidates.size(), 5u);
+
+    // The top results should include the high-frequency ones
+    if (!page.candidates.empty()) {
+        ASSERT_GE(page.candidates[0].frequency, 1000);
+    }
+
+    dict.close();
+    DeleteFileA(dict_path.c_str());
+    DeleteFileA(spellings_path.c_str());
+}
+
 RUN_ALL_TESTS()

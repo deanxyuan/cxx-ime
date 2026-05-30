@@ -3,6 +3,7 @@
 #include <cxxime/dict.h>
 #include <cxxime/query_trace.h>
 #include <cxxime/query_budget.h>
+#include <cxxime/topk_collector.h>
 #include "binary_format.h"
 #include <cstring>
 #include <cstdio>
@@ -752,10 +753,21 @@ std::vector<Candidate> Dict::lookup_by_ids(const std::vector<uint32_t>& query_id
             hi = mid;
     }
 
+    // Determine TopK capacity: min(limit, max_results_before_merge)
+    // Per Phase 2 design: collector should not collect more than the caller needs.
+    size_t topk_cap = (size_t)limit;
+    if (budget && budget->max_results_before_merge > 0 &&
+        (size_t)budget->max_results_before_merge < topk_cap)
+        topk_cap = (size_t)budget->max_results_before_merge;
+    TopKCollector collector(topk_cap);
+
+    // Dedup set — only insert text for candidates that enter the collector.
+    // Cap at 2x topk_cap to bound memory on high-collision inputs.
     std::unordered_set<std::string> seen;
+    size_t seen_max = topk_cap * 2;
     bool deadline_hit = false;
 
-    // First pass: collect ALL exact matches (no limit — need frequency sort)
+    // First pass: exact matches
     auto ids_eq = [&](const IdEntry& e) {
         if (e.count != query_ids.size()) return false;
         for (size_t k = 0; k < query_ids.size(); ++k)
@@ -768,9 +780,8 @@ std::vector<Candidate> Dict::lookup_by_ids(const std::vector<uint32_t>& query_id
     while (pos < (uint32_t)id_index_.size() && ids_eq(id_index_[pos])) {
         // Check scan budget
         if (budget && exact_count >= budget->max_exact_scan) {
-            if (trace) {
+            if (trace)
                 trace->truncated = true;
-            }
             break;
         }
         // Check deadline every 64 entries
@@ -786,15 +797,19 @@ std::vector<Candidate> Dict::lookup_by_ids(const std::vector<uint32_t>& query_id
         Candidate c;
         c.text.assign(dict_strings_ + e.text_offset, e.text_len);
         c.frequency = e.frequency + 100000;  // exact match boost
-        if (seen.insert(c.text).second)
-            results.push_back(std::move(c));
+        if (seen.size() < seen_max) {
+            if (seen.insert(c.text).second)
+                collector.offer(std::move(c));
+        } else {
+            if (trace) trace->truncated = true;
+        }
         ++pos;
         ++exact_count;
     }
 
-    // Second pass: prefix matches (skip if deadline already hit)
+    // Second pass: prefix matches (skip if deadline already hit or seen set already full)
     uint32_t prefix_count = 0;
-    if (!deadline_hit) {
+    if (!deadline_hit && seen.size() < seen_max) {
         auto ids_prefix = [&](const IdEntry& e) {
             if (e.count < query_ids.size()) return false;
             for (size_t k = 0; k < query_ids.size(); ++k)
@@ -805,9 +820,8 @@ std::vector<Candidate> Dict::lookup_by_ids(const std::vector<uint32_t>& query_id
         while (pos < (uint32_t)id_index_.size() && ids_prefix(id_index_[pos])) {
             // Check scan budget
             if (budget && prefix_count >= budget->max_prefix_scan) {
-                if (trace) {
+                if (trace)
                     trace->truncated = true;
-                }
                 break;
             }
             // Check deadline every 64 entries
@@ -822,8 +836,12 @@ std::vector<Candidate> Dict::lookup_by_ids(const std::vector<uint32_t>& query_id
             Candidate c;
             c.text.assign(dict_strings_ + e.text_offset, e.text_len);
             c.frequency = e.frequency;
-            if (seen.insert(c.text).second)
-                results.push_back(std::move(c));
+            if (seen.size() < seen_max) {
+                if (seen.insert(c.text).second)
+                    collector.offer(std::move(c));
+            } else {
+                if (trace) trace->truncated = true;
+            }
             ++pos;
             ++prefix_count;
         }
@@ -834,9 +852,7 @@ std::vector<Candidate> Dict::lookup_by_ids(const std::vector<uint32_t>& query_id
         trace->prefix_scan_count += prefix_count;
     }
 
-    std::sort(results.begin(), results.end(),
-        [](const Candidate& a, const Candidate& b) { return a.frequency > b.frequency; });
-
+    results = collector.finish();
     if ((int)results.size() > limit)
         results.resize(limit);
 
