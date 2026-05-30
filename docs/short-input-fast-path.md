@@ -78,10 +78,10 @@ PinyinTranslator::translate()
 |----------|---------|------|
 | exact_code | 完整拼音拼接 | `shurufa` |
 | abbr_code | 每个音节首字母 | `srf` |
-| mixed_code | 音节取完整或首字母的组合（每条最多 16 个） | `shurf`, `shrf` |
+| mixed_code | `generate_mixed_keys()` 统一生成（每条最多 8 个，最长 16 字符） | `shrf`, `shurf`, `zhrmghg` |
 | prefix_code | 对以上 key 取长度 1..6 的前缀 | `s`, `sr`, `sh`, `shu`, ... |
 
-约束：`max_short_key_len = 6`，每个 key 最多保留 64 个候选。
+mixed code 码型：声母增强简拼（`shrf`）、首音节展开（`shurf`）、前两音节展开（`beijidx`）、长词首字母码（`zhrmghg`）等。exact/abbr/prefix 受 `max_short_key_len = 6` 限制，mixed code 受 `max_code_len = 16` 限制。每个 key 最多保留 64 个候选。
 
 ### 排序规则
 

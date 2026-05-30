@@ -17,6 +17,7 @@ struct UserEntry {
     std::string code;       // 原始输入码，如 "shurufa" 或 "srf"
     std::string syllables;  // 可选冒号形式，如 "shu:ru:fa"
     std::string abbr_code;  // 缩写，如 "srf"
+    std::vector<std::string> mixed_keys;  // 缓存的 mixed keys，用于 bucket 重排
     int frequency = 1;
     uint64_t sequence = 0;  // 递增序号，用于调频排序
     bool deleted = false;   // 软删除标记
@@ -34,7 +35,7 @@ struct UserBucket {
 | `user_exact_index_` | `unordered_map<string, UserBucket>` | 精确匹配（完整 code） |
 | `user_prefix_index_` | `unordered_map<string, UserBucket>` | 前缀匹配（长度 1..6） |
 | `user_abbr_index_` | `unordered_map<string, UserBucket>` | 缩写匹配（首字母组合） |
-| `user_mixed_index_` | `unordered_map<string, UserBucket>` | 混合匹配（全拼首字+首字母） |
+| `user_mixed_index_` | `unordered_map<string, UserBucket>` | 混合匹配（声母增强简拼 / 首音节展开 / 前两音节展开 / 长词首字母码） |
 | `user_text_index_` | `unordered_map<string, size_t>` | 文本反查（O(1)） |
 | `user_code_sorted_` | `vector<UserEntryId>` | 按 code 字节序排序，用于长前缀二分查找 |
 
@@ -54,7 +55,20 @@ uint64_t user_sequence_ = 0;      // 全局递增序号
 | `exact` | 原始 code | `shurufa`、`srf` |
 | `prefix` | exact 的长度 1..6 前缀 | `s`、`sh`、`shu` |
 | `abbr` | 每个音节首字母（需 syllables） | `shu:ru:fa` → `srf` |
-| `mixed` | 第一音节全拼 + 后续首字母（需 syllables） | `shu:ru:fa` → `shurf` |
+| `mixed` | `generate_mixed_keys()` 统一生成（需 syllables） | 见下表 |
+
+Mixed code 码型（每词最多 8 个，去重后截断）：
+
+| 码型 | 规则 | 示例 |
+|------|------|------|
+| 声母增强简拼 | zh/ch/sh 取双字母声母，其余取首字母 | `shu:ru:fa` → `shrf` |
+| 长词首字母码 | 5+ 音节，每音节取首字母 | `zhong:hua:ren:min:gong:he:guo` → `zhrmghg` |
+| 首音节展开 | 第一音节全拼 + 后续首字母 | `shu:ru:fa` → `shurf` |
+| 前两音节展开 | 前两音节全拼 + 后续首字母（3+ 音节） | `bei:jing:da:xue` → `beijidx` |
+| 首字母+第二音节 | 第一首字母 + 第二音节全拼 + 后续首字母（3+ 音节） | `bei:jing:da:xue` → `bjingdx` |
+| 首音节前两字母 | 第一音节前两字母 + 后续首字母 | `shu:ru:fa` → `shrf` |
+
+mixed bucket 裁剪到 `kMaxUserBucketSize = 64`，按 (frequency desc, sequence desc, id asc) 排序。
 
 `prefix` 只保存长度 1..6 的短前缀，服务短输入快速路径。更长的前缀使用 `user_code_sorted_` 二分范围查询。
 
@@ -77,6 +91,7 @@ uint64_t user_sequence_ = 0;      // 全局递增序号
 struct UserLookupStats {
     uint32_t scan_count = 0;       // 实际检查的索引项数
     bool truncated = false;        // 达到 max_user_scan 上限
+    bool scan_budget_truncated = false; // scan 预算耗尽
     bool deadline_exceeded = false;
 };
 
@@ -133,11 +148,12 @@ recent_bonus = min(1000, max(0, 1000 - (user_sequence_ - entry.sequence)))
 `update_frequency(text, code, syllables)` 在写锁下执行：
 
 1. 通过 `user_text_index_` 查找文本
-2. 已存在且 code 不变：增加 frequency，更新 sequence
+2. 已存在且 code 不变：增加 frequency，更新 sequence，`re_sort_user_buckets_()` 重排受影响 bucket
 3. 已存在但 code 变化：从旧索引移除，更新 entry，插入新索引
-4. 不存在：append 新 entry，插入全部索引
-5. 对 `user_code_sorted_` 重排序
-6. `user_dirty_ = true`，`user_dict_version_++`
+4. 已存在但 syllables 新增：从旧索引移除，更新 entry，插入新索引（生成 abbr/mixed keys）
+5. 不存在：append 新 entry，插入全部索引
+6. 对 `user_code_sorted_` 重排序
+7. `user_dirty_ = true`，`user_dict_version_++`
 
 旧签名 `update_frequency(text, code)` 委托新签名（syllables 为空）。
 

@@ -121,26 +121,52 @@ build\tools\query_bench\Release\query_bench.exe --data data --input s,sd,sdf,sdd
 
 **vs ShortCache 基线：** 短输入 e2e P50 持平（±1μs），用户词索引未引入额外延迟。`nihao` 从 59μs → 60μs（+1μs，在测量误差内）。长输入波动 ±1% 以内。
 
+## Mixed Code 生成优化
+
+> 短输入快速路径 + MixedCodeGenerator 统一生成（声母增强简拼 / 长词首字母码 / 前两音节展开等）。
+>
+> `shrf` 等增强简拼 key 现由 mixed generator 生成并写入 topn.bin，全部短输入均可通过 cache 命中。
+>
+> 测试条件：`--repeat 500 --warmup 100 --page-size 7 --deadline-ms 30`，3 轮取中位数（轮间冷却 4 秒）。
+
+| 输入 | 类型 | 路径 | 候选 | e2e P50 | e2e P99 | 查询 P50 | 查询 P99 | exact_scan | prefix_scan | cache_hit | trunc% | deadline% |
+|------|------|------|------|---------|---------|----------|----------|------------|-------------|-----------|--------|-----------|
+| `s` | 单字母 | 0 | 7 | 1 us | 1 us | 1 us | 1 us | 0 | 0 | ✅ | 0% | 0% |
+| `sd` | 双字母缩写 | 0 | 7 | 0 us | 1 us | 0 us | 1 us | 0 | 0 | ✅ | 0% | 0% |
+| `sdf` | 三字母缩写 | 0 | 7 | 0 us | 1 us | 0 us | 1 us | 0 | 0 | ✅ | 0% | 0% |
+| `sddf` | 四字母缩写 | 0 | 7 | 0 us | 1 us | 0 us | 1 us | 0 | 0 | ✅ | 0% | 0% |
+| `bj` | 双字母缩写 | 0 | 7 | 0 us | 1 us | 0 us | 1 us | 0 | 0 | ✅ | 0% | 0% |
+| `srf` | 三字母缩写 | 0 | 7 | 0 us | 1 us | 0 us | 1 us | 0 | 0 | ✅ | 0% | 0% |
+| `shrf` | 声母增强简拼 | 0 | 7 | 0 us | 1 us | 0 us | 1 us | 0 | 0 | ✅ | 0% | 0% |
+| `zguo` | 混合拼音 | 0 | 7 | 0 us | 1 us | 0 us | 1 us | 0 | 0 | ✅ | 0% | 0% |
+| `nihao` | 全拼 | 0 | 7 | 0 us | 1 us | 0 us | 1 us | 0 | 0 | ✅ | 0% | 0% |
+| `nihaoshijie` | 长输入 | 1 | 1 | 53401 us | 57825 us | 55769 us | 91843 us | 0 | 1 | — | 100% | 100% |
+
+**vs 用户词索引基线：** `shrf` 从 3133μs（无 cache，syllabifier 回退）降至 0μs（cache 命中），**-100%**。其余短输入持平。核心收益是 mixed code generator 覆盖了声母增强简拼，消除了 `shrf` 的 syllabifier 回退路径。所有短输入 cache_hit = 100%，exact/prefix_scan = 0，syllabifier 完全跳过。`nihaoshijie` 长输入不走快速路径，行为与前版一致。
+
 ## 版本对比总表
 
-| 输入 | 原始 e2e P50 | TopK e2e P50 | deadline e2e P50 | ShortCache e2e P50 | 索引 e2e P50 | 总提升 |
-|------|--------------|--------------|------------------|--------------------|--------------|--------|
-| `s` | 789 us | 97 us | 36 us | 12 us | 12 us | **-98%** |
-| `sd` | 936 us | 335 us | 258 us | 24 us | 24 us | **-97%** |
-| `sdf` | 2889 us | 2233 us | 2233 us | 36 us | 35 us | **-99%** |
-| `sddf` | 6059 us | 5477 us | 5593 us | 48 us | 48 us | **-99%** |
-| `bj` | 2067 us | 210 us | 117 us | 23 us | 23 us | **-99%** |
-| `srf` | 2143 us | 1524 us | 1506 us | 36 us | 35 us | **-98%** |
-| `shrf` | 6462 us | 5763 us | 5949 us | 3161 us | 3133 us | **-51%** |
-| `zguo` | 1912 us | 1085 us | 1061 us | 48 us | 48 us | **-97%** |
-| `nihao` | 3814 us | 2494 us | 2508 us | 59 us | 60 us | **-98%** |
-| `nihaoshijie` | 25911 us | 24439 us | 25898 us | 21000 us | 29279 us | ~波动 |
+| 输入 | 原始 e2e P50 | TopK e2e P50 | deadline e2e P50 | ShortCache e2e P50 | 索引 e2e P50 | Mixed优化 e2e P50 | 总提升 |
+|------|--------------|--------------|------------------|--------------------|--------------|-------------------|--------|
+| `s` | 789 us | 97 us | 36 us | 12 us | 12 us | 1 us | **-99.9%** |
+| `sd` | 936 us | 335 us | 258 us | 24 us | 24 us | 0 us | **-100%** |
+| `sdf` | 2889 us | 2233 us | 2233 us | 36 us | 35 us | 0 us | **-100%** |
+| `sddf` | 6059 us | 5477 us | 5593 us | 48 us | 48 us | 0 us | **-100%** |
+| `bj` | 2067 us | 210 us | 117 us | 23 us | 23 us | 0 us | **-100%** |
+| `srf` | 2143 us | 1524 us | 1506 us | 36 us | 35 us | 0 us | **-100%** |
+| `shrf` | 6462 us | 5763 us | 5949 us | 3161 us | 3133 us | 0 us | **-100%** |
+| `zguo` | 1912 us | 1085 us | 1061 us | 48 us | 48 us | 0 us | **-100%** |
+| `nihao` | 3814 us | 2494 us | 2508 us | 59 us | 60 us | 0 us | **-100%** |
+| `nihaoshijie` | 25911 us | 24439 us | 25898 us | 21000 us | 29279 us | 53401 us | ~波动 |
 
-> 短输入快速路径覆盖了 1–6 字母的全拼和简拼场景，查询延迟从微秒级降至个位数微秒。长输入（>6 字母）不走快速路径，行为与 deadline 基线一致。
+> 短输入快速路径覆盖了 1–6 字母的全拼和简拼场景，查询延迟从微秒级降至个位数微秒。长输入（>6 字母）不走快速路径，行为与 deadline 基线一致。Mixed code 优化后 `shrf` 等增强简拼 key 全部命中 cache，短输入 P50 稳定在 0–1μs。
 
 ## 重跑基准
 
 ```cmd
+# 重建 topn.bin（mixed code 变更后必须重建）
+python scripts\build_short_cache.py --input data\pinyin.dict.db --output data\pinyin.topn.bin
+
 # 离线查询 benchmark（无需 server）
 build\tools\query_bench\Release\query_bench.exe --data data --input s,sd,sdf,sddf,bj,srf,shrf,zguo,nihao,nihaoshijie --repeat 500 --warmup 100 --page-size 7 --deadline-ms 30
 

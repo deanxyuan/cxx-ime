@@ -22,7 +22,8 @@ CAND_FMT = "<IIIIii"       # 24 bytes (text_off, text_len, comment_off, comment_
 CAND_SIZE = struct.calcsize(CAND_FMT)
 
 MAX_SHORT_KEY_LEN = 6
-MAX_MIXED_KEYS_PER_ENTRY = 16
+MAX_CODE_LEN = 16  # mixed codes can be longer than short keys
+MAX_MIXED_KEYS_PER_ENTRY = 8
 MAX_CANDIDATES_PER_KEY = 64
 
 # Score bonuses
@@ -88,7 +89,7 @@ def generate_keys(syllable_ids, text, frequency):
     if n > 1:
         mixed_list = _generate_mixed(syllables)
         for m in mixed_list[:MAX_MIXED_KEYS_PER_ENTRY]:
-            if m != exact and m != abbr:
+            if m != exact:
                 mixed_score = frequency + MIXED_BONUS
                 results.append((m, mixed_score, SHORT_KEY_MIXED))
 
@@ -108,44 +109,61 @@ def generate_keys(syllable_ids, text, frequency):
 
 
 def _generate_mixed(syllables):
-    """Generate mixed-code keys: each syllable is either full or first-letter."""
+    """Generate mixed-code keys targeting common abbreviation patterns.
+
+    Patterns:
+      1. Enhanced initial: zh/ch/sh -> two-letter, others -> first letter  (shu:ru:fa -> shrf)
+      2. Long phrase head (5+ syls): first letter of each syllable         (zhong:hua:ren:min:gong:he:guo -> zhrmghg)
+      B: first syllable full + rest first letter    (shu:ru:fa -> shurf)
+      C: first 2 full + rest first letter            (bei:jing:da:xue -> beijidx)
+      D: first letter + second full + rest first     (bei:jing:da:xue -> bjingdx)
+      E: first 2 chars + rest first letter           (shu:ru:fa -> shrf)
+    """
     n = len(syllables)
-    if n == 0:
+    if n <= 1:
         return []
-    if n == 1:
-        return [syllables[0]]
 
-    # For large n, limit combinations to avoid explosion
-    max_combos = MAX_MIXED_KEYS_PER_ENTRY * 2  # generate extra, we'll trim later
-    results = []
+    results = set()
 
-    def backtrack(pos, current):
-        if len(results) >= max_combos:
-            return
-        if pos == n:
-            s = "".join(current)
-            results.append(s)
-            return
-        syl = syllables[pos]
-        # Full syllable
-        backtrack(pos + 1, current + [syl])
-        # First letter only (abbreviation)
-        if len(syl) > 1:
-            backtrack(pos + 1, current + [syl[0]])
+    # Pattern 1: Enhanced initial (声母增强简拼)
+    # For zh/ch/sh syllables, use two-letter initial; otherwise first letter only.
+    enhanced = ""
+    for s in syllables:
+        if len(s) >= 2 and s[:2] in ("zh", "ch", "sh"):
+            enhanced += s[:2]
+        else:
+            enhanced += s[0]
+    results.add(enhanced)
 
-    backtrack(0, [])
-    # Remove exact and abbr (they're handled separately)
+    # Pattern 2: Long phrase head (长词首字母码, 5+ syllables)
+    if n >= 5:
+        results.add("".join(s[0] for s in syllables))
+
+    rest_first = "".join(s[0] for s in syllables[1:])
+
+    # Mode B: first syllable full + rest first letter
+    results.add(syllables[0] + rest_first)
+
+    # Mode C: first 2 syllables full + rest first letter (3+ syllables)
+    if n >= 3:
+        rest_first_from_3 = "".join(s[0] for s in syllables[2:])
+        results.add(syllables[0] + syllables[1] + rest_first_from_3)
+
+    # Mode D: first letter + second syllable full + rest first letter (3+ syllables)
+    if n >= 3:
+        results.add(syllables[0][0] + syllables[1] + rest_first_from_3)
+
+    # Mode E: first 2 chars of first syllable + rest first letter
+    if len(syllables[0]) >= 2:
+        results.add(syllables[0][:2] + rest_first)
+
+    # Remove exact (handled by exact index)
+    # Keep abbr in mixed — design doc requires srf/shrf/shurf all in mixed generator
     exact = "".join(syllables)
-    abbr = "".join(s[0] for s in syllables if s)
-    results = [r for r in results if r != exact and r != abbr]
-    # Deduplicate while preserving order
-    seen = set()
-    deduped = []
-    for r in results:
-        if r not in seen:
-            seen.add(r)
-            deduped.append(r)
-    return deduped
+    results.discard(exact)
+    results.discard("")
+
+    return sorted(results)
 
 
 def build_cache(db_path):
@@ -164,8 +182,9 @@ def build_cache(db_path):
 
         keys = generate_keys(syllable_ids, text, frequency)
         for key, score, flags in keys:
-            # Only keep short keys
-            if len(key) > MAX_SHORT_KEY_LEN:
+            # Mixed codes allow longer keys; others use short key limit
+            max_len = MAX_CODE_LEN if (flags & SHORT_KEY_MIXED) else MAX_SHORT_KEY_LEN
+            if len(key) > max_len:
                 continue
             if len(key) == 0:
                 continue
@@ -263,6 +282,7 @@ def main():
     parser = argparse.ArgumentParser(description="Build pinyin.topn.bin short code cache")
     parser.add_argument("--input", required=True, help="Input .dict.db or .dict.db.zip path")
     parser.add_argument("--output", required=True, help="Output .topn.bin path")
+    parser.add_argument("--no-verify", action="store_true", help="Skip required keys verification")
     args = parser.parse_args()
 
     db_path = resolve_input(args.input)
@@ -277,6 +297,19 @@ def main():
         print("WARNING: No keys generated. Check input data.", file=sys.stderr)
 
     serialize(key_candidates, args.output)
+
+    # Verify required keys are present (unless --no-verify)
+    if args.no_verify:
+        print("Done (verification skipped).", file=sys.stderr)
+        return
+    required_keys = ["s", "sd", "sdf", "sddf", "bj", "srf", "shrf", "zguo", "nihao"]
+    missing = [k for k in required_keys if k not in key_candidates]
+    if missing:
+        print(f"ERROR: Missing required keys in topn.bin: {missing}", file=sys.stderr)
+        sys.exit(1)
+    else:
+        print(f"  Verified: all {len(required_keys)} required keys present", file=sys.stderr)
+
     print("Done.", file=sys.stderr)
 
 

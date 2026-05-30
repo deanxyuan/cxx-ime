@@ -26,6 +26,7 @@ struct BenchmarkConfig {
     int deadline_ms = 30;
     bool trace_log = false;
     bool require_topn = false;
+    bool require_cache_hit = false;
     std::string json_output;
     BenchMode mode = BenchMode::FinalKey;
     bool run_both = false;  // --mode both
@@ -48,6 +49,9 @@ struct IterationData {
     uint32_t user_scan = 0;
     bool cache_hit = false;
     bool truncated = false;
+    bool scan_budget_truncated = false;
+    bool topk_truncated = false;
+    bool page_truncated = false;
     bool deadline_exceeded = false;
     bool cancelled = false;
     int64_t processor_us = 0;
@@ -77,6 +81,7 @@ static void print_usage(const char* prog) {
               << "  --mode <m>          Timing mode: final_key, full_typing, both (default: final_key)\n"
               << "  --trace-log         Show should_log() trigger rate\n"
               << "  --require-topn      Fail if topn cache not loaded\n"
+              << "  --require-cache-hit Fail if any short input misses cache\n"
               << "  --json <path>       Output JSONL trace file\n"
               << "  --help              Show this help\n";
 }
@@ -131,6 +136,8 @@ static BenchmarkConfig parse_args(int argc, char* argv[]) {
             config.trace_log = true;
         } else if (arg == "--require-topn") {
             config.require_topn = true;
+        } else if (arg == "--require-cache-hit") {
+            config.require_cache_hit = true;
         } else if (arg == "--json" && i + 1 < argc) {
             config.json_output = argv[++i];
         } else if (arg == "--help") {
@@ -156,6 +163,9 @@ static void copy_trace(const cxxime::QueryTrace& trace, IterationData& data, int
     data.user_scan = trace.user_scan_count;
     data.cache_hit = trace.cache_hit;
     data.truncated = trace.truncated;
+    data.scan_budget_truncated = trace.scan_budget_truncated;
+    data.topk_truncated = trace.topk_truncated;
+    data.page_truncated = trace.page_truncated;
     data.deadline_exceeded = trace.deadline_exceeded;
     data.cancelled = trace.cancelled;
     data.processor_us = trace.processor_us;
@@ -245,12 +255,12 @@ static uint32_t percentile_u32(const std::vector<uint32_t>& sorted, double p) {
 
 static void print_results(const std::vector<BenchmarkResult>& results, bool show_log_rate) {
     if (show_log_rate)
-        std::cout << "Input                Mode         p50_us   p95_us   p99_us   max_us   cands  exact_p95  prefix_p95  user_p95  cache%   trunc%   deadline%  log%\n";
+        std::cout << "Input                Mode         p50_us   p95_us   p99_us   max_us   cands  seg_p95  look_p95  merge_p95  cache%   trunc%   deadline%  log%\n";
     else
-        std::cout << "Input                Mode         p50_us   p95_us   p99_us   max_us   cands  exact_p95  prefix_p95  user_p95  cache%   trunc%   deadline%\n";
+        std::cout << "Input                Mode         p50_us   p95_us   p99_us   max_us   cands  seg_p95  look_p95  merge_p95  cache%   trunc%   deadline%\n";
 
     for (const auto& r : results) {
-        std::vector<int64_t> elapsed_us;
+        std::vector<int64_t> elapsed_us, seg_us, look_us, merge_us;
         std::vector<uint32_t> exact_scans, prefix_scans, user_scans;
         int last_cands = 0;
         int trunc_count = 0;
@@ -260,6 +270,9 @@ static void print_results(const std::vector<BenchmarkResult>& results, bool show
 
         for (const auto& it : r.iterations) {
             elapsed_us.push_back(it.elapsed_us);
+            seg_us.push_back(it.translate_us);
+            look_us.push_back(it.lookup_us);
+            merge_us.push_back(it.merge_us);
             exact_scans.push_back(it.exact_scan);
             prefix_scans.push_back(it.prefix_scan);
             user_scans.push_back(it.user_scan);
@@ -271,37 +284,40 @@ static void print_results(const std::vector<BenchmarkResult>& results, bool show
         }
 
         std::sort(elapsed_us.begin(), elapsed_us.end());
+        std::sort(seg_us.begin(), seg_us.end());
+        std::sort(look_us.begin(), look_us.end());
+        std::sort(merge_us.begin(), merge_us.end());
         std::sort(exact_scans.begin(), exact_scans.end());
         std::sort(prefix_scans.begin(), prefix_scans.end());
         std::sort(user_scans.begin(), user_scans.end());
 
         int n = (int)r.iterations.size();
         if (show_log_rate) {
-            printf("%-20s %-12s %8lld %8lld %8lld %8lld %6d %10u %11u %9u %6.1f%% %6.1f%% %8.1f%% %6.1f%%\n",
+            printf("%-20s %-12s %8lld %8lld %8lld %8lld %6d %8lld %9lld %10lld %6.1f%% %6.1f%% %8.1f%% %6.1f%%\n",
                    r.input.c_str(), r.mode.c_str(),
                    percentile_i64(elapsed_us, 0.50),
                    percentile_i64(elapsed_us, 0.95),
                    percentile_i64(elapsed_us, 0.99),
                    elapsed_us.empty() ? 0LL : elapsed_us.back(),
                    last_cands,
-                   percentile_u32(exact_scans, 0.95),
-                   percentile_u32(prefix_scans, 0.95),
-                   percentile_u32(user_scans, 0.95),
+                   percentile_i64(seg_us, 0.95),
+                   percentile_i64(look_us, 0.95),
+                   percentile_i64(merge_us, 0.95),
                    n > 0 ? 100.0 * cache_hit_count / n : 0.0,
                    n > 0 ? 100.0 * trunc_count / n : 0.0,
                    n > 0 ? 100.0 * deadline_count / n : 0.0,
                    n > 0 ? 100.0 * log_count / n : 0.0);
         } else {
-            printf("%-20s %-12s %8lld %8lld %8lld %8lld %6d %10u %11u %9u %6.1f%% %6.1f%% %8.1f%%\n",
+            printf("%-20s %-12s %8lld %8lld %8lld %8lld %6d %8lld %9lld %10lld %6.1f%% %6.1f%% %8.1f%%\n",
                    r.input.c_str(), r.mode.c_str(),
                    percentile_i64(elapsed_us, 0.50),
                    percentile_i64(elapsed_us, 0.95),
                    percentile_i64(elapsed_us, 0.99),
                    elapsed_us.empty() ? 0LL : elapsed_us.back(),
                    last_cands,
-                   percentile_u32(exact_scans, 0.95),
-                   percentile_u32(prefix_scans, 0.95),
-                   percentile_u32(user_scans, 0.95),
+                   percentile_i64(seg_us, 0.95),
+                   percentile_i64(look_us, 0.95),
+                   percentile_i64(merge_us, 0.95),
                    n > 0 ? 100.0 * cache_hit_count / n : 0.0,
                    n > 0 ? 100.0 * trunc_count / n : 0.0,
                    n > 0 ? 100.0 * deadline_count / n : 0.0);
@@ -350,7 +366,7 @@ static void write_jsonl(const std::string& path, const std::vector<BenchmarkResu
                 "\"raw_input\":\"%s\","
                 "\"candidate_count\":%d,\"syllable_path_count\":%d,\"live_path_count\":%d,"
                 "\"exact_scan_count\":%u,\"prefix_scan_count\":%u,\"user_scan_count\":%u,"
-                "\"cache_hit\":%s,\"truncated\":%s,\"deadline_exceeded\":%s,"
+                "\"cache_hit\":%s,\"truncated\":%s,\"scan_trunc\":%s,\"topk_trunc\":%s,\"page_trunc\":%s,\"deadline_exceeded\":%s,"
                 "\"processor_us\":%lld,\"translate_us\":%lld,\"lookup_us\":%lld,"
                 "\"merge_us\":%lld,\"total_us\":%lld}",
                 r.input.c_str(), r.mode.c_str(), repeat_index,
@@ -362,6 +378,9 @@ static void write_jsonl(const std::string& path, const std::vector<BenchmarkResu
                 it.exact_scan, it.prefix_scan, it.user_scan,
                 it.cache_hit ? "true" : "false",
                 it.truncated ? "true" : "false",
+                it.scan_budget_truncated ? "true" : "false",
+                it.topk_truncated ? "true" : "false",
+                it.page_truncated ? "true" : "false",
                 it.deadline_exceeded ? "true" : "false",
                 (long long)it.processor_us, (long long)it.translate_us,
                 (long long)it.lookup_us, (long long)it.merge_us, (long long)it.total_us);
@@ -450,6 +469,39 @@ int main(int argc, char* argv[]) {
     if (!config.json_output.empty()) {
         write_jsonl(config.json_output, results, config.page_size, config.deadline_ms);
     }
+
+    // --require-cache-hit: verify short inputs all hit cache
+    if (config.require_cache_hit) {
+        bool all_ok = true;
+        for (const auto& r : results) {
+            // Check if input is a short key (1-6 lowercase letters)
+            bool is_short = r.input.size() >= 1 && r.input.size() <= 6;
+            if (is_short) {
+                for (char c : r.input) {
+                    if (c < 'a' || c > 'z') { is_short = false; break; }
+                }
+            }
+            if (!is_short) continue;
+
+            for (const auto& it : r.iterations) {
+                if (!it.cache_hit) {
+                    std::cerr << "Error: " << r.input << " [" << r.mode
+                              << "] cache_hit=false (expected true for short input)\n";
+                    all_ok = false;
+                    break;
+                }
+            }
+        }
+        if (!all_ok) {
+            engine.finalize();
+            return 1;
+        }
+    }
+
+    // Report trace queue dropped counter
+    uint64_t dropped = cxxime::QueryTrace::dropped_count();
+    if (dropped > 0)
+        std::cout << "\nTrace queue dropped: " << dropped << " entries\n";
 
     engine.finalize();
     return 0;

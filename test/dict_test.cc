@@ -241,10 +241,48 @@ TEST(Dict, lookup_by_ids_scan_budget_with_topk) {
 
     // Should have truncated due to scan budget
     ASSERT_TRUE(trace.truncated);
+    ASSERT_TRUE(trace.scan_budget_truncated);
     ASSERT_TRUE(trace.exact_scan_count <= 3);
     ASSERT_TRUE(trace.prefix_scan_count <= 3);
     // Results bounded by TopK cap (not by scan budget alone — prefix scan also contributes)
     ASSERT_LE(results.size(), 10u);
+
+    dict.close();
+    DeleteFileA(path.c_str());
+}
+
+TEST(Dict, lookup_by_ids_topk_sets_flag) {
+    std::string path = make_temp_path("test_dict_topk_flag.bin");
+
+    // Create 100 entries with same syllable "de"
+    std::vector<std::tuple<std::string, std::string, int>> entries;
+    for (int i = 0; i < 100; ++i) {
+        char text[16];
+        snprintf(text, sizeof(text), "t%03d", i);
+        entries.push_back({"de", text, 100 + i});
+    }
+    cxxime::Dict::create_test_dict(path, entries);
+
+    cxxime::Dict dict;
+    ASSERT_TRUE(dict.open_dict(path));
+
+    uint32_t de_id = dict.syllable_to_id("de");
+    ASSERT_NE(de_id, UINT32_MAX);
+
+    std::vector<uint32_t> ids = {de_id};
+
+    // Large scan budget, small TopK cap — TopK should fill up
+    cxxime::QueryBudget budget;
+    budget.max_exact_scan = 500;
+    budget.max_prefix_scan = 500;
+    budget.max_results_before_merge = 5;
+
+    cxxime::QueryTrace trace = {};
+    auto results = dict.lookup_by_ids(ids, 100, &trace, &budget);
+
+    ASSERT_TRUE(trace.truncated);
+    ASSERT_TRUE(trace.topk_truncated);
+    ASSERT_LE(results.size(), 5u);
 
     dict.close();
     DeleteFileA(path.c_str());
@@ -617,7 +655,7 @@ TEST(Dict, user_dict_mixed_index) {
     }
     ASSERT_TRUE(found_abbr);
 
-    // Query via mixed key "shurf"
+    // Query via mixed key "shurf" (first syllable expanded)
     cxxime::UserLookupStats stats2;
     auto r2 = dict.lookup_user_short("shurf", 10, budget, &trace, &stats2);
     bool found_mixed = false;
@@ -625,6 +663,53 @@ TEST(Dict, user_dict_mixed_index) {
         if (c.text == "\xe8\xbe\x93\xe5\x85\xa5\xe6\xb3\x95") found_mixed = true;
     }
     ASSERT_TRUE(found_mixed);
+
+    // Query via enhanced initial "shrf" (声母增强简拼)
+    cxxime::UserLookupStats stats3;
+    auto r3 = dict.lookup_user_short("shrf", 10, budget, &trace, &stats3);
+    bool found_enhanced = false;
+    for (auto& c : r3) {
+        if (c.text == "\xe8\xbe\x93\xe5\x85\xa5\xe6\xb3\x95") found_enhanced = true;
+    }
+    ASSERT_TRUE(found_enhanced);
+
+    dict.close();
+    DeleteFileA(path.c_str());
+}
+
+TEST(Dict, user_dict_high_freq_in_scan_budget) {
+    std::string path = make_temp_path("test_dict_hf.bin");
+    cxxime::Dict::create_test_dict(path, {{"de", "\xe7\x9a\x84", 1000}});
+
+    cxxime::Dict dict;
+    ASSERT_TRUE(dict.open_dict(path));
+
+    // Insert 20 low-frequency user words with same prefix "abc"
+    for (int i = 0; i < 20; ++i) {
+        char text[16];
+        snprintf(text, sizeof(text), "word%02d", i);
+        dict.update_frequency(text, "abc");
+    }
+
+    // Insert a high-frequency word with same prefix "abc"
+    // It gets frequency=1 initially, then we boost it
+    dict.update_frequency("popular", "abc");
+    for (int i = 0; i < 100; ++i) {
+        dict.update_frequency("popular", "abc");
+    }
+
+    // Query with tight scan budget — should still find "popular"
+    cxxime::QueryBudget budget;
+    budget.max_user_scan = 10;
+    cxxime::QueryTrace trace = {};
+    cxxime::UserLookupStats stats;
+    auto results = dict.lookup_user_short("abc", 10, budget, &trace, &stats);
+
+    bool found_popular = false;
+    for (auto& c : results) {
+        if (c.text == "popular") found_popular = true;
+    }
+    ASSERT_TRUE(found_popular);
 
     dict.close();
     DeleteFileA(path.c_str());

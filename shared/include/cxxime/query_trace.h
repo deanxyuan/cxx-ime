@@ -28,12 +28,18 @@ struct QueryTrace {
     uint32_t exact_scan_count = 0;      // System dict exact code/syllableId range scans
     uint32_t prefix_scan_count = 0;     // System dict prefix range scans
     uint32_t user_scan_count = 0;       // User dict related index scans
+    uint32_t mixed_scan_count = 0;      // Mixed index items scanned
+    uint32_t mixed_bucket_size = 0;     // Mixed index bucket size at lookup time
+    bool mixed_cache_hit = false;       // Mixed index contributed candidates
 
     // Status flags
     bool cache_hit = false;
     bool deadline_exceeded = false;     // Time budget exhausted (not cancelled by new revision)
     bool cancelled = false;             // External cancel signal (revision expired, Escape, etc.)
-    bool truncated = false;             // Intentionally truncated results (Top-K, scan limits, etc.)
+    bool truncated = false;             // Any truncation occurred (union of the three below)
+    bool scan_budget_truncated = false; // Scan budget (max_exact/prefix/user_scan) exceeded
+    bool topk_truncated = false;        // TopK collector full, candidates dropped
+    bool page_truncated = false;        // Page slicing dropped candidates
 
     // Timing (microseconds)
     int64_t processor_us = 0;
@@ -60,6 +66,9 @@ struct QueryTrace {
 
     // Shutdown writer thread (call at process exit)
     static void shutdown();
+
+    // Number of trace entries dropped due to queue pressure
+    static uint64_t dropped_count();
 };
 
 } // namespace cxxime
