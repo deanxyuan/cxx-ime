@@ -273,10 +273,8 @@ int main(int argc, char* argv[]) {
     engine.set_config_page_size(config.page_size);
     engine.set_trace_enabled(true);
 
-    // Set query budget from --deadline-ms
-    cxxime::QueryBudget budget;
-    budget.deadline_us = config.deadline_ms * 1000LL;
-    engine.set_query_budget(budget);
+    // Phase 3: set deadline via new API (budget.scan_limits are auto-tuned by make_budget)
+    engine.set_query_deadline_ms(config.deadline_ms);
 
     std::cout << "Benchmark config:\n"
               << "  data_dir: " << config.data_dir << "\n"

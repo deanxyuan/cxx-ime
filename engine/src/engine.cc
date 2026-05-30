@@ -88,9 +88,8 @@ ProcessResult Engine::process_key(const KeyEvent& event) {
         total_start = std::chrono::steady_clock::now();
     }
 
-    // Set budget start time for deadline checking (microseconds)
-    budget_.start_qpc = std::chrono::duration_cast<std::chrono::microseconds>(
-        std::chrono::steady_clock::now().time_since_epoch()).count();
+    // Create per-query deadline (Phase 3: QueryDeadline with expires_at)
+    QueryDeadline per_query_deadline = QueryDeadline::from_now(query_deadline_ms_);
 
     // Let AsciiComposer track modifier key state (may toggle ascii_mode)
     ascii_composer_.process_key(event.keycode, event.is_key_up, context_);
@@ -185,16 +184,15 @@ ProcessResult Engine::process_key(const KeyEvent& event) {
             trace_.page_size = config_->page_size;
         }
         // Skip translate if deadline already expired (e.g. slow ascii_composer/processor)
-        if (budget_.deadline_us > 0 && budget_.expired()) {
+        if (per_query_deadline.enabled && per_query_deadline.expired()) {
             if (trace_enabled_) {
                 trace_.deadline_exceeded = true;
                 trace_.truncated = true;
             }
         } else {
-            // Create a budget tuned for this input length, inheriting deadline from external budget
+            // Create a budget tuned for this input length, with per-query deadline
             QueryBudget effective_budget = make_budget((int)context_.pinyin_buffer.size(), config_->page_size);
-            effective_budget.deadline_us = budget_.deadline_us;
-            effective_budget.start_qpc = budget_.start_qpc;
+            effective_budget.deadline = per_query_deadline;
             auto page = translator_.translate(context_.pinyin_buffer, context_.page_index, config_->page_size,
                                               trace_enabled_ ? &trace_ : nullptr, &effective_budget);
             context_.update_candidates(std::move(page));

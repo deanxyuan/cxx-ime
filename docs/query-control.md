@@ -12,25 +12,35 @@
 
 ## 数据结构
 
+### QueryDeadline
+
+```cpp
+// shared/include/cxxime/query_budget.h
+struct QueryDeadline {
+    using Clock = std::chrono::steady_clock;
+    bool enabled = false;               // deadline_ms=0 时为 false
+    Clock::time_point expires_at{};     // 过期时间点
+    uint32_t check_interval = 64;       // 每 N 个 posting/路径检查一次
+
+    static QueryDeadline from_now(uint32_t deadline_ms);
+    bool expired() const;               // enabled && now >= expires_at
+};
+```
+
+每次查询通过 `from_now()` 创建独立的 deadline，避免复用过期的 `expires_at`。
+
 ### QueryBudget
 
 ```cpp
 // shared/include/cxxime/query_budget.h
 struct QueryBudget {
-    int64_t deadline_us = 0;            // 截止时间（微秒），0 = 无限制
     uint32_t max_exact_scan = 512;      // 精确匹配最大扫描条目数
     uint32_t max_prefix_scan = 2048;    // 前缀匹配最大扫描条目数
-    uint32_t max_user_scan = 512;       // 用户词典最大扫描条目数（预留，尚未接入扫描循环）
     uint32_t max_results_before_merge = 64;  // TopK 容量（每次 lookup 的候选收集上限）
     uint32_t topk = 0;                  // translator 层合并容量上限（预留，当前未使用）
-
-    int64_t start_qpc = 0;             // 查询起始时间戳（Engine 自动设置）
-
-    bool expired() const;               // 判断是否已超时
+    QueryDeadline deadline;             // 时间预算
 };
 ```
-
-`expired()` 通过 `steady_clock` 计算从 `start_qpc` 到当前时间的差值，与 `deadline_us` 比较。
 
 ### TopKCollector
 
@@ -66,13 +76,13 @@ struct QueryTrace {
 
 ## 动态预算：make_budget()
 
-Engine 层在每次查询时根据输入长度自动创建预算，继承外部 deadline：
+Engine 层在每次查询时根据输入长度自动创建预算，设置 per-query deadline：
 
 ```cpp
 // engine.cc
+QueryDeadline per_query_deadline = QueryDeadline::from_now(query_deadline_ms_);
 QueryBudget effective_budget = make_budget(pinyin.size(), page_size);
-effective_budget.deadline_us = budget_.deadline_us;
-effective_budget.start_qpc = budget_.start_qpc;
+effective_budget.deadline = per_query_deadline;
 ```
 
 分档策略：
@@ -90,38 +100,43 @@ effective_budget.start_qpc = budget_.start_qpc;
 
 ```
 Engine::process_key()
+  │ 创建 per_query_deadline = QueryDeadline::from_now(query_deadline_ms_)
   │ 创建 effective_budget = make_budget(input_len, page_size)
-  │ 设置 budget_.start_qpc
+  │ effective_budget.deadline = per_query_deadline
   │ 运行 Processor
   │ 检查 deadline → 超时则跳过 translate
   ▼
 PinyinTranslator::translate(budget, trace)
-  │ 检查 deadline → < 10ms 则跳过 Syllabifier
-  │ Syllabifier 路径枚举
+  │ 检查 deadline → 超时则跳过 Syllabifier
+  │ Syllabifier::segment(deadline) — 内部 DFS 每 check_interval 路径检查
   │ 检查 deadline → 每条路径 has_prefix 前检查
   │ has_prefix 路径过滤
   │ 检查 deadline → 每条路径 lookup 前检查
   ▼
 Dict::lookup_by_ids(budget, trace)
-  │ 精确匹配扫描：每 64 条检查 deadline + max_exact_scan
-  │ 前缀匹配扫描：每 64 条检查 deadline + max_prefix_scan
+  │ 进入循环前检查 deadline（捕获上游已耗尽预算）
+  │ 精确匹配扫描：每 check_interval 条检查 deadline + max_exact_scan
+  │ 前缀匹配扫描：每 check_interval 条检查 deadline + max_prefix_scan
   │ 候选 → seen 去重 → TopKCollector.offer()
   ▼
 返回 collector.finish()（已排序，大小 ≤ limit）
 ```
 
-共 6 个检查点，覆盖从引擎入口到词典扫描的完整路径。
+共 8 个检查点，覆盖从引擎入口到词典扫描的完整路径。
 
 ### 各检查点行为
 
 | 检查点 | 位置 | 超时行为 | 截断行为 |
 |--------|------|----------|----------|
-| Engine 入口 | `engine.cc` | 跳过 translate，返回空候选 | — |
-| Translator 入口 | `pinyin_translator.cc` | `deadline_us < 10ms` 跳过 Syllabifier | — |
-| has_prefix 前 | `pinyin_translator.cc` | 跳过当前路径及后续路径 | — |
-| lookup 前 | `pinyin_translator.cc` | 跳过当前路径及后续路径 | — |
-| 精确扫描中 | `dict.cc` 每 64 条 | 中断扫描 | 设置 `truncated` |
-| 前缀扫描中 | `dict.cc` 每 64 条 | 中断扫描 | 设置 `truncated` |
+| Engine 入口 | `engine.cc` | 跳过 translate，返回空候选 | 设置 `deadline_exceeded` + `truncated` |
+| Syllabifier DFS | `syllabifier.cc` 每 check_interval 路径 | 中断路径枚举，返回已生成路径 | 设置 `deadline_exceeded` + `truncated` |
+| has_prefix 前 | `pinyin_translator.cc` | 跳过当前路径及后续路径 | 设置 `deadline_exceeded` + `truncated` |
+| lookup 前 | `pinyin_translator.cc` | 跳过当前路径及后续路径 | 设置 `deadline_exceeded` + `truncated` |
+| Dict 循环前 | `dict.cc` | 跳过扫描 | 设置 `deadline_exceeded` + `truncated` |
+| 精确扫描中 | `dict.cc` 每 check_interval 条 | 中断扫描 | 设置 `deadline_exceeded` + `truncated` |
+| 前缀扫描中 | `dict.cc` 每 check_interval 条 | 中断扫描 | 设置 `deadline_exceeded` + `truncated` |
+
+> deadline 到期时**同时设置** `deadline_exceeded=true` 和 `truncated=true`。
 
 ## 扫描流程
 
@@ -131,13 +146,15 @@ Dict::lookup_by_ids(budget, trace)
 TopKCollector collector(min(limit, max_results_before_merge))
 seen_set（容量上限 = max_results_before_merge * 2）
 
+进入循环前：检查 deadline（捕获上游已耗尽预算）
+
 精确匹配扫描循环：
-  每 64 条检查 deadline
+  每 check_interval 条检查 deadline
   超过 max_exact_scan → truncated, break
   候选 → seen 去重 → collector.offer()
 
 前缀匹配扫描循环：
-  每 64 条检查 deadline
+  每 check_interval 条检查 deadline
   超过 max_prefix_scan → truncated, break
   候选 → seen 去重 → collector.offer()
 
@@ -169,38 +186,37 @@ truncated = true 当且仅当以下任一条件成立：
 
 ## 使用方式
 
-### Engine 自动设置起始时间
+### Engine 自动创建 Deadline
 
-`Engine::process_key()` 在每次按键处理开始时自动记录 `budget_.start_qpc`，无需手动设置。
+`Engine::process_key()` 在每次按键处理开始时自动创建 `QueryDeadline::from_now(query_deadline_ms_)`，无需手动设置。
 
 ### 外部设置 Deadline
 
-通过 `Engine::set_query_budget()` 设置：
+通过 `Engine::set_query_deadline_ms()` 设置：
 
 ```cpp
-QueryBudget budget;
-budget.deadline_us = 30000;  // 30ms
-engine.set_query_budget(budget);
+engine.set_query_deadline_ms(30);   // 30ms（默认）
+engine.set_query_deadline_ms(0);    // 关闭 deadline（调试/离线验证）
 ```
 
-Scan budget 和 TopK 由 `make_budget()` 自动管理，无需手动设置。
+Scan budget 和 TopK 由 `make_budget()` 自动管理，无需手动设置。Deadline 通过 `QueryDeadline::from_now()` 在每次查询时创建独立预算。
 
 ### 当前使用场景
 
 | 场景 | Deadline | 说明 |
 |------|----------|------|
-| 生产环境（Server） | 无（`deadline_us = 0`） | Server 未调用 `set_query_budget()` |
-| query_bench 工具 | 30ms（默认） | `--deadline-ms=30` |
+| 生产环境（Server） | 30ms（默认） | `query_deadline_ms_ = 30` |
+| query_bench 工具 | 30ms（默认） | `--deadline-ms` 参数可调 |
 | 单元测试 | 按测试需要设置 | 测试 deadline 超时行为 |
 
 ## 与候选查询管道的集成
 
 详见 [候选词选词算法](candidate-selection.md)。Deadline 检查点嵌入在四步流程的每一步之间：
 
-1. **拼写图构建** — `deadline_us < 10ms` 时跳过 Syllabifier（因其内部不检查 deadline）
-2. **路径枚举** — Syllabifier 内部通过枚举上限（10000 条）控制，不受 deadline 影响
+1. **拼写图构建** — Syllabifier 内部 DFS 每 `check_interval` 路径检查 deadline
+2. **路径枚举** — Syllabifier 到期时返回已生成路径，标记 `deadline_exceeded` + `truncated`
 3. **路径过滤** — 每条路径 `has_prefix` 前检查 deadline
-4. **候选查找** — 每条路径 `lookup_by_ids` 前检查 + 扫描中每 64 条检查，结果进入 TopKCollector
+4. **候选查找** — 循环前检查 + 每条路径 `lookup_by_ids` 前检查 + 扫描中每 `check_interval` 条检查
 
 ## 日志与观测
 

@@ -29,6 +29,10 @@ TEST(Benchmark, TraceFieldsPopulated) {
         return;
     }
 
+    // Disable deadline for this test — we want to verify trace fields are populated,
+    // not that deadline is respected. Debug builds are slow and may exceed 30ms.
+    engine.set_query_deadline_ms(0);
+
     engine.set_trace_enabled(true);
 
     // Type "nihao" - use uppercase letters (A=65, Z=90) as Windows VK codes

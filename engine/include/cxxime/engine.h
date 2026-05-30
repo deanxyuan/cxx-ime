@@ -50,9 +50,13 @@ public:
             owned_config_.page_size = size;
     }
 
-    // Query budget (deadline + scan limits)
+    // Query budget (scan limits) — deadline is set separately via set_query_deadline_ms()
     void set_query_budget(const QueryBudget& budget) { budget_ = budget; }
     const QueryBudget& query_budget() const { return budget_; }
+
+    // Deadline protection (Phase 3)
+    void set_query_deadline_ms(uint32_t deadline_ms) { query_deadline_ms_ = deadline_ms; }
+    uint32_t query_deadline_ms() const { return query_deadline_ms_; }
 
     static std::string derive_spellings_path(const std::string& dict_path);
 
@@ -81,8 +85,9 @@ private:
     bool trace_enabled_ = true;
     static uint64_t next_query_id_;
 
-    // Query budget (deadline + scan limits)
+    // Query budget (scan limits only — deadline is per-query via QueryDeadline)
     QueryBudget budget_;
+    uint32_t query_deadline_ms_ = 30;  // default 30ms deadline
 };
 
 } // namespace cxxime
