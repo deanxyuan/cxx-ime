@@ -142,6 +142,11 @@ bool Dict::load_user_dict(const std::string& path) {
     std::unique_lock<std::shared_mutex> lock(user_mutex_);
     user_entries_.clear();
     user_text_index_.clear();
+    user_exact_index_.clear();
+    user_prefix_index_.clear();
+    user_abbr_index_.clear();
+    user_mixed_index_.clear();
+    user_code_sorted_.clear();
 
     user_dict_path_ = path.empty() ? default_user_dict_path() : path;
     if (user_dict_path_.empty())
@@ -156,6 +161,7 @@ bool Dict::load_user_dict(const std::string& path) {
         char* text = strtok(line, "\t");
         char* code = strtok(nullptr, "\t");
         char* freq = strtok(nullptr, "\t\n");
+        char* syl = strtok(nullptr, "\n");
         if (!text || !code) continue;
 
         UserEntry e;
@@ -163,12 +169,21 @@ bool Dict::load_user_dict(const std::string& path) {
         e.code = code;
         e.frequency = freq ? atoi(freq) : 1;
         if (e.frequency < 1) e.frequency = 1;
+        if (syl) {
+            // Trim trailing whitespace/newline
+            std::string s(syl);
+            while (!s.empty() && (s.back() == '\r' || s.back() == '\n' || s.back() == ' '))
+                s.pop_back();
+            e.syllables = s;
+        }
 
-        size_t idx = user_entries_.size();
         user_entries_.push_back(std::move(e));
-        user_text_index_[text] = idx;
     }
     fclose(f);
+
+    // Rebuild all indexes
+    rebuild_user_indexes_locked();
+    user_dict_version_++;
 
     CXXIME_LOG(L"Dict::load_user_dict loaded %zu entries", user_entries_.size());
     return true;
@@ -187,13 +202,151 @@ bool Dict::save_user_dict() {
         return false;
 
     for (auto& e : user_entries_) {
-        fprintf(f, "%s\t%s\t%d\n", e.text.c_str(), e.code.c_str(), e.frequency);
+        if (e.deleted) continue;
+        if (e.syllables.empty())
+            fprintf(f, "%s\t%s\t%d\n", e.text.c_str(), e.code.c_str(), e.frequency);
+        else
+            fprintf(f, "%s\t%s\t%d\t%s\n", e.text.c_str(), e.code.c_str(), e.frequency, e.syllables.c_str());
     }
     fclose(f);
     user_dirty_ = false;
 
     CXXIME_LOG(L"Dict::save_user_dict saved %zu entries", user_entries_.size());
     return true;
+}
+
+// ─── Phase 5: User dictionary index helpers ───────────────────────
+
+// Generate abbreviation from colon-separated syllables: "shu:ru:fa" → "srf"
+static std::string make_abbr(const std::string& syllables) {
+    std::string abbr;
+    for (size_t i = 0; i < syllables.size(); ++i) {
+        if (i == 0 || syllables[i - 1] == ':')
+            abbr += syllables[i];
+    }
+    return abbr;
+}
+
+// Generate mixed key: full first syllable + first letters of rest
+// "shu:ru:fa" → "shurf"; "ni:hao" → "nih"; "de" → "de"
+static std::string make_mixed(const std::string& syllables) {
+    std::string mixed;
+    bool past_first = false;
+    for (size_t i = 0; i < syllables.size(); ++i) {
+        if (syllables[i] == ':') {
+            past_first = true;
+            continue;
+        }
+        if (!past_first) {
+            mixed += syllables[i];
+        } else if (i == 0 || syllables[i - 1] == ':') {
+            mixed += syllables[i];
+        }
+    }
+    return mixed;
+}
+
+void Dict::rebuild_user_indexes_locked() {
+    user_exact_index_.clear();
+    user_prefix_index_.clear();
+    user_abbr_index_.clear();
+    user_mixed_index_.clear();
+    user_code_sorted_.clear();
+    user_text_index_.clear();
+
+    for (size_t i = 0; i < user_entries_.size(); ++i) {
+        auto& e = user_entries_[i];
+        if (e.deleted) continue;
+        user_text_index_[e.text] = i;
+        insert_user_into_indexes((UserEntryId)i);
+    }
+
+    std::sort(user_code_sorted_.begin(), user_code_sorted_.end(),
+        [this](UserEntryId a, UserEntryId b) {
+            return user_entries_[a].code < user_entries_[b].code;
+        });
+}
+
+void Dict::insert_user_into_indexes(UserEntryId id) {
+    auto& e = user_entries_[id];
+    if (e.deleted) return;
+
+    // exact index
+    user_exact_index_[e.code].ids.push_back(id);
+
+    // prefix index (length 1..6)
+    size_t max_prefix = std::min<size_t>(e.code.size(), 6);
+    for (size_t len = 1; len <= max_prefix; ++len) {
+        user_prefix_index_[e.code.substr(0, len)].ids.push_back(id);
+    }
+
+    // abbr and mixed indexes (require syllables)
+    if (!e.syllables.empty()) {
+        std::string abbr = make_abbr(e.syllables);
+        if (!abbr.empty()) {
+            e.abbr_code = abbr;
+            user_abbr_index_[abbr].ids.push_back(id);
+        }
+        std::string mixed = make_mixed(e.syllables);
+        if (!mixed.empty() && mixed != abbr) {
+            user_mixed_index_[mixed].ids.push_back(id);
+        }
+    }
+
+    // code_sorted_ will be sorted by caller after bulk insert
+    user_code_sorted_.push_back(id);
+}
+
+void Dict::remove_user_from_indexes(UserEntryId id) {
+    auto& e = user_entries_[id];
+
+    // Remove from exact index
+    auto it = user_exact_index_.find(e.code);
+    if (it != user_exact_index_.end()) {
+        auto& ids = it->second.ids;
+        ids.erase(std::remove(ids.begin(), ids.end(), id), ids.end());
+        if (ids.empty()) user_exact_index_.erase(it);
+    }
+
+    // Remove from prefix index
+    size_t max_prefix = std::min<size_t>(e.code.size(), 6);
+    for (size_t len = 1; len <= max_prefix; ++len) {
+        std::string key = e.code.substr(0, len);
+        auto pit = user_prefix_index_.find(key);
+        if (pit != user_prefix_index_.end()) {
+            auto& ids = pit->second.ids;
+            ids.erase(std::remove(ids.begin(), ids.end(), id), ids.end());
+            if (ids.empty()) user_prefix_index_.erase(pit);
+        }
+    }
+
+    // Remove from abbr index
+    if (!e.abbr_code.empty()) {
+        auto ait = user_abbr_index_.find(e.abbr_code);
+        if (ait != user_abbr_index_.end()) {
+            auto& ids = ait->second.ids;
+            ids.erase(std::remove(ids.begin(), ids.end(), id), ids.end());
+            if (ids.empty()) user_abbr_index_.erase(ait);
+        }
+    }
+
+    // Remove from mixed index
+    if (!e.syllables.empty()) {
+        std::string mixed = make_mixed(e.syllables);
+        auto mit = user_mixed_index_.find(mixed);
+        if (mit != user_mixed_index_.end()) {
+            auto& ids = mit->second.ids;
+            ids.erase(std::remove(ids.begin(), ids.end(), id), ids.end());
+            if (ids.empty()) user_mixed_index_.erase(mit);
+        }
+    }
+
+    // Remove from code_sorted_
+    auto sit = std::find(user_code_sorted_.begin(), user_code_sorted_.end(), id);
+    if (sit != user_code_sorted_.end())
+        user_code_sorted_.erase(sit);
+
+    e.deleted = true;
 }
 
 void Dict::unload_dict() {
@@ -261,24 +414,20 @@ std::vector<Candidate> Dict::lookup_by_syllables(
         ++lo;
     }
 
-    // Also query user dict by concatenated code
+    // Phase 5: query user dict via exact index
     if ((int)results.size() < limit) {
         std::string concat_code;
         for (auto& s : syllables) concat_code += s;
 
-        std::shared_lock<std::shared_mutex> lock(user_mutex_);
-        for (auto& e : user_entries_) {
-            if (trace)
-                ++trace->user_scan_count;
-            if (e.code == concat_code) {
-                Candidate c;
-                c.text = e.text;
-                c.frequency = e.frequency;
-                if (seen.insert(c.text).second)
-                    results.push_back(std::move(c));
-                if ((int)results.size() >= limit)
-                    break;
-            }
+        QueryBudget ub;
+        UserLookupStats ustats;
+        auto user_results = lookup_user_exact(concat_code, limit - (int)results.size(),
+                                              ub, trace, &ustats);
+        for (auto& c : user_results) {
+            if (seen.insert(c.text).second)
+                results.push_back(std::move(c));
+            if ((int)results.size() >= limit)
+                break;
         }
     }
 
@@ -341,17 +490,14 @@ std::vector<Candidate> Dict::lookup(const std::string& code_prefix, int limit, Q
         ++lo;
     }
 
-    // Query user dict
+    // Phase 5: query user dict via prefix index
     {
-        std::shared_lock<std::shared_mutex> lock(user_mutex_);
-        for (auto& e : user_entries_) {
-            if (trace)
-                ++trace->user_scan_count;
-            if (e.code.size() >= prefix_len &&
-                std::memcmp(e.code.data(), prefix_data, prefix_len) == 0) {
-                Candidate c;
-                c.text = e.text;
-                c.frequency = e.frequency + 50000;  // user entries boost below exact matches
+        QueryBudget ub;
+        UserLookupStats ustats;
+        int remain = limit - (int)results.size();
+        if (remain > 0) {
+            auto user_results = lookup_user_prefix(code_prefix, remain, ub, trace, &ustats);
+            for (auto& c : user_results) {
                 if (seen.insert(c.text).second)
                     results.push_back(std::move(c));
                 if ((int)results.size() >= limit)
@@ -404,14 +550,36 @@ int Dict::count(const std::string& code_prefix, QueryTrace* trace) {
         ++lo;
     }
 
+    // Phase 5: count user dict via index
     {
         std::shared_lock<std::shared_mutex> lock(user_mutex_);
-        for (auto& e : user_entries_) {
+        if (code_prefix.size() <= 6) {
+            auto it = user_prefix_index_.find(code_prefix);
+            if (it != user_prefix_index_.end()) {
+                for (auto id : it->second.ids) {
+                    if (!user_entries_[id].deleted)
+                        ++result;
+                }
+                if (trace)
+                    trace->user_scan_count += (uint32_t)it->second.ids.size();
+            }
+        } else {
+            // Binary search user_code_sorted_ for prefix range
+            auto lo = std::lower_bound(user_code_sorted_.begin(), user_code_sorted_.end(),
+                code_prefix, [this](UserEntryId id, const std::string& val) {
+                    return user_entries_[id].code < val;
+                });
+            uint32_t scan = 0;
+            for (auto it = lo; it != user_code_sorted_.end(); ++it) {
+                auto& e = user_entries_[*it];
+                if (e.code.compare(0, code_prefix.size(), code_prefix) != 0)
+                    break;
+                if (!e.deleted)
+                    ++result;
+                ++scan;
+            }
             if (trace)
-                ++trace->user_scan_count;
-            if (e.code.size() >= prefix_len &&
-                std::memcmp(e.code.data(), prefix_data, prefix_len) == 0)
-                ++result;
+                trace->user_scan_count += scan;
         }
     }
 
@@ -423,7 +591,8 @@ std::string Dict::reverse_lookup(const std::string& text) {
     {
         std::shared_lock<std::shared_mutex> lock(user_mutex_);
         auto it = user_text_index_.find(text);
-        if (it != user_text_index_.end() && it->second < user_entries_.size())
+        if (it != user_text_index_.end() && it->second < user_entries_.size() &&
+            !user_entries_[it->second].deleted)
             return user_entries_[it->second].code;
     }
 
@@ -441,22 +610,277 @@ std::string Dict::reverse_lookup(const std::string& text) {
     return {};
 }
 
+bool Dict::has_user_entry(const std::string& text) const {
+    std::shared_lock<std::shared_mutex> lock(user_mutex_);
+    auto it = user_text_index_.find(text);
+    return it != user_text_index_.end() && it->second < user_entries_.size() &&
+           !user_entries_[it->second].deleted;
+}
+
 void Dict::update_frequency(const std::string& text, const std::string& code) {
+    // Best-effort: no syllables available from 2-arg call
+    update_frequency(text, code, "");
+}
+
+void Dict::update_frequency(const std::string& text, const std::string& code,
+                            const std::string& syllables) {
     std::unique_lock<std::shared_mutex> lock(user_mutex_);
 
     auto it = user_text_index_.find(text);
     if (it != user_text_index_.end() && it->second < user_entries_.size()) {
-        user_entries_[it->second].frequency++;
+        auto& e = user_entries_[it->second];
+        if (e.code != code) {
+            // Code changed: rebuild indexes for this entry
+            remove_user_from_indexes((UserEntryId)it->second);
+            e.code = code;
+            e.syllables = syllables;
+            e.deleted = false;
+            insert_user_into_indexes((UserEntryId)it->second);
+            // Re-sort code_sorted_ after modification
+            std::sort(user_code_sorted_.begin(), user_code_sorted_.end(),
+                [this](UserEntryId a, UserEntryId b) {
+                    return user_entries_[a].code < user_entries_[b].code;
+                });
+        }
+        e.frequency++;
+        e.sequence = ++user_sequence_;
+        // Update syllables if we got new info
+        if (!syllables.empty() && e.syllables.empty()) {
+            e.syllables = syllables;
+            // Re-insert to populate abbr/mixed indexes
+            remove_user_from_indexes((UserEntryId)it->second);
+            e.deleted = false;
+            insert_user_into_indexes((UserEntryId)it->second);
+            std::sort(user_code_sorted_.begin(), user_code_sorted_.end(),
+                [this](UserEntryId a, UserEntryId b) {
+                    return user_entries_[a].code < user_entries_[b].code;
+                });
+        }
     } else {
         UserEntry e;
         e.text = text;
         e.code = code;
+        e.syllables = syllables;
         e.frequency = 1;
+        e.sequence = ++user_sequence_;
         size_t idx = user_entries_.size();
         user_entries_.push_back(std::move(e));
         user_text_index_[text] = idx;
+        insert_user_into_indexes((UserEntryId)idx);
+        // Re-sort code_sorted_ after insert
+        std::sort(user_code_sorted_.begin(), user_code_sorted_.end(),
+            [this](UserEntryId a, UserEntryId b) {
+                return user_entries_[a].code < user_entries_[b].code;
+            });
     }
     user_dirty_ = true;
+    user_dict_version_++;
+}
+
+// ─── Phase 5: Indexed user dict query methods ─────────────────────
+
+std::vector<Candidate> Dict::lookup_user_exact(
+    const std::string& code, int limit,
+    const QueryBudget& budget, QueryTrace* trace, UserLookupStats* stats) const {
+    std::vector<Candidate> results;
+    std::shared_lock<std::shared_mutex> lock(user_mutex_);
+
+    auto it = user_exact_index_.find(code);
+    if (it == user_exact_index_.end())
+        return results;
+
+    for (auto id : it->second.ids) {
+        if (stats->scan_count >= budget.max_user_scan) {
+            stats->truncated = true;
+            break;
+        }
+        if (budget.deadline.enabled && budget.deadline.expired()) {
+            stats->deadline_exceeded = true;
+            stats->truncated = true;
+            break;
+        }
+        auto& e = user_entries_[id];
+        if (e.deleted) continue;
+        ++stats->scan_count;
+
+        Candidate c;
+        c.text = e.text;
+        uint64_t delta = user_sequence_ - e.sequence;
+        int recent_bonus = (delta <= 1000) ? (int)(1000 - delta) : 0;
+        c.frequency = 50000 + e.frequency + recent_bonus;
+        results.push_back(std::move(c));
+        if ((int)results.size() >= limit)
+            break;
+    }
+
+    std::sort(results.begin(), results.end(),
+        [](const Candidate& a, const Candidate& b) {
+            return a.frequency > b.frequency;
+        });
+    if (trace) {
+        trace->user_scan_count += stats->scan_count;
+        if (stats->truncated) trace->truncated = true;
+        if (stats->deadline_exceeded) trace->deadline_exceeded = true;
+    }
+    return results;
+}
+
+std::vector<Candidate> Dict::lookup_user_prefix(
+    const std::string& prefix, int limit,
+    const QueryBudget& budget, QueryTrace* trace, UserLookupStats* stats) const {
+    std::vector<Candidate> results;
+    std::shared_lock<std::shared_mutex> lock(user_mutex_);
+
+    if (prefix.size() <= 6) {
+        // Use prefix index
+        auto it = user_prefix_index_.find(prefix);
+        if (it == user_prefix_index_.end())
+            return results;
+
+        for (auto id : it->second.ids) {
+            if (stats->scan_count >= budget.max_user_scan) {
+                stats->truncated = true;
+                break;
+            }
+            if (budget.deadline.enabled && budget.deadline.expired()) {
+                stats->deadline_exceeded = true;
+                stats->truncated = true;
+                break;
+            }
+            auto& e = user_entries_[id];
+            if (e.deleted) continue;
+            ++stats->scan_count;
+
+            Candidate c;
+            c.text = e.text;
+            uint64_t delta = user_sequence_ - e.sequence;
+            int recent_bonus = (delta <= 1000) ? (int)(1000 - delta) : 0;
+            c.frequency = 50000 + e.frequency + recent_bonus;
+            results.push_back(std::move(c));
+            if ((int)results.size() >= limit)
+                break;
+        }
+    } else {
+        // Binary search user_code_sorted_ for prefix range
+        auto lo = std::lower_bound(user_code_sorted_.begin(), user_code_sorted_.end(),
+            prefix, [this](UserEntryId id, const std::string& val) {
+                return user_entries_[id].code < val;
+            });
+
+        for (auto it = lo; it != user_code_sorted_.end(); ++it) {
+            auto& e = user_entries_[*it];
+            if (e.code.compare(0, prefix.size(), prefix) != 0)
+                break;
+            if (stats->scan_count >= budget.max_user_scan) {
+                stats->truncated = true;
+                break;
+            }
+            if (budget.deadline.enabled && budget.deadline.expired()) {
+                stats->deadline_exceeded = true;
+                stats->truncated = true;
+                break;
+            }
+            if (e.deleted) continue;
+            ++stats->scan_count;
+
+            Candidate c;
+            c.text = e.text;
+            uint64_t delta = user_sequence_ - e.sequence;
+            int recent_bonus = (delta <= 1000) ? (int)(1000 - delta) : 0;
+            c.frequency = 50000 + e.frequency + recent_bonus;
+            results.push_back(std::move(c));
+            if ((int)results.size() >= limit)
+                break;
+        }
+    }
+
+    std::sort(results.begin(), results.end(),
+        [](const Candidate& a, const Candidate& b) {
+            return a.frequency > b.frequency;
+        });
+    if (trace) {
+        trace->user_scan_count += stats->scan_count;
+        if (stats->truncated) trace->truncated = true;
+        if (stats->deadline_exceeded) trace->deadline_exceeded = true;
+    }
+    return results;
+}
+
+std::vector<Candidate> Dict::lookup_user_short(
+    const std::string& key, int limit,
+    const QueryBudget& budget, QueryTrace* trace, UserLookupStats* stats) const {
+    std::vector<Candidate> results;
+    std::unordered_set<std::string> seen;
+    std::shared_lock<std::shared_mutex> lock(user_mutex_);
+
+    auto try_add = [&](UserEntryId id) -> bool {
+        if (stats->scan_count >= budget.max_user_scan) {
+            stats->truncated = true;
+            return false;
+        }
+        if (budget.deadline.enabled && budget.deadline.expired()) {
+            stats->deadline_exceeded = true;
+            stats->truncated = true;
+            return false;
+        }
+        auto& e = user_entries_[id];
+        if (e.deleted) return true;
+        ++stats->scan_count;
+        if (seen.insert(e.text).second) {
+            Candidate c;
+            c.text = e.text;
+            uint64_t delta = user_sequence_ - e.sequence;
+            int recent_bonus = (delta <= 1000) ? (int)(1000 - delta) : 0;
+            c.frequency = 50000 + e.frequency + recent_bonus;
+            results.push_back(std::move(c));
+        }
+        return (int)results.size() < limit;
+    };
+
+    // 1. Exact match
+    auto eit = user_exact_index_.find(key);
+    if (eit != user_exact_index_.end()) {
+        for (auto id : eit->second.ids)
+            if (!try_add(id)) break;
+    }
+
+    // 2. Prefix match (key length ≤ 6)
+    if ((int)results.size() < limit && key.size() <= 6) {
+        auto pit = user_prefix_index_.find(key);
+        if (pit != user_prefix_index_.end()) {
+            for (auto id : pit->second.ids)
+                if (!try_add(id)) break;
+        }
+    }
+
+    // 3. Abbreviation match
+    if ((int)results.size() < limit) {
+        auto ait = user_abbr_index_.find(key);
+        if (ait != user_abbr_index_.end()) {
+            for (auto id : ait->second.ids)
+                if (!try_add(id)) break;
+        }
+    }
+
+    // 4. Mixed match
+    if ((int)results.size() < limit) {
+        auto mit = user_mixed_index_.find(key);
+        if (mit != user_mixed_index_.end()) {
+            for (auto id : mit->second.ids)
+                if (!try_add(id)) break;
+        }
+    }
+
+    std::sort(results.begin(), results.end(),
+        [](const Candidate& a, const Candidate& b) {
+            return a.frequency > b.frequency;
+        });
+    if (trace) {
+        trace->user_scan_count += stats->scan_count;
+        if (stats->truncated) trace->truncated = true;
+        if (stats->deadline_exceeded) trace->deadline_exceeded = true;
+    }
+    return results;
 }
 
 bool Dict::create_test_dict(const std::string& path,

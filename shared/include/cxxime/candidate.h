@@ -22,6 +22,12 @@ struct CandidatePage {
     std::vector<Candidate> candidates;
 };
 
+// Phase 5: cache wrapper with user dict version for invalidation
+struct CachedCandidatePage {
+    uint64_t user_dict_version = 0;
+    CandidatePage page;
+};
+
 } // namespace cxxime
 
 #endif // CXXIME_CANDIDATE_H_

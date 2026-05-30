@@ -36,6 +36,7 @@ struct QueryDeadline {
 struct QueryBudget {
     uint32_t max_exact_scan = 512;      // 精确匹配最大扫描条目数
     uint32_t max_prefix_scan = 2048;    // 前缀匹配最大扫描条目数
+    uint32_t max_user_scan = 256;       // 用户词索引最大扫描条目数
     uint32_t max_results_before_merge = 64;  // TopK 容量（每次 lookup 的候选收集上限）
     uint32_t topk = 0;                  // translator 层合并容量上限（预留，当前未使用）
     QueryDeadline deadline;             // 时间预算
@@ -135,6 +136,7 @@ Dict::lookup_by_ids(budget, trace)
 | Dict 循环前 | `dict.cc` | 跳过扫描 | 设置 `deadline_exceeded` + `truncated` |
 | 精确扫描中 | `dict.cc` 每 check_interval 条 | 中断扫描 | 设置 `deadline_exceeded` + `truncated` |
 | 前缀扫描中 | `dict.cc` 每 check_interval 条 | 中断扫描 | 设置 `deadline_exceeded` + `truncated` |
+| 用户词索引扫描中 | `dict.cc` lookup_user_* 方法 | 中断扫描 | 设置 `deadline_exceeded` + `truncated` |
 
 > deadline 到期时**同时设置** `deadline_exceeded=true` 和 `truncated=true`。
 
@@ -175,8 +177,9 @@ return collector.finish()  // 已排序，大小 ≤ limit
 truncated = true 当且仅当以下任一条件成立：
 1. exact scan 达到 make_budget() 分配的 max_exact_scan
 2. prefix scan 达到 make_budget() 分配的 max_prefix_scan
-3. seen set（去重表）达到 max_results_before_merge * 2 容量上限
-4. deadline_exceeded（时间预算耗尽）
+3. user scan 达到 max_user_scan（默认 256）
+4. seen set（去重表）达到 max_results_before_merge * 2 容量上限
+5. deadline_exceeded（时间预算耗尽）
 ```
 
 ### 不触发场景

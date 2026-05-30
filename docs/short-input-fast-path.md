@@ -2,7 +2,7 @@
 
 ## 概述
 
-短输入（1–6 小写字母，如 `s`、`sd`、`bj`、`srf`、`nihao`）是生产输入法中最常见的场景。标准查询管道需要 Syllabifier 路径枚举 + 多次 dict scan，延迟在毫秒级。快速路径在 Syllabifier 之前插入一层内存缓存查询，命中时完全跳过路径枚举和词典扫描，将延迟降至个位数微秒。
+短输入（1–6 小写字母，如 `s`、`sd`、`bj`、`srf`、`nihao`）是生产输入法中最常见的场景。标准查询管道需要 Syllabifier 路径枚举 + 多次 dict scan，延迟在毫秒级。快速路径在 Syllabifier 之前插入三层内存查询，命中时完全跳过路径枚举和词典扫描，将延迟降至个位数微秒。
 
 ## 架构
 
@@ -21,7 +21,10 @@ PinyinTranslator::translate()
   │       ├─ 1. Session Recent Cache (内存, 每 session)
   │       │     最近用户选词/提交的候选, LRU 淘汰
   │       │
-  │       └─ 2. ShortCodeCache (pinyin.topn.bin, 预构建)
+  │       ├─ 2. User Dict Short Index (内存多路索引)
+  │       │     用户词 exact/prefix/abbr/mixed 索引查询
+  │       │
+  │       └─ 3. ShortCodeCache (pinyin.topn.bin, 预构建)
   │             离线生成的 Top-N 候选索引, 二分查找
   │       │
   │       ▼
@@ -148,8 +151,9 @@ struct RecentCandidate {
 
 `lookup_short_fast()` 内部：
 1. Session Recent Cache（最高优先级, 用户个性化）
-2. ShortCodeCache（预构建 Top-N）
-3. 按 text 去重, 合并为候选列表
+2. User Dict Short Index（用户词多路索引: exact → prefix → abbr → mixed）
+3. ShortCodeCache（预构建 Top-N）
+4. 按 text 去重, 合并为候选列表
 
 ## Translator 集成
 
@@ -184,10 +188,19 @@ bool is_short_key(const std::string& pinyin) {
 ### 合并规则
 
 1. Session recent 候选优先
-2. ShortCodeCache 候选按构建时 score 排序
-3. 标准管道 (bounded dict lookup) 只用于补足缺失候选
-4. 按 `Candidate.text` 去重
-5. 缓存候选超过当前页时设置 `truncated=true`
+2. User dict short index 候选（按 `user_boost + frequency + recent_bonus` 评分）
+3. ShortCodeCache 候选按构建时 score 排序
+4. 标准管道 (bounded dict lookup) 只用于补足缺失候选
+5. 按 `Candidate.text` 去重
+6. 缓存候选超过当前页时设置 `truncated=true`
+
+### 用户词版本过滤
+
+Session recent cache 中的用户词候选在以下情况被过滤：
+- `user_dict_version` 发生变化（用户词典被重新加载或更新）
+- 候选 text 在当前用户词典中已不存在或被标记 `deleted`（`has_user_entry()` 返回 false）
+
+过滤在 `translate()` 开头执行，确保 stale 用户词不会出现在候选列表中。
 
 ## Trace 语义
 
@@ -206,6 +219,7 @@ bool is_short_key(const std::string& pinyin) {
 cache_hit = true
 exact_scan_count = 0
 prefix_scan_count = 0
+user_scan_count = 0        (用户词索引命中空 bucket 或无用户词)
 deadline_exceeded = false
 syllable_path_count = 0    (Syllabifier 未调用)
 live_path_count = 0
@@ -226,9 +240,9 @@ live_path_count = 0
 | `engine/include/cxxime/short_code_cache.h` | ShortCodeCache 类声明 + ShortKeyFlag 枚举 |
 | `engine/src/short_code_cache.cc` | 加载、校验、二分查询、create_test_cache |
 | `scripts/build_short_cache.py` | 离线构建 pinyin.topn.bin |
-| `engine/include/cxxime/dict.h` | ShortCodeCache 成员 + getter |
-| `engine/src/dict.cc` | open_dict() 加载 topn.bin |
+| `engine/include/cxxime/dict.h` | ShortCodeCache 成员 + getter, 用户词索引结构 |
+| `engine/src/dict.cc` | open_dict() 加载 topn.bin, 用户词索引构建与查询 |
 | `engine/include/cxxime/translator.h` | RecentCandidate 结构体, update_recent(), is_short_key() |
-| `engine/src/pinyin_translator.cc` | 快速路径入口, 合并逻辑, session recent 管理 |
+| `engine/src/pinyin_translator.cc` | 快速路径入口, 合并逻辑, session recent 管理, 用户词版本过滤 |
 | `engine/src/engine.cc` | select/commit 时更新 recent cache |
 | `test/short_cache_test.cc` | 单元测试 (9 cases) |
