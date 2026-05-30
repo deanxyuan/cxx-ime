@@ -446,7 +446,7 @@ cxx-ime v0.1.0 已完成 MVP 交付，Engine 模块为核心亮点：
 ## 14. 相关文档
 
 - [候选词选词算法](candidate-selection.md) — 查询管道与路径枚举
-- [查询预算与 Deadline](query-budget.md) — QueryBudget、扫描限制、超时检查点
+- [查询预算与候选收集](query-control.md) — QueryBudget、TopKCollector、扫描限制、超时检查点
 - [中英文切换设计](ascii-composer.md) — AsciiComposer 可配置切换机制
 - [词典架构设计](dict-architecture.md) — 三层架构与二进制格式
 - [词典系统设计](dictionary.md) — 二进制加载与查询流程

@@ -35,6 +35,8 @@ struct IterationData {
     uint32_t user_scan = 0;
     int syllable_paths = 0;
     int live_paths = 0;
+    bool truncated = false;
+    bool deadline_exceeded = false;
 };
 
 struct BenchmarkResult {
@@ -124,6 +126,8 @@ static IterationData run_iteration(cxxime::Engine& engine, const std::string& in
     data.user_scan = trace.user_scan_count;
     data.syllable_paths = trace.syllable_path_count;
     data.live_paths = trace.live_path_count;
+    data.truncated = trace.truncated;
+    data.deadline_exceeded = trace.deadline_exceeded;
 
     return data;
 }
@@ -165,7 +169,7 @@ static uint32_t percentile_u32(const std::vector<uint32_t>& sorted, double p) {
 
 static void print_results(const std::vector<BenchmarkResult>& results) {
     // Header
-    std::cout << "Input                e2e_p50  e2e_p95  e2e_p99  max_us   qry_p50  qry_p95  cands  exact_p95  prefix_p95  user_p95  paths\n";
+    std::cout << "Input                e2e_p50  e2e_p95  e2e_p99  max_us   qry_p50  qry_p95  cands  exact_p95  prefix_p95  user_p95  paths  trunc%  deadline%\n";
 
     for (const auto& r : results) {
         // Collect per-iteration values
@@ -173,6 +177,8 @@ static void print_results(const std::vector<BenchmarkResult>& results) {
         std::vector<uint32_t> exact_scans, prefix_scans, user_scans;
         int last_cands = 0;
         int last_paths = 0;
+        int trunc_count = 0;
+        int deadline_count = 0;
 
         for (const auto& it : r.iterations) {
             e2e_us.push_back(it.end_to_end_us);
@@ -182,6 +188,8 @@ static void print_results(const std::vector<BenchmarkResult>& results) {
             user_scans.push_back(it.user_scan);
             last_cands = it.candidate_count;
             last_paths = it.live_paths;
+            if (it.truncated) ++trunc_count;
+            if (it.deadline_exceeded) ++deadline_count;
         }
 
         std::sort(e2e_us.begin(), e2e_us.end());
@@ -190,7 +198,8 @@ static void print_results(const std::vector<BenchmarkResult>& results) {
         std::sort(prefix_scans.begin(), prefix_scans.end());
         std::sort(user_scans.begin(), user_scans.end());
 
-        printf("%-20s %8lld %8lld %8lld %8lld %8lld %8lld %6d %10u %11u %9u %6d\n",
+        int n = (int)r.iterations.size();
+        printf("%-20s %8lld %8lld %8lld %8lld %8lld %8lld %6d %10u %11u %9u %6d %6.1f%% %8.1f%%\n",
                r.input.c_str(),
                percentile_i64(e2e_us, 0.50),
                percentile_i64(e2e_us, 0.95),
@@ -202,7 +211,9 @@ static void print_results(const std::vector<BenchmarkResult>& results) {
                percentile_u32(exact_scans, 0.95),
                percentile_u32(prefix_scans, 0.95),
                percentile_u32(user_scans, 0.95),
-               last_paths);
+               last_paths,
+               n > 0 ? 100.0 * trunc_count / n : 0.0,
+               n > 0 ? 100.0 * deadline_count / n : 0.0);
     }
 }
 
@@ -224,6 +235,8 @@ static void write_jsonl(const std::string& path, const std::vector<BenchmarkResu
               << ",\"user_scan\":" << it.user_scan
               << ",\"syllable_paths\":" << it.syllable_paths
               << ",\"live_paths\":" << it.live_paths
+              << ",\"truncated\":" << (it.truncated ? "true" : "false")
+              << ",\"deadline_exceeded\":" << (it.deadline_exceeded ? "true" : "false")
               << "}\n";
         }
     }

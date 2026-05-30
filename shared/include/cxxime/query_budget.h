@@ -15,6 +15,8 @@ struct QueryBudget {
     uint32_t max_exact_scan = 512;
     uint32_t max_prefix_scan = 2048;
     uint32_t max_user_scan = 512;
+    uint32_t max_results_before_merge = 64;  // cap collected candidates per lookup (dict layer)
+    uint32_t topk = 0;                       // translator 层合并总容量上限，0 = 不限制
 
     // Set by Engine at query start — used by expired()
     int64_t start_qpc = 0;
@@ -26,6 +28,17 @@ struct QueryBudget {
         return elapsed_us >= deadline_us;
     }
 };
+
+// Create a budget tuned for the given input length and page size.
+inline QueryBudget make_budget(int input_len, int page_size) {
+    QueryBudget b;
+    if (input_len <= 1)      { b.max_exact_scan = 128;  b.max_prefix_scan = 512;  b.max_results_before_merge = 32; }
+    else if (input_len <= 2) { b.max_exact_scan = 256;  b.max_prefix_scan = 1024; b.max_results_before_merge = 48; }
+    else if (input_len <= 4) { b.max_exact_scan = 512;  b.max_prefix_scan = 2048; b.max_results_before_merge = 64; }
+    else                     { b.max_exact_scan = 1024; b.max_prefix_scan = 4096; b.max_results_before_merge = 96; }
+    b.topk = (uint32_t)page_size;
+    return b;
+}
 
 } // namespace cxxime
 

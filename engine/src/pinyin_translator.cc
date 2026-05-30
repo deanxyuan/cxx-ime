@@ -4,6 +4,7 @@
 #include <cxxime/syllabifier.h>
 #include <cxxime/query_trace.h>
 #include <cxxime/query_budget.h>
+#include <cxxime/topk_collector.h>
 #include <algorithm>
 #include <set>
 #include <unordered_set>
@@ -102,9 +103,11 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
     if (trace)
         trace->live_path_count = (int)live_ids.size();
 
-    // Dedup and query
-    std::vector<Candidate> merged;
-    merged.reserve(live_ids.size() * (size_t)fetch_limit);
+    // Dedup and query — use TopKCollector to cap merged results.
+    // Capacity = offset + fetch_limit (required for pagination).
+    // Dict-level TopK (max_results_before_merge) limits per-path candidates.
+    size_t topk_cap = (size_t)(offset + fetch_limit);
+    TopKCollector merged(topk_cap);
     std::unordered_set<std::string> seen_text;
     std::set<std::vector<uint32_t>> seen_ids;
 
@@ -122,21 +125,20 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
         auto candidates = dict_->lookup_by_ids(ids, offset + fetch_limit, trace, budget);
         for (auto& c : candidates) {
             if (seen_text.insert(c.text).second)
-                merged.push_back(std::move(c));
+                merged.offer(std::move(c));
         }
     }
 
-    // Sort merged results by frequency (cross-path merge)
-    std::sort(merged.begin(), merged.end(),
-        [](const Candidate& a, const Candidate& b) { return a.frequency > b.frequency; });
+    // finish() sorts by frequency descending
+    auto sorted = merged.finish();
 
     // Apply pagination
-    if (offset > 0 && offset < (int)merged.size())
-        merged.erase(merged.begin(), merged.begin() + offset);
-    if ((int)merged.size() > fetch_limit)
-        merged.resize(fetch_limit);
+    if (offset > 0 && offset < (int)sorted.size())
+        sorted.erase(sorted.begin(), sorted.begin() + offset);
+    if ((int)sorted.size() > fetch_limit)
+        sorted.resize(fetch_limit);
 
-    page.candidates = std::move(merged);
+    page.candidates = std::move(sorted);
     if (!page.candidates.empty())
         page.highlighted = 0;
 
