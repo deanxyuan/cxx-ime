@@ -34,6 +34,7 @@ public:
 
     size_t size() const { return items_.size(); }
     bool full() const { return k_ > 0 && items_.size() >= k_; }
+    const std::vector<Candidate>& items() const { return items_; }
 
     // Sort by frequency descending and move results out.
     std::vector<Candidate> finish() {

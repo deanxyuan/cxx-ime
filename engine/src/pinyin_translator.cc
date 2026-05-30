@@ -6,11 +6,24 @@
 #include <cxxime/query_trace.h>
 #include <cxxime/query_budget.h>
 #include <cxxime/topk_collector.h>
+#include <cxxime/query_scratch.h>
 #include <algorithm>
-#include <set>
-#include <unordered_set>
 
 namespace cxxime {
+
+// Linear dedup helpers — cheaper than hash set for small collections (≤128)
+static bool contains_text(const std::vector<Candidate>& items, const std::string& text) {
+    for (auto& c : items)
+        if (c.text == text) return true;
+    return false;
+}
+
+static bool contains_ids(const std::vector<std::vector<uint32_t>>& items,
+                         const std::vector<uint32_t>& ids) {
+    for (auto& v : items)
+        if (v == ids) return true;
+    return false;
+}
 
 void PinyinTranslator::set_dict(Dict* dict) {
     dict_ = dict;
@@ -85,18 +98,17 @@ void PinyinTranslator::update_recent(const std::string& key, const Candidate& ca
 PinyinTranslator::ShortFastResult PinyinTranslator::lookup_short_fast(
     const std::string& key, int limit, QueryTrace* trace) const {
     ShortFastResult result;
-    std::unordered_set<std::string> seen;
 
     // 1. Session recent cache (highest priority)
     // Phase 5: filter entries whose user dict entry has been deleted
     uint64_t current_version = dict_ ? dict_->user_dict_version() : 0;
     bool version_changed = (current_version != cached_user_dict_version_);
     for (auto& rc : recent_cache_) {
-        if (rc.key == key && seen.size() < (size_t)limit) {
+        if (rc.key == key && (int)result.candidates.size() < limit) {
             // Skip if user dict entry was deleted since this was cached
             if (version_changed && dict_ && !dict_->has_user_entry(rc.candidate.text))
                 continue;
-            if (seen.insert(rc.candidate.text).second)
+            if (!contains_text(result.candidates, rc.candidate.text))
                 result.candidates.push_back(rc.candidate);
         }
     }
@@ -110,9 +122,9 @@ PinyinTranslator::ShortFastResult PinyinTranslator::lookup_short_fast(
         UserLookupStats ustats;
         auto user_results = dict_->lookup_user_short(key, limit, ub, trace, &ustats);
         for (auto& c : user_results) {
-            if (seen.size() >= (size_t)limit)
+            if ((int)result.candidates.size() >= limit)
                 break;
-            if (seen.insert(c.text).second)
+            if (!contains_text(result.candidates, c.text))
                 result.candidates.push_back(std::move(c));
         }
     }
@@ -121,9 +133,9 @@ PinyinTranslator::ShortFastResult PinyinTranslator::lookup_short_fast(
     if (short_cache_ && short_cache_->is_loaded()) {
         auto cached = short_cache_->lookup(key, limit, trace);
         for (auto& c : cached) {
-            if (seen.size() >= (size_t)limit)
+            if ((int)result.candidates.size() >= limit)
                 break;
-            if (seen.insert(c.text).second)
+            if (!contains_text(result.candidates, c.text))
                 result.candidates.push_back(std::move(c));
         }
     }
@@ -133,7 +145,8 @@ PinyinTranslator::ShortFastResult PinyinTranslator::lookup_short_fast(
 }
 
 CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_index, int page_size,
-                                           QueryTrace* trace, const QueryBudget* budget) {
+                                           QueryTrace* trace, const QueryBudget* budget,
+                                           QueryScratch* scratch) {
     CandidatePage page;
     page.page_index = page_index;
     page.page_size = page_size;
@@ -174,8 +187,10 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
         // then fall through to bounded lookup for remaining candidates.
     }
 
-    // Collect syllable ID sequences to try
-    std::vector<std::vector<uint32_t>> id_sequences;
+    // Collect syllable ID sequences to try (use scratch if available)
+    QueryScratch local_scratch;
+    QueryScratch& scr = scratch ? *scratch : local_scratch;
+    auto& id_sequences = scr.id_sequences;
 
     auto add_path = [&](const std::vector<std::string>& syllables) {
         if (syllables.empty()) return;
@@ -233,7 +248,7 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
         trace->syllable_path_count = (int)id_sequences.size();
 
     // Filter: only keep paths that actually have dict entries
-    std::vector<std::vector<uint32_t>> live_ids;
+    auto& live_ids = scr.live_ids;
     live_ids.reserve(id_sequences.size());
     for (auto& ids : id_sequences) {
         // Check deadline before each has_prefix (syllabifier may have consumed most of the budget)
@@ -257,22 +272,24 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
     // Dict-level TopK (max_results_before_merge) limits per-path candidates.
     size_t topk_cap = (size_t)(offset + fetch_limit);
     TopKCollector merged(topk_cap);
-    std::unordered_set<std::string> seen_text;
-    std::set<std::vector<uint32_t>> seen_ids;
 
     // Phase 4: seed collector with fast-path candidates (dedup by text)
     if (fast.hit) {
         for (auto& c : fast.candidates) {
-            if (seen_text.insert(c.text).second) {
+            if (!contains_text(merged.items(), c.text)) {
                 Candidate copy = c;
                 merged.offer(std::move(copy));
             }
         }
     }
 
+    // Track processed ID sequences for dedup (small N, linear scan is fine)
+    std::vector<std::vector<uint32_t>> processed_ids;
+
     for (auto& ids : live_ids) {
-        if (!seen_ids.insert(ids).second)
+        if (contains_ids(processed_ids, ids))
             continue;
+        processed_ids.push_back(ids);
         // Check deadline before each lookup_by_ids
         if (budget && budget->deadline.expired()) {
             if (trace) {
@@ -283,7 +300,7 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
         }
         auto candidates = dict_->lookup_by_ids(ids, offset + fetch_limit, trace, budget);
         for (auto& c : candidates) {
-            if (seen_text.insert(c.text).second)
+            if (!contains_text(merged.items(), c.text))
                 merged.offer(std::move(c));
         }
     }

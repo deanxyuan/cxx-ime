@@ -111,7 +111,7 @@ void SpellingsIndex::unload() {
 // v2 trie prefix search: O(k) walk
 static std::vector<SpellingMatch> trie_prefix_search(
     const char* nodes, const char* strings, const uint32_t* node_offsets,
-    uint32_t node_count, const std::string& prefix) {
+    uint32_t node_count, std::string_view prefix) {
 
     std::vector<SpellingMatch> results;
     const uint32_t prefix_len = (uint32_t)prefix.size();
@@ -172,7 +172,7 @@ static std::vector<SpellingMatch> trie_prefix_search(
 // v1 flat array prefix search: binary search + scan
 static std::vector<SpellingMatch> flat_prefix_search(
     const SpellingEntryV1* entries, uint32_t entry_count,
-    const char* strings, const std::string& prefix) {
+    const char* strings, std::string_view prefix) {
 
     std::vector<SpellingMatch> results;
     const uint32_t prefix_len = (uint32_t)prefix.size();
@@ -210,7 +210,7 @@ static std::vector<SpellingMatch> flat_prefix_search(
     return results;
 }
 
-std::vector<SpellingMatch> SpellingsIndex::prefix_search(const std::string& prefix) const {
+std::vector<SpellingMatch> SpellingsIndex::prefix_search(std::string_view prefix) const {
     if (!data_ || prefix.empty())
         return {};
 

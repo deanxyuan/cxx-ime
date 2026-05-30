@@ -7,6 +7,7 @@
 
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <vector>
 #include <memory>
 
@@ -83,7 +84,7 @@ public:
     bool has_spellings() const { return node_count_ > 0; }
 
     // O(k) trie walk: returns all spellings where the stored key is a prefix of `prefix`.
-    std::vector<SpellingMatch> prefix_search(const std::string& prefix) const;
+    std::vector<SpellingMatch> prefix_search(std::string_view prefix) const;
 
     // For tests: create a v2 trie binary file from entries
     static bool create_test_trie(const std::string& path,

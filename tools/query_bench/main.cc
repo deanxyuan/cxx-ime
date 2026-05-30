@@ -22,6 +22,7 @@ struct BenchmarkConfig {
     int warmup = 100;
     int page_size = 7;
     int deadline_ms = 30;
+    bool trace_log = false;
     std::string json_output;
 };
 
@@ -37,6 +38,7 @@ struct IterationData {
     int live_paths = 0;
     bool truncated = false;
     bool deadline_exceeded = false;
+    bool should_log = false;
 };
 
 struct BenchmarkResult {
@@ -54,6 +56,7 @@ static void print_usage(const char* prog) {
               << "  --warmup <n>        Warmup count (default: 100)\n"
               << "  --page-size <n>     Page size (default: 7)\n"
               << "  --deadline-ms <n>   Deadline in ms (default: 30)\n"
+              << "  --trace-log         Show should_log() trigger rate\n"
               << "  --json <path>       Output JSONL trace file\n"
               << "  --help              Show this help\n";
 }
@@ -92,6 +95,8 @@ static BenchmarkConfig parse_args(int argc, char* argv[]) {
             config.page_size = std::atoi(argv[++i]);
         } else if (arg == "--deadline-ms" && i + 1 < argc) {
             config.deadline_ms = std::atoi(argv[++i]);
+        } else if (arg == "--trace-log") {
+            config.trace_log = true;
         } else if (arg == "--json" && i + 1 < argc) {
             config.json_output = argv[++i];
         } else if (arg == "--help") {
@@ -128,6 +133,7 @@ static IterationData run_iteration(cxxime::Engine& engine, const std::string& in
     data.live_paths = trace.live_path_count;
     data.truncated = trace.truncated;
     data.deadline_exceeded = trace.deadline_exceeded;
+    data.should_log = trace.should_log();
 
     return data;
 }
@@ -167,9 +173,12 @@ static uint32_t percentile_u32(const std::vector<uint32_t>& sorted, double p) {
     return sorted[std::min(idx, sorted.size() - 1)];
 }
 
-static void print_results(const std::vector<BenchmarkResult>& results) {
+static void print_results(const std::vector<BenchmarkResult>& results, bool show_log_rate) {
     // Header
-    std::cout << "Input                e2e_p50  e2e_p95  e2e_p99  max_us   qry_p50  qry_p95  cands  exact_p95  prefix_p95  user_p95  paths  trunc%  deadline%\n";
+    if (show_log_rate)
+        std::cout << "Input                e2e_p50  e2e_p95  e2e_p99  max_us   qry_p50  qry_p95  cands  exact_p95  prefix_p95  user_p95  paths  trunc%  deadline%  log%\n";
+    else
+        std::cout << "Input                e2e_p50  e2e_p95  e2e_p99  max_us   qry_p50  qry_p95  cands  exact_p95  prefix_p95  user_p95  paths  trunc%  deadline%\n";
 
     for (const auto& r : results) {
         // Collect per-iteration values
@@ -179,6 +188,7 @@ static void print_results(const std::vector<BenchmarkResult>& results) {
         int last_paths = 0;
         int trunc_count = 0;
         int deadline_count = 0;
+        int log_count = 0;
 
         for (const auto& it : r.iterations) {
             e2e_us.push_back(it.end_to_end_us);
@@ -190,6 +200,7 @@ static void print_results(const std::vector<BenchmarkResult>& results) {
             last_paths = it.live_paths;
             if (it.truncated) ++trunc_count;
             if (it.deadline_exceeded) ++deadline_count;
+            if (it.should_log) ++log_count;
         }
 
         std::sort(e2e_us.begin(), e2e_us.end());
@@ -199,21 +210,40 @@ static void print_results(const std::vector<BenchmarkResult>& results) {
         std::sort(user_scans.begin(), user_scans.end());
 
         int n = (int)r.iterations.size();
-        printf("%-20s %8lld %8lld %8lld %8lld %8lld %8lld %6d %10u %11u %9u %6d %6.1f%% %8.1f%%\n",
-               r.input.c_str(),
-               percentile_i64(e2e_us, 0.50),
-               percentile_i64(e2e_us, 0.95),
-               percentile_i64(e2e_us, 0.99),
-               e2e_us.empty() ? 0LL : e2e_us.back(),
-               percentile_i64(qry_us, 0.50),
-               percentile_i64(qry_us, 0.95),
-               last_cands,
-               percentile_u32(exact_scans, 0.95),
-               percentile_u32(prefix_scans, 0.95),
-               percentile_u32(user_scans, 0.95),
-               last_paths,
-               n > 0 ? 100.0 * trunc_count / n : 0.0,
-               n > 0 ? 100.0 * deadline_count / n : 0.0);
+        if (show_log_rate) {
+            printf("%-20s %8lld %8lld %8lld %8lld %8lld %8lld %6d %10u %11u %9u %6d %6.1f%% %8.1f%% %6.1f%%\n",
+                   r.input.c_str(),
+                   percentile_i64(e2e_us, 0.50),
+                   percentile_i64(e2e_us, 0.95),
+                   percentile_i64(e2e_us, 0.99),
+                   e2e_us.empty() ? 0LL : e2e_us.back(),
+                   percentile_i64(qry_us, 0.50),
+                   percentile_i64(qry_us, 0.95),
+                   last_cands,
+                   percentile_u32(exact_scans, 0.95),
+                   percentile_u32(prefix_scans, 0.95),
+                   percentile_u32(user_scans, 0.95),
+                   last_paths,
+                   n > 0 ? 100.0 * trunc_count / n : 0.0,
+                   n > 0 ? 100.0 * deadline_count / n : 0.0,
+                   n > 0 ? 100.0 * log_count / n : 0.0);
+        } else {
+            printf("%-20s %8lld %8lld %8lld %8lld %8lld %8lld %6d %10u %11u %9u %6d %6.1f%% %8.1f%%\n",
+                   r.input.c_str(),
+                   percentile_i64(e2e_us, 0.50),
+                   percentile_i64(e2e_us, 0.95),
+                   percentile_i64(e2e_us, 0.99),
+                   e2e_us.empty() ? 0LL : e2e_us.back(),
+                   percentile_i64(qry_us, 0.50),
+                   percentile_i64(qry_us, 0.95),
+                   last_cands,
+                   percentile_u32(exact_scans, 0.95),
+                   percentile_u32(prefix_scans, 0.95),
+                   percentile_u32(user_scans, 0.95),
+                   last_paths,
+                   n > 0 ? 100.0 * trunc_count / n : 0.0,
+                   n > 0 ? 100.0 * deadline_count / n : 0.0);
+        }
     }
 }
 
@@ -237,6 +267,7 @@ static void write_jsonl(const std::string& path, const std::vector<BenchmarkResu
               << ",\"live_paths\":" << it.live_paths
               << ",\"truncated\":" << (it.truncated ? "true" : "false")
               << ",\"deadline_exceeded\":" << (it.deadline_exceeded ? "true" : "false")
+              << ",\"should_log\":" << (it.should_log ? "true" : "false")
               << "}\n";
         }
     }
@@ -298,7 +329,7 @@ int main(int argc, char* argv[]) {
 
     // Print results
     std::cout << "\n";
-    print_results(results);
+    print_results(results, config.trace_log);
 
     // Write JSONL if requested
     if (!config.json_output.empty()) {

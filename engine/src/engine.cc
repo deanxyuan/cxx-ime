@@ -8,22 +8,7 @@
 namespace cxxime {
 
 // Static member for global query ID generation
-uint64_t Engine::next_query_id_ = 0;
-
-// Deterministic sampling for release builds (1% rate)
-static inline uint64_t mix64(uint64_t x) {
-    x ^= x >> 30;
-    x *= 0xbf58476d1ce4e5b9ULL;
-    x ^= x >> 27;
-    x *= 0x94d049bb133111ebULL;
-    x ^= x >> 31;
-    return x;
-}
-
-static bool should_sample(uint64_t session_id, uint64_t revision) {
-    uint64_t h = mix64((session_id << 32) ^ revision);
-    return (h % 100) == 0; // 1%
-}
+std::atomic<uint64_t> Engine::next_query_id_{0};
 
 // Self-contained: owns all resources (tests/tools).
 bool Engine::initialize(const std::string& dict_path, const std::string& config_path) {
@@ -85,11 +70,14 @@ ProcessResult Engine::process_key(const KeyEvent& event) {
         uint32_t saved_session_id = trace_.session_id;
         uint64_t saved_revision = trace_.revision;
         trace_ = QueryTrace{};
-        trace_.query_id = next_query_id_++;
+        trace_.query_id = next_query_id_.fetch_add(1, std::memory_order_relaxed);
         trace_.session_id = saved_session_id;
         trace_.revision = saved_revision;
         total_start = std::chrono::steady_clock::now();
     }
+
+    // Reset scratch buffer for this query
+    scratch_.reset_for_query();
 
     // Create per-query deadline (Phase 3: QueryDeadline with expires_at)
     QueryDeadline per_query_deadline = QueryDeadline::from_now(query_deadline_ms_);
@@ -197,7 +185,7 @@ ProcessResult Engine::process_key(const KeyEvent& event) {
             QueryBudget effective_budget = make_budget((int)context_.pinyin_buffer.size(), config_->page_size);
             effective_budget.deadline = per_query_deadline;
             auto page = translator_.translate(context_.pinyin_buffer, context_.page_index, config_->page_size,
-                                              trace_enabled_ ? &trace_ : nullptr, &effective_budget);
+                                              trace_enabled_ ? &trace_ : nullptr, &effective_budget, &scratch_);
             context_.update_candidates(std::move(page));
         }
         if (trace_enabled_) {
@@ -232,11 +220,6 @@ ProcessResult Engine::process_key(const KeyEvent& event) {
     if (trace_enabled_) {
         auto total_end = std::chrono::steady_clock::now();
         trace_.total_us = std::chrono::duration_cast<std::chrono::microseconds>(total_end - total_start).count();
-
-        // Only log slow queries and sampled queries (async, non-blocking)
-        if (trace_.should_log()) {
-            trace_.log();
-        }
     }
 
     return result;

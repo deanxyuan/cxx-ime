@@ -58,7 +58,8 @@ private:
                          SyllablePath& current,
                          std::vector<std::pair<SyllablePath, float>>& results,
                          const QueryDeadline* deadline,
-                         uint32_t& path_count) const;
+                         uint32_t& path_count,
+                         std::vector<std::pair<size_t, std::vector<SyllableEdge>>>& sorted_scratch) const;
 };
 
 } // namespace cxxime

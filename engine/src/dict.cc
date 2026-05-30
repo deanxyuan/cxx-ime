@@ -8,7 +8,6 @@
 #include <cstring>
 #include <cstdio>
 #include <algorithm>
-#include <unordered_set>
 #include <windows.h>
 #include <shlobj.h>
 #include <cxxime/logging.h>
@@ -17,6 +16,13 @@ static const char DICT_MAGIC_V1[] = "CXDIC\x01\x00\x00";
 static const char DICT_MAGIC_V2[] = "CXDIC\x02\x00\x00";
 
 namespace cxxime {
+
+// Linear dedup — cheaper than hash set for bounded result vectors (≤128)
+static bool contains_text(const std::vector<Candidate>& items, const std::string& text) {
+    for (auto& c : items)
+        if (c.text == text) return true;
+    return false;
+}
 
 Dict::~Dict() {
     close();
@@ -395,7 +401,6 @@ std::vector<Candidate> Dict::lookup_by_syllables(
     }
 
     // Collect all entries with matching syllable_ids (SQL already sorted by freq desc)
-    std::unordered_set<std::string> seen;
     while (lo < dict_entry_count_) {
         const auto& e = dict_entries_[lo];
         if (e.syllable_ids_len != key_len)
@@ -406,7 +411,7 @@ std::vector<Candidate> Dict::lookup_by_syllables(
         Candidate c;
         c.text.assign(dict_strings_ + e.text_offset, e.text_len);
         c.frequency = e.frequency;
-        if (seen.insert(c.text).second) {
+        if (!contains_text(results, c.text)) {
             results.push_back(std::move(c));
             if ((int)results.size() >= limit)
                 break;
@@ -424,7 +429,7 @@ std::vector<Candidate> Dict::lookup_by_syllables(
         auto user_results = lookup_user_exact(concat_code, limit - (int)results.size(),
                                               ub, trace, &ustats);
         for (auto& c : user_results) {
-            if (seen.insert(c.text).second)
+            if (!contains_text(results, c.text))
                 results.push_back(std::move(c));
             if ((int)results.size() >= limit)
                 break;
@@ -470,7 +475,6 @@ std::vector<Candidate> Dict::lookup(const std::string& code_prefix, int limit, Q
 
     // Scan forward collecting prefix matches.
     // Exact matches (same code length) get boosted so they sort before prefix matches.
-    std::unordered_set<std::string> seen;
     while (lo < dict_entry_count_ && (int)results.size() < limit) {
         const auto& e = dict_entries_[lo];
         if (e.syllable_ids_len < prefix_len)
@@ -485,7 +489,7 @@ std::vector<Candidate> Dict::lookup(const std::string& code_prefix, int limit, Q
         c.frequency = (e.syllable_ids_len == prefix_len ? 100000 : 0)
                     + (100 - (int)e.syllable_ids_len) * 100
                     + e.frequency;
-        if (seen.insert(c.text).second)
+        if (!contains_text(results, c.text))
             results.push_back(std::move(c));
         ++lo;
     }
@@ -498,7 +502,7 @@ std::vector<Candidate> Dict::lookup(const std::string& code_prefix, int limit, Q
         if (remain > 0) {
             auto user_results = lookup_user_prefix(code_prefix, remain, ub, trace, &ustats);
             for (auto& c : user_results) {
-                if (seen.insert(c.text).second)
+                if (!contains_text(results, c.text))
                     results.push_back(std::move(c));
                 if ((int)results.size() >= limit)
                     break;
@@ -810,7 +814,6 @@ std::vector<Candidate> Dict::lookup_user_short(
     const std::string& key, int limit,
     const QueryBudget& budget, QueryTrace* trace, UserLookupStats* stats) const {
     std::vector<Candidate> results;
-    std::unordered_set<std::string> seen;
     std::shared_lock<std::shared_mutex> lock(user_mutex_);
 
     auto try_add = [&](UserEntryId id) -> bool {
@@ -826,7 +829,7 @@ std::vector<Candidate> Dict::lookup_user_short(
         auto& e = user_entries_[id];
         if (e.deleted) return true;
         ++stats->scan_count;
-        if (seen.insert(e.text).second) {
+        if (!contains_text(results, e.text)) {
             Candidate c;
             c.text = e.text;
             uint64_t delta = user_sequence_ - e.sequence;
@@ -1202,9 +1205,7 @@ std::vector<Candidate> Dict::lookup_by_ids(const std::vector<uint32_t>& query_id
         topk_cap = (size_t)budget->max_results_before_merge;
     TopKCollector collector(topk_cap);
 
-    // Dedup set — only insert text for candidates that enter the collector.
-    // Cap at 2x topk_cap to bound memory on high-collision inputs.
-    std::unordered_set<std::string> seen;
+    // Dedup via linear scan on collector items (bounded by topk_cap, typically ≤128)
     size_t seen_max = topk_cap * 2;
     bool deadline_hit = false;
 
@@ -1249,8 +1250,8 @@ std::vector<Candidate> Dict::lookup_by_ids(const std::vector<uint32_t>& query_id
         Candidate c;
         c.text.assign(dict_strings_ + e.text_offset, e.text_len);
         c.frequency = e.frequency + 100000;  // exact match boost
-        if (seen.size() < seen_max) {
-            if (seen.insert(c.text).second)
+        if (collector.size() < seen_max) {
+            if (!contains_text(collector.items(), c.text))
                 collector.offer(std::move(c));
         } else {
             if (trace) trace->truncated = true;
@@ -1259,9 +1260,9 @@ std::vector<Candidate> Dict::lookup_by_ids(const std::vector<uint32_t>& query_id
         ++exact_count;
     }
 
-    // Second pass: prefix matches (skip if deadline already hit or seen set already full)
+    // Second pass: prefix matches (skip if deadline already hit or collector already full)
     uint32_t prefix_count = 0;
-    if (!deadline_hit && seen.size() < seen_max) {
+    if (!deadline_hit && collector.size() < seen_max) {
         // Phase 3: check deadline before entering prefix scan
         if (budget && budget->deadline.enabled && budget->deadline.expired()) {
             deadline_hit = true;
@@ -1271,7 +1272,7 @@ std::vector<Candidate> Dict::lookup_by_ids(const std::vector<uint32_t>& query_id
             }
         }
     }
-    if (!deadline_hit && seen.size() < seen_max) {
+    if (!deadline_hit && collector.size() < seen_max) {
         auto ids_prefix = [&](const IdEntry& e) {
             if (e.count < query_ids.size()) return false;
             for (size_t k = 0; k < query_ids.size(); ++k)
@@ -1298,8 +1299,8 @@ std::vector<Candidate> Dict::lookup_by_ids(const std::vector<uint32_t>& query_id
             Candidate c;
             c.text.assign(dict_strings_ + e.text_offset, e.text_len);
             c.frequency = e.frequency;
-            if (seen.size() < seen_max) {
-                if (seen.insert(c.text).second)
+            if (collector.size() < seen_max) {
+                if (!contains_text(collector.items(), c.text))
                     collector.offer(std::move(c));
             } else {
                 if (trace) trace->truncated = true;
