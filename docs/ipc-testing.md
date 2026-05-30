@@ -153,7 +153,7 @@ bench 前几次 IPC 传输延迟 ~950us（与 preedit 路径稳态一致）。�
 
 1. ~~**bench 延迟偏高**~~ — 已解决。IPC 传输延迟从 ~15ms 降至 ~50us（preedit avg），提升 294x。
 
-2. ~~**pinyin buffer 填满后延迟递增**~~ — 已解决。Syllabifier 路径枚举加入 10000 上限 + 信度排序。
+2. ~~**pinyin buffer 填满后延迟递增**~~ — 已解决。Syllabifier 路径枚举加入 256 上限（`kMaxPaths`）+ 信度排序。
 
 3. ~~**并发 client 连接偶尔超时**~~ — 已解决。`IpcClient::connect` 加入重试循环。
 
