@@ -1,0 +1,140 @@
+#!/usr/bin/env python3
+"""Test build_short_cache.py zip input handling."""
+
+import os
+import sys
+import sqlite3
+import tempfile
+import zipfile
+import struct
+
+SCRIPTS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts")
+sys.path.insert(0, SCRIPTS_DIR)
+
+
+def create_test_db(db_path):
+    """Create a SQLite dict with entries covering key mixed code patterns."""
+    conn = sqlite3.connect(db_path)
+    conn.execute("""
+        CREATE TABLE dict (
+            text TEXT, code TEXT, frequency INTEGER, syllable_ids TEXT
+        )
+    """)
+    entries = [
+        ("输入法", "shurufa", 5000, "shu:ru:fa"),       # srf, shrf, shurf
+        ("中国", "zhongguo", 8000, "zhong:guo"),         # zg, zhg, zhongg
+        ("你好", "nihao", 9000, "ni:hao"),               # nihao
+        ("北京", "beijing", 7000, "bei:jing"),           # bj
+        ("的", "de", 99999, "de"),                        # d
+        ("中华人民共和国", "zhonghuarenmingongheguo", 9500,
+         "zhong:hua:ren:min:gong:he:guo"),               # zhrmghg
+    ]
+    conn.executemany("INSERT INTO dict VALUES (?, ?, ?, ?)", entries)
+    conn.commit()
+    conn.close()
+
+
+def run_build(input_path, output_path):
+    """Run build_short_cache.py --no-verify and return the result."""
+    import subprocess
+    script = os.path.join(SCRIPTS_DIR, "build_short_cache.py")
+    result = subprocess.run(
+        [sys.executable, script, "--input", input_path, "--output", output_path,
+         "--no-verify"],
+        capture_output=True, text=True
+    )
+    return result
+
+
+def read_keys(output_path):
+    """Read the .topn.bin and return the set of keys."""
+    with open(output_path, "rb") as f:
+        data = f.read()
+
+    HEADER_FMT = "<8sIIIIIII"
+    _, version, key_count, _, _, keys_offset, _, str_offset = struct.unpack_from(HEADER_FMT, data)
+
+    KEY_FMT = "<IIIHH"
+    KEY_SIZE = struct.calcsize(KEY_FMT)
+
+    found_keys = set()
+    for i in range(key_count):
+        off = keys_offset + i * KEY_SIZE
+        _, _, key_offset_rel, key_len, _ = struct.unpack_from(KEY_FMT, data, off)
+        abs_off = str_offset + key_offset_rel
+        key = data[abs_off:abs_off + key_len].decode("ascii", errors="replace")
+        found_keys.add(key)
+
+    return found_keys
+
+
+def main():
+    ok = True
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = os.path.join(tmpdir, "test.dict.db")
+        zip_path = os.path.join(tmpdir, "test.dict.db.zip")
+        out_db = os.path.join(tmpdir, "test.topn.bin")
+        out_zip = os.path.join(tmpdir, "test2.topn.bin")
+
+        create_test_db(db_path)
+
+        # Test 1: Direct .db input
+        print("Test 1: Direct .db input ...", end=" ")
+        result = run_build(db_path, out_db)
+        if result.returncode != 0:
+            print(f"FAIL (exit {result.returncode})")
+            print(result.stderr)
+            ok = False
+        else:
+            found_db = read_keys(out_db)
+            print(f"OK ({len(found_db)} keys)")
+
+        # Test 2: .db.zip input
+        print("Test 2: .db.zip input ...", end=" ")
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.write(db_path, "test.dict.db")
+        result = run_build(zip_path, out_zip)
+        if result.returncode != 0:
+            print(f"FAIL (exit {result.returncode})")
+            print(result.stderr)
+            ok = False
+        else:
+            found_zip = read_keys(out_zip)
+            print(f"OK ({len(found_zip)} keys)")
+
+        # Test 3: Both methods produce same keys
+        if ok:
+            print("Test 3: zip and db produce same keys ...", end=" ")
+            if found_db != found_zip:
+                print(f"FAIL (db={len(found_db)}, zip={len(found_zip)})")
+                ok = False
+            else:
+                print("OK")
+
+        # Test 4: Mixed code keys present
+        if ok:
+            print("Test 4: mixed code keys (shrf, zhg, zhrmghg) present ...", end=" ")
+            missing = []
+            if "shrf" not in found_db:
+                missing.append("shrf")
+            if "zhg" not in found_db:
+                missing.append("zhg")
+            if "zhrmghg" not in found_db:
+                missing.append("zhrmghg")
+            if missing:
+                print(f"FAIL (missing: {missing})")
+                ok = False
+            else:
+                print("OK")
+
+    if ok:
+        print("\nAll tests passed.")
+        return 0
+    else:
+        print("\nSome tests FAILED.")
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -8,6 +8,7 @@
 #include <cxxime/topk_collector.h>
 #include <cxxime/query_scratch.h>
 #include <algorithm>
+#include <chrono>
 
 namespace cxxime {
 
@@ -170,7 +171,10 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
                 sorted.erase(sorted.begin(), sorted.begin() + offset);
             if ((int)sorted.size() > fetch_limit) {
                 sorted.resize(fetch_limit);
-                if (trace) trace->truncated = true;
+                if (trace) {
+                    trace->truncated = true;
+                    trace->page_truncated = true;
+                }
             }
             page.candidates = std::move(sorted);
             if (!page.candidates.empty())
@@ -208,7 +212,9 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
     // Phase 3: syllabifier now has internal deadline checking, no need to skip
     static constexpr size_t kMaxPaths = 8;
     bool deadline_hit = false;
+    std::chrono::steady_clock::time_point t_seg_start, t_seg_end;
     if (syllabifier_) {
+        if (trace) t_seg_start = std::chrono::steady_clock::now();
         // Check deadline before syllabifier (it can be slow on long inputs)
         if (budget && budget->deadline.expired()) {
             deadline_hit = true;
@@ -225,6 +231,10 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
                     trace->truncated = true;
                 }
             }
+        }
+        if (trace) {
+            t_seg_end = std::chrono::steady_clock::now();
+            trace->translate_us = std::chrono::duration_cast<std::chrono::microseconds>(t_seg_end - t_seg_start).count();
         }
     } else {
         id_sequences.reserve(2);
@@ -286,6 +296,9 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
     // Track processed ID sequences for dedup (small N, linear scan is fine)
     std::vector<std::vector<uint32_t>> processed_ids;
 
+    std::chrono::steady_clock::time_point t_lookup_start, t_lookup_end;
+    if (trace) t_lookup_start = std::chrono::steady_clock::now();
+
     for (auto& ids : live_ids) {
         if (contains_ids(processed_ids, ids))
             continue;
@@ -305,7 +318,15 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
         }
     }
 
+    if (trace) {
+        t_lookup_end = std::chrono::steady_clock::now();
+        trace->lookup_us = std::chrono::duration_cast<std::chrono::microseconds>(t_lookup_end - t_lookup_start).count();
+    }
+
     // finish() sorts by frequency descending
+    std::chrono::steady_clock::time_point t_merge_start;
+    if (trace) t_merge_start = std::chrono::steady_clock::now();
+
     auto sorted = merged.finish();
 
     // Apply pagination
@@ -317,6 +338,11 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
     page.candidates = std::move(sorted);
     if (!page.candidates.empty())
         page.highlighted = 0;
+
+    if (trace) {
+        auto t_merge_end = std::chrono::steady_clock::now();
+        trace->merge_us = std::chrono::duration_cast<std::chrono::microseconds>(t_merge_end - t_merge_start).count();
+    }
 
     return page;
 }

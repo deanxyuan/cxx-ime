@@ -21,13 +21,6 @@ struct SyllableEdge {
     float credibility = 0.0f;
 };
 
-// Saved edge for enumerate_paths scratch (avoids per-level allocation)
-struct SavedEdge {
-    size_t end_pos;
-    std::string syllable;
-    float credibility;
-};
-
 // SyllableGraph: edges[start_pos] = map<end_pos, list<SyllableEdge>>
 // Corresponds to librime SyllableGraph edges.
 using SyllableGraph = std::map<size_t, std::map<size_t, std::vector<SyllableEdge>>>;
@@ -66,8 +59,7 @@ private:
                          std::vector<std::pair<SyllablePath, float>>& results,
                          const QueryDeadline* deadline,
                          uint32_t& path_count,
-                         std::vector<std::pair<size_t, std::vector<SyllableEdge>>>& sorted_scratch,
-                         std::vector<SavedEdge>& saved_scratch) const;
+                         std::vector<std::pair<size_t, std::vector<SyllableEdge>>>& sorted_scratch) const;
 };
 
 } // namespace cxxime

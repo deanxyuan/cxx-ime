@@ -83,8 +83,7 @@ bool Syllabifier::enumerate_paths(
     std::vector<std::pair<SyllablePath, float>>& results,
     const QueryDeadline* deadline,
     uint32_t& path_count,
-    std::vector<std::pair<size_t, std::vector<SyllableEdge>>>& sorted_scratch,
-    std::vector<SavedEdge>& saved_scratch) const {
+    std::vector<std::pair<size_t, std::vector<SyllableEdge>>>& sorted_scratch) const {
 
     static const size_t kMaxPaths = 10000;
     if (results.size() >= kMaxPaths)
@@ -119,28 +118,25 @@ bool Syllabifier::enumerate_paths(
             });
     }
 
-    // Save edge data before recursing (recursive call will clear sorted_scratch).
-    // Reuse saved_scratch across recursion levels to avoid per-level allocation.
-    saved_scratch.clear();
-    for (auto& se : sorted_scratch) {
-        for (auto& edge : se.second) {
-            saved_scratch.push_back({se.first, std::move(edge.syllable), edge.credibility});
-        }
-    }
+    // Copy edges to local before recursing (recursive call will clear sorted_scratch).
+    // Use copy instead of move to preserve sorted_scratch data for remaining iterations.
+    auto edges_local = sorted_scratch;
 
-    for (auto& s : saved_scratch) {
-        current.push_back(std::move(s.syllable));
-        size_t before = results.size();
-        bool expired = enumerate_paths(graph, s.end_pos, end_pos, current, results, deadline, path_count, sorted_scratch, saved_scratch);
-        if (expired)
-            return true;  // propagate deadline expiration up
-        if (before < results.size()) {
-            for (size_t i = before; i < results.size(); ++i)
-                results[i].second += s.credibility;
+    for (auto& se : edges_local) {
+        for (auto& edge : se.second) {
+            current.push_back(edge.syllable);  // copy, not move
+            size_t before = results.size();
+            bool expired = enumerate_paths(graph, se.first, end_pos, current, results, deadline, path_count, sorted_scratch);
+            if (expired)
+                return true;  // propagate deadline expiration up
+            if (before < results.size()) {
+                for (size_t i = before; i < results.size(); ++i)
+                    results[i].second += edge.credibility;
+            }
+            current.pop_back();
+            if (results.size() >= kMaxPaths)
+                return false;
         }
-        current.pop_back();
-        if (results.size() >= kMaxPaths)
-            return false;
     }
     return false;
 }
@@ -172,10 +168,9 @@ SegmentResult Syllabifier::segment(const std::string& input, const QueryDeadline
     // Phase 3: pass deadline for internal checking during DFS.
     std::vector<std::pair<SyllablePath, float>> scored;
     std::vector<std::pair<size_t, std::vector<SyllableEdge>>> sorted_scratch;
-    std::vector<SavedEdge> saved_scratch;
     SyllablePath current;
     uint32_t path_count = 0;
-    bool deadline_expired = enumerate_paths(graph, 0, farthest, current, scored, deadline, path_count, sorted_scratch, saved_scratch);
+    bool deadline_expired = enumerate_paths(graph, 0, farthest, current, scored, deadline, path_count, sorted_scratch);
 
     if (deadline_expired) {
         result.deadline_exceeded = true;

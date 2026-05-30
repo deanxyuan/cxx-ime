@@ -51,13 +51,21 @@ struct TraceNode : MPSCQueue::Node {
 
 class TraceQueue {
 public:
+    TraceQueue() {
+        // Link all pool nodes into the free list
+        for (int i = kQueueCapacity - 1; i >= 0; --i) {
+            pool_[i].next.Store(nullptr, std::memory_order_relaxed);
+            push_free_(&pool_[i]);
+        }
+    }
+
     bool try_push(const TraceEntry& entry) {
         // Enforce bounded queue size — drop entries when over capacity
         if (size_.load(std::memory_order_relaxed) >= kQueueCapacity) {
             dropped_.fetch_add(1, std::memory_order_relaxed);
             return false;
         }
-        auto* node = new (std::nothrow) TraceNode;
+        auto* node = pop_free_();
         if (!node) {
             dropped_.fetch_add(1, std::memory_order_relaxed);
             return false;
@@ -79,7 +87,7 @@ public:
             auto* node = static_cast<TraceNode*>(queue_.pop());
             if (!node) break;
             batch[count++] = node->entry;
-            delete node;
+            push_free_(node);
             size_.fetch_sub(1, std::memory_order_relaxed);
         }
         return count;
@@ -101,6 +109,29 @@ public:
     std::mutex& mutex() { return sig_mu_; }
 
 private:
+    // Lock-free free list (atomic stack) for pre-allocated node pool
+    TraceNode* pop_free_() {
+        TraceNode* head = free_head_.Load(std::memory_order_acquire);
+        while (head) {
+            TraceNode* next = static_cast<TraceNode*>(head->next.Load(std::memory_order_relaxed));
+            if (free_head_.CompareExchangeWeak(&head, next,
+                    std::memory_order_acq_rel, std::memory_order_acquire)) {
+                return head;
+            }
+        }
+        return nullptr;
+    }
+
+    void push_free_(TraceNode* node) {
+        TraceNode* head = free_head_.Load(std::memory_order_acquire);
+        do {
+            node->next.Store(head, std::memory_order_relaxed);
+        } while (!free_head_.CompareExchangeWeak(&head, node,
+                    std::memory_order_acq_rel, std::memory_order_acquire));
+    }
+
+    TraceNode pool_[kQueueCapacity];
+    Atomic<TraceNode*> free_head_{nullptr};
     MPSCQueue queue_;
     std::mutex sig_mu_;
     std::condition_variable sig_cv_;
@@ -378,7 +409,9 @@ int QueryTrace::to_json(char* buf, int buf_size) const {
         "\"page\":%d,\"page_size\":%d,"
         "\"paths\":%d,\"live\":%d,\"candidates\":%d,"
         "\"exact_scan\":%u,\"prefix_scan\":%u,\"user_scan\":%u,"
-        "\"cache\":%s,\"deadline\":%s,\"cancelled\":%s,\"truncated\":%s,"
+        "\"mixed_scan\":%u,\"mixed_bucket\":%u,\"mixed_hit\":%s,"
+        "\"cache\":%s,\"deadline\":%s,\"cancelled\":%s,"
+        "\"truncated\":%s,\"scan_trunc\":%s,\"topk_trunc\":%s,\"page_trunc\":%s,"
         "\"proc_us\":%lld,\"trans_us\":%lld,\"lookup_us\":%lld,\"merge_us\":%lld,\"total_us\":%lld}",
         (unsigned long long)query_id,
         (unsigned)session_id,
@@ -387,10 +420,14 @@ int QueryTrace::to_json(char* buf, int buf_size) const {
         page_index, page_size,
         syllable_path_count, live_path_count, candidate_count,
         exact_scan_count, prefix_scan_count, user_scan_count,
+        mixed_scan_count, mixed_bucket_size, mixed_cache_hit ? "true" : "false",
         cache_hit ? "true" : "false",
         deadline_exceeded ? "true" : "false",
         cancelled ? "true" : "false",
         truncated ? "true" : "false",
+        scan_budget_truncated ? "true" : "false",
+        topk_truncated ? "true" : "false",
+        page_truncated ? "true" : "false",
         (long long)processor_us,
         (long long)translate_us,
         (long long)lookup_us,
@@ -473,6 +510,10 @@ void QueryTrace::shutdown() {
     if (g_writer_thread.joinable()) {
         g_writer_thread.join();
     }
+}
+
+uint64_t QueryTrace::dropped_count() {
+    return g_queue.dropped();
 }
 
 } // namespace cxxime

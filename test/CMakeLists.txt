@@ -26,3 +26,8 @@ add_cxxime_test(benchmark_test)
 add_cxxime_test(short_cache_test)
 add_cxxime_test(trace_test)
 add_cxxime_test(mpscq_test)
+
+find_package(Python3 QUIET)
+if(Python3_FOUND)
+    add_test(NAME build_short_cache_test COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/build_short_cache_test.py)
+endif()

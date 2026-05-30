@@ -23,6 +23,7 @@ struct UserLookupStats;
 struct UserLookupStats {
     uint32_t scan_count = 0;
     bool truncated = false;
+    bool scan_budget_truncated = false;
     bool deadline_exceeded = false;
 };
 
@@ -120,6 +121,7 @@ private:
         std::string code;       // raw committed key, e.g. "shurufa" or "srf"
         std::string syllables;  // optional colon form, e.g. "shu:ru:fa"
         std::string abbr_code;  // e.g. "srf"
+        std::vector<std::string> mixed_keys;  // cached mixed keys for bucket re-sort
         int frequency = 1;
         uint64_t sequence = 0;
         bool deleted = false;
@@ -149,6 +151,9 @@ private:
     void rebuild_user_indexes_locked();
     void insert_user_into_indexes(UserEntryId id);
     void remove_user_from_indexes(UserEntryId id);
+    void bucket_insert_sorted_(UserBucket& bucket, UserEntryId id);
+    void sort_bucket_(UserBucket& bucket);
+    void re_sort_user_buckets_(UserEntryId id);
 
 };
 
