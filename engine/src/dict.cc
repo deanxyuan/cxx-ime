@@ -105,6 +105,22 @@ bool Dict::open_dict(const std::string& bin_path) {
         build_syllabary();
         build_id_index();
     }
+
+    // Phase 4: try to load short code cache (pinyin.topn.bin)
+    // Derive path from dict_bin_path: pinyin.dict.bin → pinyin.topn.bin
+    {
+        std::string topn_path = bin_path;
+        auto pos = topn_path.rfind(".dict.bin");
+        if (pos != std::string::npos)
+            topn_path.replace(pos, std::string::npos, ".topn.bin");
+        else
+            topn_path += ".topn.bin";
+        if (!short_cache_.load(topn_path)) {
+            CXXIME_LOG(L"Dict::open_dict short cache not loaded (dev mode fallback)");
+            // Not fatal — translator will fall back to bounded lookup
+        }
+    }
+
     return true;
 }
 
@@ -182,6 +198,7 @@ bool Dict::save_user_dict() {
 
 void Dict::unload_dict() {
     unload_id_index();
+    short_cache_.unload();
     delete[] dict_data_;
     dict_data_ = nullptr;
     dict_entries_ = nullptr;

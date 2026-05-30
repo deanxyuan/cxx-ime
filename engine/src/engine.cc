@@ -55,6 +55,9 @@ bool Engine::initialize(Dict& dict, SpellingsIndex& spellings,
     if (syllabifier_) {
         translator_.set_syllabifier(syllabifier_);
     }
+    if (dict_->has_short_cache()) {
+        translator_.set_short_cache(&dict_->short_cache());
+    }
 
     init_per_session(config);
     return true;
@@ -209,13 +212,20 @@ ProcessResult Engine::process_key(const KeyEvent& event) {
     CXXIME_LOG(L"Engine::process_key: result=%d, buf='%S'",
                (int)result, context_.pinyin_buffer.c_str());
 
-    // If committed, update user frequency
+    // If committed, update user frequency and recent cache
     if (result == ProcessResult::COMMITTED && !context_.committed_text.empty()) {
         std::string code = context_.pinyin_buffer;
         if (code.empty()) {
             code = dict_->reverse_lookup(context_.committed_text);
         }
         dict_->update_frequency(context_.committed_text, code);
+        // Phase 4: update session recent cache for short input fast path
+        if (!context_.pinyin_buffer.empty()) {
+            Candidate c;
+            c.text = context_.committed_text;
+            c.frequency = 0;
+            translator_.update_recent(context_.pinyin_buffer, c);
+        }
     }
 
     // Finalize trace
@@ -253,6 +263,12 @@ bool Engine::select_candidate(int index) {
     if (!code.empty())
         dict_->update_frequency(context_.committed_text, code);
 
+    // Phase 4: update session recent cache for short input fast path
+    if (!context_.pinyin_buffer.empty()) {
+        translator_.update_recent(context_.pinyin_buffer,
+                                  context_.candidates.candidates[index]);
+    }
+
     return true;
 }
 
@@ -267,6 +283,7 @@ std::string Engine::get_commit_text() {
 
 void Engine::clear() {
     context_.reset();
+    translator_.clear_recent();
 }
 
 std::string Engine::derive_spellings_path(const std::string& dict_path) {

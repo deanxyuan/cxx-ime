@@ -11,6 +11,7 @@ add_library(cxxime-engine STATIC
     src/config.cc
     src/engine.cc
     src/ascii_composer.cc
+    src/short_code_cache.cc
 )
 
 target_include_directories(cxxime-engine PUBLIC
