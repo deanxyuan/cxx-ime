@@ -117,6 +117,11 @@ cxxime::IPCResponse ServerApp::handle_request(const cxxime::IPCRequest& request)
 
         auto result = engine->process_key(event);
 
+        // Single trace outlet: server logs trace after engine populates fields
+        if (engine->last_trace().should_log()) {
+            engine->last_trace().log();
+        }
+
         response.ascii_mode = engine->ascii_composer().is_ascii_mode();
         response.composing = engine->context().is_composing();
 
@@ -140,8 +145,6 @@ cxxime::IPCResponse ServerApp::handle_request(const cxxime::IPCRequest& request)
         } else {
             response.status = cxxime::IPCStatus::ERR_ENGINE_PROCESS_FAILED;
         }
-        // Trace logging is handled inside Engine::process_key() — no duplicate log here.
-
         break;
     }
 

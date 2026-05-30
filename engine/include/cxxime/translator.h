@@ -15,6 +15,7 @@ class Syllabifier;
 class ShortCodeCache;
 struct QueryTrace;
 struct QueryBudget;
+struct QueryScratch;
 
 // Phase 4: session recent cache entry for short input fast path
 struct RecentCandidate {
@@ -34,7 +35,8 @@ public:
     void clear_recent() { recent_cache_.clear(); }
 
     CandidatePage translate(const std::string& pinyin, int page_index = 0, int page_size = 9,
-                            QueryTrace* trace = nullptr, const QueryBudget* budget = nullptr);
+                            QueryTrace* trace = nullptr, const QueryBudget* budget = nullptr,
+                            QueryScratch* scratch = nullptr);
 
 private:
     // Phase 4: short input fast path

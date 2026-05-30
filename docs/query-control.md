@@ -165,7 +165,37 @@ return collector.finish()  // 已排序，大小 ≤ limit
 
 ### 去重策略
 
-`unordered_set<string> seen` 对通过去重检查的候选插入，容量上限 `max_results_before_merge * 2`。流程：先检查 `seen` 容量是否已满，未满则插入 text 并调用 `collector.offer()`；已满则设置 `truncated = true` 并跳过后续候选。
+候选首屏规模很小（≤128），采用小数组线性去重替代 `unordered_set`：
+
+```cpp
+// pinyin_translator.cc / dict.cc
+static bool contains_text(const std::vector<Candidate>& items, const std::string& text);
+static bool contains_ids(const std::vector<std::vector<uint32_t>>& items,
+                         const std::vector<uint32_t>& ids);
+```
+
+流程：遍历已收集候选，逐个比较 text/ids。候选数通常 < 100，线性扫描比 hash set 更快（无哈希计算、无堆分配、cache 友好）。
+
+### QueryScratch（查询复用缓冲区）
+
+每 Engine 持有一份 `QueryScratch`，随 session 复用，避免 `translate()` 每次查询堆分配临时容器：
+
+```cpp
+// engine/include/cxxime/query_scratch.h
+struct QueryScratch {
+    std::vector<std::vector<uint32_t>> id_sequences;
+    std::vector<std::vector<uint32_t>> live_ids;
+    std::vector<Candidate> merged_candidates;
+    std::vector<Candidate> temp_candidates;
+    std::vector<uint32_t> seen_hashes;
+    std::vector<uint32_t> path_ids;
+
+    void reset_for_query();   // clear() 所有 vector
+    void trim_if_large();     // capacity > 256 时 shrink_to_fit()
+};
+```
+
+Engine 在 `process_key()` 开始时调用 `scratch_.reset_for_query()`，传入 `translator_.translate()`。单个 vector capacity 超过 256 时在查询结束后 shrink。
 
 ## truncated 语义
 

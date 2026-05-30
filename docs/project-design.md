@@ -312,13 +312,15 @@ cxx-ime/
 ├── install.ps1 / uninstall.ps1
 │
 ├── shared/                 # 共享基础类型
-│   ├── include/cxxime/     ipc_protocol.h, key_event.h, logging.h, candidate.h
-│   └── src/                key_event.cc
+│   ├── include/cxxime/     ipc_protocol.h, key_event.h, logging.h, candidate.h,
+│   │                       query_trace.h, query_budget.h, mpscq.h
+│   └── src/                key_event.cc, query_trace_log.cc, mpscq.cc
 │
 ├── engine/                 # 输入引擎
 │   ├── include/cxxime/     engine.h, processor.h, translator.h, segmentor.h,
 │   │                       dict.h, context.h, config.h, ascii_composer.h,
-│   │                       spellings_index.h, syllabifier.h
+│   │                       spellings_index.h, syllabifier.h, query_scratch.h,
+│   │                       topk_collector.h, short_code_cache.h
 │   └── src/                engine.cc, pinyin_processor.cc, pinyin_translator.cc,
 │                           pinyin_segmentor.cc, dict.cc, config.cc, context.cc,
 │                           spellings_index.cc, syllabifier.cc, ascii_composer.cc
@@ -347,9 +349,10 @@ cxx-ime/
 │   ├── pinyin.dict.db      # SQLite 源词典
 │   └── tools/              # Python 词典工具（fetch/convert/build）
 │
-├── test/                   # 10 个测试可执行文件
+├── test/                   # 13 个测试可执行文件
 │   ├── util/testutil.h     # 自研轻量测试框架
-│   └── {engine, segmentor, dict, config, layout, preedit_mode, ipc, wubi, candidate_window, benchmark}_test.cc
+│   └── {engine, segmentor, dict, config, layout, preedit_mode, ipc, wubi,
+│         candidate_window, benchmark, short_cache, trace, mpscq}_test.cc
 │
 ├── third_party/            # 第三方库
 │   ├── sqlite3/            # SQLite amalgamation（FTS5 + JSON1）
@@ -419,7 +422,7 @@ cxx-ime v0.1.0 已完成 MVP 交付，Engine 模块为核心亮点：
 3. **可配置中英文切换** ✅ — AsciiComposer，7 种切换样式，左右修饰键分离
 4. **二进制堆加载主词典 + 内存用户词典** ✅ — 一次性读入，启动 < 0.5s
 5. **C++17 + nlohmann/json（头文件 only）** ✅ — SQLite 仅构建时使用，无 Boost 依赖
-6. **10 个测试 exe / 64+ 用例** ✅ — 自研轻量测试框架
+6. **13 个测试 exe / 130+ 用例** ✅ — 自研轻量测试框架
 7. **dict_query 测试工具** ✅ — 交互式拼音/五笔词典查询
 
 **IPC/Server/TSF/UI 模块（基础完成）：**

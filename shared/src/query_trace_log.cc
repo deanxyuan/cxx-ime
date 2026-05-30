@@ -1,6 +1,7 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
 #include <cxxime/query_trace.h>
+#include <cxxime/mpscq.h>
 #include <cxxime/logging.h>
 #include <windows.h>
 #include <cstdio>
@@ -31,6 +32,7 @@ static constexpr auto kFlushInterval = std::chrono::milliseconds(100); // Flush 
 // ─── Slow query thresholds ───────────────────────────────────
 
 static constexpr int64_t kSlowQueryUs = 30000;     // 30ms
+static constexpr int64_t kCacheMissSlowUs = 10000; // 10ms (non-cache-hit slow threshold)
 static constexpr int64_t kSlowIpcUs = 2000;        // 2ms
 static constexpr int64_t kSlowWindowUs = 5000;     // 5ms
 
@@ -41,63 +43,75 @@ struct TraceEntry {
     int len;
 };
 
-// ─── Bounded SPSC queue (lock-free for single producer/single consumer) ──
+// ─── MPSC trace queue (lock-free multi-producer, single-consumer) ──────
 
-class BoundedQueue {
+struct TraceNode : MPSCQueue::Node {
+    TraceEntry entry;
+};
+
+class TraceQueue {
 public:
-    BoundedQueue() : head_(0), tail_(0), dropped_(0) {}
-
-    // Producer: try to push (non-blocking, returns false if full)
     bool try_push(const TraceEntry& entry) {
-        size_t head = head_.load(std::memory_order_relaxed);
-        size_t next = (head + 1) % kQueueCapacity;
-        if (next == tail_.load(std::memory_order_acquire)) {
+        // Enforce bounded queue size — drop entries when over capacity
+        if (size_.load(std::memory_order_relaxed) >= kQueueCapacity) {
             dropped_.fetch_add(1, std::memory_order_relaxed);
-            return false;  // Queue full, drop entry
+            return false;
         }
-        entries_[head] = entry;
-        head_.store(next, std::memory_order_release);
+        auto* node = new (std::nothrow) TraceNode;
+        if (!node) {
+            dropped_.fetch_add(1, std::memory_order_relaxed);
+            return false;
+        }
+        node->entry = entry;
+        queue_.push(node);
+        size_.fetch_add(1, std::memory_order_relaxed);
+        // Wake writer thread
+        {
+            std::lock_guard<std::mutex> lock(sig_mu_);
+        }
+        sig_cv_.notify_one();
         return true;
     }
 
-    // Consumer: try to pop (non-blocking, returns false if empty)
-    bool try_pop(TraceEntry& entry) {
-        size_t tail = tail_.load(std::memory_order_relaxed);
-        if (tail == head_.load(std::memory_order_acquire)) {
-            return false;  // Queue empty
-        }
-        entry = entries_[tail];
-        tail_.store((tail + 1) % kQueueCapacity, std::memory_order_release);
-        return true;
-    }
-
-    // Consumer: pop up to max_entries, returns count popped
     int pop_batch(TraceEntry* batch, int max_entries) {
         int count = 0;
         while (count < max_entries) {
-            if (!try_pop(batch[count]))
-                break;
-            ++count;
+            auto* node = static_cast<TraceNode*>(queue_.pop());
+            if (!node) break;
+            batch[count++] = node->entry;
+            delete node;
+            size_.fetch_sub(1, std::memory_order_relaxed);
         }
         return count;
     }
 
+    // Wait for entries or timeout (signaling only — queue data is lock-free)
+    void wait(std::unique_lock<std::mutex>& lock) {
+        sig_cv_.wait_for(lock, kFlushInterval);
+    }
+
+    void notify() {
+        std::lock_guard<std::mutex> lock(sig_mu_);
+        sig_cv_.notify_all();
+    }
+
     size_t dropped() const { return dropped_.load(std::memory_order_relaxed); }
-    void reset_dropped() { dropped_.store(0, std::memory_order_relaxed); }
+
+    // Mutex for wait/notify signaling only (does NOT protect queue data)
+    std::mutex& mutex() { return sig_mu_; }
 
 private:
-    TraceEntry entries_[kQueueCapacity];
-    std::atomic<size_t> head_;
-    std::atomic<size_t> tail_;
-    std::atomic<size_t> dropped_;
+    MPSCQueue queue_;
+    std::mutex sig_mu_;
+    std::condition_variable sig_cv_;
+    std::atomic<int> size_{0};
+    std::atomic<uint64_t> dropped_{0};
 };
 
 // ─── Async writer ────────────────────────────────────────────
 
-static BoundedQueue g_queue;
+static TraceQueue g_queue;
 static std::thread g_writer_thread;
-static std::mutex g_shutdown_mutex;
-static std::condition_variable g_shutdown_cv;
 static std::atomic<bool> g_shutdown{false};
 static std::atomic<bool> g_writer_started{false};
 
@@ -250,12 +264,10 @@ static void writer_thread_func() {
     auto last_flush = std::chrono::steady_clock::now();
 
     while (!g_shutdown.load(std::memory_order_relaxed)) {
-        // Wait for entries or shutdown
+        // Wait for entries or timeout (100ms flush interval)
         {
-            std::unique_lock<std::mutex> lock(g_shutdown_mutex);
-            g_shutdown_cv.wait_for(lock, kFlushInterval, [] {
-                return g_shutdown.load(std::memory_order_relaxed);
-            });
+            std::unique_lock<std::mutex> lock(g_queue.mutex());
+            g_queue.wait(lock);
         }
 
         // Drain queue in batches
@@ -389,6 +401,20 @@ int QueryTrace::to_json(char* buf, int buf_size) const {
     return written;
 }
 
+static inline uint64_t mix64(uint64_t x) {
+    x ^= x >> 30;
+    x *= 0xbf58476d1ce4e5b9ULL;
+    x ^= x >> 27;
+    x *= 0x94d049bb133111ebULL;
+    x ^= x >> 31;
+    return x;
+}
+
+bool QueryTrace::should_sample(uint32_t session_id, uint64_t revision, int rate) {
+    uint64_t h = mix64((uint64_t(session_id) << 32) ^ revision);
+    return (h % rate) == 0;
+}
+
 bool QueryTrace::should_log() const {
     // Always log if deadline exceeded or cancelled
     if (deadline_exceeded || cancelled)
@@ -398,11 +424,16 @@ bool QueryTrace::should_log() const {
     if (total_us >= kSlowQueryUs)
         return true;
 
-    // NOTE: truncated is NOT unconditionally logged — page_size truncation
-    // is normal and expected. Only ScanBudget/Deadline truncation should
-    // trigger logging, which requires truncate_reasons field (future work).
+    // Log cache-miss queries that are moderately slow
+    if (!cache_hit && total_us >= kCacheMissSlowUs)
+        return true;
 
-    return false;
+    // Truncated queries: sample at 1%
+    if (truncated)
+        return should_sample(session_id, revision, 100);
+
+    // Normal queries: sample at 0.1%
+    return should_sample(session_id, revision, 1000);
 }
 
 void QueryTrace::log() const {
@@ -437,7 +468,7 @@ void QueryTrace::shutdown() {
         return;
 
     g_shutdown.store(true, std::memory_order_relaxed);
-    g_shutdown_cv.notify_all();
+    g_queue.notify();  // Wake up writer thread
 
     if (g_writer_thread.joinable()) {
         g_writer_thread.join();

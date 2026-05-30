@@ -4,7 +4,7 @@
 #include <cxxime/query_budget.h>
 #include <algorithm>
 #include <queue>
-#include <set>
+#include <string_view>
 
 namespace cxxime {
 
@@ -20,7 +20,7 @@ SyllableGraph Syllabifier::build_graph(const std::string& input) const {
     // Corresponds to librime syllabifier.cc BuildSyllableGraph
     using Vertex = std::pair<size_t, int>;  // (pos, worst_type)
     std::priority_queue<Vertex, std::vector<Vertex>, std::greater<Vertex>> queue;
-    std::set<size_t> visited;
+    std::vector<uint8_t> visited(input.size() + 1, 0);
 
     queue.push({0, kNormalSpelling});
 
@@ -28,11 +28,11 @@ SyllableGraph Syllabifier::build_graph(const std::string& input) const {
         auto [pos, vertex_type] = queue.top();
         queue.pop();
 
-        if (visited.count(pos))
+        if (visited[pos])
             continue;
-        visited.insert(pos);
+        visited[pos] = 1;
 
-        std::string remaining = input.substr(pos);
+        std::string_view remaining(input.data() + pos, input.size() - pos);
         auto matches = spellings_.prefix_search(remaining);
 
         for (auto& m : matches) {
@@ -67,7 +67,7 @@ SyllableGraph Syllabifier::build_graph(const std::string& input) const {
 
             // Enqueue end vertex with worst type along path
             int worst_type = std::max(vertex_type, m.type);
-            if (visited.find(end_pos) == visited.end()) {
+            if (end_pos < visited.size() && !visited[end_pos]) {
                 queue.push({end_pos, worst_type});
             }
         }
@@ -82,7 +82,8 @@ bool Syllabifier::enumerate_paths(
     SyllablePath& current,
     std::vector<std::pair<SyllablePath, float>>& results,
     const QueryDeadline* deadline,
-    uint32_t& path_count) const {
+    uint32_t& path_count,
+    std::vector<std::pair<size_t, std::vector<SyllableEdge>>>& sorted_scratch) const {
 
     static const size_t kMaxPaths = 10000;
     if (results.size() >= kMaxPaths)
@@ -105,34 +106,45 @@ bool Syllabifier::enumerate_paths(
     if (it == graph.end())
         return false;
 
-    // Sort edges by credibility descending so the best paths are explored first.
-    // This ensures common syllables (higher cred) are found before rare ones when
-    // the path cap is reached.
-    std::vector<std::pair<size_t, std::vector<SyllableEdge>>> sorted_edges(
-        it->second.begin(), it->second.end());
-    for (auto& se : sorted_edges) {
+    // Fill scratch with edges from current position.
+    // sorted_scratch capacity is reused across recursion levels (no re-allocation).
+    sorted_scratch.clear();
+    for (auto& kv : it->second)
+        sorted_scratch.push_back(kv);
+    for (auto& se : sorted_scratch) {
         std::sort(se.second.begin(), se.second.end(),
             [](const SyllableEdge& a, const SyllableEdge& b) {
                 return a.credibility > b.credibility;
             });
     }
 
-    for (auto& se : sorted_edges) {
+    // Save edge data before recursing (recursive call will clear sorted_scratch).
+    // Move syllable strings to avoid deep copy.
+    struct SavedEdge {
+        size_t end_pos;
+        std::string syllable;
+        float credibility;
+    };
+    std::vector<SavedEdge> saved;
+    for (auto& se : sorted_scratch) {
         for (auto& edge : se.second) {
-            current.push_back(edge.syllable);
-            float cred = edge.credibility;
-            size_t before = results.size();
-            bool expired = enumerate_paths(graph, se.first, end_pos, current, results, deadline, path_count);
-            if (expired)
-                return true;  // propagate deadline expiration up
-            if (before < results.size()) {
-                for (size_t i = before; i < results.size(); ++i)
-                    results[i].second += cred;
-            }
-            current.pop_back();
-            if (results.size() >= kMaxPaths)
-                return false;
+            saved.push_back({se.first, std::move(edge.syllable), edge.credibility});
         }
+    }
+
+    for (auto& s : saved) {
+        current.push_back(std::move(s.syllable));
+        size_t before = results.size();
+        bool expired = enumerate_paths(graph, s.end_pos, end_pos, current, results, deadline, path_count, sorted_scratch);
+        if (expired)
+            return true;  // propagate deadline expiration up
+        if (before < results.size()) {
+            for (size_t i = before; i < results.size(); ++i)
+                results[i].second += s.credibility;
+        }
+        current.pop_back();
+        if (results.size() >= kMaxPaths)
+            return false;
     }
     return false;
 }
@@ -163,9 +175,10 @@ SegmentResult Syllabifier::segment(const std::string& input, const QueryDeadline
     // from dense abbreviation graphs.
     // Phase 3: pass deadline for internal checking during DFS.
     std::vector<std::pair<SyllablePath, float>> scored;
+    std::vector<std::pair<size_t, std::vector<SyllableEdge>>> sorted_scratch;
     SyllablePath current;
     uint32_t path_count = 0;
-    bool deadline_expired = enumerate_paths(graph, 0, farthest, current, scored, deadline, path_count);
+    bool deadline_expired = enumerate_paths(graph, 0, farthest, current, scored, deadline, path_count, sorted_scratch);
 
     if (deadline_expired) {
         result.deadline_exceeded = true;
@@ -178,12 +191,17 @@ SegmentResult Syllabifier::segment(const std::string& input, const QueryDeadline
             return a.second > b.second;
         });
 
-    // Deduplicate and collect
-    std::set<std::string> seen;
+    // Deduplicate and collect (linear scan — path count bounded by kMaxPaths)
+    std::vector<std::string> seen_keys;
     for (auto& [path, cred] : scored) {
         std::string key;
         for (auto& s : path) key += s + ":";
-        if (seen.insert(key).second) {
+        bool dup = false;
+        for (auto& k : seen_keys) {
+            if (k == key) { dup = true; break; }
+        }
+        if (!dup) {
+            seen_keys.push_back(key);
             result.paths.push_back(std::move(path));
         }
     }

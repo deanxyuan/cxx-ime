@@ -5,8 +5,10 @@
 
 #include <string>
 #include <memory>
+#include <atomic>
 #include <cxxime/processor.h>
 #include <cxxime/translator.h>
+#include <cxxime/query_scratch.h>
 #include <cxxime/dict.h>
 #include <cxxime/context.h>
 #include <cxxime/config.h>
@@ -83,11 +85,14 @@ private:
     // Query trace (explicit ownership, not thread_local - see TraceContext constraints)
     QueryTrace trace_;
     bool trace_enabled_ = true;
-    static uint64_t next_query_id_;
+    static std::atomic<uint64_t> next_query_id_;
 
     // Query budget (scan limits only — deadline is per-query via QueryDeadline)
     QueryBudget budget_;
     uint32_t query_deadline_ms_ = 30;  // default 30ms deadline
+
+    // Per-engine reusable scratch buffer for translate() queries
+    QueryScratch scratch_;
 };
 
 } // namespace cxxime

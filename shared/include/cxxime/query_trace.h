@@ -49,8 +49,11 @@ struct QueryTrace {
     // Returns number of bytes written (excluding null terminator), or 0 on error
     int to_json(char* buf, int buf_size) const;
 
-    // Check if this trace should be logged (slow query, error, etc.)
+    // Check if this trace should be logged (slow query, error, sampling, etc.)
     bool should_log() const;
+
+    // Deterministic sampling: returns true with probability 1/rate
+    static bool should_sample(uint32_t session_id, uint64_t revision, int rate);
 
     // Log to async queue (non-blocking, drops if queue full)
     void log() const;
