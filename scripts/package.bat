@@ -66,6 +66,13 @@ if exist "%PINYIN_SRC%" (
     ) else (
         echo        WARNING: Failed to generate pinyin binary dict.
     )
+    echo        Generating short code cache (topn)...
+    python "%ROOT%\scripts\build_short_cache.py" --input "%PINYIN_SRC%" --output "%DIST_DIR%\data\pinyin.topn.bin" 2>&1
+    if exist "%DIST_DIR%\data\pinyin.topn.bin" (
+        echo        pinyin.topn.bin generated.
+    ) else (
+        echo        WARNING: Failed to generate pinyin.topn.bin (short input fast path disabled^).
+    )
 ) else (
     echo        WARNING: pinyin.dict.db.zip not found. Cannot build pinyin dictionary.
 )
@@ -145,6 +152,7 @@ echo       themes.json          Color themes (14 schemes^)
 echo       pinyin.dict.bin      Pinyin binary dictionary (runtime^)
 echo       pinyin.dict.idx      Pinyin syllable index (runtime^)
 echo       pinyin.spellings.bin Pinyin spelling trie (runtime^)
+echo       pinyin.topn.bin     Short code cache - fast path (runtime^)
 echo       wubi86.dict.bin      Wubi binary dictionary (if available^)
 echo     install.bat            Installer (run as administrator^)
 echo     uninstall.bat          Uninstaller (run as administrator^)

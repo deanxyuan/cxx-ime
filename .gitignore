@@ -11,6 +11,7 @@ data/pinyin.dict.db.bak
 data/*.dict.bin
 data/*.spellings.bin
 data/*.dict.idx
+data/*.topn.bin
 
 # Benchmark output
 *.jsonl

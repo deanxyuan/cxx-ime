@@ -11,6 +11,7 @@
 #include <shared_mutex>
 #include <atomic>
 #include <cxxime/candidate.h>
+#include <cxxime/short_code_cache.h>
 
 namespace cxxime {
 
@@ -48,6 +49,10 @@ public:
     bool load_user_dict(const std::string& path);
     bool save_user_dict();
 
+    // Short code cache (Phase 4 fast path)
+    const ShortCodeCache& short_cache() const { return short_cache_; }
+    bool has_short_cache() const { return short_cache_.is_loaded(); }
+
     // Syllable ID mapping (for pinyin integer-ID lookup path)
     uint32_t syllable_to_id(const std::string& syllable) const;
     bool has_syllabary() const { return !syllable_to_id_.empty(); }
@@ -67,6 +72,9 @@ private:
     const DictEntry* dict_entries_ = nullptr;
     const char* dict_strings_ = nullptr;
     uint32_t dict_entry_count_ = 0;
+
+    // Short code cache (Phase 4)
+    ShortCodeCache short_cache_;
 
     // Integer ID index (.dict.idx, heap-allocated)
     char* idx_data_ = nullptr;

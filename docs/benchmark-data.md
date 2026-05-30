@@ -5,10 +5,10 @@
 ## 测试条件
 
 ```cmd
-build\tools\query_bench\Release\query_bench.exe --data data --input s,sd,sdf,sddf,bj,srf,shrf,zguo,nihao,nihaoshijie --repeat 500
+build\tools\query_bench\Release\query_bench.exe --data data --input s,sd,sdf,sddf,bj,srf,shrf,zguo,nihao,nihaoshijie --repeat 500 --warmup 100 --page-size 7 --deadline-ms 30
 ```
 
-参数：`--page-size 7 --deadline-ms 30 --warmup 100`
+参数：`--repeat 500 --warmup 100 --page-size 7 --deadline-ms 30`，取 3 轮中位数（轮间冷却 10 秒）。
 
 ## 原始基线（无优化）
 
@@ -67,28 +67,57 @@ build\tools\query_bench\Release\query_bench.exe --data data --input s,sd,sdf,sdd
 
 **vs TopK 基线：** `s` 查询 P50 从 94μs 降至 34μs（**-64%**），`bj` 从 92μs 降至 79μs（**-14%**），其余输入波动 ±6% 以内。
 
+## 短输入快速路径
+
+> TopKCollector + make_budget + QueryDeadline + **ShortCodeCache (pinyin.topn.bin)**
+>
+> 短输入（1–6 小写字母）先查 session recent cache + 预构建 topn.bin，命中时完全跳过 syllabifier 和 dict scan。
+>
+> 测试条件：`--repeat 500 --warmup 100 --page-size 7 --deadline-ms 30`，3 轮取中位数（轮间冷却 10 秒）。
+
+| 输入 | 类型 | 路径 | 候选 | e2e P50 | e2e P99 | 查询 P50 | 查询 P99 | exact_scan | prefix_scan | cache_hit | trunc% | deadline% |
+|------|------|------|------|---------|---------|----------|----------|------------|-------------|-----------|--------|-----------|
+| `s` | 单字母 | 0 | 7 | 12 us | 12 us | 9 us | 10 us | 0 | 0 | ✅ | 0% | 0% |
+| `sd` | 双字母缩写 | 0 | 7 | 24 us | 26 us | 9 us | 10 us | 0 | 0 | ✅ | 0% | 0% |
+| `sdf` | 三字母缩写 | 0 | 7 | 36 us | 49 us | 9 us | 10 us | 0 | 0 | ✅ | 0% | 0% |
+| `sddf` | 四字母缩写 | 0 | 7 | 48 us | 52 us | 9 us | 10 us | 0 | 0 | ✅ | 0% | 0% |
+| `bj` | 双字母缩写 | 0 | 7 | 23 us | 25 us | 9 us | 10 us | 0 | 0 | ✅ | 0% | 0% |
+| `srf` | 三字母缩写 | 0 | 7 | 36 us | 38 us | 9 us | 10 us | 0 | 0 | ✅ | 0% | 0% |
+| `shrf` | 四字母缩写 | 0 | 0 | 3161 us | 4162 us | 3114 us | 3904 us | 0 | 0 | — | 0% | 0% |
+| `zguo` | 混合拼音 | 0 | 7 | 48 us | 49 us | 9 us | 10 us | 0 | 0 | ✅ | 0% | 0% |
+| `nihao` | 全拼 | 0 | 7 | 59 us | 61 us | 9 us | 10 us | 0 | 0 | ✅ | 0% | 0% |
+| `nihaoshijie` | 长输入 | 1 | 1 | 21000 us | 32616 us | 4444 us | 6704 us | 1 | 21 | — | 0% | 0% |
+
+**关键指标变化：**
+- 路径数 = 0：纯 cache 命中时 syllabifier 完全未被调用。
+- exact/prefix_scan = 0：dict scan 完全跳过。
+- `shrf` 无候选：topn.bin 中无此 key 的词典条目（词典不含 `shu:ru:fa` 对应的 `shrf` 混合码），无 cache 命中，回退 syllabifier 后仍无结果。
+- `nihaoshijie` 路径 = 1：长度 > 6，不走快速路径，行为与 deadline 基线一致。
+
+**vs deadline 基线：** 3–6 字母输入收益最大（-91% ~ -99%），因为这些输入原先需要 syllabifier 路径枚举 + 多次 dict scan，快速路径完全跳过。1–2 字母输入原本就快，提升幅度相对较小但仍然显著（-67% ~ -80%）。长输入（>6 字母）不走快速路径，数据波动属正常范围。
+
 ## 版本对比总表
 
-| 输入 | 原始 e2e P50 | TopK e2e P50 | deadline e2e P50 | 总提升 |
-|------|--------------|--------------|------------------|--------|
-| `s` | 789 us | 97 us | 36 us | **-95%** |
-| `sd` | 936 us | 335 us | 258 us | **-72%** |
-| `sdf` | 2889 us | 2233 us | 2233 us | -23% |
-| `sddf` | 6059 us | 5477 us | 5593 us | -8% |
-| `bj` | 2067 us | 210 us | 117 us | **-94%** |
-| `srf` | 2143 us | 1524 us | 1506 us | -30% |
-| `shrf` | 6462 us | 5763 us | 5949 us | -8% |
-| `zguo` | 1912 us | 1085 us | 1061 us | **-45%** |
-| `nihao` | 3814 us | 2494 us | 2508 us | -34% |
-| `nihaoshijie` | 25911 us | 24439 us | 25898 us | ~0% |
+| 输入 | 原始 e2e P50 | TopK e2e P50 | deadline e2e P50 | ShortCache e2e P50 | 总提升 |
+|------|--------------|--------------|------------------|----------------|--------|
+| `s` | 789 us | 97 us | 36 us | 12 us | **-98%** |
+| `sd` | 936 us | 335 us | 258 us | 24 us | **-97%** |
+| `sdf` | 2889 us | 2233 us | 2233 us | 36 us | **-99%** |
+| `sddf` | 6059 us | 5477 us | 5593 us | 48 us | **-99%** |
+| `bj` | 2067 us | 210 us | 117 us | 23 us | **-99%** |
+| `srf` | 2143 us | 1524 us | 1506 us | 36 us | **-98%** |
+| `shrf` | 6462 us | 5763 us | 5949 us | 3161 us | **-51%** |
+| `zguo` | 1912 us | 1085 us | 1061 us | 48 us | **-97%** |
+| `nihao` | 3814 us | 2494 us | 2508 us | 59 us | **-98%** |
+| `nihaoshijie` | 25911 us | 24439 us | 25898 us | 21000 us | ~波动 |
 
-> 短输入（1–2 字母）收益最大，长输入无劣化。
+> 短输入快速路径覆盖了 1–6 字母的全拼和简拼场景，查询延迟从微秒级降至个位数微秒。长输入（>6 字母）不走快速路径，行为与 deadline 基线一致。
 
 ## 重跑基准
 
 ```cmd
 # 离线查询 benchmark（无需 server）
-build\tools\query_bench\Release\query_bench.exe --data data --input s,sd,sdf,sddf,bj,srf,shrf,zguo,nihao,nihaoshijie --repeat 500
+build\tools\query_bench\Release\query_bench.exe --data data --input s,sd,sdf,sddf,bj,srf,shrf,zguo,nihao,nihaoshijie --repeat 500 --warmup 100 --page-size 7 --deadline-ms 30
 
 # IPC 端到端 benchmark（需先启动 server）
 scripts\benchmark.bat

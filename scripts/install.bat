@@ -113,7 +113,7 @@ if exist "%SCRIPT_DIR%data\themes.json" copy /y "%SCRIPT_DIR%data\themes.json" "
 
 :: Dictionary files (binary + source)
 for %%f in (pinyin wubi86) do (
-    for %%e in (dict.bin dict.idx spellings.bin dict.db) do (
+    for %%e in (dict.bin dict.idx spellings.bin topn.bin dict.db) do (
         if exist "%SCRIPT_DIR%data\%%f.%%e" (
             copy /y "%SCRIPT_DIR%data\%%f.%%e" "%DATA_DIR%\" >nul
         )

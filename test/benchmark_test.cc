@@ -35,8 +35,9 @@ TEST(Benchmark, TraceFieldsPopulated) {
 
     engine.set_trace_enabled(true);
 
-    // Type "nihao" - use uppercase letters (A=65, Z=90) as Windows VK codes
-    const char* input = "nihao";
+    // Type "nihaoshijie" (12 chars) — must be >6 to bypass Phase 4 short key fast path
+    // and exercise the full syllabifier + dict lookup pipeline.
+    const char* input = "nihaoshijie";
     for (const char* p = input; *p; ++p) {
         cxxime::KeyEvent event;
         event.keycode = *p - 'a' + 'A';  // Convert to uppercase VK code
@@ -46,7 +47,7 @@ TEST(Benchmark, TraceFieldsPopulated) {
 
     const auto& trace = engine.last_trace();
 
-    printf("Trace fields for 'nihao':\n");
+    printf("Trace fields for 'nihaoshijie':\n");
     printf("  total_us: %lld\n", trace.total_us);
     printf("  processor_us: %lld\n", trace.processor_us);
     printf("  translate_us: %lld\n", trace.translate_us);
@@ -55,6 +56,7 @@ TEST(Benchmark, TraceFieldsPopulated) {
     printf("  candidate_count: %d\n", trace.candidate_count);
     printf("  exact_scan_count: %u\n", trace.exact_scan_count);
     printf("  prefix_scan_count: %u\n", trace.prefix_scan_count);
+    printf("  cache_hit: %d\n", trace.cache_hit ? 1 : 0);
 
     // Verify trace fields are populated
     ASSERT_GT(trace.total_us, 0) << "total_us should be > 0";
