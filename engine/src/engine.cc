@@ -42,6 +42,9 @@ bool Engine::initialize(Dict& dict, SpellingsIndex& spellings,
     }
     if (dict_->has_short_cache()) {
         translator_.set_short_cache(&dict_->short_cache());
+        CXXIME_LOG(L"Engine: short_cache loaded");
+    } else {
+        CXXIME_LOG(L"Engine: short_cache NOT loaded");
     }
 
     init_per_session(config);
@@ -267,6 +270,11 @@ std::string Engine::get_commit_text() {
 void Engine::clear() {
     context_.reset();
     translator_.clear_recent();
+}
+
+void Engine::clear_composition() {
+    context_.reset();
+    // Preserve session recent cache — don't call translator_.clear_recent()
 }
 
 std::string Engine::derive_spellings_path(const std::string& dict_path) {

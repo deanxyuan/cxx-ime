@@ -410,8 +410,8 @@ static inline uint64_t mix64(uint64_t x) {
     return x;
 }
 
-bool QueryTrace::should_sample(uint32_t session_id, uint64_t revision, int rate) {
-    uint64_t h = mix64((uint64_t(session_id) << 32) ^ revision);
+bool QueryTrace::should_sample(uint32_t session_id, uint64_t revision, uint64_t query_id, int rate) {
+    uint64_t h = mix64((uint64_t(session_id) << 32) ^ revision ^ query_id);
     return (h % rate) == 0;
 }
 
@@ -430,10 +430,10 @@ bool QueryTrace::should_log() const {
 
     // Truncated queries: sample at 1%
     if (truncated)
-        return should_sample(session_id, revision, 100);
+        return should_sample(session_id, revision, query_id, 100);
 
     // Normal queries: sample at 0.1%
-    return should_sample(session_id, revision, 1000);
+    return should_sample(session_id, revision, query_id, 1000);
 }
 
 void QueryTrace::log() const {

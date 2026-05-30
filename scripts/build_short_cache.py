@@ -40,8 +40,14 @@ SHORT_KEY_PREFIX = 0x08
 
 def resolve_input(path):
     """Resolve input path, auto-extracting .zip if needed."""
-    if os.path.isfile(path):
-        return path
+    # Check .zip/.db.zip first — must extract before returning .db path
+    if path.endswith(".db.zip") and os.path.isfile(path):
+        extract_dir = os.path.dirname(path) or "."
+        with zipfile.ZipFile(path) as zf:
+            zf.extractall(extract_dir)
+        db_path = path[:-4]  # remove .zip -> .db
+        if os.path.isfile(db_path):
+            return db_path
     if path.endswith(".zip") and os.path.isfile(path):
         extract_dir = os.path.dirname(path) or "."
         with zipfile.ZipFile(path) as zf:
@@ -49,14 +55,8 @@ def resolve_input(path):
         db_path = path[:-4]  # remove .zip
         if os.path.isfile(db_path):
             return db_path
-    # Try .db.zip -> .db
-    if path.endswith(".db.zip") and os.path.isfile(path):
-        extract_dir = os.path.dirname(path) or "."
-        with zipfile.ZipFile(path) as zf:
-            zf.extractall(extract_dir)
-        db_path = path[:-4]
-        if os.path.isfile(db_path):
-            return db_path
+    if os.path.isfile(path):
+        return path
     return path
 
 
