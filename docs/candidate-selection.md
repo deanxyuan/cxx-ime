@@ -79,6 +79,8 @@ id_index_ 前缀匹配: "shui:dian" → entries[...]
   扫出: 水电(freq=150000), 水点(freq=90000), ...
 ```
 
+同时查询用户词典索引（`lookup_user_exact` / `lookup_user_prefix`），补充个性化候选。用户词候选按 `user_boost + frequency + recent_bonus` 评分，插入到结果中。
+
 所有路径的结果合并去重，按频率降序排列，分页返回。
 
 ### 完整示例：输入 `"sdf"`
@@ -95,6 +97,33 @@ id_index_ 前缀匹配: "shui:dian" → entries[...]
    [3] 水电费  117200  (来自 shui:dian:fei)
    ...
 ```
+
+## 用户词典查询
+
+用户词典在查询管道中通过多路索引（exact / prefix / abbr / mixed）查询，与系统词典结果合并：
+
+| 查询方法 | 触发条件 | 索引 |
+|----------|---------|------|
+| `lookup_user_exact` | `lookup_by_syllables()` 精确匹配 | `user_exact_index_` |
+| `lookup_user_prefix` | `lookup()` 前缀匹配 | `user_prefix_index_` 或 `user_code_sorted_` 二分 |
+| `lookup_user_short` | 短输入快速路径 | exact → prefix → abbr → mixed |
+
+### 用户词评分
+
+```
+score = user_boost + frequency + recent_bonus
+
+user_boost   = 50000（固定加分，低于系统词精确匹配的 100000）
+recent_bonus = min(1000, max(0, 1000 - (user_sequence_ - entry.sequence)))
+```
+
+用户词候选低于系统词精确匹配但高于系统词前缀/缩写匹配，保证用户选过的词优先于未选过的同码词，但不会覆盖系统词的精确匹配。
+
+### 扫描预算
+
+用户词查询遵守 `QueryBudget::max_user_scan`（默认 256）。`user_scan_count` 只反映命中 bucket 或二分范围内的实际检查次数，不随用户词总量增长。
+
+详见 [用户词典设计](user-dictionary.md)。
 
 ## 性能特征
 
@@ -114,9 +143,9 @@ Syllabifier(拼写图) → Segmentor(切分) → Translator(查词+排序)
 
 - **Syllabifier**：BFS 构建音节图，基于 Patricia trie 前缀搜索，DFS 枚举全路径（信度排序+上限截断）
 - **Segmentor**：内置完整拼音音节表，贪婪最长匹配
-- **Translator**：基于音节 ID 的词典二分查找 + 频率排序
+- **Translator**：基于音节 ID 的词典二分查找 + 用户词索引查询 + 频率排序
 - Filter/Formatter 层未实现（目前不需要繁简转换、注释等）
-- 候选按主词典频率降序排列，用户词典匹配项额外加分
+- 候选按主词典频率降序排列，用户词典匹配项额外加分（`user_boost=50000` + `frequency` + `recent_bonus`）
 
 ## 查询预算（Deadline & Scan Budget）
 
@@ -126,5 +155,6 @@ Syllabifier(拼写图) → Segmentor(切分) → Translator(查词+排序)
 - **has_prefix 前**：每条路径检查 deadline
 - **lookup_by_ids 前**：每条路径检查 deadline
 - **lookup_by_ids 内部**：每 64 条检查 deadline + 扫描上限（`max_exact_scan` / `max_prefix_scan`）
+- **用户词索引扫描**：每 64 条检查 deadline + 扫描上限（`max_user_scan`，默认 256）
 
 任一触发都会设置 `QueryTrace::deadline_exceeded` 和 `truncated`。详见 [查询预算与候选收集](query-control.md)。

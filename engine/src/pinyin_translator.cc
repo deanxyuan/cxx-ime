@@ -88,14 +88,36 @@ PinyinTranslator::ShortFastResult PinyinTranslator::lookup_short_fast(
     std::unordered_set<std::string> seen;
 
     // 1. Session recent cache (highest priority)
+    // Phase 5: filter entries whose user dict entry has been deleted
+    uint64_t current_version = dict_ ? dict_->user_dict_version() : 0;
+    bool version_changed = (current_version != cached_user_dict_version_);
     for (auto& rc : recent_cache_) {
         if (rc.key == key && seen.size() < (size_t)limit) {
+            // Skip if user dict entry was deleted since this was cached
+            if (version_changed && dict_ && !dict_->has_user_entry(rc.candidate.text))
+                continue;
             if (seen.insert(rc.candidate.text).second)
                 result.candidates.push_back(rc.candidate);
         }
     }
+    if (version_changed)
+        cached_user_dict_version_ = current_version;
 
-    // 2. Pre-built short code cache
+    // 2. Phase 5: User dictionary short index (after recent, before system cache)
+    if (dict_) {
+        QueryBudget ub;
+        ub.max_user_scan = 64;  // tight budget for fast path
+        UserLookupStats ustats;
+        auto user_results = dict_->lookup_user_short(key, limit, ub, trace, &ustats);
+        for (auto& c : user_results) {
+            if (seen.size() >= (size_t)limit)
+                break;
+            if (seen.insert(c.text).second)
+                result.candidates.push_back(std::move(c));
+        }
+    }
+
+    // 3. Pre-built short code cache
     if (short_cache_ && short_cache_->is_loaded()) {
         auto cached = short_cache_->lookup(key, limit, trace);
         for (auto& c : cached) {

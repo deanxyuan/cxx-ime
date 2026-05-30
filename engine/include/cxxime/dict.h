@@ -18,6 +18,13 @@ namespace cxxime {
 struct DictEntry;
 struct QueryTrace;
 struct QueryBudget;
+struct UserLookupStats;
+
+struct UserLookupStats {
+    uint32_t scan_count = 0;
+    bool truncated = false;
+    bool deadline_exceeded = false;
+};
 
 class Dict {
 public:
@@ -44,6 +51,7 @@ public:
     int count(const std::string& code_prefix, QueryTrace* trace = nullptr);
     std::string reverse_lookup(const std::string& text);
     void update_frequency(const std::string& text, const std::string& code);
+    void update_frequency(const std::string& text, const std::string& code, const std::string& syllables);
 
     // User dictionary persistence
     bool load_user_dict(const std::string& path);
@@ -52,6 +60,18 @@ public:
     // Short code cache (Phase 4 fast path)
     const ShortCodeCache& short_cache() const { return short_cache_; }
     bool has_short_cache() const { return short_cache_.is_loaded(); }
+
+    // Phase 5: user dict version for cache invalidation
+    uint64_t user_dict_version() const { return user_dict_version_; }
+    bool has_user_entry(const std::string& text) const;
+
+    // Phase 5: internal indexed user dict query methods
+    std::vector<Candidate> lookup_user_exact(const std::string& code, int limit,
+        const QueryBudget& budget, QueryTrace* trace, UserLookupStats* stats) const;
+    std::vector<Candidate> lookup_user_prefix(const std::string& prefix, int limit,
+        const QueryBudget& budget, QueryTrace* trace, UserLookupStats* stats) const;
+    std::vector<Candidate> lookup_user_short(const std::string& key, int limit,
+        const QueryBudget& budget, QueryTrace* trace, UserLookupStats* stats) const;
 
     // Syllable ID mapping (for pinyin integer-ID lookup path)
     uint32_t syllable_to_id(const std::string& syllable) const;
@@ -90,16 +110,42 @@ private:
     // User dictionary: in-memory structure with TSV persistence.
     // Replaces SQLite — user dict is small (< 1MB), this is simpler and avoids
     // all SQLite concurrency issues. shared_mutex for concurrent reads.
+    using UserEntryId = uint32_t;
+
     struct UserEntry {
         std::string text;
-        std::string code;
+        std::string code;       // raw committed key, e.g. "shurufa" or "srf"
+        std::string syllables;  // optional colon form, e.g. "shu:ru:fa"
+        std::string abbr_code;  // e.g. "srf"
         int frequency = 1;
+        uint64_t sequence = 0;
+        bool deleted = false;
     };
+
+    struct UserBucket {
+        std::vector<UserEntryId> ids;
+    };
+
     std::vector<UserEntry> user_entries_;
     std::unordered_map<std::string, size_t> user_text_index_; // text → entries_ index
+
+    // Phase 5: multi-way indexes
+    std::unordered_map<std::string, UserBucket> user_exact_index_;
+    std::unordered_map<std::string, UserBucket> user_prefix_index_;
+    std::unordered_map<std::string, UserBucket> user_abbr_index_;
+    std::unordered_map<std::string, UserBucket> user_mixed_index_;
+    std::vector<UserEntryId> user_code_sorted_;
+    uint64_t user_dict_version_ = 0;
+    uint64_t user_sequence_ = 0;
+
     mutable std::shared_mutex user_mutex_;
     std::atomic<bool> user_dirty_{false};
     std::string user_dict_path_;
+
+    // Phase 5: index maintenance helpers
+    void rebuild_user_indexes_locked();
+    void insert_user_into_indexes(UserEntryId id);
+    void remove_user_from_indexes(UserEntryId id);
 
 };
 

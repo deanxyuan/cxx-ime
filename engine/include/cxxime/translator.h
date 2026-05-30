@@ -53,6 +53,7 @@ private:
     // Phase 4: per-session recent candidate cache
     std::vector<RecentCandidate> recent_cache_;
     uint64_t recent_sequence_ = 0;
+    mutable uint64_t cached_user_dict_version_ = 0;  // Phase 5: for cache invalidation
     static constexpr size_t kMaxRecentKeys = 128;
     static constexpr size_t kMaxRecentPerKey = 8;
 };
