@@ -5,13 +5,14 @@
 #include <cxxime/logging.h>
 #include <cxxime/data_path.h>
 
-bool SharedResources::load(const std::string& dict_path, const std::string& config_path) {
+bool SharedResources::load(const std::string& dict_path, const std::string& cfg_path) {
     std::string user_dict_path = cxxime::user_data_path("user.tsv");
     if (!dict.open(dict_path, user_dict_path)) {
         CXXIME_LOG(L"SharedResources: dict.open FAILED");
         return false;
     }
-    if (!config_path.empty()) {
+    if (!cfg_path.empty()) {
+        config_path = cfg_path;
         config.load(config_path);
         // Overlay user config from %APPDATA%
         config.load(cxxime::user_data_path("default.json"));
@@ -77,4 +78,19 @@ size_t SessionManager::cleanup_idle_sessions(uint32_t timeout_ms) {
         }
     }
     return count;
+}
+
+void SharedResources::reload_config() {
+    if (config_path.empty())
+        return;
+    CXXIME_LOG(L"SharedResources: reloading config from %S", config_path.c_str());
+    config = cxxime::Config();  // Reset to defaults
+    config.load(config_path);
+    config.load(cxxime::user_data_path("default.json"));
+    config.load_themes(cxxime::data_path("themes.json"));
+}
+
+void SessionManager::reload_config() {
+    shared_.reload_config();
+    CXXIME_LOG(L"SessionManager: config reloaded, %zu active sessions", sessions_.size());
 }

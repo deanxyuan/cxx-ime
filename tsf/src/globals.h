@@ -27,4 +27,12 @@ extern CRITICAL_SECTION g_cs;
 void DllAddRef();
 void DllRelease();
 
+namespace cxxime { class ConfigMonitor; class Config; }
+cxxime::ConfigMonitor* get_config_monitor();
+cxxime::Config get_config();
+void reload_global_config();
+void init_config_monitor();
+void add_config_monitor_ref();
+void release_config_monitor_ref();
+
 #endif // CXXIME_TSF_GLOBALS_H_

@@ -6,6 +6,7 @@
 #include <windows.h>
 #include <cxxime/ipc_server.h>
 #include <cxxime/ipc_protocol.h>
+#include <cxxime/config_monitor.h>
 #include "session_manager.h"
 
 class ServerApp {
@@ -20,6 +21,7 @@ private:
 
     SessionManager session_mgr_;
     cxxime::IpcServer ipc_server_;
+    cxxime::ConfigMonitor config_monitor_;
     HWND hwnd_ = nullptr;
     std::string config_path_;
 };

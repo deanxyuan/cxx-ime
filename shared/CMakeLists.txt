@@ -3,6 +3,7 @@ project(cxxime-shared CXX)
 add_library(cxxime-shared STATIC
     src/key_event.cc
     src/data_path.cc
+    src/config_monitor.cc
     src/mpscq.cc
     src/query_trace_log.cc
 )

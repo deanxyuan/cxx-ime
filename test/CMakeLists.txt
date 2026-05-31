@@ -29,6 +29,7 @@ add_cxxime_test(benchmark_test)
 add_cxxime_test(short_cache_test)
 add_cxxime_test(trace_test)
 add_cxxime_test(mpscq_test)
+add_cxxime_test(config_monitor_test)
 
 find_package(Python3 QUIET)
 if(Python3_FOUND)
