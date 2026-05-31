@@ -15,7 +15,7 @@ endif()
 option(CXXIME_BUILD_TESTS "Build tests" ON)
 
 # Data directory resolution:
-#   Production (default): CXXIME_PRODUCTION_BUILD=ON  → %APPDATA%/CxxIME/
+#   Production (default): CXXIME_PRODUCTION_BUILD=ON  → <exe_dir>/data/
 #   Development:          CXXIME_PRODUCTION_BUILD=OFF → ${CMAKE_SOURCE_DIR}/data/
 option(CXXIME_PRODUCTION_BUILD "Build for production install" ON)
 

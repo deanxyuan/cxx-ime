@@ -6,7 +6,7 @@
 - `CreateFileA` + `ReadFile` 读取 `pinyin.dict.bin`（~73MB）
 - `CreateFileA` + `ReadFile` 读取 `pinyin.dict.idx`（~48MB）
 - `CreateFileA` + `ReadFile` 读取 `pinyin.spellings.bin`
-- SQLite 打开 `%APPDATA%\CxxIME\user.db`
+- 读取 `%USERPROFILE%\cxxime\user.tsv`
 
 多个 worker 线程并发创建 session 时，同时打开同一 .bin 文件偶尔失败（防病毒/文件系统过滤驱动干扰），导致 session 创建失败。
 

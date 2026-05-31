@@ -14,6 +14,10 @@
 #include <cxxime/logging.h>
 #include <cxxime/engine.h>
 
+static std::string data_path(const char* rel) {
+    return std::string(CXXIME_PROJECT_DIR) + std::string("data/") + rel;
+}
+
 // ─── QueryTrace::should_log() ──────────────────────────────────────────
 
 TEST(QueryTrace, should_log_deadline_exceeded) {
@@ -183,7 +187,7 @@ TEST(AtomicQueryId, query_id_no_duplicates) {
 
 TEST(EngineTrace, trace_fields_populated) {
     cxxime::Engine engine;
-    if (!engine.initialize(CXXIME_DATA_DIR "pinyin.dict.bin"))
+    if (!engine.initialize(data_path("pinyin.dict.bin").c_str()))
         return;  // skip if data not available
 
     engine.set_trace_enabled(true);
@@ -204,7 +208,7 @@ TEST(EngineTrace, no_auto_trace_log) {
     // Engine should NOT call trace_.log() internally — that's the server's job.
     // This test just verifies the engine runs without crashing when trace is enabled.
     cxxime::Engine engine;
-    if (!engine.initialize(CXXIME_DATA_DIR "pinyin.dict.bin"))
+    if (!engine.initialize(data_path("pinyin.dict.bin").c_str()))
         return;
 
     engine.set_trace_enabled(true);
