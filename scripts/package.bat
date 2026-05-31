@@ -96,6 +96,53 @@ if "!HAS_DICT!"=="0" (
     echo        The IME will not function without a dictionary.
 )
 
+echo [3.5/6] Verifying data file integrity...
+python "%SCRIPT_DIR%verify_data_files.py" --data-dir "%DIST_DIR%\data"
+if errorlevel 1 (
+    echo        ERROR: Data file integrity check failed. Aborting.
+    exit /b 1
+)
+
+echo        Checking for Debug CRT dependencies...
+set "HAS_DEBUG_CRT=0"
+for %%f in ("%DIST_DIR%\cxxime_tsf.dll" "%DIST_DIR%\cxxime-server.exe" "%DIST_DIR%\cxxime-settings.exe") do (
+    dumpbin /dependents "%%f" 2>nul | findstr /i "ucrtbased.dll vcruntimed.dll" >nul 2>&1
+    if not errorlevel 1 (
+        echo        ERROR: %%~nxf links to Debug CRT.
+        set "HAS_DEBUG_CRT=1"
+    )
+)
+if "!HAS_DEBUG_CRT!"=="1" (
+    echo        ERROR: Release build must not depend on Debug CRT.
+    exit /b 1
+)
+echo        No Debug CRT dependencies.
+
+echo        Checking for high-frequency CXXIME_LOG in hot paths...
+set "HAS_HOT_LOG=0"
+for %%m in ("%ROOT%\engine\src\pinyin_translator.cc" "%ROOT%\engine\src\dict.cc" "%ROOT%\ipc\src\ipc_server.cc") do (
+    if exist "%%~m" (
+        findstr /n "CXXIME_LOG" "%%~m" 2>nul | findstr /v "//.*CXXIME_LOG" >nul 2>&1
+        if not errorlevel 1 (
+            echo        WARNING: %%~nm.cc contains CXXIME_LOG calls in hot path.
+            set "HAS_HOT_LOG=1"
+        )
+    )
+)
+if "!HAS_HOT_LOG!"=="1" (
+    echo        WARNING: Review CXXIME_LOG calls above — release hot paths should not log at high frequency.
+)
+
+echo        Checking log rotation config...
+if exist "%DIST_DIR%\data\default.json" (
+    findstr "log_max_size" "%DIST_DIR%\data\default.json" >nul 2>&1
+    if errorlevel 1 (
+        echo        WARNING: default.json does not contain log_max_size — log rotation may not be configured.
+    ) else (
+        echo        Log rotation config found.
+    )
+)
+
 echo [4/6] Copying installer scripts...
 copy /y "%SCRIPT_DIR%install.bat" "%DIST_DIR%\" >nul
 copy /y "%SCRIPT_DIR%uninstall.bat" "%DIST_DIR%\" >nul
