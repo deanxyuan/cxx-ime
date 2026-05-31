@@ -4,6 +4,7 @@
 #include "editor_app.h"
 #include <commdlg.h>
 #include <cxxime/data_path.h>
+#include <cxxime/config_notify.h>
 
 #pragma comment(lib, "comctl32.lib")
 
@@ -483,6 +484,9 @@ void EditorApp::save_config() {
     }
 
     config_.save(cxxime::user_data_path("default.json"));
+
+    // Notify TSF/Server that config has changed
+    cxxime::notify_config_changed();
 }
 
 // ─── Window proc ───────────────────────────────────────────────────────

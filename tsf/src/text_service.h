@@ -106,7 +106,6 @@ private:
     void _ProcessKeyUp(WPARAM wParam);
     void _AbortComposition();
     uint32_t _get_modifiers() const;
-    void _load_config();
 
     LONG _cRef = 1;
     ITfThreadMgr* _threadMgr = nullptr;

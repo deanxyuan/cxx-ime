@@ -51,6 +51,12 @@ bool ServerApp::initialize(const std::string& dict_path, const std::string& conf
         return false;
     }
 
+    // Start config change watcher — reload config directly on change
+    config_monitor_.initialize();
+    config_monitor_.start([this]() {
+        session_mgr_.reload_config();
+    });
+
     return true;
 }
 
@@ -63,6 +69,7 @@ void ServerApp::run() {
 }
 
 void ServerApp::finalize() {
+    config_monitor_.stop();
     ipc_server_.stop();
 
     if (hwnd_) {

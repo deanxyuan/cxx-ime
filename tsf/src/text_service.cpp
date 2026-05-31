@@ -271,7 +271,9 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
     OutputDebugStringA("[CxxIME] ActivateEx called\n");
     CXXIME_LOG(L"ActivateEx: clientId=%u, flags=%u", tid, dwFlags);
 
-    _load_config();
+    _config = get_config();
+    init_config_monitor();
+    add_config_monitor_ref();
 
     _threadMgr = ptim;
     _threadMgr->AddRef();
@@ -360,6 +362,8 @@ STDMETHODIMP TextService::Deactivate() {
         _sessionId = 0;
     }
     _client.disconnect();
+
+    release_config_monitor_ref();
 
     _candidateWindow.destroy();
 
@@ -455,7 +459,9 @@ STDMETHODIMP TextService::OnKeyUp(ITfContext* pic, WPARAM wParam, LPARAM lParam,
 bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam, BOOL* pfEaten) {
     *pfEaten = FALSE;
 
-    _load_config();
+    // Config is reloaded by watcher thread (not keypress-driven).
+    // Copy to local _config for consistent use during this keypress.
+    _config = get_config();
 
     // Record key event start time
     _key_event_start = std::chrono::steady_clock::now();
@@ -636,7 +642,8 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
 }
 
 void TextService::_ProcessKeyUp(WPARAM wParam) {
-    _load_config();
+    // Config is reloaded by watcher thread (not keypress-driven).
+    _config = get_config();
 
     CXXIME_LOG(L"_ProcessKeyUp: vk=%u, sessionId=%u", (unsigned int)wParam, _sessionId);
 
@@ -952,11 +959,6 @@ uint32_t TextService::_get_modifiers() const {
             mods |= 0x04;
     }
     return mods;
-}
-
-void TextService::_load_config() {
-    _config.load(cxxime::data_path("default.json"));
-    _config.load(cxxime::user_data_path("default.json"));
 }
 
 RECT TextService::_resolve_caret_rect(ITfContext* pic) {

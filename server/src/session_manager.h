@@ -19,8 +19,10 @@ struct SharedResources {
     cxxime::SpellingsIndex spellings;
     cxxime::Config config;
     std::unique_ptr<cxxime::Syllabifier> syllabifier;
+    std::string config_path;  // Stored for reload
 
     bool load(const std::string& dict_path, const std::string& config_path);
+    void reload_config();
 };
 
 struct SessionEntry {
@@ -37,6 +39,7 @@ public:
     void touch_session(uint32_t id);
 
     size_t cleanup_idle_sessions(uint32_t timeout_ms);
+    void reload_config();
 
 private:
     SharedResources shared_;
