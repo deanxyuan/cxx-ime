@@ -18,6 +18,11 @@
 #include <string>
 #include <set>
 
+// Build a path relative to the project root.
+static std::string project_path(const char* rel) {
+    return std::string(CXXIME_PROJECT_DIR) + rel;
+}
+
 static const char* kTestInputs[] = {
     "s", "sd", "sdf", "sddf", "bj", "srf", "shrf", "zguo", "nihao", "nihaoshijie"
 };
@@ -30,8 +35,8 @@ static int64_t percentile(const std::vector<int64_t>& sorted, double p) {
 
 TEST(Benchmark, TraceFieldsPopulated) {
     cxxime::Engine engine;
-    std::string dict_path = CXXIME_DATA_DIR "pinyin.dict.bin";
-    std::string config_path = CXXIME_DATA_DIR "default.json";
+    std::string dict_path = project_path("data/pinyin.dict.bin").c_str();
+    std::string config_path = project_path("data/default.json").c_str();
 
     if (!engine.initialize(dict_path, config_path)) {
         return;
@@ -81,8 +86,8 @@ TEST(Benchmark, TraceFieldsPopulated) {
 TEST(Benchmark, TraceOverhead) {
     // Initialize engine
     cxxime::Engine engine;
-    std::string dict_path = CXXIME_DATA_DIR "pinyin.dict.bin";
-    std::string config_path = CXXIME_DATA_DIR "default.json";
+    std::string dict_path = project_path("data/pinyin.dict.bin").c_str();
+    std::string config_path = project_path("data/default.json").c_str();
 
     if (!engine.initialize(dict_path, config_path)) {
         // Skip if dict not available
@@ -186,11 +191,6 @@ TEST(Benchmark, TraceOverhead) {
 
 // ---- Phase 7 helpers ----
 
-// Concatenate CXXIME_DATA_DIR (a string literal) with a relative path.
-static std::string data_path(const char* rel) {
-    return std::string(CXXIME_DATA_DIR) + rel;
-}
-
 #ifdef _WIN32
 inline int get_exit_code(int rc) { return rc; }
 #else
@@ -240,8 +240,8 @@ static int64_t percentile_vec(const std::vector<int64_t>& sorted, double p) {
 
 TEST(Benchmark, JsonlFieldsComplete) {
     cxxime::Engine engine;
-    std::string dict_path = CXXIME_DATA_DIR "pinyin.dict.bin";
-    std::string config_path = CXXIME_DATA_DIR "default.json";
+    std::string dict_path = project_path("data/pinyin.dict.bin").c_str();
+    std::string config_path = project_path("data/default.json").c_str();
     if (!engine.initialize(dict_path, config_path)) return;
 
     engine.set_query_deadline_ms(0);
@@ -282,8 +282,8 @@ TEST(Benchmark, JsonlFieldsComplete) {
 
 TEST(Benchmark, RepeatCountExact) {
     cxxime::Engine engine;
-    std::string dict_path = CXXIME_DATA_DIR "pinyin.dict.bin";
-    std::string config_path = CXXIME_DATA_DIR "default.json";
+    std::string dict_path = project_path("data/pinyin.dict.bin").c_str();
+    std::string config_path = project_path("data/default.json").c_str();
     if (!engine.initialize(dict_path, config_path)) return;
 
     engine.set_query_deadline_ms(0);
@@ -294,7 +294,7 @@ TEST(Benchmark, RepeatCountExact) {
     const int kRepeat = 5;
 
     // Write JSONL to temp file
-    std::string tmp_path = CXXIME_DATA_DIR "_bench_repeat_test.jsonl";
+    std::string tmp_path = project_path("data/_bench_repeat_test.jsonl").c_str();
     {
         std::ofstream f(tmp_path);
         for (int i = 0; i < kRepeat; ++i) {
@@ -329,8 +329,8 @@ TEST(Benchmark, RepeatCountExact) {
 
 TEST(Benchmark, PageSizeAffectsCandidates) {
     cxxime::Engine engine;
-    std::string dict_path = CXXIME_DATA_DIR "pinyin.dict.bin";
-    std::string config_path = CXXIME_DATA_DIR "default.json";
+    std::string dict_path = project_path("data/pinyin.dict.bin").c_str();
+    std::string config_path = project_path("data/default.json").c_str();
     if (!engine.initialize(dict_path, config_path)) return;
 
     engine.set_query_deadline_ms(0);
@@ -373,8 +373,8 @@ TEST(Benchmark, PageSizeAffectsCandidates) {
 
 TEST(Benchmark, DeadlineTriggered) {
     cxxime::Engine engine;
-    std::string dict_path = CXXIME_DATA_DIR "pinyin.dict.bin";
-    std::string config_path = CXXIME_DATA_DIR "default.json";
+    std::string dict_path = project_path("data/pinyin.dict.bin").c_str();
+    std::string config_path = project_path("data/default.json").c_str();
     if (!engine.initialize(dict_path, config_path)) return;
 
     engine.set_trace_enabled(true);
@@ -416,7 +416,7 @@ TEST(Benchmark, DataFileIntegrity) {
     };
 
     for (const auto& fc : checks) {
-        std::string path = std::string(CXXIME_DATA_DIR) + fc.filename;
+        std::string path = project_path((std::string("data/") + fc.filename).c_str());
         std::ifstream f(path, std::ios::binary);
         ASSERT_TRUE(f.is_open()) << "Cannot open " << fc.filename;
 
@@ -437,7 +437,7 @@ TEST(Benchmark, DataFileIntegrity) {
 
     // default.json must exist and be non-empty
     {
-        std::string path = data_path("default.json");
+        std::string path = project_path("data/default.json");
         std::ifstream f(path);
         ASSERT_TRUE(f.is_open()) << "Cannot open default.json";
         f.seekg(0, std::ios::end);
@@ -451,7 +451,7 @@ TEST(Benchmark, DataFileIntegrity) {
 
 static int run_check_script(const std::string& threshold_path, const std::string& jsonl_path,
                             const std::string& output_dir) {
-    std::string script = data_path("../scripts/check_query_bench.py");
+    std::string script = project_path("scripts/check_query_bench.py");
     std::string cmd = "python \"" + script + "\" --input \"" + jsonl_path +
                       "\" --threshold \"" + threshold_path +
                       "\" --output-dir \"" + output_dir + "\"";
@@ -460,14 +460,14 @@ static int run_check_script(const std::string& threshold_path, const std::string
 
 TEST(Benchmark, CheckQueryBenchPass) {
     // Create a minimal JSONL with relaxed timing
-    std::string jsonl_path = data_path("_bench_check_pass.jsonl");
-    std::string output_dir = data_path("_bench_reports");
-    std::string threshold_path = data_path("../tools/query_bench/thresholds.local.json");
+    std::string jsonl_path = project_path("data/_bench_check_pass.jsonl");
+    std::string output_dir = project_path("data/_bench_reports");
+    std::string threshold_path = project_path("tools/query_bench/thresholds.local.json");
 
     {
         cxxime::Engine engine;
-        std::string dict_path = data_path("pinyin.dict.bin");
-        std::string config_path = data_path("default.json");
+        std::string dict_path = project_path("data/pinyin.dict.bin");
+        std::string config_path = project_path("data/default.json");
         if (!engine.initialize(dict_path, config_path)) return;
 
         engine.set_query_deadline_ms(0);
@@ -497,9 +497,9 @@ TEST(Benchmark, CheckQueryBenchPass) {
 
 TEST(Benchmark, CheckQueryBenchFail) {
     // Create a JSONL with artificially slow timing (100000us = 100ms)
-    std::string jsonl_path = data_path("_bench_check_fail.jsonl");
-    std::string output_dir = data_path("_bench_reports_fail");
-    std::string threshold_path = data_path("../tools/query_bench/thresholds.local.json");
+    std::string jsonl_path = project_path("data/_bench_check_fail.jsonl");
+    std::string output_dir = project_path("data/_bench_reports_fail");
+    std::string threshold_path = project_path("tools/query_bench/thresholds.local.json");
 
     {
         // Write a hand-crafted JSONL line with p95 > 1000 (the short_inputs threshold)
@@ -535,8 +535,8 @@ TEST(Benchmark, CheckQueryBenchFail) {
 TEST(Benchmark, CacheHitScanZero) {
     // Short input "s" should hit topn cache with all scan counts = 0
     cxxime::Engine engine;
-    std::string dict_path = data_path("pinyin.dict.bin");
-    std::string config_path = data_path("default.json");
+    std::string dict_path = project_path("data/pinyin.dict.bin");
+    std::string config_path = project_path("data/default.json");
     if (!engine.initialize(dict_path, config_path)) return;
 
     engine.set_query_deadline_ms(0);
@@ -564,8 +564,8 @@ TEST(Benchmark, CacheHitScanZero) {
 TEST(Benchmark, CacheMissScanPositive) {
     // Long input "nihaoshijie" should miss cache, scan counts > 0
     cxxime::Engine engine;
-    std::string dict_path = data_path("pinyin.dict.bin");
-    std::string config_path = data_path("default.json");
+    std::string dict_path = project_path("data/pinyin.dict.bin");
+    std::string config_path = project_path("data/default.json");
     if (!engine.initialize(dict_path, config_path)) return;
 
     engine.set_query_deadline_ms(0);
@@ -595,8 +595,8 @@ TEST(Benchmark, CacheMissScanPositive) {
 TEST(Benchmark, TruncationWhenExcessCandidates) {
     // With page_size=1, a common input should produce truncated=true
     cxxime::Engine engine;
-    std::string dict_path = data_path("pinyin.dict.bin");
-    std::string config_path = data_path("default.json");
+    std::string dict_path = project_path("data/pinyin.dict.bin");
+    std::string config_path = project_path("data/default.json");
     if (!engine.initialize(dict_path, config_path)) return;
 
     engine.set_query_deadline_ms(0);
@@ -623,8 +623,8 @@ TEST(Benchmark, TruncationWhenExcessCandidates) {
 TEST(Benchmark, DeadlineAndTruncatedCoupled) {
     // When deadline is exceeded, truncated must also be true
     cxxime::Engine engine;
-    std::string dict_path = data_path("pinyin.dict.bin");
-    std::string config_path = data_path("default.json");
+    std::string dict_path = project_path("data/pinyin.dict.bin");
+    std::string config_path = project_path("data/default.json");
     if (!engine.initialize(dict_path, config_path)) return;
 
     engine.set_trace_enabled(true);
@@ -653,8 +653,8 @@ TEST(Benchmark, DeadlineAndTruncatedCoupled) {
 TEST(Benchmark, NormalInputNoDeadline) {
     // Short input with generous deadline should not exceed deadline
     cxxime::Engine engine;
-    std::string dict_path = data_path("pinyin.dict.bin");
-    std::string config_path = data_path("default.json");
+    std::string dict_path = project_path("data/pinyin.dict.bin");
+    std::string config_path = project_path("data/default.json");
     if (!engine.initialize(dict_path, config_path)) return;
 
     engine.set_trace_enabled(true);
@@ -678,16 +678,17 @@ TEST(Benchmark, NormalInputNoDeadline) {
 TEST(Benchmark, MissingTopnCausesCheckFail) {
     // verify_data_files.py must fail when pinyin.topn.bin is missing.
     // Create a temp directory, copy all data files except topn.bin, run check.
-    // Use backslash paths for Windows commands.
 
-    // Build a backslash version of data dir for Windows commands
-    std::string data_dir_bs = CXXIME_DATA_DIR;
-    for (auto& c : data_dir_bs) { if (c == '/') c = '\\'; }
-    // Remove trailing backslash
-    if (!data_dir_bs.empty() && data_dir_bs.back() == '\\')
-        data_dir_bs.pop_back();
+    // Use backslash paths for Windows copy/mkdir commands
+    auto bs = [](const std::string& s) {
+        std::string r = s;
+        for (auto& c : r) { if (c == '/') c = '\\'; }
+        if (!r.empty() && r.back() == '\\') r.pop_back();
+        return r;
+    };
 
-    std::string tmp_dir = data_dir_bs + "\\_test_no_topn";
+    std::string data_dir = bs(project_path("data"));
+    std::string tmp_dir = data_dir + "\\_test_no_topn";
 
     // Create temp dir
     std::string mkdir_cmd = "if not exist \"" + tmp_dir + "\" mkdir \"" + tmp_dir + "\"";
@@ -699,7 +700,7 @@ TEST(Benchmark, MissingTopnCausesCheckFail) {
     };
     bool all_copied = true;
     for (const char* f : files) {
-        std::string src = data_dir_bs + "\\" + f;
+        std::string src = data_dir + "\\" + f;
         std::string dst = tmp_dir + "\\" + f;
         std::string cmd = "copy /y \"" + src + "\" \"" + dst + "\" >nul 2>&1";
         int copy_rc = std::system(cmd.c_str());
@@ -710,7 +711,6 @@ TEST(Benchmark, MissingTopnCausesCheckFail) {
     }
 
     if (!all_copied) {
-        // Cleanup and skip
         std::string rmdir_cmd = "rmdir /s /q \"" + tmp_dir + "\" 2>nul";
         std::system(rmdir_cmd.c_str());
         printf("MissingTopnCausesCheckFail: SKIP (copy failed)\n");
@@ -718,9 +718,7 @@ TEST(Benchmark, MissingTopnCausesCheckFail) {
     }
 
     // Run verify_data_files.py — should fail because topn.bin is missing
-    std::string script = data_dir_bs + "\\..\\scripts\\verify_data_files.py";
-    // Use forward-slash path for Python
-    for (auto& c : script) { if (c == '\\') c = '/'; }
+    std::string script = project_path("scripts/verify_data_files.py");
     std::string tmp_dir_py = tmp_dir;
     for (auto& c : tmp_dir_py) { if (c == '\\') c = '/'; }
     std::string cmd = "python \"" + script + "\" --data-dir \"" + tmp_dir_py + "\"";

@@ -5,6 +5,7 @@
 #include <cxxime/translator.h>
 #include <cxxime/syllabifier.h>
 #include <cxxime/spellings_index.h>
+#include <cxxime/data_path.h>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -168,26 +169,10 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Resolve exe directory for default paths
-    char exe_path[MAX_PATH] = {};
-    GetModuleFileNameA(nullptr, exe_path, MAX_PATH);
-    std::string exe_dir(exe_path);
-    auto pos = exe_dir.find_last_of("\\/");
-    if (pos != std::string::npos)
-        exe_dir = exe_dir.substr(0, pos);
-
     auto resolve_path = [&](const std::string& arg, const char* filename) -> std::string {
         if (!arg.empty())
             return arg;
-        // Try exe_dir/data/, then walk up ../data/ until found
-        std::string base = exe_dir;
-        for (int up = 0; up < 6; ++up) {
-            std::string c = base + "\\data\\" + filename;
-            if (GetFileAttributesA(c.c_str()) != INVALID_FILE_ATTRIBUTES)
-                return c;
-            base += "\\..";
-        }
-        return std::string(exe_dir) + "\\data\\" + filename;  // fallback
+        return cxxime::data_path(filename);
     };
 
     if (mode == "pinyin") {

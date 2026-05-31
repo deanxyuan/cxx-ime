@@ -354,7 +354,7 @@ std::atomic<bool> user_dirty_{false};
 
 TSV 文件（制表符分隔），每行：`text\tcode\tfrequency`
 
-- 默认路径: `%LOCALAPPDATA%\CxxIME\user.tsv`
+- 默认路径: `%USERPROFILE%\cxxime\user.tsv`
 - 读写锁 `shared_mutex` 保证并发安全，读操作无阻塞
 
 详见 [用户词典设计](user-dictionary.md)。

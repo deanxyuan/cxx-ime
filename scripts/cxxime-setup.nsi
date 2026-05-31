@@ -10,7 +10,7 @@ Unicode true
 
 Name "${PRODUCT} ${VERSION}"
 OutFile "cxxime-v${VERSION}-setup.exe"
-InstallDir "$PROGRAMFILES\cxxime"
+InstallDir "$PROGRAMFILES\CxxIME"
 RequestExecutionLevel admin
 SetCompressor lzma
 
@@ -28,7 +28,7 @@ Page custom FinishPage FinishPageLeave
 Function .onInit
     StrCpy $LaunchSettings 0
     ${If} ${RunningX64}
-        StrCpy $INSTDIR "$PROGRAMFILES64\cxxime"
+        StrCpy $INSTDIR "$PROGRAMFILES64\CxxIME"
     ${EndIf}
 FunctionEnd
 
@@ -71,10 +71,11 @@ Section "Install"
     File "data\pinyin.dict.bin"
     File "data\pinyin.dict.idx"
     File "data\pinyin.spellings.bin"
+    File "data\pinyin.topn.bin"
     File /nonfatal "data\wubi86.dict.bin"
 
-    CreateDirectory "$APPDATA\CxxIME"
-    SetOutPath "$APPDATA\CxxIME"
+    CreateDirectory "$PROFILE\cxxime"
+    SetOutPath "$PROFILE\cxxime"
     File "data\default.json"
     File "data\themes.json"
 
@@ -145,19 +146,16 @@ Section "Uninstall"
     Delete "$INSTDIR\data\pinyin.dict.bin"
     Delete "$INSTDIR\data\pinyin.dict.idx"
     Delete "$INSTDIR\data\pinyin.spellings.bin"
+    Delete "$INSTDIR\data\pinyin.topn.bin"
     Delete "$INSTDIR\data\wubi86.dict.bin"
     Delete "$INSTDIR\uninstall.exe"
     RMDir /r "$INSTDIR\data"
     RMDir /REBOOTOK "$INSTDIR"
 
-    Delete "$APPDATA\CxxIME\default.json"
-    Delete "$APPDATA\CxxIME\themes.json"
-    Delete "$APPDATA\CxxIME\pinyin.dict.bin"
-    Delete "$APPDATA\CxxIME\pinyin.dict.idx"
-    Delete "$APPDATA\CxxIME\pinyin.spellings.bin"
-    Delete "$APPDATA\CxxIME\wubi86.dict.bin"
-    Delete "$APPDATA\CxxIME\user.tsv"
-    RMDir "$APPDATA\CxxIME"
+    Delete "$PROFILE\cxxime\default.json"
+    Delete "$PROFILE\cxxime\themes.json"
+    Delete "$PROFILE\cxxime\user.tsv"
+    RMDir "$PROFILE\cxxime"
 
     SetRebootFlag true
 SectionEnd
