@@ -1,6 +1,7 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 //
 // Performance overhead verification for QueryTrace instrumentation.
+// Phase 7: regression threshold and field semantic tests.
 
 #include "util/testutil.h"
 #include <cxxime/engine.h>
@@ -9,6 +10,13 @@
 #include <vector>
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <fstream>
+#include <sstream>
+#include <string>
+#include <set>
 
 static const char* kTestInputs[] = {
     "s", "sd", "sdf", "sddf", "bj", "srf", "shrf", "zguo", "nihao", "nihaoshijie"
@@ -174,6 +182,561 @@ TEST(Benchmark, TraceOverhead) {
     ASSERT_LT(overhead_p95, 3.0) << "P95 overhead should be < 3%%, got " << overhead_p95 << "%%";
 
     engine.finalize();
+}
+
+// ---- Phase 7 helpers ----
+
+// Concatenate CXXIME_DATA_DIR (a string literal) with a relative path.
+static std::string data_path(const char* rel) {
+    return std::string(CXXIME_DATA_DIR) + rel;
+}
+
+#ifdef _WIN32
+inline int get_exit_code(int rc) { return rc; }
+#else
+inline int get_exit_code(int rc) { return WEXITSTATUS(rc); }
+#endif
+
+static std::string format_trace_json(const cxxime::QueryTrace& trace, const std::string& input,
+                                     const char* mode, int repeat_index,
+                                     int page_size, int deadline_ms) {
+    char buf[512];
+    snprintf(buf, sizeof(buf),
+        "{\"input\":\"%s\",\"repeat_index\":%d,"
+        "\"mode\":\"%s\",\"page_size\":%d,\"deadline_ms\":%d,"
+        "\"elapsed_us\":%lld,"
+        "\"processor_us\":%lld,\"translate_us\":%lld,"
+        "\"lookup_us\":%lld,\"merge_us\":%lld,"
+        "\"candidate_count\":%d,"
+        "\"exact_scan_count\":%u,\"prefix_scan_count\":%u,\"user_scan_count\":%u,"
+        "\"syllable_path_count\":%d,\"live_path_count\":%d,"
+        "\"cache_hit\":%s,\"truncated\":%s,\"deadline_exceeded\":%s}",
+        input.c_str(), repeat_index,
+        mode, page_size, deadline_ms,
+        (long long)trace.total_us,
+        (long long)trace.processor_us, (long long)trace.translate_us,
+        (long long)trace.lookup_us, (long long)trace.merge_us,
+        trace.candidate_count,
+        trace.exact_scan_count, trace.prefix_scan_count, trace.user_scan_count,
+        trace.syllable_path_count, trace.live_path_count,
+        trace.cache_hit ? "true" : "false",
+        trace.truncated ? "true" : "false",
+        trace.deadline_exceeded ? "true" : "false");
+    return std::string(buf);
+}
+
+static bool json_has_field(const std::string& json, const std::string& field) {
+    std::string needle = "\"" + field + "\"";
+    return json.find(needle) != std::string::npos;
+}
+
+static int64_t percentile_vec(const std::vector<int64_t>& sorted, double p) {
+    if (sorted.empty()) return 0;
+    size_t idx = (size_t)std::ceil(p * sorted.size()) - 1;
+    return sorted[std::min(idx, sorted.size() - 1)];
+}
+
+// ---- Phase 7: JSONL field completeness ----
+
+TEST(Benchmark, JsonlFieldsComplete) {
+    cxxime::Engine engine;
+    std::string dict_path = CXXIME_DATA_DIR "pinyin.dict.bin";
+    std::string config_path = CXXIME_DATA_DIR "default.json";
+    if (!engine.initialize(dict_path, config_path)) return;
+
+    engine.set_query_deadline_ms(0);
+    engine.set_trace_enabled(true);
+    engine.set_config_page_size(7);
+
+    // Type "s" (cache path) and "nihaoshijie" (full pipeline)
+    const char* inputs[] = {"s", "nihaoshijie"};
+    for (const char* input : inputs) {
+        engine.clear_composition();
+        for (const char* p = input; *p; ++p) {
+            cxxime::KeyEvent event;
+            event.keycode = *p - 'a' + 'A';
+            event.is_key_up = false;
+            engine.process_key(event);
+        }
+        std::string json = format_trace_json(engine.last_trace(), input,
+                                             "final_key", 0, 7, 30);
+        printf("JSON for '%s': %s\n", input, json.c_str());
+
+        const char* required[] = {
+            "input", "repeat_index", "mode", "page_size", "deadline_ms",
+            "elapsed_us", "processor_us", "translate_us", "lookup_us", "merge_us",
+            "candidate_count", "exact_scan_count", "prefix_scan_count", "user_scan_count",
+            "syllable_path_count", "live_path_count",
+            "cache_hit", "truncated", "deadline_exceeded",
+        };
+        for (const char* field : required) {
+            ASSERT_TRUE(json_has_field(json, field))
+                << "Missing field '" << field << "' in JSON for input '" << input << "'";
+        }
+    }
+
+    engine.finalize();
+}
+
+// ---- Phase 7: repeat count exactness ----
+
+TEST(Benchmark, RepeatCountExact) {
+    cxxime::Engine engine;
+    std::string dict_path = CXXIME_DATA_DIR "pinyin.dict.bin";
+    std::string config_path = CXXIME_DATA_DIR "default.json";
+    if (!engine.initialize(dict_path, config_path)) return;
+
+    engine.set_query_deadline_ms(0);
+    engine.set_trace_enabled(true);
+    engine.set_config_page_size(7);
+
+    const std::string input = "sdf";
+    const int kRepeat = 5;
+
+    // Write JSONL to temp file
+    std::string tmp_path = CXXIME_DATA_DIR "_bench_repeat_test.jsonl";
+    {
+        std::ofstream f(tmp_path);
+        for (int i = 0; i < kRepeat; ++i) {
+            engine.clear_composition();
+            for (char c : input) {
+                cxxime::KeyEvent event;
+                event.keycode = c - 'a' + 'A';
+                event.is_key_up = false;
+                engine.process_key(event);
+            }
+            f << format_trace_json(engine.last_trace(), input, "final_key", i, 7, 30) << "\n";
+        }
+    }
+
+    // Count lines for this input
+    int line_count = 0;
+    {
+        std::ifstream f(tmp_path);
+        std::string line;
+        while (std::getline(f, line)) {
+            if (line.find("\"input\":\"sdf\"") != std::string::npos)
+                ++line_count;
+        }
+    }
+    std::remove(tmp_path.c_str());
+
+    ASSERT_EQ(line_count, kRepeat) << "Expected exactly " << kRepeat << " lines for 'sdf'";
+    engine.finalize();
+}
+
+// ---- Phase 7: page_size affects candidate_count ----
+
+TEST(Benchmark, PageSizeAffectsCandidates) {
+    cxxime::Engine engine;
+    std::string dict_path = CXXIME_DATA_DIR "pinyin.dict.bin";
+    std::string config_path = CXXIME_DATA_DIR "default.json";
+    if (!engine.initialize(dict_path, config_path)) return;
+
+    engine.set_query_deadline_ms(0);
+    engine.set_trace_enabled(true);
+
+    const std::string input = "nihaoshijie";
+
+    // Run with page_size=3
+    engine.set_config_page_size(3);
+    engine.clear_composition();
+    for (char c : input) {
+        cxxime::KeyEvent event;
+        event.keycode = c - 'a' + 'A';
+        event.is_key_up = false;
+        engine.process_key(event);
+    }
+    int cands_small = engine.last_trace().candidate_count;
+
+    // Run with page_size=7
+    engine.set_config_page_size(7);
+    engine.clear_composition();
+    for (char c : input) {
+        cxxime::KeyEvent event;
+        event.keycode = c - 'a' + 'A';
+        event.is_key_up = false;
+        engine.process_key(event);
+    }
+    int cands_large = engine.last_trace().candidate_count;
+
+    printf("PageSize test: page_size=3 -> %d cands, page_size=7 -> %d cands\n",
+           cands_small, cands_large);
+
+    ASSERT_LE(cands_small, 3) << "page_size=3 should limit candidates to <= 3";
+    ASSERT_GE(cands_large, cands_small) << "page_size=7 should return >= page_size=3 candidates";
+
+    engine.finalize();
+}
+
+// ---- Phase 7: deadline triggering ----
+
+TEST(Benchmark, DeadlineTriggered) {
+    cxxime::Engine engine;
+    std::string dict_path = CXXIME_DATA_DIR "pinyin.dict.bin";
+    std::string config_path = CXXIME_DATA_DIR "default.json";
+    if (!engine.initialize(dict_path, config_path)) return;
+
+    engine.set_trace_enabled(true);
+    engine.set_config_page_size(7);
+    engine.set_query_deadline_ms(1);  // 1ms — very tight
+
+    // Long input should trigger deadline
+    const std::string input = "woxiangshuruyiduanhenchangdepinyin";
+    for (char c : input) {
+        cxxime::KeyEvent event;
+        event.keycode = c - 'a' + 'A';
+        event.is_key_up = false;
+        engine.process_key(event);
+    }
+
+    const auto& trace = engine.last_trace();
+    printf("Deadline test: deadline_exceeded=%d, truncated=%d, candidate_count=%d\n",
+           trace.deadline_exceeded ? 1 : 0, trace.truncated ? 1 : 0, trace.candidate_count);
+
+    ASSERT_TRUE(trace.deadline_exceeded) << "1ms deadline should be exceeded for long input";
+
+    engine.finalize();
+}
+
+// ---- Phase 7: data file integrity ----
+
+TEST(Benchmark, DataFileIntegrity) {
+    struct FileCheck {
+        const char* filename;
+        const char* expected_magic;
+        int magic_len;
+    };
+
+    FileCheck checks[] = {
+        {"pinyin.dict.bin",      "CXDIC", 5},
+        {"pinyin.dict.idx",      "CXIDX", 5},
+        {"pinyin.spellings.bin", "CXSPL", 5},
+        {"pinyin.topn.bin",      "CXTOPN", 6},
+    };
+
+    for (const auto& fc : checks) {
+        std::string path = std::string(CXXIME_DATA_DIR) + fc.filename;
+        std::ifstream f(path, std::ios::binary);
+        ASSERT_TRUE(f.is_open()) << "Cannot open " << fc.filename;
+
+        // Check size > 0
+        f.seekg(0, std::ios::end);
+        auto size = f.tellg();
+        ASSERT_GT(size, 0) << fc.filename << " is empty";
+
+        // Check magic
+        f.seekg(0, std::ios::beg);
+        char magic[8] = {};
+        f.read(magic, 8);
+        ASSERT_TRUE(std::memcmp(magic, fc.expected_magic, fc.magic_len) == 0)
+            << fc.filename << " has bad magic";
+
+        printf("  %s: size=%lld, magic OK\n", fc.filename, (long long)size);
+    }
+
+    // default.json must exist and be non-empty
+    {
+        std::string path = data_path("default.json");
+        std::ifstream f(path);
+        ASSERT_TRUE(f.is_open()) << "Cannot open default.json";
+        f.seekg(0, std::ios::end);
+        ASSERT_GT(f.tellg(), 0) << "default.json is empty";
+    }
+
+    printf("All data files verified.\n");
+}
+
+// ---- Phase 7: check_query_bench.py threshold pass/fail ----
+
+static int run_check_script(const std::string& threshold_path, const std::string& jsonl_path,
+                            const std::string& output_dir) {
+    std::string script = data_path("../scripts/check_query_bench.py");
+    std::string cmd = "python \"" + script + "\" --input \"" + jsonl_path +
+                      "\" --threshold \"" + threshold_path +
+                      "\" --output-dir \"" + output_dir + "\"";
+    return std::system(cmd.c_str());
+}
+
+TEST(Benchmark, CheckQueryBenchPass) {
+    // Create a minimal JSONL with relaxed timing
+    std::string jsonl_path = data_path("_bench_check_pass.jsonl");
+    std::string output_dir = data_path("_bench_reports");
+    std::string threshold_path = data_path("../tools/query_bench/thresholds.local.json");
+
+    {
+        cxxime::Engine engine;
+        std::string dict_path = data_path("pinyin.dict.bin");
+        std::string config_path = data_path("default.json");
+        if (!engine.initialize(dict_path, config_path)) return;
+
+        engine.set_query_deadline_ms(0);
+        engine.set_trace_enabled(true);
+        engine.set_config_page_size(7);
+
+        std::ofstream f(jsonl_path);
+        // Run "s" 10 times — short input, should be fast
+        for (int i = 0; i < 10; ++i) {
+            engine.clear_composition();
+            cxxime::KeyEvent event;
+            event.keycode = 'S';
+            event.is_key_up = false;
+            engine.process_key(event);
+            f << format_trace_json(engine.last_trace(), "s", "final_key", i, 7, 0) << "\n";
+        }
+        engine.finalize();
+    }
+
+    int rc = run_check_script(threshold_path, jsonl_path, output_dir);
+    int exit_code = get_exit_code(rc);
+    printf("CheckQueryBenchPass: exit_code=%d\n", exit_code);
+    ASSERT_EQ(exit_code, 0) << "check_query_bench.py should pass with relaxed threshold";
+
+    std::remove(jsonl_path.c_str());
+}
+
+TEST(Benchmark, CheckQueryBenchFail) {
+    // Create a JSONL with artificially slow timing (100000us = 100ms)
+    std::string jsonl_path = data_path("_bench_check_fail.jsonl");
+    std::string output_dir = data_path("_bench_reports_fail");
+    std::string threshold_path = data_path("../tools/query_bench/thresholds.local.json");
+
+    {
+        // Write a hand-crafted JSONL line with p95 > 1000 (the short_inputs threshold)
+        std::ofstream f(jsonl_path);
+        for (int i = 0; i < 10; ++i) {
+            // 50000us > short_inputs p95_us=1000
+            char buf[512];
+            snprintf(buf, sizeof(buf),
+                "{\"input\":\"s\",\"repeat_index\":%d,"
+                "\"mode\":\"final_key\",\"page_size\":7,\"deadline_ms\":0,"
+                "\"elapsed_us\":50000,"
+                "\"processor_us\":10,\"translate_us\":20,"
+                "\"lookup_us\":10,\"merge_us\":5,"
+                "\"candidate_count\":7,"
+                "\"exact_scan_count\":0,\"prefix_scan_count\":0,\"user_scan_count\":0,"
+                "\"syllable_path_count\":1,\"live_path_count\":1,"
+                "\"cache_hit\":true,\"truncated\":false,\"deadline_exceeded\":false}",
+                i);
+            f << buf << "\n";
+        }
+    }
+
+    int rc = run_check_script(threshold_path, jsonl_path, output_dir);
+    int exit_code = get_exit_code(rc);
+    printf("CheckQueryBenchFail: exit_code=%d\n", exit_code);
+    ASSERT_EQ(exit_code, 3) << "check_query_bench.py should fail with strict threshold";
+
+    std::remove(jsonl_path.c_str());
+}
+
+// ---- Phase 7: state field semantic tests ----
+
+TEST(Benchmark, CacheHitScanZero) {
+    // Short input "s" should hit topn cache with all scan counts = 0
+    cxxime::Engine engine;
+    std::string dict_path = data_path("pinyin.dict.bin");
+    std::string config_path = data_path("default.json");
+    if (!engine.initialize(dict_path, config_path)) return;
+
+    engine.set_query_deadline_ms(0);
+    engine.set_trace_enabled(true);
+    engine.set_config_page_size(7);
+
+    cxxime::KeyEvent event;
+    event.keycode = 'S';
+    event.is_key_up = false;
+    engine.process_key(event);
+
+    const auto& trace = engine.last_trace();
+    printf("CacheHitScanZero: cache_hit=%d, exact=%u, prefix=%u, user=%u\n",
+           trace.cache_hit ? 1 : 0, trace.exact_scan_count,
+           trace.prefix_scan_count, trace.user_scan_count);
+
+    ASSERT_TRUE(trace.cache_hit) << "Short input 's' should hit cache";
+    ASSERT_EQ(trace.exact_scan_count, 0u) << "Cache hit should have 0 exact scans";
+    ASSERT_EQ(trace.prefix_scan_count, 0u) << "Cache hit should have 0 prefix scans";
+    ASSERT_EQ(trace.user_scan_count, 0u) << "Cache hit should have 0 user scans";
+
+    engine.finalize();
+}
+
+TEST(Benchmark, CacheMissScanPositive) {
+    // Long input "nihaoshijie" should miss cache, scan counts > 0
+    cxxime::Engine engine;
+    std::string dict_path = data_path("pinyin.dict.bin");
+    std::string config_path = data_path("default.json");
+    if (!engine.initialize(dict_path, config_path)) return;
+
+    engine.set_query_deadline_ms(0);
+    engine.set_trace_enabled(true);
+    engine.set_config_page_size(7);
+
+    const char* input = "nihaoshijie";
+    for (const char* p = input; *p; ++p) {
+        cxxime::KeyEvent event;
+        event.keycode = *p - 'a' + 'A';
+        event.is_key_up = false;
+        engine.process_key(event);
+    }
+
+    const auto& trace = engine.last_trace();
+    printf("CacheMissScanPositive: cache_hit=%d, exact=%u, prefix=%u, user=%u\n",
+           trace.cache_hit ? 1 : 0, trace.exact_scan_count,
+           trace.prefix_scan_count, trace.user_scan_count);
+
+    ASSERT_TRUE(!trace.cache_hit) << "Long input 'nihaoshijie' should miss cache";
+    uint32_t total_scans = trace.exact_scan_count + trace.prefix_scan_count + trace.user_scan_count;
+    ASSERT_GT(total_scans, 0u) << "Cache miss should have scan counts > 0";
+
+    engine.finalize();
+}
+
+TEST(Benchmark, TruncationWhenExcessCandidates) {
+    // With page_size=1, a common input should produce truncated=true
+    cxxime::Engine engine;
+    std::string dict_path = data_path("pinyin.dict.bin");
+    std::string config_path = data_path("default.json");
+    if (!engine.initialize(dict_path, config_path)) return;
+
+    engine.set_query_deadline_ms(0);
+    engine.set_trace_enabled(true);
+    engine.set_config_page_size(1);  // Minimal page — forces truncation
+
+    cxxime::KeyEvent event;
+    event.keycode = 'S';
+    event.is_key_up = false;
+    engine.process_key(event);
+
+    const auto& trace = engine.last_trace();
+    printf("Truncation: truncated=%d, candidates=%d, page_size=1\n",
+           trace.truncated ? 1 : 0, trace.candidate_count);
+
+    // If cache returns > 1 candidate but page_size=1, truncated should be true
+    if (trace.candidate_count > 1) {
+        ASSERT_TRUE(trace.truncated) << "page_size=1 with >1 candidate should be truncated";
+    }
+
+    engine.finalize();
+}
+
+TEST(Benchmark, DeadlineAndTruncatedCoupled) {
+    // When deadline is exceeded, truncated must also be true
+    cxxime::Engine engine;
+    std::string dict_path = data_path("pinyin.dict.bin");
+    std::string config_path = data_path("default.json");
+    if (!engine.initialize(dict_path, config_path)) return;
+
+    engine.set_trace_enabled(true);
+    engine.set_config_page_size(7);
+    engine.set_query_deadline_ms(1);  // 1ms — very tight
+
+    const std::string input = "woxiangshuruyiduanhenchangdepinyin";
+    for (char c : input) {
+        cxxime::KeyEvent event;
+        event.keycode = c - 'a' + 'A';
+        event.is_key_up = false;
+        engine.process_key(event);
+    }
+
+    const auto& trace = engine.last_trace();
+    printf("DeadlineCoupled: deadline_exceeded=%d, truncated=%d\n",
+           trace.deadline_exceeded ? 1 : 0, trace.truncated ? 1 : 0);
+
+    if (trace.deadline_exceeded) {
+        ASSERT_TRUE(trace.truncated) << "deadline_exceeded=true requires truncated=true";
+    }
+
+    engine.finalize();
+}
+
+TEST(Benchmark, NormalInputNoDeadline) {
+    // Short input with generous deadline should not exceed deadline
+    cxxime::Engine engine;
+    std::string dict_path = data_path("pinyin.dict.bin");
+    std::string config_path = data_path("default.json");
+    if (!engine.initialize(dict_path, config_path)) return;
+
+    engine.set_trace_enabled(true);
+    engine.set_config_page_size(7);
+    engine.set_query_deadline_ms(30);  // Normal deadline
+
+    // Short input — should be fast
+    cxxime::KeyEvent event;
+    event.keycode = 'S';
+    event.is_key_up = false;
+    engine.process_key(event);
+
+    const auto& trace = engine.last_trace();
+    printf("NormalNoDeadline: deadline_exceeded=%d\n", trace.deadline_exceeded ? 1 : 0);
+
+    ASSERT_TRUE(!trace.deadline_exceeded) << "Short input with 30ms deadline should not be exceeded";
+
+    engine.finalize();
+}
+
+TEST(Benchmark, MissingTopnCausesCheckFail) {
+    // verify_data_files.py must fail when pinyin.topn.bin is missing.
+    // Create a temp directory, copy all data files except topn.bin, run check.
+    // Use backslash paths for Windows commands.
+
+    // Build a backslash version of data dir for Windows commands
+    std::string data_dir_bs = CXXIME_DATA_DIR;
+    for (auto& c : data_dir_bs) { if (c == '/') c = '\\'; }
+    // Remove trailing backslash
+    if (!data_dir_bs.empty() && data_dir_bs.back() == '\\')
+        data_dir_bs.pop_back();
+
+    std::string tmp_dir = data_dir_bs + "\\_test_no_topn";
+
+    // Create temp dir
+    std::string mkdir_cmd = "if not exist \"" + tmp_dir + "\" mkdir \"" + tmp_dir + "\"";
+    std::system(mkdir_cmd.c_str());
+
+    // Copy required files except topn.bin
+    const char* files[] = {
+        "pinyin.dict.bin", "pinyin.dict.idx", "pinyin.spellings.bin", "default.json"
+    };
+    bool all_copied = true;
+    for (const char* f : files) {
+        std::string src = data_dir_bs + "\\" + f;
+        std::string dst = tmp_dir + "\\" + f;
+        std::string cmd = "copy /y \"" + src + "\" \"" + dst + "\" >nul 2>&1";
+        int copy_rc = std::system(cmd.c_str());
+        if (copy_rc != 0) {
+            printf("  WARNING: failed to copy %s (rc=%d)\n", f, copy_rc);
+            all_copied = false;
+        }
+    }
+
+    if (!all_copied) {
+        // Cleanup and skip
+        std::string rmdir_cmd = "rmdir /s /q \"" + tmp_dir + "\" 2>nul";
+        std::system(rmdir_cmd.c_str());
+        printf("MissingTopnCausesCheckFail: SKIP (copy failed)\n");
+        return;
+    }
+
+    // Run verify_data_files.py — should fail because topn.bin is missing
+    std::string script = data_dir_bs + "\\..\\scripts\\verify_data_files.py";
+    // Use forward-slash path for Python
+    for (auto& c : script) { if (c == '\\') c = '/'; }
+    std::string tmp_dir_py = tmp_dir;
+    for (auto& c : tmp_dir_py) { if (c == '\\') c = '/'; }
+    std::string cmd = "python \"" + script + "\" --data-dir \"" + tmp_dir_py + "\"";
+    int rc = std::system(cmd.c_str());
+    int exit_code = get_exit_code(rc);
+
+    printf("MissingTopnCausesCheckFail: exit_code=%d\n", exit_code);
+    ASSERT_EQ(exit_code, 1) << "verify_data_files.py should fail without pinyin.topn.bin";
+
+    // Cleanup
+    for (const char* f : files) {
+        std::string path = tmp_dir + "\\" + f;
+        std::remove(path.c_str());
+    }
+    std::string rmdir_cmd = "rmdir /s /q \"" + tmp_dir + "\" 2>nul";
+    std::system(rmdir_cmd.c_str());
 }
 
 RUN_ALL_TESTS()

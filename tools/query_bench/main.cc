@@ -342,48 +342,28 @@ static void write_jsonl(const std::string& path, const std::vector<BenchmarkResu
             prev_mode = r.mode;
         }
         for (const auto& it : r.iterations) {
-            // Escape raw_input for JSON
-            char escaped[256] = {};
-            int j = 0;
-            for (int i = 0; it.raw_input[i] && j < 254; ++i) {
-                char c = it.raw_input[i];
-                if (c == '"' || c == '\\') {
-                    if (j + 2 >= 254) break;
-                    escaped[j++] = '\\';
-                    escaped[j++] = c;
-                } else if (c >= 32) {
-                    escaped[j++] = c;
-                }
-            }
-            escaped[j] = '\0';
-
-            char buf[1024];
+            char buf[512];
             snprintf(buf, sizeof(buf),
-                "{\"input\":\"%s\",\"mode\":\"%s\",\"repeat_index\":%d,"
-                "\"page_size\":%d,\"deadline_ms\":%d,"
-                "\"elapsed_us\":%lld,\"query_id\":%llu,"
-                "\"session_id\":%u,\"revision\":%llu,"
-                "\"raw_input\":\"%s\","
-                "\"candidate_count\":%d,\"syllable_path_count\":%d,\"live_path_count\":%d,"
+                "{\"input\":\"%s\",\"repeat_index\":%d,"
+                "\"mode\":\"%s\",\"page_size\":%d,\"deadline_ms\":%d,"
+                "\"elapsed_us\":%lld,"
+                "\"processor_us\":%lld,\"translate_us\":%lld,"
+                "\"lookup_us\":%lld,\"merge_us\":%lld,"
+                "\"candidate_count\":%d,"
                 "\"exact_scan_count\":%u,\"prefix_scan_count\":%u,\"user_scan_count\":%u,"
-                "\"cache_hit\":%s,\"truncated\":%s,\"scan_trunc\":%s,\"topk_trunc\":%s,\"page_trunc\":%s,\"deadline_exceeded\":%s,"
-                "\"processor_us\":%lld,\"translate_us\":%lld,\"lookup_us\":%lld,"
-                "\"merge_us\":%lld,\"total_us\":%lld}",
-                r.input.c_str(), r.mode.c_str(), repeat_index,
-                page_size, deadline_ms,
-                (long long)it.elapsed_us, (unsigned long long)it.query_id,
-                (unsigned)it.session_id, (unsigned long long)it.revision,
-                escaped,
-                it.candidate_count, it.syllable_paths, it.live_paths,
+                "\"syllable_path_count\":%d,\"live_path_count\":%d,"
+                "\"cache_hit\":%s,\"truncated\":%s,\"deadline_exceeded\":%s}",
+                r.input.c_str(), repeat_index,
+                r.mode.c_str(), page_size, deadline_ms,
+                (long long)it.elapsed_us,
+                (long long)it.processor_us, (long long)it.translate_us,
+                (long long)it.lookup_us, (long long)it.merge_us,
+                it.candidate_count,
                 it.exact_scan, it.prefix_scan, it.user_scan,
+                it.syllable_paths, it.live_paths,
                 it.cache_hit ? "true" : "false",
                 it.truncated ? "true" : "false",
-                it.scan_budget_truncated ? "true" : "false",
-                it.topk_truncated ? "true" : "false",
-                it.page_truncated ? "true" : "false",
-                it.deadline_exceeded ? "true" : "false",
-                (long long)it.processor_us, (long long)it.translate_us,
-                (long long)it.lookup_us, (long long)it.merge_us, (long long)it.total_us);
+                it.deadline_exceeded ? "true" : "false");
             f << buf << "\n";
             ++repeat_index;
         }
