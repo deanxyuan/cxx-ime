@@ -60,11 +60,17 @@ HRESULT register_profiles() {
 
     hr = pProfiles->Register(c_clsidTextService);
     if (SUCCEEDED(hr)) {
+        // Get DLL path for icon
+        WCHAR dll_path[MAX_PATH] = {};
+        GetModuleFileNameW(g_hInst, dll_path, MAX_PATH);
+
         hr = pProfiles->AddLanguageProfile(c_clsidTextService,
                                            MAKELANGID(LANG_CHINESE, SUBLANG_CHINESE_SIMPLIFIED),
                                            c_guidProfile, TEXTSERVICE_DESC,
                                            (ULONG)wcslen(TEXTSERVICE_DESC),
-                                           nullptr, 0, 0);
+                                           dll_path,
+                                           (ULONG)((wcslen(dll_path) + 1) * sizeof(WCHAR)),
+                                           0);  // icon index 0 (first icon in resource)
     }
     pProfiles->Release();
     return hr;

@@ -9,6 +9,7 @@ add_library(cxxime-tsf SHARED
     src/edit_session.cpp
     src/display_attribute.cpp
     src/register.cpp
+    src/language_bar.cpp
     cxxime_tsf.def
 )
 

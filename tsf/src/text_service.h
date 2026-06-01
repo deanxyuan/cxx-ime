@@ -3,6 +3,10 @@
 #ifndef CXXIME_TSF_TEXT_SERVICE_H_
 #define CXXIME_TSF_TEXT_SERVICE_H_
 
+// Forward declarations for language bar buttons
+class CLangBarItemButton;
+class CLangBarImeButton;
+
 #include "pch.h"
 #include <cxxime/ipc_client.h>
 #include <cxxime/ipc_protocol.h>
@@ -123,6 +127,10 @@ private:
     bool _fTestKeyUpPending = false;
     cxxime::CandidateWindow _candidateWindow;
     cxxime::Config _config;
+
+    // Language bar buttons
+    CLangBarItemButton* _modeButton = nullptr;  // 中/EN 按钮
+    CLangBarImeButton* _imeButton = nullptr;    // 拼/五 按钮
 
     RECT _caretRect = {};
 
