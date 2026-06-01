@@ -4,6 +4,10 @@
 #define CXXIME_TSF_LANGUAGE_BAR_H_
 
 #include "pch.h"
+#include <cxxime/ipc_protocol.h>
+#include <functional>
+
+using ShowStatusBarCallback = std::function<void()>;
 
 class CLangBarItemButton : public ITfLangBarItemButton,
                            public ITfSource {
@@ -34,6 +38,7 @@ public:
     STDMETHODIMP UnadviseSink(DWORD dwCookie) override;
 
     void update_icon(bool chinese_mode);
+    void set_show_status_callback(ShowStatusBarCallback cb);
 
 private:
     static const DWORD LANGBARITEMSINK_COOKIE = 0x43585849; // "CXXI"
@@ -43,6 +48,7 @@ private:
     GUID _guid;
     bool _chinese_mode = true;
     ITfLangBarItemSink* _pSink = nullptr;
+    ShowStatusBarCallback _show_status_cb;
 };
 
 // IME identifier button (shows "Ping" icon, no toggle)
@@ -74,12 +80,15 @@ public:
     STDMETHODIMP AdviseSink(REFIID riid, IUnknown* punk, DWORD* pdwCookie) override;
     STDMETHODIMP UnadviseSink(DWORD dwCookie) override;
 
+    void update_mode(cxxime::InputMode mode);
+
 private:
     static const DWORD LANGBARITEMSINK_COOKIE = 0x494D4542; // "IMEB"
 
     LONG _cRef = 1;
     TfClientId _clientId;
     GUID _guid;
+    cxxime::InputMode _input_mode = cxxime::InputMode::PINYIN;
     ITfLangBarItemSink* _pSink = nullptr;
 };
 

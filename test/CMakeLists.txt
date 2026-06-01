@@ -25,11 +25,28 @@ add_cxxime_test(preedit_mode_test)
 add_cxxime_test(ipc_test)
 add_cxxime_test(wubi_test)
 add_cxxime_test(candidate_window_test)
+add_cxxime_test(status_window_test)
 add_cxxime_test(benchmark_test)
 add_cxxime_test(short_cache_test)
 add_cxxime_test(trace_test)
 add_cxxime_test(mpscq_test)
 add_cxxime_test(config_monitor_test)
+
+add_executable(session_manager_status_test
+    session_manager_status_test.cc
+    ${TEST_COMMON_SOURCES}
+    ${CMAKE_SOURCE_DIR}/server/src/session_manager.cc
+)
+target_include_directories(session_manager_status_test PRIVATE
+    ${TEST_INCLUDE_DIRS}
+    ${CMAKE_SOURCE_DIR}/server/src
+)
+target_compile_definitions(session_manager_status_test PRIVATE
+    CXXIME_PROJECT_DIR="${CMAKE_SOURCE_DIR}/"
+    CXXIME_DATA_DIR="${CMAKE_SOURCE_DIR}/data/"
+)
+target_link_libraries(session_manager_status_test PRIVATE ${TEST_COMMON_DEPS})
+add_test(NAME session_manager_status_test COMMAND session_manager_status_test)
 
 find_package(Python3 QUIET)
 if(Python3_FOUND)

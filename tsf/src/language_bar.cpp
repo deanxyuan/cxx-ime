@@ -96,11 +96,17 @@ STDMETHODIMP CLangBarItemButton::OnClick(TfLBIClick click, POINT pt, const RECT*
 }
 
 STDMETHODIMP CLangBarItemButton::InitMenu(ITfMenu* pMenu) {
-    return E_NOTIMPL;
+    if (!pMenu) return E_INVALIDARG;
+    pMenu->AddMenuItem(0, TF_LBMENUF_SUBMENU, nullptr, nullptr,
+                       L"\x663E\x793A\x72B6\x6001\x680F", 5, nullptr);  // 显示状态栏
+    return S_OK;
 }
 
 STDMETHODIMP CLangBarItemButton::OnMenuSelect(UINT wID) {
-    return E_NOTIMPL;
+    if (wID == 0 && _show_status_cb) {
+        _show_status_cb();
+    }
+    return S_OK;
 }
 
 STDMETHODIMP CLangBarItemButton::GetIcon(HICON* phIcon) {
@@ -137,12 +143,22 @@ STDMETHODIMP CLangBarItemButton::GetIcon(HICON* phIcon) {
     if (hFont) DeleteObject(hFont);
     SelectObject(hdcMem, hOldBitmap);
 
+    // Mask bitmap: all white = all pixels visible
+    HBITMAP hMask = CreateBitmap(cx, cy, 1, 1, nullptr);
+    HDC hdcMask = CreateCompatibleDC(hdc);
+    HBITMAP hOldMask = (HBITMAP)SelectObject(hdcMask, hMask);
+    RECT rcMask = {0, 0, cx, cy};
+    FillRect(hdcMask, &rcMask, (HBRUSH)GetStockObject(WHITE_BRUSH));
+    SelectObject(hdcMask, hOldMask);
+    DeleteDC(hdcMask);
+
     ICONINFO iconInfo = {};
     iconInfo.fIcon = TRUE;
     iconInfo.hbmColor = hBitmap;
-    iconInfo.hbmMask = hBitmap;
+    iconInfo.hbmMask = hMask;
     *phIcon = CreateIconIndirect(&iconInfo);
 
+    DeleteObject(hMask);
     DeleteObject(hBitmap);
     DeleteDC(hdcMem);
     ReleaseDC(NULL, hdc);
@@ -206,6 +222,10 @@ void CLangBarItemButton::update_icon(bool chinese_mode) {
     }
 }
 
+void CLangBarItemButton::set_show_status_callback(ShowStatusBarCallback cb) {
+    _show_status_cb = std::move(cb);
+}
+
 // CLangBarImeButton implementation
 
 CLangBarImeButton::CLangBarImeButton(TfClientId tid, REFGUID guid)
@@ -256,7 +276,8 @@ STDMETHODIMP CLangBarImeButton::Show(BOOL fShow) { return S_OK; }
 
 STDMETHODIMP CLangBarImeButton::GetTooltipString(BSTR* pbstrToolTip) {
     if (!pbstrToolTip) return E_INVALIDARG;
-    *pbstrToolTip = SysAllocString(L"CxxIME");
+    *pbstrToolTip = SysAllocString(
+        (_input_mode == cxxime::InputMode::PINYIN) ? L"\x62FC\x97F3\x8F93\x5165" : L"\x4E94\x7B14\x8F93\x5165");
     return S_OK;
 }
 
@@ -295,19 +316,30 @@ STDMETHODIMP CLangBarImeButton::GetIcon(HICON* phIcon) {
                               DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Arial");
     HFONT hOldFont = hFont ? (HFONT)SelectObject(hdcMem, hFont) : nullptr;
 
-    // Show "拼" identifier (Wubi mode indicator)
-    DrawTextW(hdcMem, L"拼", -1, &rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    // Show "拼" or "五" based on input mode
+    const wchar_t* text = (_input_mode == cxxime::InputMode::PINYIN) ? L"\x62FC" : L"\x4E94";
+    DrawTextW(hdcMem, text, -1, &rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 
     if (hOldFont) SelectObject(hdcMem, hOldFont);
     if (hFont) DeleteObject(hFont);
     SelectObject(hdcMem, hOldBitmap);
 
+    // Mask bitmap: all white = all pixels visible
+    HBITMAP hMask = CreateBitmap(cx, cy, 1, 1, nullptr);
+    HDC hdcMask = CreateCompatibleDC(hdc);
+    HBITMAP hOldMask = (HBITMAP)SelectObject(hdcMask, hMask);
+    RECT rcMask = {0, 0, cx, cy};
+    FillRect(hdcMask, &rcMask, (HBRUSH)GetStockObject(WHITE_BRUSH));
+    SelectObject(hdcMask, hOldMask);
+    DeleteDC(hdcMask);
+
     ICONINFO iconInfo = {};
     iconInfo.fIcon = TRUE;
     iconInfo.hbmColor = hBitmap;
-    iconInfo.hbmMask = hBitmap;
+    iconInfo.hbmMask = hMask;
     *phIcon = CreateIconIndirect(&iconInfo);
 
+    DeleteObject(hMask);
     DeleteObject(hBitmap);
     DeleteDC(hdcMem);
     ReleaseDC(NULL, hdc);
@@ -342,4 +374,11 @@ STDMETHODIMP CLangBarImeButton::UnadviseSink(DWORD dwCookie) {
     _pSink->Release();
     _pSink = nullptr;
     return S_OK;
+}
+
+void CLangBarImeButton::update_mode(cxxime::InputMode mode) {
+    _input_mode = mode;
+    if (_pSink) {
+        _pSink->OnUpdate(TF_LBI_ICON | TF_LBI_TEXT);
+    }
 }

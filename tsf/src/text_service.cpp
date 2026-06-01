@@ -356,11 +356,37 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
         CXXIME_LOG(L"Failed to get ITfLangBarItemMgr interface");
     }
 
+    // Initialize status window controller
+    if (_config.status_window.enable) {
+        bool first_init = !_statusController.is_initialized();
+        if (!_statusController.initialize(nullptr, &_client, _sessionId, &_config)) {
+            CXXIME_LOG(L"StatusController: window creation failed, disabled");
+        } else {
+            _statusController.update_config(_config);
+            if (first_init && _config.status_window.show_on_startup) {
+                _statusController.show();
+            }
+        }
+        // Set language bar callback for "显示状态栏"
+        if (_modeButton) {
+            _modeButton->set_show_status_callback([this]() {
+                _config.status_window.enable = true;
+                _statusController.update_config(_config);
+                _config.save(cxxime::user_data_path("default.json"));
+                _statusController.show();
+            });
+        }
+    }
+
     return S_OK;
 }
 
 STDMETHODIMP TextService::Deactivate() {
     CXXIME_LOG(L"Deactivate: sessionId=%u", _sessionId);
+
+    // Destroy status window first — avoid clicks during IPC teardown
+    _statusController.shutdown();
+
     if (_sessionId) {
         // Commit any pending composition before ending session
         if (_composing) {
@@ -545,6 +571,10 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
 
     // Sync mode state from engine
     _chinese_mode = !response.ascii_mode;
+    if (_statusController.is_initialized())
+        _statusController.sync_status(response.ime_status);
+    if (_modeButton) _modeButton->update_icon(response.ime_status.chinese_mode);
+    if (_imeButton) _imeButton->update_mode(response.ime_status.input_mode);
 
     // Handle committed text (e.g. Shift toggle with commit_text, or normal candidate selection)
     if (response.commit_text[0] != '\0') {
@@ -702,6 +732,10 @@ void TextService::_ProcessKeyUp(WPARAM wParam) {
 
     if (ok) {
         _chinese_mode = !response.ascii_mode;
+        if (_statusController.is_initialized())
+            _statusController.sync_status(response.ime_status);
+        if (_modeButton) _modeButton->update_icon(response.ime_status.chinese_mode);
+        if (_imeButton) _imeButton->update_mode(response.ime_status.input_mode);
         CXXIME_LOG(L"_ProcessKeyUp: _chinese_mode=%d, _composing=%d", _chinese_mode, _composing);
 
         // Handle committed text from toggle (e.g. Shift with commit_text style)
@@ -754,10 +788,14 @@ STDMETHODIMP TextService::OnCompositionTerminated(TfEditCookie ecWrite, ITfCompo
 
 // ITfThreadFocusSink
 STDMETHODIMP TextService::OnSetThreadFocus() {
+    if (_statusController.is_initialized())
+        _statusController.show();
     return S_OK;
 }
 
 STDMETHODIMP TextService::OnKillThreadFocus() {
+    if (_statusController.is_initialized())
+        _statusController.hide();
     _client.focus_out(_sessionId);
     _AbortComposition();
     return S_OK;
@@ -790,6 +828,17 @@ STDMETHODIMP TextService::OnUninitDocumentMgr(ITfDocumentMgr* pDocMgr) {
 }
 
 STDMETHODIMP TextService::OnSetFocus(ITfDocumentMgr* pDocMgrFocus, ITfDocumentMgr* pDocMgrPrevFocus) {
+    // Sync status on focus change (user may have toggled via language bar)
+    if (_statusController.is_initialized()) {
+        cxxime::IPCResponse resp = {};
+        if (_client.get_status(_sessionId, resp)) {
+            _statusController.sync_status(resp.ime_status);
+            _chinese_mode = resp.ime_status.chinese_mode;
+            if (_modeButton) _modeButton->update_icon(resp.ime_status.chinese_mode);
+            if (_imeButton) _imeButton->update_mode(resp.ime_status.input_mode);
+        }
+    }
+
     // Document focus changed — hide candidate window if switching away
     if (_composing) {
         _candidateWindow.hide();

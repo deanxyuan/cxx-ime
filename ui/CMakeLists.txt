@@ -6,6 +6,7 @@ add_library(cxxime-ui STATIC
     src/gdi_renderer.cc
     src/layout.cc
     src/theme.cc
+    src/status_window.cc
 )
 
 target_include_directories(cxxime-ui PUBLIC

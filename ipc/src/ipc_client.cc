@@ -191,4 +191,46 @@ bool IpcClient::focus_out(uint32_t session_id) {
     return send_request(req, resp);
 }
 
+bool IpcClient::toggle_chinese(uint32_t session_id, IPCResponse& response) {
+    IPCRequest req = {};
+    req.command = IPCCommand::TOGGLE_CHINESE;
+    req.session_id = session_id;
+    return send_request(req, response);
+}
+
+bool IpcClient::toggle_shape(uint32_t session_id, IPCResponse& response) {
+    IPCRequest req = {};
+    req.command = IPCCommand::TOGGLE_SHAPE;
+    req.session_id = session_id;
+    return send_request(req, response);
+}
+
+bool IpcClient::toggle_punct(uint32_t session_id, IPCResponse& response) {
+    IPCRequest req = {};
+    req.command = IPCCommand::TOGGLE_PUNCT;
+    req.session_id = session_id;
+    return send_request(req, response);
+}
+
+bool IpcClient::switch_input_mode(uint32_t session_id, IPCResponse& response) {
+    IPCRequest req = {};
+    req.command = IPCCommand::SWITCH_INPUT_MODE;
+    req.session_id = session_id;
+    return send_request(req, response);
+}
+
+bool IpcClient::get_status(uint32_t session_id, IPCResponse& response) {
+    IPCRequest req = {};
+    req.command = IPCCommand::GET_STATUS;
+    req.session_id = session_id;
+    return send_request(req, response);
+}
+
+bool IpcClient::reload_config(uint32_t session_id, IPCResponse& response) {
+    IPCRequest req = {};
+    req.command = IPCCommand::RELOAD_CONFIG;
+    req.session_id = session_id;
+    return send_request(req, response);
+}
+
 } // namespace cxxime

@@ -8,6 +8,7 @@
 #include <mutex>
 #include <unordered_map>
 #include <chrono>
+#include <cxxime/ipc_protocol.h>
 #include <cxxime/engine.h>
 #include <cxxime/spellings_index.h>
 #include <cxxime/syllabifier.h>
@@ -28,6 +29,7 @@ struct SharedResources {
 struct SessionEntry {
     std::unique_ptr<cxxime::Engine> engine;
     std::chrono::steady_clock::time_point last_activity;
+    cxxime::ImeStatus ime_status;
 };
 
 class SessionManager {
@@ -40,6 +42,12 @@ public:
 
     size_t cleanup_idle_sessions(uint32_t timeout_ms);
     void reload_config();
+
+    cxxime::ImeStatus get_ime_status(uint32_t id);
+    cxxime::ImeStatus toggle_chinese(uint32_t id);
+    cxxime::ImeStatus toggle_shape(uint32_t id);
+    cxxime::ImeStatus toggle_punct(uint32_t id);
+    cxxime::ImeStatus switch_input_mode(uint32_t id);
 
 private:
     SharedResources shared_;
