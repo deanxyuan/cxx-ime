@@ -152,6 +152,7 @@ cxxime::IPCResponse ServerApp::handle_request(const cxxime::IPCRequest& request)
         } else {
             response.status = cxxime::IPCStatus::ERR_ENGINE_PROCESS_FAILED;
         }
+        response.ime_status = session_mgr_.get_ime_status(request.session_id);
         break;
     }
 
@@ -202,6 +203,41 @@ cxxime::IPCResponse ServerApp::handle_request(const cxxime::IPCRequest& request)
         }
         break;
     }
+
+    case cxxime::IPCCommand::TOGGLE_CHINESE:
+        response.ime_status = session_mgr_.toggle_chinese(request.session_id);
+        if (response.ime_status.revision == 0) {
+            response.status = cxxime::IPCStatus::ERR_INVALID_SESSION;
+        } else {
+            response.ascii_mode = !response.ime_status.chinese_mode;
+        }
+        break;
+
+    case cxxime::IPCCommand::TOGGLE_SHAPE:
+        response.ime_status = session_mgr_.toggle_shape(request.session_id);
+        if (response.ime_status.revision == 0)
+            response.status = cxxime::IPCStatus::ERR_INVALID_SESSION;
+        break;
+
+    case cxxime::IPCCommand::TOGGLE_PUNCT:
+        response.ime_status = session_mgr_.toggle_punct(request.session_id);
+        if (response.ime_status.revision == 0)
+            response.status = cxxime::IPCStatus::ERR_INVALID_SESSION;
+        break;
+
+    case cxxime::IPCCommand::SWITCH_INPUT_MODE:
+        response.ime_status = session_mgr_.switch_input_mode(request.session_id);
+        if (response.ime_status.revision == 0)
+            response.status = cxxime::IPCStatus::ERR_INVALID_SESSION;
+        break;
+
+    case cxxime::IPCCommand::GET_STATUS:
+        response.ime_status = session_mgr_.get_ime_status(request.session_id);
+        break;
+
+    case cxxime::IPCCommand::RELOAD_CONFIG:
+        session_mgr_.reload_config();
+        break;
 
     default:
         response.status = cxxime::IPCStatus::ERR_UNKNOWN_COMMAND;

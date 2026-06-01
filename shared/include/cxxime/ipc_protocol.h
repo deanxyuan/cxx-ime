@@ -9,6 +9,19 @@ namespace cxxime {
 
 constexpr wchar_t IPC_PIPE_BASE_NAME[] = L"\\\\.\\pipe\\CxxIME";
 
+enum class InputMode : uint32_t {
+    PINYIN = 0,
+    WUBI = 1,
+};
+
+struct ImeStatus {
+    bool chinese_mode = true;
+    bool full_shape = false;
+    bool chinese_punct = true;
+    InputMode input_mode = InputMode::PINYIN;
+    uint64_t revision = 0;
+};
+
 enum class IPCCommand : uint32_t {
     START_SESSION = 1,
     END_SESSION = 2,
@@ -18,6 +31,12 @@ enum class IPCCommand : uint32_t {
     CLEAR_COMPOSITION = 6,
     FOCUS_IN = 7,
     FOCUS_OUT = 8,
+    TOGGLE_CHINESE = 9,
+    TOGGLE_SHAPE = 10,
+    TOGGLE_PUNCT = 11,
+    SWITCH_INPUT_MODE = 12,
+    GET_STATUS = 13,
+    RELOAD_CONFIG = 14,
 };
 
 enum class IPCStatus : uint32_t {
@@ -47,6 +66,7 @@ struct IPCResponse {
     uint32_t highlighted = 0;
     bool ascii_mode = false;
     bool composing = false;
+    ImeStatus ime_status;
 };
 #pragma pack(pop)
 

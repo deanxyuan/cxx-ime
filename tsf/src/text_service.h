@@ -12,6 +12,7 @@ class CLangBarImeButton;
 #include <cxxime/ipc_protocol.h>
 #include <cxxime/candidate_window.h>
 #include <cxxime/config.h>
+#include "status_controller.h"
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -131,6 +132,9 @@ private:
     // Language bar buttons
     CLangBarItemButton* _modeButton = nullptr;  // 中/EN 按钮
     CLangBarImeButton* _imeButton = nullptr;    // 拼/五 按钮
+
+    // Status window controller
+    cxxime::StatusController _statusController;
 
     RECT _caretRect = {};
 

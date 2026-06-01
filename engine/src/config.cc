@@ -69,6 +69,14 @@ bool Config::load(const std::string& path) {
 
         load_string(j, "theme", theme);
 
+        if (j.contains("status_window") && j["status_window"].is_object()) {
+            auto& sw = j["status_window"];
+            load_bool(sw, "enable", status_window.enable);
+            load_int(sw, "x", status_window.x);
+            load_int(sw, "y", status_window.y);
+            load_bool(sw, "show_on_startup", status_window.show_on_startup);
+        }
+
         if (j.contains("ascii_composer") && j["ascii_composer"].is_object()) {
             auto& ac = j["ascii_composer"];
             load_bool(ac, "good_old_caps_lock", good_old_caps_lock);
@@ -164,6 +172,11 @@ bool Config::save(const std::string& path) const {
     j["layout"]["align_type"] = layout_config.align_type;
 
     j["theme"] = theme;
+
+    j["status_window"]["enable"] = status_window.enable;
+    j["status_window"]["x"] = status_window.x;
+    j["status_window"]["y"] = status_window.y;
+    j["status_window"]["show_on_startup"] = status_window.show_on_startup;
 
     nlohmann::json ac;
     ac["good_old_caps_lock"] = good_old_caps_lock;

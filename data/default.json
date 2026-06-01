@@ -44,5 +44,11 @@
         },
         "good_old_caps_lock": false
     },
-    "theme": "azure"
+    "theme": "azure",
+    "status_window": {
+        "enable": true,
+        "x": -1,
+        "y": -1,
+        "show_on_startup": true
+    }
 }

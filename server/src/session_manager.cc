@@ -94,3 +94,54 @@ void SessionManager::reload_config() {
     shared_.reload_config();
     CXXIME_LOG(L"SessionManager: config reloaded, %zu active sessions", sessions_.size());
 }
+
+cxxime::ImeStatus SessionManager::get_ime_status(uint32_t id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = sessions_.find(id);
+    if (it != sessions_.end()) {
+        return it->second.ime_status;
+    }
+    return {};
+}
+
+cxxime::ImeStatus SessionManager::toggle_chinese(uint32_t id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = sessions_.find(id);
+    if (it == sessions_.end()) return {};
+    auto& s = it->second;
+    s.ime_status.chinese_mode = !s.ime_status.chinese_mode;
+    s.ime_status.revision++;
+    s.engine->ascii_composer().set_ascii_mode(!s.ime_status.chinese_mode);
+    return s.ime_status;
+}
+
+cxxime::ImeStatus SessionManager::toggle_shape(uint32_t id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = sessions_.find(id);
+    if (it == sessions_.end()) return {};
+    auto& s = it->second;
+    s.ime_status.full_shape = !s.ime_status.full_shape;
+    s.ime_status.revision++;
+    return s.ime_status;
+}
+
+cxxime::ImeStatus SessionManager::toggle_punct(uint32_t id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = sessions_.find(id);
+    if (it == sessions_.end()) return {};
+    auto& s = it->second;
+    s.ime_status.chinese_punct = !s.ime_status.chinese_punct;
+    s.ime_status.revision++;
+    return s.ime_status;
+}
+
+cxxime::ImeStatus SessionManager::switch_input_mode(uint32_t id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = sessions_.find(id);
+    if (it == sessions_.end()) return {};
+    auto& s = it->second;
+    s.ime_status.input_mode = (s.ime_status.input_mode == cxxime::InputMode::PINYIN)
+        ? cxxime::InputMode::WUBI : cxxime::InputMode::PINYIN;
+    s.ime_status.revision++;
+    return s.ime_status;
+}

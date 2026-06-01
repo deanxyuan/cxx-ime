@@ -52,6 +52,15 @@ struct Config {
     std::unordered_map<std::string, std::string> ascii_switch_key;
     bool good_old_caps_lock = false;
 
+    // status_window
+    struct StatusWindowConfig {
+        bool enable = true;
+        int x = -1;
+        int y = -1;
+        bool show_on_startup = true;
+    };
+    StatusWindowConfig status_window;
+
     // Color scheme loaded from themes.json.
     // Fields default to -1 = "not set" (resolved to Weasel-style fallbacks in load_themes).
     struct SchemeColors {

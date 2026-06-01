@@ -168,7 +168,7 @@ def build_spellings_trie(db_path: str, output_path: str) -> int:
     data = trie.serialize()
     with open(output_path, "wb") as f:
         f.write(data)
-    print(f"  spellings.bin: {len(rows)} spellings → {len(trie_serialize_nodes(data))} trie nodes, {len(data)} bytes")
+    print(f"  spellings.bin: {len(rows)} spellings, {len(trie_serialize_nodes(data))} trie nodes, {len(data)} bytes")
     return len(rows)
 
 

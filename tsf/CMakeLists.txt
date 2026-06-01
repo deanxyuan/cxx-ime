@@ -10,6 +10,7 @@ add_library(cxxime-tsf SHARED
     src/display_attribute.cpp
     src/register.cpp
     src/language_bar.cpp
+    src/status_controller.cc
     cxxime_tsf.def
 )
 

@@ -30,6 +30,13 @@ public:
     bool focus_in(uint32_t session_id);
     bool focus_out(uint32_t session_id);
 
+    bool toggle_chinese(uint32_t session_id, IPCResponse& response);
+    bool toggle_shape(uint32_t session_id, IPCResponse& response);
+    bool toggle_punct(uint32_t session_id, IPCResponse& response);
+    bool switch_input_mode(uint32_t session_id, IPCResponse& response);
+    bool get_status(uint32_t session_id, IPCResponse& response);
+    bool reload_config(uint32_t session_id, IPCResponse& response);
+
     int64_t last_ipc_us() const { return last_ipc_us_; }
 
 private:
