@@ -7,6 +7,7 @@
 #include <cxxime/logging.h>
 #include <cxxime/data_path.h>
 #include "preedit_mode.h"
+#include "language_bar.h"
 #include <cstring>
 #include <shellapi.h>
 #include <shlobj.h>
@@ -336,6 +337,25 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
         CXXIME_LOG(L"Failed to connect to server");
     }
 
+    // Register language bar buttons
+    ITfLangBarItemMgr* pLangBarItemMgr = nullptr;
+    if (SUCCEEDED(_threadMgr->QueryInterface(IID_ITfLangBarItemMgr, (void**)&pLangBarItemMgr))) {
+        _modeButton = new CLangBarItemButton(tid, c_guidLangBarModeButton);
+        _imeButton = new CLangBarImeButton(tid, c_guidLangBarImeButton);
+
+        if (FAILED(pLangBarItemMgr->AddItem(_modeButton))) {
+            CXXIME_LOG(L"Failed to add mode button to language bar");
+        }
+        if (FAILED(pLangBarItemMgr->AddItem(_imeButton))) {
+            CXXIME_LOG(L"Failed to add IME button to language bar");
+        }
+
+        pLangBarItemMgr->Release();
+        CXXIME_LOG(L"Language bar buttons registered");
+    } else {
+        CXXIME_LOG(L"Failed to get ITfLangBarItemMgr interface");
+    }
+
     return S_OK;
 }
 
@@ -366,6 +386,23 @@ STDMETHODIMP TextService::Deactivate() {
     release_config_monitor_ref();
 
     _candidateWindow.destroy();
+
+    // Unregister language bar buttons
+    ITfLangBarItemMgr* pLangBarItemMgr = nullptr;
+    if (_threadMgr && SUCCEEDED(_threadMgr->QueryInterface(IID_ITfLangBarItemMgr, (void**)&pLangBarItemMgr))) {
+        if (_modeButton) {
+            pLangBarItemMgr->RemoveItem(_modeButton);
+            _modeButton->Release();
+            _modeButton = nullptr;
+        }
+        if (_imeButton) {
+            pLangBarItemMgr->RemoveItem(_imeButton);
+            _imeButton->Release();
+            _imeButton = nullptr;
+        }
+        pLangBarItemMgr->Release();
+        CXXIME_LOG(L"Language bar buttons unregistered");
+    }
 
     // Unregister thread focus sink and event sink
     if (_threadMgr) {

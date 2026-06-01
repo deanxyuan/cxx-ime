@@ -295,8 +295,8 @@ STDMETHODIMP CLangBarImeButton::GetIcon(HICON* phIcon) {
                               DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Arial");
     HFONT hOldFont = hFont ? (HFONT)SelectObject(hdcMem, hFont) : nullptr;
 
-    // Show "Cxx" identifier
-    DrawTextW(hdcMem, L"Cxx", -1, &rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    // Show "拼" identifier (Wubi mode indicator)
+    DrawTextW(hdcMem, L"拼", -1, &rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 
     if (hOldFont) SelectObject(hdcMem, hOldFont);
     if (hFont) DeleteObject(hFont);
