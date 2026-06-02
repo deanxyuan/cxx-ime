@@ -65,6 +65,10 @@ Section "Install"
     File "cxxime-server.exe"
     File "cxxime-settings.exe"
 
+    !ifdef FAST
+        SetCompress off
+    !endif
+
     SetOutPath "$INSTDIR\data"
     File "data\default.json"
     File "data\themes.json"
@@ -73,6 +77,8 @@ Section "Install"
     File "data\pinyin.spellings.bin"
     File "data\pinyin.topn.bin"
     File /nonfatal "data\wubi86.dict.bin"
+
+    SetCompress auto
 
     CreateDirectory "$PROFILE\cxxime"
     SetOutPath "$PROFILE\cxxime"

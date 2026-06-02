@@ -4,6 +4,7 @@
 #include "class_factory.h"
 #include "register.h"
 #include "text_service.h"
+#include <cxxime/status_window.h>
 #include <cxxime/config_monitor.h>
 #include <cxxime/config.h>
 #include <cxxime/data_path.h>
@@ -54,6 +55,9 @@ BOOL WINAPI DllMain(HINSTANCE hInst, DWORD dwReason, LPVOID) {
         g_config_monitor->add_ref();
         break;
     case DLL_PROCESS_DETACH:
+        // Destroy all lingering status windows BEFORE other cleanup.
+        cxxime::StatusWindow::cleanup_all();
+
         // Refcount manages lifecycle — dec_ref, don't delete.
         g_config_monitor->dec_ref();
         TextService::shutdown_trace(); // Flush and close trace writer thread

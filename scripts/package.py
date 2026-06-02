@@ -221,7 +221,7 @@ def copy_installer_scripts(config: str) -> None:
         print("  WARNING: LICENSE not found, NSIS may fail")
 
 
-def build_nsis(config: str) -> None:
+def build_nsis(config: str, fast: bool = False) -> None:
     """Run makensis to create the installer."""
     # Find makensis
     makensis = shutil.which("makensis")
@@ -249,7 +249,11 @@ def build_nsis(config: str) -> None:
 
     print(f"  Using NSIS: {makensis}")
     nsi_file = os.path.join(DIST_DIR, "cxxime-setup.nsi")
-    run([makensis, nsi_file], cwd=DIST_DIR)
+    cmd = [makensis]
+    if fast:
+        cmd.append("/DFAST")
+    cmd.append(nsi_file)
+    run(cmd, cwd=DIST_DIR)
 
     # Move installer to output
     os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -311,6 +315,10 @@ def main():
         help="Skip dictionary generation (use existing dist/data/ files)",
     )
     parser.add_argument(
+        "--fast", action="store_true",
+        help="Fast NSIS build: skip compression for large data files",
+    )
+    parser.add_argument(
         "--skip-nsis", action="store_true",
         help="Skip NSIS installer build (only update dist/ contents)",
     )
@@ -361,7 +369,7 @@ def main():
         step("[6/6] Skipping NSIS installer (--skip-nsis).")
     else:
         step("[6/6] Building NSIS installer...")
-        build_nsis(config)
+        build_nsis(config, fast=args.fast)
 
     print_summary(config)
 

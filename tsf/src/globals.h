@@ -25,10 +25,21 @@ DEFINE_GUID(c_guidLangBarImeButton, 0xd2e3f4a5, 0xb6c7, 0x8901, 0xde, 0xfa, 0x23
 
 #define TEXTSERVICE_DESC L"CxxIME"
 #define TEXTSERVICE_MODEL L"Apartment"
+#define TEXTSERVICE_ICON_INDEX 0
+
+#define TEXTSERVICE_LANGID_HANS  MAKELANGID(LANG_CHINESE, SUBLANG_CHINESE_SIMPLIFIED)
+
+// For Windows 8+
+#ifndef TF_IPP_CAPS_IMMERSIVESUPPORT
+#define TF_IPP_CAPS_IMMERSIVESUPPORT  0x00010000
+#define TF_IPP_CAPS_SYSTRAYSUPPORT    0x00020000
+#endif
 
 extern HINSTANCE g_hInst;
 extern LONG g_cRefDll;
 extern CRITICAL_SECTION g_cs;
+
+extern const GUID GUID_LBI_INPUTMODE;
 
 void DllAddRef();
 void DllRelease();
