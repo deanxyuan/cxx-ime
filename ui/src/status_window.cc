@@ -2,11 +2,39 @@
 
 #include <cxxime/status_window.h>
 #include <commctrl.h>
+#include <algorithm>
 #include <cstring>
+#include <mutex>
+#include <vector>
 
 #pragma comment(lib, "comctl32.lib")
 
 namespace cxxime {
+
+// ============================================================
+// Global window list — cleaned up by DllMain on process exit
+// ============================================================
+static std::vector<HWND> s_windows;
+static std::mutex s_windows_mutex;
+
+void StatusWindow::cleanup_all() {
+    std::lock_guard<std::mutex> lock(s_windows_mutex);
+    for (HWND h : s_windows) {
+        if (IsWindow(h)) DestroyWindow(h);
+    }
+    s_windows.clear();
+}
+
+static void register_window(HWND h) {
+    std::lock_guard<std::mutex> lock(s_windows_mutex);
+    s_windows.push_back(h);
+}
+
+static void unregister_window(HWND h) {
+    std::lock_guard<std::mutex> lock(s_windows_mutex);
+    auto it = std::find(s_windows.begin(), s_windows.end(), h);
+    if (it != s_windows.end()) s_windows.erase(it);
+}
 
 // ============================================================
 // Button text tables
@@ -54,23 +82,6 @@ StatusWindow::~StatusWindow() {
 bool StatusWindow::create(HWND parent) {
     if (hwnd_) return true;
 
-    // Register owner window class (hidden, auto-destroys status window on process exit)
-    WNDCLASSEXW owc = {};
-    owc.cbSize = sizeof(owc);
-    owc.lpszClassName = L"CxxIMEStatusOwner";
-    if (!GetClassInfoExW(GetModuleHandle(nullptr), owc.lpszClassName, &owc)) {
-        owc.lpfnWndProc = DefWindowProcW;
-        owc.hInstance = GetModuleHandle(nullptr);
-        RegisterClassExW(&owc);
-    }
-
-    owner_hwnd_ = CreateWindowExW(
-        0, L"CxxIMEStatusOwner", nullptr, WS_POPUP,
-        0, 0, 0, 0, nullptr, nullptr, GetModuleHandle(nullptr), nullptr);
-
-    if (!owner_hwnd_) return false;
-
-    // Register status window class
     WNDCLASSEXW wc = {};
     wc.cbSize = sizeof(wc);
     wc.lpszClassName = L"CxxIMEStatusWindow";
@@ -102,12 +113,13 @@ bool StatusWindow::create(HWND parent) {
         L"CxxIME Status",
         WS_POPUP,
         x, y, win_w, win_h,
-        owner_hwnd_, nullptr, GetModuleHandle(nullptr), this
+        nullptr, nullptr, GetModuleHandle(nullptr), this
     );
 
     if (!hwnd_) return false;
 
     SetWindowLongPtrW(hwnd_, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(this));
+    register_window(hwnd_);
 
     font_ = CreateButtonFont(12);
     InitTooltip();
@@ -125,12 +137,9 @@ void StatusWindow::destroy() {
         font_ = nullptr;
     }
     if (hwnd_ && IsWindow(hwnd_)) {
+        unregister_window(hwnd_);
         DestroyWindow(hwnd_);
         hwnd_ = nullptr;
-    }
-    if (owner_hwnd_ && IsWindow(owner_hwnd_)) {
-        DestroyWindow(owner_hwnd_);
-        owner_hwnd_ = nullptr;
     }
     hovered_button_ = -1;
     is_tracking_ = false;
@@ -138,7 +147,7 @@ void StatusWindow::destroy() {
 }
 
 bool StatusWindow::is_created() const {
-    return hwnd_ != nullptr && owner_hwnd_ != nullptr;
+    return hwnd_ != nullptr;
 }
 
 // ============================================================

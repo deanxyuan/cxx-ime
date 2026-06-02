@@ -1,4 +1,8 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
+//
+// register_server / unregister_server: original code (no changes)
+// register_profiles: uses ITfInputProcessorProfileMgr::RegisterProfile (Windows 8+ API)
+//   to register with TEXTSERVICE_ICON_INDEX — this is what makes the TSF icon work.
 
 #include "register.h"
 #include "globals.h"
@@ -51,45 +55,71 @@ HRESULT unregister_server() {
     return S_OK;
 }
 
+// ── Profile registration (Windows 8+ API) ───────────────────────────────
+
 HRESULT register_profiles() {
-    ITfInputProcessorProfiles* pProfiles = nullptr;
-    HRESULT hr = CoCreateInstance(CLSID_TF_InputProcessorProfiles, nullptr, CLSCTX_INPROC_SERVER,
-                                  IID_ITfInputProcessorProfiles, (void**)&pProfiles);
+    ITfInputProcessorProfileMgr* pProfileMgr = nullptr;
+    HRESULT hr = CoCreateInstance(CLSID_TF_InputProcessorProfiles, nullptr, CLSCTX_ALL,
+                                  IID_ITfInputProcessorProfileMgr, (void**)&pProfileMgr);
     if (FAILED(hr))
         return hr;
 
-    hr = pProfiles->Register(c_clsidTextService);
-    if (SUCCEEDED(hr)) {
-        // Get DLL path for icon
-        WCHAR dll_path[MAX_PATH] = {};
-        GetModuleFileNameW(g_hInst, dll_path, MAX_PATH);
+    WCHAR achIconFile[MAX_PATH] = {};
+    GetModuleFileNameW(g_hInst, achIconFile, ARRAYSIZE(achIconFile));
+    ULONG cchIconFile = (ULONG)wcslen(achIconFile);
 
-        hr = pProfiles->AddLanguageProfile(c_clsidTextService,
-                                           MAKELANGID(LANG_CHINESE, SUBLANG_CHINESE_SIMPLIFIED),
-                                           c_guidProfile, TEXTSERVICE_DESC,
-                                           (ULONG)wcslen(TEXTSERVICE_DESC),
-                                           dll_path,
-                                           (ULONG)((wcslen(dll_path) + 1) * sizeof(WCHAR)),
-                                           0);  // icon index 0 (first icon in resource)
-    }
-    pProfiles->Release();
+    // Register simplified Chinese profile (HKL = NULL for pure TSF IME)
+    hr = pProfileMgr->RegisterProfile(
+        c_clsidTextService,
+        TEXTSERVICE_LANGID_HANS,
+        c_guidProfile,
+        TEXTSERVICE_DESC,
+        (ULONG)wcslen(TEXTSERVICE_DESC),
+        achIconFile,
+        cchIconFile,
+        TEXTSERVICE_ICON_INDEX,
+        nullptr,  // hkl — NULL for pure TSF without IMM32 fallback
+        0,        // flags
+        TRUE,     // enable
+        0);
+
+    pProfileMgr->Release();
     return hr;
 }
 
 HRESULT unregister_profiles() {
-    ITfInputProcessorProfiles* pProfiles = nullptr;
-    HRESULT hr = CoCreateInstance(CLSID_TF_InputProcessorProfiles, nullptr, CLSCTX_INPROC_SERVER,
-                                  IID_ITfInputProcessorProfiles, (void**)&pProfiles);
+    ITfInputProcessorProfileMgr* pProfileMgr = nullptr;
+    HRESULT hr = CoCreateInstance(CLSID_TF_InputProcessorProfiles, nullptr, CLSCTX_ALL,
+                                  IID_ITfInputProcessorProfileMgr, (void**)&pProfileMgr);
     if (FAILED(hr))
         return hr;
 
-    pProfiles->RemoveLanguageProfile(c_clsidTextService,
-                                     MAKELANGID(LANG_CHINESE, SUBLANG_CHINESE_SIMPLIFIED),
-                                     c_guidProfile);
-    pProfiles->Unregister(c_clsidTextService);
-    pProfiles->Release();
+    pProfileMgr->UnregisterProfile(c_clsidTextService, TEXTSERVICE_LANGID_HANS,
+                                    c_guidProfile, 0);
+    pProfileMgr->Release();
     return S_OK;
 }
+
+// ── Category registration (aligned with weasel) ─────────────────────────
+
+static const GUID kSupportCategories[] = {
+    GUID_TFCAT_CATEGORY_OF_TIP,
+    GUID_TFCAT_TIP_KEYBOARD,
+    GUID_TFCAT_TIPCAP_SECUREMODE,
+    GUID_TFCAT_TIPCAP_UIELEMENTENABLED,
+    GUID_TFCAT_TIPCAP_INPUTMODECOMPARTMENT,
+    GUID_TFCAT_TIPCAP_COMLESS,
+    GUID_TFCAT_TIPCAP_WOW16,
+    GUID_TFCAT_TIPCAP_IMMERSIVESUPPORT,
+    GUID_TFCAT_TIPCAP_SYSTRAYSUPPORT,
+    GUID_TFCAT_PROP_AUDIODATA,
+    GUID_TFCAT_PROP_INKDATA,
+    GUID_TFCAT_PROPSTYLE_CUSTOM,
+    GUID_TFCAT_PROPSTYLE_STATIC,
+    GUID_TFCAT_PROPSTYLE_STATICCOMPACT,
+    GUID_TFCAT_DISPLAYATTRIBUTEPROVIDER,
+    GUID_TFCAT_DISPLAYATTRIBUTEPROPERTY,
+};
 
 HRESULT register_categories() {
     ITfCategoryMgr* pCategoryMgr = nullptr;
@@ -98,11 +128,13 @@ HRESULT register_categories() {
     if (FAILED(hr))
         return hr;
 
-    pCategoryMgr->RegisterCategory(c_clsidTextService, GUID_TFCAT_TIP_KEYBOARD, c_clsidTextService);
-    pCategoryMgr->RegisterCategory(c_clsidTextService, GUID_TFCAT_DISPLAYATTRIBUTEPROVIDER, c_clsidTextService);
+    for (const auto& guid : kSupportCategories) {
+        hr = pCategoryMgr->RegisterCategory(c_clsidTextService, guid, c_clsidTextService);
+        if (FAILED(hr)) break;
+    }
 
     pCategoryMgr->Release();
-    return S_OK;
+    return hr;
 }
 
 HRESULT unregister_categories() {
@@ -112,8 +144,9 @@ HRESULT unregister_categories() {
     if (FAILED(hr))
         return hr;
 
-    pCategoryMgr->UnregisterCategory(c_clsidTextService, GUID_TFCAT_TIP_KEYBOARD, c_clsidTextService);
-    pCategoryMgr->UnregisterCategory(c_clsidTextService, GUID_TFCAT_DISPLAYATTRIBUTEPROVIDER, c_clsidTextService);
+    for (const auto& guid : kSupportCategories) {
+        pCategoryMgr->UnregisterCategory(c_clsidTextService, guid, c_clsidTextService);
+    }
 
     pCategoryMgr->Release();
     return S_OK;

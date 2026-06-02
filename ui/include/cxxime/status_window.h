@@ -37,6 +37,9 @@ public:
     StatusWindow(const StatusWindow&) = delete;
     StatusWindow& operator=(const StatusWindow&) = delete;
 
+    // Called from DllMain(DLL_PROCESS_DETACH) — destroy all lingering windows.
+    static void cleanup_all();
+
     bool create(HWND parent);
     void destroy();
     bool is_created() const;
@@ -83,7 +86,6 @@ private:
 
     // 成员
     HWND hwnd_ = nullptr;
-    HWND owner_hwnd_ = nullptr;   // hidden owner — process exit auto-destroys status window
     HWND tooltip_hwnd_ = nullptr;
     HFONT font_ = nullptr;
     ButtonState state_;
