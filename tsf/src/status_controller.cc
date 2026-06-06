@@ -2,6 +2,7 @@
 
 #include "status_controller.h"
 #include "globals.h"
+#include "resource.h"
 #include <cxxime/ipc_client.h>
 #include <cxxime/config.h>
 #include <cxxime/render_context.h>
@@ -26,6 +27,12 @@ bool StatusController::initialize(HWND parent, IpcClient* client, uint32_t sessi
         CXXIME_LOG(L"StatusController: window creation failed");
         return false;
     }
+
+    // Load logo icon from TSF DLL resources
+    HICON logo = (HICON)LoadImageW(
+        g_hInst, MAKEINTRESOURCE(IDI_PINTEREST),
+        IMAGE_ICON, 16, 16, LR_DEFAULTCOLOR);
+    if (logo) window_.set_logo_icon(logo);
 
     window_.set_click_callback([this](StatusButton btn) { on_button_click(btn); });
     window_.set_position_callback([this](int x, int y) { on_position_change(x, y); });

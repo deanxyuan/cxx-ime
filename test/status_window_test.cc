@@ -12,14 +12,27 @@ static cxxime::Theme make_test_theme() {
     cxxime::Theme t;
     t.background         = {30,  30,  30,  255};
     t.border             = {50,  50,  50,  255};
-    t.status_active_back   = {0,   120, 212, 255};
-    t.status_active_text   = {255, 255, 255, 255};
-    t.status_inactive_back = {61,  61,  61,  200};
-    t.status_inactive_text = {204, 204, 204, 255};
-    t.status_separator     = {64,  64,  64,  255};
-    t.status_logo_back     = {61,  61,  61,  120};
-    t.status_logo_border   = {64,  64,  64,  150};
+    t.status_inactive_back = {232, 232, 232, 200};
+    t.status_inactive_text = {51,  51,  51,  255};
+    t.status_separator     = {212, 212, 212, 255};
+    t.status_logo_back     = {232, 232, 232, 120};
     return t;
+}
+
+static HICON load_freedly_icon() {
+    static HICON icon = nullptr;
+    if (!icon) {
+        icon = (HICON)LoadImageW(nullptr,
+            CXXIME_PROJECT_DIR L"resource/freedly.ico",
+            IMAGE_ICON, 16, 16, LR_LOADFROMFILE | LR_DEFAULTCOLOR);
+    }
+    return icon;
+}
+
+static bool create_test_window(cxxime::StatusWindow& w) {
+    bool ok = w.create(GetDesktopWindow(), make_test_theme());
+    if (ok) w.set_logo_icon(load_freedly_icon());
+    return ok;
 }
 
 // ============================================================
@@ -30,7 +43,7 @@ TEST(StatusWindow, CreateAndDestroy) {
     cxxime::StatusWindow window;
     ASSERT_TRUE(!window.is_created());
 
-    ASSERT_TRUE(window.create(GetDesktopWindow(), make_test_theme()));
+    ASSERT_TRUE(create_test_window(window));
     ASSERT_TRUE(window.is_created());
 
     window.destroy();
@@ -39,11 +52,11 @@ TEST(StatusWindow, CreateAndDestroy) {
 
 TEST(StatusWindow, CreateTwice) {
     cxxime::StatusWindow window;
-    ASSERT_TRUE(window.create(GetDesktopWindow(), make_test_theme()));
+    ASSERT_TRUE(create_test_window(window));
     ASSERT_TRUE(window.is_created());
 
     // Second create should return true without crash
-    ASSERT_TRUE(window.create(GetDesktopWindow(), make_test_theme()));
+    ASSERT_TRUE(create_test_window(window));
     ASSERT_TRUE(window.is_created());
 
     window.destroy();
@@ -62,7 +75,7 @@ TEST(StatusWindow, DestroyWithoutCreate) {
 
 TEST(StatusWindow, ShowHide) {
     cxxime::StatusWindow window;
-    ASSERT_TRUE(window.create(GetDesktopWindow(), make_test_theme()));
+    ASSERT_TRUE(create_test_window(window));
 
     window.show();
     ASSERT_TRUE(window.is_visible());
@@ -87,7 +100,7 @@ TEST(StatusWindow, ShowWithoutCreate) {
 
 TEST(StatusWindow, UpdateState) {
     cxxime::StatusWindow window;
-    ASSERT_TRUE(window.create(GetDesktopWindow(), make_test_theme()));
+    ASSERT_TRUE(create_test_window(window));
 
     cxxime::ButtonState state;
     state.chinese_mode = false;
@@ -102,7 +115,7 @@ TEST(StatusWindow, UpdateState) {
 
 TEST(StatusWindow, SetEnabled) {
     cxxime::StatusWindow window;
-    ASSERT_TRUE(window.create(GetDesktopWindow(), make_test_theme()));
+    ASSERT_TRUE(create_test_window(window));
 
     window.set_enabled(false);
     window.set_enabled(true);
@@ -116,7 +129,7 @@ TEST(StatusWindow, SetEnabled) {
 
 TEST(StatusWindow, PositionMemory) {
     cxxime::StatusWindow window;
-    ASSERT_TRUE(window.create(GetDesktopWindow(), make_test_theme()));
+    ASSERT_TRUE(create_test_window(window));
 
     window.set_position(200, 300);
     int x = 0, y = 0;
@@ -146,7 +159,7 @@ TEST(StatusWindow, PositionWithoutCreate) {
 
 TEST(StatusWindow, ClickCallback) {
     cxxime::StatusWindow window;
-    ASSERT_TRUE(window.create(GetDesktopWindow(), make_test_theme()));
+    ASSERT_TRUE(create_test_window(window));
 
     int click_count = 0;
     cxxime::StatusButton last_button = cxxime::StatusButton::SETTINGS;
@@ -169,7 +182,7 @@ TEST(StatusWindow, ClickCallback) {
 
 TEST(StatusWindow, ClickWhenDisabled) {
     cxxime::StatusWindow window;
-    ASSERT_TRUE(window.create(GetDesktopWindow(), make_test_theme()));
+    ASSERT_TRUE(create_test_window(window));
 
     int click_count = 0;
     window.set_click_callback([&](cxxime::StatusButton) { click_count++; });
@@ -187,7 +200,7 @@ TEST(StatusWindow, ClickWhenDisabled) {
 
 TEST(StatusWindow, DragVsClick) {
     cxxime::StatusWindow window;
-    ASSERT_TRUE(window.create(GetDesktopWindow(), make_test_theme()));
+    ASSERT_TRUE(create_test_window(window));
 
     int click_count = 0;
     int drag_count = 0;
@@ -207,7 +220,7 @@ TEST(StatusWindow, DragVsClick) {
 
 TEST(StatusWindow, PositionCallback) {
     cxxime::StatusWindow window;
-    ASSERT_TRUE(window.create(GetDesktopWindow(), make_test_theme()));
+    ASSERT_TRUE(create_test_window(window));
 
     int pos_x = -1, pos_y = -1;
     window.set_position_callback([&](int x, int y) {
@@ -220,7 +233,7 @@ TEST(StatusWindow, PositionCallback) {
 
 TEST(StatusWindow, ConfigActionCallback) {
     cxxime::StatusWindow window;
-    ASSERT_TRUE(window.create(GetDesktopWindow(), make_test_theme()));
+    ASSERT_TRUE(create_test_window(window));
 
     std::string last_action;
     window.set_config_action_callback([&](const std::string& action) {
@@ -236,7 +249,7 @@ TEST(StatusWindow, ConfigActionCallback) {
 
 TEST(StatusWindow, LogoClickIgnored) {
     cxxime::StatusWindow window;
-    ASSERT_TRUE(window.create(GetDesktopWindow(), make_test_theme()));
+    ASSERT_TRUE(create_test_window(window));
 
     int click_count = 0;
     window.set_click_callback([&](cxxime::StatusButton) { click_count++; });
@@ -258,7 +271,7 @@ TEST(StatusWindow, LogoClickIgnored) {
 
 TEST(StatusWindow, SettingsClick) {
     cxxime::StatusWindow window;
-    ASSERT_TRUE(window.create(GetDesktopWindow(), make_test_theme()));
+    ASSERT_TRUE(create_test_window(window));
 
     cxxime::StatusButton last_button = cxxime::StatusButton::CHINESE_MODE;
     window.set_click_callback([&](cxxime::StatusButton btn) {
@@ -284,7 +297,7 @@ TEST(StatusWindow, SettingsClick) {
 TEST(StatusWindow, CreateDestroyCycle) {
     for (int i = 0; i < 3; ++i) {
         cxxime::StatusWindow window;
-        ASSERT_TRUE(window.create(GetDesktopWindow(), make_test_theme()));
+        ASSERT_TRUE(create_test_window(window));
         ASSERT_TRUE(window.is_created());
         window.show();
         ASSERT_TRUE(window.is_visible());

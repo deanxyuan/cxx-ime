@@ -8,6 +8,7 @@
 #include <dwrite.h>
 #include <string>
 #include <functional>
+#include <vector>
 #include <cstdint>
 #include <cxxime/render_context.h>
 
@@ -29,6 +30,8 @@ struct ButtonState {
 using StatusButtonClickCallback = std::function<void(StatusButton)>;
 using StatusPositionChangeCallback = std::function<void(int x, int y)>;
 using StatusConfigActionCallback = std::function<void(const std::string& action)>;
+
+struct ButtonDrawInfo;
 
 class StatusWindow {
 public:
@@ -58,6 +61,9 @@ public:
     void set_position_callback(StatusPositionChangeCallback callback);
     void set_config_action_callback(StatusConfigActionCallback callback);
 
+    // Logo icon (loaded from DLL resources by StatusController)
+    void set_logo_icon(HICON icon);
+
     // Test accessor
     HWND hwnd_for_test() const { return hwnd_; }
 
@@ -76,6 +82,7 @@ private:
     void CleanupLayeredSurface();
     void InitD2D();
     void CleanupD2D();
+    void ComputeButtonDrawInfo(std::vector<ButtonDrawInfo>& out);
     void PaintD2D();
     void PaintGdiplus();
 
@@ -89,8 +96,8 @@ private:
     void InitTooltip();
     void ShowContextMenu(int x, int y);
 
-    // Drag: move threshold to distinguish click from drag
-    static constexpr int DRAG_THRESHOLD = 4;
+    // Drag: DPI-aware threshold to distinguish click from drag
+    int drag_threshold() const { return Scaled(6); }
     void BeginTracking(int x, int y);
     void ContinueTracking(int x, int y);
     void EndTracking();
@@ -110,12 +117,9 @@ private:
     float dpi_scale_ = 1.0f;
     int Scaled(int base) const { return static_cast<int>(base * dpi_scale_ + 0.5f); }
     int WindowWidth() const {
-        return Scaled(BASE_WINDOW_PADDING
-                      + BASE_LOGO_WIDTH + BASE_BUTTON_GAP
-                      + 3 * BASE_BUTTON_WIDTH + 2 * BASE_BUTTON_GAP
-                      + 2 * BASE_SEPARATOR_GAP + BASE_SEPARATOR_WIDTH
-                      + BASE_SETTINGS_WIDTH
-                      + BASE_WINDOW_PADDING);
+        // Use GetPillButtonRect accumulation to match actual button positions
+        RECT last = GetPillButtonRect(BUTTON_COUNT - 1);
+        return last.right + Scaled(BASE_WINDOW_PADDING);
     }
     int WindowHeight() const {
         return Scaled(BASE_BUTTON_HEIGHT + 2 * BASE_WINDOW_PADDING);
@@ -151,6 +155,7 @@ private:
     int hovered_button_ = -1;
     bool is_enabled_ = true;
     bool layered_ready_ = false;
+    HICON logo_icon_ = nullptr;  // drawn in logo pill
 
     // ── Drag state ────────────────────────────────────────────
     bool is_tracking_ = false;

@@ -2,6 +2,7 @@
 
 #include <cxxime/status_window.h>
 #include <commctrl.h>
+#include <uxtheme.h>
 #include <gdiplus.h>
 #include <algorithm>
 #include <cstring>
@@ -10,6 +11,7 @@
 
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "gdiplus.lib")
+#pragma comment(lib, "uxtheme.lib")
 
 namespace cxxime {
 
@@ -220,6 +222,11 @@ void StatusWindow::set_config_action_callback(StatusConfigActionCallback callbac
     config_action_callback_ = std::move(callback);
 }
 
+void StatusWindow::set_logo_icon(HICON icon) {
+    logo_icon_ = icon;
+    RedrawLayered();
+}
+
 // ============================================================
 // WndProc
 // ============================================================
@@ -260,6 +267,29 @@ LRESULT StatusWindow::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
     case WM_MOUSEACTIVATE:
         return MA_NOACTIVATE;
+
+    case WM_DPICHANGED: {
+        dpi_scale_ = HIWORD(wp) / 96.0f;
+        // Rebuild fonts
+        if (font_cn_) { DeleteObject(font_cn_); font_cn_ = nullptr; }
+        if (font_en_) { DeleteObject(font_en_); font_en_ = nullptr; }
+        if (font_icon_) { DeleteObject(font_icon_); font_icon_ = nullptr; }
+        CreateFonts();
+        // Recalculate window size
+        win_w_ = WindowWidth();
+        win_h_ = WindowHeight();
+        // Use system-suggested rect
+        RECT* rc = reinterpret_cast<RECT*>(lp);
+        SetWindowPos(hwnd_, nullptr, rc->left, rc->top,
+                     rc->right - rc->left, rc->bottom - rc->top,
+                     SWP_NOZORDER | SWP_NOACTIVATE);
+        // Rebuild offscreen surface
+        CleanupLayeredSurface();
+        InitLayeredSurface();
+        if (use_d2d_) { CleanupD2D(); InitD2D(); }
+        RedrawLayered();
+        return 0;
+    }
 
     case WM_NOTIFY: {
         auto* nmhdr = reinterpret_cast<NMHDR*>(lp);
@@ -393,6 +423,108 @@ void StatusWindow::CleanupD2D() {
 }
 
 // ============================================================
+// Color blend helper
+// ============================================================
+static Color blend(Color base, Color overlay, float alpha) {
+    return {
+        (uint8_t)(base.r + (int)((overlay.r - base.r) * alpha)),
+        (uint8_t)(base.g + (int)((overlay.g - base.g) * alpha)),
+        (uint8_t)(base.b + (int)((overlay.b - base.b) * alpha)),
+        base.a,
+    };
+}
+
+// ============================================================
+// Shared button draw info (computed once, used by both D2D and GDI+)
+// ============================================================
+struct ButtonDrawInfo {
+    RECT rect;
+    Color bg_color;
+    Color text_color;
+    const wchar_t* text;
+    int font_index;  // 0=cn, 1=icon
+    int nudge_y;     // vertical nudge for punctuation
+    int press_offset; // text downward shift when pressed
+    bool hovered;     // for border visibility
+};
+
+void StatusWindow::ComputeButtonDrawInfo(std::vector<ButtonDrawInfo>& out) {
+    out.clear();
+
+    int x = Scaled(BASE_WINDOW_PADDING);
+    int y = Scaled(BASE_WINDOW_PADDING);
+
+    // Logo (index -1, not a button)
+    x += Scaled(BASE_LOGO_WIDTH + BASE_BUTTON_GAP);
+
+    // Three function buttons
+    const wchar_t* active_texts[] = {L"\x4E2D", L"\x5168", L"\x3002"};
+    const wchar_t* inactive_texts[] = {L"\x82F1", L"\x534A", L"."};
+    bool active_states[] = {state_.chinese_mode, state_.full_shape, state_.chinese_punct};
+
+    for (int i = 0; i < 3; ++i) {
+        RECT btn_rc = {x, y, x + Scaled(BASE_BUTTON_WIDTH), y + Scaled(BASE_BUTTON_HEIGHT)};
+        bool active = active_states[i];
+        bool hover = (hovered_button_ == i);
+        bool pressed = (is_tracking_ && !is_dragging_ && hovered_button_ == i);
+
+        Color bg_col = theme_.status_inactive_back;
+        Color txt_col = theme_.status_inactive_text;
+        if (pressed) {
+            bg_col = blend(bg_col, {0, 0, 0, 255}, 0.25f);
+        } else if (hover) {
+            bg_col = blend(bg_col, {0, 0, 0, 255}, 0.15f);
+        }
+        if (!is_enabled_) {
+            bg_col.a = (uint8_t)(bg_col.a * 0.4);
+            txt_col.a = (uint8_t)(txt_col.a * 0.4);
+        }
+
+        ButtonDrawInfo info;
+        info.rect = btn_rc;
+        info.bg_color = bg_col;
+        info.text_color = txt_col;
+        info.text = active ? active_texts[i] : inactive_texts[i];
+        info.font_index = 0;  // cn font
+        info.nudge_y = (i == 2) ? Scaled(2) : 0;  // U+3002 sits low
+        info.press_offset = pressed ? Scaled(2) : 0;
+        info.hovered = hover || pressed;
+        out.push_back(info);
+        x += Scaled(BASE_BUTTON_WIDTH + BASE_BUTTON_GAP);
+    }
+
+    // Separator
+    x += Scaled(BASE_SEPARATOR_GAP - BASE_BUTTON_GAP);
+    x += Scaled(BASE_SEPARATOR_WIDTH + BASE_SEPARATOR_GAP);
+
+    // Settings button
+    {
+        RECT settings_rc = {x, y, x + Scaled(BASE_SETTINGS_WIDTH), y + Scaled(BASE_BUTTON_HEIGHT)};
+        bool sh = (hovered_button_ == 3);
+        bool sp = (is_tracking_ && !is_dragging_ && hovered_button_ == 3);
+
+        Color set_col = theme_.status_inactive_back;
+        if (sp) {
+            set_col = blend(set_col, {0, 0, 0, 255}, 0.25f);
+        } else if (sh) {
+            set_col = blend(set_col, {0, 0, 0, 255}, 0.15f);
+        }
+        if (!is_enabled_) set_col.a = (uint8_t)(set_col.a * 0.4);
+
+        ButtonDrawInfo info;
+        info.rect = settings_rc;
+        info.bg_color = set_col;
+        info.text_color = theme_.status_inactive_text;
+        info.text = L"\xE713";
+        info.font_index = 1;  // icon font
+        info.nudge_y = 0;
+        info.press_offset = sp ? Scaled(1) : 0;
+        info.hovered = sh || sp;
+        out.push_back(info);
+    }
+}
+
+// ============================================================
 // Rendering: D2D on layered DC
 // ============================================================
 void StatusWindow::PaintD2D() {
@@ -403,7 +535,7 @@ void StatusWindow::PaintD2D() {
     d2d_rt_->BeginDraw();
     d2d_rt_->Clear(D2D1::ColorF(0, 0, 0, 0));  // transparent
 
-    float win_r = (float)Scaled(BASE_BUTTON_HEIGHT / 2 + BASE_WINDOW_PADDING);  // 17
+    float win_r = (float)Scaled(BASE_BUTTON_HEIGHT / 2 + BASE_WINDOW_PADDING);
 
     auto make_brush = [&](const Color& c) -> ID2D1SolidColorBrush* {
         ID2D1SolidColorBrush* b = nullptr;
@@ -411,7 +543,6 @@ void StatusWindow::PaintD2D() {
         return b;
     };
 
-    // Helper: draw pill-shaped round rect
     auto fill_pill = [&](const RECT& rc, const Color& bg) {
         float r = (float)(rc.bottom - rc.top) / 2.0f;
         D2D1_ROUNDED_RECT rr = {D2D1::RectF((float)rc.left, (float)rc.top,
@@ -429,7 +560,9 @@ void StatusWindow::PaintD2D() {
         b->Release();
     };
 
-    // 1. Window background — rounded fill + border
+    IDWriteTextFormat* fonts[] = {d2d_font_cn_, d2d_font_icon_};
+
+    // 1. Window background
     ID2D1SolidColorBrush* bg_brush = make_brush(theme_.background);
     ID2D1SolidColorBrush* border_brush = make_brush(theme_.border);
     D2D1_ROUNDED_RECT win_rr = {D2D1::RectF(0, 0, (float)win_w_, (float)win_h_), win_r, win_r};
@@ -438,97 +571,61 @@ void StatusWindow::PaintD2D() {
     bg_brush->Release();
     border_brush->Release();
 
-    int x = Scaled(BASE_WINDOW_PADDING);
-    int y = Scaled(BASE_WINDOW_PADDING);
-
     // 2. Logo placeholder
     {
-        RECT logo_rc = {x, y, x + Scaled(BASE_LOGO_WIDTH), y + Scaled(BASE_BUTTON_HEIGHT)};
+        RECT logo_rc = GetLogoRect();
         float lr = (float)(logo_rc.bottom - logo_rc.top) / 2.0f;
         fill_pill(logo_rc, theme_.status_logo_back);
-        // logo border
         ID2D1SolidColorBrush* lb = make_brush(theme_.border);
         D2D1_ROUNDED_RECT lrr = {D2D1::RectF((float)logo_rc.left, (float)logo_rc.top,
                                                (float)logo_rc.right, (float)logo_rc.bottom), lr, lr};
         d2d_rt_->DrawRoundedRectangle(lrr, lb, 1.0f);
         lb->Release();
-        draw_text(logo_rc, L"L", d2d_font_en_, theme_.status_inactive_text);
     }
-    x += Scaled(BASE_LOGO_WIDTH + BASE_BUTTON_GAP);
 
-    // 3. Three function buttons
-    struct { const wchar_t* active_text; const wchar_t* inactive_text; IDWriteTextFormat* fmt; }
-    func_btns[] = {
-        {L"\x4E2D", L"EN",     d2d_font_cn_},
-        {L"\x5168", L"\x534A", d2d_font_en_},
-        {L"\x3002", L".",     d2d_font_cn_},
-    };
-    bool active_states[] = {state_.chinese_mode, state_.full_shape, state_.chinese_punct};
+    // 3. Buttons (shared draw info)
+    std::vector<ButtonDrawInfo> buttons;
+    ComputeButtonDrawInfo(buttons);
 
-    for (int i = 0; i < 3; ++i) {
-        RECT btn_rc = {x, y, x + Scaled(BASE_BUTTON_WIDTH), y + Scaled(BASE_BUTTON_HEIGHT)};
-        bool active = active_states[i];
-        bool hover = (hovered_button_ == i);
-        bool pressed = (is_tracking_ && !is_dragging_ && hovered_button_ == i);
-
-        Color bg_col = active ? theme_.status_active_back : theme_.status_inactive_back;
-        Color txt_col = active ? theme_.status_active_text : theme_.status_inactive_text;
-        if (pressed) {
-            bg_col.r = (uint8_t)(bg_col.r * 0.8);
-            bg_col.g = (uint8_t)(bg_col.g * 0.8);
-            bg_col.b = (uint8_t)(bg_col.b * 0.8);
-        } else if (hover) {
-            bg_col.r = (uint8_t)std::min(255, (int)(bg_col.r * 1.15));
-            bg_col.g = (uint8_t)std::min(255, (int)(bg_col.g * 1.15));
-            bg_col.b = (uint8_t)std::min(255, (int)(bg_col.b * 1.15));
+    for (const auto& btn : buttons) {
+        fill_pill(btn.rect, btn.bg_color);
+        // Button border (always visible, like logo)
+        {
+            float r = (float)(btn.rect.bottom - btn.rect.top) / 2.0f;
+            D2D1_ROUNDED_RECT brr = {D2D1::RectF((float)btn.rect.left, (float)btn.rect.top,
+                                                   (float)btn.rect.right, (float)btn.rect.bottom), r, r};
+            ID2D1SolidColorBrush* bb = make_brush(theme_.border);
+            d2d_rt_->DrawRoundedRectangle(brr, bb, 1.0f);
+            bb->Release();
         }
-        if (!is_enabled_) {
-            bg_col.a = (uint8_t)(bg_col.a * 0.4);
-            txt_col.a = (uint8_t)(txt_col.a * 0.4);
-        }
-
-        fill_pill(btn_rc, bg_col);
-        const wchar_t* text = active ? func_btns[i].active_text : func_btns[i].inactive_text;
-        RECT txt_rc = btn_rc;
-        if (i == 2) txt_rc.top -= Scaled(2);  // U+3002 sits low; nudge up
-        draw_text(txt_rc, text, func_btns[i].fmt, txt_col);
-        x += Scaled(BASE_BUTTON_WIDTH + BASE_BUTTON_GAP);
+        RECT txt_rc = btn.rect;
+        txt_rc.top += btn.press_offset - btn.nudge_y;
+        draw_text(txt_rc, btn.text, fonts[btn.font_index], btn.text_color);
     }
 
     // 4. Separator
-    x += Scaled(BASE_SEPARATOR_GAP - BASE_BUTTON_GAP);
-    int sep_y1 = y + Scaled(4);
-    int sep_y2 = y + Scaled(BASE_BUTTON_HEIGHT - 4);
-    ID2D1SolidColorBrush* sep_brush = make_brush(theme_.status_separator);
-    d2d_rt_->DrawLine(D2D1::Point2F((float)x, (float)sep_y1),
-                      D2D1::Point2F((float)x, (float)sep_y2), sep_brush,
-                      (float)Scaled(BASE_SEPARATOR_WIDTH));
-    sep_brush->Release();
-    x += Scaled(BASE_SEPARATOR_WIDTH + BASE_SEPARATOR_GAP);
-
-    // 5. Settings button
     {
-        RECT settings_rc = {x, y, x + Scaled(BASE_SETTINGS_WIDTH), y + Scaled(BASE_BUTTON_HEIGHT)};
-        bool sh = (hovered_button_ == 3);
-        bool sp = (is_tracking_ && !is_dragging_ && hovered_button_ == 3);
-
-        Color set_col = theme_.status_inactive_back;
-        if (sp) {
-            set_col.r = (uint8_t)(set_col.r * 0.8);
-            set_col.g = (uint8_t)(set_col.g * 0.8);
-            set_col.b = (uint8_t)(set_col.b * 0.8);
-        } else if (sh) {
-            set_col.r = (uint8_t)std::min(255, (int)(set_col.r * 1.15));
-            set_col.g = (uint8_t)std::min(255, (int)(set_col.g * 1.15));
-            set_col.b = (uint8_t)std::min(255, (int)(set_col.b * 1.15));
-        }
-        if (!is_enabled_) set_col.a = (uint8_t)(set_col.a * 0.4);
-
-        fill_pill(settings_rc, set_col);
-        draw_text(settings_rc, L"\xE713", d2d_font_icon_, theme_.status_inactive_text);
+        int x = GetSeparatorRect().left;
+        int y = Scaled(BASE_WINDOW_PADDING);
+        int sep_y1 = y + Scaled(4);
+        int sep_y2 = y + Scaled(BASE_BUTTON_HEIGHT - 4);
+        ID2D1SolidColorBrush* sep_brush = make_brush(theme_.status_separator);
+        d2d_rt_->DrawLine(D2D1::Point2F((float)x, (float)sep_y1),
+                          D2D1::Point2F((float)x, (float)sep_y2), sep_brush,
+                          (float)Scaled(BASE_SEPARATOR_WIDTH));
+        sep_brush->Release();
     }
 
     d2d_rt_->EndDraw();
+
+    // Draw logo icon on top (via GDI, since D2D has ended)
+    if (logo_icon_) {
+        RECT logo_rc = GetLogoRect();
+        int icon_sz = std::min(logo_rc.right - logo_rc.left, logo_rc.bottom - logo_rc.top) - 4;
+        int ix = logo_rc.left + ((logo_rc.right - logo_rc.left) - icon_sz) / 2;
+        int iy = logo_rc.top + ((logo_rc.bottom - logo_rc.top) - icon_sz) / 2;
+        DrawIconEx(layered_dc_, ix, iy, logo_icon_, icon_sz, icon_sz, 0, nullptr, DI_NORMAL);
+    }
 }
 
 // ============================================================
@@ -539,13 +636,13 @@ void StatusWindow::PaintGdiplus() {
 
     RECT client_rc = {0, 0, win_w_, win_h_};
 
-    // Clear to transparent using GDI+
+    // Clear to transparent
     {
         Gdiplus::Graphics g(layered_dc_);
         g.Clear(Gdiplus::Color(0, 0, 0, 0));
     }
 
-    // Draw background border with GDI+
+    // Background with rounded border
     {
         float r = (float)Scaled(BASE_BUTTON_HEIGHT / 2 + BASE_WINDOW_PADDING);
         float w = (float)client_rc.right;
@@ -570,12 +667,9 @@ void StatusWindow::PaintGdiplus() {
         g.DrawPath(&pen, &path);
     }
 
-    int x = Scaled(BASE_WINDOW_PADDING);
-    int y = Scaled(BASE_WINDOW_PADDING);
-
     // Logo placeholder
     {
-        RECT logo_rc = {x, y, x + Scaled(BASE_LOGO_WIDTH), y + Scaled(BASE_BUTTON_HEIGHT)};
+        RECT logo_rc = GetLogoRect();
         float lr = (float)(logo_rc.bottom - logo_rc.top) / 2.0f;
         {
             Gdiplus::Graphics g(layered_dc_);
@@ -593,116 +687,54 @@ void StatusWindow::PaintGdiplus() {
                 theme_.border.r, theme_.border.g, theme_.border.b), 1.0f);
             g.DrawPath(&pen, &path);
         }
-        SetBkMode(layered_dc_, TRANSPARENT);
-        SetTextColor(layered_dc_, RGB(theme_.status_inactive_text.r, theme_.status_inactive_text.g, theme_.status_inactive_text.b));
-        SelectObject(layered_dc_, font_en_);
-        DrawTextW(layered_dc_, L"L", 1, const_cast<RECT*>(&logo_rc), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        if (logo_icon_) {
+            int icon_sz = std::min(logo_rc.right - logo_rc.left, logo_rc.bottom - logo_rc.top) - 4;
+            int ix = logo_rc.left + ((logo_rc.right - logo_rc.left) - icon_sz) / 2;
+            int iy = logo_rc.top + ((logo_rc.bottom - logo_rc.top) - icon_sz) / 2;
+            DrawIconEx(layered_dc_, ix, iy, logo_icon_, icon_sz, icon_sz, 0, nullptr, DI_NORMAL);
+        }
     }
-    x += Scaled(BASE_LOGO_WIDTH + BASE_BUTTON_GAP);
 
-    // Three function buttons
-    struct { const wchar_t* active_text; const wchar_t* inactive_text; HFONT font; }
-    func_btns[] = {
-        {L"\x4E2D", L"EN",     font_cn_},
-        {L"\x5168", L"\x534A", font_en_},
-        {L"\x3002", L".",      font_cn_},
-    };
-    bool active_states[] = {state_.chinese_mode, state_.full_shape, state_.chinese_punct};
+    // Buttons (shared draw info)
+    HFONT gdi_fonts[] = {font_cn_, font_icon_};
+    std::vector<ButtonDrawInfo> buttons;
+    ComputeButtonDrawInfo(buttons);
 
-    for (int i = 0; i < 3; ++i) {
-        RECT btn_rc = {x, y, x + Scaled(BASE_BUTTON_WIDTH), y + Scaled(BASE_BUTTON_HEIGHT)};
-        bool active = active_states[i];
-        bool hover = (hovered_button_ == i);
-        bool pressed = (is_tracking_ && !is_dragging_ && hovered_button_ == i);
-
-        Color bg_col = active ? theme_.status_active_back : theme_.status_inactive_back;
-        Color txt_col = active ? theme_.status_active_text : theme_.status_inactive_text;
-        if (pressed) {
-            bg_col.r = (uint8_t)(bg_col.r * 0.8);
-            bg_col.g = (uint8_t)(bg_col.g * 0.8);
-            bg_col.b = (uint8_t)(bg_col.b * 0.8);
-        } else if (hover) {
-            bg_col.r = (uint8_t)std::min(255, (int)(bg_col.r * 1.15));
-            bg_col.g = (uint8_t)std::min(255, (int)(bg_col.g * 1.15));
-            bg_col.b = (uint8_t)std::min(255, (int)(bg_col.b * 1.15));
-        }
-        if (!is_enabled_) {
-            bg_col.a = (uint8_t)(bg_col.a * 0.4);
-            txt_col.a = (uint8_t)(txt_col.a * 0.4);
-        }
-
-        float r = (float)(btn_rc.bottom - btn_rc.top) / 2.0f;
+    for (const auto& btn : buttons) {
+        float r = (float)(btn.rect.bottom - btn.rect.top) / 2.0f;
         {
             Gdiplus::Graphics g(layered_dc_);
             g.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
             Gdiplus::GraphicsPath path;
-            path.AddArc((float)btn_rc.left, (float)btn_rc.top, 2.0f*r, 2.0f*r, 180, 90);
-            path.AddArc((float)btn_rc.right - 2.0f*r, (float)btn_rc.top, 2.0f*r, 2.0f*r, 270, 90);
-            path.AddArc((float)btn_rc.right - 2.0f*r, (float)btn_rc.bottom - 2.0f*r, 2.0f*r, 2.0f*r, 0, 90);
-            path.AddArc((float)btn_rc.left, (float)btn_rc.bottom - 2.0f*r, 2.0f*r, 2.0f*r, 90, 90);
+            path.AddArc((float)btn.rect.left, (float)btn.rect.top, 2.0f*r, 2.0f*r, 180, 90);
+            path.AddArc((float)btn.rect.right - 2.0f*r, (float)btn.rect.top, 2.0f*r, 2.0f*r, 270, 90);
+            path.AddArc((float)btn.rect.right - 2.0f*r, (float)btn.rect.bottom - 2.0f*r, 2.0f*r, 2.0f*r, 0, 90);
+            path.AddArc((float)btn.rect.left, (float)btn.rect.bottom - 2.0f*r, 2.0f*r, 2.0f*r, 90, 90);
             path.CloseFigure();
-            Gdiplus::SolidBrush brush(Gdiplus::Color(bg_col.a, bg_col.r, bg_col.g, bg_col.b));
+            Gdiplus::SolidBrush brush(Gdiplus::Color(btn.bg_color.a, btn.bg_color.r, btn.bg_color.g, btn.bg_color.b));
             g.FillPath(&brush, &path);
+            // Button border (always visible, like logo)
+            Gdiplus::Pen pen(Gdiplus::Color(theme_.border.a, theme_.border.r,
+                                            theme_.border.g, theme_.border.b), 1.0f);
+            g.DrawPath(&pen, &path);
         }
         SetBkMode(layered_dc_, TRANSPARENT);
-        SetTextColor(layered_dc_, RGB(txt_col.r, txt_col.g, txt_col.b));
-        const wchar_t* text = active ? func_btns[i].active_text : func_btns[i].inactive_text;
-        SelectObject(layered_dc_, func_btns[i].font);
-        RECT txt_rc = btn_rc;
-        if (i == 2) txt_rc.top -= Scaled(2);  // U+3002 sits low; nudge up
-        DrawTextW(layered_dc_, text, -1, const_cast<RECT*>(&txt_rc), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-        x += Scaled(BASE_BUTTON_WIDTH + BASE_BUTTON_GAP);
+        SetTextColor(layered_dc_, RGB(btn.text_color.r, btn.text_color.g, btn.text_color.b));
+        SelectObject(layered_dc_, gdi_fonts[btn.font_index]);
+        RECT txt_rc = btn.rect;
+        txt_rc.top += btn.press_offset - btn.nudge_y;
+        DrawTextW(layered_dc_, btn.text, -1, const_cast<RECT*>(&txt_rc), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     }
 
     // Separator
-    x += Scaled(BASE_SEPARATOR_GAP - BASE_BUTTON_GAP);
     {
-        int sep_y1 = y + Scaled(4);
-        int sep_y2 = y + Scaled(BASE_BUTTON_HEIGHT - 4);
+        RECT sep_rc = GetSeparatorRect();
         HPEN pen = CreatePen(PS_SOLID, Scaled(BASE_SEPARATOR_WIDTH),
             RGB(theme_.status_separator.r, theme_.status_separator.g, theme_.status_separator.b));
         SelectObject(layered_dc_, pen);
-        MoveToEx(layered_dc_, x, sep_y1, nullptr);
-        LineTo(layered_dc_, x, sep_y2);
+        MoveToEx(layered_dc_, sep_rc.left, sep_rc.top, nullptr);
+        LineTo(layered_dc_, sep_rc.left, sep_rc.bottom);
         DeleteObject(pen);
-    }
-    x += Scaled(BASE_SEPARATOR_WIDTH + BASE_SEPARATOR_GAP);
-
-    // Settings button
-    {
-        RECT settings_rc = {x, y, x + Scaled(BASE_SETTINGS_WIDTH), y + Scaled(BASE_BUTTON_HEIGHT)};
-        bool sh = (hovered_button_ == 3);
-        bool sp = (is_tracking_ && !is_dragging_ && hovered_button_ == 3);
-
-        Color set_col = theme_.status_inactive_back;
-        if (sp) {
-            set_col.r = (uint8_t)(set_col.r * 0.8);
-            set_col.g = (uint8_t)(set_col.g * 0.8);
-            set_col.b = (uint8_t)(set_col.b * 0.8);
-        } else if (sh) {
-            set_col.r = (uint8_t)std::min(255, (int)(set_col.r * 1.15));
-            set_col.g = (uint8_t)std::min(255, (int)(set_col.g * 1.15));
-            set_col.b = (uint8_t)std::min(255, (int)(set_col.b * 1.15));
-        }
-        if (!is_enabled_) set_col.a = (uint8_t)(set_col.a * 0.4);
-
-        float sr = (float)(settings_rc.bottom - settings_rc.top) / 2.0f;
-        {
-            Gdiplus::Graphics g(layered_dc_);
-            g.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
-            Gdiplus::GraphicsPath path;
-            path.AddArc((float)settings_rc.left, (float)settings_rc.top, 2.0f*sr, 2.0f*sr, 180, 90);
-            path.AddArc((float)settings_rc.right - 2.0f*sr, (float)settings_rc.top, 2.0f*sr, 2.0f*sr, 270, 90);
-            path.AddArc((float)settings_rc.right - 2.0f*sr, (float)settings_rc.bottom - 2.0f*sr, 2.0f*sr, 2.0f*sr, 0, 90);
-            path.AddArc((float)settings_rc.left, (float)settings_rc.bottom - 2.0f*sr, 2.0f*sr, 2.0f*sr, 90, 90);
-            path.CloseFigure();
-            Gdiplus::SolidBrush brush(Gdiplus::Color(set_col.a, set_col.r, set_col.g, set_col.b));
-            g.FillPath(&brush, &path);
-        }
-        SetBkMode(layered_dc_, TRANSPARENT);
-        SetTextColor(layered_dc_, RGB(theme_.status_inactive_text.r, theme_.status_inactive_text.g, theme_.status_inactive_text.b));
-        SelectObject(layered_dc_, font_icon_);
-        DrawTextW(layered_dc_, L"\xE713", 1, const_cast<RECT*>(&settings_rc), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     }
 }
 
@@ -741,27 +773,24 @@ RECT StatusWindow::GetLogoRect() const {
 }
 
 RECT StatusWindow::GetSeparatorRect() const {
-    int x = Scaled(BASE_WINDOW_PADDING
-                   + BASE_LOGO_WIDTH + BASE_BUTTON_GAP
-                   + 3 * BASE_BUTTON_WIDTH + 3 * BASE_BUTTON_GAP
-                   + BASE_SEPARATOR_GAP - BASE_BUTTON_GAP);
+    // Anchor after 3 function buttons (reuse GetPillButtonRect for accumulation)
+    RECT last_btn = GetPillButtonRect(2);
+    int x = last_btn.right + Scaled(BASE_SEPARATOR_GAP);
     int y = Scaled(BASE_WINDOW_PADDING + 4);
     return {x, y, x + Scaled(BASE_SEPARATOR_WIDTH), y + Scaled(BASE_BUTTON_HEIGHT - 8)};
 }
 
 RECT StatusWindow::GetPillButtonRect(int index) const {
-    int x = Scaled(BASE_WINDOW_PADDING + BASE_LOGO_WIDTH + BASE_BUTTON_GAP);
+    // Anchor accumulation: each button's x starts at previous button's right edge
+    int x = Scaled(BASE_WINDOW_PADDING) + Scaled(BASE_LOGO_WIDTH) + Scaled(BASE_BUTTON_GAP);
     int y = Scaled(BASE_WINDOW_PADDING);
-
-    if (index < 3) {
-        x += index * Scaled(BASE_BUTTON_WIDTH + BASE_BUTTON_GAP);
-        return {x, y, x + Scaled(BASE_BUTTON_WIDTH), y + Scaled(BASE_BUTTON_HEIGHT)};
-    } else {
-        x += 3 * Scaled(BASE_BUTTON_WIDTH) + 3 * Scaled(BASE_BUTTON_GAP)
-             + Scaled(BASE_SEPARATOR_GAP - BASE_BUTTON_GAP)
-             + Scaled(BASE_SEPARATOR_WIDTH) + Scaled(BASE_SEPARATOR_GAP);
-        return {x, y, x + Scaled(BASE_SETTINGS_WIDTH), y + Scaled(BASE_BUTTON_HEIGHT)};
+    for (int i = 0; i < index; ++i) {
+        x += Scaled(i < 3 ? BASE_BUTTON_WIDTH : BASE_SETTINGS_WIDTH);
+        x += Scaled(BASE_BUTTON_GAP);
+        if (i == 2) x += Scaled(2 * BASE_SEPARATOR_GAP + BASE_SEPARATOR_WIDTH);
     }
+    int w = Scaled(index < 3 ? BASE_BUTTON_WIDTH : BASE_SETTINGS_WIDTH);
+    return {x, y, x + w, y + Scaled(BASE_BUTTON_HEIGHT)};
 }
 
 // ============================================================
@@ -802,6 +831,7 @@ void StatusWindow::OnLButtonDown(int x, int y) {
     is_dragging_ = false;
     hovered_button_ = HitTest(x, y);
     SetCapture(hwnd_);
+    if (layered_ready_) RedrawLayered();
 }
 
 void StatusWindow::OnMouseMove(int x, int y) {
@@ -846,7 +876,7 @@ void StatusWindow::ContinueTracking(int x, int y) {
     int dx = abs(screen_pt.x - track_start_.x);
     int dy = abs(screen_pt.y - track_start_.y);
 
-    if (!is_dragging_ && (dx >= DRAG_THRESHOLD || dy >= DRAG_THRESHOLD)) {
+    if (!is_dragging_ && (dx >= drag_threshold() || dy >= drag_threshold())) {
         is_dragging_ = true;
     }
 
@@ -856,6 +886,13 @@ void StatusWindow::ContinueTracking(int x, int y) {
         SetWindowPos(hwnd_, nullptr, new_x, new_y, 0, 0,
                      SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
         if (layered_ready_) RedrawLayered();
+    } else {
+        // Before drag threshold: update pressed button highlight
+        int new_hover = HitTest(x, y);
+        if (new_hover != hovered_button_) {
+            hovered_button_ = new_hover;
+            if (layered_ready_) RedrawLayered();
+        }
     }
 }
 
@@ -894,6 +931,11 @@ void StatusWindow::InitTooltip() {
     );
 
     if (!tooltip_hwnd_) return;
+
+    // Remove system theme and set custom colors to match status window style
+    SetWindowTheme(tooltip_hwnd_, L"", L"");
+    SendMessageW(tooltip_hwnd_, TTM_SETTIPBKCOLOR, 0, RGB(232, 232, 232));
+    SendMessageW(tooltip_hwnd_, TTM_SETTIPTEXTCOLOR, 0, RGB(51, 51, 51));
 
     for (int i = 0; i < BUTTON_COUNT; ++i) {
         RECT rc = GetPillButtonRect(i);

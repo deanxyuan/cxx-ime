@@ -41,6 +41,7 @@ private:
     HWND hFontSize_ = nullptr;
     HWND hLayoutH_ = nullptr, hLayoutV_ = nullptr;
     HWND hRenderD2D_ = nullptr, hRenderGDI_ = nullptr;
+    HWND hStatusWindow_ = nullptr;
 
     // Candidate panel (15 numeric fields + align combo)
     HWND hCandEdits_[15] = {};
