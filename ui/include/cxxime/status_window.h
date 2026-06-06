@@ -44,7 +44,7 @@ public:
     // Called from DllMain(DLL_PROCESS_DETACH) — destroy all lingering windows.
     static void cleanup_all();
 
-    bool create(HWND parent, const Theme& theme);
+    bool create(HWND parent, const StatusTheme& theme);
     void destroy();
     bool is_created() const;
 
@@ -150,7 +150,7 @@ private:
     HFONT font_icon_ = nullptr;
 
     // ── State ─────────────────────────────────────────────────
-    Theme theme_;
+    StatusTheme theme_;
     ButtonState state_;
     int hovered_button_ = -1;
     bool is_enabled_ = true;

@@ -73,9 +73,9 @@ TEST(Engine, translate_dd_has_candidates) {
     std::string spellings_path = make_temp_path("test_engine_spellings.bin");
 
     cxxime::Dict::create_test_dict(dict_path, {
-        {"di:di", "\xe5\xbc\x9f\xe5\xbc\x9f", 500},
-        {"da:da", "\xe5\xa4\xa7\xe5\xa4\xa7", 400},
-        {"de:dao", "\xe5\xbe\x97\xe5\x88\xb0", 300},
+        {"di:di", "弟弟", 500},
+        {"da:da", "大大", 400},
+        {"de:dao", "得到", 300},
     });
 
     ASSERT_TRUE(cxxime::SpellingsIndex::create_test_trie(spellings_path, {
@@ -103,7 +103,7 @@ TEST(Engine, translate_dd_has_candidates) {
 
     bool found_didi = false;
     for (const auto& c : page.candidates) {
-        if (c.text == "\xe5\xbc\x9f\xe5\xbc\x9f") found_didi = true;
+        if (c.text == "弟弟") found_didi = true;
     }
     ASSERT_TRUE(found_didi);
     ASSERT_EQ(page.highlighted, 0);
@@ -116,8 +116,8 @@ TEST(Engine, translate_dd_has_candidates) {
 TEST(Engine, translate_valid_pinyin) {
     std::string dict_path = make_temp_path("test_engine_valid.bin");
     cxxime::Dict::create_test_dict(dict_path, {
-        {"de", "\xe7\x9a\x84", 1000},
-        {"de:dao", "\xe5\xbe\x97\xe5\x88\xb0", 300},
+        {"de", "的", 1000},
+        {"de:dao", "得到", 300},
     });
 
     cxxime::Dict dict;
@@ -131,7 +131,7 @@ TEST(Engine, translate_valid_pinyin) {
 
     bool found_de = false;
     for (const auto& c : page.candidates) {
-        if (c.text == "\xe7\x9a\x84") found_de = true;
+        if (c.text == "的") found_de = true;
     }
     ASSERT_TRUE(found_de);
 
@@ -142,7 +142,7 @@ TEST(Engine, translate_valid_pinyin) {
 TEST(Engine, space_with_candidates_commits) {
     cxxime::Context ctx;
     ctx.pinyin_buffer = "de";
-    ctx.candidates.candidates.push_back({"\xe7\x9a\x84", "", 100});
+    ctx.candidates.candidates.push_back({"的", "", 100});
     ctx.candidates.highlighted = 0;
 
     cxxime::KeyEvent event;
@@ -152,7 +152,7 @@ TEST(Engine, space_with_candidates_commits) {
     cxxime::PinyinProcessor processor;
     auto result = processor.process_key(event, ctx);
     ASSERT_EQ(result, cxxime::ProcessResult::COMMITTED);
-    ASSERT_EQ(ctx.committed_text, "\xe7\x9a\x84");
+    ASSERT_EQ(ctx.committed_text, "的");
 }
 
 TEST(Engine, space_no_candidates_rejects) {
@@ -171,8 +171,8 @@ TEST(Engine, space_no_candidates_rejects) {
 TEST(Engine, number_selects_candidate) {
     cxxime::Context ctx;
     ctx.pinyin_buffer = "de";
-    ctx.candidates.candidates.push_back({"\xe7\x9a\x84", "", 100});
-    ctx.candidates.candidates.push_back({"\xe5\x9c\xb0", "", 80});
+    ctx.candidates.candidates.push_back({"的", "", 100});
+    ctx.candidates.candidates.push_back({"地", "", 80});
     ctx.candidates.highlighted = 0;
 
     cxxime::KeyEvent event;
@@ -182,7 +182,7 @@ TEST(Engine, number_selects_candidate) {
     cxxime::PinyinProcessor processor;
     auto result = processor.process_key(event, ctx);
     ASSERT_EQ(result, cxxime::ProcessResult::COMMITTED);
-    ASSERT_EQ(ctx.committed_text, "\xe5\x9c\xb0");
+    ASSERT_EQ(ctx.committed_text, "地");
 }
 
 // Verify that raw VK constants used in engine (to avoid <windows.h> dependency)
@@ -204,7 +204,7 @@ TEST(Engine, translate_shurufa) {
     std::string spellings_path = make_temp_path("test_shurufa_spellings.bin");
 
     cxxime::Dict::create_test_dict(dict_path, {
-        {"shu:ru:fa", "\xe8\xbe\x93\xe5\x85\xa5\xe6\xb3\x95", 1000}, // 输入法
+        {"shu:ru:fa", "输入法", 1000}, // 输入法
     });
 
     ASSERT_TRUE(cxxime::SpellingsIndex::create_test_trie(spellings_path, {
@@ -226,7 +226,7 @@ TEST(Engine, translate_shurufa) {
     ASSERT_GE(page.candidates.size(), 1u);
     bool found = false;
     for (auto& c : page.candidates)
-        if (c.text == "\xe8\xbe\x93\xe5\x85\xa5\xe6\xb3\x95") found = true;
+        if (c.text == "输入法") found = true;
     ASSERT_TRUE(found);
 
     dict.close();
@@ -239,8 +239,8 @@ TEST(Engine, translate_nihao) {
     std::string spellings_path = make_temp_path("test_nihao_spellings.bin");
 
     cxxime::Dict::create_test_dict(dict_path, {
-        {"ni:hao", "\xe4\xbd\xa0\xe5\xa5\xbd", 1000}, // 你好
-        {"ni",     "\xe4\xbd\xa0", 500},                // 你
+        {"ni:hao", "你好", 1000}, // 你好
+        {"ni",     "你", 500},                // 你
     });
 
     ASSERT_TRUE(cxxime::SpellingsIndex::create_test_trie(spellings_path, {
@@ -259,7 +259,7 @@ TEST(Engine, translate_nihao) {
 
     auto page = translator.translate("nihao", 0, 10);
     ASSERT_GE(page.candidates.size(), 1u);
-    ASSERT_EQ(page.candidates[0].text, "\xe4\xbd\xa0\xe5\xa5\xbd");
+    ASSERT_EQ(page.candidates[0].text, "你好");
 
     dict.close();
     DeleteFileA(dict_path.c_str());
@@ -273,7 +273,7 @@ TEST(Engine, translate_abbrev_bj) {
     std::string spellings_path = make_temp_path("test_abbrev_bj_spellings.bin");
 
     cxxime::Dict::create_test_dict(dict_path, {
-        {"bei:jing", "\xe5\x8c\x97\xe4\xba\xac", 1000}, // 北京
+        {"bei:jing", "北京", 1000}, // 北京
     });
 
     ASSERT_TRUE(cxxime::SpellingsIndex::create_test_trie(spellings_path, {
@@ -296,7 +296,7 @@ TEST(Engine, translate_abbrev_bj) {
     ASSERT_GE(page.candidates.size(), 1u);
     bool found = false;
     for (auto& c : page.candidates)
-        if (c.text == "\xe5\x8c\x97\xe4\xba\xac") found = true;
+        if (c.text == "北京") found = true;
     ASSERT_TRUE(found);
 
     dict.close();
@@ -309,7 +309,7 @@ TEST(Engine, translate_abbrev_srf) {
     std::string spellings_path = make_temp_path("test_abbrev_srf_spellings.bin");
 
     cxxime::Dict::create_test_dict(dict_path, {
-        {"shu:ru:fa", "\xe8\xbe\x93\xe5\x85\xa5\xe6\xb3\x95", 1000}, // 输入法
+        {"shu:ru:fa", "输入法", 1000}, // 输入法
     });
 
     ASSERT_TRUE(cxxime::SpellingsIndex::create_test_trie(spellings_path, {
@@ -331,7 +331,7 @@ TEST(Engine, translate_abbrev_srf) {
     ASSERT_GE(page.candidates.size(), 1u);
     bool found = false;
     for (auto& c : page.candidates)
-        if (c.text == "\xe8\xbe\x93\xe5\x85\xa5\xe6\xb3\x95") found = true;
+        if (c.text == "输入法") found = true;
     ASSERT_TRUE(found);
 
     dict.close();
@@ -346,7 +346,7 @@ TEST(Engine, translate_mixed_zhg) {
     std::string spellings_path = make_temp_path("test_mixed_zhg_spellings.bin");
 
     cxxime::Dict::create_test_dict(dict_path, {
-        {"zhong:guo", "\xe4\xb8\xad\xe5\x9b\xbd", 1000}, // 中国
+        {"zhong:guo", "中国", 1000}, // 中国
     });
 
     ASSERT_TRUE(cxxime::SpellingsIndex::create_test_trie(spellings_path, {
@@ -367,7 +367,7 @@ TEST(Engine, translate_mixed_zhg) {
     ASSERT_GE(page.candidates.size(), 1u);
     bool found = false;
     for (auto& c : page.candidates)
-        if (c.text == "\xe4\xb8\xad\xe5\x9b\xbd") found = true;
+        if (c.text == "中国") found = true;
     ASSERT_TRUE(found);
 
     dict.close();
@@ -380,7 +380,7 @@ TEST(Engine, translate_mixed_zguo) {
     std::string spellings_path = make_temp_path("test_mixed_zguo_spellings.bin");
 
     cxxime::Dict::create_test_dict(dict_path, {
-        {"zhong:guo", "\xe4\xb8\xad\xe5\x9b\xbd", 1000}, // 中国
+        {"zhong:guo", "中国", 1000}, // 中国
     });
 
     ASSERT_TRUE(cxxime::SpellingsIndex::create_test_trie(spellings_path, {
@@ -401,7 +401,7 @@ TEST(Engine, translate_mixed_zguo) {
     ASSERT_GE(page.candidates.size(), 1u);
     bool found = false;
     for (auto& c : page.candidates)
-        if (c.text == "\xe4\xb8\xad\xe5\x9b\xbd") found = true;
+        if (c.text == "中国") found = true;
     ASSERT_TRUE(found);
 
     dict.close();
@@ -416,7 +416,7 @@ TEST(Engine, translate_fuzzy_zongguo) {
     std::string spellings_path = make_temp_path("test_fuzzy_zongguo_spellings.bin");
 
     cxxime::Dict::create_test_dict(dict_path, {
-        {"zhong:guo", "\xe4\xb8\xad\xe5\x9b\xbd", 1000}, // 中国
+        {"zhong:guo", "中国", 1000}, // 中国
     });
 
     ASSERT_TRUE(cxxime::SpellingsIndex::create_test_trie(spellings_path, {
@@ -437,7 +437,7 @@ TEST(Engine, translate_fuzzy_zongguo) {
     ASSERT_GE(page.candidates.size(), 1u);
     bool found = false;
     for (auto& c : page.candidates)
-        if (c.text == "\xe4\xb8\xad\xe5\x9b\xbd") found = true;
+        if (c.text == "中国") found = true;
     ASSERT_TRUE(found);
 
     dict.close();
@@ -450,7 +450,7 @@ TEST(Engine, translate_fuzzy_cifan) {
     std::string spellings_path = make_temp_path("test_fuzzy_cifan_spellings.bin");
 
     cxxime::Dict::create_test_dict(dict_path, {
-        {"chi:fan", "\xe5\x90\x83\xe9\xa5\xad", 1000}, // 吃饭
+        {"chi:fan", "吃饭", 1000}, // 吃饭
     });
 
     ASSERT_TRUE(cxxime::SpellingsIndex::create_test_trie(spellings_path, {
@@ -471,7 +471,7 @@ TEST(Engine, translate_fuzzy_cifan) {
     ASSERT_GE(page.candidates.size(), 1u);
     bool found = false;
     for (auto& c : page.candidates)
-        if (c.text == "\xe5\x90\x83\xe9\xa5\xad") found = true;
+        if (c.text == "吃饭") found = true;
     ASSERT_TRUE(found);
 
     dict.close();
@@ -683,8 +683,8 @@ TEST(QueryDeadline, expired_after_time_passes) {
 TEST(Deadline, expired_deadline_sets_trace_flags) {
     std::string dict_path = make_temp_path("test_deadline_dict.bin");
     cxxime::Dict::create_test_dict(dict_path, {
-        {"de", "\xe7\x9a\x84", 1000},
-        {"de:dao", "\xe5\xbe\x97\xe5\x88\xb0", 300},
+        {"de", "的", 1000},
+        {"de:dao", "得到", 300},
     });
 
     cxxime::Dict dict;
@@ -709,7 +709,7 @@ TEST(Deadline, expired_deadline_sets_trace_flags) {
 TEST(Deadline, normal_query_no_deadline_flags) {
     std::string dict_path = make_temp_path("test_no_deadline_dict.bin");
     cxxime::Dict::create_test_dict(dict_path, {
-        {"de", "\xe7\x9a\x84", 1000},
+        {"de", "的", 1000},
     });
 
     cxxime::Dict dict;
@@ -761,8 +761,8 @@ TEST(Deadline, scan_budget_limits_scanning) {
 TEST(Deadline, engine_sets_trace_deadline_from_deadline_ms) {
     std::string dict_path = make_temp_path("test_engine_deadline_dict.bin");
     cxxime::Dict::create_test_dict(dict_path, {
-        {"de", "\xe7\x9a\x84", 1000},
-        {"de:dao", "\xe5\xbe\x97\xe5\x88\xb0", 300},
+        {"de", "的", 1000},
+        {"de:dao", "得到", 300},
     });
 
     cxxime::Engine engine;
@@ -789,7 +789,7 @@ TEST(Deadline, engine_sets_trace_deadline_from_deadline_ms) {
 TEST(Deadline, engine_no_budget_means_no_deadline) {
     std::string dict_path = make_temp_path("test_engine_no_budget_dict.bin");
     cxxime::Dict::create_test_dict(dict_path, {
-        {"de", "\xe7\x9a\x84", 1000},
+        {"de", "的", 1000},
     });
 
     cxxime::Engine engine;
@@ -835,14 +835,14 @@ TEST(Translator, translate_topk_merge_across_paths) {
     // Two different syllable paths that produce distinct candidates
     std::vector<std::tuple<std::string, std::string, int>> entries;
     // Path 1: "bei:jing" → 北京 + many low-freq
-    entries.push_back({"bei:jing", "\xe5\x8c\x97\xe4\xba\xac", 2000});
+    entries.push_back({"bei:jing", "北京", 2000});
     for (int i = 0; i < 30; ++i) {
         char text[16];
         snprintf(text, sizeof(text), "bj%02d", i);
         entries.push_back({"bei:jing", text, 10 + i});
     }
     // Path 2: "shang:hai" → 上海 + many low-freq
-    entries.push_back({"shang:hai", "\xe4\xb8\x8a\xe6\xb5\xb7", 1800});
+    entries.push_back({"shang:hai", "上海", 1800});
     for (int i = 0; i < 30; ++i) {
         char text[16];
         snprintf(text, sizeof(text), "sh%02d", i);
@@ -995,9 +995,9 @@ TEST(Deadline, default_deadline_no_trigger_on_normal_input) {
     std::string spellings_path = make_temp_path("test_default_deadline_spellings.bin");
 
     cxxime::Dict::create_test_dict(dict_path, {
-        {"ni:hao", "\xe4\xbd\xa0\xe5\xa5\xbd", 1000},
-        {"ni",     "\xe4\xbd\xa0", 500},
-        {"hao",    "\xe5\xa5\xbd", 400},
+        {"ni:hao", "你好", 1000},
+        {"ni",     "你", 500},
+        {"hao",    "好", 400},
     });
 
     ASSERT_TRUE(cxxime::SpellingsIndex::create_test_trie(spellings_path, {
@@ -1033,9 +1033,9 @@ TEST(Deadline, disabled_deadline_matches_phase2) {
     std::string spellings_path = make_temp_path("test_disabled_deadline_spellings.bin");
 
     cxxime::Dict::create_test_dict(dict_path, {
-        {"ni:hao", "\xe4\xbd\xa0\xe5\xa5\xbd", 1000},
-        {"ni",     "\xe4\xbd\xa0", 500},
-        {"hao",    "\xe5\xa5\xbd", 400},
+        {"ni:hao", "你好", 1000},
+        {"ni",     "你", 500},
+        {"hao",    "好", 400},
     });
 
     ASSERT_TRUE(cxxime::SpellingsIndex::create_test_trie(spellings_path, {

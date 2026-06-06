@@ -25,12 +25,15 @@ struct Theme {
     Color next_page{128, 128, 128, 255};
     int font_size = 14;
     const wchar_t* font_name = L"Microsoft YaHei UI";
+};
 
-    // Status window colors (fixed light scheme)
-    Color status_inactive_back{232, 232, 232, 200};    // Button background
-    Color status_inactive_text{51, 51, 51, 255};       // Button text
-    Color status_separator{212, 212, 212, 255};        // Separator line color
-    Color status_logo_back{232, 232, 232, 120};        // Logo placeholder background
+struct StatusTheme {
+    Color back{243, 243, 243, 255};
+    Color border{200, 200, 200, 255};
+    Color inactive_back{232, 232, 232, 200};
+    Color inactive_text{51, 51, 51, 255};
+    Color separator{212, 212, 212, 255};
+    Color logo_back{232, 232, 232, 120};
 };
 
 struct CandidateRect {

@@ -4,6 +4,7 @@
 #include <cxxime/mpscq.h>
 #include <cxxime/logging.h>
 #include <windows.h>
+#include <shlobj.h>
 #include <cstdio>
 #include <cstring>
 #include <mutex>
@@ -147,14 +148,12 @@ static std::atomic<bool> g_shutdown{false};
 static std::atomic<bool> g_writer_started{false};
 
 static std::string get_log_dir() {
-    char* local_app_data = nullptr;
-    size_t len = 0;
-    if (_dupenv_s(&local_app_data, &len, "LOCALAPPDATA") == 0 && local_app_data) {
-        std::string dir = std::string(local_app_data) + "\\CxxIME\\logs";
-        free(local_app_data);
-        return dir;
-    }
-    return "";
+    wchar_t profile[MAX_PATH];
+    if (FAILED(SHGetFolderPathW(nullptr, CSIDL_PROFILE, nullptr, 0, profile)))
+        return {};
+    char utf8[MAX_PATH * 3] = {};
+    WideCharToMultiByte(CP_UTF8, 0, profile, -1, utf8, sizeof(utf8), nullptr, nullptr);
+    return std::string(utf8) + "\\cxxime\\logs";
 }
 
 static std::string get_trace_path() {

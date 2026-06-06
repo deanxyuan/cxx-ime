@@ -38,11 +38,6 @@ Theme build_theme_from_config(const Config& cfg) {
         t.preedit_text = {248, 255, 255, 255};
         t.prev_page    = {100, 150, 198, 255};
         t.next_page    = {100, 150, 198, 255};
-        // Status window colors (fixed light scheme)
-        t.status_inactive_back = {232, 232, 232, 200};
-        t.status_inactive_text = {51,  51,  51,  255};
-        t.status_separator     = {212, 212, 212, 255};
-        t.status_logo_back     = {232, 232, 232, 120};
         return t;
     }
 
@@ -56,12 +51,6 @@ Theme build_theme_from_config(const Config& cfg) {
     t.preedit_text = to_color(s->hilited_text_color);
     t.prev_page    = to_color(s->prevpage_color);
     t.next_page    = to_color(s->nextpage_color);
-
-    // Status window colors — fixed light scheme, not theme-dependent
-    t.status_inactive_back = {232, 232, 232, 200};
-    t.status_inactive_text = {51,  51,  51,  255};
-    t.status_separator     = {212, 212, 212, 255};
-    t.status_logo_back     = {232, 232, 232, 120};
     return t;
 }
 

@@ -17,8 +17,8 @@ static std::string make_temp_path(const char* name) {
 static std::string setup_test_dict() {
     std::string dict_path = make_temp_path("test_status_dict.bin");
     cxxime::Dict::create_test_dict(dict_path, {
-        {"ni", "\xe4\xbd\xa0", 1000},
-        {"hao", "\xe5\xa5\xbd", 800},
+        {"ni", "你", 1000},
+        {"hao", "好", 800},
     });
     return dict_path;
 }

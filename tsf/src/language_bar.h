@@ -37,7 +37,7 @@ public:
     STDMETHODIMP AdviseSink(REFIID riid, IUnknown* punk, DWORD* pdwCookie) override;
     STDMETHODIMP UnadviseSink(DWORD dwCookie) override;
 
-    void update_icon(bool chinese_mode);
+    void update_icon(bool chinese_mode, bool caps_lock);
     void set_show_status_callback(ShowStatusBarCallback cb);
 
 private:
@@ -47,6 +47,10 @@ private:
     TfClientId _clientId;
     GUID _guid;
     bool _chinese_mode = true;
+    bool _caps_lock = false;
+    HICON _hIconZH = nullptr;
+    HICON _hIconEN = nullptr;
+    HICON _hIconC = nullptr;
     ITfLangBarItemSink* _pSink = nullptr;
     ShowStatusBarCallback _show_status_cb;
 };
@@ -89,6 +93,7 @@ private:
     TfClientId _clientId;
     GUID _guid;
     cxxime::InputMode _input_mode = cxxime::InputMode::PINYIN;
+    HICON _hIcon = nullptr;
     ITfLangBarItemSink* _pSink = nullptr;
 };
 

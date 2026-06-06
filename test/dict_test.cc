@@ -19,7 +19,7 @@ static std::string make_temp_path(const char* name) {
 TEST(Dict, open_close) {
     std::string path = make_temp_path("test_dict_open.bin");
     cxxime::Dict::create_test_dict(path, {
-        {"de", "\xe7\x9a\x84", 1000},
+        {"de", "的", 1000},
     });
 
     cxxime::Dict dict;
@@ -34,8 +34,8 @@ TEST(Dict, open_close) {
 TEST(Dict, lookup) {
     std::string path = make_temp_path("test_dict_lookup.bin");
     cxxime::Dict::create_test_dict(path, {
-        {"de", "\xe7\x9a\x84", 1000},
-        {"de:dao", "\xe5\xbe\x97\xe5\x88\xb0", 300},
+        {"de", "的", 1000},
+        {"de:dao", "得到", 300},
     });
 
     cxxime::Dict dict;
@@ -46,7 +46,7 @@ TEST(Dict, lookup) {
 
     bool found_de = false;
     for (const auto& c : results) {
-        if (c.text == "\xe7\x9a\x84") found_de = true;
+        if (c.text == "的") found_de = true;
     }
     ASSERT_TRUE(found_de);
 
@@ -57,8 +57,8 @@ TEST(Dict, lookup) {
 TEST(Dict, lookup_by_syllables) {
     std::string path = make_temp_path("test_dict_syll.bin");
     cxxime::Dict::create_test_dict(path, {
-        {"di:di", "\xe5\xbc\x9f\xe5\xbc\x9f", 500},
-        {"da:da", "\xe5\xa4\xa7\xe5\xa4\xa7", 400},
+        {"di:di", "弟弟", 500},
+        {"da:da", "大大", 400},
     });
 
     cxxime::Dict dict;
@@ -70,7 +70,7 @@ TEST(Dict, lookup_by_syllables) {
 
     bool found = false;
     for (const auto& c : results) {
-        if (c.text == "\xe5\xbc\x9f\xe5\xbc\x9f") found = true;
+        if (c.text == "弟弟") found = true;
     }
     ASSERT_TRUE(found);
 
@@ -95,13 +95,13 @@ TEST(Dict, lookup_empty) {
 TEST(Dict, reverse_lookup) {
     std::string path = make_temp_path("test_dict_rev.bin");
     cxxime::Dict::create_test_dict(path, {
-        {"ni:hao", "\xe4\xbd\xa0\xe5\xa5\xbd", 800},
+        {"ni:hao", "你好", 800},
     });
 
     cxxime::Dict dict;
     ASSERT_TRUE(dict.open_dict(path));
 
-    auto code = dict.reverse_lookup("\xe4\xbd\xa0\xe5\xa5\xbd");
+    auto code = dict.reverse_lookup("你好");
     ASSERT_TRUE(code == "ni:hao");
 
     dict.close();
@@ -111,14 +111,14 @@ TEST(Dict, reverse_lookup) {
 TEST(Dict, user_dict_frequency) {
     std::string path = make_temp_path("test_dict_freq.bin");
     cxxime::Dict::create_test_dict(path, {
-        {"de", "\xe7\x9a\x84", 1000},
+        {"de", "的", 1000},
     });
 
     cxxime::Dict dict;
     ASSERT_TRUE(dict.open_dict(path));
 
-    dict.update_frequency("\xe7\x9a\x84", "de");
-    dict.update_frequency("\xe7\x9a\x84", "de");
+    dict.update_frequency("的", "de");
+    dict.update_frequency("的", "de");
 
     auto results = dict.lookup("de", 10);
     ASSERT_GE(results.size(), 1u);
@@ -316,7 +316,7 @@ TEST(Dict, lookup_by_ids_respects_limit) {
 TEST(Dict, lookup_by_ids_no_match_returns_empty) {
     std::string path = make_temp_path("test_dict_nomatch.bin");
     cxxime::Dict::create_test_dict(path, {
-        {"de", "\xe7\x9a\x84", 1000},
+        {"de", "的", 1000},
     });
 
     cxxime::Dict dict;
@@ -370,14 +370,14 @@ TEST(Dict, lookup_by_ids_scan_budget_sets_truncated) {
 
 TEST(Dict, user_dict_3col_and_4col_tsv) {
     std::string path = make_temp_path("test_dict_tsv.bin");
-    cxxime::Dict::create_test_dict(path, {{"de", "\xe7\x9a\x84", 1000}});
+    cxxime::Dict::create_test_dict(path, {{"de", "的", 1000}});
 
     // Write a 3-column user TSV
     std::string tsv3 = make_temp_path("user_3col.tsv");
     {
         FILE* f = fopen(tsv3.c_str(), "w");
-        fprintf(f, "\xe7\x9a\x84\tde\t100\n");
-        fprintf(f, "\xe4\xbd\xa0\xe5\xa5\xbd\tnihao\t50\n");
+        fprintf(f, "的\tde\t100\n");
+        fprintf(f, "你好\tnihao\t50\n");
         fclose(f);
     }
 
@@ -391,8 +391,8 @@ TEST(Dict, user_dict_3col_and_4col_tsv) {
     std::string tsv4 = make_temp_path("user_4col.tsv");
     {
         FILE* f = fopen(tsv4.c_str(), "w");
-        fprintf(f, "\xe7\x9a\x84\tde\t100\tde\n");
-        fprintf(f, "\xe4\xbd\xa0\xe5\xa5\xbd\tnihao\t50\tni:hao\n");
+        fprintf(f, "的\tde\t100\tde\n");
+        fprintf(f, "你好\tnihao\t50\tni:hao\n");
         fclose(f);
     }
 
@@ -408,14 +408,14 @@ TEST(Dict, user_dict_3col_and_4col_tsv) {
 
 TEST(Dict, user_dict_exact_index) {
     std::string path = make_temp_path("test_dict_exact_idx.bin");
-    cxxime::Dict::create_test_dict(path, {{"de", "\xe7\x9a\x84", 1000}});
+    cxxime::Dict::create_test_dict(path, {{"de", "的", 1000}});
 
     cxxime::Dict dict;
     ASSERT_TRUE(dict.open_dict(path));
 
     // Insert user words
-    dict.update_frequency("\xe8\xbe\x93\xe5\x85\xa5\xe6\xb3\x95", "shurufa", "shu:ru:fa");
-    dict.update_frequency("\xe7\xa4\xbe\xe4\xbc\x9a", "shehui", "she:hui");
+    dict.update_frequency("输入法", "shurufa", "shu:ru:fa");
+    dict.update_frequency("社会", "shehui", "she:hui");
 
     cxxime::QueryTrace trace = {};
     std::vector<std::string> syllables = {"shu", "ru", "fa"};
@@ -423,7 +423,7 @@ TEST(Dict, user_dict_exact_index) {
 
     bool found = false;
     for (auto& c : results) {
-        if (c.text == "\xe8\xbe\x93\xe5\x85\xa5\xe6\xb3\x95") found = true;
+        if (c.text == "输入法") found = true;
     }
     ASSERT_TRUE(found);
     // Should only scan 1 entry (the exact match bucket), not all user entries
@@ -435,22 +435,22 @@ TEST(Dict, user_dict_exact_index) {
 
 TEST(Dict, user_dict_prefix_index) {
     std::string path = make_temp_path("test_dict_prefix_idx.bin");
-    cxxime::Dict::create_test_dict(path, {{"de", "\xe7\x9a\x84", 1000}});
+    cxxime::Dict::create_test_dict(path, {{"de", "的", 1000}});
 
     cxxime::Dict dict;
     ASSERT_TRUE(dict.open_dict(path));
 
-    dict.update_frequency("\xe8\xbe\x93\xe5\x85\xa5\xe6\xb3\x95", "shurufa");
-    dict.update_frequency("\xe7\xa4\xbe\xe4\xbc\x9a", "shehui");
-    dict.update_frequency("\xe6\x95\xb0\xe6\x8d\xae", "shuju");
+    dict.update_frequency("输入法", "shurufa");
+    dict.update_frequency("社会", "shehui");
+    dict.update_frequency("数据", "shuju");
 
     cxxime::QueryTrace trace = {};
     auto results = dict.lookup("shu", 10, &trace);
 
     bool found_srf = false, found_sj = false;
     for (auto& c : results) {
-        if (c.text == "\xe8\xbe\x93\xe5\x85\xa5\xe6\xb3\x95") found_srf = true;
-        if (c.text == "\xe6\x95\xb0\xe6\x8d\xae") found_sj = true;
+        if (c.text == "输入法") found_srf = true;
+        if (c.text == "数据") found_sj = true;
     }
     ASSERT_TRUE(found_srf);
     ASSERT_TRUE(found_sj);
@@ -463,14 +463,14 @@ TEST(Dict, user_dict_prefix_index) {
 
 TEST(Dict, user_dict_count_indexed) {
     std::string path = make_temp_path("test_dict_count_idx.bin");
-    cxxime::Dict::create_test_dict(path, {{"de", "\xe7\x9a\x84", 1000}});
+    cxxime::Dict::create_test_dict(path, {{"de", "的", 1000}});
 
     cxxime::Dict dict;
     ASSERT_TRUE(dict.open_dict(path));
 
-    dict.update_frequency("\xe8\xbe\x93\xe5\x85\xa5\xe6\xb3\x95", "shurufa");
-    dict.update_frequency("\xe7\xa4\xbe\xe4\xbc\x9a", "shehui");
-    dict.update_frequency("\xe6\x95\xb0\xe6\x8d\xae", "shuju");
+    dict.update_frequency("输入法", "shurufa");
+    dict.update_frequency("社会", "shehui");
+    dict.update_frequency("数据", "shuju");
 
     cxxime::QueryTrace trace = {};
     int cnt = dict.count("shu", &trace);
@@ -486,12 +486,12 @@ TEST(Dict, user_dict_count_indexed) {
 
 TEST(Dict, user_dict_update_frequency_new_word) {
     std::string path = make_temp_path("test_dict_uf_new.bin");
-    cxxime::Dict::create_test_dict(path, {{"de", "\xe7\x9a\x84", 1000}});
+    cxxime::Dict::create_test_dict(path, {{"de", "的", 1000}});
 
     cxxime::Dict dict;
     ASSERT_TRUE(dict.open_dict(path));
 
-    dict.update_frequency("\xe8\xbe\x93\xe5\x85\xa5\xe6\xb3\x95", "shurufa", "shu:ru:fa");
+    dict.update_frequency("输入法", "shurufa", "shu:ru:fa");
 
     // Should be findable via exact index
     cxxime::QueryTrace trace = {};
@@ -499,7 +499,7 @@ TEST(Dict, user_dict_update_frequency_new_word) {
     auto r1 = dict.lookup_by_syllables(syllables, 10, &trace);
     bool found = false;
     for (auto& c : r1) {
-        if (c.text == "\xe8\xbe\x93\xe5\x85\xa5\xe6\xb3\x95") found = true;
+        if (c.text == "输入法") found = true;
     }
     ASSERT_TRUE(found);
 
@@ -507,12 +507,12 @@ TEST(Dict, user_dict_update_frequency_new_word) {
     auto r2 = dict.lookup("shu", 10);
     found = false;
     for (auto& c : r2) {
-        if (c.text == "\xe8\xbe\x93\xe5\x85\xa5\xe6\xb3\x95") found = true;
+        if (c.text == "输入法") found = true;
     }
     ASSERT_TRUE(found);
 
     // Should be findable via reverse lookup
-    auto code = dict.reverse_lookup("\xe8\xbe\x93\xe5\x85\xa5\xe6\xb3\x95");
+    auto code = dict.reverse_lookup("输入法");
     ASSERT_TRUE(code == "shurufa");
 
     dict.close();
@@ -521,26 +521,26 @@ TEST(Dict, user_dict_update_frequency_new_word) {
 
 TEST(Dict, user_dict_update_frequency_code_change) {
     std::string path = make_temp_path("test_dict_uf_chg.bin");
-    cxxime::Dict::create_test_dict(path, {{"de", "\xe7\x9a\x84", 1000}});
+    cxxime::Dict::create_test_dict(path, {{"de", "的", 1000}});
 
     cxxime::Dict dict;
     ASSERT_TRUE(dict.open_dict(path));
 
     // Insert with code "abc"
-    dict.update_frequency("\xe6\xb5\x8b\xe8\xaf\x95", "abc");
+    dict.update_frequency("测试", "abc");
     auto r1 = dict.lookup("abc", 10);
     bool found_abc = false;
     for (auto& c : r1) {
-        if (c.text == "\xe6\xb5\x8b\xe8\xaf\x95") found_abc = true;
+        if (c.text == "测试") found_abc = true;
     }
     ASSERT_TRUE(found_abc);
 
     // Change code to "xyz"
-    dict.update_frequency("\xe6\xb5\x8b\xe8\xaf\x95", "xyz");
+    dict.update_frequency("测试", "xyz");
     auto r2 = dict.lookup("xyz", 10);
     bool found_xyz = false;
     for (auto& c : r2) {
-        if (c.text == "\xe6\xb5\x8b\xe8\xaf\x95") found_xyz = true;
+        if (c.text == "测试") found_xyz = true;
     }
     ASSERT_TRUE(found_xyz);
 
@@ -548,7 +548,7 @@ TEST(Dict, user_dict_update_frequency_code_change) {
     auto r3 = dict.lookup("abc", 10);
     bool still_abc = false;
     for (auto& c : r3) {
-        if (c.text == "\xe6\xb5\x8b\xe8\xaf\x95") still_abc = true;
+        if (c.text == "测试") still_abc = true;
     }
     ASSERT_TRUE(!still_abc);
 
@@ -558,7 +558,7 @@ TEST(Dict, user_dict_update_frequency_code_change) {
 
 TEST(Dict, user_dict_scan_count_bounded) {
     std::string path = make_temp_path("test_dict_scan_bound.bin");
-    cxxime::Dict::create_test_dict(path, {{"de", "\xe7\x9a\x84", 1000}});
+    cxxime::Dict::create_test_dict(path, {{"de", "的", 1000}});
 
     cxxime::Dict dict;
     ASSERT_TRUE(dict.open_dict(path));
@@ -582,7 +582,7 @@ TEST(Dict, user_dict_scan_count_bounded) {
 
 TEST(Dict, user_dict_max_user_scan_truncated) {
     std::string path = make_temp_path("test_dict_trunc.bin");
-    cxxime::Dict::create_test_dict(path, {{"de", "\xe7\x9a\x84", 1000}});
+    cxxime::Dict::create_test_dict(path, {{"de", "的", 1000}});
 
     cxxime::Dict dict;
     ASSERT_TRUE(dict.open_dict(path));
@@ -608,12 +608,12 @@ TEST(Dict, user_dict_max_user_scan_truncated) {
 
 TEST(Dict, user_dict_deadline_exceeded) {
     std::string path = make_temp_path("test_dict_deadline.bin");
-    cxxime::Dict::create_test_dict(path, {{"de", "\xe7\x9a\x84", 1000}});
+    cxxime::Dict::create_test_dict(path, {{"de", "的", 1000}});
 
     cxxime::Dict dict;
     ASSERT_TRUE(dict.open_dict(path));
 
-    dict.update_frequency("\xe8\xbe\x93\xe5\x85\xa5\xe6\xb3\x95", "shurufa", "shu:ru:fa");
+    dict.update_frequency("输入法", "shurufa", "shu:ru:fa");
 
     // Create a budget with an already-expired deadline
     cxxime::QueryBudget budget;
@@ -636,13 +636,13 @@ TEST(Dict, user_dict_deadline_exceeded) {
 
 TEST(Dict, user_dict_mixed_index) {
     std::string path = make_temp_path("test_dict_mixed.bin");
-    cxxime::Dict::create_test_dict(path, {{"de", "\xe7\x9a\x84", 1000}});
+    cxxime::Dict::create_test_dict(path, {{"de", "的", 1000}});
 
     cxxime::Dict dict;
     ASSERT_TRUE(dict.open_dict(path));
 
     // Insert user word with syllables — generates abbr "srf" and mixed "shurf"
-    dict.update_frequency("\xe8\xbe\x93\xe5\x85\xa5\xe6\xb3\x95", "shurufa", "shu:ru:fa");
+    dict.update_frequency("输入法", "shurufa", "shu:ru:fa");
 
     // Query via abbreviation "srf"
     cxxime::QueryBudget budget;
@@ -651,7 +651,7 @@ TEST(Dict, user_dict_mixed_index) {
     auto r1 = dict.lookup_user_short("srf", 10, budget, &trace, &stats);
     bool found_abbr = false;
     for (auto& c : r1) {
-        if (c.text == "\xe8\xbe\x93\xe5\x85\xa5\xe6\xb3\x95") found_abbr = true;
+        if (c.text == "输入法") found_abbr = true;
     }
     ASSERT_TRUE(found_abbr);
 
@@ -660,7 +660,7 @@ TEST(Dict, user_dict_mixed_index) {
     auto r2 = dict.lookup_user_short("shurf", 10, budget, &trace, &stats2);
     bool found_mixed = false;
     for (auto& c : r2) {
-        if (c.text == "\xe8\xbe\x93\xe5\x85\xa5\xe6\xb3\x95") found_mixed = true;
+        if (c.text == "输入法") found_mixed = true;
     }
     ASSERT_TRUE(found_mixed);
 
@@ -669,7 +669,7 @@ TEST(Dict, user_dict_mixed_index) {
     auto r3 = dict.lookup_user_short("shrf", 10, budget, &trace, &stats3);
     bool found_enhanced = false;
     for (auto& c : r3) {
-        if (c.text == "\xe8\xbe\x93\xe5\x85\xa5\xe6\xb3\x95") found_enhanced = true;
+        if (c.text == "输入法") found_enhanced = true;
     }
     ASSERT_TRUE(found_enhanced);
 
@@ -679,7 +679,7 @@ TEST(Dict, user_dict_mixed_index) {
 
 TEST(Dict, user_dict_high_freq_in_scan_budget) {
     std::string path = make_temp_path("test_dict_hf.bin");
-    cxxime::Dict::create_test_dict(path, {{"de", "\xe7\x9a\x84", 1000}});
+    cxxime::Dict::create_test_dict(path, {{"de", "的", 1000}});
 
     cxxime::Dict dict;
     ASSERT_TRUE(dict.open_dict(path));
@@ -717,7 +717,7 @@ TEST(Dict, user_dict_high_freq_in_scan_budget) {
 
 TEST(Dict, user_dict_stress_10k) {
     std::string path = make_temp_path("test_dict_stress.bin");
-    cxxime::Dict::create_test_dict(path, {{"de", "\xe7\x9a\x84", 1000}});
+    cxxime::Dict::create_test_dict(path, {{"de", "的", 1000}});
 
     cxxime::Dict dict;
     ASSERT_TRUE(dict.open_dict(path));

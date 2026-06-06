@@ -93,10 +93,10 @@ static int tsf_queue_pop_batch(TsfTraceEntry* batch, int max) {
 
 static std::string tsf_get_log_dir() {
     wchar_t buf[MAX_PATH] = {};
-    if (FAILED(SHGetFolderPathW(nullptr, CSIDL_LOCAL_APPDATA, nullptr, 0, buf)))
+    if (FAILED(SHGetFolderPathW(nullptr, CSIDL_PROFILE, nullptr, 0, buf)))
         return {};
-    std::wstring dir = std::wstring(buf) + L"\\CxxIME\\logs";
-    CreateDirectoryW((std::wstring(buf) + L"\\CxxIME").c_str(), nullptr);
+    std::wstring dir = std::wstring(buf) + L"\\cxxime\\logs";
+    CreateDirectoryW((std::wstring(buf) + L"\\cxxime").c_str(), nullptr);
     CreateDirectoryW(dir.c_str(), nullptr);
     char utf8[MAX_PATH * 3] = {};
     WideCharToMultiByte(CP_UTF8, 0, dir.c_str(), -1, utf8, sizeof(utf8), nullptr, nullptr);
@@ -573,7 +573,10 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
     _chinese_mode = !response.ascii_mode;
     if (_statusController.is_initialized())
         _statusController.sync_status(response.ime_status);
-    if (_modeButton) _modeButton->update_icon(response.ime_status.chinese_mode);
+    if (_modeButton) {
+        bool caps = (GetKeyState(VK_CAPITAL) & 1) != 0;
+        _modeButton->update_icon(response.ime_status.chinese_mode, caps);
+    }
     if (_imeButton) _imeButton->update_mode(response.ime_status.input_mode);
 
     // Handle committed text (e.g. Shift toggle with commit_text, or normal candidate selection)
@@ -734,7 +737,10 @@ void TextService::_ProcessKeyUp(WPARAM wParam) {
         _chinese_mode = !response.ascii_mode;
         if (_statusController.is_initialized())
             _statusController.sync_status(response.ime_status);
-        if (_modeButton) _modeButton->update_icon(response.ime_status.chinese_mode);
+        if (_modeButton) {
+            bool caps = (GetKeyState(VK_CAPITAL) & 1) != 0;
+            _modeButton->update_icon(response.ime_status.chinese_mode, caps);
+        }
         if (_imeButton) _imeButton->update_mode(response.ime_status.input_mode);
         CXXIME_LOG(L"_ProcessKeyUp: _chinese_mode=%d, _composing=%d", _chinese_mode, _composing);
 
@@ -834,7 +840,10 @@ STDMETHODIMP TextService::OnSetFocus(ITfDocumentMgr* pDocMgrFocus, ITfDocumentMg
         if (_client.get_status(_sessionId, resp)) {
             _statusController.sync_status(resp.ime_status);
             _chinese_mode = resp.ime_status.chinese_mode;
-            if (_modeButton) _modeButton->update_icon(resp.ime_status.chinese_mode);
+            if (_modeButton) {
+                bool caps = (GetKeyState(VK_CAPITAL) & 1) != 0;
+                _modeButton->update_icon(resp.ime_status.chinese_mode, caps);
+            }
             if (_imeButton) _imeButton->update_mode(resp.ime_status.input_mode);
         }
     }
