@@ -4,6 +4,9 @@
 #define CXXIME_TSF_RESOURCE_H_
 
 #define IDI_CXXIME  100
-#define IDI_PINTEREST 101
+#define IDI_ICON_ZH     102
+#define IDI_ICON_EN     103
+#define IDI_ICON_C      104
+#define IDI_FREEDLY     105
 
 #endif // CXXIME_TSF_RESOURCE_H_

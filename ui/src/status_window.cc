@@ -64,13 +64,13 @@ static void shutdown_gdiplus() {
 // Tooltip text table
 // ============================================================
 static const wchar_t* kTooltipText[] = {
-    L"\x4E2D\x6587\x6A21\x5F0F",
-    L"\x82F1\x6587\x6A21\x5F0F",
-    L"\x5168\x89D2",
-    L"\x534A\x89D2",
-    L"\x4E2D\x6587\x6807\x70B9",
-    L"\x82F1\x6587\x6807\x70B9",
-    L"\x6253\x5F00\x8BBE\x7F6E",
+    L"中文模式",
+    L"英文模式",
+    L"全角",
+    L"半角",
+    L"中文标点",
+    L"英文标点",
+    L"打开设置",
 };
 
 // ============================================================
@@ -82,7 +82,7 @@ StatusWindow::~StatusWindow() {
     destroy();
 }
 
-bool StatusWindow::create(HWND parent, const Theme& theme) {
+bool StatusWindow::create(HWND parent, const StatusTheme& theme) {
     if (hwnd_) return true;
 
     theme_ = theme;
@@ -458,8 +458,8 @@ void StatusWindow::ComputeButtonDrawInfo(std::vector<ButtonDrawInfo>& out) {
     x += Scaled(BASE_LOGO_WIDTH + BASE_BUTTON_GAP);
 
     // Three function buttons
-    const wchar_t* active_texts[] = {L"\x4E2D", L"\x5168", L"\x3002"};
-    const wchar_t* inactive_texts[] = {L"\x82F1", L"\x534A", L"."};
+    const wchar_t* active_texts[] = {L"中", L"全", L"。"};
+    const wchar_t* inactive_texts[] = {L"英", L"半", L"."};
     bool active_states[] = {state_.chinese_mode, state_.full_shape, state_.chinese_punct};
 
     for (int i = 0; i < 3; ++i) {
@@ -468,8 +468,8 @@ void StatusWindow::ComputeButtonDrawInfo(std::vector<ButtonDrawInfo>& out) {
         bool hover = (hovered_button_ == i);
         bool pressed = (is_tracking_ && !is_dragging_ && hovered_button_ == i);
 
-        Color bg_col = theme_.status_inactive_back;
-        Color txt_col = theme_.status_inactive_text;
+        Color bg_col = theme_.inactive_back;
+        Color txt_col = theme_.inactive_text;
         if (pressed) {
             bg_col = blend(bg_col, {0, 0, 0, 255}, 0.25f);
         } else if (hover) {
@@ -503,7 +503,7 @@ void StatusWindow::ComputeButtonDrawInfo(std::vector<ButtonDrawInfo>& out) {
         bool sh = (hovered_button_ == 3);
         bool sp = (is_tracking_ && !is_dragging_ && hovered_button_ == 3);
 
-        Color set_col = theme_.status_inactive_back;
+        Color set_col = theme_.inactive_back;
         if (sp) {
             set_col = blend(set_col, {0, 0, 0, 255}, 0.25f);
         } else if (sh) {
@@ -514,7 +514,7 @@ void StatusWindow::ComputeButtonDrawInfo(std::vector<ButtonDrawInfo>& out) {
         ButtonDrawInfo info;
         info.rect = settings_rc;
         info.bg_color = set_col;
-        info.text_color = theme_.status_inactive_text;
+        info.text_color = theme_.inactive_text;
         info.text = L"\xE713";
         info.font_index = 1;  // icon font
         info.nudge_y = 0;
@@ -563,7 +563,7 @@ void StatusWindow::PaintD2D() {
     IDWriteTextFormat* fonts[] = {d2d_font_cn_, d2d_font_icon_};
 
     // 1. Window background
-    ID2D1SolidColorBrush* bg_brush = make_brush(theme_.background);
+    ID2D1SolidColorBrush* bg_brush = make_brush(theme_.back);
     ID2D1SolidColorBrush* border_brush = make_brush(theme_.border);
     D2D1_ROUNDED_RECT win_rr = {D2D1::RectF(0, 0, (float)win_w_, (float)win_h_), win_r, win_r};
     d2d_rt_->FillRoundedRectangle(win_rr, bg_brush);
@@ -575,7 +575,7 @@ void StatusWindow::PaintD2D() {
     {
         RECT logo_rc = GetLogoRect();
         float lr = (float)(logo_rc.bottom - logo_rc.top) / 2.0f;
-        fill_pill(logo_rc, theme_.status_logo_back);
+        fill_pill(logo_rc, theme_.logo_back);
         ID2D1SolidColorBrush* lb = make_brush(theme_.border);
         D2D1_ROUNDED_RECT lrr = {D2D1::RectF((float)logo_rc.left, (float)logo_rc.top,
                                                (float)logo_rc.right, (float)logo_rc.bottom), lr, lr};
@@ -609,7 +609,7 @@ void StatusWindow::PaintD2D() {
         int y = Scaled(BASE_WINDOW_PADDING);
         int sep_y1 = y + Scaled(4);
         int sep_y2 = y + Scaled(BASE_BUTTON_HEIGHT - 4);
-        ID2D1SolidColorBrush* sep_brush = make_brush(theme_.status_separator);
+        ID2D1SolidColorBrush* sep_brush = make_brush(theme_.separator);
         d2d_rt_->DrawLine(D2D1::Point2F((float)x, (float)sep_y1),
                           D2D1::Point2F((float)x, (float)sep_y2), sep_brush,
                           (float)Scaled(BASE_SEPARATOR_WIDTH));
@@ -658,8 +658,8 @@ void StatusWindow::PaintGdiplus() {
         path.AddArc(0.0f, h - 2.0f * r, 2.0f * r, 2.0f * r, 90, 90);
         path.CloseFigure();
 
-        Gdiplus::SolidBrush bg_brush(Gdiplus::Color(theme_.background.a, theme_.background.r,
-                                                     theme_.background.g, theme_.background.b));
+        Gdiplus::SolidBrush bg_brush(Gdiplus::Color(theme_.back.a, theme_.back.r,
+                                                     theme_.back.g, theme_.back.b));
         g.FillPath(&bg_brush, &path);
 
         Gdiplus::Pen pen(Gdiplus::Color(theme_.border.a, theme_.border.r,
@@ -680,8 +680,8 @@ void StatusWindow::PaintGdiplus() {
             path.AddArc((float)logo_rc.right - 2.0f*lr, (float)logo_rc.bottom - 2.0f*lr, 2.0f*lr, 2.0f*lr, 0, 90);
             path.AddArc((float)logo_rc.left, (float)logo_rc.bottom - 2.0f*lr, 2.0f*lr, 2.0f*lr, 90, 90);
             path.CloseFigure();
-            Gdiplus::SolidBrush brush(Gdiplus::Color(theme_.status_logo_back.a,
-                theme_.status_logo_back.r, theme_.status_logo_back.g, theme_.status_logo_back.b));
+            Gdiplus::SolidBrush brush(Gdiplus::Color(theme_.logo_back.a,
+                theme_.logo_back.r, theme_.logo_back.g, theme_.logo_back.b));
             g.FillPath(&brush, &path);
             Gdiplus::Pen pen(Gdiplus::Color(theme_.border.a,
                 theme_.border.r, theme_.border.g, theme_.border.b), 1.0f);
@@ -730,7 +730,7 @@ void StatusWindow::PaintGdiplus() {
     {
         RECT sep_rc = GetSeparatorRect();
         HPEN pen = CreatePen(PS_SOLID, Scaled(BASE_SEPARATOR_WIDTH),
-            RGB(theme_.status_separator.r, theme_.status_separator.g, theme_.status_separator.b));
+            RGB(theme_.separator.r, theme_.separator.g, theme_.separator.b));
         SelectObject(layered_dc_, pen);
         MoveToEx(layered_dc_, sep_rc.left, sep_rc.top, nullptr);
         LineTo(layered_dc_, sep_rc.left, sep_rc.bottom);
@@ -955,11 +955,11 @@ void StatusWindow::InitTooltip() {
 // ============================================================
 void StatusWindow::ShowContextMenu(int x, int y) {
     HMENU hMenu = CreatePopupMenu();
-    AppendMenuW(hMenu, MF_STRING, 1, L"\x6253\x5F00\x8BBE\x7F6E");
-    AppendMenuW(hMenu, MF_STRING, 2, L"\x91CD\x8F7D\x914D\x7F6E");
-    AppendMenuW(hMenu, MF_STRING, 3, L"\x9690\x85CF\x72B6\x6001\x680F");
+    AppendMenuW(hMenu, MF_STRING, 1, L"打开设置");
+    AppendMenuW(hMenu, MF_STRING, 2, L"重载配置");
+    AppendMenuW(hMenu, MF_STRING, 3, L"隐藏状态栏");
     AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(hMenu, MF_STRING, 4, L"\x5173\x4E8E");
+    AppendMenuW(hMenu, MF_STRING, 4, L"关于");
 
     UINT cmd = TrackPopupMenu(hMenu, TPM_RIGHTBUTTON | TPM_RETURNCMD, x, y, 0, hwnd_, nullptr);
     DestroyMenu(hMenu);

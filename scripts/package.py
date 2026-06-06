@@ -36,7 +36,7 @@ def run(cmd: list[str], **kwargs) -> None:
     subprocess.run(cmd, check=True, **kwargs)
 
 
-def build(config: str, clean: bool = False) -> None:
+def build(config: str, clean: bool = False, skip_tests: bool = False, skip_tools: bool = False) -> None:
     """Configure and build the project."""
     if clean and os.path.exists(BUILD_DIR):
         print(f"Cleaning build directory: {BUILD_DIR}")
@@ -50,6 +50,10 @@ def build(config: str, clean: bool = False) -> None:
         "-G", "Visual Studio 17 2022", "-A", "x64",
         "-DCXXIME_PRODUCTION_BUILD=ON",
     ]
+    if skip_tests:
+        cmake_args.append("-DCXXIME_BUILD_TESTS=OFF")
+    if skip_tools:
+        cmake_args.append("-DCXXIME_BUILD_TOOLS=OFF")
     run(cmake_args)
     run(["cmake", "--build", BUILD_DIR, "--config", config])
 
@@ -322,6 +326,22 @@ def main():
         "--skip-nsis", action="store_true",
         help="Skip NSIS installer build (only update dist/ contents)",
     )
+    parser.add_argument(
+        "--skip-tests", action="store_true", default=True,
+        help="Skip building unit tests (default: on)",
+    )
+    parser.add_argument(
+        "--with-tests", action="store_false", dest="skip_tests",
+        help="Build unit tests",
+    )
+    parser.add_argument(
+        "--skip-tools", action="store_true", default=True,
+        help="Skip building development tools (default: on)",
+    )
+    parser.add_argument(
+        "--with-tools", action="store_false", dest="skip_tools",
+        help="Build development tools",
+    )
     args = parser.parse_args()
 
     config = "Debug" if args.debug else "Release"
@@ -333,7 +353,7 @@ def main():
         print(f"\nSkipping build (--skip-build). Using existing binaries in {BUILD_DIR}.")
     else:
         step("[1/6] Building...")
-        build(config, clean=args.clean)
+        build(config, clean=args.clean, skip_tests=args.skip_tests, skip_tools=args.skip_tools)
 
     # 2. Clean + copy
     step("[2/6] Preparing distribution directory...")

@@ -146,8 +146,8 @@ TEST(IPC, process_key_preedit) {
             resp.status = cxxime::IPCStatus::OK;
             strncpy_s(resp.preedit, "ni", sizeof(resp.preedit) - 1);
             resp.candidate_count = 2;
-            strncpy_s(resp.candidates[0], "\xe4\xbd\xa0", sizeof(resp.candidates[0]) - 1);
-            strncpy_s(resp.candidates[1], "\xe5\xb0\xbc", sizeof(resp.candidates[1]) - 1);
+            strncpy_s(resp.candidates[0], "你", sizeof(resp.candidates[0]) - 1);
+            strncpy_s(resp.candidates[1], "尼", sizeof(resp.candidates[1]) - 1);
         }
         return resp;
     }));
@@ -167,7 +167,7 @@ TEST(IPC, process_key_commit) {
         cxxime::IPCResponse resp = {};
         if (req.command == cxxime::IPCCommand::PROCESS_KEY) {
             resp.status = cxxime::IPCStatus::OK;
-            strncpy_s(resp.commit_text, "\xe4\xbd\xa0", sizeof(resp.commit_text) - 1);
+            strncpy_s(resp.commit_text, "你", sizeof(resp.commit_text) - 1);
         }
         return resp;
     }));
@@ -177,7 +177,7 @@ TEST(IPC, process_key_commit) {
     cxxime::IPCResponse resp = {};
     ASSERT_TRUE(client.process_key(1, '1', 0, resp));
     ASSERT_EQ(resp.status, cxxime::IPCStatus::OK);
-    ASSERT_EQ(strcmp(resp.commit_text, "\xe4\xbd\xa0"), 0);
+    ASSERT_EQ(strcmp(resp.commit_text, "你"), 0);
 }
 
 TEST(IPC, process_key_rejected) {
@@ -201,7 +201,7 @@ TEST(IPC, select_candidate) {
         cxxime::IPCResponse resp = {};
         if (req.command == cxxime::IPCCommand::SELECT_CANDIDATE) {
             resp.status = cxxime::IPCStatus::OK;
-            strncpy_s(resp.commit_text, "\xe4\xbd\xa0\xe5\xa5\xbd", sizeof(resp.commit_text) - 1);
+            strncpy_s(resp.commit_text, "你好", sizeof(resp.commit_text) - 1);
         }
         return resp;
     }));
@@ -219,7 +219,7 @@ TEST(IPC, commit_composition) {
         cxxime::IPCResponse resp = {};
         if (req.command == cxxime::IPCCommand::COMMIT_COMPOSITION) {
             resp.status = cxxime::IPCStatus::OK;
-            strncpy_s(resp.commit_text, "\xe6\xb5\x8b\xe8\xaf\x95", sizeof(resp.commit_text) - 1);
+            strncpy_s(resp.commit_text, "测试", sizeof(resp.commit_text) - 1);
         }
         return resp;
     }));

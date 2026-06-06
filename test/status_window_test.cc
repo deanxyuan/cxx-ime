@@ -7,18 +7,6 @@
 #include <cxxime/status_window.h>
 #include <cxxime/render_context.h>
 
-// Test theme for StatusWindow tests
-static cxxime::Theme make_test_theme() {
-    cxxime::Theme t;
-    t.background         = {30,  30,  30,  255};
-    t.border             = {50,  50,  50,  255};
-    t.status_inactive_back = {232, 232, 232, 200};
-    t.status_inactive_text = {51,  51,  51,  255};
-    t.status_separator     = {212, 212, 212, 255};
-    t.status_logo_back     = {232, 232, 232, 120};
-    return t;
-}
-
 static HICON load_freedly_icon() {
     static HICON icon = nullptr;
     if (!icon) {
@@ -30,7 +18,7 @@ static HICON load_freedly_icon() {
 }
 
 static bool create_test_window(cxxime::StatusWindow& w) {
-    bool ok = w.create(GetDesktopWindow(), make_test_theme());
+    bool ok = w.create(GetDesktopWindow(), cxxime::StatusTheme());
     if (ok) w.set_logo_icon(load_freedly_icon());
     return ok;
 }

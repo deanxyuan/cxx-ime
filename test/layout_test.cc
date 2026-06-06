@@ -15,7 +15,7 @@ TEST(Layout, estimate_text_width_ascii) {
 }
 
 TEST(Layout, estimate_text_width_cjk) {
-    int w_cjk = cxxime::estimate_text_width("\xe4\xbd\xa0\xe5\xa5\xbd");  // 你好
+    int w_cjk = cxxime::estimate_text_width("你好");  // 你好
     int w_ascii = cxxime::estimate_text_width("ab");
     ASSERT_TRUE(w_cjk > w_ascii);
     ASSERT_EQ(w_cjk, 48);  // 2 * 14 + 20

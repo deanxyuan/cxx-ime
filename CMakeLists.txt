@@ -13,6 +13,7 @@ if(WIN32)
 endif()
 
 option(CXXIME_BUILD_TESTS "Build tests" ON)
+option(CXXIME_BUILD_TOOLS "Build development tools" ON)
 
 # Data directory resolution:
 #   Production (default): CXXIME_PRODUCTION_BUILD=ON  → <exe_dir>/data/
@@ -37,12 +38,15 @@ if(CXXIME_BUILD_TESTS)
     add_subdirectory(test)
 endif()
 
-add_subdirectory(tools/dict_query)
-add_subdirectory(tools/sqlite_query)
-add_subdirectory(tools/ipc_test)
-add_subdirectory(tools/candidate_window_tool)
-add_subdirectory(tools/tsf_position_tool)
-add_subdirectory(tools/status_window_tool)
-add_subdirectory(tools/query_bench)
-add_subdirectory(tools/tray_icon_tool)
+if(CXXIME_BUILD_TOOLS)
+    add_subdirectory(tools/dict_query)
+    add_subdirectory(tools/sqlite_query)
+    add_subdirectory(tools/ipc_test)
+    add_subdirectory(tools/candidate_window_tool)
+    add_subdirectory(tools/tsf_position_tool)
+    add_subdirectory(tools/status_window_tool)
+    add_subdirectory(tools/query_bench)
+    add_subdirectory(tools/tray_icon_tool)
+endif()
+
 add_subdirectory(settings)

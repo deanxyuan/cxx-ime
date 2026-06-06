@@ -18,9 +18,17 @@
 CLangBarItemButton::CLangBarItemButton(TfClientId tid, REFGUID guid)
     : _clientId(tid), _guid(guid), _chinese_mode(true), _pSink(nullptr) {
     DllAddRef();
+    int cx = GetSystemMetrics(SM_CXSMICON);
+    int cy = GetSystemMetrics(SM_CYSMICON);
+    _hIconZH = (HICON)LoadImageW(g_hInst, MAKEINTRESOURCEW(IDI_ICON_ZH), IMAGE_ICON, cx, cy, LR_DEFAULTCOLOR);
+    _hIconEN = (HICON)LoadImageW(g_hInst, MAKEINTRESOURCEW(IDI_ICON_EN), IMAGE_ICON, cx, cy, LR_DEFAULTCOLOR);
+    _hIconC  = (HICON)LoadImageW(g_hInst, MAKEINTRESOURCEW(IDI_ICON_C),  IMAGE_ICON, cx, cy, LR_DEFAULTCOLOR);
 }
 
 CLangBarItemButton::~CLangBarItemButton() {
+    if (_hIconZH) { DestroyIcon(_hIconZH); _hIconZH = nullptr; }
+    if (_hIconEN) { DestroyIcon(_hIconEN); _hIconEN = nullptr; }
+    if (_hIconC)  { DestroyIcon(_hIconC);  _hIconC = nullptr; }
     _pSink = nullptr;
     DllRelease();
 }
@@ -81,7 +89,14 @@ STDMETHODIMP CLangBarItemButton::Show(BOOL fShow) {
 STDMETHODIMP CLangBarItemButton::GetTooltipString(BSTR* pbstrToolTip) {
     if (!pbstrToolTip)
         return E_INVALIDARG;
-    *pbstrToolTip = SysAllocString(_chinese_mode ? L"CxxIME - Chinese" : L"CxxIME - English");
+    const wchar_t* tip;
+    if (_caps_lock)
+        tip = L"CxxIME - Caps Lock";
+    else if (_chinese_mode)
+        tip = L"CxxIME - 中文";
+    else
+        tip = L"CxxIME - English";
+    *pbstrToolTip = SysAllocString(tip);
     return S_OK;
 }
 
@@ -98,7 +113,7 @@ STDMETHODIMP CLangBarItemButton::OnClick(TfLBIClick click, POINT pt, const RECT*
 STDMETHODIMP CLangBarItemButton::InitMenu(ITfMenu* pMenu) {
     if (!pMenu) return E_INVALIDARG;
     pMenu->AddMenuItem(0, TF_LBMENUF_SUBMENU, nullptr, nullptr,
-                       L"\x663E\x793A\x72B6\x6001\x680F", 5, nullptr);  // 显示状态栏
+                       L"显示状态栏", 5, nullptr);
     return S_OK;
 }
 
@@ -113,58 +128,12 @@ STDMETHODIMP CLangBarItemButton::GetIcon(HICON* phIcon) {
     if (!phIcon)
         return E_INVALIDARG;
 
-    int cx = GetSystemMetrics(SM_CXSMICON);
-    int cy = GetSystemMetrics(SM_CYSMICON);
-    if (cx < 16) cx = 16;
-    if (cy < 16) cy = 16;
-
-    HDC hdc = GetDC(NULL);
-    HDC hdcMem = CreateCompatibleDC(hdc);
-    HBITMAP hBitmap = CreateCompatibleBitmap(hdc, cx, cy);
-    HBITMAP hOldBitmap = (HBITMAP)SelectObject(hdcMem, hBitmap);
-
-    HBRUSH hBrush = CreateSolidBrush(_chinese_mode ? RGB(0, 160, 0) : RGB(0, 100, 200));
-    RECT rc = {0, 0, cx, cy};
-    FillRect(hdcMem, &rc, hBrush);
-    DeleteObject(hBrush);
-
-    SetBkMode(hdcMem, TRANSPARENT);
-    SetTextColor(hdcMem, RGB(255, 255, 255));
-
-    HFONT hFont = CreateFontW(cy * 2 / 3, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
-                              DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                              DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Arial");
-    HFONT hOldFont = hFont ? (HFONT)SelectObject(hdcMem, hFont) : nullptr;
-
-    const wchar_t* text = _chinese_mode ? L"\x4E2D" : L"EN";
-    DrawTextW(hdcMem, text, -1, &rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-
-    if (hOldFont) SelectObject(hdcMem, hOldFont);
-    if (hFont) DeleteObject(hFont);
-    SelectObject(hdcMem, hOldBitmap);
-
-    // Mask bitmap: all white = all pixels visible
-    HBITMAP hMask = CreateBitmap(cx, cy, 1, 1, nullptr);
-    HDC hdcMask = CreateCompatibleDC(hdc);
-    HBITMAP hOldMask = (HBITMAP)SelectObject(hdcMask, hMask);
-    RECT rcMask = {0, 0, cx, cy};
-    FillRect(hdcMask, &rcMask, (HBRUSH)GetStockObject(WHITE_BRUSH));
-    SelectObject(hdcMask, hOldMask);
-    DeleteDC(hdcMask);
-
-    ICONINFO iconInfo = {};
-    iconInfo.fIcon = TRUE;
-    iconInfo.hbmColor = hBitmap;
-    iconInfo.hbmMask = hMask;
-    *phIcon = CreateIconIndirect(&iconInfo);
-
-    DeleteObject(hMask);
-    DeleteObject(hBitmap);
-    DeleteDC(hdcMem);
-    ReleaseDC(NULL, hdc);
-
-    CXXIME_LOG(L"GetIcon: mode=%S, cx=%d, cy=%d, hIcon=0x%p",
-               _chinese_mode ? "ZH" : "EN", cx, cy, *phIcon);
+    if (_caps_lock)
+        *phIcon = _hIconC;
+    else if (_chinese_mode)
+        *phIcon = _hIconZH;
+    else
+        *phIcon = _hIconEN;
 
     return (*phIcon == NULL) ? E_FAIL : S_OK;
 }
@@ -207,18 +176,18 @@ STDMETHODIMP CLangBarItemButton::UnadviseSink(DWORD dwCookie) {
     return S_OK;
 }
 
-void CLangBarItemButton::update_icon(bool chinese_mode) {
-    CXXIME_LOG(L"update_icon: old=%S, new=%S, sink=0x%p",
-               _chinese_mode ? "ZH" : "EN", chinese_mode ? "ZH" : "EN", _pSink);
+void CLangBarItemButton::update_icon(bool chinese_mode, bool caps_lock) {
+    CXXIME_LOG(L"update_icon: chinese=%d->%d, caps=%d->%d, sink=0x%p",
+               _chinese_mode ? 1 : 0, chinese_mode ? 1 : 0,
+               _caps_lock ? 1 : 0, caps_lock ? 1 : 0, _pSink);
 
-    // Always update the mode, even if sink is not available yet
+    bool changed = (_chinese_mode != chinese_mode) || (_caps_lock != caps_lock);
     _chinese_mode = chinese_mode;
+    _caps_lock = caps_lock;
 
-    if (_pSink) {
+    if (changed && _pSink) {
         _pSink->OnUpdate(TF_LBI_ICON);
         CXXIME_LOG(L"update_icon: OnUpdate(TF_LBI_ICON) called");
-    } else {
-        CXXIME_LOG(L"update_icon: _pSink is nullptr, icon state updated but framework not notified");
     }
 }
 
@@ -231,9 +200,13 @@ void CLangBarItemButton::set_show_status_callback(ShowStatusBarCallback cb) {
 CLangBarImeButton::CLangBarImeButton(TfClientId tid, REFGUID guid)
     : _clientId(tid), _guid(guid), _pSink(nullptr) {
     DllAddRef();
+    int cx = GetSystemMetrics(SM_CXSMICON);
+    int cy = GetSystemMetrics(SM_CYSMICON);
+    _hIcon = (HICON)LoadImageW(g_hInst, MAKEINTRESOURCEW(IDI_CXXIME), IMAGE_ICON, cx, cy, LR_DEFAULTCOLOR);
 }
 
 CLangBarImeButton::~CLangBarImeButton() {
+    if (_hIcon) { DestroyIcon(_hIcon); _hIcon = nullptr; }
     _pSink = nullptr;
     DllRelease();
 }
@@ -277,7 +250,7 @@ STDMETHODIMP CLangBarImeButton::Show(BOOL fShow) { return S_OK; }
 STDMETHODIMP CLangBarImeButton::GetTooltipString(BSTR* pbstrToolTip) {
     if (!pbstrToolTip) return E_INVALIDARG;
     *pbstrToolTip = SysAllocString(
-        (_input_mode == cxxime::InputMode::PINYIN) ? L"\x62FC\x97F3\x8F93\x5165" : L"\x4E94\x7B14\x8F93\x5165");
+        (_input_mode == cxxime::InputMode::PINYIN) ? L"拼音输入" : L"五笔输入");
     return S_OK;
 }
 
@@ -289,61 +262,8 @@ STDMETHODIMP CLangBarImeButton::InitMenu(ITfMenu* pMenu) { return E_NOTIMPL; }
 STDMETHODIMP CLangBarImeButton::OnMenuSelect(UINT wID) { return E_NOTIMPL; }
 
 STDMETHODIMP CLangBarImeButton::GetIcon(HICON* phIcon) {
-    CXXIME_LOG(L"ImeButton::GetIcon called");
     if (!phIcon) return E_INVALIDARG;
-
-    int cx = GetSystemMetrics(SM_CXSMICON);
-    int cy = GetSystemMetrics(SM_CYSMICON);
-    if (cx < 16) cx = 16;
-    if (cy < 16) cy = 16;
-
-    HDC hdc = GetDC(NULL);
-    HDC hdcMem = CreateCompatibleDC(hdc);
-    HBITMAP hBitmap = CreateCompatibleBitmap(hdc, cx, cy);
-    HBITMAP hOldBitmap = (HBITMAP)SelectObject(hdcMem, hBitmap);
-
-    // Blue background for Cxx identifier
-    HBRUSH hBrush = CreateSolidBrush(RGB(0, 100, 200));
-    RECT rc = {0, 0, cx, cy};
-    FillRect(hdcMem, &rc, hBrush);
-    DeleteObject(hBrush);
-
-    SetBkMode(hdcMem, TRANSPARENT);
-    SetTextColor(hdcMem, RGB(255, 255, 255));
-
-    HFONT hFont = CreateFontW(cy * 2 / 3, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
-                              DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                              DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Arial");
-    HFONT hOldFont = hFont ? (HFONT)SelectObject(hdcMem, hFont) : nullptr;
-
-    // Show "拼" or "五" based on input mode
-    const wchar_t* text = (_input_mode == cxxime::InputMode::PINYIN) ? L"\x62FC" : L"\x4E94";
-    DrawTextW(hdcMem, text, -1, &rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-
-    if (hOldFont) SelectObject(hdcMem, hOldFont);
-    if (hFont) DeleteObject(hFont);
-    SelectObject(hdcMem, hOldBitmap);
-
-    // Mask bitmap: all white = all pixels visible
-    HBITMAP hMask = CreateBitmap(cx, cy, 1, 1, nullptr);
-    HDC hdcMask = CreateCompatibleDC(hdc);
-    HBITMAP hOldMask = (HBITMAP)SelectObject(hdcMask, hMask);
-    RECT rcMask = {0, 0, cx, cy};
-    FillRect(hdcMask, &rcMask, (HBRUSH)GetStockObject(WHITE_BRUSH));
-    SelectObject(hdcMask, hOldMask);
-    DeleteDC(hdcMask);
-
-    ICONINFO iconInfo = {};
-    iconInfo.fIcon = TRUE;
-    iconInfo.hbmColor = hBitmap;
-    iconInfo.hbmMask = hMask;
-    *phIcon = CreateIconIndirect(&iconInfo);
-
-    DeleteObject(hMask);
-    DeleteObject(hBitmap);
-    DeleteDC(hdcMem);
-    ReleaseDC(NULL, hdc);
-
+    *phIcon = _hIcon;
     return (*phIcon == NULL) ? E_FAIL : S_OK;
 }
 

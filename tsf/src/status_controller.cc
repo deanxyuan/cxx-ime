@@ -23,14 +23,14 @@ bool StatusController::initialize(HWND parent, IpcClient* client, uint32_t sessi
     session_id_ = session_id;
     config_ = config;
 
-    if (!window_.create(parent, build_theme_from_config(*config_))) {
+    if (!window_.create(parent, cxxime::StatusTheme())) {
         CXXIME_LOG(L"StatusController: window creation failed");
         return false;
     }
 
     // Load logo icon from TSF DLL resources
     HICON logo = (HICON)LoadImageW(
-        g_hInst, MAKEINTRESOURCE(IDI_PINTEREST),
+        g_hInst, MAKEINTRESOURCE(IDI_FREEDLY),
         IMAGE_ICON, 16, 16, LR_DEFAULTCOLOR);
     if (logo) window_.set_logo_icon(logo);
 

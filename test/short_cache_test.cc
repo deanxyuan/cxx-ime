@@ -28,8 +28,8 @@ static bool _init_temp = []() {
 TEST(ShortCache, load_valid_file) {
     std::string path = make_temp_path("test_topn_valid.bin");
     std::vector<cxxime::Candidate> cands = {
-        {"\xe5\xbc\x9f\xe5\xbc\x9f", "", 500},  // 弟弟
-        {"\xe5\xa4\xa7\xe5\xa4\xa7", "", 400},    // 大大
+        {"弟弟", "", 500},  // 弟弟
+        {"大大", "", 400},    // 大大
     };
     ASSERT_TRUE(cxxime::ShortCodeCache::create_test_cache(path, {{"srf", cands}}));
 
@@ -39,8 +39,8 @@ TEST(ShortCache, load_valid_file) {
 
     auto results = cache.lookup("srf", 10);
     ASSERT_EQ((int)results.size(), 2);
-    ASSERT_EQ(results[0].text, "\xe5\xbc\x9f\xe5\xbc\x9f");
-    ASSERT_EQ(results[1].text, "\xe5\xa4\xa7\xe5\xa4\xa7");
+    ASSERT_EQ(results[0].text, "弟弟");
+    ASSERT_EQ(results[1].text, "大大");
 
     cache.unload();
     ASSERT_TRUE(!cache.is_loaded());
@@ -166,12 +166,12 @@ TEST(ShortFastPath, cache_hit_skips_syllabifier) {
 
     // Create dict with pinyin entries
     ASSERT_TRUE(cxxime::Dict::create_test_dict(dict_path, {
-        {"shu:ru:fa", "\xe8\xbe\x93\xe5\x85\xa5\xe6\xb3\x95", 500},  // 输入法
+        {"shu:ru:fa", "输入法", 500},  // 输入法
     }));
 
     // Create short cache with "srf" key
     std::vector<cxxime::Candidate> cands = {
-        {"\xe8\xbe\x93\xe5\x85\xa5\xe6\xb3\x95", "", 500},
+        {"输入法", "", 500},
     };
     ASSERT_TRUE(cxxime::ShortCodeCache::create_test_cache(topn_path, {{"srf", cands}}));
 
@@ -210,7 +210,7 @@ TEST(ShortFastPath, non_short_key_no_cache) {
     std::string dict_path = make_temp_path("test_sfp_long.dict.bin");
 
     ASSERT_TRUE(cxxime::Dict::create_test_dict(dict_path, {
-        {"ni:hao:shi:jie:ni:hao", "\xe4\xbd\xa0\xe5\xa5\xbd", 500},
+        {"ni:hao:shi:jie:ni:hao", "你好", 500},
     }));
 
     cxxime::Dict dict;
