@@ -5,6 +5,22 @@
 #include <cstring>
 #include <windows.h>
 #include <cxxime/status_window.h>
+#include <cxxime/render_context.h>
+
+// Test theme for StatusWindow tests
+static cxxime::Theme make_test_theme() {
+    cxxime::Theme t;
+    t.background         = {30,  30,  30,  255};
+    t.border             = {50,  50,  50,  255};
+    t.status_active_back   = {0,   120, 212, 255};
+    t.status_active_text   = {255, 255, 255, 255};
+    t.status_inactive_back = {61,  61,  61,  200};
+    t.status_inactive_text = {204, 204, 204, 255};
+    t.status_separator     = {64,  64,  64,  255};
+    t.status_logo_back     = {61,  61,  61,  120};
+    t.status_logo_border   = {64,  64,  64,  150};
+    return t;
+}
 
 // ============================================================
 // Create / Destroy
@@ -14,7 +30,7 @@ TEST(StatusWindow, CreateAndDestroy) {
     cxxime::StatusWindow window;
     ASSERT_TRUE(!window.is_created());
 
-    ASSERT_TRUE(window.create(GetDesktopWindow()));
+    ASSERT_TRUE(window.create(GetDesktopWindow(), make_test_theme()));
     ASSERT_TRUE(window.is_created());
 
     window.destroy();
@@ -23,11 +39,11 @@ TEST(StatusWindow, CreateAndDestroy) {
 
 TEST(StatusWindow, CreateTwice) {
     cxxime::StatusWindow window;
-    ASSERT_TRUE(window.create(GetDesktopWindow()));
+    ASSERT_TRUE(window.create(GetDesktopWindow(), make_test_theme()));
     ASSERT_TRUE(window.is_created());
 
     // Second create should return true without crash
-    ASSERT_TRUE(window.create(GetDesktopWindow()));
+    ASSERT_TRUE(window.create(GetDesktopWindow(), make_test_theme()));
     ASSERT_TRUE(window.is_created());
 
     window.destroy();
@@ -46,7 +62,7 @@ TEST(StatusWindow, DestroyWithoutCreate) {
 
 TEST(StatusWindow, ShowHide) {
     cxxime::StatusWindow window;
-    ASSERT_TRUE(window.create(GetDesktopWindow()));
+    ASSERT_TRUE(window.create(GetDesktopWindow(), make_test_theme()));
 
     window.show();
     ASSERT_TRUE(window.is_visible());
@@ -71,13 +87,12 @@ TEST(StatusWindow, ShowWithoutCreate) {
 
 TEST(StatusWindow, UpdateState) {
     cxxime::StatusWindow window;
-    ASSERT_TRUE(window.create(GetDesktopWindow()));
+    ASSERT_TRUE(window.create(GetDesktopWindow(), make_test_theme()));
 
     cxxime::ButtonState state;
     state.chinese_mode = false;
     state.full_shape = true;
     state.chinese_punct = false;
-    state.is_pinyin = false;
 
     // Should not crash
     window.update_state(state);
@@ -87,7 +102,7 @@ TEST(StatusWindow, UpdateState) {
 
 TEST(StatusWindow, SetEnabled) {
     cxxime::StatusWindow window;
-    ASSERT_TRUE(window.create(GetDesktopWindow()));
+    ASSERT_TRUE(window.create(GetDesktopWindow(), make_test_theme()));
 
     window.set_enabled(false);
     window.set_enabled(true);
@@ -101,7 +116,7 @@ TEST(StatusWindow, SetEnabled) {
 
 TEST(StatusWindow, PositionMemory) {
     cxxime::StatusWindow window;
-    ASSERT_TRUE(window.create(GetDesktopWindow()));
+    ASSERT_TRUE(window.create(GetDesktopWindow(), make_test_theme()));
 
     window.set_position(200, 300);
     int x = 0, y = 0;
@@ -131,7 +146,7 @@ TEST(StatusWindow, PositionWithoutCreate) {
 
 TEST(StatusWindow, ClickCallback) {
     cxxime::StatusWindow window;
-    ASSERT_TRUE(window.create(GetDesktopWindow()));
+    ASSERT_TRUE(window.create(GetDesktopWindow(), make_test_theme()));
 
     int click_count = 0;
     cxxime::StatusButton last_button = cxxime::StatusButton::SETTINGS;
@@ -142,9 +157,9 @@ TEST(StatusWindow, ClickCallback) {
 
     window.show();
 
-    // Simulate click on button 0 (中/英): press then release at same position
-    SendMessageW(window.hwnd_for_test(), WM_LBUTTONDOWN, 0, MAKELPARAM(16, 16));
-    SendMessageW(window.hwnd_for_test(), WM_LBUTTONUP, 0, MAKELPARAM(16, 16));
+    // Button 0 (中/EN) is at x=38, y=6, w=28, h=22 → center at (52, 17)
+    SendMessageW(window.hwnd_for_test(), WM_LBUTTONDOWN, 0, MAKELPARAM(52, 17));
+    SendMessageW(window.hwnd_for_test(), WM_LBUTTONUP, 0, MAKELPARAM(52, 17));
 
     ASSERT_EQ(click_count, 1);
     ASSERT_TRUE(last_button == cxxime::StatusButton::CHINESE_MODE);
@@ -154,16 +169,16 @@ TEST(StatusWindow, ClickCallback) {
 
 TEST(StatusWindow, ClickWhenDisabled) {
     cxxime::StatusWindow window;
-    ASSERT_TRUE(window.create(GetDesktopWindow()));
+    ASSERT_TRUE(window.create(GetDesktopWindow(), make_test_theme()));
 
     int click_count = 0;
     window.set_click_callback([&](cxxime::StatusButton) { click_count++; });
 
     window.set_enabled(false);
 
-    // Simulate click on button 0
-    SendMessageW(window.hwnd_for_test(), WM_LBUTTONDOWN, 0, MAKELPARAM(16, 16));
-    SendMessageW(window.hwnd_for_test(), WM_LBUTTONUP, 0, MAKELPARAM(16, 16));
+    // Button 0 center at (52, 17)
+    SendMessageW(window.hwnd_for_test(), WM_LBUTTONDOWN, 0, MAKELPARAM(52, 17));
+    SendMessageW(window.hwnd_for_test(), WM_LBUTTONUP, 0, MAKELPARAM(52, 17));
 
     ASSERT_EQ(click_count, 0);
 
@@ -172,17 +187,17 @@ TEST(StatusWindow, ClickWhenDisabled) {
 
 TEST(StatusWindow, DragVsClick) {
     cxxime::StatusWindow window;
-    ASSERT_TRUE(window.create(GetDesktopWindow()));
+    ASSERT_TRUE(window.create(GetDesktopWindow(), make_test_theme()));
 
     int click_count = 0;
     int drag_count = 0;
     window.set_click_callback([&](cxxime::StatusButton) { click_count++; });
     window.set_position_callback([&](int, int) { drag_count++; });
 
-    // Simulate drag: press at (16,16), move well past threshold (4px), release
-    SendMessageW(window.hwnd_for_test(), WM_LBUTTONDOWN, 0, MAKELPARAM(16, 16));
-    SendMessageW(window.hwnd_for_test(), WM_MOUSEMOVE, 0, MAKELPARAM(116, 16));
-    SendMessageW(window.hwnd_for_test(), WM_LBUTTONUP, 0, MAKELPARAM(116, 16));
+    // Simulate drag: press, move well past threshold (4px), release
+    SendMessageW(window.hwnd_for_test(), WM_LBUTTONDOWN, 0, MAKELPARAM(52, 17));
+    SendMessageW(window.hwnd_for_test(), WM_MOUSEMOVE, 0, MAKELPARAM(152, 17));
+    SendMessageW(window.hwnd_for_test(), WM_LBUTTONUP, 0, MAKELPARAM(152, 17));
 
     ASSERT_EQ(click_count, 0);
     ASSERT_EQ(drag_count, 1);
@@ -192,7 +207,7 @@ TEST(StatusWindow, DragVsClick) {
 
 TEST(StatusWindow, PositionCallback) {
     cxxime::StatusWindow window;
-    ASSERT_TRUE(window.create(GetDesktopWindow()));
+    ASSERT_TRUE(window.create(GetDesktopWindow(), make_test_theme()));
 
     int pos_x = -1, pos_y = -1;
     window.set_position_callback([&](int x, int y) {
@@ -205,12 +220,59 @@ TEST(StatusWindow, PositionCallback) {
 
 TEST(StatusWindow, ConfigActionCallback) {
     cxxime::StatusWindow window;
-    ASSERT_TRUE(window.create(GetDesktopWindow()));
+    ASSERT_TRUE(window.create(GetDesktopWindow(), make_test_theme()));
 
     std::string last_action;
     window.set_config_action_callback([&](const std::string& action) {
         last_action = action;
     });
+
+    window.destroy();
+}
+
+// ============================================================
+// Logo and separator — non-interactive (status_window_redesign)
+// ============================================================
+
+TEST(StatusWindow, LogoClickIgnored) {
+    cxxime::StatusWindow window;
+    ASSERT_TRUE(window.create(GetDesktopWindow(), make_test_theme()));
+
+    int click_count = 0;
+    window.set_click_callback([&](cxxime::StatusButton) { click_count++; });
+
+    window.show();
+
+    // Logo area: x=6, y=6, w=28, h=22 → center at (20, 17)
+    SendMessageW(window.hwnd_for_test(), WM_LBUTTONDOWN, 0, MAKELPARAM(20, 17));
+    SendMessageW(window.hwnd_for_test(), WM_LBUTTONUP, 0, MAKELPARAM(20, 17));
+
+    ASSERT_EQ(click_count, 0);
+
+    window.destroy();
+}
+
+// ============================================================
+// Settings button click (index 3, was 4)
+// ============================================================
+
+TEST(StatusWindow, SettingsClick) {
+    cxxime::StatusWindow window;
+    ASSERT_TRUE(window.create(GetDesktopWindow(), make_test_theme()));
+
+    cxxime::StatusButton last_button = cxxime::StatusButton::CHINESE_MODE;
+    window.set_click_callback([&](cxxime::StatusButton btn) {
+        last_button = btn;
+    });
+
+    window.show();
+
+    // Settings button (index 3): x after 3 func buttons + separator = ~144
+    // x = 6+28+4+84+8+16+1+8 = 155, center at 155+12=167, y=17
+    SendMessageW(window.hwnd_for_test(), WM_LBUTTONDOWN, 0, MAKELPARAM(167, 17));
+    SendMessageW(window.hwnd_for_test(), WM_LBUTTONUP, 0, MAKELPARAM(167, 17));
+
+    ASSERT_TRUE(last_button == cxxime::StatusButton::SETTINGS);
 
     window.destroy();
 }
@@ -222,7 +284,7 @@ TEST(StatusWindow, ConfigActionCallback) {
 TEST(StatusWindow, CreateDestroyCycle) {
     for (int i = 0; i < 3; ++i) {
         cxxime::StatusWindow window;
-        ASSERT_TRUE(window.create(GetDesktopWindow()));
+        ASSERT_TRUE(window.create(GetDesktopWindow(), make_test_theme()));
         ASSERT_TRUE(window.is_created());
         window.show();
         ASSERT_TRUE(window.is_visible());

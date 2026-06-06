@@ -4,25 +4,26 @@
 #define CXXIME_STATUS_WINDOW_H_
 
 #include <windows.h>
+#include <d2d1.h>
+#include <dwrite.h>
 #include <string>
 #include <functional>
 #include <cstdint>
+#include <cxxime/render_context.h>
 
 namespace cxxime {
 
 enum class StatusButton {
-    CHINESE_MODE,   // 中/英
+    CHINESE_MODE,   // 中/EN
     FULL_SHAPE,     // 全/半
     CHINESE_PUNCT,  // 。/.
-    INPUT_MODE,     // 拼/五
-    SETTINGS,       // 配置
+    SETTINGS,       // ⚙
 };
 
 struct ButtonState {
     bool chinese_mode = true;
     bool full_shape = false;
     bool chinese_punct = true;
-    bool is_pinyin = true;
 };
 
 using StatusButtonClickCallback = std::function<void(StatusButton)>;
@@ -40,7 +41,7 @@ public:
     // Called from DllMain(DLL_PROCESS_DETACH) — destroy all lingering windows.
     static void cleanup_all();
 
-    bool create(HWND parent);
+    bool create(HWND parent, const Theme& theme);
     void destroy();
     bool is_created() const;
 
@@ -64,35 +65,94 @@ private:
     static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
     LRESULT HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
 
-    void OnPaint();
+    void RedrawLayered();
     void OnLButtonDown(int x, int y);
     void OnMouseMove(int x, int y);
     void OnMouseLeave();
     void OnRButtonUp(int x, int y);
 
-    void DrawButton(HDC hdc, int index, const RECT& rect, bool pressed);
-    RECT GetButtonRect(int index) const;
-    int HitTest(int x, int y) const;
-    HFONT CreateButtonFont(int size);
+    // Rendering: D2D primary, GDI+ fallback — both render to layered_dc_
+    void InitLayeredSurface();
+    void CleanupLayeredSurface();
+    void InitD2D();
+    void CleanupD2D();
+    void PaintD2D();
+    void PaintGdiplus();
 
+    // Coordinate helpers
+    RECT GetLogoRect() const;
+    RECT GetSeparatorRect() const;
+    RECT GetPillButtonRect(int index) const;
+    int HitTest(int x, int y) const;
+
+    void CreateFonts();
     void InitTooltip();
     void ShowContextMenu(int x, int y);
 
-    // 拖动：移动阈值区分点击和拖动
+    // Drag: move threshold to distinguish click from drag
     static constexpr int DRAG_THRESHOLD = 4;
     void BeginTracking(int x, int y);
     void ContinueTracking(int x, int y);
     void EndTracking();
 
-    // 成员
+    // Layout constants (base values; actual rendering multiplied by dpi_scale_)
+    static constexpr int BUTTON_COUNT = 4;            // Interactive buttons (excludes logo)
+    static constexpr int BASE_BUTTON_WIDTH = 28;      // Function button width
+    static constexpr int BASE_SETTINGS_WIDTH = 24;    // Settings button width
+    static constexpr int BASE_BUTTON_HEIGHT = 22;     // Button height
+    static constexpr int BASE_BUTTON_GAP = 4;         // Gap between buttons
+    static constexpr int BASE_SEPARATOR_GAP = 8;      // Gap on each side of separator
+    static constexpr int BASE_SEPARATOR_WIDTH = 1;    // Separator line width
+    static constexpr int BASE_WINDOW_PADDING = 6;     // Inner padding
+    static constexpr int BASE_LOGO_WIDTH = 28;        // Logo placeholder width
+
+    // DPI scaling
+    float dpi_scale_ = 1.0f;
+    int Scaled(int base) const { return static_cast<int>(base * dpi_scale_ + 0.5f); }
+    int WindowWidth() const {
+        return Scaled(BASE_WINDOW_PADDING
+                      + BASE_LOGO_WIDTH + BASE_BUTTON_GAP
+                      + 3 * BASE_BUTTON_WIDTH + 2 * BASE_BUTTON_GAP
+                      + 2 * BASE_SEPARATOR_GAP + BASE_SEPARATOR_WIDTH
+                      + BASE_SETTINGS_WIDTH
+                      + BASE_WINDOW_PADDING);
+    }
+    int WindowHeight() const {
+        return Scaled(BASE_BUTTON_HEIGHT + 2 * BASE_WINDOW_PADDING);
+    }
+
+    // ── Window ───────────────────────────────────────────────
     HWND hwnd_ = nullptr;
     HWND tooltip_hwnd_ = nullptr;
-    HFONT font_ = nullptr;
+    int win_w_ = 0, win_h_ = 0;
+
+    // ── Layered window: offscreen 32-bit ARGB surface ────────
+    HBITMAP layered_bmp_ = nullptr;
+    HDC layered_dc_ = nullptr;
+    void* layered_bits_ = nullptr;
+
+    // ── D2D (primary, renders to layered DC) ──────────────────
+    ID2D1Factory* d2d_factory_ = nullptr;
+    ID2D1DCRenderTarget* d2d_rt_ = nullptr;
+    IDWriteFactory* dwrite_factory_ = nullptr;
+    IDWriteTextFormat* d2d_font_cn_ = nullptr;
+    IDWriteTextFormat* d2d_font_en_ = nullptr;
+    IDWriteTextFormat* d2d_font_icon_ = nullptr;
+    bool use_d2d_ = false;
+
+    // ── GDI+ fallback fonts ───────────────────────────────────
+    HFONT font_cn_ = nullptr;
+    HFONT font_en_ = nullptr;
+    HFONT font_icon_ = nullptr;
+
+    // ── State ─────────────────────────────────────────────────
+    Theme theme_;
     ButtonState state_;
     int hovered_button_ = -1;
     bool is_enabled_ = true;
+    bool layered_ready_ = false;
 
-    // 拖动状态
+    // ── Drag state ────────────────────────────────────────────
     bool is_tracking_ = false;
     bool is_dragging_ = false;
     POINT track_start_ = {};
@@ -101,25 +161,6 @@ private:
     StatusButtonClickCallback click_callback_;
     StatusPositionChangeCallback position_callback_;
     StatusConfigActionCallback config_action_callback_;
-
-    // 常量（基准值，实际渲染乘以 dpi_scale_）
-    static constexpr int BUTTON_COUNT = 5;
-    static constexpr int BASE_BUTTON_WIDTH = 32;
-    static constexpr int BASE_BUTTON_HEIGHT = 24;
-    static constexpr int BASE_BUTTON_SPACING = 2;
-    static constexpr int BASE_WINDOW_PADDING = 4;
-
-    // DPI 缩放
-    float dpi_scale_ = 1.0f;
-    int Scaled(int base) const { return static_cast<int>(base * dpi_scale_ + 0.5f); }
-    int WindowWidth() const {
-        return Scaled(BUTTON_COUNT * BASE_BUTTON_WIDTH +
-                      (BUTTON_COUNT - 1) * BASE_BUTTON_SPACING +
-                      2 * BASE_WINDOW_PADDING);
-    }
-    int WindowHeight() const {
-        return Scaled(BASE_BUTTON_HEIGHT + 2 * BASE_WINDOW_PADDING);
-    }
 };
 
 } // namespace cxxime

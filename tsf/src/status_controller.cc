@@ -4,6 +4,7 @@
 #include "globals.h"
 #include <cxxime/ipc_client.h>
 #include <cxxime/config.h>
+#include <cxxime/render_context.h>
 #include <cxxime/logging.h>
 #include <cxxime/data_path.h>
 #include <windows.h>
@@ -21,7 +22,7 @@ bool StatusController::initialize(HWND parent, IpcClient* client, uint32_t sessi
     session_id_ = session_id;
     config_ = config;
 
-    if (!window_.create(parent)) {
+    if (!window_.create(parent, build_theme_from_config(*config_))) {
         CXXIME_LOG(L"StatusController: window creation failed");
         return false;
     }
@@ -61,7 +62,6 @@ void StatusController::sync_status(const ImeStatus& status) {
     state.chinese_mode = status.chinese_mode;
     state.full_shape = status.full_shape;
     state.chinese_punct = status.chinese_punct;
-    state.is_pinyin = (status.input_mode == InputMode::PINYIN);
 
     window_.update_state(state);
 }
@@ -98,7 +98,6 @@ void StatusController::on_button_click(StatusButton button) {
     case StatusButton::CHINESE_MODE:  toggle_chinese_mode(); break;
     case StatusButton::FULL_SHAPE:    toggle_full_shape(); break;
     case StatusButton::CHINESE_PUNCT: toggle_chinese_punct(); break;
-    case StatusButton::INPUT_MODE:    switch_input_mode(); break;
     case StatusButton::SETTINGS:      open_settings(); break;
     }
 }
@@ -158,17 +157,6 @@ void StatusController::toggle_chinese_punct() {
         ipc_healthy_ = false;
         window_.set_enabled(false);
         CXXIME_LOG(L"StatusController: IPC toggle_punct failed");
-    }
-}
-
-void StatusController::switch_input_mode() {
-    IPCResponse resp = {};
-    if (client_->switch_input_mode(session_id_, resp)) {
-        sync_status(resp.ime_status);
-    } else {
-        ipc_healthy_ = false;
-        window_.set_enabled(false);
-        CXXIME_LOG(L"StatusController: IPC switch_input_mode failed");
     }
 }
 
