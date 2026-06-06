@@ -145,3 +145,11 @@ cxxime::ImeStatus SessionManager::switch_input_mode(uint32_t id) {
     s.ime_status.revision++;
     return s.ime_status;
 }
+
+void SessionManager::sync_ascii_mode(uint32_t id, bool ascii_mode) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = sessions_.find(id);
+    if (it != sessions_.end()) {
+        it->second.ime_status.chinese_mode = !ascii_mode;
+    }
+}
