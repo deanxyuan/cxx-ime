@@ -26,14 +26,11 @@ struct Theme {
     int font_size = 14;
     const wchar_t* font_name = L"Microsoft YaHei UI";
 
-    // Status window colors (status_window_redesign)
-    Color status_active_back{0, 120, 212, 255};       // Active button background (Windows blue)
-    Color status_active_text{255, 255, 255, 255};      // Active button text
-    Color status_inactive_back{61, 61, 61, 200};       // Inactive button bg (dark theme default)
-    Color status_inactive_text{204, 204, 204, 255};    // Inactive button text
-    Color status_separator{64, 64, 64, 255};           // Separator line color
-    Color status_logo_back{61, 61, 61, 120};           // Logo placeholder background
-    Color status_logo_border{64, 64, 64, 150};         // Logo placeholder border
+    // Status window colors (fixed light scheme)
+    Color status_inactive_back{232, 232, 232, 200};    // Button background
+    Color status_inactive_text{51, 51, 51, 255};       // Button text
+    Color status_separator{212, 212, 212, 255};        // Separator line color
+    Color status_logo_back{232, 232, 232, 120};        // Logo placeholder background
 };
 
 struct CandidateRect {

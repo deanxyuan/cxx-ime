@@ -38,14 +38,11 @@ Theme build_theme_from_config(const Config& cfg) {
         t.preedit_text = {248, 255, 255, 255};
         t.prev_page    = {100, 150, 198, 255};
         t.next_page    = {100, 150, 198, 255};
-        // Status window colors (dark — azure is a dark theme)
-        t.status_active_back   = {0,   120, 212, 255};
-        t.status_active_text   = {255, 255, 255, 255};
-        t.status_inactive_back = {61,  61,  61,  200};
-        t.status_inactive_text = {204, 204, 204, 255};
-        t.status_separator     = {64,  64,  64,  255};
-        t.status_logo_back     = {61,  61,  61,  120};
-        t.status_logo_border   = {64,  64,  64,  150};
+        // Status window colors (fixed light scheme)
+        t.status_inactive_back = {232, 232, 232, 200};
+        t.status_inactive_text = {51,  51,  51,  255};
+        t.status_separator     = {212, 212, 212, 255};
+        t.status_logo_back     = {232, 232, 232, 120};
         return t;
     }
 
@@ -60,25 +57,11 @@ Theme build_theme_from_config(const Config& cfg) {
     t.prev_page    = to_color(s->prevpage_color);
     t.next_page    = to_color(s->nextpage_color);
 
-    // Auto-detect light vs dark theme for status window colors
-    bool is_dark = (t.background.r * 299 + t.background.g * 587 + t.background.b * 114) < 128000;
-    if (is_dark) {
-        t.status_active_back   = {0,   120, 212, 255};
-        t.status_active_text   = {255, 255, 255, 255};
-        t.status_inactive_back = {61,  61,  61,  200};
-        t.status_inactive_text = {204, 204, 204, 255};
-        t.status_separator     = {64,  64,  64,  255};
-        t.status_logo_back     = {61,  61,  61,  120};
-        t.status_logo_border   = {64,  64,  64,  150};
-    } else {
-        t.status_active_back   = {0,   120, 212, 255};
-        t.status_active_text   = {255, 255, 255, 255};
-        t.status_inactive_back = {232, 232, 232, 200};
-        t.status_inactive_text = {51,  51,  51,  255};
-        t.status_separator     = {212, 212, 212, 255};
-        t.status_logo_back     = {232, 232, 232, 120};
-        t.status_logo_border   = {212, 212, 212, 150};
-    }
+    // Status window colors — fixed light scheme, not theme-dependent
+    t.status_inactive_back = {232, 232, 232, 200};
+    t.status_inactive_text = {51,  51,  51,  255};
+    t.status_separator     = {212, 212, 212, 255};
+    t.status_logo_back     = {232, 232, 232, 120};
     return t;
 }
 

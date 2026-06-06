@@ -260,6 +260,9 @@ void EditorApp::create_controls(HWND hwnd) {
     hRenderD2D_ = make_radio(1105, L"D2D", cx, t + kRowH * 4, S(60), p1, true);
     hRenderGDI_ = make_radio(1106, L"GDI", cx + S(68), t + kRowH * 4, S(60), p1, false);
 
+    cx = make_label(L"状态窗口:", kPanelPadLeft, t + kRowH * 5, p1);
+    hStatusWindow_ = make_check(1107, L"显示状态窗口", cx, t + kRowH * 5, S(140), p1);
+
     // ── Panel 2: Candidate Window ───────────────────────────────────
     HWND p2 = hPanels_[2]; t = kPanelPadTop;
     const wchar_t* cnames[] = {
@@ -408,6 +411,7 @@ void EditorApp::load_config() {
 
     set_check(hInlinePreedit_, config_.inline_preedit);
     combo_sel_str(hPreeditType_, config_.preedit_type);
+    set_check(hStatusWindow_, config_.status_window.enable);
 
     const char* ks[] = {"Shift_L","Shift_R","Control_L","Control_R"};
     for (int i = 0; i < 4; ++i) {
@@ -430,6 +434,7 @@ void EditorApp::readback(HWND) {
         if (c.font_size < 8) c.font_size = 8;
         c.layout = (SendMessageW(hLayoutH_, BM_GETCHECK, 0, 0) == BST_CHECKED) ? "horizontal" : "vertical";
         c.render_backend = (SendMessageW(hRenderD2D_, BM_GETCHECK, 0, 0) == BST_CHECKED) ? "d2d" : "gdi";
+        c.status_window.enable = get_check(hStatusWindow_);
     } else if (panel_ == 2) {
         c.page_size = get_edit_int(hCandEdits_[0]);
         c.layout_config.min_width = get_edit_int(hCandEdits_[1]);

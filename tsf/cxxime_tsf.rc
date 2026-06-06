@@ -5,3 +5,4 @@
 
 // Icons - paths relative to project root (set via /i flag in CMake)
 IDI_CXXIME  ICON    "resource\\v5\\v5_v1.ico"
+IDI_PINTEREST ICON    "resource\\pinterest.ico"
