@@ -18,6 +18,8 @@ KeyEvent from_windows_key(uint32_t vk_code, uint32_t /*lparam*/, bool is_key_up)
             event.set_ctrl();
         if (keyboard_state[VK_MENU] & 0x80)
             event.set_alt();
+        if (keyboard_state[VK_CAPITAL] & 0x01)
+            event.set_caps_lock();
     }
 
     return event;

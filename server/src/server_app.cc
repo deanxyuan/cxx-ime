@@ -155,6 +155,7 @@ cxxime::IPCResponse ServerApp::handle_request(const cxxime::IPCRequest& request)
         // Sync engine's ascii_mode to session ime_status.
         // AsciiComposer's internal toggle (Shift/CapsLock etc.) modifies ascii_mode_
         // but does not update SessionEntry::ime_status.chinese_mode.
+        session_mgr_.sync_caps_lock(request.session_id, event.is_caps_lock());
         session_mgr_.sync_ascii_mode(request.session_id, engine->ascii_composer().is_ascii_mode());
         response.ime_status = session_mgr_.get_ime_status(request.session_id);
         break;

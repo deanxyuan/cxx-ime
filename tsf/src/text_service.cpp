@@ -263,6 +263,86 @@ STDMETHODIMP_(ULONG) TextService::Release() {
     return cr;
 }
 
+void TextService::_sync_ime_status(const cxxime::ImeStatus& status) {
+    bool chinese_changed = (_chinese_mode != status.chinese_mode);
+    bool caps_changed = (_caps_lock != status.caps_lock);
+    _chinese_mode = status.chinese_mode;
+    _caps_lock = status.caps_lock;
+
+    _sync_conversion_mode_compartment(status);
+    if (_statusController.is_initialized()) _statusController.sync_status(status);
+    if (_modeButton) _modeButton->update_from_status(status);
+    if (_imeButton) _imeButton->update_mode(status.input_mode);
+
+    if (chinese_changed || caps_changed) _refresh_mode_button_item();
+}
+
+void TextService::_sync_conversion_mode_compartment(const cxxime::ImeStatus& status) {
+    if (!_threadMgr || _clientId == TF_CLIENTID_NULL) return;
+
+    ITfCompartmentMgr* compartment_mgr = nullptr;
+    HRESULT hr = _threadMgr->QueryInterface(IID_ITfCompartmentMgr,
+                                            reinterpret_cast<void**>(&compartment_mgr));
+
+    if (FAILED(hr) || !compartment_mgr) return;
+
+    ITfCompartment* compartment = nullptr;
+    hr = compartment_mgr->GetCompartment(GUID_COMPARTMENT_KEYBOARD_INPUTMODE_CONVERSION,
+                                         &compartment);
+    compartment_mgr->Release();
+
+    if (FAILED(hr) || !compartment) return;
+
+    DWORD conversion_mode = 0;
+    VARIANT current = {};
+    VariantInit(&current);
+    if (SUCCEEDED(compartment->GetValue(&current))) {
+        if (current.vt == VT_I4 || current.vt == VT_INT) {
+            conversion_mode = static_cast<DWORD>(current.lVal);
+        } else if (current.vt == VT_UI4 || current.vt == VT_UINT) {
+            conversion_mode = current.ulVal;
+        }
+    }
+    VariantClear(&current);
+
+    DWORD new_mode = conversion_mode;
+    if (status.chinese_mode) {
+        new_mode != TF_CONVERSIONMODE_NATIVE;
+    } else {
+        new_mode &= ~TF_CONVERSIONMODE_NATIVE;
+    }
+
+    if (new_mode != conversion_mode) {
+        VARIANT next = {};
+        VariantInit(&next);
+        next.vt = VT_I4;
+        next.lVal = static_cast<LONG>(new_mode);
+        hr = compartment->SetValue(_clientId, &next);
+        CXXIME_LOG(L"sync_conversion_mode: chinese=%d, mode=0x%08x->0x%08x, hr=0x%08x",
+                   status.chinese_mode ? 1 : 0, conversion_mode, new_mode, hr);
+        VariantClear(&current);
+    }
+    compartment->Release();
+}
+
+void TextService::_refresh_mode_button_item() {
+    if (!_threadMgr || !_modeButton) return;
+
+    ITfLangBarItemMgr* item_mgr = nullptr;
+    HRESULT hr_qi =
+        _threadMgr->QueryInterface(IID_ITfLangBarItemMgr, reinterpret_cast<void**>(&item_mgr));
+
+    if (FAILED(hr_qi) || !item_mgr) {
+        CXXIME_LOG(L"ModeButton refresh: QI ITfLangbarItemMgr failed, hr=0x%08x", hr_qi);
+        return;
+    }
+
+    HRESULT hr_remove = item_mgr->RemoveItem(_modeButton);
+    HRESULT hr_add = item_mgr->AddItem(_modeButton);
+    CXXIME_LOG(L"ModeButton refresh: remove=0x%08x, add=0x%08x", hr_remove, hr_add);
+    item_mgr->Release();
+}
+
 // ITfTextInputProcessorEx
 STDMETHODIMP TextService::Activate(ITfThreadMgr* ptim, TfClientId tid) {
     return ActivateEx(ptim, tid, 0);
@@ -340,7 +420,7 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
     // Register language bar buttons
     ITfLangBarItemMgr* pLangBarItemMgr = nullptr;
     if (SUCCEEDED(_threadMgr->QueryInterface(IID_ITfLangBarItemMgr, (void**)&pLangBarItemMgr))) {
-        _modeButton = new CLangBarItemButton(tid, c_guidLangBarModeButton);
+        _modeButton = new CLangBarItemButton(tid, GUID_LBI_INPUTMODE);
         _imeButton = new CLangBarImeButton(tid, c_guidLangBarImeButton);
 
         if (FAILED(pLangBarItemMgr->AddItem(_modeButton))) {
@@ -376,8 +456,26 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
                 _statusController.show();
             });
         }
+
+        // Set menu callback for left-click IPC toggle
+        if (_modeButton) {
+            _modeButton->set_menu_callback([this](int menu_id) {
+                CXXIME_LOG(L"menu_callback: menu_id=%d, sessionId=%u", menu_id, _sessionId);
+                cxxime::IPCResponse resp = {};
+                _client.toggle_chinese(_sessionId, resp);
+                CXXIME_LOG(L"menu_callback: toggle_chinese result status=%d, chinese=%d",
+                           (int)resp.status, resp.ime_status.chinese_mode);
+                if (resp.status == cxxime::IPCStatus::OK) {
+                    _sync_ime_status(resp.ime_status);
+                }
+            });
+        }
     }
 
+    cxxime::IPCResponse resp = {};
+    if (_client.get_status(_sessionId, resp) && resp.status == cxxime::IPCStatus::OK) {
+        _sync_ime_status(resp.ime_status);
+    }
     return S_OK;
 }
 
@@ -570,14 +668,7 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
                (unsigned int)wParam, response.ascii_mode, response.commit_text, response.preedit, response.composing);
 
     // Sync mode state from engine
-    _chinese_mode = !response.ascii_mode;
-    if (_statusController.is_initialized())
-        _statusController.sync_status(response.ime_status);
-    if (_modeButton) {
-        bool caps = (GetKeyState(VK_CAPITAL) & 1) != 0;
-        _modeButton->update_icon(response.ime_status.chinese_mode, caps);
-    }
-    if (_imeButton) _imeButton->update_mode(response.ime_status.input_mode);
+    _sync_ime_status(response.ime_status);
 
     // Handle committed text (e.g. Shift toggle with commit_text, or normal candidate selection)
     if (response.commit_text[0] != '\0') {
@@ -715,10 +806,12 @@ void TextService::_ProcessKeyUp(WPARAM wParam) {
     // Config is reloaded by watcher thread (not keypress-driven).
     _config = get_config();
 
-    CXXIME_LOG(L"_ProcessKeyUp: vk=%u, sessionId=%u", (unsigned int)wParam, _sessionId);
+    uint32_t modifiers = _get_modifiers();
+    CXXIME_LOG(L"_ProcessKeyUp: vk=%u, mods=%u, sessionId=%u", (unsigned int)wParam, modifiers,
+               _sessionId);
 
     cxxime::IPCResponse response = {};
-    bool ok = _client.process_key(_sessionId, (uint32_t)wParam, 0, response, true);
+    bool ok = _client.process_key(_sessionId, (uint32_t)wParam, modifiers, response, true);
 
     // If IPC failed, try to reconnect and re-create session
     if (!ok) {
@@ -726,7 +819,7 @@ void TextService::_ProcessKeyUp(WPARAM wParam) {
         if (_client.connect()) {
             _client.start_session(_sessionId);
             CXXIME_LOG(L"_ProcessKeyUp: Reconnected, new sessionId=%u", _sessionId);
-            ok = _client.process_key(_sessionId, (uint32_t)wParam, 0, response, true);
+            ok = _client.process_key(_sessionId, (uint32_t)wParam, modifiers, response, true);
         }
     }
 
@@ -734,14 +827,7 @@ void TextService::_ProcessKeyUp(WPARAM wParam) {
                ok, response.ascii_mode, response.commit_text, response.composing);
 
     if (ok) {
-        _chinese_mode = !response.ascii_mode;
-        if (_statusController.is_initialized())
-            _statusController.sync_status(response.ime_status);
-        if (_modeButton) {
-            bool caps = (GetKeyState(VK_CAPITAL) & 1) != 0;
-            _modeButton->update_icon(response.ime_status.chinese_mode, caps);
-        }
-        if (_imeButton) _imeButton->update_mode(response.ime_status.input_mode);
+        _sync_ime_status(response.ime_status);
         CXXIME_LOG(L"_ProcessKeyUp: _chinese_mode=%d, _composing=%d", _chinese_mode, _composing);
 
         // Handle committed text from toggle (e.g. Shift with commit_text style)
@@ -773,7 +859,11 @@ void TextService::_ProcessKeyUp(WPARAM wParam) {
 
 STDMETHODIMP TextService::OnPreservedKey(ITfContext* pic, REFGUID rguid, BOOL* pfEaten) {
     if (IsEqualGUID(rguid, c_guidPreservedKey_Toggle) && !_composing) {
-        _chinese_mode = !_chinese_mode;
+        //_chinese_mode = !_chinese_mode;
+        cxxime::IPCResponse resp = {};
+        if (_client.toggle_chinese(_sessionId, resp) && resp.status == cxxime::IPCStatus::OK) {
+            _sync_ime_status(resp.ime_status);
+        }
         CXXIME_LOG(L"Mode toggled (preserved key): %s", _chinese_mode ? L"Chinese" : L"English");
         *pfEaten = TRUE;
     } else {
@@ -835,17 +925,19 @@ STDMETHODIMP TextService::OnUninitDocumentMgr(ITfDocumentMgr* pDocMgr) {
 
 STDMETHODIMP TextService::OnSetFocus(ITfDocumentMgr* pDocMgrFocus, ITfDocumentMgr* pDocMgrPrevFocus) {
     // Sync status on focus change (user may have toggled via language bar)
-    if (_statusController.is_initialized()) {
-        cxxime::IPCResponse resp = {};
-        if (_client.get_status(_sessionId, resp)) {
-            _statusController.sync_status(resp.ime_status);
-            _chinese_mode = resp.ime_status.chinese_mode;
-            if (_modeButton) {
-                bool caps = (GetKeyState(VK_CAPITAL) & 1) != 0;
-                _modeButton->update_icon(resp.ime_status.chinese_mode, caps);
-            }
-            if (_imeButton) _imeButton->update_mode(resp.ime_status.input_mode);
-        }
+    //if (_statusController.is_initialized()) {
+    //    cxxime::IPCResponse resp = {};
+    //    if (_client.get_status(_sessionId, resp)) {
+    //        _statusController.sync_status(resp.ime_status);
+    //        _chinese_mode = resp.ime_status.chinese_mode;
+    //        if (_modeButton)
+    //            _modeButton->update_from_status(resp.ime_status);
+    //        if (_imeButton) _imeButton->update_mode(resp.ime_status.input_mode);
+    //    }
+    //}
+    cxxime::IPCResponse resp = {};
+    if (_client.get_status(_sessionId, resp) && resp.status == cxxime::IPCStatus::OK) {
+        _sync_ime_status(resp.ime_status);
     }
 
     // Document focus changed — hide candidate window if switching away
@@ -1052,6 +1144,8 @@ uint32_t TextService::_get_modifiers() const {
             mods |= 0x02;
         if (kb[VK_MENU] & 0x80)
             mods |= 0x04;
+        if (kb[VK_CAPITAL] & 0x1)
+            mods |= 0x08;
     }
     return mods;
 }

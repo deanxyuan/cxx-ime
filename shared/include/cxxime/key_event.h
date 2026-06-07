@@ -15,10 +15,12 @@ struct KeyEvent {
     bool is_shift() const { return (modifiers & 0x01) != 0; }
     bool is_ctrl() const { return (modifiers & 0x02) != 0; }
     bool is_alt() const { return (modifiers & 0x04) != 0; }
+    bool is_caps_lock() const { return (modifiers & 0x08) != 0; }
 
     void set_shift() { modifiers |= 0x01; }
     void set_ctrl() { modifiers |= 0x02; }
     void set_alt() { modifiers |= 0x04; }
+    void set_caps_lock() { modifiers |= 0x08; }
 };
 
 // Convert Windows WPARAM/LPARAM to KeyEvent
