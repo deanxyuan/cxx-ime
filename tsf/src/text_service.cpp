@@ -307,7 +307,7 @@ void TextService::_sync_conversion_mode_compartment(const cxxime::ImeStatus& sta
 
     DWORD new_mode = conversion_mode;
     if (status.chinese_mode) {
-        new_mode != TF_CONVERSIONMODE_NATIVE;
+        new_mode |= TF_CONVERSIONMODE_NATIVE;
     } else {
         new_mode &= ~TF_CONVERSIONMODE_NATIVE;
     }
@@ -320,7 +320,7 @@ void TextService::_sync_conversion_mode_compartment(const cxxime::ImeStatus& sta
         hr = compartment->SetValue(_clientId, &next);
         CXXIME_LOG(L"sync_conversion_mode: chinese=%d, mode=0x%08x->0x%08x, hr=0x%08x",
                    status.chinese_mode ? 1 : 0, conversion_mode, new_mode, hr);
-        VariantClear(&current);
+        VariantClear(&next);
     }
     compartment->Release();
 }
