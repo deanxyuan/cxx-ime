@@ -288,7 +288,7 @@ STDMETHODIMP CLangBarImeButton::OnMenuSelect(UINT wID) { return E_NOTIMPL; }
 
 STDMETHODIMP CLangBarImeButton::GetIcon(HICON* phIcon) {
     if (!phIcon) return E_INVALIDARG;
-    *phIcon = _hIcon;
+    *phIcon = _hIcon ? CopyIcon(_hIcon) : nullptr;
     return (*phIcon == NULL) ? E_FAIL : S_OK;
 }
 
