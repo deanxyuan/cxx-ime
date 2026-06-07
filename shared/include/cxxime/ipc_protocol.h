@@ -16,6 +16,7 @@ enum class InputMode : uint32_t {
 
 struct ImeStatus {
     bool chinese_mode = true;
+    bool caps_lock = false;
     bool full_shape = false;
     bool chinese_punct = true;
     InputMode input_mode = InputMode::PINYIN;

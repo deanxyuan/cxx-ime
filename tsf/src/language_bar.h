@@ -37,8 +37,12 @@ public:
     STDMETHODIMP AdviseSink(REFIID riid, IUnknown* punk, DWORD* pdwCookie) override;
     STDMETHODIMP UnadviseSink(DWORD dwCookie) override;
 
-    void update_icon(bool chinese_mode, bool caps_lock);
+    void update_icon(bool chinese_mode);
+    void update_from_status(const cxxime::ImeStatus& status);
     void set_show_status_callback(ShowStatusBarCallback cb);
+
+    using MenuCallback = std::function<void(int menu_id)>;
+    void set_menu_callback(MenuCallback cb);
 
 private:
     static const DWORD LANGBARITEMSINK_COOKIE = 0x43585849; // "CXXI"
@@ -48,11 +52,12 @@ private:
     GUID _guid;
     bool _chinese_mode = true;
     bool _caps_lock = false;
-    HICON _hIconZH = nullptr;
-    HICON _hIconEN = nullptr;
-    HICON _hIconC = nullptr;
+    HICON _hIconZh = nullptr;
+    HICON _hIconEn = nullptr;
+    HICON _hIconCaps = nullptr;
     ITfLangBarItemSink* _pSink = nullptr;
     ShowStatusBarCallback _show_status_cb;
+    MenuCallback _menu_callback;
 };
 
 // IME identifier button (shows "Ping" icon, no toggle)

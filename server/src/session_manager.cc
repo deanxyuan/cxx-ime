@@ -153,3 +153,11 @@ void SessionManager::sync_ascii_mode(uint32_t id, bool ascii_mode) {
         it->second.ime_status.chinese_mode = !ascii_mode;
     }
 }
+
+void SessionManager::sync_caps_lock(uint32_t id, bool caps_lock) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = sessions_.find(id);
+    if (it != sessions_.end()) {
+        it->second.ime_status.caps_lock = caps_lock;
+    }
+}

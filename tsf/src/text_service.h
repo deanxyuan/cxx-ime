@@ -111,6 +111,9 @@ private:
     void _ProcessKeyUp(WPARAM wParam);
     void _AbortComposition();
     uint32_t _get_modifiers() const;
+    void _sync_ime_status(const cxxime::ImeStatus& status);
+    void _sync_conversion_mode_compartment(const cxxime::ImeStatus& status);
+    void _refresh_mode_button_item();
 
     LONG _cRef = 1;
     ITfThreadMgr* _threadMgr = nullptr;
@@ -124,6 +127,7 @@ private:
     uint32_t _sessionId = 0;
     bool _composing = false;
     bool _chinese_mode = true;
+    bool _caps_lock = false;
     bool _fTestKeyDownPending = false;
     bool _fTestKeyUpPending = false;
     cxxime::CandidateWindow _candidateWindow;

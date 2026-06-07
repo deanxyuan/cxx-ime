@@ -49,6 +49,7 @@ public:
     cxxime::ImeStatus toggle_punct(uint32_t id);
     cxxime::ImeStatus switch_input_mode(uint32_t id);
     void sync_ascii_mode(uint32_t id, bool ascii_mode);
+    void sync_caps_lock(uint32_t id, bool caps_lock);
 
 private:
     SharedResources shared_;

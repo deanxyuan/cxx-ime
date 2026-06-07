@@ -100,6 +100,28 @@ TEST(SessionStatus, switch_input_mode) {
     ASSERT_EQ(s.revision, (uint64_t)2);
 }
 
+TEST(SessionStatus, sync_caps_lock_sets_current_state) {
+    SessionManager mgr;
+    mgr.initialize(setup_test_dict());
+    uint32_t id = mgr.create_session();
+    ASSERT_GT(id, (uint32_t)0);
+
+    auto s = mgr.get_ime_status(id);
+    ASSERT_EQ(s.caps_lock, false);
+
+    mgr.sync_caps_lock(id, true);
+    s = mgr.get_ime_status(id);
+    ASSERT_EQ(s.caps_lock, true);
+
+    mgr.sync_caps_lock(id, true);
+    s = mgr.get_ime_status(id);
+    ASSERT_EQ(s.caps_lock, true);
+
+    mgr.sync_caps_lock(id, false);
+    s = mgr.get_ime_status(id);
+    ASSERT_EQ(s.caps_lock, false);
+}
+
 TEST(SessionStatus, get_ime_status) {
     SessionManager mgr;
     mgr.initialize(setup_test_dict());
