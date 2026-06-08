@@ -711,7 +711,7 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
         auto decision = cxxime_tsf::decide_preedit(
             _config.inline_preedit, _config.preedit_type, preedit, candidate_texts);
 
-        CXXIME_LOG(L"_ProcessKeyEvent: start_comp=%d, _composing=%d, _composition=%d, inline='%S'",
+        CXXIME_LOG(L"_ProcessKeyEvent: start_comp=%d, _composing=%d, _composition=%d, inline='%s'",
                    decision.start_composition, _composing, _composition != nullptr,
                    decision.inline_text.c_str());
 

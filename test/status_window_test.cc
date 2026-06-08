@@ -101,6 +101,22 @@ TEST(StatusWindow, UpdateState) {
     window.destroy();
 }
 
+TEST(StatusWindow, UpdateStateCapsLock) {
+    cxxime::StatusWindow window;
+    ASSERT_TRUE(create_test_window(window));
+
+    cxxime::ButtonState state;
+    state.chinese_mode = true;
+    state.caps_lock = true;
+    state.full_shape = false;
+    state.chinese_punct = true;
+
+    // CapsLock display is derived during redraw; this should not crash.
+    window.update_state(state);
+
+    window.destroy();
+}
+
 TEST(StatusWindow, SetEnabled) {
     cxxime::StatusWindow window;
     ASSERT_TRUE(create_test_window(window));

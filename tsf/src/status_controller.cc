@@ -67,6 +67,7 @@ void StatusController::sync_status(const ImeStatus& status) {
 
     ButtonState state;
     state.chinese_mode = status.chinese_mode;
+    state.caps_lock = status.caps_lock;
     state.full_shape = status.full_shape;
     state.chinese_punct = status.chinese_punct;
 
@@ -199,6 +200,7 @@ void StatusController::open_settings() {
 bool StatusController::status_changed(const ImeStatus& new_status) const {
     return current_status_.revision != new_status.revision ||
            current_status_.chinese_mode != new_status.chinese_mode ||
+           current_status_.caps_lock != new_status.caps_lock ||
            current_status_.full_shape != new_status.full_shape ||
            current_status_.chinese_punct != new_status.chinese_punct ||
            current_status_.input_mode != new_status.input_mode;
