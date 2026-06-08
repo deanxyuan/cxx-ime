@@ -66,12 +66,28 @@ static void shutdown_gdiplus() {
 static const wchar_t* kTooltipText[] = {
     L"中文模式",
     L"英文模式",
+    L"大写模式",
     L"全角",
     L"半角",
     L"中文标点",
     L"英文标点",
     L"打开设置",
 };
+
+enum TooltipIndex {
+    TIP_CHINESE_MODE = 0,
+    TIP_ENGLISH_MODE,
+    TIP_CAPS_MODE,
+    TIP_FULL_SHAPE,
+    TIP_HALF_SHAPE,
+    TIP_CHINESE_PUNCT,
+    TIP_ENGLISH_PUNCT,
+    TIP_SETTINGS,
+};
+
+static bool effective_chinese_punct(const ButtonState& state) {
+    return state.chinese_mode && !state.caps_lock && state.chinese_punct;
+}
 
 // ============================================================
 // Lifecycle
@@ -299,10 +315,21 @@ LRESULT StatusWindow::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (idx >= 0 && idx < BUTTON_COUNT) {
                 int tip_idx = -1;
                 switch (idx) {
-                case 0: tip_idx = state_.chinese_mode ? 0 : 1; break;
-                case 1: tip_idx = state_.full_shape ? 2 : 3; break;
-                case 2: tip_idx = state_.chinese_punct ? 4 : 5; break;
-                case 3: tip_idx = 6; break;
+                case 0:
+                    tip_idx = state_.caps_lock
+                                  ? TIP_CAPS_MODE
+                                  : (state_.chinese_mode ? TIP_CHINESE_MODE : TIP_ENGLISH_MODE);
+                    break;
+                case 1:
+                    tip_idx = state_.full_shape ? TIP_FULL_SHAPE : TIP_HALF_SHAPE;
+                    break;
+                case 2:
+                    tip_idx =
+                        effective_chinese_punct(state_) ? TIP_CHINESE_PUNCT : TIP_ENGLISH_PUNCT;
+                    break;
+                case 3:
+                    tip_idx = TIP_SETTINGS;
+                    break;
                 }
                 if (tip_idx >= 0) di->lpszText = const_cast<LPWSTR>(kTooltipText[tip_idx]);
             }
@@ -442,7 +469,7 @@ struct ButtonDrawInfo {
     Color bg_color;
     Color text_color;
     const wchar_t* text;
-    int font_index;  // 0=cn, 1=icon
+    int font_index;  // 0=cn, 1=en, 2=icon
     int nudge_y;     // vertical nudge for punctuation
     int press_offset; // text downward shift when pressed
     bool hovered;     // for border visibility
@@ -458,13 +485,25 @@ void StatusWindow::ComputeButtonDrawInfo(std::vector<ButtonDrawInfo>& out) {
     x += Scaled(BASE_LOGO_WIDTH + BASE_BUTTON_GAP);
 
     // Three function buttons
-    const wchar_t* active_texts[] = {L"中", L"全", L"。"};
-    const wchar_t* inactive_texts[] = {L"英", L"半", L"."};
-    bool active_states[] = {state_.chinese_mode, state_.full_shape, state_.chinese_punct};
+    bool show_chinese_punct = effective_chinese_punct(state_);
+    const wchar_t* texts[] = {
+        state_.caps_lock ? L"A" : (state_.chinese_mode ? L"中" : L"英"),
+        state_.full_shape ? L"全" : L"半",
+        show_chinese_punct ? L"。" : L".",
+    };
+    int fond_indices[] = {
+        state_.caps_lock ? 1 : 0,
+        0,
+        show_chinese_punct ? 0 : 1,
+    };
+    int nudge_y[] = {
+        0,
+        0,
+        show_chinese_punct ? Scaled(2) : 0,
+    };
 
     for (int i = 0; i < 3; ++i) {
         RECT btn_rc = {x, y, x + Scaled(BASE_BUTTON_WIDTH), y + Scaled(BASE_BUTTON_HEIGHT)};
-        bool active = active_states[i];
         bool hover = (hovered_button_ == i);
         bool pressed = (is_tracking_ && !is_dragging_ && hovered_button_ == i);
 
@@ -484,9 +523,9 @@ void StatusWindow::ComputeButtonDrawInfo(std::vector<ButtonDrawInfo>& out) {
         info.rect = btn_rc;
         info.bg_color = bg_col;
         info.text_color = txt_col;
-        info.text = active ? active_texts[i] : inactive_texts[i];
-        info.font_index = 0;  // cn font
-        info.nudge_y = (i == 2) ? Scaled(2) : 0;  // U+3002 sits low
+        info.text = texts[i];
+        info.font_index = fond_indices[i];
+        info.nudge_y = nudge_y[i]; // U+3002 sits low
         info.press_offset = pressed ? Scaled(2) : 0;
         info.hovered = hover || pressed;
         out.push_back(info);
@@ -516,7 +555,7 @@ void StatusWindow::ComputeButtonDrawInfo(std::vector<ButtonDrawInfo>& out) {
         info.bg_color = set_col;
         info.text_color = theme_.inactive_text;
         info.text = L"\xE713";
-        info.font_index = 1;  // icon font
+        info.font_index = 2;  // icon font
         info.nudge_y = 0;
         info.press_offset = sp ? Scaled(1) : 0;
         info.hovered = sh || sp;
@@ -560,7 +599,7 @@ void StatusWindow::PaintD2D() {
         b->Release();
     };
 
-    IDWriteTextFormat* fonts[] = {d2d_font_cn_, d2d_font_icon_};
+    IDWriteTextFormat* fonts[] = {d2d_font_cn_, d2d_font_en_, d2d_font_icon_};
 
     // 1. Window background
     ID2D1SolidColorBrush* bg_brush = make_brush(theme_.back);
@@ -696,7 +735,7 @@ void StatusWindow::PaintGdiplus() {
     }
 
     // Buttons (shared draw info)
-    HFONT gdi_fonts[] = {font_cn_, font_icon_};
+    HFONT gdi_fonts[] = {font_cn_, font_en_, font_icon_};
     std::vector<ButtonDrawInfo> buttons;
     ComputeButtonDrawInfo(buttons);
 

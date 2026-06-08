@@ -23,6 +23,7 @@ enum class StatusButton {
 
 struct ButtonState {
     bool chinese_mode = true;
+    bool caps_lock = false;
     bool full_shape = false;
     bool chinese_punct = true;
 };
