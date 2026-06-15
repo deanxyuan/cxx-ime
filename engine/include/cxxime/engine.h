@@ -4,6 +4,7 @@
 #define CXXIME_ENGINE_H_
 
 #include <string>
+#include <utility>
 #include <memory>
 #include <atomic>
 #include <cxxime/processor.h>
@@ -13,6 +14,7 @@
 #include <cxxime/context.h>
 #include <cxxime/config.h>
 #include <cxxime/ascii_composer.h>
+#include <cxxime/output_options.h>
 #include <cxxime/spellings_index.h>
 #include <cxxime/syllabifier.h>
 #include <cxxime/query_trace.h>
@@ -31,11 +33,18 @@ public:
 
     void finalize();
 
+    // Hot-reload config: update config_ pointer and rebuild AsciiComposer.
+    // The new Config object must outlive this Engine (managed by SessionEntry::config_snapshot).
+    void reload_config(const Config& config);
+
     ProcessResult process_key(const KeyEvent& event);
+    ProcessResult process_key(const KeyEvent& event, const OutputOptions& opts);
     const Context& context() const;
     Context& context();
     bool select_candidate(int index);
     std::string get_commit_text();
+    std::pair<std::string, CommitSource> take_commit_text_with_source();
+    std::pair<std::string, CommitSource> commit_composition_with_source();
     void clear();
     void clear_composition();  // clear composing state only, preserve session recent cache
 

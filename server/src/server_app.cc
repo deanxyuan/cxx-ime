@@ -3,7 +3,6 @@
 #include "server_app.h"
 #include <cxxime/logging.h>
 #include <cxxime/data_path.h>
-#include <cxxime/query_trace.h>
 #include <cstring>
 
 bool ServerApp::initialize(const std::string& dict_path, const std::string& config_path) {
@@ -105,71 +104,54 @@ cxxime::IPCResponse ServerApp::handle_request(const cxxime::IPCRequest& request)
         break;
 
     case cxxime::IPCCommand::PROCESS_KEY: {
-        auto* engine = session_mgr_.get_engine(request.session_id);
-        if (!engine) {
-            response.status = cxxime::IPCStatus::ERR_INVALID_SESSION;
-            break;
-        }
-
-        // Set up trace with session info
-        engine->set_trace_session_id(request.session_id);
-
         cxxime::KeyEvent event;
         event.keycode = request.key_code;
         event.modifiers = request.modifiers;
         event.is_key_up = request.is_key_up;
 
-        CXXIME_LOG(L"PROCESS_KEY: vk=%u, is_key_up=%d, composing=%d",
-                   request.key_code, request.is_key_up, engine->context().is_composing());
+        auto r = session_mgr_.process_key(request.session_id, event);
 
-        auto result = engine->process_key(event);
-
-        // Single trace outlet: server logs trace after engine populates fields
-        if (engine->last_trace().should_log()) {
-            engine->last_trace().log();
+        if (r.status != cxxime::IPCStatus::OK) {
+            response.status = r.status;
+            break;
         }
 
-        response.ascii_mode = engine->ascii_composer().is_ascii_mode();
-        response.composing = engine->context().is_composing();
+        response.status = cxxime::IPCStatus::OK;
+        response.ascii_mode = !r.ime_status.chinese_mode;
+        response.composing = r.composing;
+        response.ime_status = r.ime_status;
 
-        CXXIME_LOG(L"PROCESS_KEY: result=%d, ascii_mode=%d, composing=%d, committed_text='%S'",
-                   (int)result, response.ascii_mode, response.composing,
-                   engine->context().committed_text.c_str());
+        if (r.result == cxxime::ProcessResult::REJECTED) {
+            response.status = cxxime::IPCStatus::ERR_ENGINE_PROCESS_FAILED;
+            break;
+        }
 
-        if (result == cxxime::ProcessResult::COMMITTED) {
-            std::string commit = engine->get_commit_text();
-            strncpy_s(response.commit_text, commit.c_str(), sizeof(response.commit_text) - 1);
-            CXXIME_LOG(L"PROCESS_KEY: COMMITTED, commit_text='%S'", response.commit_text);
-        } else if (result == cxxime::ProcessResult::ACCEPTED) {
-            const auto& ctx = engine->context();
-            strncpy_s(response.preedit, ctx.pinyin_buffer.c_str(), sizeof(response.preedit) - 1);
-            response.candidate_count = (uint32_t)ctx.candidates.candidates.size();
+        if (r.composing) {
+            strncpy_s(response.preedit, r.preedit.c_str(), sizeof(response.preedit) - 1);
+            response.candidate_count = (uint32_t)r.candidates.candidates.size();
             for (uint32_t i = 0; i < response.candidate_count && i < 10; ++i) {
-                strncpy_s(response.candidates[i], ctx.candidates.candidates[i].text.c_str(),
+                strncpy_s(response.candidates[i], r.candidates.candidates[i].text.c_str(),
                           sizeof(response.candidates[i]) - 1);
             }
-            response.highlighted = (uint32_t)ctx.candidates.highlighted;
-        } else {
-            response.status = cxxime::IPCStatus::ERR_ENGINE_PROCESS_FAILED;
+            response.highlighted = (uint32_t)r.candidates.highlighted;
         }
-        // Sync engine's ascii_mode to session ime_status.
-        // AsciiComposer's internal toggle (Shift/CapsLock etc.) modifies ascii_mode_
-        // but does not update SessionEntry::ime_status.chinese_mode.
-        session_mgr_.sync_caps_lock(request.session_id, event.is_caps_lock());
-        session_mgr_.sync_ascii_mode(request.session_id, engine->ascii_composer().is_ascii_mode());
-        response.ime_status = session_mgr_.get_ime_status(request.session_id);
+
+        if (r.result == cxxime::ProcessResult::COMMITTED) {
+            strncpy_s(response.commit_text, r.commit_text.c_str(), sizeof(response.commit_text) - 1);
+        }
         break;
     }
 
     case cxxime::IPCCommand::SELECT_CANDIDATE: {
-        auto* engine = session_mgr_.get_engine(request.session_id);
-        if (!engine) {
-            response.status = cxxime::IPCStatus::ERR_INVALID_SESSION;
+        auto r = session_mgr_.select_candidate(request.session_id, request.candidate_index);
+        if (r.status != cxxime::IPCStatus::OK) {
+            response.status = r.status;
             break;
         }
-        if (engine->select_candidate(request.candidate_index)) {
-            std::string commit = engine->get_commit_text();
-            strncpy_s(response.commit_text, commit.c_str(), sizeof(response.commit_text) - 1);
+        response.status = cxxime::IPCStatus::OK;
+        response.ime_status = r.ime_status;
+        if (r.result == cxxime::ProcessResult::COMMITTED) {
+            strncpy_s(response.commit_text, r.commit_text.c_str(), sizeof(response.commit_text) - 1);
         } else {
             response.status = cxxime::IPCStatus::ERR_ENGINE_PROCESS_FAILED;
         }
@@ -177,68 +159,82 @@ cxxime::IPCResponse ServerApp::handle_request(const cxxime::IPCRequest& request)
     }
 
     case cxxime::IPCCommand::COMMIT_COMPOSITION: {
-        auto* engine = session_mgr_.get_engine(request.session_id);
-        if (engine) {
-            std::string commit = engine->get_commit_text();
-            strncpy_s(response.commit_text, commit.c_str(), sizeof(response.commit_text) - 1);
-            engine->clear();
-        } else {
-            response.status = cxxime::IPCStatus::ERR_INVALID_SESSION;
+        auto r = session_mgr_.commit_composition(request.session_id);
+        if (r.status != cxxime::IPCStatus::OK) {
+            response.status = r.status;
+            break;
+        }
+        response.status = cxxime::IPCStatus::OK;
+        response.ime_status = r.ime_status;
+        if (r.result == cxxime::ProcessResult::COMMITTED) {
+            strncpy_s(response.commit_text, r.commit_text.c_str(), sizeof(response.commit_text) - 1);
         }
         break;
     }
 
-    case cxxime::IPCCommand::CLEAR_COMPOSITION: {
-        auto* engine = session_mgr_.get_engine(request.session_id);
-        if (engine) {
-            engine->clear();
-        } else {
-            response.status = cxxime::IPCStatus::ERR_INVALID_SESSION;
-        }
+    case cxxime::IPCCommand::CLEAR_COMPOSITION:
+        response.status = session_mgr_.clear_composition(request.session_id);
         break;
-    }
 
     case cxxime::IPCCommand::FOCUS_IN:
         break;
 
-    case cxxime::IPCCommand::FOCUS_OUT: {
-        auto* engine = session_mgr_.get_engine(request.session_id);
-        if (engine) {
-            engine->clear();
+    case cxxime::IPCCommand::FOCUS_OUT:
+        session_mgr_.focus_out(request.session_id);
+        break;
+
+    case cxxime::IPCCommand::TOGGLE_CHINESE: {
+        auto [status, ime_status] = session_mgr_.toggle_chinese(request.session_id);
+        if (status != cxxime::IPCStatus::OK) {
+            response.status = status;
+            break;
         }
+        response.ime_status = ime_status;
+        response.ascii_mode = !ime_status.chinese_mode;
         break;
     }
 
-    case cxxime::IPCCommand::TOGGLE_CHINESE:
-        response.ime_status = session_mgr_.toggle_chinese(request.session_id);
-        if (response.ime_status.revision == 0) {
-            response.status = cxxime::IPCStatus::ERR_INVALID_SESSION;
-        } else {
-            response.ascii_mode = !response.ime_status.chinese_mode;
+    case cxxime::IPCCommand::TOGGLE_SHAPE: {
+        auto [status, ime_status] = session_mgr_.toggle_shape(request.session_id);
+        if (status != cxxime::IPCStatus::OK) {
+            response.status = status;
+            break;
         }
+        response.ime_status = ime_status;
         break;
+    }
 
-    case cxxime::IPCCommand::TOGGLE_SHAPE:
-        response.ime_status = session_mgr_.toggle_shape(request.session_id);
-        if (response.ime_status.revision == 0)
-            response.status = cxxime::IPCStatus::ERR_INVALID_SESSION;
+    case cxxime::IPCCommand::TOGGLE_PUNCT: {
+        auto [status, ime_status] = session_mgr_.toggle_punct(request.session_id);
+        if (status != cxxime::IPCStatus::OK) {
+            response.status = status;
+            break;
+        }
+        response.ime_status = ime_status;
         break;
+    }
 
-    case cxxime::IPCCommand::TOGGLE_PUNCT:
-        response.ime_status = session_mgr_.toggle_punct(request.session_id);
-        if (response.ime_status.revision == 0)
-            response.status = cxxime::IPCStatus::ERR_INVALID_SESSION;
+    case cxxime::IPCCommand::SWITCH_INPUT_MODE: {
+        auto [status, ime_status] = session_mgr_.switch_input_mode(request.session_id);
+        if (status != cxxime::IPCStatus::OK) {
+            response.status = status;
+            break;
+        }
+        response.ime_status = ime_status;
         break;
+    }
 
-    case cxxime::IPCCommand::SWITCH_INPUT_MODE:
-        response.ime_status = session_mgr_.switch_input_mode(request.session_id);
-        if (response.ime_status.revision == 0)
-            response.status = cxxime::IPCStatus::ERR_INVALID_SESSION;
+    case cxxime::IPCCommand::GET_STATUS: {
+        auto [status, ime_status] = session_mgr_.get_ime_status(request.session_id);
+        if (status != cxxime::IPCStatus::OK) {
+            response.status = status;
+            break;
+        }
+        response.status = cxxime::IPCStatus::OK;
+        response.ascii_mode = !ime_status.chinese_mode;
+        response.ime_status = ime_status;
         break;
-
-    case cxxime::IPCCommand::GET_STATUS:
-        response.ime_status = session_mgr_.get_ime_status(request.session_id);
-        break;
+    }
 
     case cxxime::IPCCommand::RELOAD_CONFIG:
         session_mgr_.reload_config();
