@@ -22,6 +22,13 @@ static constexpr int kTsfQueueCapacity = 128;
 static constexpr int kTsfBatchSize = 16;
 static constexpr auto kTsfFlushInterval = std::chrono::milliseconds(200);
 
+// Sync ime_status only when server filled valid data (OK or ENGINE_PROCESS_FAILED).
+// ERR_INVALID_SESSION means server didn't fill ime_status — don't overwrite local state.
+static bool should_sync_ime_status(cxxime::IPCStatus status) {
+    return status == cxxime::IPCStatus::OK ||
+           status == cxxime::IPCStatus::ERR_ENGINE_PROCESS_FAILED;
+}
+
 static const char* tsf_result_str(TextService::TsfResult r) {
     switch (r) {
         case TextService::TsfResult::IPC_FAILED: return "ipc_failed";
@@ -667,8 +674,10 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
     CXXIME_LOG(L"_ProcessKeyEvent: ok, vk=%u, ascii=%d, commit='%S', preedit='%S', composing=%d",
                (unsigned int)wParam, response.ascii_mode, response.commit_text, response.preedit, response.composing);
 
-    // Sync mode state from engine
-    _sync_ime_status(response.ime_status);
+    // Sync mode state from engine — only when server filled valid ime_status
+    if (should_sync_ime_status(response.status)) {
+        _sync_ime_status(response.ime_status);
+    }
 
     // Handle committed text (e.g. Shift toggle with commit_text, or normal candidate selection)
     if (response.commit_text[0] != '\0') {
@@ -827,7 +836,10 @@ void TextService::_ProcessKeyUp(WPARAM wParam) {
                ok, response.ascii_mode, response.commit_text, response.composing);
 
     if (ok) {
-        _sync_ime_status(response.ime_status);
+        if (response.status == cxxime::IPCStatus::OK ||
+            response.status == cxxime::IPCStatus::ERR_ENGINE_PROCESS_FAILED) {
+            _sync_ime_status(response.ime_status);
+        }
         CXXIME_LOG(L"_ProcessKeyUp: _chinese_mode=%d, _composing=%d", _chinese_mode, _composing);
 
         // Handle committed text from toggle (e.g. Shift with commit_text style)

@@ -1,6 +1,7 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
 #include <cxxime/engine.h>
+#include <cxxime/output_composer.h>
 #include <windows.h>
 #include <chrono>
 #include <cxxime/logging.h>
@@ -62,11 +63,20 @@ void Engine::finalize() {
     context_.reset();
 }
 
+void Engine::reload_config(const Config& config) {
+    config_ = &config;
+    ascii_composer_.load_config(config);
+}
+
 ProcessResult Engine::process_key(const KeyEvent& event) {
+    return process_key(event, OutputOptions{});
+}
+
+ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& opts) {
     CXXIME_LOG(L"Engine::process_key: vk=%u, is_key_up=%d, composing=%d",
                event.keycode, event.is_key_up, context_.is_composing());
 
-    // Initialize trace for this query (only if tracing enabled)
+    // Phase 0: Initialize trace for this query (only if tracing enabled)
     // Preserve session_id/revision set by caller (server) before this call.
     std::chrono::steady_clock::time_point total_start;
     if (trace_enabled_) {
@@ -79,19 +89,31 @@ ProcessResult Engine::process_key(const KeyEvent& event) {
         total_start = std::chrono::steady_clock::now();
     }
 
-    // Reset scratch buffer for this query
+    // Phase 1: Reset scratch buffer for this query
     scratch_.reset_for_query();
 
     // Create per-query deadline (Phase 3: QueryDeadline with expires_at)
     QueryDeadline per_query_deadline = QueryDeadline::from_now(query_deadline_ms_);
 
-    // Let AsciiComposer track modifier key state (may toggle ascii_mode)
+    // Phase 2: Let AsciiComposer track modifier key state (may toggle ascii_mode)
     ascii_composer_.process_key(event.keycode, event.is_key_up, context_);
 
     CXXIME_LOG(L"Engine::process_key: after ascii_composer, committed_text='%S'", context_.committed_text.c_str());
 
     // Check if AsciiComposer committed text (e.g. Shift toggle with commit_text)
     if (!context_.committed_text.empty()) {
+        context_.set_commit_source(CommitSource::kRawCode);
+        if (trace_enabled_) {
+            auto total_end = std::chrono::steady_clock::now();
+            trace_.total_us = std::chrono::duration_cast<std::chrono::microseconds>(total_end - total_start).count();
+        }
+        return ProcessResult::COMMITTED;
+    }
+
+    // Phase 2.5: intercept_key — in English + full-width mode, intercept digit keys
+    if (OutputComposer::intercept_key(event, opts, config_->good_old_caps_lock,
+                                      context_.committed_text)) {
+        context_.set_commit_source(CommitSource::kRawCode);
         if (trace_enabled_) {
             auto total_end = std::chrono::steady_clock::now();
             trace_.total_us = std::chrono::duration_cast<std::chrono::microseconds>(total_end - total_start).count();
@@ -103,9 +125,13 @@ ProcessResult Engine::process_key(const KeyEvent& event) {
     if (ascii_composer_.is_ascii_mode() && !event.is_key_up) {
         uint32_t vk = event.keycode;
 
-        // Letter keys (A-Z): commit as single ASCII char
+        // Letter keys (A-Z): commit as single ASCII char, respect Shift
         if (vk >= 'A' && vk <= 'Z') {
-            context_.committed_text = std::string(1, static_cast<char>(vk - 'A' + 'a'));
+            char ch = static_cast<char>(vk);
+            if (!event.is_shift())
+                ch = static_cast<char>(tolower(ch));
+            context_.committed_text = std::string(1, ch);
+            context_.set_commit_source(CommitSource::kRawCode);
             if (ascii_composer_.is_temporary_ascii()) {
                 ascii_composer_.set_ascii_mode(false);
             }
@@ -119,6 +145,7 @@ ProcessResult Engine::process_key(const KeyEvent& event) {
         // Space: commit a space
         if (vk == 0x20) {  // VK_SPACE
             context_.committed_text = " ";
+            context_.set_commit_source(CommitSource::kRawCode);
             if (trace_enabled_) {
                 auto total_end = std::chrono::steady_clock::now();
                 trace_.total_us = std::chrono::duration_cast<std::chrono::microseconds>(total_end - total_start).count();
@@ -129,6 +156,7 @@ ProcessResult Engine::process_key(const KeyEvent& event) {
         // Enter: commit pending text and newline
         if (vk == 0x0D) {  // VK_RETURN
             context_.committed_text = "\r\n";
+            context_.set_commit_source(CommitSource::kRawCode);
             if (ascii_composer_.is_temporary_ascii()) {
                 ascii_composer_.set_ascii_mode(false);
             }
@@ -147,6 +175,7 @@ ProcessResult Engine::process_key(const KeyEvent& event) {
         return ProcessResult::REJECTED;
     }
 
+    // Phase 4: PinyinProcessor
     std::chrono::steady_clock::time_point t0, t1, t2;
     if (trace_enabled_) {
         t0 = std::chrono::steady_clock::now();
@@ -166,12 +195,24 @@ ProcessResult Engine::process_key(const KeyEvent& event) {
         }
     }
 
+    // Set commit_source based on pinyin_buffer state.
+    // Note: pinyin_buffer.empty() is a heuristic — the authoritative fallback
+    // is in Context::commit_with_source() which overrides to kCandidate
+    // when candidates.highlighted is valid.
+    if (result == ProcessResult::COMMITTED) {
+        if (context_.pinyin_buffer.empty()) {
+            context_.set_commit_source(CommitSource::kRawCode);   // Enter 提交拼音
+        } else {
+            context_.set_commit_source(CommitSource::kCandidate); // 选词
+        }
+    }
+
     // Auto-restore from temporary inline_ascii when composition ends
     if (result == ProcessResult::COMMITTED && ascii_composer_.is_temporary_ascii()) {
         ascii_composer_.set_ascii_mode(false);
     }
 
-    // After processing, update candidates if still composing
+    // Phase 5: After processing, update candidates if still composing
     if (result == ProcessResult::ACCEPTED && context_.is_composing()) {
         if (trace_enabled_) {
             trace_.page_index = context_.page_index;
@@ -203,7 +244,7 @@ ProcessResult Engine::process_key(const KeyEvent& event) {
     CXXIME_LOG(L"Engine::process_key: result=%d, buf='%S'",
                (int)result, context_.pinyin_buffer.c_str());
 
-    // If committed, update user frequency and recent cache
+    // Phase 6: If committed, update user frequency and recent cache
     if (result == ProcessResult::COMMITTED && !context_.committed_text.empty()) {
         std::string code = context_.pinyin_buffer;
         if (code.empty()) {
@@ -219,7 +260,7 @@ ProcessResult Engine::process_key(const KeyEvent& event) {
         }
     }
 
-    // Finalize trace
+    // Phase 7: Finalize trace
     if (trace_enabled_) {
         auto total_end = std::chrono::steady_clock::now();
         trace_.total_us = std::chrono::duration_cast<std::chrono::microseconds>(total_end - total_start).count();
@@ -242,6 +283,7 @@ bool Engine::select_candidate(int index) {
 
     context_.candidates.highlighted = index;
     context_.committed_text = context_.candidates.candidates[index].text;
+    context_.set_commit_source(CommitSource::kCandidate);
 
     std::string code = context_.pinyin_buffer;
     if (code.empty())
@@ -264,7 +306,20 @@ std::string Engine::get_commit_text() {
     context_.committed_text.clear();
     context_.candidates = {};
     context_.page_index = 0;
+    context_.set_commit_source(CommitSource::kRawCode);
     return text;
+}
+
+std::pair<std::string, CommitSource> Engine::take_commit_text_with_source() {
+    auto result = std::make_pair(std::move(context_.committed_text), context_.commit_source());
+    context_.committed_text.clear();
+    context_.set_commit_source(CommitSource::kRawCode);
+    // 不清空 pinyin_buffer 和 candidates —— 由调用方决定是否清空
+    return result;
+}
+
+std::pair<std::string, CommitSource> Engine::commit_composition_with_source() {
+    return context_.commit_with_source();
 }
 
 void Engine::clear() {

@@ -11,13 +11,15 @@ bool SharedResources::load(const std::string& dict_path, const std::string& cfg_
         CXXIME_LOG(L"SharedResources: dict.open FAILED");
         return false;
     }
+    auto cfg = std::make_shared<cxxime::Config>();
     if (!cfg_path.empty()) {
         config_path = cfg_path;
-        config.load(config_path);
+        cfg->load(config_path);
         // Overlay user config from %APPDATA%
-        config.load(cxxime::user_data_path("default.json"));
-        config.load_themes(cxxime::data_path("themes.json"));
+        cfg->load(cxxime::user_data_path("default.json"));
+        cfg->load_themes(cxxime::data_path("themes.json"));
     }
+    config = std::move(cfg);
     std::string sp_path = cxxime::Engine::derive_spellings_path(dict_path);
     if (!sp_path.empty() && spellings.load(sp_path) && spellings.has_spellings()) {
         syllabifier = std::make_unique<cxxime::Syllabifier>(spellings);
@@ -31,12 +33,23 @@ bool SessionManager::initialize(const std::string& dict_path, const std::string&
 
 uint32_t SessionManager::create_session() {
     auto engine = std::make_unique<cxxime::Engine>();
+    // Snapshot config under mutex (reload_config may race)
+    std::shared_ptr<const cxxime::Config> cfg_snapshot;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        cfg_snapshot = shared_.config;
+    }
+    if (!cfg_snapshot) return 0;
     if (!engine->initialize(shared_.dict, shared_.spellings,
-                            shared_.syllabifier.get(), shared_.config))
+                            shared_.syllabifier.get(), *cfg_snapshot))
         return 0;
     std::lock_guard<std::mutex> lock(mutex_);
     uint32_t id = next_id_++;
-    sessions_[id] = {std::move(engine), std::chrono::steady_clock::now()};
+    auto entry = std::make_shared<SessionEntry>();
+    entry->engine = std::move(engine);
+    entry->last_activity = std::chrono::steady_clock::now();
+    entry->config_snapshot = std::move(cfg_snapshot);
+    sessions_[id] = entry;
     return id;
 }
 
@@ -45,21 +58,26 @@ void SessionManager::destroy_session(uint32_t id) {
     sessions_.erase(id);
 }
 
-cxxime::Engine* SessionManager::get_engine(uint32_t id) {
+std::shared_ptr<SessionEntry> SessionManager::lookup_session(uint32_t id) {
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = sessions_.find(id);
     if (it != sessions_.end()) {
-        it->second.last_activity = std::chrono::steady_clock::now();
-        return it->second.engine.get();
+        it->second->last_activity = std::chrono::steady_clock::now();
+        return it->second;
     }
     return nullptr;
+}
+
+cxxime::Engine* SessionManager::get_engine(uint32_t id) {
+    auto entry = lookup_session(id);
+    return entry ? entry->engine.get() : nullptr;
 }
 
 void SessionManager::touch_session(uint32_t id) {
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = sessions_.find(id);
     if (it != sessions_.end()) {
-        it->second.last_activity = std::chrono::steady_clock::now();
+        it->second->last_activity = std::chrono::steady_clock::now();
     }
 }
 
@@ -69,7 +87,7 @@ size_t SessionManager::cleanup_idle_sessions(uint32_t timeout_ms) {
     size_t count = 0;
     for (auto it = sessions_.begin(); it != sessions_.end(); ) {
         auto idle = std::chrono::duration_cast<std::chrono::milliseconds>(
-            now - it->second.last_activity).count();
+            now - it->second->last_activity).count();
         if (static_cast<uint32_t>(idle) > timeout_ms) {
             it = sessions_.erase(it);
             ++count;
@@ -84,80 +102,242 @@ void SharedResources::reload_config() {
     if (config_path.empty())
         return;
     CXXIME_LOG(L"SharedResources: reloading config from %S", config_path.c_str());
-    config = cxxime::Config();  // Reset to defaults
-    config.load(config_path);
-    config.load(cxxime::user_data_path("default.json"));
-    config.load_themes(cxxime::data_path("themes.json"));
+    auto cfg = std::make_shared<cxxime::Config>();
+    cfg->load(config_path);
+    cfg->load(cxxime::user_data_path("default.json"));
+    cfg->load_themes(cxxime::data_path("themes.json"));
+    config = std::move(cfg);
+    CXXIME_LOG(L"SharedResources: config reloaded");
 }
 
 void SessionManager::reload_config() {
+    // Hold sessions_mutex_ to synchronize with process_key's first-phase lookup
+    std::lock_guard<std::mutex> lock(mutex_);
     shared_.reload_config();
     CXXIME_LOG(L"SessionManager: config reloaded, %zu active sessions", sessions_.size());
 }
 
-cxxime::ImeStatus SessionManager::get_ime_status(uint32_t id) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    auto it = sessions_.find(id);
-    if (it != sessions_.end()) {
-        return it->second.ime_status;
-    }
-    return {};
+std::pair<cxxime::IPCStatus, cxxime::ImeStatus> SessionManager::get_ime_status(uint32_t id) {
+    auto entry = lookup_session(id);
+    if (!entry) return {cxxime::IPCStatus::ERR_INVALID_SESSION, {}};
+    std::lock_guard<std::mutex> lock(entry->mutex);
+    return {cxxime::IPCStatus::OK, entry->ime_status};
 }
 
-cxxime::ImeStatus SessionManager::toggle_chinese(uint32_t id) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    auto it = sessions_.find(id);
-    if (it == sessions_.end()) return {};
-    auto& s = it->second;
+std::pair<cxxime::IPCStatus, cxxime::ImeStatus> SessionManager::toggle_chinese(uint32_t id) {
+    auto entry = lookup_session(id);
+    if (!entry) return {cxxime::IPCStatus::ERR_INVALID_SESSION, {}};
+    std::lock_guard<std::mutex> lock(entry->mutex);
+    auto& s = *entry;
     s.ime_status.chinese_mode = !s.ime_status.chinese_mode;
     s.ime_status.revision++;
     s.engine->ascii_composer().set_ascii_mode(!s.ime_status.chinese_mode);
-    return s.ime_status;
+    return {cxxime::IPCStatus::OK, s.ime_status};
 }
 
-cxxime::ImeStatus SessionManager::toggle_shape(uint32_t id) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    auto it = sessions_.find(id);
-    if (it == sessions_.end()) return {};
-    auto& s = it->second;
+std::pair<cxxime::IPCStatus, cxxime::ImeStatus> SessionManager::toggle_shape(uint32_t id) {
+    auto entry = lookup_session(id);
+    if (!entry) return {cxxime::IPCStatus::ERR_INVALID_SESSION, {}};
+    std::lock_guard<std::mutex> lock(entry->mutex);
+    auto& s = *entry;
     s.ime_status.full_shape = !s.ime_status.full_shape;
     s.ime_status.revision++;
-    return s.ime_status;
+    return {cxxime::IPCStatus::OK, s.ime_status};
 }
 
-cxxime::ImeStatus SessionManager::toggle_punct(uint32_t id) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    auto it = sessions_.find(id);
-    if (it == sessions_.end()) return {};
-    auto& s = it->second;
+std::pair<cxxime::IPCStatus, cxxime::ImeStatus> SessionManager::toggle_punct(uint32_t id) {
+    auto entry = lookup_session(id);
+    if (!entry) return {cxxime::IPCStatus::ERR_INVALID_SESSION, {}};
+    std::lock_guard<std::mutex> lock(entry->mutex);
+    auto& s = *entry;
     s.ime_status.chinese_punct = !s.ime_status.chinese_punct;
     s.ime_status.revision++;
-    return s.ime_status;
+    return {cxxime::IPCStatus::OK, s.ime_status};
 }
 
-cxxime::ImeStatus SessionManager::switch_input_mode(uint32_t id) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    auto it = sessions_.find(id);
-    if (it == sessions_.end()) return {};
-    auto& s = it->second;
+std::pair<cxxime::IPCStatus, cxxime::ImeStatus> SessionManager::switch_input_mode(uint32_t id) {
+    auto entry = lookup_session(id);
+    if (!entry) return {cxxime::IPCStatus::ERR_INVALID_SESSION, {}};
+    std::lock_guard<std::mutex> lock(entry->mutex);
+    auto& s = *entry;
     s.ime_status.input_mode = (s.ime_status.input_mode == cxxime::InputMode::PINYIN)
         ? cxxime::InputMode::WUBI : cxxime::InputMode::PINYIN;
     s.ime_status.revision++;
-    return s.ime_status;
+    return {cxxime::IPCStatus::OK, s.ime_status};
 }
 
-void SessionManager::sync_ascii_mode(uint32_t id, bool ascii_mode) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    auto it = sessions_.find(id);
-    if (it != sessions_.end()) {
-        it->second.ime_status.chinese_mode = !ascii_mode;
-    }
+cxxime::IPCStatus SessionManager::sync_ascii_mode(uint32_t id, bool ascii_mode) {
+    auto entry = lookup_session(id);
+    if (!entry) return cxxime::IPCStatus::ERR_INVALID_SESSION;
+    std::lock_guard<std::mutex> lock(entry->mutex);
+    entry->ime_status.chinese_mode = !ascii_mode;
+    return cxxime::IPCStatus::OK;
 }
 
-void SessionManager::sync_caps_lock(uint32_t id, bool caps_lock) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    auto it = sessions_.find(id);
-    if (it != sessions_.end()) {
-        it->second.ime_status.caps_lock = caps_lock;
+cxxime::IPCStatus SessionManager::sync_caps_lock(uint32_t id, bool caps_lock) {
+    auto entry = lookup_session(id);
+    if (!entry) return cxxime::IPCStatus::ERR_INVALID_SESSION;
+    std::lock_guard<std::mutex> lock(entry->mutex);
+    entry->ime_status.caps_lock = caps_lock;
+    return cxxime::IPCStatus::OK;
+}
+
+ProcessKeyResult SessionManager::process_key(uint32_t id, const cxxime::KeyEvent& event) {
+    // Two-phase lock: lookup session and copy shared_ptr, then lock session
+    std::shared_ptr<SessionEntry> entry;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = sessions_.find(id);
+        if (it == sessions_.end()) {
+            ProcessKeyResult err;
+            err.status = cxxime::IPCStatus::ERR_INVALID_SESSION;
+            return err;
+        }
+        entry = it->second;
     }
+    std::lock_guard<std::mutex> lock(entry->mutex);
+    auto& s = *entry;
+    auto& engine = *s.engine;
+
+    // 0. Check config snapshot — detect hot reload
+    {
+        std::shared_ptr<const cxxime::Config> current_cfg;
+        {
+            std::lock_guard<std::mutex> map_lock(mutex_);
+            current_cfg = shared_.config;
+        }
+        if (current_cfg && current_cfg.get() != s.config_snapshot.get()) {
+            engine.reload_config(*current_cfg);
+            s.config_snapshot = std::move(current_cfg);
+        }
+    }
+
+    // 1. sync caps_lock (must happen before OutputOptions derivation)
+    s.ime_status.caps_lock = event.is_caps_lock();
+
+    // 2. derive OutputOptions
+    auto opts = cxxime::OutputOptions::from(s.ime_status);
+
+    // 3. set trace
+    engine.set_trace_session_id(id);
+
+    // 4. call Engine
+    auto result = engine.process_key(event, opts);
+
+    // 5. sync ascii_mode -> ime_status.chinese_mode
+    bool old_ascii = !s.ime_status.chinese_mode;
+    bool new_ascii = engine.ascii_composer().is_ascii_mode();
+    s.ime_status.chinese_mode = !new_ascii;
+    if (old_ascii != new_ascii) {
+        s.ime_status.revision++;
+    }
+
+    // 6. populate return value
+    //    Key: process COMMITTED first (take + clear context), THEN read composing.
+    //    COMMITTED sets committed_text but does NOT clear pinyin_buffer,
+    //    so is_composing() would return true if read before take.
+    ProcessKeyResult ret;
+    ret.status = cxxime::IPCStatus::OK;
+    ret.result = result;
+    ret.ime_status = s.ime_status;
+
+    if (result == cxxime::ProcessResult::COMMITTED) {
+        auto [raw, source] = engine.take_commit_text_with_source();
+        ret.commit_text = cxxime::OutputComposer::transform(raw, opts, source,
+                                                            s.config_snapshot->good_old_caps_lock);
+        ret.composing = false;
+    } else {
+        ret.composing = engine.context().is_composing();
+        if (ret.composing) {
+            ret.preedit = engine.context().pinyin_buffer;
+            ret.candidates = engine.context().candidates;
+        }
+    }
+
+    // trace log
+    if (engine.last_trace().should_log()) {
+        engine.last_trace().log();
+    }
+
+    return ret;
+}
+
+ProcessKeyResult SessionManager::select_candidate(uint32_t id, int index) {
+    std::shared_ptr<SessionEntry> entry;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = sessions_.find(id);
+        if (it == sessions_.end()) {
+            ProcessKeyResult err;
+            err.status = cxxime::IPCStatus::ERR_INVALID_SESSION;
+            return err;
+        }
+        entry = it->second;
+    }
+    std::lock_guard<std::mutex> lock(entry->mutex);
+    auto& s = *entry;
+    auto opts = cxxime::OutputOptions::from(s.ime_status);
+    ProcessKeyResult ret;
+    ret.status = cxxime::IPCStatus::OK;
+    ret.ime_status = s.ime_status;
+
+    if (s.engine->select_candidate(index)) {
+        auto [raw, source] = s.engine->take_commit_text_with_source();
+        ret.commit_text = cxxime::OutputComposer::transform(raw, opts, source,
+                                                            s.config_snapshot->good_old_caps_lock);
+        ret.result = cxxime::ProcessResult::COMMITTED;
+    } else {
+        ret.result = cxxime::ProcessResult::REJECTED;
+    }
+    return ret;
+}
+
+ProcessKeyResult SessionManager::commit_composition(uint32_t id) {
+    std::shared_ptr<SessionEntry> entry;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = sessions_.find(id);
+        if (it == sessions_.end()) {
+            ProcessKeyResult err;
+            err.status = cxxime::IPCStatus::ERR_INVALID_SESSION;
+            return err;
+        }
+        entry = it->second;
+    }
+    std::lock_guard<std::mutex> lock(entry->mutex);
+    auto& s = *entry;
+    auto opts = cxxime::OutputOptions::from(s.ime_status);
+    ProcessKeyResult ret;
+    ret.status = cxxime::IPCStatus::OK;
+    ret.ime_status = s.ime_status;
+
+    auto [raw, source] = s.engine->commit_composition_with_source();
+    if (!raw.empty()) {
+        ret.commit_text = cxxime::OutputComposer::transform(raw, opts, source,
+                                                            s.config_snapshot->good_old_caps_lock);
+        ret.result = cxxime::ProcessResult::COMMITTED;
+    } else {
+        ret.result = cxxime::ProcessResult::ACCEPTED;
+    }
+    ret.composing = false;
+    s.ime_status.revision++;
+    ret.ime_status = s.ime_status;
+    return ret;
+}
+
+cxxime::IPCStatus SessionManager::clear_composition(uint32_t id) {
+    auto entry = lookup_session(id);
+    if (!entry) return cxxime::IPCStatus::ERR_INVALID_SESSION;
+    std::lock_guard<std::mutex> lock(entry->mutex);
+    entry->engine->clear_composition();
+    return cxxime::IPCStatus::OK;
+}
+
+cxxime::IPCStatus SessionManager::focus_out(uint32_t id) {
+    auto entry = lookup_session(id);
+    if (!entry) return cxxime::IPCStatus::ERR_INVALID_SESSION;
+    std::lock_guard<std::mutex> lock(entry->mutex);
+    entry->engine->clear_composition();
+    entry->ime_status.revision++;
+    return cxxime::IPCStatus::OK;
 }
