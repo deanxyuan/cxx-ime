@@ -58,12 +58,11 @@ std::string OutputComposer::transform(const std::string& text, const OutputOptio
     if (text.empty())
         return text;
 
-    // kRawCode: apply Caps Lock inversion, then full-width conversion
+    // kRawCode: apply Caps Lock inversion only
     std::string result;
-    result.reserve(text.size() * 3);  // worst case: every byte becomes 3 bytes
+    result.reserve(text.size());
 
     bool do_caps = opts.caps_lock && !good_old_caps_lock;
-    bool do_full = opts.full_shape;
 
     for (size_t i = 0; i < text.size(); ++i) {
         unsigned char ch = static_cast<unsigned char>(text[i]);
@@ -80,23 +79,15 @@ std::string OutputComposer::transform(const std::string& text, const OutputOptio
             continue;
         }
 
-        // ASCII range 0x20-0x7E: apply transformations
+        // ASCII range 0x20-0x7E: apply Caps Lock inversion only
         char c = static_cast<char>(ch);
-
-        // Step 1: Caps Lock inversion (a-z ↔ A-Z)
         if (do_caps) {
             if (c >= 'a' && c <= 'z')
                 c = static_cast<char>(c - 'a' + 'A');
             else if (c >= 'A' && c <= 'Z')
                 c = static_cast<char>(c - 'A' + 'a');
         }
-
-        // Step 2: Full-width conversion
-        if (do_full) {
-            result += to_full_width(c);
-        } else {
-            result.push_back(c);
-        }
+        result.push_back(c);
     }
 
     return result;

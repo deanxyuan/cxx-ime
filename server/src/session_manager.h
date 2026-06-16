@@ -15,6 +15,7 @@
 #include <cxxime/syllabifier.h>
 #include <cxxime/config.h>
 #include <cxxime/output_composer.h>
+#include <cxxime/punct_types.h>
 
 // Read-only resources shared across all sessions, loaded once at server startup.
 struct SharedResources {
@@ -22,9 +23,12 @@ struct SharedResources {
     cxxime::SpellingsIndex spellings;
     std::shared_ptr<const cxxime::Config> config;
     std::unique_ptr<cxxime::Syllabifier> syllabifier;
+    std::shared_ptr<const cxxime::PunctMapping> punct_mapping;
     std::string config_path;  // Stored for reload
+    std::string punct_path;   // Stored for reload
 
     bool load(const std::string& dict_path, const std::string& config_path);
+    bool load_punctuation(const std::string& path);
     void reload_config();
 };
 
@@ -55,6 +59,7 @@ public:
 
     size_t cleanup_idle_sessions(uint32_t timeout_ms);
     void reload_config();
+    bool reload_punctuation(const std::string& path);
 
     std::pair<cxxime::IPCStatus, cxxime::ImeStatus> get_ime_status(uint32_t id);
     std::pair<cxxime::IPCStatus, cxxime::ImeStatus> toggle_chinese(uint32_t id);

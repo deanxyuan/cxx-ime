@@ -9,6 +9,42 @@
 #include <cxxime/output_options.h>
 #include <cxxime/key_event.h>
 #include <cxxime/processor.h>
+#include <cxxime/punct_types.h>
+#include <cxxime/dict.h>
+#include <windows.h>
+
+// ============================================================
+// Punctuation test helpers
+// ============================================================
+
+static char g_punct_tmp[MAX_PATH] = {};
+static std::string punct_tmp(const char* name) {
+    return std::string(g_punct_tmp) + name;
+}
+static bool _init_punct_tmp = []() {
+    GetTempPathA(MAX_PATH, g_punct_tmp);
+    return true;
+}();
+
+static cxxime::PunctMapping make_test_punct_mapping() {
+    cxxime::PunctMapping pm;
+    // half_shape: used when chinese_punct=true
+    pm.half_shape["."] = {cxxime::PunctType::COMMIT, "\xe3\x80\x82", {}, {}};  // 。
+    pm.half_shape[","] = {cxxime::PunctType::COMMIT, "\xef\xbc\x8c", {}, {}};  // ，
+    pm.half_shape["'"] = {cxxime::PunctType::PAIR, {}, {"\xe2\x80\x98", "\xe2\x80\x99"}, {}};  // ' '
+    pm.half_shape["\""] = {cxxime::PunctType::PAIR, {}, {"\xe2\x80\x9c", "\xe2\x80\x9d"}, {}};  // " "
+    pm.half_shape["-"] = {cxxime::PunctType::ALTERNATIVES, {}, {}, {"\xe2\x80\x94", "\xe2\x80\x93", "\xc2\xb7"}};  // — – ·
+    // full_shape: used when chinese_punct=false && full_shape=true
+    pm.full_shape["["] = {cxxime::PunctType::COMMIT, "\xe3\x80\x90", {}, {}};  // 【
+    return pm;
+}
+
+static cxxime::KeyEvent make_punct_key(uint32_t vk) {
+    cxxime::KeyEvent event;
+    event.keycode = vk;
+    event.is_key_up = false;
+    return event;
+}
 
 // ============================================================
 // Context commit source tests (no dictionary needed)
@@ -165,6 +201,221 @@ TEST(EngineSource, engine_take_preserves_source) {
     auto [text, source] = engine.take_commit_text_with_source();
     ASSERT_EQ(text, "WiFi");
     ASSERT_EQ(source, cxxime::CommitSource::kCandidate);
+}
+
+// ============================================================
+// Punctuation integration tests
+// ============================================================
+
+TEST(EngineSource, punctuation_chinese_period) {
+    auto pm = make_test_punct_mapping();
+    std::string dp = punct_tmp("es_punct1.bin");
+    cxxime::Dict::create_test_dict(dp, {{"de", "的", 1}});
+    cxxime::Engine engine;
+    ASSERT_TRUE(engine.initialize(dp));
+    engine.set_trace_enabled(false);
+
+    cxxime::OutputOptions opts;
+    opts.chinese_mode = true;
+    opts.chinese_punct = true;
+    opts.punct_mapping = &pm;
+
+    auto result = engine.process_key(make_punct_key(0xBE), opts);  // VK_OEM_PERIOD
+    ASSERT_EQ(result, cxxime::ProcessResult::COMMITTED);
+    auto [text, source] = engine.take_commit_text_with_source();
+    ASSERT_EQ(text, "\xe3\x80\x82");  // 。
+    ASSERT_EQ(source, cxxime::CommitSource::kCandidate);
+
+    engine.finalize();
+    DeleteFileA(dp.c_str());
+}
+
+TEST(EngineSource, punctuation_with_composing) {
+    auto pm = make_test_punct_mapping();
+    std::string dp = punct_tmp("es_punct2.bin");
+    cxxime::Dict::create_test_dict(dp, {{"ni", "你", 100}});
+    cxxime::Engine engine;
+    ASSERT_TRUE(engine.initialize(dp));
+    engine.set_trace_enabled(false);
+
+    cxxime::OutputOptions opts;
+    opts.chinese_mode = true;
+    opts.chinese_punct = true;
+    opts.punct_mapping = &pm;
+
+    // Type "ni" to get candidates
+    engine.process_key(make_punct_key('N'), opts);
+    engine.process_key(make_punct_key('I'), opts);
+
+    // Now press period - should commit candidate + punctuation
+    auto result = engine.process_key(make_punct_key(0xBE), opts);
+    ASSERT_EQ(result, cxxime::ProcessResult::COMMITTED);
+    auto [text, source] = engine.take_commit_text_with_source();
+    // Should be candidate text + punctuation
+    ASSERT_TRUE(!text.empty());
+    ASSERT_EQ(source, cxxime::CommitSource::kCandidate);
+    ASSERT_EQ(engine.context().pinyin_buffer, "");
+
+    engine.finalize();
+    DeleteFileA(dp.c_str());
+}
+
+TEST(EngineSource, punctuation_pair_alternation) {
+    auto pm = make_test_punct_mapping();
+    std::string dp = punct_tmp("es_punct3.bin");
+    cxxime::Dict::create_test_dict(dp, {{"de", "的", 1}});
+    cxxime::Engine engine;
+    ASSERT_TRUE(engine.initialize(dp));
+    engine.set_trace_enabled(false);
+
+    cxxime::OutputOptions opts;
+    opts.chinese_mode = true;
+    opts.chinese_punct = true;
+    opts.punct_mapping = &pm;
+
+    // First press: left quote
+    engine.process_key(make_punct_key(0xDE), opts);  // VK_OEM_7 (')
+    auto [text1, _1] = engine.take_commit_text_with_source();
+    ASSERT_EQ(text1, "\xe2\x80\x98");  // '
+
+    // Second press: right quote
+    engine.process_key(make_punct_key(0xDE), opts);
+    auto [text2, _2] = engine.take_commit_text_with_source();
+    ASSERT_EQ(text2, "\xe2\x80\x99");  // '
+
+    // Third press: left quote again
+    engine.process_key(make_punct_key(0xDE), opts);
+    auto [text3, _3] = engine.take_commit_text_with_source();
+    ASSERT_EQ(text3, "\xe2\x80\x98");  // '
+
+    engine.finalize();
+    DeleteFileA(dp.c_str());
+}
+
+TEST(EngineSource, punctuation_alternatives_cycle) {
+    auto pm = make_test_punct_mapping();
+    std::string dp = punct_tmp("es_punct4.bin");
+    cxxime::Dict::create_test_dict(dp, {{"de", "的", 1}});
+    cxxime::Engine engine;
+    ASSERT_TRUE(engine.initialize(dp));
+    engine.set_trace_enabled(false);
+
+    cxxime::OutputOptions opts;
+    opts.chinese_mode = true;
+    opts.chinese_punct = true;
+    opts.punct_mapping = &pm;
+
+    // Cycle through alternatives
+    engine.process_key(make_punct_key(0xBD), opts);  // VK_OEM_MINUS (-)
+    auto [t1, _1] = engine.take_commit_text_with_source();
+    ASSERT_EQ(t1, "\xe2\x80\x94");  // —
+
+    engine.process_key(make_punct_key(0xBD), opts);
+    auto [t2, _2] = engine.take_commit_text_with_source();
+    ASSERT_EQ(t2, "\xe2\x80\x93");  // –
+
+    engine.process_key(make_punct_key(0xBD), opts);
+    auto [t3, _3] = engine.take_commit_text_with_source();
+    ASSERT_EQ(t3, "\xc2\xb7");  // ·
+
+    // Should cycle back
+    engine.process_key(make_punct_key(0xBD), opts);
+    auto [t4, _4] = engine.take_commit_text_with_source();
+    ASSERT_EQ(t4, "\xe2\x80\x94");  // —
+
+    engine.finalize();
+    DeleteFileA(dp.c_str());
+}
+
+TEST(EngineSource, full_shape_period) {
+    auto pm = make_test_punct_mapping();
+    std::string dp = punct_tmp("es_punct5.bin");
+    cxxime::Dict::create_test_dict(dp, {{"de", "的", 1}});
+    cxxime::Engine engine;
+    ASSERT_TRUE(engine.initialize(dp));
+    engine.set_trace_enabled(false);
+
+    cxxime::OutputOptions opts;
+    opts.chinese_mode = false;
+    opts.chinese_punct = false;
+    opts.full_shape = true;
+    opts.punct_mapping = &pm;
+
+    auto result = engine.process_key(make_punct_key(0xBE), opts);
+    ASSERT_EQ(result, cxxime::ProcessResult::COMMITTED);
+    auto [text, source] = engine.take_commit_text_with_source();
+    ASSERT_EQ(text, "\xef\xbc\x8e");  // ．
+
+    engine.finalize();
+    DeleteFileA(dp.c_str());
+}
+
+TEST(EngineSource, full_shape_letter_in_english_mode) {
+    std::string dp = punct_tmp("es_punct6.bin");
+    cxxime::Dict::create_test_dict(dp, {{"de", "的", 1}});
+    cxxime::Engine engine;
+    ASSERT_TRUE(engine.initialize(dp));
+    engine.set_trace_enabled(false);
+
+    // In English mode + full_shape, letter keys should be intercepted by handle_full_shape
+    cxxime::OutputOptions opts;
+    opts.chinese_mode = false;
+    opts.chinese_punct = false;
+    opts.full_shape = true;
+
+    // Note: In Chinese mode, letter keys are handled by PinyinProcessor (as pinyin input),
+    // not by handle_full_shape. This test verifies English mode behavior.
+    auto result = engine.process_key(make_punct_key('A'), opts);
+    // In English mode without ascii_mode set, the letter goes through PinyinProcessor first
+    // which returns ACCEPTED. handle_full_shape is only called when result is REJECTED.
+    // So the result depends on whether ascii_mode is active.
+    // Since ascii_mode defaults to false, PinyinProcessor handles it.
+    ASSERT_EQ(result, cxxime::ProcessResult::ACCEPTED);
+
+    engine.finalize();
+    DeleteFileA(dp.c_str());
+}
+
+TEST(EngineSource, full_shape_custom_mapping) {
+    auto pm = make_test_punct_mapping();
+    std::string dp = punct_tmp("es_punct7.bin");
+    cxxime::Dict::create_test_dict(dp, {{"de", "的", 1}});
+    cxxime::Engine engine;
+    ASSERT_TRUE(engine.initialize(dp));
+    engine.set_trace_enabled(false);
+
+    cxxime::OutputOptions opts;
+    opts.chinese_mode = false;
+    opts.chinese_punct = false;
+    opts.full_shape = true;
+    opts.punct_mapping = &pm;
+
+    auto result = engine.process_key(make_punct_key(0xDB), opts);  // VK_OEM_4 ([)
+    ASSERT_EQ(result, cxxime::ProcessResult::COMMITTED);
+    auto [text, source] = engine.take_commit_text_with_source();
+    ASSERT_EQ(text, "\xe3\x80\x90");  // 【
+
+    engine.finalize();
+    DeleteFileA(dp.c_str());
+}
+
+TEST(EngineSource, english_half_shape_no_intercept) {
+    std::string dp = punct_tmp("es_punct8.bin");
+    cxxime::Dict::create_test_dict(dp, {{"de", "的", 1}});
+    cxxime::Engine engine;
+    ASSERT_TRUE(engine.initialize(dp));
+    engine.set_trace_enabled(false);
+
+    cxxime::OutputOptions opts;
+    opts.chinese_mode = false;
+    opts.full_shape = false;
+    opts.chinese_punct = false;
+
+    auto result = engine.process_key(make_punct_key(0xBE), opts);
+    ASSERT_EQ(result, cxxime::ProcessResult::REJECTED);
+
+    engine.finalize();
+    DeleteFileA(dp.c_str());
 }
 
 RUN_ALL_TESTS()

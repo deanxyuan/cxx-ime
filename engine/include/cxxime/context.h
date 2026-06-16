@@ -4,6 +4,7 @@
 #define CXXIME_CONTEXT_H_
 
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <cxxime/candidate.h>
 #include <cxxime/output_options.h>
@@ -27,6 +28,11 @@ public:
 
     // 一次性取走 committed_text 和 commit_source，清空内部状态
     std::pair<std::string, CommitSource> commit_with_source();
+
+    // Punctuation state (not cleared on reset() — persists across compositions)
+    std::unordered_map<std::string, bool> pair_open;   // Quote alternation state
+    std::unordered_map<std::string, int> alt_index;    // Alternatives rotation state
+    char last_committed_char = '\0';                    // Digit separator guard
 
 private:
     CommitSource commit_source_ = CommitSource::kRawCode;
