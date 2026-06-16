@@ -26,6 +26,7 @@ REQUIRED_FILES = [
     "pinyin.spellings.bin",
     "pinyin.topn.bin",
     "default.json",
+    "punctuation.json",
 ]
 
 REQUIRED_TOPN_KEYS = ["s", "sd", "sdf", "sddf", "bj", "srf", "shrf"]

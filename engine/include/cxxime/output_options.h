@@ -4,6 +4,7 @@
 #define CXXIME_OUTPUT_OPTIONS_H_
 
 #include <cxxime/ipc_protocol.h>
+#include <cxxime/punct_types.h>
 
 namespace cxxime {
 
@@ -21,6 +22,7 @@ struct OutputOptions {
     bool caps_lock = false;
     bool full_shape = false;
     bool chinese_punct = true;  // Effective Chinese punctuation (not raw preference)
+    const PunctMapping* punct_mapping = nullptr;  // Punctuation mapping table (read-only)
 
     static OutputOptions from(const ImeStatus& status) {
         OutputOptions opts;

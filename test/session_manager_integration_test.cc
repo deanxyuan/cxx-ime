@@ -7,6 +7,7 @@
 #include "util/testutil.h"
 #include <cstdio>
 #include <cstring>
+#include <fstream>
 #include <string>
 #include <windows.h>
 #include <cxxime/ipc_protocol.h>
@@ -303,6 +304,111 @@ TEST(SessionIntegration, independent_sessions_output_composer) {
     auto r1 = mgr.process_key(id1, make_key('5'));
     ASSERT_EQ(r1.result, cxxime::ProcessResult::COMMITTED);
     ASSERT_EQ(r1.commit_text, "５");
+}
+
+// ============================================================
+// Punctuation IPC integration
+// ============================================================
+
+static std::string write_temp_punct_json(const char* name, const char* content) {
+    std::string path = make_temp_path(name);
+    std::ofstream f(path);
+    f << content;
+    f.close();
+    return path;
+}
+
+// Test 1: Hot-reload punctuation mapping
+TEST(SessionIntegration, punctuation_hot_reload) {
+    // Write initial punctuation.json: "." → "。"
+    std::string punct_path = write_temp_punct_json("punct_hot.json",
+        R"({"half_shape": {".": {"commit": "。"}}})");
+
+    SessionManager mgr;
+    mgr.initialize(setup_test_dict());
+    // Load custom punctuation file
+    ASSERT_TRUE(mgr.reload_punctuation(punct_path));
+
+    uint32_t id = mgr.create_session();
+    // Chinese mode + chinese_punct=true (default)
+    // Press '.' → should map to "。"
+    auto r = mgr.process_key(id, make_key(VK_OEM_PERIOD));
+    ASSERT_EQ(r.status, cxxime::IPCStatus::OK);
+    ASSERT_EQ(r.result, cxxime::ProcessResult::COMMITTED);
+    ASSERT_EQ(r.commit_text, "。");
+
+    // Write modified punctuation.json: "." → "！"
+    write_temp_punct_json("punct_hot.json",
+        R"({"half_shape": {".": {"commit": "！"}}})");
+
+    // Reload — new mapping should take effect
+    ASSERT_TRUE(mgr.reload_punctuation(punct_path));
+
+    auto r2 = mgr.process_key(id, make_key(VK_OEM_PERIOD));
+    ASSERT_EQ(r2.status, cxxime::IPCStatus::OK);
+    ASSERT_EQ(r2.result, cxxime::ProcessResult::COMMITTED);
+    ASSERT_EQ(r2.commit_text, "！");
+}
+
+// Test 2: Multi-session quote pair_open state isolation
+TEST(SessionIntegration, punctuation_pair_state_isolation) {
+    std::string punct_path = write_temp_punct_json("punct_pair.json",
+        R"({"half_shape": {"'": {"pair": ["'", "'"]}}})");
+
+    SessionManager mgr;
+    mgr.initialize(setup_test_dict());
+    ASSERT_TRUE(mgr.reload_punctuation(punct_path));
+
+    uint32_t id1 = mgr.create_session();
+    uint32_t id2 = mgr.create_session();
+
+    // Session 1: first ' → left quote "'"
+    auto r1a = mgr.process_key(id1, make_key(VK_OEM_7));
+    ASSERT_EQ(r1a.result, cxxime::ProcessResult::COMMITTED);
+    ASSERT_EQ(r1a.commit_text, "'");
+
+    // Session 1: second ' → right quote "'"
+    auto r1b = mgr.process_key(id1, make_key(VK_OEM_7));
+    ASSERT_EQ(r1b.result, cxxime::ProcessResult::COMMITTED);
+    ASSERT_EQ(r1b.commit_text, "'");
+
+    // Session 2: first ' → left quote "'" (independent state, not affected by session 1)
+    auto r2a = mgr.process_key(id2, make_key(VK_OEM_7));
+    ASSERT_EQ(r2a.result, cxxime::ProcessResult::COMMITTED);
+    ASSERT_EQ(r2a.commit_text, "'");
+
+    // Session 1: third ' → left quote "'" again (alternation continues)
+    auto r1c = mgr.process_key(id1, make_key(VK_OEM_7));
+    ASSERT_EQ(r1c.result, cxxime::ProcessResult::COMMITTED);
+    ASSERT_EQ(r1c.commit_text, "'");
+}
+
+// Test 3: Punctuation committed via IPC process_key
+TEST(SessionIntegration, punctuation_commit_via_ipc) {
+    SessionManager mgr;
+    mgr.initialize(setup_test_dict());
+    uint32_t id = mgr.create_session();
+
+    // Chinese mode (default): chinese_punct=true
+    // Press '.' → should commit "。"
+    auto r = mgr.process_key(id, make_key(VK_OEM_PERIOD));
+    ASSERT_EQ(r.status, cxxime::IPCStatus::OK);
+    ASSERT_EQ(r.result, cxxime::ProcessResult::COMMITTED);
+    ASSERT_EQ(r.commit_text, "。");
+    ASSERT_EQ(r.composing, false);
+
+    // Press ',' → should commit "，"
+    auto r2 = mgr.process_key(id, make_key(VK_OEM_COMMA));
+    ASSERT_EQ(r2.status, cxxime::IPCStatus::OK);
+    ASSERT_EQ(r2.result, cxxime::ProcessResult::COMMITTED);
+    ASSERT_EQ(r2.commit_text, "，");
+
+    // Toggle chinese_punct off → punctuation should be rejected (pass-through)
+    mgr.toggle_punct(id);
+    auto r3 = mgr.process_key(id, make_key(VK_OEM_PERIOD));
+    ASSERT_EQ(r3.status, cxxime::IPCStatus::OK);
+    // With chinese_punct=false, punctuation is not mapped → REJECTED
+    ASSERT_EQ(r3.result, cxxime::ProcessResult::REJECTED);
 }
 
 // Initialize temp_path before tests run

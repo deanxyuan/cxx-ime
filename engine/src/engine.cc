@@ -3,6 +3,7 @@
 #include <cxxime/engine.h>
 #include <cxxime/output_composer.h>
 #include <windows.h>
+#include <cctype>
 #include <chrono>
 #include <cxxime/logging.h>
 
@@ -167,6 +168,22 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
             return ProcessResult::COMMITTED;
         }
 
+        // Punctuation / full-shape handling
+        if (handle_punctuation(event, context_, opts)) {
+            if (trace_enabled_) {
+                auto total_end = std::chrono::steady_clock::now();
+                trace_.total_us = std::chrono::duration_cast<std::chrono::microseconds>(total_end - total_start).count();
+            }
+            return ProcessResult::COMMITTED;
+        }
+        if (handle_full_shape(event, context_, opts)) {
+            if (trace_enabled_) {
+                auto total_end = std::chrono::steady_clock::now();
+                trace_.total_us = std::chrono::duration_cast<std::chrono::microseconds>(total_end - total_start).count();
+            }
+            return ProcessResult::COMMITTED;
+        }
+
         // Other keys: reject (pass through to app)
         if (trace_enabled_) {
             auto total_end = std::chrono::steady_clock::now();
@@ -210,6 +227,14 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
     // Auto-restore from temporary inline_ascii when composition ends
     if (result == ProcessResult::COMMITTED && ascii_composer_.is_temporary_ascii()) {
         ascii_composer_.set_ascii_mode(false);
+    }
+
+    // Phase 4.5: Punctuation / full-shape handling (only when processor rejected)
+    if (result == ProcessResult::REJECTED) {
+        if (handle_punctuation(event, context_, opts))
+            result = ProcessResult::COMMITTED;
+        else if (handle_full_shape(event, context_, opts))
+            result = ProcessResult::COMMITTED;
     }
 
     // Phase 5: After processing, update candidates if still composing
@@ -267,6 +292,139 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
     }
 
     return result;
+}
+
+void Engine::commit_with_punctuation(Context& context, const std::string& output,
+                                     const std::vector<std::string>*, int) {
+    if (context.is_composing() && !context.candidates.candidates.empty() &&
+        context.candidates.highlighted >= 0 &&
+        context.candidates.highlighted < (int)context.candidates.candidates.size()) {
+        context.committed_text = context.candidates.candidates[context.candidates.highlighted].text + output;
+    } else {
+        context.committed_text = output;
+    }
+    context.pinyin_buffer.clear();
+    context.candidates = {};
+    context.page_index = 0;
+    context.set_commit_source(CommitSource::kCandidate);
+    context.last_committed_char = output.back();
+}
+
+bool Engine::handle_punctuation(const KeyEvent& event, Context& context, const OutputOptions& opts) {
+    // Guard: key-up
+    if (event.is_key_up)
+        return false;
+
+    // Guard: modifier keys
+    if (event.is_ctrl() || event.is_alt())
+        return false;
+
+    // Guard: chinese_punct or (full_shape with custom mapping)
+    bool should_process = opts.chinese_punct ||
+        (opts.full_shape && opts.punct_mapping && !opts.punct_mapping->full_shape.empty());
+    if (!should_process)
+        return false;
+
+    // Step 1: VK → character
+    char ch = vk_to_char(event.keycode, event.is_shift());
+    if (ch == '\0')
+        return false;
+
+    // Step 2: check punct_mapping
+    if (!opts.punct_mapping)
+        return false;
+
+    // Step 3: select mapping table
+    std::string key(1, ch);
+    const PunctEntry* entry = nullptr;
+    if (opts.chinese_punct) {
+        auto it = opts.punct_mapping->half_shape.find(key);
+        if (it != opts.punct_mapping->half_shape.end())
+            entry = &it->second;
+    } else if (opts.full_shape) {
+        auto it = opts.punct_mapping->full_shape.find(key);
+        if (it != opts.punct_mapping->full_shape.end())
+            entry = &it->second;
+    }
+
+    // Step 4: not found
+    if (!entry)
+        return false;
+
+    // Step 5: digit separator guard
+    if (context.pinyin_buffer.empty() &&
+        std::isdigit(static_cast<unsigned char>(context.last_committed_char))) {
+        if (key == "." || key == ",")
+            return false;
+    }
+
+    // Step 6: process punct type
+    std::string output;
+    switch (entry->type) {
+    case PunctType::COMMIT:
+        output = entry->commit;
+        break;
+    case PunctType::PAIR: {
+        bool opened = context.pair_open[key];
+        int idx = opened ? 1 : 0;
+        output = entry->pair[idx];
+        context.pair_open[key] = !opened;
+        break;
+    }
+    case PunctType::ALTERNATIVES: {
+        int idx = context.alt_index[key] % static_cast<int>(entry->alternatives.size());
+        output = entry->alternatives[idx];
+        context.alt_index[key] = idx + 1;
+        break;
+    }
+    }
+
+    // Step 7: commit
+    commit_with_punctuation(context, output, nullptr, 0);
+    CXXIME_LOG(L"handle_punctuation: key='%c' -> '%S'", ch, output.c_str());
+    return true;
+}
+
+bool Engine::handle_full_shape(const KeyEvent& event, Context& context, const OutputOptions& opts) {
+    // Guard: key-up
+    if (event.is_key_up)
+        return false;
+
+    // Guard: modifier keys
+    if (event.is_ctrl() || event.is_alt())
+        return false;
+
+    // Guard: full_shape mode
+    if (!opts.full_shape)
+        return false;
+
+    // Step 1: VK → character
+    char ch = vk_to_char(event.keycode, event.is_shift());
+    if (ch == '\0') {
+        // vk_to_char only handles OEM punctuation; also handle letters and digits
+        uint32_t vk = event.keycode;
+        if (vk >= 'A' && vk <= 'Z') {
+            ch = event.is_shift()
+                ? static_cast<char>(vk)
+                : static_cast<char>(vk + 32);  // to lowercase
+        } else if (vk >= '0' && vk <= '9') {
+            ch = static_cast<char>(vk);
+        } else {
+            return false;
+        }
+    }
+
+    // Step 2: range check
+    if (static_cast<unsigned char>(ch) < 0x20 || static_cast<unsigned char>(ch) > 0x7e)
+        return false;
+
+    // Step 3: full-width conversion
+    std::string output = OutputComposer::to_full_width(ch);
+
+    // Step 4: commit
+    commit_with_punctuation(context, output, nullptr, 0);
+    CXXIME_LOG(L"handle_full_shape: '%c' -> full-width", ch);
+    return true;
 }
 
 const Context& Engine::context() const {

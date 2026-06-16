@@ -137,34 +137,34 @@ void StatusController::on_config_action(const std::string& action) {
 
 void StatusController::toggle_chinese_mode() {
     IPCResponse resp = {};
-    if (client_->toggle_chinese(session_id_, resp)) {
+    if (client_->toggle_chinese(session_id_, resp) && resp.status == cxxime::IPCStatus::OK) {
         sync_status(resp.ime_status);
     } else {
         ipc_healthy_ = false;
         window_.set_enabled(false);
-        CXXIME_LOG(L"StatusController: IPC toggle_chinese failed");
+        CXXIME_LOG(L"StatusController: IPC toggle_chinese failed, status=%d", (int)resp.status);
     }
 }
 
 void StatusController::toggle_full_shape() {
     IPCResponse resp = {};
-    if (client_->toggle_shape(session_id_, resp)) {
+    if (client_->toggle_shape(session_id_, resp) && resp.status == cxxime::IPCStatus::OK) {
         sync_status(resp.ime_status);
     } else {
         ipc_healthy_ = false;
         window_.set_enabled(false);
-        CXXIME_LOG(L"StatusController: IPC toggle_shape failed");
+        CXXIME_LOG(L"StatusController: IPC toggle_shape failed, status=%d", (int)resp.status);
     }
 }
 
 void StatusController::toggle_chinese_punct() {
     IPCResponse resp = {};
-    if (client_->toggle_punct(session_id_, resp)) {
+    if (client_->toggle_punct(session_id_, resp) && resp.status == cxxime::IPCStatus::OK) {
         sync_status(resp.ime_status);
     } else {
         ipc_healthy_ = false;
         window_.set_enabled(false);
-        CXXIME_LOG(L"StatusController: IPC toggle_punct failed");
+        CXXIME_LOG(L"StatusController: IPC toggle_punct failed, status=%d", (int)resp.status);
     }
 }
 

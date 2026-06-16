@@ -4,6 +4,44 @@
 #include <windows.h>
 #include <cxxime/logging.h>
 #include <cxxime/data_path.h>
+#include <json.hpp>
+#include <fstream>
+
+namespace {
+
+void parse_punct_section(const nlohmann::json& j, const char* section,
+                         std::unordered_map<std::string, cxxime::PunctEntry>& target) {
+    if (!j.contains(section) || !j[section].is_object())
+        return;
+    for (auto it = j[section].begin(); it != j[section].end(); ++it) {
+        std::string key = it.key();
+        const nlohmann::json& val = it.value();
+        if (!val.is_object()) continue;
+        cxxime::PunctEntry entry{};
+        if (val.contains("commit") && val["commit"].is_string()) {
+            entry.type = cxxime::PunctType::COMMIT;
+            entry.commit = val["commit"].get<std::string>();
+        } else if (val.contains("pair") && val["pair"].is_array()) {
+            entry.type = cxxime::PunctType::PAIR;
+            for (const auto& item : val["pair"]) {
+                if (item.is_string())
+                    entry.pair.push_back(item.get<std::string>());
+            }
+        } else if (val.contains("alternatives") && val["alternatives"].is_array()) {
+            entry.type = cxxime::PunctType::ALTERNATIVES;
+            for (const auto& item : val["alternatives"]) {
+                if (item.is_string())
+                    entry.alternatives.push_back(item.get<std::string>());
+            }
+        } else {
+            CXXIME_LOG(L"Punct: unknown entry type for key '%S'", key.c_str());
+            continue;
+        }
+        target[key] = std::move(entry);
+    }
+}
+
+}  // anonymous namespace
 
 bool SharedResources::load(const std::string& dict_path, const std::string& cfg_path) {
     std::string user_dict_path = cxxime::user_data_path("user.tsv");
@@ -20,11 +58,42 @@ bool SharedResources::load(const std::string& dict_path, const std::string& cfg_
         cfg->load_themes(cxxime::data_path("themes.json"));
     }
     config = std::move(cfg);
+
+    // Load punctuation mapping (non-fatal)
+    load_punctuation(cxxime::data_path("punctuation.json"));
     std::string sp_path = cxxime::Engine::derive_spellings_path(dict_path);
     if (!sp_path.empty() && spellings.load(sp_path) && spellings.has_spellings()) {
         syllabifier = std::make_unique<cxxime::Syllabifier>(spellings);
     }
     return true;
+}
+
+bool SharedResources::load_punctuation(const std::string& path) {
+    if (path.empty()) return true;
+
+    std::ifstream file(path);
+    if (!file.is_open()) {
+        CXXIME_LOG(L"SharedResources: punctuation file not found: %S", path.c_str());
+        return false;
+    }
+
+    try {
+        nlohmann::json j = nlohmann::json::parse(file);
+
+        auto mapping = std::make_shared<cxxime::PunctMapping>();
+
+        parse_punct_section(j, "half_shape", mapping->half_shape);
+        parse_punct_section(j, "full_shape", mapping->full_shape);
+
+        punct_mapping = std::move(mapping);
+        punct_path = path;
+        CXXIME_LOG(L"SharedResources: punctuation loaded (%zu half, %zu full)",
+                   punct_mapping->half_shape.size(), punct_mapping->full_shape.size());
+        return true;
+    } catch (const nlohmann::json::exception& e) {
+        CXXIME_LOG(L"SharedResources: punctuation parse error: %S", e.what());
+        return false;
+    }
 }
 
 bool SessionManager::initialize(const std::string& dict_path, const std::string& config_path) {
@@ -108,6 +177,11 @@ void SharedResources::reload_config() {
     cfg->load_themes(cxxime::data_path("themes.json"));
     config = std::move(cfg);
     CXXIME_LOG(L"SharedResources: config reloaded");
+
+    // Reload punctuation mapping
+    if (!punct_path.empty()) {
+        load_punctuation(punct_path);
+    }
 }
 
 void SessionManager::reload_config() {
@@ -115,6 +189,11 @@ void SessionManager::reload_config() {
     std::lock_guard<std::mutex> lock(mutex_);
     shared_.reload_config();
     CXXIME_LOG(L"SessionManager: config reloaded, %zu active sessions", sessions_.size());
+}
+
+bool SessionManager::reload_punctuation(const std::string& path) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return shared_.load_punctuation(path);
 }
 
 std::pair<cxxime::IPCStatus, cxxime::ImeStatus> SessionManager::get_ime_status(uint32_t id) {
@@ -217,6 +296,7 @@ ProcessKeyResult SessionManager::process_key(uint32_t id, const cxxime::KeyEvent
 
     // 2. derive OutputOptions
     auto opts = cxxime::OutputOptions::from(s.ime_status);
+    opts.punct_mapping = shared_.punct_mapping.get();
 
     // 3. set trace
     engine.set_trace_session_id(id);

@@ -25,9 +25,10 @@ struct OutputComposer {
     static std::string transform(const std::string& text, const OutputOptions& opts,
                                  CommitSource source, bool good_old_caps_lock);
 
-private:
     // Convert a single ASCII character to full-width UTF-8.
     static std::string to_full_width(char ch);
+
+private:
 };
 
 }  // namespace cxxime

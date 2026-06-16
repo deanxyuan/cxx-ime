@@ -108,6 +108,13 @@ def copy_config() -> None:
     else:
         print("  WARNING: themes.json not found")
 
+    punct = os.path.join(DATA, "punctuation.json")
+    if os.path.isfile(punct):
+        shutil.copy2(punct, data_dir)
+        print("  punctuation.json")
+    else:
+        print("  WARNING: punctuation.json not found")
+
 
 def prepare_dictionaries() -> None:
     """Run prepare_dict.py for pinyin and wubi."""
@@ -285,6 +292,7 @@ def print_summary(config: str) -> None:
     print("  data/")
     print("    default.json           Default configuration")
     print("    themes.json            Color themes")
+    print("    punctuation.json       Punctuation mapping")
     print("    pinyin.dict.bin        Pinyin binary dictionary (runtime)")
     print("    pinyin.dict.idx        Pinyin syllable index (runtime)")
     print("    pinyin.spellings.bin   Pinyin spelling trie (runtime)")

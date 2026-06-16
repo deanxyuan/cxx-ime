@@ -131,7 +131,7 @@ STDMETHODIMP CLangBarItemButton::InitMenu(ITfMenu* pMenu) {
 }
 
 STDMETHODIMP CLangBarItemButton::OnMenuSelect(UINT wID) {
-    if (wID == 0 && _show_status_cb) {
+    if (wID == 5 && _show_status_cb) {
         _show_status_cb();
     }
     return S_OK;

@@ -104,6 +104,12 @@ private:
 
     // Per-engine reusable scratch buffer for translate() queries
     QueryScratch scratch_;
+
+    // Punctuation handling (Phase 2.5 / 4.5)
+    bool handle_punctuation(const KeyEvent& event, Context& context, const OutputOptions& opts);
+    bool handle_full_shape(const KeyEvent& event, Context& context, const OutputOptions& opts);
+    void commit_with_punctuation(Context& context, const std::string& output,
+                                 const std::vector<std::string>* candidates, int highlighted);
 };
 
 } // namespace cxxime
