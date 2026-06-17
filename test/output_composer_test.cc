@@ -435,7 +435,7 @@ TEST(OutputComposer, punct_digit_separator_guard) {
     DeleteFileA(dp.c_str());
 }
 
-TEST(OutputComposer, punct_ctrl_not_intercepted) {
+TEST(OutputComposer, ctrl_period_toggles_punct) {
     auto pm = make_punct_mapping();
     std::string dp = punct_tmp("punct7.bin");
     cxxime::Dict::create_test_dict(dp, {{"de", "的", 1}});
@@ -454,7 +454,7 @@ TEST(OutputComposer, punct_ctrl_not_intercepted) {
     e.set_ctrl();
 
     auto r = engine.process_key(e, opts);
-    ASSERT_EQ(r, cxxime::ProcessResult::REJECTED);  // Ctrl+punct not intercepted
+    ASSERT_EQ(r, cxxime::ProcessResult::TOGGLE_PUNCT);  // Ctrl+. toggles punctuation
 
     engine.finalize();
     DeleteFileA(dp.c_str());

@@ -12,6 +12,7 @@ constexpr wchar_t IPC_PIPE_BASE_NAME[] = L"\\\\.\\pipe\\CxxIME";
 enum class InputMode : uint32_t {
     PINYIN = 0,
     WUBI = 1,
+    MIXED = 2,  // 五笔拼音混输
 };
 
 struct ImeStatus {
@@ -38,6 +39,7 @@ enum class IPCCommand : uint32_t {
     SWITCH_INPUT_MODE = 12,
     GET_STATUS = 13,
     RELOAD_CONFIG = 14,
+    ADD_USER_ENTRY = 15,
 };
 
 enum class IPCStatus : uint32_t {
@@ -56,6 +58,8 @@ struct IPCRequest {
     uint32_t modifiers = 0;
     uint32_t candidate_index = 0;
     bool is_key_up = false;
+    char text[64] = {};   // ADD_USER_ENTRY: word text
+    char code[32] = {};   // ADD_USER_ENTRY: input code
 };
 
 struct IPCResponse {

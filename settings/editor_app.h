@@ -14,7 +14,7 @@ namespace settings {
 
 class EditorApp {
 public:
-    static int run(HINSTANCE hInst, float dpiScale = 1.0f);
+    static int run(HINSTANCE hInst, float dpiScale = 1.0f, bool quickPhrase = false);
 
 private:
     void create_controls(HWND hwnd);
@@ -22,10 +22,12 @@ private:
     void load_config();
     void save_config();
     void readback(HWND hwnd);
+    void add_user_entry();
 
     HWND hwnd_ = nullptr;
     HWND hList_ = nullptr;
     int panel_ = 0;
+    bool quick_phrase_ = false;
 
     // Panel container windows
     HWND hPanels_[6] = {};
@@ -50,6 +52,11 @@ private:
     // Shortcuts
     HWND hKeyCombos_[4] = {};
     HWND hCapsLock_ = nullptr;
+
+    // Dictionary panel (quick phrase)
+    HWND hPhraseText_ = nullptr;
+    HWND hPhraseCode_ = nullptr;
+    HWND hPhraseAddBtn_ = nullptr;
 
     cxxime::Config config_;
     std::wstring input_mode_ = L"拼音";

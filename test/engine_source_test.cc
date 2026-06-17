@@ -418,4 +418,59 @@ TEST(EngineSource, english_half_shape_no_intercept) {
     DeleteFileA(dp.c_str());
 }
 
+TEST(EngineSource, ascii_mode_full_shape_letter) {
+    std::string dp = punct_tmp("es_punct7.bin");
+    cxxime::Dict::create_test_dict(dp, {{"de", "的", 1}});
+    cxxime::Engine engine;
+    ASSERT_TRUE(engine.initialize(dp));
+    engine.set_trace_enabled(false);
+    engine.ascii_composer().set_ascii_mode(true);
+
+    cxxime::OutputOptions opts;
+    opts.chinese_mode = false;
+    opts.chinese_punct = false;
+    opts.full_shape = true;
+
+    // Letter 'A' without Shift → lowercase 'a' → full-width ａ (U+FF41)
+    auto result = engine.process_key(make_punct_key('A'), opts);
+    ASSERT_EQ(result, cxxime::ProcessResult::COMMITTED);
+    auto [text1, src1] = engine.take_commit_text_with_source();
+    ASSERT_EQ(text1, "\xef\xbd\x81");  // U+FF41
+
+    // Letter 'Z' without Shift → lowercase 'z' → full-width ｚ (U+FF5A)
+    auto result2 = engine.process_key(make_punct_key('Z'), opts);
+    ASSERT_EQ(result2, cxxime::ProcessResult::COMMITTED);
+    auto [text2, src2] = engine.take_commit_text_with_source();
+    ASSERT_EQ(text2, "\xef\xbd\x9a");  // U+FF5A
+
+    engine.finalize();
+    DeleteFileA(dp.c_str());
+}
+
+TEST(EngineSource, ascii_mode_full_shape_space) {
+    std::string dp = punct_tmp("es_punct8.bin");
+    cxxime::Dict::create_test_dict(dp, {{"de", "的", 1}});
+    cxxime::Engine engine;
+    ASSERT_TRUE(engine.initialize(dp));
+    engine.set_trace_enabled(false);
+    engine.ascii_composer().set_ascii_mode(true);
+
+    cxxime::OutputOptions opts;
+    opts.chinese_mode = false;
+    opts.chinese_punct = false;
+    opts.full_shape = true;
+
+    // Space should produce ideographic space U+3000
+    cxxime::KeyEvent space_key;
+    space_key.keycode = 0x20;  // VK_SPACE
+    space_key.is_key_up = false;
+    auto result = engine.process_key(space_key, opts);
+    ASSERT_EQ(result, cxxime::ProcessResult::COMMITTED);
+    auto [text, src] = engine.take_commit_text_with_source();
+    ASSERT_EQ(text, "\xe3\x80\x80");  // U+3000
+
+    engine.finalize();
+    DeleteFileA(dp.c_str());
+}
+
 RUN_ALL_TESTS()

@@ -245,6 +245,16 @@ std::pair<cxxime::IPCStatus, cxxime::ImeStatus> SessionManager::switch_input_mod
     return {cxxime::IPCStatus::OK, s.ime_status};
 }
 
+std::pair<cxxime::IPCStatus, cxxime::ImeStatus> SessionManager::switch_input_mode(uint32_t id, cxxime::InputMode mode) {
+    auto entry = lookup_session(id);
+    if (!entry) return {cxxime::IPCStatus::ERR_INVALID_SESSION, {}};
+    std::lock_guard<std::mutex> lock(entry->mutex);
+    auto& s = *entry;
+    s.ime_status.input_mode = mode;
+    s.ime_status.revision++;
+    return {cxxime::IPCStatus::OK, s.ime_status};
+}
+
 cxxime::IPCStatus SessionManager::sync_ascii_mode(uint32_t id, bool ascii_mode) {
     auto entry = lookup_session(id);
     if (!entry) return cxxime::IPCStatus::ERR_INVALID_SESSION;
@@ -319,12 +329,33 @@ ProcessKeyResult SessionManager::process_key(uint32_t id, const cxxime::KeyEvent
     ProcessKeyResult ret;
     ret.status = cxxime::IPCStatus::OK;
     ret.result = result;
+
+    // Handle toggle results — flip status and return updated ImeStatus
+    if (result == cxxime::ProcessResult::TOGGLE_SHAPE) {
+        s.ime_status.full_shape = !s.ime_status.full_shape;
+        s.ime_status.revision++;
+    } else if (result == cxxime::ProcessResult::TOGGLE_PUNCT) {
+        // In English mode, Ctrl+. also switches to Chinese mode
+        if (!s.ime_status.chinese_mode) {
+            s.ime_status.chinese_mode = true;
+            engine.ascii_composer().set_ascii_mode(false);
+        }
+        s.ime_status.chinese_punct = !s.ime_status.chinese_punct;
+        s.ime_status.revision++;
+    }
+
     ret.ime_status = s.ime_status;
 
     if (result == cxxime::ProcessResult::COMMITTED) {
         auto [raw, source] = engine.take_commit_text_with_source();
         ret.commit_text = cxxime::OutputComposer::transform(raw, opts, source,
                                                             s.config_snapshot->good_old_caps_lock);
+        ret.composing = false;
+    } else if (result == cxxime::ProcessResult::TOGGLE_PUNCT
+            || result == cxxime::ProcessResult::TOGGLE_SHAPE) {
+        // Toggle results should not carry stale preedit — clear the composition
+        // so the TSF client ends the inline display cleanly.
+        engine.clear_composition();
         ret.composing = false;
     } else {
         ret.composing = engine.context().is_composing();
@@ -419,5 +450,13 @@ cxxime::IPCStatus SessionManager::focus_out(uint32_t id) {
     std::lock_guard<std::mutex> lock(entry->mutex);
     entry->engine->clear_composition();
     entry->ime_status.revision++;
+    return cxxime::IPCStatus::OK;
+}
+
+cxxime::IPCStatus SessionManager::add_user_entry(uint32_t id, const std::string& text, const std::string& code) {
+    if (text.empty() || code.empty()) return cxxime::IPCStatus::ERR_UNKNOWN_COMMAND;
+    // Operates on shared dict — no session validation needed.
+    shared_.dict.update_frequency(text, code);
+    shared_.dict.save_user_dict();
     return cxxime::IPCStatus::OK;
 }

@@ -215,7 +215,16 @@ cxxime::IPCResponse ServerApp::handle_request(const cxxime::IPCRequest& request)
     }
 
     case cxxime::IPCCommand::SWITCH_INPUT_MODE: {
-        auto [status, ime_status] = session_mgr_.switch_input_mode(request.session_id);
+        // candidate_index carries target mode: 1=WUBI, 2=MIXED.
+        // 0 = legacy toggle behavior (backward compat with old toggle callback).
+        std::pair<cxxime::IPCStatus, cxxime::ImeStatus> result;
+        if (request.candidate_index == 0) {
+            result = session_mgr_.switch_input_mode(request.session_id);
+        } else {
+            auto mode = static_cast<cxxime::InputMode>(request.candidate_index);
+            result = session_mgr_.switch_input_mode(request.session_id, mode);
+        }
+        auto [status, ime_status] = result;
         if (status != cxxime::IPCStatus::OK) {
             response.status = status;
             break;
@@ -239,6 +248,13 @@ cxxime::IPCResponse ServerApp::handle_request(const cxxime::IPCRequest& request)
     case cxxime::IPCCommand::RELOAD_CONFIG:
         session_mgr_.reload_config();
         break;
+
+    case cxxime::IPCCommand::ADD_USER_ENTRY: {
+        std::string text(request.text, strnlen(request.text, sizeof(request.text)));
+        std::string code(request.code, strnlen(request.code, sizeof(request.code)));
+        response.status = session_mgr_.add_user_entry(request.session_id, text, code);
+        break;
+    }
 
     default:
         response.status = cxxime::IPCStatus::ERR_UNKNOWN_COMMAND;

@@ -10,6 +10,11 @@
 
 static char temp_path[MAX_PATH] = {};
 
+static bool _status_init = []() {
+    GetTempPathA(MAX_PATH, temp_path);
+    return true;
+}();
+
 static std::string make_temp_path(const char* name) {
     return std::string(temp_path) + "\\" + name;
 }

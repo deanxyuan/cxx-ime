@@ -10,6 +10,7 @@ target_include_directories(cxxime-settings PRIVATE
 
 target_link_libraries(cxxime-settings PRIVATE
     cxxime-engine
+    cxxime-ipc
     cxxime-shared
     comctl32.lib
 )
