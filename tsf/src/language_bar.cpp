@@ -125,14 +125,64 @@ STDMETHODIMP CLangBarItemButton::OnClick(TfLBIClick click, POINT pt, const RECT*
 
 STDMETHODIMP CLangBarItemButton::InitMenu(ITfMenu* pMenu) {
     if (!pMenu) return E_INVALIDARG;
-    pMenu->AddMenuItem(0, TF_LBMENUF_SUBMENU, nullptr, nullptr,
-                       L"显示状态栏", 5, nullptr);
+
+    // 纯五笔模式
+    pMenu->AddMenuItem(1, 0, nullptr, nullptr, L"纯五笔模式", 1, nullptr);
+
+    // 纯拼音模式
+    pMenu->AddMenuItem(2, 0, nullptr, nullptr, L"纯拼音模式", 2, nullptr);
+
+    // 五笔拼音混输
+    pMenu->AddMenuItem(3, 0, nullptr, nullptr, L"五笔拼音混输", 3, nullptr);
+
+    // 分隔线
+    pMenu->AddMenuItem(4, TF_LBMENUF_SEPARATOR, nullptr, nullptr, nullptr, 0, nullptr);
+
+    // 快捷造词
+    pMenu->AddMenuItem(5, 0, nullptr, nullptr, L"快捷造词", 4, nullptr);
+
+    // 分隔线
+    pMenu->AddMenuItem(6, TF_LBMENUF_SEPARATOR, nullptr, nullptr, nullptr, 0, nullptr);
+
+    // 隐藏状态栏/显示状态栏（动态文本）
+    const wchar_t* status_text = _status_visible ? L"隐藏状态栏" : L"显示状态栏";
+    pMenu->AddMenuItem(7, 0, nullptr, nullptr, status_text, 5, nullptr);
+
+    // 设置
+    pMenu->AddMenuItem(8, 0, nullptr, nullptr, L"设置", 6, nullptr);
+
+    // 分隔线
+    pMenu->AddMenuItem(9, TF_LBMENUF_SEPARATOR, nullptr, nullptr, nullptr, 0, nullptr);
+
+    // 关于
+    pMenu->AddMenuItem(10, 0, nullptr, nullptr, L"关于", 7, nullptr);
+
     return S_OK;
 }
 
 STDMETHODIMP CLangBarItemButton::OnMenuSelect(UINT wID) {
-    if (wID == 5 && _show_status_cb) {
-        _show_status_cb();
+    switch (wID) {
+    case 1:  // 纯五笔模式
+        if (_switch_input_mode_cb) _switch_input_mode_cb(1);
+        break;
+    case 2:  // 纯拼音模式
+        if (_switch_input_mode_cb) _switch_input_mode_cb(0);
+        break;
+    case 3:  // 五笔拼音混输
+        if (_switch_input_mode_cb) _switch_input_mode_cb(2);
+        break;
+    case 4:  // 快捷造词
+        if (_quick_phrase_cb) _quick_phrase_cb();
+        break;
+    case 5:  // 隐藏状态栏/显示状态栏
+        if (_show_status_cb) _show_status_cb();
+        break;
+    case 6:  // 设置
+        if (_open_settings_cb) _open_settings_cb();
+        break;
+    case 7:  // 关于
+        if (_about_cb) _about_cb();
+        break;
     }
     return S_OK;
 }
@@ -218,6 +268,34 @@ void CLangBarItemButton::set_show_status_callback(ShowStatusBarCallback cb) {
 
 void CLangBarItemButton::set_menu_callback(MenuCallback cb) {
     _menu_callback = std::move(cb);
+}
+
+void CLangBarItemButton::set_toggle_input_mode_callback(ToggleInputModeCallback cb) {
+    _toggle_input_mode_cb = std::move(cb);
+}
+
+void CLangBarItemButton::set_open_settings_callback(OpenSettingsCallback cb) {
+    _open_settings_cb = std::move(cb);
+}
+
+void CLangBarItemButton::set_reload_config_callback(ReloadConfigCallback cb) {
+    _reload_config_cb = std::move(cb);
+}
+
+void CLangBarItemButton::set_about_callback(AboutCallback cb) {
+    _about_cb = std::move(cb);
+}
+
+void CLangBarItemButton::set_switch_input_mode_callback(SwitchInputModeCallback cb) {
+    _switch_input_mode_cb = std::move(cb);
+}
+
+void CLangBarItemButton::set_quick_phrase_callback(QuickPhraseCallback cb) {
+    _quick_phrase_cb = std::move(cb);
+}
+
+void CLangBarItemButton::set_status_visible(bool visible) {
+    _status_visible = visible;
 }
 
 // CLangBarImeButton implementation

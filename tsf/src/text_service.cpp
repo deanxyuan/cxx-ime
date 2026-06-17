@@ -454,13 +454,18 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
                 _statusController.show();
             }
         }
-        // Set language bar callback for "显示状态栏"
+        // Set language bar callback for "显示/隐藏状态栏"
         if (_modeButton) {
             _modeButton->set_show_status_callback([this]() {
-                _config.status_window.enable = true;
+                _config.status_window.enable = !_config.status_window.enable;
                 _statusController.update_config(_config);
                 _config.save(cxxime::user_data_path("default.json"));
-                _statusController.show();
+                if (_config.status_window.enable) {
+                    _statusController.show();
+                } else {
+                    _statusController.hide();
+                }
+                _modeButton->set_status_visible(_config.status_window.enable);
             });
         }
 
@@ -476,6 +481,66 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
                     _sync_ime_status(resp.ime_status);
                 }
             });
+
+            // Set toggle input mode callback (拼音/五笔切换)
+            _modeButton->set_toggle_input_mode_callback([this]() {
+                CXXIME_LOG(L"toggle_input_mode_callback: sessionId=%u", _sessionId);
+                cxxime::IPCResponse resp = {};
+                _client.switch_input_mode(_sessionId, resp);
+                if (resp.status == cxxime::IPCStatus::OK) {
+                    _sync_ime_status(resp.ime_status);
+                }
+            });
+
+            // Set open settings callback
+            _modeButton->set_open_settings_callback([]() {
+                HWND existing = FindWindowW(nullptr, L"CxxIME Settings");
+                if (existing) {
+                    SetForegroundWindow(existing);
+                    return;
+                }
+                wchar_t dll_path[MAX_PATH] = {};
+                GetModuleFileNameW(g_hInst, dll_path, MAX_PATH);
+                wchar_t* last_slash = wcsrchr(dll_path, L'\\');
+                if (last_slash) *(last_slash + 1) = L'\0';
+                std::wstring settings_path = std::wstring(dll_path) + L"cxxime-settings.exe";
+                STARTUPINFOW si = {};
+                si.cb = sizeof(si);
+                PROCESS_INFORMATION pi = {};
+                CreateProcessW(settings_path.c_str(), nullptr, nullptr, nullptr,
+                               FALSE, 0, nullptr, nullptr, &si, &pi);
+                if (pi.hProcess) {
+                    CloseHandle(pi.hProcess);
+                    CloseHandle(pi.hThread);
+                }
+            });
+
+            // Set about callback
+            _modeButton->set_about_callback([]() {
+                MessageBoxW(nullptr,
+                            L"CxxIME 轻量级输入法\n"
+                            L"版本: 1.0.0\n\n"
+                            L"© 2026 CxxIME Contributors\n"
+                            L"Apache License 2.0",
+                            L"关于 CxxIME",
+                            MB_OK | MB_ICONINFORMATION);
+            });
+
+            // Set switch input mode callback (纯拼音/纯五笔/混输)
+            _modeButton->set_switch_input_mode_callback([this](int mode) {
+                CXXIME_LOG(L"switch_input_mode_callback: mode=%d, sessionId=%u", mode, _sessionId);
+                // TODO: 实现输入模式切换
+                // mode: 0=纯拼音, 1=纯五笔, 2=混输
+            });
+
+            // Set quick phrase callback (快捷造词)
+            _modeButton->set_quick_phrase_callback([this]() {
+                CXXIME_LOG(L"quick_phrase_callback: sessionId=%u", _sessionId);
+                // TODO: 实现快捷造词功能
+            });
+
+            // Set status visible state
+            _modeButton->set_status_visible(_config.status_window.enable);
         }
     }
 
