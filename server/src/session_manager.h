@@ -66,6 +66,7 @@ public:
     std::pair<cxxime::IPCStatus, cxxime::ImeStatus> toggle_shape(uint32_t id);
     std::pair<cxxime::IPCStatus, cxxime::ImeStatus> toggle_punct(uint32_t id);
     std::pair<cxxime::IPCStatus, cxxime::ImeStatus> switch_input_mode(uint32_t id);
+    std::pair<cxxime::IPCStatus, cxxime::ImeStatus> switch_input_mode(uint32_t id, cxxime::InputMode mode);
     cxxime::IPCStatus sync_ascii_mode(uint32_t id, bool ascii_mode);
     cxxime::IPCStatus sync_caps_lock(uint32_t id, bool caps_lock);
 
@@ -74,6 +75,8 @@ public:
     ProcessKeyResult commit_composition(uint32_t id);
     cxxime::IPCStatus clear_composition(uint32_t id);
     cxxime::IPCStatus focus_out(uint32_t id);
+
+    cxxime::IPCStatus add_user_entry(uint32_t id, const std::string& text, const std::string& code);
 
 private:
     cxxime::Engine* get_engine(uint32_t id);

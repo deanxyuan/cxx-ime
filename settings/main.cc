@@ -18,11 +18,14 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int) {
     SetProcessDpiAwareness(PROCESS_PER_MONITOR_DPI_AWARE);
     float dpiScale = get_dpi_scale();
 
+    bool quickPhrase = false;
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
     if (argv) {
-        for (int i = 1; i < argc - 1; ++i) {
-            if (wcscmp(argv[i], L"--data") == 0 && i + 1 < argc) {
+        for (int i = 1; i < argc; ++i) {
+            if (wcscmp(argv[i], L"--quick-phrase") == 0) {
+                quickPhrase = true;
+            } else if (wcscmp(argv[i], L"--data") == 0 && i + 1 < argc) {
                 std::string dir;
                 int len = WideCharToMultiByte(CP_UTF8, 0, argv[i + 1], -1,
                                               nullptr, 0, nullptr, nullptr);
@@ -32,11 +35,11 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int) {
                                        &dir[0], len, nullptr, nullptr);
                 }
                 cxxime::set_data_dir(dir);
-                break;
+                ++i;
             }
         }
         LocalFree(argv);
     }
 
-    return cxxime::settings::EditorApp::run(hInst, dpiScale);
+    return cxxime::settings::EditorApp::run(hInst, dpiScale, quickPhrase);
 }

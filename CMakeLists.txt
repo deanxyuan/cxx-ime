@@ -47,6 +47,7 @@ if(CXXIME_BUILD_TOOLS)
     add_subdirectory(tools/status_window_tool)
     add_subdirectory(tools/query_bench)
     add_subdirectory(tools/tray_icon_tool)
+    add_subdirectory(tools/punct_test)
 endif()
 
 add_subdirectory(settings)

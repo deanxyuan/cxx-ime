@@ -136,26 +136,23 @@ STDMETHODIMP CLangBarItemButton::InitMenu(ITfMenu* pMenu) {
     pMenu->AddMenuItem(3, 0, nullptr, nullptr, L"五笔拼音混输", 3, nullptr);
 
     // 分隔线
-    pMenu->AddMenuItem(4, TF_LBMENUF_SEPARATOR, nullptr, nullptr, nullptr, 0, nullptr);
+    pMenu->AddMenuItem(0, TF_LBMENUF_SEPARATOR, nullptr, nullptr, nullptr, 0, nullptr);
 
     // 快捷造词
-    pMenu->AddMenuItem(5, 0, nullptr, nullptr, L"快捷造词", 4, nullptr);
-
-    // 分隔线
-    pMenu->AddMenuItem(6, TF_LBMENUF_SEPARATOR, nullptr, nullptr, nullptr, 0, nullptr);
+    pMenu->AddMenuItem(4, 0, nullptr, nullptr, L"快捷造词", 4, nullptr);
 
     // 隐藏状态栏/显示状态栏（动态文本）
     const wchar_t* status_text = _status_visible ? L"隐藏状态栏" : L"显示状态栏";
-    pMenu->AddMenuItem(7, 0, nullptr, nullptr, status_text, 5, nullptr);
+    pMenu->AddMenuItem(5, 0, nullptr, nullptr, status_text, 5, nullptr);
 
     // 设置
-    pMenu->AddMenuItem(8, 0, nullptr, nullptr, L"设置", 6, nullptr);
+    pMenu->AddMenuItem(6, 0, nullptr, nullptr, L"设置", 6, nullptr);
 
     // 分隔线
-    pMenu->AddMenuItem(9, TF_LBMENUF_SEPARATOR, nullptr, nullptr, nullptr, 0, nullptr);
+    pMenu->AddMenuItem(0, TF_LBMENUF_SEPARATOR, nullptr, nullptr, nullptr, 0, nullptr);
 
     // 关于
-    pMenu->AddMenuItem(10, 0, nullptr, nullptr, L"关于", 7, nullptr);
+    pMenu->AddMenuItem(7, 0, nullptr, nullptr, L"关于", 7, nullptr);
 
     return S_OK;
 }
@@ -352,8 +349,12 @@ STDMETHODIMP CLangBarImeButton::Show(BOOL fShow) { return S_OK; }
 
 STDMETHODIMP CLangBarImeButton::GetTooltipString(BSTR* pbstrToolTip) {
     if (!pbstrToolTip) return E_INVALIDARG;
-    *pbstrToolTip = SysAllocString(
-        (_input_mode == cxxime::InputMode::PINYIN) ? L"拼音输入" : L"五笔输入");
+    const wchar_t* tip = L"拼音输入";
+    if (_input_mode == cxxime::InputMode::WUBI)
+        tip = L"五笔输入";
+    else if (_input_mode == cxxime::InputMode::MIXED)
+        tip = L"五笔拼音混输";
+    *pbstrToolTip = SysAllocString(tip);
     return S_OK;
 }
 

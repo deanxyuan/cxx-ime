@@ -5,6 +5,7 @@
 #include <commdlg.h>
 #include <cxxime/data_path.h>
 #include <cxxime/config_notify.h>
+#include <cxxime/ipc_client.h>
 
 #pragma comment(lib, "comctl32.lib")
 
@@ -121,10 +122,11 @@ void set_check(HWND c, bool v) { SendMessageW(c, BM_SETCHECK, v ? BST_CHECKED : 
 
 // ─── Run ───────────────────────────────────────────────────────────────
 
-int EditorApp::run(HINSTANCE hInst, float dpiScale) {
+int EditorApp::run(HINSTANCE hInst, float dpiScale, bool quickPhrase) {
     g_dpi = dpiScale;
     EditorApp app;
     g_app = &app;
+    app.quick_phrase_ = quickPhrase;
 
     INITCOMMONCONTROLSEX icc = {sizeof(icc), ICC_STANDARD_CLASSES};
     InitCommonControlsEx(&icc);
@@ -312,6 +314,39 @@ void EditorApp::create_controls(HWND hwnd) {
     mk_dict_row(L"五笔词典:", dd + "wubi86.dict.bin", t + kRowH * 2);
     mk_dict_row(L"用户词典:", dd + "user.tsv", t + kRowH * 3);
 
+    // Quick phrase section
+    int phraseY = t + kRowH * 5;
+    HFONT hPhraseTitle = CreateFontW(-S(kFontPt + 2), 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
+                                     DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                                     CLEARTYPE_QUALITY, 0, L"Microsoft YaHei UI");
+    HWND hPhraseLabel = CreateWindowExW(0, L"STATIC", L"快捷造词", WS_CHILD | WS_VISIBLE | SS_LEFT,
+                                        kPanelPadLeft, phraseY, S(200), kCtrlH, p4,
+                                        nullptr, GetModuleHandle(nullptr), nullptr);
+    SendMessageW(hPhraseLabel, WM_SETFONT, (WPARAM)hPhraseTitle, TRUE);
+
+    int phraseRow1Y = phraseY + kRowH;
+    int phraseRow2Y = phraseY + kRowH * 2;
+    int phraseEditW = S(200);
+    cx = make_label(L"词语:", kPanelPadLeft, phraseRow1Y, p4);
+    hPhraseText_ = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
+                                   WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
+                                   cx, phraseRow1Y, phraseEditW, kCtrlH, p4, (HMENU)4001,
+                                   GetModuleHandle(nullptr), nullptr);
+    SendMessageW(hPhraseText_, WM_SETFONT, (WPARAM)get_font(), TRUE);
+
+    cx = make_label(L"编码:", kPanelPadLeft, phraseRow2Y, p4);
+    hPhraseCode_ = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
+                                   WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
+                                   cx, phraseRow2Y, phraseEditW, kCtrlH, p4, (HMENU)4002,
+                                   GetModuleHandle(nullptr), nullptr);
+    SendMessageW(hPhraseCode_, WM_SETFONT, (WPARAM)get_font(), TRUE);
+
+    hPhraseAddBtn_ = CreateWindowExW(0, L"BUTTON", L"添加",
+                                     WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+                                     cx + phraseEditW + S(12), phraseRow2Y, S(80), kCtrlH, p4,
+                                     (HMENU)4003, GetModuleHandle(nullptr), nullptr);
+    SendMessageW(hPhraseAddBtn_, WM_SETFONT, (WPARAM)get_font(), TRUE);
+
     // ── Panel 5: About ──────────────────────────────────────────────
     HWND p5 = hPanels_[5]; t = kPanelPadTop;
     HFONT hAboutTitle = CreateFontW(-S(kFontPt + 2), 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
@@ -421,7 +456,7 @@ void EditorApp::load_config() {
     }
     set_check(hCapsLock_, config_.good_old_caps_lock);
 
-    show_panel(0);
+    show_panel(quick_phrase_ ? 4 : 0);
 }
 
 // ─── Readback ──────────────────────────────────────────────────────────
@@ -492,6 +527,48 @@ void EditorApp::save_config() {
 
     // Notify TSF/Server that config has changed
     cxxime::notify_config_changed();
+}
+
+void EditorApp::add_user_entry() {
+    wchar_t wtext[64] = {};
+    wchar_t wcode[32] = {};
+    GetWindowTextW(hPhraseText_, wtext, 64);
+    GetWindowTextW(hPhraseCode_, wcode, 32);
+
+    if (wtext[0] == L'\0' || wcode[0] == L'\0') {
+        MessageBoxW(hwnd_, L"请输入词语和编码。", L"CxxIME", MB_OK | MB_ICONWARNING);
+        return;
+    }
+
+    auto w2s = [](const wchar_t* w) {
+        int len = WideCharToMultiByte(CP_UTF8, 0, w, -1, nullptr, 0, nullptr, nullptr);
+        std::string s(len - 1, '\0');
+        WideCharToMultiByte(CP_UTF8, 0, w, -1, &s[0], len, nullptr, nullptr);
+        return s;
+    };
+
+    std::string text = w2s(wtext);
+    std::string code = w2s(wcode);
+
+    cxxime::IpcClient client;
+    if (!client.connect()) {
+        MessageBoxW(hwnd_, L"无法连接到 CxxIME 服务。请确保输入法正在运行。",
+                    L"CxxIME", MB_OK | MB_ICONERROR);
+        return;
+    }
+
+    cxxime::IPCResponse resp = {};
+    bool ok = client.add_user_entry(0, text.c_str(), code.c_str(), resp);
+    client.disconnect();
+
+    if (ok && resp.status == cxxime::IPCStatus::OK) {
+        SetWindowTextW(hPhraseText_, L"");
+        SetWindowTextW(hPhraseCode_, L"");
+        std::wstring msg = L"已添加词条: " + std::wstring(wtext) + L" (" + std::wstring(wcode) + L")";
+        MessageBoxW(hwnd_, msg.c_str(), L"CxxIME", MB_OK | MB_ICONINFORMATION);
+    } else {
+        MessageBoxW(hwnd_, L"添加词条失败。", L"CxxIME", MB_OK | MB_ICONERROR);
+    }
 }
 
 // ─── Window proc ───────────────────────────────────────────────────────
@@ -646,6 +723,9 @@ LRESULT CALLBACK EditorApp::wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             }
             break;
         }
+        case 4003: // Add user entry button
+            a->add_user_entry();
+            break;
         case 1000: // input mode combo
             if (HIWORD(wp) == CBN_SELCHANGE) {
                 wchar_t b[32];

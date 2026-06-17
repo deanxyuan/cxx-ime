@@ -34,8 +34,10 @@ public:
     bool toggle_shape(uint32_t session_id, IPCResponse& response);
     bool toggle_punct(uint32_t session_id, IPCResponse& response);
     bool switch_input_mode(uint32_t session_id, IPCResponse& response);
+    bool switch_input_mode(uint32_t session_id, InputMode mode, IPCResponse& response);
     bool get_status(uint32_t session_id, IPCResponse& response);
     bool reload_config(uint32_t session_id, IPCResponse& response);
+    bool add_user_entry(uint32_t session_id, const char* text, const char* code, IPCResponse& response);
 
     int64_t last_ipc_us() const { return last_ipc_us_; }
 

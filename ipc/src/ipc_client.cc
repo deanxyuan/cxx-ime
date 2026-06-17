@@ -219,6 +219,14 @@ bool IpcClient::switch_input_mode(uint32_t session_id, IPCResponse& response) {
     return send_request(req, response);
 }
 
+bool IpcClient::switch_input_mode(uint32_t session_id, InputMode mode, IPCResponse& response) {
+    IPCRequest req = {};
+    req.command = IPCCommand::SWITCH_INPUT_MODE;
+    req.session_id = session_id;
+    req.candidate_index = static_cast<uint32_t>(mode);
+    return send_request(req, response);
+}
+
 bool IpcClient::get_status(uint32_t session_id, IPCResponse& response) {
     IPCRequest req = {};
     req.command = IPCCommand::GET_STATUS;
@@ -230,6 +238,15 @@ bool IpcClient::reload_config(uint32_t session_id, IPCResponse& response) {
     IPCRequest req = {};
     req.command = IPCCommand::RELOAD_CONFIG;
     req.session_id = session_id;
+    return send_request(req, response);
+}
+
+bool IpcClient::add_user_entry(uint32_t session_id, const char* text, const char* code, IPCResponse& response) {
+    IPCRequest req = {};
+    req.command = IPCCommand::ADD_USER_ENTRY;
+    req.session_id = session_id;
+    if (text) strncpy(req.text, text, sizeof(req.text) - 1);
+    if (code) strncpy(req.code, code, sizeof(req.code) - 1);
     return send_request(req, response);
 }
 

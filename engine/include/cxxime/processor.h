@@ -12,6 +12,8 @@ enum class ProcessResult {
     ACCEPTED,
     REJECTED,
     COMMITTED,
+    TOGGLE_SHAPE,   // full/half shape toggle (Shift+Space)
+    TOGGLE_PUNCT,   // Chinese/English punctuation toggle (Ctrl+.)
 };
 
 class PinyinProcessor {

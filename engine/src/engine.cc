@@ -101,6 +101,18 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
 
     CXXIME_LOG(L"Engine::process_key: after ascii_composer, committed_text='%S'", context_.committed_text.c_str());
 
+    // Phase 2.3: keyboard shortcuts for toggles
+    if (!event.is_key_up) {
+        // Shift+Space → toggle full/half shape
+        if (event.keycode == 0x20 && event.is_shift() && !event.is_ctrl() && !event.is_alt()) {
+            return ProcessResult::TOGGLE_SHAPE;
+        }
+        // Ctrl+. → toggle Chinese/English punctuation
+        if (event.keycode == 0xBE && event.is_ctrl() && !event.is_alt()) {
+            return ProcessResult::TOGGLE_PUNCT;
+        }
+    }
+
     // Check if AsciiComposer committed text (e.g. Shift toggle with commit_text)
     if (!context_.committed_text.empty()) {
         context_.set_commit_source(CommitSource::kRawCode);
@@ -131,7 +143,9 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
             char ch = static_cast<char>(vk);
             if (!event.is_shift())
                 ch = static_cast<char>(tolower(ch));
-            context_.committed_text = std::string(1, ch);
+            context_.committed_text = opts.full_shape
+                ? OutputComposer::to_full_width(ch)
+                : std::string(1, ch);
             context_.set_commit_source(CommitSource::kRawCode);
             if (ascii_composer_.is_temporary_ascii()) {
                 ascii_composer_.set_ascii_mode(false);
@@ -143,9 +157,11 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
             return ProcessResult::COMMITTED;
         }
 
-        // Space: commit a space
+        // Space: commit a space (full-width ideographic space when full_shape)
         if (vk == 0x20) {  // VK_SPACE
-            context_.committed_text = " ";
+            context_.committed_text = opts.full_shape
+                ? OutputComposer::to_full_width(' ')
+                : " ";
             context_.set_commit_source(CommitSource::kRawCode);
             if (trace_enabled_) {
                 auto total_end = std::chrono::steady_clock::now();
@@ -401,14 +417,12 @@ bool Engine::handle_full_shape(const KeyEvent& event, Context& context, const Ou
     // Step 1: VK → character
     char ch = vk_to_char(event.keycode, event.is_shift());
     if (ch == '\0') {
-        // vk_to_char only handles OEM punctuation; also handle letters and digits
+        // vk_to_char handles OEM punctuation + digit keys; only letters remain
         uint32_t vk = event.keycode;
         if (vk >= 'A' && vk <= 'Z') {
             ch = event.is_shift()
                 ? static_cast<char>(vk)
                 : static_cast<char>(vk + 32);  // to lowercase
-        } else if (vk >= '0' && vk <= '9') {
-            ch = static_cast<char>(vk);
         } else {
             return false;
         }
@@ -470,9 +484,7 @@ std::string Engine::get_commit_text() {
 
 std::pair<std::string, CommitSource> Engine::take_commit_text_with_source() {
     auto result = std::make_pair(std::move(context_.committed_text), context_.commit_source());
-    context_.committed_text.clear();
-    context_.set_commit_source(CommitSource::kRawCode);
-    // 不清空 pinyin_buffer 和 candidates —— 由调用方决定是否清空
+    context_.reset();
     return result;
 }
 

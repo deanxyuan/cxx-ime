@@ -128,6 +128,7 @@ private:
     bool _composing = false;
     bool _chinese_mode = true;
     bool _caps_lock = false;
+    bool _activated = false;
     bool _fTestKeyDownPending = false;
     bool _fTestKeyUpPending = false;
     cxxime::CandidateWindow _candidateWindow;

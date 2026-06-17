@@ -494,7 +494,7 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
 
             // Set open settings callback
             _modeButton->set_open_settings_callback([]() {
-                HWND existing = FindWindowW(nullptr, L"CxxIME Settings");
+                HWND existing = FindWindowW(nullptr, L"CxxIME 设置");
                 if (existing) {
                     SetForegroundWindow(existing);
                     return;
@@ -529,14 +529,37 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
             // Set switch input mode callback (纯拼音/纯五笔/混输)
             _modeButton->set_switch_input_mode_callback([this](int mode) {
                 CXXIME_LOG(L"switch_input_mode_callback: mode=%d, sessionId=%u", mode, _sessionId);
-                // TODO: 实现输入模式切换
-                // mode: 0=纯拼音, 1=纯五笔, 2=混输
+                cxxime::IPCResponse resp = {};
+                _client.switch_input_mode(_sessionId, static_cast<cxxime::InputMode>(mode), resp);
+                if (resp.status == cxxime::IPCStatus::OK) {
+                    _sync_ime_status(resp.ime_status);
+                }
             });
 
             // Set quick phrase callback (快捷造词)
             _modeButton->set_quick_phrase_callback([this]() {
                 CXXIME_LOG(L"quick_phrase_callback: sessionId=%u", _sessionId);
-                // TODO: 实现快捷造词功能
+                HWND existing = FindWindowW(nullptr, L"CxxIME 设置");
+                if (existing) {
+                    // TODO: send message to switch to dictionary panel
+                    SetForegroundWindow(existing);
+                    return;
+                }
+                wchar_t dll_path[MAX_PATH] = {};
+                GetModuleFileNameW(g_hInst, dll_path, MAX_PATH);
+                wchar_t* last_slash = wcsrchr(dll_path, L'\\');
+                if (last_slash) *(last_slash + 1) = L'\0';
+                std::wstring settings_path = std::wstring(dll_path) + L"cxxime-settings.exe";
+                std::wstring cmd_line = L"\"" + settings_path + L"\" --quick-phrase";
+                STARTUPINFOW si = {};
+                si.cb = sizeof(si);
+                PROCESS_INFORMATION pi = {};
+                CreateProcessW(nullptr, &cmd_line[0], nullptr, nullptr,
+                               FALSE, 0, nullptr, nullptr, &si, &pi);
+                if (pi.hProcess) {
+                    CloseHandle(pi.hProcess);
+                    CloseHandle(pi.hThread);
+                }
             });
 
             // Set status visible state
@@ -548,13 +571,16 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
     if (_client.get_status(_sessionId, resp) && resp.status == cxxime::IPCStatus::OK) {
         _sync_ime_status(resp.ime_status);
     }
+    _activated = true;
     return S_OK;
 }
 
 STDMETHODIMP TextService::Deactivate() {
     CXXIME_LOG(L"Deactivate: sessionId=%u", _sessionId);
+    _activated = false;
 
-    // Destroy status window first — avoid clicks during IPC teardown
+    // Hide status window immediately, then destroy — avoid clicks during IPC teardown
+    _statusController.hide();
     _statusController.shutdown();
 
     if (_sessionId) {
@@ -961,7 +987,7 @@ STDMETHODIMP TextService::OnCompositionTerminated(TfEditCookie ecWrite, ITfCompo
 
 // ITfThreadFocusSink
 STDMETHODIMP TextService::OnSetThreadFocus() {
-    if (_statusController.is_initialized())
+    if (_activated && _statusController.is_initialized())
         _statusController.show();
     return S_OK;
 }

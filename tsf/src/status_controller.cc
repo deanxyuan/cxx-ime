@@ -170,7 +170,7 @@ void StatusController::toggle_chinese_punct() {
 
 void StatusController::open_settings() {
     // Try to find existing settings window
-    HWND existing = FindWindowW(nullptr, L"CxxIME Settings");
+    HWND existing = FindWindowW(nullptr, L"CxxIME 设置");
     if (existing) {
         SetForegroundWindow(existing);
         return;
