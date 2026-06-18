@@ -16,9 +16,17 @@ enum class ProcessResult {
     TOGGLE_PUNCT,   // Chinese/English punctuation toggle (Ctrl+.)
 };
 
-class PinyinProcessor {
+// Abstract processor interface
+class IProcessor {
 public:
-    ProcessResult process_key(const KeyEvent& event, Context& context);
+    virtual ~IProcessor() = default;
+    virtual ProcessResult process_key(const KeyEvent& event, Context& context) = 0;
+};
+
+// Pinyin processor implementation
+class PinyinProcessor : public IProcessor {
+public:
+    ProcessResult process_key(const KeyEvent& event, Context& context) override;
 };
 
 } // namespace cxxime

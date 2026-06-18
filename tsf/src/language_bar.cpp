@@ -123,9 +123,13 @@ STDMETHODIMP CLangBarItemButton::OnClick(TfLBIClick click, POINT pt, const RECT*
         HMENU hMenu = CreatePopupMenu();
         if (!hMenu) return E_FAIL;
 
-        AppendMenuW(hMenu, MF_STRING, 1, L"纯五笔模式");
-        AppendMenuW(hMenu, MF_STRING, 2, L"纯拼音模式");
-        AppendMenuW(hMenu, MF_STRING, 3, L"五笔拼音混输");
+        UINT wubi_flags = MF_STRING | ((_input_mode == cxxime::InputMode::WUBI) ? MF_CHECKED : 0);
+        UINT pinyin_flags = MF_STRING | ((_input_mode == cxxime::InputMode::PINYIN) ? MF_CHECKED : 0);
+        UINT mixed_flags = MF_STRING | ((_input_mode == cxxime::InputMode::MIXED) ? MF_CHECKED : 0);
+
+        AppendMenuW(hMenu, wubi_flags, 1, L"纯五笔模式");
+        AppendMenuW(hMenu, pinyin_flags, 2, L"纯拼音模式");
+        AppendMenuW(hMenu, mixed_flags, 3, L"五笔拼音混输");
         AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
         AppendMenuW(hMenu, MF_STRING, 4, L"快捷造词");
         AppendMenuW(hMenu, MF_STRING, 5, _status_visible ? L"隐藏状态栏" : L"显示状态栏");
@@ -271,6 +275,7 @@ void CLangBarItemButton::update_icon(bool chinese_mode) {
 }
 
 void CLangBarItemButton::update_from_status(const cxxime::ImeStatus& status) {
+    _input_mode = status.input_mode;
     if (_chinese_mode != status.chinese_mode || _caps_lock != status.caps_lock) {
         _chinese_mode = status.chinese_mode;
         _caps_lock = status.caps_lock;

@@ -17,6 +17,6 @@ speller:
     - derive/([aeiou])ng$/$1gn/           # ang→agn 等
 
     # 模糊音 (可选扩展, librime 默认未启用)
-    # - derive/^([zcs])h/$1/              # zh↔z
-    # - fuzz/^n(.*)/l$1/                  # n↔l
-    # - derive/^(.*)eng$/$1en/            # eng↔en
+    - derive/^([zcs])h/$1/              # zh↔z
+    - fuzz/^n(.*)/l$1/                  # n↔l
+    - derive/^(.*)eng$/$1en/            # eng↔en

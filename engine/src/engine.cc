@@ -2,7 +2,11 @@
 
 #include <cxxime/engine.h>
 #include <cxxime/output_composer.h>
+#include <cxxime/wubi_processor.h>
+#include <cxxime/wubi_translator.h>
+#include <cxxime/mixed_translator.h>
 #include <windows.h>
+#include <algorithm>
 #include <cctype>
 #include <chrono>
 #include <cxxime/logging.h>
@@ -33,21 +37,25 @@ bool Engine::initialize(const std::string& dict_path, const std::string& config_
 // Shared-resource: references pre-loaded data (server sessions).
 bool Engine::initialize(Dict& dict, SpellingsIndex& spellings,
                         Syllabifier* syllabifier, const Config& config) {
-    dict_ = &dict;
+    pinyin_dict_ = &dict;
     spellings_ = &spellings;
     syllabifier_ = syllabifier;
     config_ = &config;
 
-    translator_.set_dict(dict_);
+    // Create processor and translator instances
+    processor_ = std::make_unique<PinyinProcessor>();
+    auto pinyin_trans = std::make_unique<PinyinTranslator>();
+    pinyin_trans->set_dict(pinyin_dict_);
     if (syllabifier_) {
-        translator_.set_syllabifier(syllabifier_);
+        pinyin_trans->set_syllabifier(syllabifier_);
     }
-    if (dict_->has_short_cache()) {
-        translator_.set_short_cache(&dict_->short_cache());
+    if (pinyin_dict_->has_short_cache()) {
+        pinyin_trans->set_short_cache(&pinyin_dict_->short_cache());
         CXXIME_LOG(L"Engine: short_cache loaded");
     } else {
         CXXIME_LOG(L"Engine: short_cache NOT loaded");
     }
+    translator_ = std::move(pinyin_trans);
 
     init_per_session(config);
     return true;
@@ -58,7 +66,7 @@ void Engine::init_per_session(const Config& config) {
 }
 
 void Engine::finalize() {
-    if (dict_ == &owned_dict_) {
+    if (pinyin_dict_ == &owned_dict_) {
         owned_dict_.close();
     }
     context_.reset();
@@ -213,7 +221,7 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
     if (trace_enabled_) {
         t0 = std::chrono::steady_clock::now();
     }
-    auto result = processor_.process_key(event, context_);
+    auto result = processor_->process_key(event, context_);
     if (trace_enabled_) {
         t1 = std::chrono::steady_clock::now();
         trace_.processor_us = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
@@ -269,12 +277,24 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
             // Create a budget tuned for this input length, with per-query deadline
             QueryBudget effective_budget = make_budget((int)context_.pinyin_buffer.size(), config_->page_size);
             effective_budget.deadline = per_query_deadline;
-            auto page = translator_.translate(context_.pinyin_buffer, context_.page_index, config_->page_size,
+            auto page = translator_->translate(context_.pinyin_buffer, context_.page_index, config_->page_size,
                                               trace_enabled_ ? &trace_ : nullptr, &effective_budget, &scratch_);
             context_.update_candidates(std::move(page));
         }
         if (trace_enabled_) {
             trace_.candidate_count = (int)context_.candidates.candidates.size();
+        }
+
+        // 五笔/混输模式：四码唯一候选自动上屏
+        if ((mode_ == InputMode::WUBI || mode_ == InputMode::MIXED) && result == ProcessResult::ACCEPTED) {
+            if (context_.pinyin_buffer.size() == 4 &&
+                context_.candidates.candidates.size() == 1) {
+                context_.committed_text = context_.candidates.candidates[0].text;
+                context_.set_commit_source(CommitSource::kCandidate);
+                context_.pinyin_buffer.clear();
+                context_.candidates = {};
+                result = ProcessResult::COMMITTED;
+            }
         }
     }
     if (trace_enabled_) {
@@ -288,16 +308,29 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
     // Phase 6: If committed, update user frequency and recent cache
     if (result == ProcessResult::COMMITTED && !context_.committed_text.empty()) {
         std::string code = context_.pinyin_buffer;
-        if (code.empty()) {
-            code = dict_->reverse_lookup(context_.committed_text);
+        Dict* active_dict;
+        if (mode_ == InputMode::WUBI) {
+            active_dict = wubi_dict_;
+        } else if (mode_ == InputMode::MIXED) {
+            // 混合模式：四码纯字母视为五笔，否则拼音
+            bool is_wubi = (code.size() == 4 &&
+                            std::all_of(code.begin(), code.end(), [](char c) { return std::isalpha(static_cast<unsigned char>(c)); }));
+            active_dict = is_wubi ? wubi_dict_ : pinyin_dict_;
+        } else {
+            active_dict = pinyin_dict_;
         }
-        dict_->update_frequency(context_.committed_text, code);
+        if (code.empty() && active_dict) {
+            code = active_dict->reverse_lookup(context_.committed_text);
+        }
+        if (active_dict) {
+            active_dict->update_frequency(context_.committed_text, code);
+        }
         // Phase 4: update session recent cache for short input fast path
         if (!context_.pinyin_buffer.empty()) {
             Candidate c;
             c.text = context_.committed_text;
             c.frequency = 0;
-            translator_.update_recent(context_.pinyin_buffer, c);
+            translator_->update_recent(context_.pinyin_buffer, c);
         }
     }
 
@@ -457,15 +490,16 @@ bool Engine::select_candidate(int index) {
     context_.committed_text = context_.candidates.candidates[index].text;
     context_.set_commit_source(CommitSource::kCandidate);
 
+    Dict* active_dict = (mode_ == InputMode::WUBI) ? wubi_dict_ : pinyin_dict_;
     std::string code = context_.pinyin_buffer;
-    if (code.empty())
-        code = dict_->reverse_lookup(context_.committed_text);
-    if (!code.empty())
-        dict_->update_frequency(context_.committed_text, code);
+    if (code.empty() && active_dict)
+        code = active_dict->reverse_lookup(context_.committed_text);
+    if (!code.empty() && active_dict)
+        active_dict->update_frequency(context_.committed_text, code);
 
     // Phase 4: update session recent cache for short input fast path
     if (!context_.pinyin_buffer.empty()) {
-        translator_.update_recent(context_.pinyin_buffer,
+        translator_->update_recent(context_.pinyin_buffer,
                                   context_.candidates.candidates[index]);
     }
 
@@ -494,12 +528,64 @@ std::pair<std::string, CommitSource> Engine::commit_composition_with_source() {
 
 void Engine::clear() {
     context_.reset();
-    translator_.clear_recent();
+    translator_->clear_recent();
 }
 
 void Engine::clear_composition() {
     context_.reset();
-    // Preserve session recent cache — don't call translator_.clear_recent()
+    // Preserve session recent cache — don't call translator_->clear_recent()
+}
+
+void Engine::set_wubi_dict(Dict* dict) {
+    wubi_dict_ = dict;
+}
+
+void Engine::set_fuzzy_enabled(bool enabled) {
+    if (spellings_) spellings_->set_fuzzy_enabled(enabled);
+}
+
+void Engine::switch_mode(InputMode mode) {
+    // 五笔词典未加载时，强制回退拼音模式
+    if ((mode == InputMode::WUBI || mode == InputMode::MIXED) && !wubi_dict_)
+        mode = InputMode::PINYIN;
+
+    if (mode == mode_) return;
+
+    context_.reset();
+
+    mode_ = mode;
+    if (mode == InputMode::WUBI) {
+        // 五笔模式：创建 WubiProcessor 和 WubiTranslator
+        processor_ = std::make_unique<WubiProcessor>();
+        auto wubi_trans = std::make_unique<WubiTranslator>();
+        wubi_trans->set_dict(wubi_dict_);
+        translator_ = std::move(wubi_trans);
+    } else if (mode == InputMode::MIXED) {
+        // 混输模式：复用 PinyinProcessor，新建 MixedTranslator 同时查询两个词典
+        processor_ = std::make_unique<PinyinProcessor>();
+        auto mixed_trans = std::make_unique<MixedTranslator>();
+        mixed_trans->set_pinyin_dict(pinyin_dict_);
+        mixed_trans->set_wubi_dict(wubi_dict_);
+        if (syllabifier_) {
+            mixed_trans->set_syllabifier(syllabifier_);
+        }
+        if (pinyin_dict_->has_short_cache()) {
+            mixed_trans->set_short_cache(&pinyin_dict_->short_cache());
+        }
+        translator_ = std::move(mixed_trans);
+    } else {
+        // 拼音模式：恢复 PinyinProcessor 和 PinyinTranslator
+        processor_ = std::make_unique<PinyinProcessor>();
+        auto pinyin_trans = std::make_unique<PinyinTranslator>();
+        pinyin_trans->set_dict(pinyin_dict_);
+        if (syllabifier_) {
+            pinyin_trans->set_syllabifier(syllabifier_);
+        }
+        if (pinyin_dict_->has_short_cache()) {
+            pinyin_trans->set_short_cache(&pinyin_dict_->short_cache());
+        }
+        translator_ = std::move(pinyin_trans);
+    }
 }
 
 std::string Engine::derive_spellings_path(const std::string& dict_path) {

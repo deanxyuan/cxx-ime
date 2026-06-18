@@ -71,6 +71,7 @@ void StatusController::sync_status(const ImeStatus& status) {
     state.caps_lock = status.caps_lock;
     state.full_shape = status.full_shape;
     state.chinese_punct = status.chinese_punct;
+    state.input_mode = status.input_mode;
 
     window_.update_state(state);
 }
@@ -134,6 +135,12 @@ void StatusController::on_config_action(const std::string& action) {
         }
     } else if (action == "about") {
         show_about_dialog();
+    } else if (action == "switch_to_pinyin") {
+        switch_input_mode(cxxime::InputMode::PINYIN);
+    } else if (action == "switch_to_wubi") {
+        switch_input_mode(cxxime::InputMode::WUBI);
+    } else if (action == "switch_to_mixed") {
+        switch_input_mode(cxxime::InputMode::MIXED);
     }
 }
 
@@ -167,6 +174,17 @@ void StatusController::toggle_chinese_punct() {
         ipc_healthy_ = false;
         window_.set_enabled(false);
         CXXIME_LOG(L"StatusController: IPC toggle_punct failed, status=%d", (int)resp.status);
+    }
+}
+
+void StatusController::switch_input_mode(cxxime::InputMode target) {
+    IPCResponse resp = {};
+    if (client_->switch_input_mode(session_id_, target, resp) && resp.status == cxxime::IPCStatus::OK) {
+        sync_status(resp.ime_status);
+    } else {
+        ipc_healthy_ = false;
+        window_.set_enabled(false);
+        CXXIME_LOG(L"StatusController: IPC switch_input_mode failed, status=%d", (int)resp.status);
     }
 }
 

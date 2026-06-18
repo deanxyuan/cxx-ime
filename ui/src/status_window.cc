@@ -68,7 +68,7 @@ static const wchar_t* kTooltipText[] = {
     L"大写锁定",
     L"全/半角 (Shift+Space)",
     L"中/英文标点 (Ctrl+.)",
-    L"打开设置",
+    L"设置",
 };
 
 static bool effective_chinese_punct(const ButtonState& state) {
@@ -967,10 +967,18 @@ void StatusWindow::InitTooltip() {
 // ============================================================
 void StatusWindow::ShowContextMenu(int x, int y) {
     HMENU hMenu = CreatePopupMenu();
-    AppendMenuW(hMenu, MF_STRING, 1, L"打开设置");
+    AppendMenuW(hMenu, MF_STRING, 1, L"设置");
     AppendMenuW(hMenu, MF_STRING, 2, L"重载配置");
     AppendMenuW(hMenu, MF_STRING, 3, L"隐藏状态栏");
+
+    // Input mode — directly in main menu
+    UINT pinyin_flags = MF_STRING | ((state_.input_mode == InputMode::PINYIN) ? MF_CHECKED : 0);
+    UINT wubi_flags = MF_STRING | ((state_.input_mode == InputMode::WUBI) ? MF_CHECKED : 0);
+    UINT mixed_flags = MF_STRING | ((state_.input_mode == InputMode::MIXED) ? MF_CHECKED : 0);
     AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(hMenu, pinyin_flags, 10, L"纯拼音");
+    AppendMenuW(hMenu, wubi_flags, 11, L"纯五笔");
+    AppendMenuW(hMenu, mixed_flags, 12, L"五笔拼音混输");
     AppendMenuW(hMenu, MF_STRING, 4, L"关于");
 
     UINT cmd = TrackPopupMenu(hMenu, TPM_RIGHTBUTTON | TPM_RETURNCMD, x, y, 0, hwnd_, nullptr);
@@ -982,6 +990,9 @@ void StatusWindow::ShowContextMenu(int x, int y) {
         case 2: config_action_callback_("reload_config"); break;
         case 3: config_action_callback_("hide"); break;
         case 4: config_action_callback_("about"); break;
+        case 10: config_action_callback_("switch_to_pinyin"); break;
+        case 11: config_action_callback_("switch_to_wubi"); break;
+        case 12: config_action_callback_("switch_to_mixed"); break;
         }
     }
 }

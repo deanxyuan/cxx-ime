@@ -36,6 +36,7 @@ private:
     HWND hInputMode_ = nullptr;
     HWND hInlinePreedit_ = nullptr;
     HWND hPreeditType_ = nullptr;
+    HWND hFuzzyPinyin_ = nullptr;
 
     // Appearance panel
     HWND hThemeCombo_ = nullptr;

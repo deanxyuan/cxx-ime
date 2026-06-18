@@ -226,7 +226,7 @@ void EditorApp::create_controls(HWND hwnd) {
     HWND p0 = hPanels_[0]; int t = kPanelPadTop, cx;
     cx = make_label(L"输入模式:", kPanelPadLeft, t, p0);
     hInputMode_ = make_combo(1000, cx, t, S(140), p0);
-    combo_add(hInputMode_, L"拼音"); combo_add(hInputMode_, L"五笔");
+    combo_add(hInputMode_, L"拼音"); combo_add(hInputMode_, L"五笔"); combo_add(hInputMode_, L"混输");
     combo_sel(hInputMode_, L"拼音");
 
     cx = make_label(L"内嵌预编辑:", kPanelPadLeft, t + kRowH, p0);
@@ -237,6 +237,9 @@ void EditorApp::create_controls(HWND hwnd) {
     combo_add(hPreeditType_, L"composition");
     combo_add(hPreeditType_, L"preview");
     combo_add(hPreeditType_, L"preview_all");
+
+    cx = make_label(L"模糊拼音:", kPanelPadLeft, t + kRowH * 3, p0);
+    hFuzzyPinyin_ = make_check(1020, L"启用", cx, t + kRowH * 3, S(80), p0);
 
     // ── Panel 1: Appearance ─────────────────────────────────────────
     HWND p1 = hPanels_[1]; t = kPanelPadTop;
@@ -366,7 +369,7 @@ void EditorApp::create_controls(HWND hwnd) {
     mk_about(L"https://github.com/deanxyuan/cxx-ime", t + kRowH * 4, kCtrlH, get_font());
 
     // Buttons (saveX/cancelX/appX/by calculated above)
-    CreateWindowExW(0, L"BUTTON", L"保存",
+    CreateWindowExW(0, L"BUTTON", L"确定",
                     WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
                     saveX, btnY, btnW, btnH, hwnd, (HMENU)2001, nullptr, nullptr);
     CreateWindowExW(0, L"BUTTON", L"取消",
@@ -446,6 +449,7 @@ void EditorApp::load_config() {
 
     set_check(hInlinePreedit_, config_.inline_preedit);
     combo_sel_str(hPreeditType_, config_.preedit_type);
+    set_check(hFuzzyPinyin_, config_.fuzzy_pinyin);
     set_check(hStatusWindow_, config_.status_window.enable);
 
     const char* ks[] = {"Shift_L","Shift_R","Control_L","Control_R"};
@@ -455,6 +459,9 @@ void EditorApp::load_config() {
         combo_sel_str(hKeyCombos_[i], v);
     }
     set_check(hCapsLock_, config_.good_old_caps_lock);
+
+    // Set input mode combo based on config
+    combo_sel(hInputMode_, (config_.input_mode == 2) ? L"混输" : (config_.input_mode == 1) ? L"五笔" : L"拼音");
 
     show_panel(quick_phrase_ ? 4 : 0);
 }
@@ -513,6 +520,7 @@ void EditorApp::save_config() {
         }
     }
     config_.inline_preedit = get_check(hInlinePreedit_);
+    config_.fuzzy_pinyin = get_check(hFuzzyPinyin_);
     const char* ks[] = {"Shift_L","Shift_R","Control_L","Control_R"};
     for (int i = 0; i < 4; ++i) {
         wchar_t b[64];
@@ -523,7 +531,31 @@ void EditorApp::save_config() {
         }
     }
 
+    // Save input mode to config
+    {
+        int mode_idx = (int)SendMessageW(hInputMode_, CB_GETCURSEL, 0, 0);
+        config_.input_mode = (mode_idx == 2) ? 2 : (mode_idx == 1) ? 1 : 0;
+    }
+
     config_.save(cxxime::user_data_path("default.json"));
+
+    // Notify server to switch input mode if changed
+    {
+        cxxime::InputMode target_mode;
+        if (config_.input_mode == 2)
+            target_mode = cxxime::InputMode::MIXED;
+        else if (config_.input_mode == 1)
+            target_mode = cxxime::InputMode::WUBI;
+        else
+            target_mode = cxxime::InputMode::PINYIN;
+
+        cxxime::IpcClient client;
+        cxxime::IPCResponse resp;
+        if (client.connect()) {
+            client.switch_input_mode(0, target_mode, resp);
+            client.disconnect();
+        }
+    }
 
     // Notify TSF/Server that config has changed
     cxxime::notify_config_changed();
@@ -689,9 +721,9 @@ LRESULT CALLBACK EditorApp::wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         }
         switch (LOWORD(wp)) {
-        case 2001: // Save
+        case 2001: // OK
             a->save_config();
-            MessageBoxW(hwnd, L"配置已保存。", L"CxxIME", MB_OK | MB_ICONINFORMATION);
+            DestroyWindow(hwnd);
             break;
         case 2003: // Apply
             a->save_config();

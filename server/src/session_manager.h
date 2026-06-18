@@ -20,6 +20,7 @@
 // Read-only resources shared across all sessions, loaded once at server startup.
 struct SharedResources {
     cxxime::Dict dict;
+    cxxime::Dict wubi_dict;
     cxxime::SpellingsIndex spellings;
     std::shared_ptr<const cxxime::Config> config;
     std::unique_ptr<cxxime::Syllabifier> syllabifier;
@@ -83,6 +84,9 @@ private:
 
     // Helper: two-phase lock lookup. Returns nullptr if session not found.
     std::shared_ptr<SessionEntry> lookup_session(uint32_t id);
+
+    // Persist input_mode to config file so settings window stays in sync.
+    void persist_input_mode(cxxime::InputMode mode);
 
     SharedResources shared_;
     std::unordered_map<uint32_t, std::shared_ptr<SessionEntry>> sessions_;

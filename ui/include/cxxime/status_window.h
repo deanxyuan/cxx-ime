@@ -11,6 +11,7 @@
 #include <vector>
 #include <cstdint>
 #include <cxxime/render_context.h>
+#include <cxxime/ipc_protocol.h>
 
 namespace cxxime {
 
@@ -26,6 +27,7 @@ struct ButtonState {
     bool caps_lock = false;
     bool full_shape = false;
     bool chinese_punct = true;
+    InputMode input_mode = InputMode::PINYIN;
 };
 
 using StatusButtonClickCallback = std::function<void(StatusButton)>;

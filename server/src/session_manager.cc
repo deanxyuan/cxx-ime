@@ -65,6 +65,15 @@ bool SharedResources::load(const std::string& dict_path, const std::string& cfg_
     if (!sp_path.empty() && spellings.load(sp_path) && spellings.has_spellings()) {
         syllabifier = std::make_unique<cxxime::Syllabifier>(spellings);
     }
+
+    // 加载五笔词典（可选，失败不影响）
+    std::string wubi_dict_path = cxxime::data_path("wubi86.dict.bin");
+    if (!wubi_dict.open(wubi_dict_path)) {
+        CXXIME_LOG(L"SharedResources: wubi dict not found, wubi mode disabled");
+    } else {
+        CXXIME_LOG(L"SharedResources: wubi dict loaded");
+    }
+
     return true;
 }
 
@@ -112,12 +121,18 @@ uint32_t SessionManager::create_session() {
     if (!engine->initialize(shared_.dict, shared_.spellings,
                             shared_.syllabifier.get(), *cfg_snapshot))
         return 0;
+    if (shared_.wubi_dict.is_open()) {
+        engine->set_wubi_dict(&shared_.wubi_dict);
+    }
     std::lock_guard<std::mutex> lock(mutex_);
     uint32_t id = next_id_++;
     auto entry = std::make_shared<SessionEntry>();
     entry->engine = std::move(engine);
     entry->last_activity = std::chrono::steady_clock::now();
     entry->config_snapshot = std::move(cfg_snapshot);
+    entry->ime_status.input_mode = static_cast<cxxime::InputMode>(entry->config_snapshot->input_mode);
+    entry->engine->switch_mode(entry->ime_status.input_mode);
+    entry->engine->set_fuzzy_enabled(entry->config_snapshot->fuzzy_pinyin);
     sessions_[id] = entry;
     return id;
 }
@@ -187,7 +202,28 @@ void SharedResources::reload_config() {
 void SessionManager::reload_config() {
     // Hold sessions_mutex_ to synchronize with process_key's first-phase lookup
     std::lock_guard<std::mutex> lock(mutex_);
+    auto new_mode = shared_.config ? static_cast<cxxime::InputMode>(shared_.config->input_mode)
+                                   : cxxime::InputMode::PINYIN;
     shared_.reload_config();
+    // Sync input_mode from config to all active sessions
+    if (shared_.config) {
+        auto target = static_cast<cxxime::InputMode>(shared_.config->input_mode);
+        for (auto& [id, entry] : sessions_) {
+            std::lock_guard<std::mutex> elock(entry->mutex);
+            if (entry->ime_status.input_mode != target) {
+                entry->engine->switch_mode(target);
+                entry->ime_status.input_mode = target;
+                entry->ime_status.revision++;
+            }
+        }
+        {
+            bool fuzzy = shared_.config->fuzzy_pinyin;
+            for (auto& [id, entry] : sessions_) {
+                std::lock_guard<std::mutex> elock(entry->mutex);
+                entry->engine->set_fuzzy_enabled(fuzzy);
+            }
+        }
+    }
     CXXIME_LOG(L"SessionManager: config reloaded, %zu active sessions", sessions_.size());
 }
 
@@ -239,9 +275,12 @@ std::pair<cxxime::IPCStatus, cxxime::ImeStatus> SessionManager::switch_input_mod
     if (!entry) return {cxxime::IPCStatus::ERR_INVALID_SESSION, {}};
     std::lock_guard<std::mutex> lock(entry->mutex);
     auto& s = *entry;
-    s.ime_status.input_mode = (s.ime_status.input_mode == cxxime::InputMode::PINYIN)
+    auto target = (s.ime_status.input_mode == cxxime::InputMode::PINYIN)
         ? cxxime::InputMode::WUBI : cxxime::InputMode::PINYIN;
+    s.engine->switch_mode(target);
+    s.ime_status.input_mode = s.engine->mode();  // sync with actual engine mode
     s.ime_status.revision++;
+    persist_input_mode(s.ime_status.input_mode);
     return {cxxime::IPCStatus::OK, s.ime_status};
 }
 
@@ -250,8 +289,10 @@ std::pair<cxxime::IPCStatus, cxxime::ImeStatus> SessionManager::switch_input_mod
     if (!entry) return {cxxime::IPCStatus::ERR_INVALID_SESSION, {}};
     std::lock_guard<std::mutex> lock(entry->mutex);
     auto& s = *entry;
-    s.ime_status.input_mode = mode;
+    s.engine->switch_mode(mode);
+    s.ime_status.input_mode = s.engine->mode();  // sync with actual engine mode
     s.ime_status.revision++;
+    persist_input_mode(s.ime_status.input_mode);
     return {cxxime::IPCStatus::OK, s.ime_status};
 }
 
@@ -459,4 +500,31 @@ cxxime::IPCStatus SessionManager::add_user_entry(uint32_t id, const std::string&
     shared_.dict.update_frequency(text, code);
     shared_.dict.save_user_dict();
     return cxxime::IPCStatus::OK;
+}
+
+void SessionManager::persist_input_mode(cxxime::InputMode mode) {
+    // Only write to user config directory (program dir may be read-only).
+    const std::string path = cxxime::user_data_path("default.json");
+    if (path.empty()) return;
+
+    try {
+        // Read existing JSON (may not exist yet)
+        nlohmann::json j;
+        std::ifstream in(path);
+        if (in.is_open()) {
+            in >> j;
+            in.close();
+        }
+
+        j["engine"]["input_mode"] = static_cast<int>(mode);
+
+        std::ofstream out(path);
+        if (!out.is_open()) {
+            CXXIME_LOG(L"persist_input_mode: cannot write %S", path.c_str());
+            return;
+        }
+        out << j.dump(4) << "\n";
+    } catch (const std::exception& e) {
+        CXXIME_LOG(L"persist_input_mode: exception: %S", e.what());
+    }
 }
