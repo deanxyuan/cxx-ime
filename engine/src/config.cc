@@ -68,7 +68,6 @@ bool Config::load(const std::string& path) {
             load_int(l, "round_corner_ex", layout_config.round_corner_ex);
             load_int(l, "label_font_point", layout_config.label_font_point);
             load_int(l, "border_width", layout_config.border_width);
-            load_string(l, "align_type", layout_config.align_type);
         }
 
         load_string(j, "theme", theme);
@@ -175,7 +174,6 @@ bool Config::save(const std::string& path) const {
     j["layout"]["round_corner_ex"] = layout_config.round_corner_ex;
     j["layout"]["label_font_point"] = layout_config.label_font_point;
     j["layout"]["border_width"] = layout_config.border_width;
-    j["layout"]["align_type"] = layout_config.align_type;
 
     j["theme"] = theme;
 

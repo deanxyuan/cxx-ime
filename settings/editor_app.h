@@ -8,6 +8,8 @@
 #include <commctrl.h>
 #include <string>
 #include <cxxime/config.h>
+#include <cxxime/render_context.h>
+#include <cxxime/layout.h>
 
 namespace cxxime {
 namespace settings {
@@ -15,6 +17,13 @@ namespace settings {
 class EditorApp {
 public:
     static int run(HINSTANCE hInst, float dpiScale = 1.0f, bool quickPhrase = false);
+
+    // Preview (public for subclass proc access)
+    void update_preview();
+    void update_cand_preview();
+    void draw_candidate_preview(HDC hdc, HWND hPreview, const cxxime::Config& preview_cfg);
+    cxxime::Config build_appearance_preview_config();
+    cxxime::Config build_cand_preview_config();
 
 private:
     void create_controls(HWND hwnd);
@@ -35,8 +44,11 @@ private:
     // Input panel controls
     HWND hInputMode_ = nullptr;
     HWND hInlinePreedit_ = nullptr;
-    HWND hPreeditType_ = nullptr;
+    HWND hPreeditTypeComposition_ = nullptr;
+    HWND hPreeditTypePreview_ = nullptr;
     HWND hFuzzyPinyin_ = nullptr;
+    HWND hPageSize_ = nullptr;
+    void update_preedit_type_enabled();
 
     // Appearance panel
     HWND hThemeCombo_ = nullptr;
@@ -45,10 +57,10 @@ private:
     HWND hLayoutH_ = nullptr, hLayoutV_ = nullptr;
     HWND hRenderD2D_ = nullptr, hRenderGDI_ = nullptr;
     HWND hStatusWindow_ = nullptr;
+    HWND hLabelFontPt_ = nullptr;
 
-    // Candidate panel (15 numeric fields + align combo)
-    HWND hCandEdits_[15] = {};
-    HWND hAlignCombo_ = nullptr;
+    // Candidate panel (layout numeric fields)
+    HWND hCandEdits_[13] = {};
 
     // Shortcuts
     HWND hKeyCombos_[4] = {};
@@ -58,6 +70,10 @@ private:
     HWND hPhraseText_ = nullptr;
     HWND hPhraseCode_ = nullptr;
     HWND hPhraseAddBtn_ = nullptr;
+
+    // Preview
+    HWND hPreview_ = nullptr;
+    HWND hCandPreview_ = nullptr;
 
     cxxime::Config config_;
     std::wstring input_mode_ = L"拼音";

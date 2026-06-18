@@ -12,5 +12,6 @@ target_link_libraries(cxxime-settings PRIVATE
     cxxime-engine
     cxxime-ipc
     cxxime-shared
+    cxxime-ui
     comctl32.lib
 )

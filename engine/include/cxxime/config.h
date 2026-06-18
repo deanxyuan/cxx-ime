@@ -23,7 +23,6 @@ struct LayoutConfig {
     int round_corner_ex = 4;   // window corner radius
     int border_width = 1;      // window border
     int label_font_point = 0;  // label/preedit font size, 0 = use font_point
-    std::string align_type = "center";
 };
 
 struct Config {

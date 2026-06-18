@@ -32,8 +32,7 @@
         "round_corner": 4,
         "round_corner_ex": 4,
         "label_font_point": 0,
-        "border_width": 1,
-        "align_type": "center"
+        "border_width": 1
     },
     "ascii_composer": {
         "switch_key": {

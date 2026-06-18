@@ -3,11 +3,14 @@
 
 #include "editor_app.h"
 #include <commdlg.h>
+#include <algorithm>
+#include <commctrl.h>
 #include <cxxime/data_path.h>
 #include <cxxime/config_notify.h>
 #include <cxxime/ipc_client.h>
 
 #pragma comment(lib, "comctl32.lib")
+#pragma comment(lib, "uxtheme.lib")
 
 namespace cxxime {
 namespace settings {
@@ -117,6 +120,38 @@ int get_edit_int(HWND e) {
 }
 bool get_check(HWND c) { return SendMessageW(c, BM_GETCHECK, 0, 0) == BST_CHECKED; }
 void set_check(HWND c, bool v) { SendMessageW(c, BM_SETCHECK, v ? BST_CHECKED : BST_UNCHECKED, 0); }
+
+static LRESULT CALLBACK PreviewSubclassProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp,
+                                            UINT_PTR idSubclass, DWORD_PTR refData) {
+    if (msg == WM_PAINT) {
+        PAINTSTRUCT ps;
+        HDC hdc = BeginPaint(hwnd, &ps);
+        auto* app = reinterpret_cast<EditorApp*>(refData);
+        int id = GetDlgCtrlID(hwnd);
+        cxxime::Config pcfg = (id == 1109) ? app->build_appearance_preview_config()
+                                           : app->build_cand_preview_config();
+        app->draw_candidate_preview(hdc, hwnd, pcfg);
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+    if (msg == WM_NCDESTROY) {
+        RemoveWindowSubclass(hwnd, PreviewSubclassProc, idSubclass);
+    }
+    return DefSubclassProc(hwnd, msg, wp, lp);
+}
+
+// Forward WM_COMMAND from panel children (edit EN_CHANGE etc.) to main window
+static LRESULT CALLBACK PanelForwardProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp,
+                                         UINT_PTR idSubclass, DWORD_PTR refData) {
+    if (msg == WM_COMMAND) {
+        SendMessageW((HWND)refData, WM_COMMAND, wp, lp);
+        return 0;
+    }
+    if (msg == WM_NCDESTROY) {
+        RemoveWindowSubclass(hwnd, PanelForwardProc, idSubclass);
+    }
+    return DefSubclassProc(hwnd, msg, wp, lp);
+}
 
 } // namespace
 
@@ -229,36 +264,42 @@ void EditorApp::create_controls(HWND hwnd) {
     combo_add(hInputMode_, L"拼音"); combo_add(hInputMode_, L"五笔"); combo_add(hInputMode_, L"混输");
     combo_sel(hInputMode_, L"拼音");
 
-    cx = make_label(L"内嵌预编辑:", kPanelPadLeft, t + kRowH, p0);
-    hInlinePreedit_ = make_check(1001, L"", cx, t + kRowH, S(20), p0);
+    // Checkbox/radio parent = main window so WM_COMMAND is received
+    cx = make_label(L"内联显示:", kPanelPadLeft, t + kRowH, p0);
+    hInlinePreedit_ = make_check(1001, L"在应用中显示编码",
+                                 panelX + cx, panelY + t + kRowH, S(160), hwnd);
 
-    cx = make_label(L"预编辑类型:", kPanelPadLeft, t + kRowH * 2, p0);
-    hPreeditType_ = make_combo(1002, cx, t + kRowH * 2, S(140), p0);
-    combo_add(hPreeditType_, L"composition");
-    combo_add(hPreeditType_, L"preview");
+    cx = make_label(L"显示内容:", kPanelPadLeft, t + kRowH * 2, p0);
+    hPreeditTypeComposition_ = make_radio(1002, L"编码 (ni'hao)",
+                                          panelX + cx, panelY + t + kRowH * 2, S(130), hwnd, true);
+    hPreeditTypePreview_ = make_radio(1003, L"首选 (你好)",
+                                      panelX + cx + S(138), panelY + t + kRowH * 2, S(120), hwnd, false);
 
     cx = make_label(L"模糊拼音:", kPanelPadLeft, t + kRowH * 3, p0);
-    hFuzzyPinyin_ = make_check(1020, L"启用", cx, t + kRowH * 3, S(80), p0);
+    hFuzzyPinyin_ = make_check(1020, L"启用", panelX + cx, panelY + t + kRowH * 3, S(80), hwnd);
+
+    cx = make_label(L"候选数量:", kPanelPadLeft, t + kRowH * 4, p0);
+    hPageSize_ = make_edit(1021, panelX + cx, panelY + t + kRowH * 4, S(50), hwnd);
 
     // ── Panel 1: Appearance ─────────────────────────────────────────
     HWND p1 = hPanels_[1]; t = kPanelPadTop;
+    // Labels stay on p1; controls that send WM_COMMAND use hwnd as parent
     cx = make_label(L"主题:", kPanelPadLeft, t, p1);
-    hThemeCombo_ = make_combo(1100, cx, t, S(160), p1);
+    hThemeCombo_ = make_combo(1100, panelX + cx, panelY + t, S(160), hwnd);
 
     cx = make_label(L"字体:", kPanelPadLeft, t + kRowH, p1);
     hFontBtn_ = CreateWindowExW(0, L"BUTTON", L"...",
                                 WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
-                                kPadX + cx, kPadY + t + kRowH, S(160), kCtrlH, hwnd, (HMENU)(INT_PTR)1101,
+                                panelX + cx, panelY + t + kRowH, S(160), kCtrlH, hwnd, (HMENU)(INT_PTR)1101,
                                 GetModuleHandle(nullptr), nullptr);
     SendMessageW(hFontBtn_, WM_SETFONT, (WPARAM)get_font(), TRUE);
-    ShowWindow(hFontBtn_, SW_HIDE);  // only visible on appearance panel
 
-    cx = make_label(L"字号:", kPanelPadLeft, t + kRowH * 2, p1);
-    hFontSize_ = make_edit(1102, cx, t + kRowH * 2, S(50), p1);
+    cx = make_label(L"候选字号:", kPanelPadLeft, t + kRowH * 2, p1);
+    hFontSize_ = make_edit(1102, panelX + cx, panelY + t + kRowH * 2, S(50), hwnd);
 
     cx = make_label(L"布局方向:", kPanelPadLeft, t + kRowH * 3, p1);
-    hLayoutH_ = make_radio(1103, L"横向", cx, t + kRowH * 3, S(60), p1, true);
-    hLayoutV_ = make_radio(1104, L"纵向", cx + S(68), t + kRowH * 3, S(60), p1, false);
+    hLayoutH_ = make_radio(1103, L"横向", panelX + cx, panelY + t + kRowH * 3, S(60), hwnd, true);
+    hLayoutV_ = make_radio(1104, L"纵向", panelX + cx + S(68), panelY + t + kRowH * 3, S(60), hwnd, false);
 
     cx = make_label(L"渲染后端:", kPanelPadLeft, t + kRowH * 4, p1);
     hRenderD2D_ = make_radio(1105, L"D2D", cx, t + kRowH * 4, S(60), p1, true);
@@ -267,25 +308,61 @@ void EditorApp::create_controls(HWND hwnd) {
     cx = make_label(L"状态窗口:", kPanelPadLeft, t + kRowH * 5, p1);
     hStatusWindow_ = make_check(1107, L"显示状态窗口", cx, t + kRowH * 5, S(140), p1);
 
+    cx = make_label(L"编码字号:", kPanelPadLeft, t + kRowH * 6, p1);
+    hLabelFontPt_ = make_edit(1108, panelX + cx, panelY + t + kRowH * 6, S(50), hwnd);
+    {
+        int hx = cx + S(56);
+        HWND hHint = CreateWindowExW(0, L"STATIC", L"(0 表示比候选字号小 2)",
+                                      WS_CHILD | WS_VISIBLE | SS_LEFT,
+                                      hx, t + kRowH * 6, S(200), kCtrlH,
+                                      p1, nullptr, GetModuleHandle(nullptr), nullptr);
+        SendMessageW(hHint, WM_SETFONT, (WPARAM)get_font(), TRUE);
+    }
+
+    // Appearance preview
+    {
+        int previewY = t + kRowH * 7 + S(4);
+        int previewH = panelH - previewY - S(4);
+        if (previewH > S(40)) {
+            hPreview_ = CreateWindowExW(0, L"STATIC", nullptr,
+                                        WS_CHILD | WS_VISIBLE,
+                                        kPanelPadLeft, previewY,
+                                        S(600), previewH,
+                                        p1, (HMENU)1109, GetModuleHandle(nullptr), nullptr);
+            SetWindowSubclass(hPreview_, PreviewSubclassProc, 1109, (DWORD_PTR)this);
+        }
+    }
+
     // ── Panel 2: Candidate Window ───────────────────────────────────
     HWND p2 = hPanels_[2]; t = kPanelPadTop;
+    SetWindowSubclass(p2, PanelForwardProc, 2000, (DWORD_PTR)hwnd);
     const wchar_t* cnames[] = {
-        L"候选数量:", L"最小宽度:", L"最大宽度:", L"最大高度:",
+        L"最小宽度:", L"最大宽度:", L"最大高度:",
         L"水平边距:", L"垂直边距:", L"间距:", L"候选间距:",
-        L"高亮间距:", L"高亮内边距X:", L"高亮内边距Y:", L"圆角半径:",
-        L"窗口圆角:", L"边框宽度:", L"标签字号:"
+        L"高亮内边距X:", L"高亮内边距Y:", L"高亮间距:", L"圆角半径:",
+        L"窗口圆角:", L"边框宽度:"
     };
     int colW = S(250), editOff = S(108), editW = S(60);
-    for (int i = 0; i < 15; ++i) {
-        int col = i / 8, row = i % 8;
+    for (int i = 0; i < 13; ++i) {
+        int col = i / 7, row = i % 7;
         int cx = kPanelPadLeft + col * colW, cy = t + row * kRowH;
         int ctlX = make_label(cnames[i], cx, cy, p2);
         hCandEdits_[i] = make_edit(1200 + i, ctlX, cy, editW, p2);
     }
-    int ax = kPanelPadLeft + 1 * colW, ay = t + 7 * kRowH;
-    int ctlX = make_label(L"对齐方式:", ax, ay, p2);
-    hAlignCombo_ = make_combo(1215, ctlX, ay, S(100), p2);
-    combo_add(hAlignCombo_, L"center"); combo_add(hAlignCombo_, L"left"); combo_add(hAlignCombo_, L"right");
+
+    // Candidate window preview
+    {
+        int previewY = t + kRowH * 7 + S(4);
+        int previewH = panelH - previewY - S(4);
+        if (previewH > S(40)) {
+            hCandPreview_ = CreateWindowExW(0, L"STATIC", nullptr,
+                                            WS_CHILD | WS_VISIBLE,
+                                            kPanelPadLeft, previewY,
+                                            S(600), previewH,
+                                            p2, (HMENU)1213, GetModuleHandle(nullptr), nullptr);
+            SetWindowSubclass(hCandPreview_, PreviewSubclassProc, 1213, (DWORD_PTR)this);
+        }
+    }
 
     // ── Panel 3: Shortcuts ──────────────────────────────────────────
     HWND p3 = hPanels_[3]; t = kPanelPadTop;
@@ -395,9 +472,30 @@ void EditorApp::show_panel(int idx) {
     for (int i = 0; i < kPanelCount; ++i)
         ShowWindow(hPanels_[i], (i == idx) ? SW_SHOW : SW_HIDE);
     panel_ = idx;
-    // Font button only visible on appearance panel
-    if (hFontBtn_) ShowWindow(hFontBtn_, (idx == 1) ? SW_SHOW : SW_HIDE);
+    // Panel 0 floating controls (parent = main window)
+    int sw0 = (idx == 0) ? SW_SHOW : SW_HIDE;
+    if (hInlinePreedit_)            ShowWindow(hInlinePreedit_, sw0);
+    if (hPreeditTypeComposition_)   ShowWindow(hPreeditTypeComposition_, sw0);
+    if (hPreeditTypePreview_)       ShowWindow(hPreeditTypePreview_, sw0);
+    if (hFuzzyPinyin_)              ShowWindow(hFuzzyPinyin_, sw0);
+    if (hPageSize_)                 ShowWindow(hPageSize_, sw0);
+    // Panel 1 floating controls (parent = main window for WM_COMMAND)
+    int sw1 = (idx == 1) ? SW_SHOW : SW_HIDE;
+    if (hThemeCombo_)  ShowWindow(hThemeCombo_, sw1);
+    if (hFontBtn_)     ShowWindow(hFontBtn_, sw1);
+    if (hFontSize_)    ShowWindow(hFontSize_, sw1);
+    if (hLayoutH_)     ShowWindow(hLayoutH_, sw1);
+    if (hLayoutV_)     ShowWindow(hLayoutV_, sw1);
+    if (hLabelFontPt_) ShowWindow(hLabelFontPt_, sw1);
+    if (idx == 1) update_preview();
+    if (idx == 2) update_cand_preview();
     InvalidateRect(hList_, nullptr, TRUE);
+}
+
+void EditorApp::update_preedit_type_enabled() {
+    BOOL on = (SendMessageW(hInlinePreedit_, BM_GETCHECK, 0, 0) == BST_CHECKED);
+    EnableWindow(hPreeditTypeComposition_, on);
+    EnableWindow(hPreeditTypePreview_, on);
 }
 
 // ─── Config ─────────────────────────────────────────────────────────────
@@ -428,27 +526,31 @@ void EditorApp::load_config() {
     SendMessageW(hRenderD2D_, BM_SETCHECK, d2d ? BST_CHECKED : BST_UNCHECKED, 0);
     SendMessageW(hRenderGDI_, BM_SETCHECK, d2d ? BST_UNCHECKED : BST_CHECKED, 0);
 
-    set_edit_int(hCandEdits_[0], config_.page_size);
-    set_edit_int(hCandEdits_[1], config_.layout_config.min_width);
-    set_edit_int(hCandEdits_[2], config_.layout_config.max_width);
-    set_edit_int(hCandEdits_[3], config_.layout_config.max_height);
-    set_edit_int(hCandEdits_[4], config_.layout_config.margin_x);
-    set_edit_int(hCandEdits_[5], config_.layout_config.margin_y);
-    set_edit_int(hCandEdits_[6], config_.layout_config.spacing);
-    set_edit_int(hCandEdits_[7], config_.layout_config.candidate_spacing);
-    set_edit_int(hCandEdits_[8], config_.layout_config.hilite_spacing);
-    set_edit_int(hCandEdits_[9], config_.layout_config.hilite_padding_x);
-    set_edit_int(hCandEdits_[10], config_.layout_config.hilite_padding_y);
-    set_edit_int(hCandEdits_[11], config_.layout_config.round_corner);
-    set_edit_int(hCandEdits_[12], config_.layout_config.round_corner_ex);
-    set_edit_int(hCandEdits_[13], config_.layout_config.border_width);
-    set_edit_int(hCandEdits_[14], config_.layout_config.label_font_point);
+    set_edit_int(hCandEdits_[0], config_.layout_config.min_width);
+    set_edit_int(hCandEdits_[1], config_.layout_config.max_width);
+    set_edit_int(hCandEdits_[2], config_.layout_config.max_height);
+    set_edit_int(hCandEdits_[3], config_.layout_config.margin_x);
+    set_edit_int(hCandEdits_[4], config_.layout_config.margin_y);
+    set_edit_int(hCandEdits_[5], config_.layout_config.spacing);
+    set_edit_int(hCandEdits_[6], config_.layout_config.candidate_spacing);
+    set_edit_int(hCandEdits_[7], config_.layout_config.hilite_padding_x);
+    set_edit_int(hCandEdits_[8], config_.layout_config.hilite_padding_y);
+    set_edit_int(hCandEdits_[9], config_.layout_config.hilite_spacing);
+    set_edit_int(hCandEdits_[10], config_.layout_config.round_corner);
+    set_edit_int(hCandEdits_[11], config_.layout_config.round_corner_ex);
+    set_edit_int(hCandEdits_[12], config_.layout_config.border_width);
 
-    combo_sel_str(hAlignCombo_, config_.layout_config.align_type);
+    set_edit_int(hPageSize_, config_.page_size);
+    set_edit_int(hLabelFontPt_, config_.layout_config.label_font_point);
 
     set_check(hInlinePreedit_, config_.inline_preedit);
-    combo_sel_str(hPreeditType_, config_.preedit_type);
+    if (config_.preedit_type == "preview") {
+        SendMessageW(hPreeditTypePreview_, BM_SETCHECK, BST_CHECKED, 0);
+    } else {
+        SendMessageW(hPreeditTypeComposition_, BM_SETCHECK, BST_CHECKED, 0);
+    }
     set_check(hFuzzyPinyin_, config_.fuzzy_pinyin);
+    update_preedit_type_enabled();
     set_check(hStatusWindow_, config_.status_window.enable);
 
     const char* ks[] = {"Shift_L","Shift_R","Control_L","Control_R"};
@@ -473,42 +575,34 @@ void EditorApp::readback(HWND) {
     if (panel_ == 0) {
         c.inline_preedit = get_check(hInlinePreedit_);
         c.fuzzy_pinyin = get_check(hFuzzyPinyin_);
+        c.page_size = get_edit_int(hPageSize_);
         {
             int idx = (int)SendMessageW(hInputMode_, CB_GETCURSEL, 0, 0);
             c.input_mode = (idx == 2) ? 2 : (idx == 1) ? 1 : 0;
         }
-        {
-            int idx = (int)SendMessageW(hPreeditType_, CB_GETCURSEL, 0, 0);
-            if (idx >= 0) {
-                wchar_t b[128];
-                SendMessageW(hPreeditType_, CB_GETLBTEXT, idx, (LPARAM)b);
-                int len = WideCharToMultiByte(CP_UTF8, 0, b, -1, nullptr, 0, nullptr, nullptr);
-                c.preedit_type.resize(len - 1);
-                WideCharToMultiByte(CP_UTF8, 0, b, -1, &c.preedit_type[0], len, nullptr, nullptr);
-            }
-        }
+        c.preedit_type = (SendMessageW(hPreeditTypePreview_, BM_GETCHECK, 0, 0) == BST_CHECKED)
+                         ? "preview" : "composition";
     } else if (panel_ == 1) {
         c.font_size = get_edit_int(hFontSize_);
         if (c.font_size < 8) c.font_size = 8;
         c.layout = (SendMessageW(hLayoutH_, BM_GETCHECK, 0, 0) == BST_CHECKED) ? "horizontal" : "vertical";
         c.render_backend = (SendMessageW(hRenderD2D_, BM_GETCHECK, 0, 0) == BST_CHECKED) ? "d2d" : "gdi";
         c.status_window.enable = get_check(hStatusWindow_);
+        c.layout_config.label_font_point = get_edit_int(hLabelFontPt_);
     } else if (panel_ == 2) {
-        c.page_size = get_edit_int(hCandEdits_[0]);
-        c.layout_config.min_width = get_edit_int(hCandEdits_[1]);
-        c.layout_config.max_width = get_edit_int(hCandEdits_[2]);
-        c.layout_config.max_height = get_edit_int(hCandEdits_[3]);
-        c.layout_config.margin_x = get_edit_int(hCandEdits_[4]);
-        c.layout_config.margin_y = get_edit_int(hCandEdits_[5]);
-        c.layout_config.spacing = get_edit_int(hCandEdits_[6]);
-        c.layout_config.candidate_spacing = get_edit_int(hCandEdits_[7]);
-        c.layout_config.hilite_spacing = get_edit_int(hCandEdits_[8]);
-        c.layout_config.hilite_padding_x = get_edit_int(hCandEdits_[9]);
-        c.layout_config.hilite_padding_y = get_edit_int(hCandEdits_[10]);
-        c.layout_config.round_corner = get_edit_int(hCandEdits_[11]);
-        c.layout_config.round_corner_ex = get_edit_int(hCandEdits_[12]);
-        c.layout_config.border_width = get_edit_int(hCandEdits_[13]);
-        c.layout_config.label_font_point = get_edit_int(hCandEdits_[14]);
+        c.layout_config.min_width = get_edit_int(hCandEdits_[0]);
+        c.layout_config.max_width = get_edit_int(hCandEdits_[1]);
+        c.layout_config.max_height = get_edit_int(hCandEdits_[2]);
+        c.layout_config.margin_x = get_edit_int(hCandEdits_[3]);
+        c.layout_config.margin_y = get_edit_int(hCandEdits_[4]);
+        c.layout_config.spacing = get_edit_int(hCandEdits_[5]);
+        c.layout_config.candidate_spacing = get_edit_int(hCandEdits_[6]);
+        c.layout_config.hilite_padding_x = get_edit_int(hCandEdits_[7]);
+        c.layout_config.hilite_padding_y = get_edit_int(hCandEdits_[8]);
+        c.layout_config.hilite_spacing = get_edit_int(hCandEdits_[9]);
+        c.layout_config.round_corner = get_edit_int(hCandEdits_[10]);
+        c.layout_config.round_corner_ex = get_edit_int(hCandEdits_[11]);
+        c.layout_config.border_width = get_edit_int(hCandEdits_[12]);
     } else if (panel_ == 3) {
         c.good_old_caps_lock = get_check(hCapsLock_);
     }
@@ -527,14 +621,8 @@ void EditorApp::save_config() {
         GetWindowTextW(hThemeCombo_, b, 128);
         config_.theme = w2s(b);
     }
-    {
-        wchar_t b[128];
-        int idx = (int)SendMessageW(hPreeditType_, CB_GETCURSEL, 0, 0);
-        if (idx >= 0) {
-            SendMessageW(hPreeditType_, CB_GETLBTEXT, idx, (LPARAM)b);
-            config_.preedit_type = w2s(b);
-        }
-    }
+    config_.preedit_type = (SendMessageW(hPreeditTypePreview_, BM_GETCHECK, 0, 0) == BST_CHECKED)
+                          ? "preview" : "composition";
     config_.inline_preedit = get_check(hInlinePreedit_);
     config_.fuzzy_pinyin = get_check(hFuzzyPinyin_);
     const char* ks[] = {"Shift_L","Shift_R","Control_L","Control_R"};
@@ -617,6 +705,290 @@ void EditorApp::add_user_entry() {
     } else {
         MessageBoxW(hwnd_, L"添加词条失败。", L"CxxIME", MB_OK | MB_ICONERROR);
     }
+}
+
+// ─── Preview ──────────────────────────────────────────────────────────
+
+static std::string wstr_to_utf8(const std::wstring& w) {
+    int len = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, nullptr, 0, nullptr, nullptr);
+    if (len <= 1) return {};
+    std::string s(len - 1, '\0');
+    WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, &s[0], len, nullptr, nullptr);
+    return s;
+}
+
+static std::wstring utf8_to_wstr(const std::string& s) {
+    int len = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
+    if (len <= 1) return {};
+    std::wstring ws(len - 1, L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, &ws[0], len);
+    return ws;
+}
+
+cxxime::Config EditorApp::build_appearance_preview_config() {
+    cxxime::Config cfg = config_;
+    wchar_t b[128];
+    GetWindowTextW(hThemeCombo_, b, 128);
+    cfg.theme = wstr_to_utf8(b);
+    cfg.font_size = get_edit_int(hFontSize_);
+    if (cfg.font_size < 8) cfg.font_size = 8;
+    cfg.layout = (SendMessageW(hLayoutH_, BM_GETCHECK, 0, 0) == BST_CHECKED)
+                 ? "horizontal" : "vertical";
+    return cfg;
+}
+
+cxxime::Config EditorApp::build_cand_preview_config() {
+    cxxime::Config cfg = config_;
+    cfg.layout_config.min_width = get_edit_int(hCandEdits_[0]);
+    cfg.layout_config.max_width = get_edit_int(hCandEdits_[1]);
+    cfg.layout_config.max_height = get_edit_int(hCandEdits_[2]);
+    cfg.layout_config.margin_x = get_edit_int(hCandEdits_[3]);
+    cfg.layout_config.margin_y = get_edit_int(hCandEdits_[4]);
+    cfg.layout_config.spacing = get_edit_int(hCandEdits_[5]);
+    cfg.layout_config.candidate_spacing = get_edit_int(hCandEdits_[6]);
+    cfg.layout_config.hilite_padding_x = get_edit_int(hCandEdits_[7]);
+    cfg.layout_config.hilite_padding_y = get_edit_int(hCandEdits_[8]);
+    cfg.layout_config.hilite_spacing = get_edit_int(hCandEdits_[9]);
+    cfg.layout_config.round_corner = get_edit_int(hCandEdits_[10]);
+    cfg.layout_config.round_corner_ex = get_edit_int(hCandEdits_[11]);
+    cfg.layout_config.border_width = get_edit_int(hCandEdits_[12]);
+    return cfg;
+}
+
+static void resize_preview_to_content(HWND hPreview, const cxxime::Config& cfg) {
+    using namespace cxxime;
+    if (!hPreview) return;
+
+    std::vector<Candidate> candidates = {
+        {"你好"}, {"您好"}, {"昵称"}, {"尼采"}, {"拟态"}, {"腻烦"}, {"匿藏"}
+    };
+
+    HDC hdc = GetDC(hPreview);
+    LayoutConfig lc = cfg.layout_config;
+
+    // Prevent row-wrapping in preview: use a very large max_width for horizontal layout
+    bool horizontal = (cfg.layout == "horizontal");
+    if (horizontal) lc.max_width = 10000;
+
+    HFONT hFont = CreateFontW(-MulDiv(cfg.font_size, GetDeviceCaps(hdc, LOGPIXELSY), 72),
+                              0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+                              OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                              DEFAULT_PITCH | FF_DONTCARE,
+                              std::wstring(cfg.font_name.begin(), cfg.font_name.end()).c_str());
+    HFONT old = (HFONT)SelectObject(hdc, hFont);
+
+    LayoutResult lr = horizontal
+        ? calculate_horizontal_layout(hdc, candidates, cfg.font_name, cfg.font_size, lc)
+        : calculate_vertical_layout(hdc, candidates, cfg.font_name, cfg.font_size, lc);
+
+    // Add preedit height
+    int preedit_pt = lc.label_font_point > 0 ? lc.label_font_point
+                     : (cfg.font_size > 2 ? cfg.font_size - 2 : cfg.font_size);
+    HFONT hPreeditFont = CreateFontW(-MulDiv(preedit_pt, GetDeviceCaps(hdc, LOGPIXELSY), 72),
+                                     0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+                                     OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                                     DEFAULT_PITCH | FF_DONTCARE,
+                                     std::wstring(cfg.font_name.begin(), cfg.font_name.end()).c_str());
+    SIZE ps = {};
+    { HFONT o = (HFONT)SelectObject(hdc, hPreeditFont);
+      GetTextExtentPoint32W(hdc, L"ni'hao", 6, &ps);
+      SelectObject(hdc, o); }
+    int row_h = lr.row_height > 0 ? lr.row_height : (ps.cy > 0 ? ps.cy : lc.margin_y * 2);
+    int preedit_h = (ps.cy > 0 ? ps.cy : row_h) + lc.spacing;
+    lr.height += preedit_h;
+
+    // Account for page nav buttons (< >) width after last candidate
+    if (!lr.rects.empty()) {
+        int nav_right = lr.rects.back().highlight_rect.right + 4 + 34 + lc.margin_x;
+        if (nav_right > lr.width) lr.width = nav_right;
+    }
+
+    SelectObject(hdc, old);
+    DeleteObject(hFont);
+    DeleteObject(hPreeditFont);
+    ReleaseDC(hPreview, hdc);
+
+    // Resize preview to actual content size
+    RECT cur;
+    GetWindowRect(hPreview, &cur);
+    int cur_w = cur.right - cur.left;
+    int cur_h = cur.bottom - cur.top;
+    if (lr.width != cur_w || lr.height != cur_h) {
+        // Invalidate parent area covered by old preview so it gets repainted
+        HWND hParent = GetParent(hPreview);
+        RECT pr = cur;
+        MapWindowPoints(HWND_DESKTOP, hParent, (LPPOINT)&pr, 2);
+        InvalidateRect(hParent, &pr, TRUE);
+        SetWindowPos(hPreview, nullptr, 0, 0, lr.width, lr.height, SWP_NOMOVE | SWP_NOZORDER);
+    }
+}
+
+void EditorApp::update_preview() {
+    resize_preview_to_content(hPreview_, build_appearance_preview_config());
+    if (hPreview_) InvalidateRect(hPreview_, nullptr, FALSE);
+}
+
+void EditorApp::update_cand_preview() {
+    resize_preview_to_content(hCandPreview_, build_cand_preview_config());
+    if (hCandPreview_) InvalidateRect(hCandPreview_, nullptr, FALSE);
+}
+
+void EditorApp::draw_candidate_preview(HDC hdc, HWND hPreview, const cxxime::Config& preview_cfg) {
+    using namespace cxxime;
+
+    Theme theme = build_theme_from_config(preview_cfg);
+
+    std::vector<Candidate> candidates = {
+        {"你好"}, {"您好"}, {"昵称"}, {"尼采"}, {"拟态"}, {"腻烦"}, {"匿藏"}
+    };
+
+    std::wstring wfn = utf8_to_wstr(preview_cfg.font_name);
+    if (wfn.empty()) wfn = L"Microsoft YaHei UI";
+    int fs = preview_cfg.font_size;
+    int dpi = GetDeviceCaps(hdc, LOGPIXELSY);
+    auto to_clr = [](Color c) -> COLORREF { return RGB(c.r, c.g, c.b); };
+
+    int preedit_pt = preview_cfg.layout_config.label_font_point > 0
+        ? preview_cfg.layout_config.label_font_point
+        : (fs > 2 ? fs - 2 : fs);
+    LayoutConfig lc = preview_cfg.layout_config;
+    bool horizontal = (preview_cfg.layout == "horizontal");
+
+    // Prevent row-wrapping in preview: use a very large max_width for horizontal layout
+    if (horizontal) lc.max_width = 10000;
+
+    // Fonts
+    HFONT hFont = CreateFontW(-MulDiv(fs, dpi, 72), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                              DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                              CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, wfn.c_str());
+    HFONT hPreeditFont = CreateFontW(-MulDiv(preedit_pt, dpi, 72), 0, 0, 0, FW_NORMAL,
+                                     FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+                                     CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                                     DEFAULT_PITCH | FF_DONTCARE, wfn.c_str());
+    HFONT hNavFont = CreateFontW(-MulDiv(9, dpi, 72), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                                 DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                                 CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, wfn.c_str());
+
+    // Layout — get actual dimensions
+    HFONT oldFont = (HFONT)SelectObject(hdc, hFont);
+    LayoutResult lr = horizontal
+        ? calculate_horizontal_layout(hdc, candidates, preview_cfg.font_name, fs, lc)
+        : calculate_vertical_layout(hdc, candidates, preview_cfg.font_name, fs, lc);
+
+    // Clamp text rects to window width (vertical layout may have wider text than window)
+    for (auto& cr : lr.rects) {
+        if (cr.text_rect.right > lr.width - lc.margin_x)
+            cr.text_rect.right = lr.width - lc.margin_x;
+        if (cr.highlight_rect.right > lr.width - lc.margin_x)
+            cr.highlight_rect.right = lr.width - lc.margin_x;
+    }
+
+    // Preedit — measure and shift candidates down
+    std::wstring wpreedit = L"ni'hao";
+    SIZE ps = {};
+    { HFONT old = (HFONT)SelectObject(hdc, hPreeditFont);
+      GetTextExtentPoint32W(hdc, wpreedit.c_str(), (int)wpreedit.length(), &ps);
+      SelectObject(hdc, old); }
+    int row_h = lr.row_height > 0 ? lr.row_height : (ps.cy > 0 ? ps.cy : lc.margin_y * 2);
+    int preedit_h = (ps.cy > 0 ? ps.cy : row_h) + lc.spacing;
+    for (auto& cr : lr.rects) {
+        cr.label_rect.top += preedit_h;      cr.label_rect.bottom += preedit_h;
+        cr.text_rect.top += preedit_h;       cr.text_rect.bottom += preedit_h;
+        cr.highlight_rect.top += preedit_h;  cr.highlight_rect.bottom += preedit_h;
+    }
+    lr.height += preedit_h;
+    RECT preedit_rect = {lc.margin_x, lc.margin_y,
+                         lr.width - lc.margin_x, lc.margin_y + (ps.cy > 0 ? ps.cy : row_h)};
+
+    // Page nav — after last candidate
+    RECT prev_btn = {}, next_btn = {};
+    {
+        auto& last = lr.rects.back();
+        int nav_h = last.highlight_rect.bottom - last.highlight_rect.top;
+        int nav_y = last.highlight_rect.top;
+        int x = last.highlight_rect.right + 4;
+        prev_btn = {x, nav_y, x + 16, nav_y + nav_h};
+        next_btn = {x + 18, nav_y, x + 34, nav_y + nav_h};
+        if (next_btn.right + lc.margin_x > lr.width)
+            lr.width = next_btn.right + lc.margin_x;
+    }
+
+    RECT rc;
+    GetClientRect(hPreview, &rc);
+
+    // Clip to rounded corners, then erase background
+    int wr = lc.round_corner_ex;
+    HRGN rgn = CreateRoundRectRgn(rc.left, rc.top, rc.right + 1, rc.bottom + 1, wr, wr);
+    SelectClipRgn(hdc, rgn);
+    DeleteObject(rgn);
+    HBRUSH bgBrush = CreateSolidBrush(to_clr(theme.background));
+    FillRect(hdc, &rc, bgBrush);
+    DeleteObject(bgBrush);
+
+    // Preedit text
+    SelectObject(hdc, hPreeditFont);
+    SetBkMode(hdc, TRANSPARENT);
+    SetTextColor(hdc, to_clr(theme.preedit_text));
+    DrawTextW(hdc, wpreedit.c_str(), -1, &preedit_rect,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+
+    // Separator
+    SelectObject(hdc, hFont);
+    int sep_y = preedit_rect.bottom + lc.spacing / 3;
+    Color sep_col = {
+        (uint8_t)((theme.background.r * 3 + theme.text.r) / 4),
+        (uint8_t)((theme.background.g * 3 + theme.text.g) / 4),
+        (uint8_t)((theme.background.b * 3 + theme.text.b) / 4), 255};
+    HPEN sepPen = CreatePen(PS_SOLID, 1, to_clr(sep_col));
+    HPEN oldPen = (HPEN)SelectObject(hdc, sepPen);
+    MoveToEx(hdc, lc.margin_x + 2, sep_y, nullptr);
+    LineTo(hdc, lr.width - lc.margin_x - 2, sep_y);
+    SelectObject(hdc, oldPen);
+    DeleteObject(sepPen);
+
+    // Candidates
+    HBRUSH hlBrush = CreateSolidBrush(to_clr(theme.hilited_back));
+    COLORREF hl_text_clr = to_clr(theme.hilited_text);
+    COLORREF normal_text_clr = to_clr(theme.text);
+    COLORREF label_clr = to_clr(theme.label_text);
+
+    for (const auto& cr : lr.rects) {
+        int i = cr.index;
+        bool hl = (i == 0);
+        if (hl) {
+            HBRUSH ob = (HBRUSH)SelectObject(hdc, hlBrush);
+            HPEN op = (HPEN)SelectObject(hdc, GetStockObject(NULL_PEN));
+            RoundRect(hdc, cr.highlight_rect.left, cr.highlight_rect.top,
+                      cr.highlight_rect.right, cr.highlight_rect.bottom,
+                      lc.round_corner, lc.round_corner);
+            SelectObject(hdc, op); SelectObject(hdc, ob);
+        }
+        SetTextColor(hdc, hl ? hl_text_clr : label_clr);
+        std::wstring label = std::to_wstring(i + 1) + L".";
+        DrawTextW(hdc, label.c_str(), -1, const_cast<RECT*>(&cr.label_rect),
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        SetTextColor(hdc, hl ? hl_text_clr : normal_text_clr);
+        std::wstring wtext = utf8_to_wstr(cr.text);
+        DrawTextW(hdc, wtext.c_str(), -1, const_cast<RECT*>(&cr.text_rect),
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    }
+
+    // Page nav
+    SelectObject(hdc, hNavFont);
+    COLORREF dim_clr = to_clr({(uint8_t)((theme.background.r * 3 + theme.text.r) / 4),
+                               (uint8_t)((theme.background.g * 3 + theme.text.g) / 4),
+                               (uint8_t)((theme.background.b * 3 + theme.text.b) / 4), 255});
+    SetTextColor(hdc, dim_clr);
+    DrawTextW(hdc, L"<", 1, &prev_btn, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    DrawTextW(hdc, L">", 1, &next_btn, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+
+    // Cleanup
+    SelectClipRgn(hdc, nullptr);  // reset clip region
+    DeleteObject(hlBrush);
+    DeleteObject(hFont);
+    DeleteObject(hPreeditFont);
+    DeleteObject(hNavFont);
+    SelectObject(hdc, oldFont);
 }
 
 // ─── Window proc ───────────────────────────────────────────────────────
@@ -711,17 +1083,24 @@ LRESULT CALLBACK EditorApp::wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             SetWindowPos(btn, nullptr, bx, btnY, btnW, btnH, SWP_NOZORDER);
             SendMessageW(btn, WM_SETFONT, (WPARAM)newFont, TRUE);
         }
-        // Font button: scale like panel children
-        if (a->hFontBtn_) {
-            RECT r; GetWindowRect(a->hFontBtn_, &r);
+        // Floating controls (parent = main window): scale like panel children
+        auto scale_floating = [&](HWND h) {
+            if (!h) return;
+            RECT r; GetWindowRect(h, &r);
             POINT pt = {r.left, r.top};
             ScreenToClient(hwnd, &pt);
-            SetWindowPos(a->hFontBtn_, nullptr,
+            SetWindowPos(h, nullptr,
                          (int)(pt.x * ratio + 0.5f), (int)(pt.y * ratio + 0.5f),
                          (int)((r.right - r.left) * ratio + 0.5f),
                          (int)((r.bottom - r.top) * ratio + 0.5f), SWP_NOZORDER);
-            SendMessageW(a->hFontBtn_, WM_SETFONT, (WPARAM)newFont, TRUE);
-        }
+            SendMessageW(h, WM_SETFONT, (WPARAM)newFont, TRUE);
+        };
+        scale_floating(a->hThemeCombo_);
+        scale_floating(a->hFontBtn_);
+        scale_floating(a->hFontSize_);
+        scale_floating(a->hLayoutH_);
+        scale_floating(a->hLayoutV_);
+        scale_floating(a->hLabelFontPt_);
 
         RedrawWindow(hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN);
         return 0;
@@ -747,6 +1126,10 @@ LRESULT CALLBACK EditorApp::wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case 2002: // Cancel
             DestroyWindow(hwnd);
             break;
+        case 1001: // Inline preedit checkbox — toggle preedit type radio buttons
+            if (HIWORD(wp) == BN_CLICKED)
+                a->update_preedit_type_enabled();
+            break;
         case 1101: { // Font button
             std::wstring wf;
             wf.assign(a->config_.font_name.begin(), a->config_.font_name.end());
@@ -768,6 +1151,7 @@ LRESULT CALLBACK EditorApp::wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 std::wstring label = std::wstring(lf.lfFaceName) + L"  " +
                                      std::to_wstring(a->config_.font_size);
                 SetWindowTextW(a->hFontBtn_, label.c_str());
+                a->update_preview();
             }
             break;
         }
@@ -784,6 +1168,20 @@ LRESULT CALLBACK EditorApp::wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 }
             }
             break;
+        }
+        // Preview updates for appearance panel controls
+        if (HIWORD(wp) == CBN_SELCHANGE && LOWORD(wp) == 1100) {
+            a->update_preview();
+        }
+        if (HIWORD(wp) == BN_CLICKED && (LOWORD(wp) == 1103 || LOWORD(wp) == 1104)) {
+            a->update_preview();
+        }
+        if (HIWORD(wp) == EN_CHANGE && (LOWORD(wp) == 1102 || LOWORD(wp) == 1108)) {
+            a->update_preview();
+        }
+        // Preview updates for candidate window panel controls
+        if (HIWORD(wp) == EN_CHANGE && LOWORD(wp) >= 1200 && LOWORD(wp) <= 1212) {
+            a->update_cand_preview();
         }
         return 0;
     case WM_MEASUREITEM: {
