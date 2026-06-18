@@ -41,6 +41,7 @@ private:
     void toggle_chinese_mode();
     void toggle_full_shape();
     void toggle_chinese_punct();
+    void switch_input_mode(cxxime::InputMode target = cxxime::InputMode::PINYIN);
     void open_settings();
     bool status_changed(const ImeStatus& new_status) const;
 

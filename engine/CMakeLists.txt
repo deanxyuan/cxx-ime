@@ -8,6 +8,9 @@ add_library(cxxime-engine STATIC
     src/syllabifier.cc
     src/pinyin_translator.cc
     src/pinyin_processor.cc
+    src/wubi_translator.cc
+    src/mixed_translator.cc
+    src/wubi_processor.cc
     src/config.cc
     src/engine.cc
     src/ascii_composer.cc

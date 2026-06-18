@@ -65,6 +65,7 @@ private:
     GUID _guid;
     bool _chinese_mode = true;
     bool _caps_lock = false;
+    cxxime::InputMode _input_mode = cxxime::InputMode::PINYIN;
     HICON _hIconZh = nullptr;
     HICON _hIconEn = nullptr;
     HICON _hIconCaps = nullptr;

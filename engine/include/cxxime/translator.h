@@ -24,19 +24,31 @@ struct RecentCandidate {
     uint64_t sequence = 0;
 };
 
-class PinyinTranslator {
+// Abstract translator interface
+class ITranslator {
+public:
+    virtual ~ITranslator() = default;
+    virtual CandidatePage translate(const std::string& input, int page_index = 0, int page_size = 9,
+                                    QueryTrace* trace = nullptr, const QueryBudget* budget = nullptr,
+                                    QueryScratch* scratch = nullptr) = 0;
+    virtual void update_recent(const std::string& key, const Candidate& candidate) {}
+    virtual void clear_recent() {}
+};
+
+// Pinyin translator implementation
+class PinyinTranslator : public ITranslator {
 public:
     void set_dict(Dict* dict);
     void set_syllabifier(Syllabifier* syllabifier);
     void set_short_cache(const ShortCodeCache* cache) { short_cache_ = cache; }
 
     // Phase 4: session recent cache management
-    void update_recent(const std::string& key, const Candidate& candidate);
-    void clear_recent() { recent_cache_.clear(); }
+    void update_recent(const std::string& key, const Candidate& candidate) override;
+    void clear_recent() override { recent_cache_.clear(); }
 
     CandidatePage translate(const std::string& pinyin, int page_index = 0, int page_size = 9,
                             QueryTrace* trace = nullptr, const QueryBudget* budget = nullptr,
-                            QueryScratch* scratch = nullptr);
+                            QueryScratch* scratch = nullptr) override;
 
 private:
     // Phase 4: short input fast path
