@@ -142,10 +142,25 @@ static LRESULT CALLBACK ParentWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             if (g_d2d) g_window.set_render_backend(cxxime::RenderBackend::D2D);
             update_display();
         } else if (vk == 'P') {
-            static bool show_preedit = true;
-            show_preedit = !show_preedit;
-            g_window.set_preedit(show_preedit ? "ni'hao" : "");
-            printf("Preedit: %s\n", show_preedit ? "on" : "off");
+            // Cycle preedit_type: off → composition → preview → off
+            static int preedit_mode = 0;  // 0=off, 1=composition, 2=preview
+            preedit_mode = (preedit_mode + 1) % 3;
+            const char* mode_names[] = {"off", "composition", "preview"};
+            const char* raw_pinyin = "ni'hao";
+            std::string preedit_str;
+            switch (preedit_mode) {
+            case 0: preedit_str = ""; break;
+            case 1: preedit_str = raw_pinyin; break;  // composition: raw pinyin
+            case 2: {  // preview: first candidate
+                if (!g_page.candidates.empty())
+                    preedit_str = g_page.candidates[0].text;
+                else
+                    preedit_str = raw_pinyin;
+                break;
+            }
+            }
+            g_window.set_preedit(preedit_str);
+            printf("Preedit type: %s → \"%s\"\n", mode_names[preedit_mode], preedit_str.c_str());
             update_display();
         } else {
             // Letters simulate pinyin input
@@ -164,7 +179,7 @@ int main() {
     SetConsoleOutputCP(CP_UTF8);
     printf("=== Candidate Window Test Tool ===\n");
     printf("Keys: 1-9=select  Space=commit  Esc=hide\n");
-    printf("      PageUp/PageDown=flip  T=theme  L=layout  D=D2D/GDI  F=font  P=preedit\n");
+    printf("      PageUp/PageDown=flip  T=theme  L=layout  D=D2D/GDI  F=font  P=preedit_type\n");
     printf("      (click on window to select candidates)\n\n");
 
     // Create hidden parent window

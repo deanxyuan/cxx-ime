@@ -668,6 +668,10 @@ STDMETHODIMP TextService::OnSetFocus(BOOL fForeground) {
     if (fForeground) {
         _client.focus_in(_sessionId);
     } else {
+        // Switching away from CxxIME — hide status window immediately.
+        // OnKillThreadFocus may not fire when switching IMEs within the same thread.
+        if (_statusController.is_initialized())
+            _statusController.hide();
         _client.focus_out(_sessionId);
         _AbortComposition();
     }
@@ -907,6 +911,7 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
         // Server accepted but no commit and no preedit (e.g. Escape cleared the buffer)
         _candidateWindow.hide();
         _candidateWindow.set_preedit("");
+        if (_composing && _composition) update_composition(pic, L"");
         _end_composition(pic);
         _composing = false;
         *pfEaten = TRUE;

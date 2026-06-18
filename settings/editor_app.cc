@@ -236,7 +236,6 @@ void EditorApp::create_controls(HWND hwnd) {
     hPreeditType_ = make_combo(1002, cx, t + kRowH * 2, S(140), p0);
     combo_add(hPreeditType_, L"composition");
     combo_add(hPreeditType_, L"preview");
-    combo_add(hPreeditType_, L"preview_all");
 
     cx = make_label(L"模糊拼音:", kPanelPadLeft, t + kRowH * 3, p0);
     hFuzzyPinyin_ = make_check(1020, L"启用", cx, t + kRowH * 3, S(80), p0);
@@ -392,7 +391,7 @@ void EditorApp::create_controls(HWND hwnd) {
 // ─── Panel switching ───────────────────────────────────────────────────
 
 void EditorApp::show_panel(int idx) {
-    readback(hwnd_);
+    // 方案 B：切 panel 不自动记住修改，用户需先点"保存"或"应用"
     for (int i = 0; i < kPanelCount; ++i)
         ShowWindow(hPanels_[i], (i == idx) ? SW_SHOW : SW_HIDE);
     panel_ = idx;
@@ -471,7 +470,24 @@ void EditorApp::load_config() {
 void EditorApp::readback(HWND) {
     if (!hPanels_[panel_]) return;
     auto& c = config_;
-    if (panel_ == 1) {
+    if (panel_ == 0) {
+        c.inline_preedit = get_check(hInlinePreedit_);
+        c.fuzzy_pinyin = get_check(hFuzzyPinyin_);
+        {
+            int idx = (int)SendMessageW(hInputMode_, CB_GETCURSEL, 0, 0);
+            c.input_mode = (idx == 2) ? 2 : (idx == 1) ? 1 : 0;
+        }
+        {
+            int idx = (int)SendMessageW(hPreeditType_, CB_GETCURSEL, 0, 0);
+            if (idx >= 0) {
+                wchar_t b[128];
+                SendMessageW(hPreeditType_, CB_GETLBTEXT, idx, (LPARAM)b);
+                int len = WideCharToMultiByte(CP_UTF8, 0, b, -1, nullptr, 0, nullptr, nullptr);
+                c.preedit_type.resize(len - 1);
+                WideCharToMultiByte(CP_UTF8, 0, b, -1, &c.preedit_type[0], len, nullptr, nullptr);
+            }
+        }
+    } else if (panel_ == 1) {
         c.font_size = get_edit_int(hFontSize_);
         if (c.font_size < 8) c.font_size = 8;
         c.layout = (SendMessageW(hLayoutH_, BM_GETCHECK, 0, 0) == BST_CHECKED) ? "horizontal" : "vertical";

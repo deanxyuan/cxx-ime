@@ -91,8 +91,7 @@ STDMETHODIMP EditSession::DoEditSession(TfEditCookie ec) {
         ITfRange* pRange = nullptr;
         bool own_range = false;
         if (pComp && SUCCEEDED(pComp->GetRange(&pRange))) {
-            if (!_text.empty())
-                pRange->SetText(ec, TF_ST_CORRECTION, _text.c_str(), (LONG)_text.length());
+            pRange->SetText(ec, TF_ST_CORRECTION, _text.c_str(), (LONG)_text.length());
             pRange->Collapse(ec, TF_ANCHOR_END);
         } else {
             TF_SELECTION sel = {};

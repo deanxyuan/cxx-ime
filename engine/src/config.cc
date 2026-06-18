@@ -48,7 +48,7 @@ bool Config::load(const std::string& path) {
             load_bool(s, "inline_preedit", inline_preedit);
             load_string(s, "render_backend", render_backend);
             load_string(s, "preedit_type", preedit_type);
-            if (preedit_type != "composition" && preedit_type != "preview" && preedit_type != "preview_all")
+            if (preedit_type != "composition" && preedit_type != "preview")
                 preedit_type = "composition";
         }
 

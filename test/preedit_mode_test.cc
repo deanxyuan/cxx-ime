@@ -5,7 +5,9 @@
 #include <vector>
 #include "preedit_mode.h"
 
-TEST(PreeditMode, composition) {
+// -- inline_preedit=true: TSF composition active, candidate window hides preedit --
+
+TEST(PreeditMode, inline_composition) {
     std::wstring preedit = L"nihao";
     std::vector<std::wstring> candidates = {L"你好", L"泥好"};
 
@@ -16,7 +18,7 @@ TEST(PreeditMode, composition) {
     ASSERT_TRUE(!d.show_preedit_in_popup);
 }
 
-TEST(PreeditMode, preview) {
+TEST(PreeditMode, inline_preview) {
     std::wstring preedit = L"nihao";
     std::vector<std::wstring> candidates = {L"你好", L"泥好"};
 
@@ -24,23 +26,25 @@ TEST(PreeditMode, preview) {
 
     ASSERT_TRUE(d.start_composition);
     ASSERT_EQ(d.inline_text, L"你好");
-    ASSERT_TRUE(d.show_preedit_in_popup);
+    ASSERT_TRUE(!d.show_preedit_in_popup);
 }
 
-TEST(PreeditMode, preview_all) {
+TEST(PreeditMode, inline_preview_no_candidates) {
     std::wstring preedit = L"nihao";
-    std::vector<std::wstring> candidates = {L"你好", L"泥好"};
+    std::vector<std::wstring> candidates;
 
-    auto d = cxxime_tsf::decide_preedit(true, "preview_all", preedit, candidates);
+    auto d = cxxime_tsf::decide_preedit(true, "preview", preedit, candidates);
 
     ASSERT_TRUE(d.start_composition);
-    ASSERT_EQ(d.inline_text, L"你好 泥好");
-    ASSERT_TRUE(d.show_preedit_in_popup);
+    ASSERT_EQ(d.inline_text, L"nihao");
+    ASSERT_TRUE(!d.show_preedit_in_popup);
 }
 
-TEST(PreeditMode, no_inline) {
+// -- inline_preedit=false: no TSF composition, candidate window shows raw pinyin --
+
+TEST(PreeditMode, no_inline_composition) {
     std::wstring preedit = L"nihao";
-    std::vector<std::wstring> candidates = {L"你好"};
+    std::vector<std::wstring> candidates = {L"你好", L"泥好"};
 
     auto d = cxxime_tsf::decide_preedit(false, "composition", preedit, candidates);
 
@@ -49,26 +53,15 @@ TEST(PreeditMode, no_inline) {
     ASSERT_TRUE(d.show_preedit_in_popup);
 }
 
-TEST(PreeditMode, preview_no_candidates) {
+TEST(PreeditMode, no_inline_preview) {
     std::wstring preedit = L"nihao";
-    std::vector<std::wstring> candidates;
+    std::vector<std::wstring> candidates = {L"你好", L"泥好"};
 
-    auto d = cxxime_tsf::decide_preedit(true, "preview", preedit, candidates);
+    auto d = cxxime_tsf::decide_preedit(false, "preview", preedit, candidates);
 
-    ASSERT_TRUE(d.start_composition);
-    ASSERT_EQ(d.inline_text, L"nihao");
-    ASSERT_TRUE(!d.show_preedit_in_popup);
-}
-
-TEST(PreeditMode, preview_all_no_candidates) {
-    std::wstring preedit = L"nihao";
-    std::vector<std::wstring> candidates;
-
-    auto d = cxxime_tsf::decide_preedit(true, "preview_all", preedit, candidates);
-
-    ASSERT_TRUE(d.start_composition);
-    ASSERT_EQ(d.inline_text, L"nihao");
-    ASSERT_TRUE(!d.show_preedit_in_popup);
+    ASSERT_TRUE(!d.start_composition);
+    ASSERT_TRUE(d.inline_text.empty());
+    ASSERT_TRUE(d.show_preedit_in_popup);
 }
 
 RUN_ALL_TESTS()
