@@ -33,6 +33,8 @@ struct Config {
 
     // engine
     int page_size = 9;
+    int input_mode = 0;  // 0=pinyin, 1=wubi, 2=mixed
+    bool fuzzy_pinyin = true;  // 模糊拼音开关
 
     // style
     std::string font_name = "Microsoft YaHei UI";

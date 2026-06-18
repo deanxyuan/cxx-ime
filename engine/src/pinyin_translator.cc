@@ -210,7 +210,9 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
     // 1. Syllabifier for abbreviation expansion (reserve first)
     // Limit paths to avoid CPU cache thrashing on short inputs (e.g. single letter 's')
     // Phase 3: syllabifier now has internal deadline checking, no need to skip
-    static constexpr size_t kMaxPaths = 8;
+    // Need enough paths for fuzzy spellings — abbreviation-heavy graphs can
+    // produce hundreds of paths before non-abbreviation paths appear.
+    static constexpr size_t kMaxPaths = 64;
     bool deadline_hit = false;
     std::chrono::steady_clock::time_point t_seg_start, t_seg_end;
     if (syllabifier_) {
