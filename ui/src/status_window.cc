@@ -64,25 +64,11 @@ static void shutdown_gdiplus() {
 // Tooltip text table
 // ============================================================
 static const wchar_t* kTooltipText[] = {
-    L"中文模式",
-    L"英文模式",
-    L"大写模式",
-    L"全角",
-    L"半角",
-    L"中文标点",
-    L"英文标点",
+    L"中/英文 (Shift)",
+    L"大写锁定",
+    L"全/半角 (Shift+Space)",
+    L"中/英文标点 (Ctrl+.)",
     L"打开设置",
-};
-
-enum TooltipIndex {
-    TIP_CHINESE_MODE = 0,
-    TIP_ENGLISH_MODE,
-    TIP_CAPS_MODE,
-    TIP_FULL_SHAPE,
-    TIP_HALF_SHAPE,
-    TIP_CHINESE_PUNCT,
-    TIP_ENGLISH_PUNCT,
-    TIP_SETTINGS,
 };
 
 static bool effective_chinese_punct(const ButtonState& state) {
@@ -313,25 +299,14 @@ LRESULT StatusWindow::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             auto* di = reinterpret_cast<NMTTDISPINFO*>(lp);
             int idx = static_cast<int>(di->hdr.idFrom);
             if (idx >= 0 && idx < BUTTON_COUNT) {
-                int tip_idx = -1;
+                const wchar_t* tip = nullptr;
                 switch (idx) {
-                case 0:
-                    tip_idx = state_.caps_lock
-                                  ? TIP_CAPS_MODE
-                                  : (state_.chinese_mode ? TIP_CHINESE_MODE : TIP_ENGLISH_MODE);
-                    break;
-                case 1:
-                    tip_idx = state_.full_shape ? TIP_FULL_SHAPE : TIP_HALF_SHAPE;
-                    break;
-                case 2:
-                    tip_idx =
-                        effective_chinese_punct(state_) ? TIP_CHINESE_PUNCT : TIP_ENGLISH_PUNCT;
-                    break;
-                case 3:
-                    tip_idx = TIP_SETTINGS;
-                    break;
+                case 0: tip = state_.caps_lock ? kTooltipText[1] : kTooltipText[0]; break;
+                case 1: tip = kTooltipText[2]; break;
+                case 2: tip = kTooltipText[3]; break;
+                case 3: tip = kTooltipText[4]; break;
                 }
-                if (tip_idx >= 0) di->lpszText = const_cast<LPWSTR>(kTooltipText[tip_idx]);
+                if (tip) di->lpszText = const_cast<LPWSTR>(tip);
             }
         }
         return 0;
@@ -963,18 +938,16 @@ void StatusWindow::EndTracking() {
 // ============================================================
 void StatusWindow::InitTooltip() {
     tooltip_hwnd_ = CreateWindowExW(
-        0, TOOLTIPS_CLASSW, nullptr,
-        WS_POPUP | TTS_ALWAYSTIP,
+        WS_EX_TOPMOST, TOOLTIPS_CLASSW, nullptr,
+        WS_POPUP | TTS_ALWAYSTIP | TTS_NOPREFIX,
         CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
         hwnd_, nullptr, GetModuleHandle(nullptr), nullptr
     );
 
     if (!tooltip_hwnd_) return;
 
-    // Remove system theme and set custom colors to match status window style
+    // Remove system theme for consistent rendering over layered window
     SetWindowTheme(tooltip_hwnd_, L"", L"");
-    SendMessageW(tooltip_hwnd_, TTM_SETTIPBKCOLOR, 0, RGB(232, 232, 232));
-    SendMessageW(tooltip_hwnd_, TTM_SETTIPTEXTCOLOR, 0, RGB(51, 51, 51));
 
     for (int i = 0; i < BUTTON_COUNT; ++i) {
         RECT rc = GetPillButtonRect(i);

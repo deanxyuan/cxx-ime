@@ -8,6 +8,7 @@
 #include <cxxime/config_monitor.h>
 #include <cxxime/config.h>
 #include <cxxime/data_path.h>
+#include <cxxime/logging.h>
 #include <atomic>
 
 // Forward declarations for DllRegisterServer/DllUnregisterServer
@@ -48,6 +49,7 @@ BOOL WINAPI DllMain(HINSTANCE hInst, DWORD dwReason, LPVOID) {
     switch (dwReason) {
     case DLL_PROCESS_ATTACH:
         g_hInst = hInst;
+        cxxime::set_module_handle(hInst);
         DisableThreadLibraryCalls(hInst);
         InitializeCriticalSection(&g_cs);
         g_config_monitor = new cxxime::ConfigMonitor();

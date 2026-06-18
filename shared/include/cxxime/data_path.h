@@ -4,8 +4,13 @@
 #define CXXIME_DATA_PATH_H_
 
 #include <string>
+#include <windows.h>
 
 namespace cxxime {
+
+// Set the DLL module handle for correct path resolution when loaded
+// into foreign processes (e.g. TSF DLL in Notepad.exe).
+void set_module_handle(HMODULE hModule);
 
 // Runtime override for data directory. When set (non-empty), data_dir()
 // returns this path instead of the compile-time or default production path.

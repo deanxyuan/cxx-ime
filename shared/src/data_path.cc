@@ -12,6 +12,12 @@ namespace cxxime {
 // from any thread (TSF DLL loaded in multiple processes).
 static std::mutex g_override_mutex;
 static std::string g_data_dir_override;
+static HMODULE g_module_handle = nullptr;
+
+void set_module_handle(HMODULE hModule) {
+    std::lock_guard<std::mutex> lock(g_override_mutex);
+    g_module_handle = hModule;
+}
 
 void set_data_dir(const std::string& dir) {
     std::lock_guard<std::mutex> lock(g_override_mutex);
@@ -28,11 +34,16 @@ std::string data_dir() {
 #ifdef CXXIME_DATA_DIR
     return CXXIME_DATA_DIR;
 #else
-    // Production: <exe_dir>\data\ (magic static — thread-safe init)
+    // Production: <dll_dir>\data\ (magic static — thread-safe init)
     static std::string cached;
     if (cached.empty()) {
+        HMODULE mod = nullptr;
+        {
+            std::lock_guard<std::mutex> lock(g_override_mutex);
+            mod = g_module_handle;
+        }
         wchar_t modPath[MAX_PATH];
-        if (GetModuleFileNameW(nullptr, modPath, MAX_PATH)) {
+        if (GetModuleFileNameW(mod, modPath, MAX_PATH)) {
             std::wstring dataDir(modPath);
             dataDir.erase(dataDir.rfind(L'\\') + 1);
             dataDir += L"data\\";
