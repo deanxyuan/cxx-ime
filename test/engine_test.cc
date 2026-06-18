@@ -155,7 +155,7 @@ TEST(Engine, space_with_candidates_commits) {
     ASSERT_EQ(ctx.committed_text, "的");
 }
 
-TEST(Engine, space_no_candidates_rejects) {
+TEST(Engine, space_no_candidates_dismisses) {
     cxxime::Context ctx;
     ctx.pinyin_buffer = "zzz";
 
@@ -165,7 +165,8 @@ TEST(Engine, space_no_candidates_rejects) {
 
     cxxime::PinyinProcessor processor;
     auto result = processor.process_key(event, ctx);
-    ASSERT_EQ(result, cxxime::ProcessResult::REJECTED);
+    ASSERT_EQ(result, cxxime::ProcessResult::ACCEPTED);
+    ASSERT_TRUE(ctx.pinyin_buffer.empty());
 }
 
 TEST(Engine, number_selects_candidate) {

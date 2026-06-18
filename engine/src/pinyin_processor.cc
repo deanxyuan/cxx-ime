@@ -29,13 +29,17 @@ ProcessResult PinyinProcessor::process_key(const KeyEvent& event, Context& conte
         return ProcessResult::REJECTED;
     }
 
-    // Space: select first candidate
+    // Space: select first candidate, or dismiss if no candidates
     if (vk == VK_SPACE) {
         if (context.is_composing() && !context.candidates.candidates.empty()) {
             if (context.candidates.highlighted >= 0 && context.candidates.highlighted < (int)context.candidates.candidates.size()) {
                 context.committed_text = context.candidates.candidates[context.candidates.highlighted].text;
                 return ProcessResult::COMMITTED;
             }
+        }
+        if (context.is_composing()) {
+            context.reset();
+            return ProcessResult::ACCEPTED;
         }
         return ProcessResult::REJECTED;
     }
