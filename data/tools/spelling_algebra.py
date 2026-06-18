@@ -150,6 +150,26 @@ class DerivationRule(TransformationRule):
         return False
 
 
+class FuzzyDerivationRule(DerivationRule):
+    """A derive rule that is semantically fuzzy (e.g. eng↔en, zh↔z).
+    Produces type=kFuzzySpelling with penalty, like FuzzingRule,
+    but parsed from a derive/ definition.
+    """
+
+    def rule_type(self):
+        return K_FUZZY
+
+    def credibility_delta(self):
+        return K_FUZZY_PENALTY
+
+
+# Known fuzzy derive patterns: (raw_regex, raw_replacement)
+_FUZZY_DERIVE_PATTERNS = {
+    (r"^([zcs])h", "$1"),       # zh↔z, ch↔c, sh↔s
+    (r"^(.*)eng$", "$1en"),     # eng↔en
+}
+
+
 class FuzzingRule(DerivationRule):
     """fuzz/ptn/rep/ — fuzzy spelling variant.
     Matches librime Fuzzing (calculus.cc:160-180).
@@ -269,6 +289,8 @@ def _parse_rule(definition):
             return TransformationRule(args[0], _convert_boost_replacement(args[1]))
     elif token == "derive":
         if len(args) >= 2:
+            if (args[0], args[1]) in _FUZZY_DERIVE_PATTERNS:
+                return FuzzyDerivationRule(args[0], _convert_boost_replacement(args[1]))
             return DerivationRule(args[0], _convert_boost_replacement(args[1]))
     elif token == "fuzz":
         if len(args) >= 2:
@@ -430,8 +452,8 @@ if __name__ == "__main__":
     assert "ca" in script
     ca_spellings = {s.syllable: s for s in script["ca"]}
     assert "ca" in ca_spellings and ca_spellings["ca"].type == K_NORMAL
-    assert "cha" in ca_spellings and ca_spellings["cha"].type == K_NORMAL  # derive doesn't change type
-    print("  [OK] derive: 'ca' → ca(normal), cha(normal)")
+    assert "cha" in ca_spellings and ca_spellings["cha"].type == K_FUZZY  # fuzzy derive
+    print("  [OK] derive: 'ca' → ca(normal), cha(fuzzy)")
 
     # Test 3: Fuzzing (n↔l)
     script = Script()

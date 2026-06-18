@@ -36,7 +36,11 @@ SyllableGraph Syllabifier::build_graph(const std::string& input) const {
         auto matches = spellings_.prefix_search(remaining);
 
         for (auto& m : matches) {
-            // Determine how many input characters this match consumes
+            // Determine how many input characters this match consumes.
+            // In a Patricia trie the spelling's syllable (e.g. "zhong") may
+            // differ from the trie key (e.g. "zong") for fuzzy spellings.
+            // We use input_key_len (the trie key length) for edge creation,
+            // since that reflects how many input chars the key consumes.
             size_t input_len;
             if (m.syllable == remaining) {
                 // Exact match: consumes all remaining input
@@ -45,16 +49,13 @@ SyllableGraph Syllabifier::build_graph(const std::string& input) const {
                        m.syllable == remaining.substr(0, m.syllable.size())) {
                 // Syllable is a prefix of remaining input (normal match)
                 input_len = m.syllable.size();
-            } else if (m.type == kAbbreviation || m.type == kFuzzySpelling) {
-                // Abbreviation or fuzzy: input key is shorter than or different
-                // from the full syllable. Use input_key_len from the match.
-                input_len = m.input_key_len > 0 ? m.input_key_len : 1;
-                if (input_len > remaining.size())
-                    input_len = remaining.size();
+            } else if (m.input_key_len > 0 && m.input_key_len <= remaining.size()) {
+                // Trie key length available (abbreviation, fuzzy, or normal
+                // spelling whose key differs from syllable). Use it directly.
+                input_len = m.input_key_len;
+            } else if (m.type == kAbbreviation) {
+                input_len = 1;
             } else {
-                // Normal spelling that doesn't match the start of remaining input.
-                // prefix_search returns all keys sharing a common prefix, but for
-                // normal spellings only exact matches are valid graph edges.
                 continue;
             }
 
@@ -122,6 +123,11 @@ bool Syllabifier::enumerate_paths(
                 return a.credibility > b.credibility;
             });
     }
+    // Sort edge groups by end_pos descending — explore longer edges first.
+    // This ensures non-abbreviation paths (e.g. "zhong:guo") are discovered
+    // before abbreviation paths (e.g. "za:o:n:g:g:u:o") fill kMaxPaths.
+    std::sort(sorted_scratch.begin(), sorted_scratch.end(),
+        [](const auto& a, const auto& b) { return a.first > b.first; });
 
     // Copy edges to local before recursing (recursive call will clear sorted_scratch).
     // Use copy instead of move to preserve sorted_scratch data for remaining iterations.

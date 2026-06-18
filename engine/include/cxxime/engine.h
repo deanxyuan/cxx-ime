@@ -19,6 +19,7 @@
 #include <cxxime/syllabifier.h>
 #include <cxxime/query_trace.h>
 #include <cxxime/query_budget.h>
+#include <cxxime/ipc_protocol.h>
 
 namespace cxxime {
 
@@ -53,7 +54,7 @@ public:
 
     // Query trace access
     const QueryTrace& last_trace() const { return trace_; }
-    bool has_short_cache() const { return dict_ && dict_->has_short_cache(); }
+    bool has_short_cache() const { return pinyin_dict_ && pinyin_dict_->has_short_cache(); }
     void set_trace_enabled(bool enabled) { trace_enabled_ = enabled; }
     void set_trace_session_id(uint32_t id) { trace_.session_id = id; }
 
@@ -71,13 +72,24 @@ public:
     void set_query_deadline_ms(uint32_t deadline_ms) { query_deadline_ms_ = deadline_ms; }
     uint32_t query_deadline_ms() const { return query_deadline_ms_; }
 
+    // Wubi dict optional load
+    void set_wubi_dict(Dict* dict);
+
+    // Fuzzy pinyin toggle
+    void set_fuzzy_enabled(bool enabled);
+
+    // Mode switching
+    void switch_mode(InputMode mode);
+    InputMode mode() const { return mode_; }
+
     static std::string derive_spellings_path(const std::string& dict_path);
 
 private:
     void init_per_session(const Config& config);
 
-    PinyinProcessor processor_;
-    PinyinTranslator translator_;
+    std::unique_ptr<IProcessor> processor_;
+    std::unique_ptr<ITranslator> translator_;
+
     Context context_;
     AsciiComposer ascii_composer_;
 
@@ -88,10 +100,14 @@ private:
     std::unique_ptr<Syllabifier> owned_syllabifier_;
 
     // Active resource references (point to owned_* or shared_* depending on init path).
-    Dict* dict_ = nullptr;
+    Dict* pinyin_dict_ = nullptr;
+    Dict* wubi_dict_ = nullptr;
     SpellingsIndex* spellings_ = nullptr;
     Syllabifier* syllabifier_ = nullptr;
     const Config* config_ = nullptr;
+
+    // Input mode
+    InputMode mode_ = InputMode::PINYIN;
 
     // Query trace (explicit ownership, not thread_local - see TraceContext constraints)
     QueryTrace trace_;

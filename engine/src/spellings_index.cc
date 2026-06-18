@@ -142,7 +142,7 @@ static std::vector<SpellingMatch> trie_prefix_search(
                               *(const uint32_t*)(sp + 4));
             m.type = *(const uint8_t*)(sp + 8);
             m.credibility = *(const float*)(sp + 10);
-            m.input_key_len = key_len;
+            m.input_key_len = prefix_pos;
             results.push_back(std::move(m));
             sp += SPELLING_SIZE;
         }
@@ -214,10 +214,20 @@ std::vector<SpellingMatch> SpellingsIndex::prefix_search(std::string_view prefix
     if (!data_ || prefix.empty())
         return {};
 
+    std::vector<SpellingMatch> results;
     if (is_trie_)
-        return trie_prefix_search(nodes_, strings_, node_offsets_.get(), node_count_, prefix);
+        results = trie_prefix_search(nodes_, strings_, node_offsets_.get(), node_count_, prefix);
     else
-        return flat_prefix_search(flat_entries_, flat_entry_count_, strings_, prefix);
+        results = flat_prefix_search(flat_entries_, flat_entry_count_, strings_, prefix);
+
+    if (!fuzzy_enabled_) {
+        results.erase(
+            std::remove_if(results.begin(), results.end(),
+                [](const SpellingMatch& m) { return m.type == kFuzzySpelling; }),
+            results.end());
+    }
+
+    return results;
 }
 
 bool SpellingsIndex::create_test_trie(const std::string& path,

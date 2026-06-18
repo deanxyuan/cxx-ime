@@ -32,6 +32,10 @@ bool Config::load(const std::string& path) {
             load_int(e, "page_size", page_size);
             if (page_size < 1) page_size = 1;
             if (page_size > 100) page_size = 100;
+            load_int(e, "input_mode", input_mode);
+            if (input_mode < 0) input_mode = 0;
+            if (input_mode > 2) input_mode = 2;
+            load_bool(e, "fuzzy_pinyin", fuzzy_pinyin);
         }
 
         if (j.contains("style") && j["style"].is_object()) {
@@ -146,6 +150,8 @@ bool Config::save(const std::string& path) const {
     j["schema"]["description"] = "CxxIME default pinyin schema";
 
     j["engine"]["page_size"] = page_size;
+    j["engine"]["input_mode"] = input_mode;
+    j["engine"]["fuzzy_pinyin"] = fuzzy_pinyin;
     j["engine"]["max_pinyin_length"] = 64;
 
     j["style"]["font_face"] = font_name;

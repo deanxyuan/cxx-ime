@@ -86,6 +86,9 @@ public:
     // O(k) trie walk: returns all spellings where the stored key is a prefix of `prefix`.
     std::vector<SpellingMatch> prefix_search(std::string_view prefix) const;
 
+    void set_fuzzy_enabled(bool enabled) { fuzzy_enabled_ = enabled; }
+    bool fuzzy_enabled() const { return fuzzy_enabled_; }
+
     // For tests: create a v2 trie binary file from entries
     static bool create_test_trie(const std::string& path,
                                  const std::vector<std::tuple<std::string, std::string, int, float>>& entries);
@@ -105,6 +108,7 @@ private:
     const SpellingEntryV1* flat_entries_ = nullptr;
     uint32_t flat_entry_count_ = 0;
     bool is_trie_ = false;
+    bool fuzzy_enabled_ = true;
 };
 
 } // namespace cxxime
