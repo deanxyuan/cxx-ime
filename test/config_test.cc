@@ -88,12 +88,12 @@ TEST(Config, preedit_type_preview) {
     const char* path = "test_preedit_type.json";
     {
         std::ofstream f(path);
-        f << R"({"style":{"preedit_type":"preview_all"}})";
+        f << R"({"style":{"preedit_type":"preview"}})";
     }
 
     cxxime::Config cfg;
     ASSERT_TRUE(cfg.load(path));
-    ASSERT_TRUE(cfg.preedit_type == "preview_all");
+    ASSERT_TRUE(cfg.preedit_type == "preview");
 
     std::remove(path);
 }
@@ -108,6 +108,20 @@ TEST(Config, preedit_type_invalid_fallback) {
     cxxime::Config cfg;
     ASSERT_TRUE(cfg.load(path));
     ASSERT_TRUE(cfg.preedit_type == "composition");
+
+    std::remove(path);
+}
+
+TEST(Config, preedit_type_preview_all_fallback) {
+    const char* path = "test_preedit_preview_all.json";
+    {
+        std::ofstream f(path);
+        f << R"({"style":{"preedit_type":"preview_all"}})";
+    }
+
+    cxxime::Config cfg;
+    ASSERT_TRUE(cfg.load(path));
+    ASSERT_TRUE(cfg.preedit_type == "composition");  // preview_all removed, falls back
 
     std::remove(path);
 }

@@ -42,7 +42,7 @@ struct Config {
     std::string layout = "horizontal";  // horizontal | vertical
     std::string render_backend = "d2d";  // gdi | d2d
     bool inline_preedit = false;
-    std::string preedit_type = "preview";
+    std::string preedit_type = "composition";
 
     // theme
     std::string theme = "azure";
