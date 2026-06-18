@@ -418,19 +418,34 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
         }
     });
 
-    // Connect to server
+    // Connect to server and query initial status before adding language bar buttons.
+    // This avoids _refresh_mode_button_item (RemoveItem+AddItem) flash during activation
+    // by pre-setting button state to match server, so _sync_ime_status sees no delta.
+    cxxime::ImeStatus initial_status = {};
+    initial_status.chinese_mode = true; // fallback default matching CLangBarItemButton ctor
     if (_client.connect()) {
         _client.start_session(_sessionId);
         CXXIME_LOG(L"Connected to server, sessionId=%u", _sessionId);
+        cxxime::IPCResponse status_resp = {};
+        if (_client.get_status(_sessionId, status_resp) && status_resp.status == cxxime::IPCStatus::OK) {
+            initial_status = status_resp.ime_status;
+        }
     } else {
         CXXIME_LOG(L"Failed to connect to server");
     }
+
+    // Pre-set TextService state so _sync_ime_status sees no delta
+    _chinese_mode = initial_status.chinese_mode;
+    _caps_lock = initial_status.caps_lock;
 
     // Register language bar buttons
     ITfLangBarItemMgr* pLangBarItemMgr = nullptr;
     if (SUCCEEDED(_threadMgr->QueryInterface(IID_ITfLangBarItemMgr, (void**)&pLangBarItemMgr))) {
         _modeButton = new CLangBarItemButton(tid, GUID_LBI_INPUTMODE);
         _imeButton = new CLangBarImeButton(tid, c_guidLangBarImeButton);
+
+        // Pre-set button state before AddItem to avoid flash
+        _modeButton->update_from_status(initial_status);
 
         if (FAILED(pLangBarItemMgr->AddItem(_modeButton))) {
             CXXIME_LOG(L"Failed to add mode button to language bar");
