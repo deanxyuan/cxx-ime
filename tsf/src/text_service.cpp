@@ -6,8 +6,10 @@
 #include "display_attribute.h"
 #include <cxxime/logging.h>
 #include <cxxime/data_path.h>
+#include <cxxime/render_context.h>
 #include "preedit_mode.h"
 #include "language_bar.h"
+#include "about_dialog.h"
 #include <cstring>
 #include <shellapi.h>
 #include <shlobj.h>
@@ -517,13 +519,7 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
 
             // Set about callback
             _modeButton->set_about_callback([]() {
-                MessageBoxW(nullptr,
-                            L"CxxIME 轻量级输入法\n"
-                            L"版本: 1.0.0\n\n"
-                            L"© 2026 CxxIME Contributors\n"
-                            L"Apache License 2.0",
-                            L"关于 CxxIME",
-                            MB_OK | MB_ICONINFORMATION);
+                show_about_dialog();
             });
 
             // Set switch input mode callback (纯拼音/纯五笔/混输)
@@ -720,7 +716,18 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
 
     // Config is reloaded by watcher thread (not keypress-driven).
     // Copy to local _config for consistent use during this keypress.
-    _config = get_config();
+    {
+        auto new_config = get_config();
+        if (new_config.theme != _config.theme) {
+            _candidateWindow.set_theme(cxxime::build_theme_from_config(new_config));
+        }
+        if (new_config.layout != _config.layout)
+            _candidateWindow.set_layout(new_config.layout);
+        if (new_config.font_size != _config.font_size ||
+            new_config.theme != _config.theme)
+            _statusController.update_config(new_config);
+        _config = std::move(new_config);
+    }
 
     // Record key event start time
     _key_event_start = std::chrono::steady_clock::now();

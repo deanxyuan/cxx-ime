@@ -86,7 +86,7 @@ STDMETHODIMP CLangBarItemButton::GetInfo(TF_LANGBARITEMINFO* pInfo) {
 
     pInfo->clsidService = c_clsidTextService;
     pInfo->guidItem = _guid;
-    pInfo->dwStyle = TF_LBI_STYLE_SHOWNINTRAY | TF_LBI_STYLE_BTN_BUTTON;
+    pInfo->dwStyle = TF_LBI_STYLE_SHOWNINTRAY | TF_LBI_STYLE_BTN_BUTTON | TF_LBI_STYLE_BTN_MENU;
     pInfo->ulSort = 0;
     wcscpy_s(pInfo->szDescription, TEXTSERVICE_DESC);
     return S_OK;
@@ -119,6 +119,30 @@ STDMETHODIMP CLangBarItemButton::OnClick(TfLBIClick click, POINT pt, const RECT*
     CXXIME_LOG(L"OnClick: click=%d, has_callback=%d", (int)click, _menu_callback ? 1 : 0);
     if (click == TF_LBI_CLK_LEFT) {
         if (_menu_callback) _menu_callback(0);  // 0 = toggle chinese
+    } else if (click == TF_LBI_CLK_RIGHT) {
+        HMENU hMenu = CreatePopupMenu();
+        if (!hMenu) return E_FAIL;
+
+        AppendMenuW(hMenu, MF_STRING, 1, L"纯五笔模式");
+        AppendMenuW(hMenu, MF_STRING, 2, L"纯拼音模式");
+        AppendMenuW(hMenu, MF_STRING, 3, L"五笔拼音混输");
+        AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(hMenu, MF_STRING, 4, L"快捷造词");
+        AppendMenuW(hMenu, MF_STRING, 5, _status_visible ? L"隐藏状态栏" : L"显示状态栏");
+        AppendMenuW(hMenu, MF_STRING, 6, L"设置");
+        AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(hMenu, MF_STRING, 7, L"关于");
+
+        // Get foreground window for TrackPopupMenuEx
+        HWND hwnd = GetForegroundWindow();
+        UINT wID = TrackPopupMenuEx(hMenu,
+                                    TPM_NONOTIFY | TPM_RETURNCMD | TPM_RIGHTBUTTON,
+                                    pt.x, pt.y, hwnd, nullptr);
+        DestroyMenu(hMenu);
+
+        if (wID > 0) {
+            OnMenuSelect(wID);
+        }
     }
     return S_OK;
 }

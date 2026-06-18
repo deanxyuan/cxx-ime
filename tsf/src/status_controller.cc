@@ -3,6 +3,7 @@
 #include "status_controller.h"
 #include "globals.h"
 #include "resource.h"
+#include "about_dialog.h"
 #include <cxxime/ipc_client.h>
 #include <cxxime/config.h>
 #include <cxxime/render_context.h>
@@ -131,8 +132,9 @@ void StatusController::on_config_action(const std::string& action) {
             config_->status_window.enable = false;
             config_->save(user_data_path("default.json"));
         }
+    } else if (action == "about") {
+        show_about_dialog();
     }
-    // "about" — no action for now
 }
 
 void StatusController::toggle_chinese_mode() {
