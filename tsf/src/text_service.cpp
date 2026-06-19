@@ -10,6 +10,7 @@
 #include "preedit_mode.h"
 #include "language_bar.h"
 #include "about_dialog.h"
+#include <atomic>
 #include <cstring>
 #include <shellapi.h>
 #include <shlobj.h>
@@ -273,8 +274,6 @@ STDMETHODIMP_(ULONG) TextService::Release() {
 }
 
 void TextService::_sync_ime_status(const cxxime::ImeStatus& status) {
-    bool chinese_changed = (_chinese_mode != status.chinese_mode);
-    bool caps_changed = (_caps_lock != status.caps_lock);
     _chinese_mode = status.chinese_mode;
     _caps_lock = status.caps_lock;
 
@@ -283,14 +282,8 @@ void TextService::_sync_ime_status(const cxxime::ImeStatus& status) {
     // 如果按钮状态尚未更新，语言栏会拿到旧图标，随后 _pSink->OnUpdate 又触发一次
     // 刷新拿到新图标，两次渲染造成闪烁。
     if (_modeButton) _modeButton->update_from_status(status);
-    if (_imeButton) _imeButton->update_mode(status.input_mode);
     if (_statusController.is_initialized()) _statusController.sync_status(status);
     _sync_conversion_mode_compartment(status);
-
-    // Fix: 不再调用 _refresh_mode_button_item (RemoveItem+AddItem)，
-    // update_from_status 已通过 _pSink->OnUpdate 通知 TSF 刷新按钮，
-    // RemoveItem+AddItem 会导致按钮瞬间消失再出现，造成图标闪烁。
-    // if (chinese_changed || caps_changed) _refresh_mode_button_item();
 }
 
 void TextService::_sync_conversion_mode_compartment(const cxxime::ImeStatus& status) {
@@ -339,24 +332,6 @@ void TextService::_sync_conversion_mode_compartment(const cxxime::ImeStatus& sta
         VariantClear(&next);
     }
     compartment->Release();
-}
-
-void TextService::_refresh_mode_button_item() {
-    if (!_threadMgr || !_modeButton) return;
-
-    ITfLangBarItemMgr* item_mgr = nullptr;
-    HRESULT hr_qi =
-        _threadMgr->QueryInterface(IID_ITfLangBarItemMgr, reinterpret_cast<void**>(&item_mgr));
-
-    if (FAILED(hr_qi) || !item_mgr) {
-        CXXIME_LOG(L"ModeButton refresh: QI ITfLangbarItemMgr failed, hr=0x%08x", hr_qi);
-        return;
-    }
-
-    HRESULT hr_remove = item_mgr->RemoveItem(_modeButton);
-    HRESULT hr_add = item_mgr->AddItem(_modeButton);
-    CXXIME_LOG(L"ModeButton refresh: remove=0x%08x, add=0x%08x", hr_remove, hr_add);
-    item_mgr->Release();
 }
 
 // ITfTextInputProcessorEx
@@ -426,8 +401,8 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
     });
 
     // Connect to server and query initial status before adding language bar buttons.
-    // This avoids _refresh_mode_button_item (RemoveItem+AddItem) flash during activation
-    // by pre-setting button state to match server, so _sync_ime_status sees no delta.
+    // Pre-set the mode button to match the server before AddItem, so TSF reads the
+    // correct icon on the first GetIcon call.
     cxxime::ImeStatus initial_status = {};
     initial_status.chinese_mode = true; // fallback default matching CLangBarItemButton ctor
     // Reuse existing connection if available (Deactivate no longer disconnects).
@@ -454,7 +429,6 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
     ITfLangBarItemMgr* pLangBarItemMgr = nullptr;
     if (SUCCEEDED(_threadMgr->QueryInterface(IID_ITfLangBarItemMgr, (void**)&pLangBarItemMgr))) {
         _modeButton = new CLangBarItemButton(tid, GUID_LBI_INPUTMODE);
-        _imeButton = new CLangBarImeButton(tid, c_guidLangBarImeButton);
 
         // Pre-set button state before AddItem to avoid flash
         _modeButton->update_from_status(initial_status);
@@ -462,12 +436,9 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
         if (FAILED(pLangBarItemMgr->AddItem(_modeButton))) {
             CXXIME_LOG(L"Failed to add mode button to language bar");
         }
-        if (FAILED(pLangBarItemMgr->AddItem(_imeButton))) {
-            CXXIME_LOG(L"Failed to add IME button to language bar");
-        }
 
         pLangBarItemMgr->Release();
-        CXXIME_LOG(L"Language bar buttons registered");
+        CXXIME_LOG(L"Mode language bar button registered");
     } else {
         CXXIME_LOG(L"Failed to get ITfLangBarItemMgr interface");
     }
@@ -641,7 +612,8 @@ STDMETHODIMP TextService::Deactivate() {
 
     _candidateWindow.destroy();
 
-    // Unregister language bar buttons
+    // Unregister language bar button. The IME branding icon is provided by the TSF profile
+    // registration, so CxxIME only owns this GUID_LBI_INPUTMODE status button.
     ITfLangBarItemMgr* pLangBarItemMgr = nullptr;
     if (_threadMgr && SUCCEEDED(_threadMgr->QueryInterface(IID_ITfLangBarItemMgr, (void**)&pLangBarItemMgr))) {
         if (_modeButton) {
@@ -649,13 +621,8 @@ STDMETHODIMP TextService::Deactivate() {
             _modeButton->Release();
             _modeButton = nullptr;
         }
-        if (_imeButton) {
-            pLangBarItemMgr->RemoveItem(_imeButton);
-            _imeButton->Release();
-            _imeButton = nullptr;
-        }
         pLangBarItemMgr->Release();
-        CXXIME_LOG(L"Language bar buttons unregistered");
+        CXXIME_LOG(L"Mode language bar button unregistered");
     }
 
     // Unregister thread focus sink and event sink

@@ -15,6 +15,14 @@
 #define CONNECT_E_NOCONNECTION 0x80040202
 #endif
 
+namespace {
+
+UINT mode_icon_id(bool chinese_mode, bool caps_lock) {
+    return caps_lock ? IDI_ICON_C : (chinese_mode ? IDI_ICON_ZH : IDI_ICON_EN);
+}
+
+} // namespace
+
 CLangBarItemButton::CLangBarItemButton(TfClientId tid, REFGUID guid)
     : _clientId(tid), _guid(guid), _chinese_mode(true), _pSink(nullptr) {
     DllAddRef();
@@ -95,6 +103,10 @@ STDMETHODIMP CLangBarItemButton::GetInfo(TF_LANGBARITEMINFO* pInfo) {
 STDMETHODIMP CLangBarItemButton::GetStatus(DWORD* pdwStatus) {
     if (pdwStatus) {
         *pdwStatus = 0;
+        if (!_visible) {
+            *pdwStatus |= TF_LBI_STATUS_HIDDEN;
+            return S_OK;
+        }
         if (_chinese_mode)
             *pdwStatus |= TF_LBI_STATUS_BTN_TOGGLED;
     }
@@ -102,6 +114,15 @@ STDMETHODIMP CLangBarItemButton::GetStatus(DWORD* pdwStatus) {
 }
 
 STDMETHODIMP CLangBarItemButton::Show(BOOL fShow) {
+    bool visible = !!fShow;
+    if (_visible == visible)
+        return S_OK;
+
+    _visible = visible;
+    if (_pSink) {
+        HRESULT hr = _pSink->OnUpdate(TF_LBI_STATUS);
+        CXXIME_LOG(L"ModeButton Show: visible=%d, hr=0x%08x", _visible ? 1 : 0, hr);
+    }
     return S_OK;
 }
 
@@ -214,7 +235,7 @@ STDMETHODIMP CLangBarItemButton::OnMenuSelect(UINT wID) {
 
 STDMETHODIMP CLangBarItemButton::GetIcon(HICON* phIcon) {
     if (!phIcon) return E_INVALIDARG;
-    UINT iconId = _caps_lock ? IDI_ICON_C : (_chinese_mode ? IDI_ICON_ZH : IDI_ICON_EN);
+    UINT iconId = mode_icon_id(_chinese_mode, _caps_lock);
     HICON source = _caps_lock ? _hIconCaps : (_chinese_mode ? _hIconZh : _hIconEn);
     *phIcon = source ? CopyIcon(source) : nullptr;
     if (!*phIcon) {
@@ -264,9 +285,12 @@ STDMETHODIMP CLangBarItemButton::UnadviseSink(DWORD dwCookie) {
 
 void CLangBarItemButton::update_icon(bool chinese_mode) {
     if (_chinese_mode != chinese_mode) {
+        UINT old_icon = mode_icon_id(_chinese_mode, _caps_lock);
+        UINT new_icon = mode_icon_id(chinese_mode, _caps_lock);
         _chinese_mode = chinese_mode;
         if (_pSink) {
-            DWORD flags = TF_LBI_ICON | TF_LBI_STATUS | TF_LBI_TEXT | TF_LBI_TOOLTIP;
+            DWORD flags = TF_LBI_STATUS | TF_LBI_TOOLTIP;
+            if (old_icon != new_icon) flags |= TF_LBI_ICON;
             HRESULT hr = _pSink->OnUpdate(flags);
             CXXIME_LOG(L"ModeButton OnUpdate: chinese=%d, caps=%d, flags=0x%08x, hr=0x%08x",
                        _chinese_mode ? 1 : 0, _caps_lock ? 1 : 0, flags, hr);
@@ -277,10 +301,13 @@ void CLangBarItemButton::update_icon(bool chinese_mode) {
 void CLangBarItemButton::update_from_status(const cxxime::ImeStatus& status) {
     _input_mode = status.input_mode;
     if (_chinese_mode != status.chinese_mode || _caps_lock != status.caps_lock) {
+        UINT old_icon = mode_icon_id(_chinese_mode, _caps_lock);
+        UINT new_icon = mode_icon_id(status.chinese_mode, status.caps_lock);
         _chinese_mode = status.chinese_mode;
         _caps_lock = status.caps_lock;
         if (_pSink) {
-            DWORD flags = TF_LBI_ICON | TF_LBI_STATUS | TF_LBI_TEXT | TF_LBI_TOOLTIP;
+            DWORD flags = TF_LBI_STATUS | TF_LBI_TOOLTIP;
+            if (old_icon != new_icon) flags |= TF_LBI_ICON;
             HRESULT hr = _pSink->OnUpdate(flags);
             CXXIME_LOG(L"ModeButton OnUpdate: chinese=%d, caps=%d, flags=0x%08x, hr=0x%08x",
                        _chinese_mode ? 1 : 0, _caps_lock ? 1 : 0, flags, hr);
@@ -322,117 +349,4 @@ void CLangBarItemButton::set_quick_phrase_callback(QuickPhraseCallback cb) {
 
 void CLangBarItemButton::set_status_visible(bool visible) {
     _status_visible = visible;
-}
-
-// CLangBarImeButton implementation
-
-CLangBarImeButton::CLangBarImeButton(TfClientId tid, REFGUID guid)
-    : _clientId(tid), _guid(guid), _pSink(nullptr) {
-    DllAddRef();
-    int cx = GetSystemMetrics(SM_CXSMICON);
-    int cy = GetSystemMetrics(SM_CYSMICON);
-    _hIcon = (HICON)LoadImageW(g_hInst, MAKEINTRESOURCEW(IDI_CXXIME), IMAGE_ICON, cx, cy, LR_DEFAULTCOLOR);
-}
-
-CLangBarImeButton::~CLangBarImeButton() {
-    if (_hIcon) { DestroyIcon(_hIcon); _hIcon = nullptr; }
-    _pSink = nullptr;
-    DllRelease();
-}
-
-STDMETHODIMP CLangBarImeButton::QueryInterface(REFIID riid, void** ppvObj) {
-    if (!ppvObj) return E_INVALIDARG;
-    *ppvObj = nullptr;
-    if (IsEqualIID(riid, IID_IUnknown) || IsEqualIID(riid, IID_ITfLangBarItem) ||
-        IsEqualIID(riid, IID_ITfLangBarItemButton))
-        *ppvObj = static_cast<ITfLangBarItemButton*>(this);
-    else if (IsEqualIID(riid, IID_ITfSource))
-        *ppvObj = static_cast<ITfSource*>(this);
-    if (*ppvObj) { AddRef(); return S_OK; }
-    return E_NOINTERFACE;
-}
-
-STDMETHODIMP_(ULONG) CLangBarImeButton::AddRef() { return InterlockedIncrement(&_cRef); }
-STDMETHODIMP_(ULONG) CLangBarImeButton::Release() {
-    LONG cr = InterlockedDecrement(&_cRef);
-    if (cr == 0) delete this;
-    return cr;
-}
-
-STDMETHODIMP CLangBarImeButton::GetInfo(TF_LANGBARITEMINFO* pInfo) {
-    if (!pInfo) return E_INVALIDARG;
-    pInfo->clsidService = c_clsidTextService;
-    pInfo->guidItem = _guid;
-    pInfo->dwStyle = TF_LBI_STYLE_SHOWNINTRAY | TF_LBI_STYLE_BTN_BUTTON;
-    pInfo->ulSort = 1;  // After mode button (ulSort=0)
-    wcscpy_s(pInfo->szDescription, TEXTSERVICE_DESC);
-    return S_OK;
-}
-
-STDMETHODIMP CLangBarImeButton::GetStatus(DWORD* pdwStatus) {
-    if (pdwStatus) *pdwStatus = 0;
-    return S_OK;
-}
-
-STDMETHODIMP CLangBarImeButton::Show(BOOL fShow) { return S_OK; }
-
-STDMETHODIMP CLangBarImeButton::GetTooltipString(BSTR* pbstrToolTip) {
-    if (!pbstrToolTip) return E_INVALIDARG;
-    const wchar_t* tip = L"拼音输入";
-    if (_input_mode == cxxime::InputMode::WUBI)
-        tip = L"五笔输入";
-    else if (_input_mode == cxxime::InputMode::MIXED)
-        tip = L"五笔拼音混输";
-    *pbstrToolTip = SysAllocString(tip);
-    return S_OK;
-}
-
-STDMETHODIMP CLangBarImeButton::OnClick(TfLBIClick click, POINT pt, const RECT* prcArea) {
-    return S_OK;  // No toggle behavior
-}
-
-STDMETHODIMP CLangBarImeButton::InitMenu(ITfMenu* pMenu) { return E_NOTIMPL; }
-STDMETHODIMP CLangBarImeButton::OnMenuSelect(UINT wID) { return E_NOTIMPL; }
-
-STDMETHODIMP CLangBarImeButton::GetIcon(HICON* phIcon) {
-    if (!phIcon) return E_INVALIDARG;
-    *phIcon = _hIcon ? CopyIcon(_hIcon) : nullptr;
-    return (*phIcon == NULL) ? E_FAIL : S_OK;
-}
-
-STDMETHODIMP CLangBarImeButton::GetText(BSTR* pbstrText) {
-    if (!pbstrText) return E_INVALIDARG;
-    *pbstrText = SysAllocString(L"CxxIME");
-    return S_OK;
-}
-
-STDMETHODIMP CLangBarImeButton::AdviseSink(REFIID riid, IUnknown* punk, DWORD* pdwCookie) {
-    CXXIME_LOG(L"ImeButton::AdviseSink called");
-    if (!IsEqualIID(riid, IID_ITfLangBarItemSink))
-        return CONNECT_E_CANNOTCONNECT;
-    if (_pSink != nullptr) { _pSink->Release(); _pSink = nullptr; }
-    if (punk->QueryInterface(IID_ITfLangBarItemSink, (LPVOID*)&_pSink) != S_OK) {
-        _pSink = nullptr;
-        CXXIME_LOG(L"ImeButton::AdviseSink: QI FAILED");
-        return E_NOINTERFACE;
-    }
-    *pdwCookie = LANGBARITEMSINK_COOKIE;
-    CXXIME_LOG(L"ImeButton::AdviseSink: OK, sink=0x%p", _pSink);
-    return S_OK;
-}
-
-STDMETHODIMP CLangBarImeButton::UnadviseSink(DWORD dwCookie) {
-    if (dwCookie != LANGBARITEMSINK_COOKIE || _pSink == nullptr)
-        return CONNECT_E_NOCONNECTION;
-    _pSink->Release();
-    _pSink = nullptr;
-    return S_OK;
-}
-
-void CLangBarImeButton::update_mode(cxxime::InputMode mode) {
-    if (_input_mode == mode) return;
-    _input_mode = mode;
-    if (_pSink) {
-        _pSink->OnUpdate(TF_LBI_ICON | TF_LBI_TEXT);
-    }
 }
