@@ -53,13 +53,15 @@ void ConfigMonitor::start(std::function<void()> on_change) {
     if (running_.exchange(true))
         return;  // Already running
     on_change_ = std::move(on_change);
-    std::thread([this] { watcher_func(); }).detach();
+    watcher_thread_ = std::thread([this] { watcher_func(); });
 }
 
 void ConfigMonitor::stop() {
     if (!running_.exchange(false))
         return;
     SetEvent(event_);  // Wake watcher thread so it can exit
+    if (watcher_thread_.joinable())
+        watcher_thread_.join();
 }
 
 void ConfigMonitor::add_ref() {

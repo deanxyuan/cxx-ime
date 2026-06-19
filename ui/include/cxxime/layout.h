@@ -32,12 +32,5 @@ LayoutResult calculate_vertical_layout(HDC hdc,
     const std::string& font_name, int font_size,
     const LayoutConfig& cfg);
 
-// Deprecated compat overloads
-LayoutResult calculate_horizontal_layout(const std::vector<int>& text_widths,
-    int row_height, int spacing, int max_width, int padding);
-LayoutResult calculate_vertical_layout(const std::vector<int>& text_widths,
-    int row_height, int max_width, int padding);
-int estimate_text_width(const std::string& utf8_text);
-
 } // namespace cxxime
 #endif

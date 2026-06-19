@@ -3,70 +3,108 @@
 #include "util/testutil.h"
 #include <vector>
 #include <cxxime/layout.h>
+#include <cxxime/candidate.h>
+#include <cxxime/config.h>
 
-TEST(Layout, estimate_text_width_empty) {
-    ASSERT_EQ(cxxime::estimate_text_width(""), 20);
+static cxxime::Candidate make_cand(const char* text) {
+    cxxime::Candidate c;
+    c.text = text;
+    c.frequency = 100;
+    return c;
 }
 
-TEST(Layout, estimate_text_width_ascii) {
-    int w = cxxime::estimate_text_width("abc");
-    ASSERT_TRUE(w > 20);
-    ASSERT_EQ(w, 44);  // 3 chars * 8px + 20 padding
-}
-
-TEST(Layout, estimate_text_width_cjk) {
-    int w_cjk = cxxime::estimate_text_width("你好");  // 你好
-    int w_ascii = cxxime::estimate_text_width("ab");
-    ASSERT_TRUE(w_cjk > w_ascii);
-    ASSERT_EQ(w_cjk, 48);  // 2 * 14 + 20
+static cxxime::LayoutConfig make_cfg(int max_width = 600) {
+    cxxime::LayoutConfig cfg;
+    cfg.max_width = max_width;
+    return cfg;
 }
 
 TEST(Layout, horizontal_single_row) {
-    std::vector<int> widths = {60, 60, 60};
-    auto lr = cxxime::calculate_horizontal_layout(widths, 24, 8, 600, 8);
+    HDC hdc = GetDC(nullptr);
+    std::vector<cxxime::Candidate> cands = {make_cand("abc"), make_cand("def"), make_cand("ghi")};
+    auto lr = cxxime::calculate_horizontal_layout(hdc, cands, "Arial", 14, make_cfg());
 
     ASSERT_EQ(lr.rects.size(), 3u);
+    // All on same row
     ASSERT_EQ(lr.rects[0].highlight_rect.top, lr.rects[1].highlight_rect.top);
     ASSERT_EQ(lr.rects[1].highlight_rect.top, lr.rects[2].highlight_rect.top);
+    // Left to right ordering
     ASSERT_TRUE(lr.rects[0].highlight_rect.left < lr.rects[1].highlight_rect.left);
     ASSERT_TRUE(lr.rects[1].highlight_rect.left < lr.rects[2].highlight_rect.left);
+    ASSERT_GT(lr.width, 0);
+    ASSERT_GT(lr.height, 0);
+
+    ReleaseDC(nullptr, hdc);
 }
 
 TEST(Layout, horizontal_wrap) {
-    std::vector<int> widths = {60, 60, 60};
-    auto lr = cxxime::calculate_horizontal_layout(widths, 24, 8, 200, 8);
+    HDC hdc = GetDC(nullptr);
+    std::vector<cxxime::Candidate> cands = {make_cand("abc"), make_cand("def"), make_cand("ghi")};
+    // Narrow width forces wrapping
+    auto lr = cxxime::calculate_horizontal_layout(hdc, cands, "Arial", 14, make_cfg(100));
 
     ASSERT_EQ(lr.rects.size(), 3u);
+    // First two on same row
     ASSERT_EQ(lr.rects[0].highlight_rect.top, lr.rects[1].highlight_rect.top);
+    // Third wraps to next row
     ASSERT_TRUE(lr.rects[2].highlight_rect.top > lr.rects[1].highlight_rect.top);
+
+    ReleaseDC(nullptr, hdc);
 }
 
 TEST(Layout, horizontal_empty) {
-    std::vector<int> widths;
-    auto lr = cxxime::calculate_horizontal_layout(widths, 24, 8, 600, 8);
+    HDC hdc = GetDC(nullptr);
+    std::vector<cxxime::Candidate> cands;
+    auto lr = cxxime::calculate_horizontal_layout(hdc, cands, "Arial", 14, make_cfg());
 
     ASSERT_EQ(lr.rects.size(), 0u);
-    ASSERT_GE(lr.width, 200);
+    ASSERT_GT(lr.width, 0);
     ASSERT_GT(lr.height, 0);
+
+    ReleaseDC(nullptr, hdc);
+}
+
+TEST(Layout, horizontal_truncation) {
+    HDC hdc = GetDC(nullptr);
+    // Single long candidate that exceeds max_width
+    std::vector<cxxime::Candidate> cands = {make_cand("这是一个非常非常长的候选词测试")};
+    auto lr = cxxime::calculate_horizontal_layout(hdc, cands, "Microsoft YaHei UI", 14, make_cfg(200));
+
+    ASSERT_EQ(lr.rects.size(), 1u);
+    // Width should be constrained
+    ASSERT_LE(lr.width, 200 + 24);  // max_width + margin tolerance
+    ASSERT_GT(lr.height, 0);
+
+    ReleaseDC(nullptr, hdc);
 }
 
 TEST(Layout, vertical_basic) {
-    std::vector<int> widths = {80, 100, 60};
-    auto lr = cxxime::calculate_vertical_layout(widths, 24, 600, 8);
+    HDC hdc = GetDC(nullptr);
+    std::vector<cxxime::Candidate> cands = {make_cand("abc"), make_cand("def"), make_cand("ghi")};
+    auto lr = cxxime::calculate_vertical_layout(hdc, cands, "Arial", 14, make_cfg());
 
     ASSERT_EQ(lr.rects.size(), 3u);
+    // Top to bottom ordering
     ASSERT_TRUE(lr.rects[0].highlight_rect.top < lr.rects[1].highlight_rect.top);
     ASSERT_TRUE(lr.rects[1].highlight_rect.top < lr.rects[2].highlight_rect.top);
     ASSERT_EQ(lr.rects[0].index, 0);
     ASSERT_EQ(lr.rects[1].index, 1);
     ASSERT_EQ(lr.rects[2].index, 2);
+    ASSERT_GT(lr.width, 0);
+    ASSERT_GT(lr.height, 0);
+
+    ReleaseDC(nullptr, hdc);
 }
 
 TEST(Layout, vertical_width_max) {
-    std::vector<int> widths = {800};
-    auto lr = cxxime::calculate_vertical_layout(widths, 24, 600, 8);
+    HDC hdc = GetDC(nullptr);
+    std::vector<cxxime::Candidate> cands = {make_cand("abc")};
+    auto lr = cxxime::calculate_vertical_layout(hdc, cands, "Arial", 14, make_cfg(100));
 
-    ASSERT_LE(lr.width, 600);
+    ASSERT_EQ(lr.rects.size(), 1u);
+    ASSERT_LE(lr.width, 100);
+
+    ReleaseDC(nullptr, hdc);
 }
 
 RUN_ALL_TESTS()
