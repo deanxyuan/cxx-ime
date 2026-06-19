@@ -51,8 +51,10 @@ bool OutputComposer::intercept_key(const KeyEvent& event, const OutputOptions& o
 
 std::string OutputComposer::transform(const std::string& text, const OutputOptions& opts,
                                       CommitSource source, bool good_old_caps_lock) {
-    // Candidate text: no conversion at all
-    if (source == CommitSource::kCandidate)
+    // Candidate text and engine-prepared text: no conversion at all
+    if (source == CommitSource::kCandidate ||
+        source == CommitSource::kRawCodePreserveCase ||
+        source == CommitSource::kRawCodePretransformed)
         return text;
 
     if (text.empty())

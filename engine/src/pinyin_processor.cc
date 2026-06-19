@@ -31,6 +31,14 @@ ProcessResult PinyinProcessor::process_key(const KeyEvent& event, Context& conte
 
     // Space: select first candidate, or dismiss if no candidates
     if (vk == VK_SPACE) {
+        if (context.is_composing() &&
+            context.commit_source() == CommitSource::kRawCodePreserveCase) {
+            context.committed_text = context.pinyin_buffer;
+            context.candidates = {};
+            context.page_index = 0;
+            context.pinyin_buffer.clear();
+            return ProcessResult::COMMITTED;
+        }
         if (context.is_composing() && !context.candidates.candidates.empty()) {
             if (context.candidates.highlighted >= 0 && context.candidates.highlighted < (int)context.candidates.candidates.size()) {
                 context.committed_text = context.candidates.candidates[context.candidates.highlighted].text;
@@ -38,6 +46,15 @@ ProcessResult PinyinProcessor::process_key(const KeyEvent& event, Context& conte
             }
         }
         if (context.is_composing()) {
+            // Append mode: commit buffer text instead of discarding
+            if (event.is_caps_lock() && context.caps_lock_style == AsciiModeSwitchStyle::APPEND) {
+                context.committed_text = context.pinyin_buffer;
+                context.set_commit_source(CommitSource::kRawCodePreserveCase);
+                context.candidates = {};
+                context.page_index = 0;
+                context.pinyin_buffer.clear();
+                return ProcessResult::COMMITTED;
+            }
             context.reset();
             return ProcessResult::ACCEPTED;
         }
@@ -66,6 +83,9 @@ ProcessResult PinyinProcessor::process_key(const KeyEvent& event, Context& conte
     if (vk == VK_RETURN) {
         if (context.is_composing()) {
             context.committed_text = context.pinyin_buffer;
+            if (context.commit_source() == CommitSource::kRawCodePreserveCase ||
+                (event.is_caps_lock() && context.caps_lock_style == AsciiModeSwitchStyle::APPEND))
+                context.set_commit_source(CommitSource::kRawCodePreserveCase);
             context.pinyin_buffer.clear();
             context.candidates = {};
             return ProcessResult::COMMITTED;
@@ -109,7 +129,18 @@ ProcessResult PinyinProcessor::process_key(const KeyEvent& event, Context& conte
 
     // Letter keys: append to pinyin buffer
     if (is_letter_key(vk)) {
-        char ch = static_cast<char>(vk - 'A' + 'a');
+        char ch;
+        // Append mode with CapsLock: preserve original case
+        if (event.is_caps_lock() && context.caps_lock_style == AsciiModeSwitchStyle::APPEND) {
+            ch = static_cast<char>(vk);  // uppercase VK code
+            if (event.is_shift())
+                ch = static_cast<char>(vk - 'A' + 'a');  // Shift+CapsLock → lowercase
+            context.set_commit_source(CommitSource::kRawCodePreserveCase);
+            context.candidates = {};
+            context.page_index = 0;
+        } else {
+            ch = static_cast<char>(vk - 'A' + 'a');  // force lowercase
+        }
         context.pinyin_buffer += ch;
         return ProcessResult::ACCEPTED;
     }

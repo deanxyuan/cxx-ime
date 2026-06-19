@@ -30,9 +30,10 @@ static bool is_modifier_key(uint32_t vk) {
 
 static AsciiModeSwitchStyle parse_style(const std::string& s) {
     if (s == "inline_ascii")     return AsciiModeSwitchStyle::INLINE_ASCII;
-    if (s == "commit_text")      return AsciiModeSwitchStyle::COMMIT_TEXT;
-    if (s == "commit_code")      return AsciiModeSwitchStyle::COMMIT_CODE;
+    if (s == "code")             return AsciiModeSwitchStyle::CODE;
+    if (s == "candidate")        return AsciiModeSwitchStyle::CANDIDATE;
     if (s == "clear")            return AsciiModeSwitchStyle::CLEAR;
+    if (s == "append")           return AsciiModeSwitchStyle::APPEND;
     if (s == "set_ascii_mode")   return AsciiModeSwitchStyle::SET_ASCII_MODE;
     if (s == "unset_ascii_mode") return AsciiModeSwitchStyle::UNSET_ASCII_MODE;
     return AsciiModeSwitchStyle::NOOP;
@@ -73,7 +74,7 @@ void AsciiComposer::load_config(const Config& config) {
     }
 }
 
-bool AsciiComposer::process_key(uint32_t key_code, bool is_key_up, Context& ctx) {
+bool AsciiComposer::process_key(uint32_t key_code, bool is_key_up, Context& ctx, bool caps_lock) {
     CXXIME_LOG(L"AsciiComposer::process_key: vk=%u, is_key_up=%d, composing=%d",
                key_code, is_key_up, ctx.is_composing());
 
@@ -89,14 +90,21 @@ bool AsciiComposer::process_key(uint32_t key_code, bool is_key_up, Context& ctx)
         return false;
     }
 
-    // CapsLock — toggle on key down
+    // CapsLock is an uppercase ASCII overlay: on key down, when the LED turns
+    // on, enter ASCII mode and remember the previous CxxIME mode; when it turns
+    // off, restore that previous mode.
+    // Cancel any pending modifier toggle (e.g., Shift held then CapsLock pressed).
     if (key_code == VK_CAPITAL) {
+        shift_pressed_ = false;
+        ctrl_pressed_ = false;
+        alt_pressed_ = false;
+        win_pressed_ = false;
+
         if (!is_key_up) {
             auto style = get_binding(VK_CAPITAL);
             if (style == AsciiModeSwitchStyle::NOOP)
                 return false;
-            ascii_mode_ = !ascii_mode_;
-            temporary_ascii_ = false;
+            apply_caps_lock_overlay(caps_lock, ctx);
         }
         return false;
     }
@@ -166,53 +174,119 @@ void AsciiComposer::toggle_mode(uint32_t key_code, Context& ctx) {
         return;
 
     case AsciiModeSwitchStyle::SET_ASCII_MODE:
-        ascii_mode_ = true;
-        temporary_ascii_ = false;
+        set_ascii_mode_from_switch(true);
         return;
 
     case AsciiModeSwitchStyle::UNSET_ASCII_MODE:
-        ascii_mode_ = false;
-        temporary_ascii_ = false;
+        set_ascii_mode_from_switch(false);
         return;
 
     case AsciiModeSwitchStyle::INLINE_ASCII:
-        ascii_mode_ = !ascii_mode_;
+        set_ascii_mode_from_switch(!ascii_mode_);
         temporary_ascii_ = ascii_mode_ && composing;
         return;
 
-    case AsciiModeSwitchStyle::COMMIT_TEXT:
+    case AsciiModeSwitchStyle::CODE:
         if (composing) {
-            if (!ctx.pinyin_buffer.empty()) {
-                ctx.committed_text = ctx.pinyin_buffer;
-            }
-            CXXIME_LOG(L"AsciiComposer::toggle_mode: COMMIT_TEXT, committed_text='%S'", ctx.committed_text.c_str());
+            ctx.committed_text = ctx.pinyin_buffer;
+            ctx.set_commit_source(CommitSource::kRawCodePreserveCase);
+            CXXIME_LOG(L"AsciiComposer::toggle_mode: CODE, committed_text='%S'", ctx.committed_text.c_str());
             ctx.pinyin_buffer.clear();
             ctx.candidates = {};
             ctx.page_index = 0;
         } else {
-            CXXIME_LOG(L"AsciiComposer::toggle_mode: COMMIT_TEXT, not composing");
+            CXXIME_LOG(L"AsciiComposer::toggle_mode: CODE, not composing");
         }
-        ascii_mode_ = !ascii_mode_;
-        temporary_ascii_ = false;
-        return;
-
-    case AsciiModeSwitchStyle::COMMIT_CODE:
-        if (composing) {
-            ctx.committed_text = ctx.pinyin_buffer;
-            ctx.pinyin_buffer.clear();
-            ctx.candidates = {};
-            ctx.page_index = 0;
-        }
-        ascii_mode_ = !ascii_mode_;
-        temporary_ascii_ = false;
+        set_ascii_mode_from_switch(!ascii_mode_);
         return;
 
     case AsciiModeSwitchStyle::CLEAR:
         if (composing)
             ctx.reset();
-        ascii_mode_ = !ascii_mode_;
-        temporary_ascii_ = false;
+        set_ascii_mode_from_switch(!ascii_mode_);
         return;
+
+    case AsciiModeSwitchStyle::CANDIDATE:
+        if (composing) {
+            if (!ctx.candidates.candidates.empty()) {
+                ctx.committed_text = ctx.candidates.candidates[0].text;
+                ctx.set_commit_source(CommitSource::kCandidate);
+            }
+            ctx.pinyin_buffer.clear();
+            ctx.candidates = {};
+            ctx.page_index = 0;
+        }
+        set_ascii_mode_from_switch(!ascii_mode_);
+        return;
+
+    case AsciiModeSwitchStyle::APPEND:
+        // CapsLock in append mode does nothing on its own —
+        // letter handling is deferred to Engine Phase 2.4 / PinyinProcessor.
+        return;
+    }
+}
+
+void AsciiComposer::set_ascii_mode_from_switch(bool mode) {
+    ascii_mode_ = mode;
+    temporary_ascii_ = false;
+    caps_lock_overlay_active_ = false;
+}
+
+void AsciiComposer::apply_caps_lock_overlay(bool caps_lock, Context& ctx) {
+    auto style = get_binding(VK_CAPITAL);
+    if (style == AsciiModeSwitchStyle::NOOP)
+        return;
+
+    if (caps_lock) {
+        if (!caps_lock_overlay_active_) {
+            ascii_mode_before_caps_lock_ = ascii_mode_;
+            caps_lock_overlay_active_ = true;
+        }
+        if (!ascii_mode_) {
+            bool composing = ctx.is_composing();
+            switch (style) {
+            case AsciiModeSwitchStyle::APPEND:
+                if (composing)
+                    return;
+                break;
+            case AsciiModeSwitchStyle::CODE:
+                if (composing) {
+                    ctx.committed_text = ctx.pinyin_buffer;
+                    ctx.set_commit_source(CommitSource::kRawCodePreserveCase);
+                    ctx.pinyin_buffer.clear();
+                    ctx.candidates = {};
+                    ctx.page_index = 0;
+                }
+                break;
+            case AsciiModeSwitchStyle::CLEAR:
+                if (composing)
+                    ctx.reset();
+                break;
+            case AsciiModeSwitchStyle::CANDIDATE:
+                if (composing) {
+                    if (!ctx.candidates.candidates.empty()) {
+                        ctx.committed_text = ctx.candidates.candidates[0].text;
+                        ctx.set_commit_source(CommitSource::kCandidate);
+                    }
+                    ctx.pinyin_buffer.clear();
+                    ctx.candidates = {};
+                    ctx.page_index = 0;
+                }
+                break;
+            default:
+                break;
+            }
+        }
+        ascii_mode_ = true;
+        temporary_ascii_ = false;
+        caps_lock_overlay_active_ = true;
+        return;
+    }
+
+    if (caps_lock_overlay_active_) {
+        ascii_mode_ = ascii_mode_before_caps_lock_;
+        temporary_ascii_ = false;
+        caps_lock_overlay_active_ = false;
     }
 }
 

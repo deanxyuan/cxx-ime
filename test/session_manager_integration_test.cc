@@ -80,6 +80,79 @@ TEST(SessionIntegration, process_key_committed_has_ime_status) {
     ASSERT_EQ(r.ime_status.chinese_mode, false);
 }
 
+TEST(SessionIntegration, english_capslock_letter_preserves_engine_case) {
+    SessionManager mgr;
+    mgr.initialize(setup_test_dict());
+    uint32_t id = mgr.create_session();
+
+    mgr.toggle_chinese(id);
+
+    auto upper = mgr.process_key(id, make_key('N', false, true));
+    ASSERT_EQ(upper.status, cxxime::IPCStatus::OK);
+    ASSERT_EQ(upper.result, cxxime::ProcessResult::COMMITTED);
+    ASSERT_EQ(upper.commit_text, "N");
+
+    auto lower = mgr.process_key(id, make_key('N', true, true));
+    ASSERT_EQ(lower.status, cxxime::IPCStatus::OK);
+    ASSERT_EQ(lower.result, cxxime::ProcessResult::COMMITTED);
+    ASSERT_EQ(lower.commit_text, "n");
+}
+
+TEST(SessionIntegration, english_capslock_keeps_english_and_outputs_uppercase) {
+    SessionManager mgr;
+    mgr.initialize(setup_test_dict());
+    uint32_t id = mgr.create_session();
+
+    mgr.toggle_chinese(id);
+
+    std::string text;
+    for (char ch : std::string("NIHAO")) {
+        auto r = mgr.process_key(id, make_key(ch, false, true));
+        ASSERT_EQ(r.status, cxxime::IPCStatus::OK);
+        ASSERT_EQ(r.result, cxxime::ProcessResult::COMMITTED);
+        ASSERT_TRUE(!r.composing);
+        text += r.commit_text;
+    }
+
+    ASSERT_EQ(text, "NIHAO");
+}
+
+TEST(SessionIntegration, append_enter_preserves_case_through_output_composer) {
+    std::string cfg_path = make_temp_path("test_append_config.json");
+    {
+        std::ofstream f(cfg_path);
+        f << R"({"ascii_composer":{"switch_key":{"Caps_Lock":"append"},"good_old_caps_lock":false}})";
+    }
+
+    SessionManager mgr;
+    mgr.initialize(setup_test_dict(), cfg_path);
+    uint32_t id = mgr.create_session();
+
+    mgr.process_key(id, make_key('N'));
+    mgr.process_key(id, make_key('I'));
+
+    cxxime::KeyEvent caps;
+    caps.keycode = 0x14;
+    caps.is_key_up = false;
+    caps.set_caps_lock();
+    mgr.process_key(id, caps);
+
+    mgr.process_key(id, make_key('D', false, true));
+    mgr.process_key(id, make_key('D', false, true));
+
+    cxxime::KeyEvent enter;
+    enter.keycode = 0x0D;
+    enter.is_key_up = false;
+    enter.set_caps_lock();
+    auto r = mgr.process_key(id, enter);
+
+    ASSERT_EQ(r.status, cxxime::IPCStatus::OK);
+    ASSERT_EQ(r.result, cxxime::ProcessResult::COMMITTED);
+    ASSERT_EQ(r.commit_text, "niDD");
+
+    DeleteFileA(cfg_path.c_str());
+}
+
 // ============================================================
 // select_candidate tests
 // ============================================================
@@ -115,13 +188,13 @@ TEST(SessionIntegration, select_candidate_candidate_no_conversion) {
     mgr.initialize(setup_test_dict());
     uint32_t id = mgr.create_session();
 
-    // Enable full_shape and caps_lock
+    // Type "ni" to get candidates
+    mgr.process_key(id, make_key('N'));
+    mgr.process_key(id, make_key('I'));
+
+    // Enable full_shape and caps_lock before selection.
     mgr.toggle_shape(id);
     mgr.sync_caps_lock(id, true);
-
-    // Type "ni" to get candidates
-    mgr.process_key(id, make_key('N', false, true));
-    mgr.process_key(id, make_key('I', false, true));
 
     // Select first candidate — kCandidate source, no conversion
     auto r = mgr.select_candidate(id, 0);
