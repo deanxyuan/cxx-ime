@@ -5,7 +5,6 @@
 
 // Forward declarations for language bar buttons
 class CLangBarItemButton;
-class CLangBarImeButton;
 
 #include "pch.h"
 #include <cxxime/ipc_client.h>
@@ -113,7 +112,6 @@ private:
     uint32_t _get_modifiers() const;
     void _sync_ime_status(const cxxime::ImeStatus& status);
     void _sync_conversion_mode_compartment(const cxxime::ImeStatus& status);
-    void _refresh_mode_button_item();
 
     LONG _cRef = 1;
     ITfThreadMgr* _threadMgr = nullptr;
@@ -136,7 +134,6 @@ private:
 
     // Language bar buttons
     CLangBarItemButton* _modeButton = nullptr;  // 中/EN 按钮
-    CLangBarImeButton* _imeButton = nullptr;    // 拼/五 按钮
 
     // Status window controller
     cxxime::StatusController _statusController;
