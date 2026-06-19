@@ -871,6 +871,7 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
                     c.text = response.candidates[i];
                     page.candidates.push_back(std::move(c));
                 }
+                _candidateWindow.set_page_info((int)response.page_current, (int)response.page_total);
                 _candidateWindow.update(page);
             } else {
                 _candidateWindow.update({});

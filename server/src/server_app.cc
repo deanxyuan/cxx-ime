@@ -134,6 +134,11 @@ cxxime::IPCResponse ServerApp::handle_request(const cxxime::IPCRequest& request)
                           sizeof(response.candidates[i]) - 1);
             }
             response.highlighted = (uint32_t)r.candidates.highlighted;
+            response.page_current = (uint32_t)(r.candidates.page_index + 1);
+            int ps = r.candidates.page_size > 0 ? r.candidates.page_size : 9;
+            response.page_total = (r.candidates.total_count > 0)
+                ? (uint32_t)((r.candidates.total_count + ps - 1) / ps)
+                : 1;
         }
 
         if (r.result == cxxime::ProcessResult::COMMITTED) {

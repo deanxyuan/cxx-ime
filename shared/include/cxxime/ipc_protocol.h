@@ -72,6 +72,8 @@ struct IPCResponse {
     bool ascii_mode = false;
     bool composing = false;
     ImeStatus ime_status;
+    uint32_t page_current = 1;
+    uint32_t page_total = 1;
 };
 #pragma pack(pop)
 
