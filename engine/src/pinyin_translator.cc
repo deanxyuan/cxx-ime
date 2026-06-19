@@ -162,11 +162,12 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
     // Try cache for all page indices; fall back to bounded lookup if insufficient.
     ShortFastResult fast;
     if (is_short_key(pinyin)) {
-        int need = offset + fetch_limit;
+        int need = offset + fetch_limit + 1;
         fast = lookup_short_fast(pinyin, need, trace);
         if (fast.hit && (int)fast.candidates.size() > offset) {
             // Enough candidates from cache for this page
             auto& sorted = fast.candidates;
+            page.total_count = (int)sorted.size();
             if (offset > 0 && offset < (int)sorted.size())
                 sorted.erase(sorted.begin(), sorted.begin() + offset);
             if ((int)sorted.size() > fetch_limit) {
@@ -280,9 +281,9 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
         trace->live_path_count = (int)live_ids.size();
 
     // Dedup and query — use TopKCollector to cap merged results.
-    // Capacity = offset + fetch_limit (required for pagination).
+    // Capacity = offset + fetch_limit + 1 (extra one to detect next page).
     // Dict-level TopK (max_results_before_merge) limits per-path candidates.
-    size_t topk_cap = (size_t)(offset + fetch_limit);
+    size_t topk_cap = (size_t)(offset + fetch_limit + 1);
     TopKCollector merged(topk_cap);
 
     // Phase 4: seed collector with fast-path candidates (dedup by text)
@@ -330,6 +331,9 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
     if (trace) t_merge_start = std::chrono::steady_clock::now();
 
     auto sorted = merged.finish();
+
+    // total_count before pagination (includes extra one for next-page detection)
+    page.total_count = (int)sorted.size();
 
     // Apply pagination
     if (offset > 0 && offset < (int)sorted.size())
