@@ -35,7 +35,7 @@ public:
     void set_page_info(int current, int total);
 
 private:
-    void rebuild_render_context(const LayoutConfig& cfg);
+    void rebuild_render_context(const LayoutConfig& cfg, int window_width);
     void init_gdi_renderer();
     void init_d2d_renderer();
 
