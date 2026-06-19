@@ -103,7 +103,7 @@ void CandidateWindow::move_to_caret(const RECT& caretRect) {
     SetWindowPos(hwnd_, nullptr, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
-void CandidateWindow::rebuild_render_context(const LayoutConfig& cfg) {
+void CandidateWindow::rebuild_render_context(const LayoutConfig& cfg, int window_width) {
     render_ctx_.rects = &candidate_rects_;
     render_ctx_.theme = &theme_;
     render_ctx_.layout_cfg = &cfg;
@@ -112,16 +112,28 @@ void CandidateWindow::rebuild_render_context(const LayoutConfig& cfg) {
     render_ctx_.page_total = page_total_;
     render_ctx_.highlighted = page_.candidates.empty() ? -1 : page_.highlighted;
 
-    // Page nav: placed after the last candidate, same row
+    // Page nav placement depends on layout orientation
     if (page_total_ > 1 && !candidate_rects_.empty()) {
         auto& last = candidate_rects_.back();
-        int nav_h = last.highlight_rect.bottom - last.highlight_rect.top;
-        int nav_y = last.highlight_rect.top;
-        int x = last.highlight_rect.right + 4;
         int pw = 16, nw = 16;
-        render_ctx_.prev_button_rect = {x, nav_y, x + pw, nav_y + nav_h};
-        render_ctx_.next_button_rect = {x + pw + 2, nav_y, x + pw + 2 + nw, nav_y + nav_h};
-        render_ctx_.page_indicator_rect = {};
+        int nav_h = last.highlight_rect.bottom - last.highlight_rect.top;
+
+        if (layout_orientation_ == "vertical") {
+            // Vertical layout: nav buttons at bottom-left, use text row height (no highlight padding)
+            nav_h = last.text_rect.bottom - last.text_rect.top;
+            int nav_y = last.text_rect.bottom;
+            int nav_x = cfg.margin_x;
+            render_ctx_.prev_button_rect = {nav_x, nav_y, nav_x + pw, nav_y + nav_h};
+            render_ctx_.next_button_rect = {nav_x + pw + 2, nav_y, nav_x + pw + 2 + nw, nav_y + nav_h};
+            render_ctx_.page_indicator_rect = {};
+        } else {
+            // Horizontal layout: nav buttons after last candidate, same row
+            int nav_y = last.highlight_rect.top;
+            int x = last.highlight_rect.right + 4;
+            render_ctx_.prev_button_rect = {x, nav_y, x + pw, nav_y + nav_h};
+            render_ctx_.next_button_rect = {x + pw + 2, nav_y, x + pw + 2 + nw, nav_y + nav_h};
+            render_ctx_.page_indicator_rect = {};
+        }
     }
 }
 
@@ -143,11 +155,13 @@ void CandidateWindow::update(const CandidatePage& page) {
     scaled_cfg_.hilite_padding_y = (int)(scaled_cfg_.hilite_padding_y * s);
     scaled_cfg_.round_corner = (int)(scaled_cfg_.round_corner * s);
     scaled_cfg_.round_corner_ex = (int)(scaled_cfg_.round_corner_ex * s);
+    scaled_cfg_.max_width = (int)(scaled_cfg_.max_width * s);
+    scaled_cfg_.max_height = (int)(scaled_cfg_.max_height * s);
     auto& cfg = scaled_cfg_;
     HDC hdc = GetDC(hwnd_);
     LayoutResult lr;
     if (layout_orientation_ == "horizontal")
-        lr = calculate_horizontal_layout(hdc, page.candidates, config_->font_name, config_->font_size, cfg);
+        lr = calculate_horizontal_layout(hdc, page.candidates, config_->font_name, config_->font_size, cfg, page_total_);
     else
         lr = calculate_vertical_layout(hdc, page.candidates, config_->font_name, config_->font_size, cfg);
 
@@ -195,10 +209,15 @@ void CandidateWindow::update(const CandidatePage& page) {
     ReleaseDC(hwnd_, hdc);
 
     candidate_rects_ = std::move(lr.rects);
-    rebuild_render_context(cfg);
+    rebuild_render_context(cfg, lr.width);
     // Extend width for page nav buttons if present
     if (page_total_ > 1 && render_ctx_.next_button_rect.right > lr.width)
         lr.width = render_ctx_.next_button_rect.right + config_->layout_config.margin_x;
+    // Vertical layout: extend height for nav buttons row below candidates
+    if (layout_orientation_ == "vertical" && page_total_ > 1 && !candidate_rects_.empty()) {
+        int nav_bottom = render_ctx_.next_button_rect.bottom + cfg.hilite_padding_y;
+        if (nav_bottom > lr.height) lr.height = nav_bottom;
+    }
     SetWindowPos(hwnd_, nullptr, 0, 0, lr.width, lr.height, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
     if (d2d_renderer_) d2d_renderer_->resize(lr.width, lr.height);
     // Rounded window corners (like Weasel's round_corner_ex)

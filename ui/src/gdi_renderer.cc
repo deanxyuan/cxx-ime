@@ -126,7 +126,7 @@ void GdiRenderer::render(HDC hdc, const RECT& clip, const RenderContext& ctx) {
         // Candidate text
         SetTextColor(hdc, hl ? hl_text_color_ : text_color_);
         DrawTextW(hdc, to_wstr(cr.text).c_str(), -1, const_cast<RECT*>(&cr.text_rect),
-                  DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     }
 
     // Page nav (always visible, dimmed when disabled)

@@ -52,6 +52,11 @@ bool D2DRenderer::initialize(HWND hwnd, int font_size, const wchar_t* font_name)
     fmt_right_  = mkfmt(dwrite_factory_, font_name, fsize, DWRITE_TEXT_ALIGNMENT_LEADING);
     fmt_preedit_ = mkfmt(dwrite_factory_, font_name, psize, DWRITE_TEXT_ALIGNMENT_LEADING);
     fmt_small_  = mkfmt(dwrite_factory_, font_name, 9.0f * dpi / 72.0f, DWRITE_TEXT_ALIGNMENT_CENTER);
+    // Set trimming on candidate text format only (safety net for layout truncation)
+    if (fmt_left_) {
+        DWRITE_TRIMMING trimming = {DWRITE_TRIMMING_GRANULARITY_CHARACTER, 0, 0};
+        fmt_left_->SetTrimming(&trimming, nullptr);
+    }
     return fmt_left_ && fmt_right_ && fmt_preedit_ && fmt_small_;
 }
 

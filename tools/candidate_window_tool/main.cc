@@ -31,9 +31,22 @@ static std::vector<std::vector<std::string>> g_pages = {
     {"中国", "种过", "忠果", "终过", "重过", "中锅", "种锅"},
 };
 
+// Test data for truncation: long text candidates
+static std::vector<std::vector<std::string>> g_long_pages = {
+    {"中华人民共和国中央人民政府公告", "中华人民共和国万岁", "世界人民大团结万岁",
+     "中央", "中华", "人民", "共和国"},
+    {"这是一个非常非常非常非常非常非常非常非常长的候选词文本", "短词", "中等长度的候选词",
+     "另一个超长候选词用于测试文本截断功能是否正常工作", "你好"},
+    {"SingleVeryLongCandidateTextThatExceedsMaxWidthForTestingMiddleTruncation", "short", "medium text"},
+    // Single very long candidate — triggers middle truncation (前缀…后缀)
+    {"中华人民共和国中央人民政府公告一九四九年十月一日在北京天安门广场举行开国大典毛泽东主席宣告中华人民共和国中央人民政府今天成立了"},
+};
+static bool g_long_mode = false;
+static int g_long_page_idx = 0;
+
 static void build_page() {
     g_page.candidates.clear();
-    auto& words = g_pages[g_page_idx];
+    auto& words = g_long_mode ? g_long_pages[g_page_idx] : g_pages[g_page_idx];
     for (size_t i = 0; i < words.size(); ++i) {
         cxxime::Candidate c;
         c.text = words[i];
@@ -141,6 +154,20 @@ static LRESULT CALLBACK ParentWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             build_page();
             if (g_d2d) g_window.set_render_backend(cxxime::RenderBackend::D2D);
             update_display();
+        } else if (vk == 'W') {
+            // Toggle long text mode for truncation testing
+            g_long_mode = !g_long_mode;
+            g_long_page_idx = 0;
+            g_page_idx = 0;
+            if (g_long_mode) {
+                g_total_pages = (int)g_long_pages.size();
+                printf("Long text mode ON — testing truncation (W to toggle off)\n");
+            } else {
+                g_total_pages = (int)g_pages.size();
+                printf("Long text mode OFF\n");
+            }
+            build_page();
+            update_display();
         } else if (vk == 'P') {
             // Cycle preedit_type: off → composition → preview → off
             static int preedit_mode = 0;  // 0=off, 1=composition, 2=preview
@@ -180,6 +207,7 @@ int main() {
     printf("=== Candidate Window Test Tool ===\n");
     printf("Keys: 1-9=select  Space=commit  Esc=hide\n");
     printf("      PageUp/PageDown=flip  T=theme  L=layout  D=D2D/GDI  F=font  P=preedit_type\n");
+    printf("      W=long_text_mode (test truncation)\n");
     printf("      (click on window to select candidates)\n\n");
 
     // Create hidden parent window
