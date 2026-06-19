@@ -379,6 +379,208 @@ TEST(WubiEngine, engine_mixed_auto_commit_4code) {
     DeleteFileA(wubi_path.c_str());
 }
 
+TEST(WubiEngine, engine_mixed_select_candidate) {
+    std::string pinyin_path = make_temp_path("test_mixed_sel_pinyin.bin");
+    std::string wubi_path = make_temp_path("test_mixed_sel_wubi.bin");
+
+    cxxime::Dict::create_test_dict(pinyin_path, {{"a", "啊", 100}});
+    cxxime::Dict::create_test_dict(wubi_path, {{"a", "工", 300}, {"aa", "式", 200}});
+
+    cxxime::Engine engine;
+    ASSERT_TRUE(engine.initialize(pinyin_path));
+
+    cxxime::Dict wubi_dict;
+    ASSERT_TRUE(wubi_dict.open(wubi_path));
+    engine.set_wubi_dict(&wubi_dict);
+
+    engine.switch_mode(cxxime::InputMode::MIXED);
+
+    // 输入字母 a，获取候选列表
+    engine.process_key(make_key('A'));
+    auto& ctx = engine.context();
+    ASSERT_GE(ctx.candidates.candidates.size(), 2u);
+
+    // 选中第二个候选
+    std::string expected = ctx.candidates.candidates[1].text;
+    bool ok = engine.select_candidate(1);
+    ASSERT_TRUE(ok);
+    ASSERT_EQ(engine.context().committed_text, expected);
+
+    engine.finalize();
+    wubi_dict.close();
+    DeleteFileA(pinyin_path.c_str());
+    DeleteFileA(wubi_path.c_str());
+}
+
+TEST(WubiEngine, engine_mixed_candidate_source_tagging) {
+    std::string pinyin_path = make_temp_path("test_mixed_src_pinyin.bin");
+    std::string wubi_path = make_temp_path("test_mixed_src_wubi.bin");
+
+    cxxime::Dict::create_test_dict(pinyin_path, {{"a", "啊", 100}});
+    cxxime::Dict::create_test_dict(wubi_path, {{"a", "工", 300}});
+
+    cxxime::Engine engine;
+    ASSERT_TRUE(engine.initialize(pinyin_path));
+
+    cxxime::Dict wubi_dict;
+    ASSERT_TRUE(wubi_dict.open(wubi_path));
+    engine.set_wubi_dict(&wubi_dict);
+
+    engine.switch_mode(cxxime::InputMode::MIXED);
+
+    // 输入字母 a，获取候选
+    auto r = engine.process_key(make_key('A'));
+    ASSERT_EQ(r, cxxime::ProcessResult::ACCEPTED);
+    auto& candidates = engine.context().candidates.candidates;
+    ASSERT_GE(candidates.size(), 1u);
+
+    // 验证候选来源标签
+    bool has_wubi = false;
+    bool has_pinyin = false;
+    for (auto& c : candidates) {
+        if (c.text == "工") {
+            ASSERT_EQ(c.source, cxxime::CandidateSource::kWubi);
+            has_wubi = true;
+        }
+        if (c.text == "啊") {
+            ASSERT_EQ(c.source, cxxime::CandidateSource::kPinyin);
+            has_pinyin = true;
+        }
+    }
+    ASSERT_TRUE(has_wubi);
+
+    engine.finalize();
+    wubi_dict.close();
+    DeleteFileA(pinyin_path.c_str());
+    DeleteFileA(wubi_path.c_str());
+}
+
+TEST(WubiEngine, engine_wubi_candidate_source) {
+    std::string pinyin_path = make_temp_path("test_wubi_src_pinyin.bin");
+    std::string wubi_path = make_temp_path("test_wubi_src_wubi.bin");
+
+    cxxime::Dict::create_test_dict(pinyin_path, {{"a", "啊", 100}});
+    cxxime::Dict::create_test_dict(wubi_path, {
+        {"a", "工", 300},
+        {"aa", "式", 200},
+    });
+
+    cxxime::Engine engine;
+    ASSERT_TRUE(engine.initialize(pinyin_path));
+
+    cxxime::Dict wubi_dict;
+    ASSERT_TRUE(wubi_dict.open(wubi_path));
+    engine.set_wubi_dict(&wubi_dict);
+
+    engine.switch_mode(cxxime::InputMode::WUBI);
+
+    // 输入字母 a，获取候选
+    auto r = engine.process_key(make_key('A'));
+    ASSERT_EQ(r, cxxime::ProcessResult::ACCEPTED);
+    auto& candidates = engine.context().candidates.candidates;
+    ASSERT_GE(candidates.size(), 1u);
+
+    // 纯五笔模式：所有候选来源应为 kWubi
+    for (auto& c : candidates) {
+        ASSERT_EQ(c.source, cxxime::CandidateSource::kWubi);
+    }
+
+    engine.finalize();
+    wubi_dict.close();
+    DeleteFileA(pinyin_path.c_str());
+    DeleteFileA(wubi_path.c_str());
+}
+
+TEST(WubiEngine, engine_wubi_auto_commit_disabled) {
+    std::string pinyin_path = make_temp_path("test_wubi_nocommit_pinyin.bin");
+    std::string wubi_path = make_temp_path("test_wubi_nocommit_wubi.bin");
+
+    cxxime::Dict::create_test_dict(pinyin_path, {{"a", "啊", 100}});
+    cxxime::Dict::create_test_dict(wubi_path, {{"abcd", "中", 300}});
+
+    cxxime::Engine engine;
+    ASSERT_TRUE(engine.initialize(pinyin_path));
+
+    cxxime::Dict wubi_dict;
+    ASSERT_TRUE(wubi_dict.open(wubi_path));
+    engine.set_wubi_dict(&wubi_dict);
+
+    engine.switch_mode(cxxime::InputMode::WUBI);
+
+    // 关闭四码自动上屏
+    cxxime::Config cfg;
+    cfg.wubi_auto_commit_4code = false;
+    engine.reload_config(cfg);
+
+    // 输入 abcd（四码），不应自动上屏
+    engine.process_key(make_key('A'));
+    engine.process_key(make_key('B'));
+    engine.process_key(make_key('C'));
+    auto r = engine.process_key(make_key('D'));
+    ASSERT_EQ(r, cxxime::ProcessResult::ACCEPTED);
+
+    // 候选应仍然可见
+    auto& ctx = engine.context();
+    ASSERT_EQ(ctx.candidates.candidates.size(), 1u);
+    ASSERT_EQ(ctx.candidates.candidates[0].text, "中");
+
+    // 手动选中第一候选，应上屏
+    bool ok = engine.select_candidate(0);
+    ASSERT_TRUE(ok);
+    ASSERT_EQ(engine.context().committed_text, "中");
+
+    engine.finalize();
+    wubi_dict.close();
+    DeleteFileA(pinyin_path.c_str());
+    DeleteFileA(wubi_path.c_str());
+}
+
+TEST(WubiEngine, engine_mixed_select_candidate_updates_correct_dict) {
+    std::string pinyin_path = make_temp_path("test_mixed_upd_pinyin.bin");
+    std::string wubi_path = make_temp_path("test_mixed_upd_wubi.bin");
+
+    cxxime::Dict::create_test_dict(pinyin_path, {{"a", "啊", 100}});
+    cxxime::Dict::create_test_dict(wubi_path, {
+        {"a", "工", 300},
+        {"aa", "式", 200},
+    });
+
+    cxxime::Engine engine;
+    ASSERT_TRUE(engine.initialize(pinyin_path));
+
+    cxxime::Dict wubi_dict;
+    ASSERT_TRUE(wubi_dict.open(wubi_path));
+    engine.set_wubi_dict(&wubi_dict);
+
+    engine.switch_mode(cxxime::InputMode::MIXED);
+
+    // 输入字母 a，获取候选列表
+    engine.process_key(make_key('A'));
+    auto& ctx = engine.context();
+    ASSERT_GE(ctx.candidates.candidates.size(), 1u);
+
+    // 找到五笔候选的索引
+    int wubi_idx = -1;
+    for (int i = 0; i < (int)ctx.candidates.candidates.size(); i++) {
+        if (ctx.candidates.candidates[i].source == cxxime::CandidateSource::kWubi) {
+            wubi_idx = i;
+            break;
+        }
+    }
+    ASSERT_GE(wubi_idx, 0);
+
+    // 选中五笔候选，验证上屏文本正确
+    std::string expected = ctx.candidates.candidates[wubi_idx].text;
+    bool ok = engine.select_candidate(wubi_idx);
+    ASSERT_TRUE(ok);
+    ASSERT_EQ(engine.context().committed_text, expected);
+
+    engine.finalize();
+    wubi_dict.close();
+    DeleteFileA(pinyin_path.c_str());
+    DeleteFileA(wubi_path.c_str());
+}
+
 TEST(WubiEngine, engine_mixed_no_wubi_dict_fallback) {
     std::string pinyin_path = make_temp_path("test_mixed_fallback.bin");
     cxxime::Dict::create_test_dict(pinyin_path, {{"a", "啊", 100}});

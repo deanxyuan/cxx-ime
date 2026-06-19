@@ -178,6 +178,8 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
                 }
             }
             page.candidates = std::move(sorted);
+            for (auto& c : page.candidates)
+                c.source = CandidateSource::kPinyin;
             if (!page.candidates.empty())
                 page.highlighted = 0;
             if (trace) {
@@ -342,6 +344,8 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
         sorted.resize(fetch_limit);
 
     page.candidates = std::move(sorted);
+    for (auto& c : page.candidates)
+        c.source = CandidateSource::kPinyin;
     if (!page.candidates.empty())
         page.highlighted = 0;
 

@@ -281,6 +281,9 @@ void EditorApp::create_controls(HWND hwnd) {
     cx = make_label(L"候选数量:", kPanelPadLeft, t + kRowH * 4, p0);
     hPageSize_ = make_edit(1021, panelX + cx, panelY + t + kRowH * 4, S(50), hwnd);
 
+    cx = make_label(L"五笔四码上屏:", kPanelPadLeft, t + kRowH * 5, p0);
+    hWubiAutoCommit_ = make_check(1022, L"启用", panelX + cx, panelY + t + kRowH * 5, S(80), hwnd);
+
     // ── Panel 1: Appearance ─────────────────────────────────────────
     HWND p1 = hPanels_[1]; t = kPanelPadTop;
     // Labels stay on p1; controls that send WM_COMMAND use hwnd as parent
@@ -478,6 +481,7 @@ void EditorApp::show_panel(int idx) {
     if (hPreeditTypeComposition_)   ShowWindow(hPreeditTypeComposition_, sw0);
     if (hPreeditTypePreview_)       ShowWindow(hPreeditTypePreview_, sw0);
     if (hFuzzyPinyin_)              ShowWindow(hFuzzyPinyin_, sw0);
+    if (hWubiAutoCommit_)           ShowWindow(hWubiAutoCommit_, sw0);
     if (hPageSize_)                 ShowWindow(hPageSize_, sw0);
     // Panel 1 floating controls (parent = main window for WM_COMMAND)
     int sw1 = (idx == 1) ? SW_SHOW : SW_HIDE;
@@ -550,6 +554,7 @@ void EditorApp::load_config() {
         SendMessageW(hPreeditTypeComposition_, BM_SETCHECK, BST_CHECKED, 0);
     }
     set_check(hFuzzyPinyin_, config_.fuzzy_pinyin);
+    set_check(hWubiAutoCommit_, config_.wubi_auto_commit_4code);
     update_preedit_type_enabled();
     set_check(hStatusWindow_, config_.status_window.enable);
 
@@ -575,6 +580,7 @@ void EditorApp::readback(HWND) {
     if (panel_ == 0) {
         c.inline_preedit = get_check(hInlinePreedit_);
         c.fuzzy_pinyin = get_check(hFuzzyPinyin_);
+        c.wubi_auto_commit_4code = get_check(hWubiAutoCommit_);
         c.page_size = get_edit_int(hPageSize_);
         {
             int idx = (int)SendMessageW(hInputMode_, CB_GETCURSEL, 0, 0);
@@ -625,6 +631,7 @@ void EditorApp::save_config() {
                           ? "preview" : "composition";
     config_.inline_preedit = get_check(hInlinePreedit_);
     config_.fuzzy_pinyin = get_check(hFuzzyPinyin_);
+    config_.wubi_auto_commit_4code = get_check(hWubiAutoCommit_);
     const char* ks[] = {"Shift_L","Shift_R","Control_L","Control_R"};
     for (int i = 0; i < 4; ++i) {
         wchar_t b[64];
