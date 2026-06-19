@@ -286,7 +286,7 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
         }
 
         // 五笔/混输模式：四码唯一候选自动上屏
-        if ((mode_ == InputMode::WUBI || mode_ == InputMode::MIXED) && result == ProcessResult::ACCEPTED) {
+        if (config_->wubi_auto_commit_4code && (mode_ == InputMode::WUBI || mode_ == InputMode::MIXED) && result == ProcessResult::ACCEPTED) {
             if (context_.pinyin_buffer.size() == 4 &&
                 context_.candidates.candidates.size() == 1) {
                 context_.committed_text = context_.candidates.candidates[0].text;
@@ -312,9 +312,14 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
         if (mode_ == InputMode::WUBI) {
             active_dict = wubi_dict_;
         } else if (mode_ == InputMode::MIXED) {
-            // 混合模式：四码纯字母视为五笔，否则拼音
-            bool is_wubi = (code.size() == 4 &&
-                            std::all_of(code.begin(), code.end(), [](char c) { return std::isalpha(static_cast<unsigned char>(c)); }));
+            // Find the committed candidate to determine its source
+            auto& cands = context_.candidates.candidates;
+            auto it = std::find_if(cands.begin(), cands.end(),
+                [&](const Candidate& c) { return c.text == context_.committed_text; });
+            bool is_wubi = (it != cands.end())
+                ? (it->source == CandidateSource::kWubi)
+                : (code.size() == 4 && std::all_of(code.begin(), code.end(),
+                    [](char c) { return std::isalpha(static_cast<unsigned char>(c)); }));
             active_dict = is_wubi ? wubi_dict_ : pinyin_dict_;
         } else {
             active_dict = pinyin_dict_;
@@ -490,8 +495,16 @@ bool Engine::select_candidate(int index) {
     context_.committed_text = context_.candidates.candidates[index].text;
     context_.set_commit_source(CommitSource::kCandidate);
 
-    Dict* active_dict = (mode_ == InputMode::WUBI) ? wubi_dict_ : pinyin_dict_;
     std::string code = context_.pinyin_buffer;
+    auto& cand = context_.candidates.candidates[index];
+    Dict* active_dict;
+    if (mode_ == InputMode::WUBI) {
+        active_dict = wubi_dict_;
+    } else if (mode_ == InputMode::MIXED) {
+        active_dict = (cand.source == CandidateSource::kWubi) ? wubi_dict_ : pinyin_dict_;
+    } else {
+        active_dict = pinyin_dict_;
+    }
     if (code.empty() && active_dict)
         code = active_dict->reverse_lookup(context_.committed_text);
     if (!code.empty() && active_dict)

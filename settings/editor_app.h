@@ -47,6 +47,7 @@ private:
     HWND hPreeditTypeComposition_ = nullptr;
     HWND hPreeditTypePreview_ = nullptr;
     HWND hFuzzyPinyin_ = nullptr;
+    HWND hWubiAutoCommit_ = nullptr;
     HWND hPageSize_ = nullptr;
     void update_preedit_type_enabled();
 

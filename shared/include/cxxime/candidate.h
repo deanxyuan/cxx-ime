@@ -8,10 +8,16 @@
 
 namespace cxxime {
 
+enum class CandidateSource {
+    kPinyin,
+    kWubi,
+};
+
 struct Candidate {
     std::string text;
     std::string comment;
     int frequency = 0;
+    CandidateSource source = CandidateSource::kPinyin;
 };
 
 struct CandidatePage {

@@ -31,6 +31,9 @@ CandidatePage WubiTranslator::translate(const std::string& code, int page_index,
         return {};
     }
 
+    for (auto& c : results)
+        c.source = CandidateSource::kWubi;
+
     // 分页
     CandidatePage page;
     page.page_size = page_size;

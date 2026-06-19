@@ -36,6 +36,7 @@ bool Config::load(const std::string& path) {
             if (input_mode < 0) input_mode = 0;
             if (input_mode > 2) input_mode = 2;
             load_bool(e, "fuzzy_pinyin", fuzzy_pinyin);
+            load_bool(e, "wubi_auto_commit_4code", wubi_auto_commit_4code);
         }
 
         if (j.contains("style") && j["style"].is_object()) {
@@ -151,6 +152,7 @@ bool Config::save(const std::string& path) const {
     j["engine"]["page_size"] = page_size;
     j["engine"]["input_mode"] = input_mode;
     j["engine"]["fuzzy_pinyin"] = fuzzy_pinyin;
+    j["engine"]["wubi_auto_commit_4code"] = wubi_auto_commit_4code;
     j["engine"]["max_pinyin_length"] = 64;
 
     j["style"]["font_face"] = font_name;

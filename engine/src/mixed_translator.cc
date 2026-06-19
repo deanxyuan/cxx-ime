@@ -7,14 +7,9 @@
 #include <cxxime/query_budget.h>
 #include <cxxime/query_scratch.h>
 #include <algorithm>
+#include <unordered_set>
 
 namespace cxxime {
-
-static bool contains_text(const std::vector<Candidate>& items, const std::string& text) {
-    for (auto& c : items)
-        if (c.text == text) return true;
-    return false;
-}
 
 void MixedTranslator::set_pinyin_dict(Dict* dict) {
     pinyin_translator_.set_dict(dict);
@@ -53,17 +48,18 @@ CandidatePage MixedTranslator::translate(const std::string& input, int page_inde
     // Interleave: alternate pinyin and wubi candidates so both are visible
     std::vector<Candidate> merged;
     merged.reserve(py.size() + wb.size());
+    std::unordered_set<std::string> seen;
     size_t pi = 0, wi = 0;
     while (pi < py.size() || wi < wb.size()) {
         // Take next pinyin candidate
         if (pi < py.size()) {
-            if (!contains_text(merged, py[pi].text))
+            if (seen.insert(py[pi].text).second)
                 merged.push_back(py[pi]);
             ++pi;
         }
         // Take next wubi candidate
         if (wi < wb.size()) {
-            if (!contains_text(merged, wb[wi].text))
+            if (seen.insert(wb[wi].text).second)
                 merged.push_back(wb[wi]);
             ++wi;
         }
