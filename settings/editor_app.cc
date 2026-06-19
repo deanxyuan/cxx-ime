@@ -370,15 +370,23 @@ void EditorApp::create_controls(HWND hwnd) {
     // ── Panel 3: Shortcuts ──────────────────────────────────────────
     HWND p3 = hPanels_[3]; t = kPanelPadTop;
     const wchar_t* kname[] = { L"Shift_L 行为:", L"Shift_R 行为:",
-                               L"Control_L 行为:", L"Control_R 行为:" };
-    const wchar_t* kopts[] = { L"inline_ascii", L"commit_text", L"noop" };
+                               L"Control_L 行为:", L"Control_R 行为:",
+                               L"Caps Lock 行为:" };
+    const wchar_t* kopts[] = { L"inline_ascii", L"code", L"candidate", L"clear", L"append", L"noop" };
+    const wchar_t* caps_opts[] = { L"code", L"candidate", L"clear", L"append" };
     for (int i = 0; i < 4; ++i) {
         cx = make_label(kname[i], kPanelPadLeft, t + i * kRowH, p3);
         hKeyCombos_[i] = make_combo(1300 + i, cx, t + i * kRowH, S(130), p3);
         for (auto o : kopts) combo_add(hKeyCombos_[i], o);
     }
-    cx = make_label(L"传统 Caps Lock:", kPanelPadLeft, t + 4 * kRowH, p3);
-    hCapsLock_ = make_check(1304, L"", cx, t + 4 * kRowH, S(20), p3);
+    {
+        int ci = 4;
+        cx = make_label(kname[ci], kPanelPadLeft, t + ci * kRowH, p3);
+        hKeyCombos_[ci] = make_combo(1300 + ci, cx, t + ci * kRowH, S(130), p3);
+        for (auto o : caps_opts) combo_add(hKeyCombos_[ci], o);
+    }
+    cx = make_label(L"传统 Caps Lock:", kPanelPadLeft, t + 5 * kRowH, p3);
+    hCapsLock_ = make_check(1305, L"", cx, t + 5 * kRowH, S(20), p3);
 
     // ── Panel 4: Dictionary ─────────────────────────────────────────
     HWND p4 = hPanels_[4]; t = kPanelPadTop;
@@ -558,10 +566,12 @@ void EditorApp::load_config() {
     update_preedit_type_enabled();
     set_check(hStatusWindow_, config_.status_window.enable);
 
-    const char* ks[] = {"Shift_L","Shift_R","Control_L","Control_R"};
-    for (int i = 0; i < 4; ++i) {
+    const char* ks[] = {"Shift_L","Shift_R","Control_L","Control_R","Caps_Lock"};
+    for (int i = 0; i < 5; ++i) {
         auto it = config_.ascii_switch_key.find(ks[i]);
         std::string v = (it != config_.ascii_switch_key.end()) ? it->second : "noop";
+        if (i == 4 && v == "noop")
+            v = "clear";
         combo_sel_str(hKeyCombos_[i], v);
     }
     set_check(hCapsLock_, config_.good_old_caps_lock);
@@ -632,8 +642,8 @@ void EditorApp::save_config() {
     config_.inline_preedit = get_check(hInlinePreedit_);
     config_.fuzzy_pinyin = get_check(hFuzzyPinyin_);
     config_.wubi_auto_commit_4code = get_check(hWubiAutoCommit_);
-    const char* ks[] = {"Shift_L","Shift_R","Control_L","Control_R"};
-    for (int i = 0; i < 4; ++i) {
+    const char* ks[] = {"Shift_L","Shift_R","Control_L","Control_R","Caps_Lock"};
+    for (int i = 0; i < 5; ++i) {
         wchar_t b[64];
         int idx = (int)SendMessageW(hKeyCombos_[i], CB_GETCURSEL, 0, 0);
         if (idx >= 0) {

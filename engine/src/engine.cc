@@ -113,7 +113,7 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
     QueryDeadline per_query_deadline = QueryDeadline::from_now(query_deadline_ms_);
 
     // Phase 2: Let AsciiComposer track modifier key state (may toggle ascii_mode)
-    ascii_composer_.process_key(event.keycode, event.is_key_up, context_);
+    ascii_composer_.process_key(event.keycode, event.is_key_up, context_, event.is_caps_lock());
 
     CXXIME_LOG(L"Engine::process_key: after ascii_composer, committed_text='%S'", context_.committed_text.c_str());
 
@@ -129,11 +129,32 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
         }
     }
 
-    // Check if AsciiComposer committed text (e.g. Shift toggle with commit_text)
+    // Check if AsciiComposer committed text (e.g. Shift toggle with code style)
     if (!context_.committed_text.empty()) {
-        context_.set_commit_source(CommitSource::kRawCode);
         record_total_us(trace_, total_start, trace_enabled_);
         return ProcessResult::COMMITTED;
+    }
+
+    // Propagate CapsLock style to Context for PinyinProcessor
+    context_.caps_lock_style = ascii_composer_.get_binding(VK_CAPITAL);
+
+    // Phase 2.4: CapsLock + letter → commit directly with case inversion
+    // When CapsLock is not configured as an IME switch, keep the OS CapsLock
+    // behavior: letters commit directly with case inversion.
+    if (!event.is_key_up && event.is_caps_lock() && !ascii_composer_.is_ascii_mode() &&
+        context_.caps_lock_style == AsciiModeSwitchStyle::NOOP) {
+        uint32_t vk = event.keycode;
+        if (vk >= 'A' && vk <= 'Z') {
+            char ch = static_cast<char>(vk);
+            if (event.is_shift())
+                ch = static_cast<char>(tolower(ch));
+            else
+                ch = static_cast<char>(toupper(ch));
+            context_.committed_text = std::string(1, ch);
+            context_.set_commit_source(CommitSource::kRawCodePretransformed);
+            record_total_us(trace_, total_start, trace_enabled_);
+            return ProcessResult::COMMITTED;
+        }
     }
 
     // Phase 2.5: intercept_key — in English + full-width mode, intercept digit keys
@@ -148,15 +169,17 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
     if (ascii_composer_.is_ascii_mode() && !event.is_key_up) {
         uint32_t vk = event.keycode;
 
-        // Letter keys (A-Z): commit as single ASCII char, respect Shift
+        // Letter keys (A-Z): commit as single ASCII char, respect Shift and CapsLock
         if (vk >= 'A' && vk <= 'Z') {
             char ch = static_cast<char>(vk);
-            if (!event.is_shift())
+            // Shift XOR CapsLock → uppercase; neither or both → lowercase
+            bool upper = event.is_shift() != event.is_caps_lock();
+            if (!upper)
                 ch = static_cast<char>(tolower(ch));
             context_.committed_text = opts.full_shape
                 ? OutputComposer::to_full_width(ch)
                 : std::string(1, ch);
-            context_.set_commit_source(CommitSource::kRawCode);
+            context_.set_commit_source(CommitSource::kRawCodePretransformed);
             if (ascii_composer_.is_temporary_ascii()) {
                 ascii_composer_.set_ascii_mode(false);
             }
@@ -239,7 +262,10 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
     // Note: pinyin_buffer.empty() is a heuristic — the authoritative fallback
     // is in Context::commit_with_source() which overrides to kCandidate
     // when candidates.highlighted is valid.
-    if (result == ProcessResult::COMMITTED) {
+    // Skip if already set (e.g. append mode or engine-prepared ASCII output).
+    if (result == ProcessResult::COMMITTED &&
+        context_.commit_source() != CommitSource::kRawCodePreserveCase &&
+        context_.commit_source() != CommitSource::kRawCodePretransformed) {
         if (context_.pinyin_buffer.empty()) {
             context_.set_commit_source(CommitSource::kRawCode);   // Enter 提交拼音
         } else {
@@ -266,12 +292,16 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
             trace_.page_index = context_.page_index;
             trace_.page_size = config_->page_size;
         }
+        bool append_raw = context_.commit_source() == CommitSource::kRawCodePreserveCase;
         // Skip translate if deadline already expired (e.g. slow ascii_composer/processor)
         if (per_query_deadline.enabled && per_query_deadline.expired()) {
             if (trace_enabled_) {
                 trace_.deadline_exceeded = true;
                 trace_.truncated = true;
             }
+        } else if (append_raw) {
+            context_.candidates = {};
+            context_.page_index = 0;
         } else {
             // Create a budget tuned for this input length, with per-query deadline
             QueryBudget effective_budget = make_budget((int)context_.pinyin_buffer.size(), config_->page_size);
@@ -285,7 +315,9 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
         }
 
         // 五笔/混输模式：四码唯一候选自动上屏
-        if (config_->wubi_auto_commit_4code && (mode_ == InputMode::WUBI || mode_ == InputMode::MIXED) && result == ProcessResult::ACCEPTED) {
+        if (!append_raw && config_->wubi_auto_commit_4code &&
+            (mode_ == InputMode::WUBI || mode_ == InputMode::MIXED) &&
+            result == ProcessResult::ACCEPTED) {
             if (context_.pinyin_buffer.size() == 4 &&
                 context_.candidates.candidates.size() == 1) {
                 context_.committed_text = context_.candidates.candidates[0].text;

@@ -122,7 +122,14 @@ cxxime::IPCResponse ServerApp::handle_request(const cxxime::IPCRequest& request)
         response.ime_status = r.ime_status;
 
         if (r.result == cxxime::ProcessResult::REJECTED) {
-            response.status = cxxime::IPCStatus::ERR_ENGINE_PROCESS_FAILED;
+            // If the engine rejected the key but cleared the composition
+            // (e.g. CapsLock with "clear" style), return OK so the TSF
+            // client can clean up its composition state.
+            if (!r.composing) {
+                response.status = cxxime::IPCStatus::OK;
+            } else {
+                response.status = cxxime::IPCStatus::ERR_ENGINE_PROCESS_FAILED;
+            }
             break;
         }
 

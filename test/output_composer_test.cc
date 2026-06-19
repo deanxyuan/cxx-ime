@@ -28,6 +28,12 @@ static cxxime::OutputOptions make_opts(bool chinese = false, bool full = true, b
     return o;
 }
 
+TEST(OutputComposer, transform_raw_code_pretransformed) {
+    cxxime::OutputOptions opts = make_opts(false, false, true);
+    auto r = cxxime::OutputComposer::transform("N", opts, cxxime::CommitSource::kRawCodePretransformed, false);
+    ASSERT_EQ(r, "N");
+}
+
 // ============================================================
 // intercept_key 测试
 // ============================================================
@@ -222,6 +228,19 @@ TEST(OutputComposer, transform_fullwidth_punctuation) {
     auto r = cxxime::OutputComposer::transform(".,;:!?()[]{}", opts, cxxime::CommitSource::kRawCode, false);
     // transform 不再做全角转换，应保持 ASCII 标点
     ASSERT_EQ(r, ".,;:!?()[]{}");
+}
+
+TEST(OutputComposer, transform_raw_code_preserve_case) {
+    // kRawCodePreserveCase: caps_lock=true 但不做大小写反转
+    cxxime::OutputOptions opts = make_opts(false, false, true);
+    auto r = cxxime::OutputComposer::transform("nihaoSD", opts, cxxime::CommitSource::kRawCodePreserveCase, false);
+    ASSERT_EQ(r, "nihaoSD");
+}
+
+TEST(OutputComposer, transform_raw_code_preserve_case_mixed) {
+    cxxime::OutputOptions opts = make_opts(false, false, true);
+    auto r = cxxime::OutputComposer::transform("AB你好", opts, cxxime::CommitSource::kRawCodePreserveCase, false);
+    ASSERT_EQ(r, "AB你好");
 }
 
 // ============================================================

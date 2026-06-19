@@ -38,10 +38,11 @@
     },
     "ascii_composer": {
         "switch_key": {
-            "Shift_L": "commit_text",
+            "Shift_L": "code",
             "Shift_R": "set_ascii_mode",
             "Control_L": "noop",
-            "Control_R": "noop"
+            "Control_R": "noop",
+            "Caps_Lock": "clear"
         },
         "good_old_caps_lock": false
     },

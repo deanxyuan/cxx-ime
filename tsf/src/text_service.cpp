@@ -278,12 +278,19 @@ void TextService::_sync_ime_status(const cxxime::ImeStatus& status) {
     _chinese_mode = status.chinese_mode;
     _caps_lock = status.caps_lock;
 
-    _sync_conversion_mode_compartment(status);
-    if (_statusController.is_initialized()) _statusController.sync_status(status);
+    // Fix: 先更新按钮状态，再触发 compartment 通知。
+    // compartment 变更会触发系统级通知，语言栏收到通知后重新调用 GetIcon 查询图标。
+    // 如果按钮状态尚未更新，语言栏会拿到旧图标，随后 _pSink->OnUpdate 又触发一次
+    // 刷新拿到新图标，两次渲染造成闪烁。
     if (_modeButton) _modeButton->update_from_status(status);
     if (_imeButton) _imeButton->update_mode(status.input_mode);
+    if (_statusController.is_initialized()) _statusController.sync_status(status);
+    _sync_conversion_mode_compartment(status);
 
-    if (chinese_changed || caps_changed) _refresh_mode_button_item();
+    // Fix: 不再调用 _refresh_mode_button_item (RemoveItem+AddItem)，
+    // update_from_status 已通过 _pSink->OnUpdate 通知 TSF 刷新按钮，
+    // RemoveItem+AddItem 会导致按钮瞬间消失再出现，造成图标闪烁。
+    // if (chinese_changed || caps_changed) _refresh_mode_button_item();
 }
 
 void TextService::_sync_conversion_mode_compartment(const cxxime::ImeStatus& status) {
@@ -423,15 +430,20 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
     // by pre-setting button state to match server, so _sync_ime_status sees no delta.
     cxxime::ImeStatus initial_status = {};
     initial_status.chinese_mode = true; // fallback default matching CLangBarItemButton ctor
-    if (_client.connect()) {
+    // Reuse existing connection if available (Deactivate no longer disconnects).
+    // If server closed the pipe, start_session's send_request will auto-reconnect.
+    if (!_client.is_connected()) {
+        if (!_client.connect()) {
+            CXXIME_LOG(L"Failed to connect to server");
+        }
+    }
+    if (_client.is_connected()) {
         _client.start_session(_sessionId);
         CXXIME_LOG(L"Connected to server, sessionId=%u", _sessionId);
         cxxime::IPCResponse status_resp = {};
         if (_client.get_status(_sessionId, status_resp) && status_resp.status == cxxime::IPCStatus::OK) {
             initial_status = status_resp.ime_status;
         }
-    } else {
-        CXXIME_LOG(L"Failed to connect to server");
     }
 
     // Pre-set TextService state so _sync_ime_status sees no delta
@@ -578,10 +590,16 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
         }
     }
 
-    cxxime::IPCResponse resp = {};
-    if (_client.get_status(_sessionId, resp) && resp.status == cxxime::IPCStatus::OK) {
-        _sync_ime_status(resp.ime_status);
-    }
+    // Fix: 移除冗余的 get_status IPC 调用。
+    // 状态已在激活开头通过 initial_status 获取并预设到 _chinese_mode/_caps_lock
+    // 和 _modeButton->update_from_status，此处再调一次 get_status + _sync_ime_status：
+    //   1. 多一次同步 IPC 阻塞 UI 线程（数百毫秒闪烁的根源）
+    //   2. 若服务器返回相同状态 → _sync_ime_status 无变化 → 纯浪费
+    //   3. 若服务器返回不同状态 → 触发 _pSink->OnUpdate → 图标闪烁
+    // cxxime::IPCResponse resp = {};
+    // if (_client.get_status(_sessionId, resp) && resp.status == cxxime::IPCStatus::OK) {
+    //     _sync_ime_status(resp.ime_status);
+    // }
     _activated = true;
     return S_OK;
 }
@@ -614,7 +632,10 @@ STDMETHODIMP TextService::Deactivate() {
         _client.end_session(_sessionId);
         _sessionId = 0;
     }
-    _client.disconnect();
+    // Fix: 不在 Deactivate 中断开连接，保持管道复用。
+    // 下次 ActivateEx 时如果服务器端已关闭连接，send_request 会自动重连。
+    // 这样避免了 connect() 中 WaitNamedPipeW 的阻塞等待（最长 3 秒）。
+    // _client.disconnect();
 
     release_config_monitor_ref();
 
@@ -910,12 +931,16 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
         CXXIME_LOG(L"_ProcessKeyEvent: window_us=%lld, ipc_us=%lld", _last_window_update_us, _last_ipc_us);
     } else if (response.status == cxxime::IPCStatus::OK) {
         // Server accepted but no commit and no preedit (e.g. Escape cleared the buffer)
+        bool was_composing = _composing;
         _candidateWindow.hide();
         _candidateWindow.set_preedit("");
         if (_composing && _composition) update_composition(pic, L"");
         _end_composition(pic);
         _composing = false;
-        *pfEaten = TRUE;
+        // Only eat the key if there was an active composition to clean up.
+        // Without this guard, keys like Backspace get eaten when not composing.
+        if (was_composing)
+            *pfEaten = TRUE;
         trace.result = TsfResult::CLEARED;
     } else {
         trace.result = TsfResult::REJECTED;
@@ -1056,16 +1081,6 @@ STDMETHODIMP TextService::OnUninitDocumentMgr(ITfDocumentMgr* pDocMgr) {
 
 STDMETHODIMP TextService::OnSetFocus(ITfDocumentMgr* pDocMgrFocus, ITfDocumentMgr* pDocMgrPrevFocus) {
     // Sync status on focus change (user may have toggled via language bar)
-    //if (_statusController.is_initialized()) {
-    //    cxxime::IPCResponse resp = {};
-    //    if (_client.get_status(_sessionId, resp)) {
-    //        _statusController.sync_status(resp.ime_status);
-    //        _chinese_mode = resp.ime_status.chinese_mode;
-    //        if (_modeButton)
-    //            _modeButton->update_from_status(resp.ime_status);
-    //        if (_imeButton) _imeButton->update_mode(resp.ime_status.input_mode);
-    //    }
-    //}
     cxxime::IPCResponse resp = {};
     if (_client.get_status(_sessionId, resp) && resp.status == cxxime::IPCStatus::OK) {
         _sync_ime_status(resp.ime_status);

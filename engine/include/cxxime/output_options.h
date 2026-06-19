@@ -10,8 +10,10 @@ namespace cxxime {
 
 // Commit source: determines whether transform() applies conversions.
 enum class CommitSource {
-    kRawCode,    // Raw pinyin, ASCII passthrough, intercept_key — apply Caps Lock + full-width
-    kCandidate,  // Candidate text — no conversion, preserve original text
+    kRawCode,             // Raw pinyin, ASCII passthrough, intercept_key — apply Caps Lock + full-width
+    kCandidate,           // Candidate text — no conversion, preserve original text
+    kRawCodePreserveCase, // Raw code with correct case, skip Caps Lock inversion
+    kRawCodePretransformed, // Engine already applied shape/case conversion
 };
 
 // Effective output state derived from ImeStatus.
