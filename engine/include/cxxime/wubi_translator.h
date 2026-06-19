@@ -15,8 +15,15 @@ public:
                             QueryTrace* trace = nullptr, const QueryBudget* budget = nullptr,
                             QueryScratch* scratch = nullptr) override;
 
+    void update_recent(const std::string& key, const Candidate& candidate) override;
+    void clear_recent() override { recent_cache_.clear(); }
+
 private:
     Dict* dict_ = nullptr;
+    std::vector<RecentCandidate> recent_cache_;
+    uint64_t recent_sequence_ = 0;
+    static constexpr size_t kMaxRecentKeys = 128;
+    static constexpr size_t kMaxRecentPerKey = 8;
 };
 
 } // namespace cxxime

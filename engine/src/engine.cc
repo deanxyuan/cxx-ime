@@ -13,6 +13,14 @@
 
 namespace cxxime {
 
+static inline void record_total_us(QueryTrace& trace,
+    std::chrono::steady_clock::time_point start, bool enabled) {
+    if (enabled) {
+        trace.total_us = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - start).count();
+    }
+}
+
 // Static member for global query ID generation
 std::atomic<uint64_t> Engine::next_query_id_{0};
 
@@ -124,10 +132,7 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
     // Check if AsciiComposer committed text (e.g. Shift toggle with commit_text)
     if (!context_.committed_text.empty()) {
         context_.set_commit_source(CommitSource::kRawCode);
-        if (trace_enabled_) {
-            auto total_end = std::chrono::steady_clock::now();
-            trace_.total_us = std::chrono::duration_cast<std::chrono::microseconds>(total_end - total_start).count();
-        }
+        record_total_us(trace_, total_start, trace_enabled_);
         return ProcessResult::COMMITTED;
     }
 
@@ -135,10 +140,7 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
     if (OutputComposer::intercept_key(event, opts, config_->good_old_caps_lock,
                                       context_.committed_text)) {
         context_.set_commit_source(CommitSource::kRawCode);
-        if (trace_enabled_) {
-            auto total_end = std::chrono::steady_clock::now();
-            trace_.total_us = std::chrono::duration_cast<std::chrono::microseconds>(total_end - total_start).count();
-        }
+        record_total_us(trace_, total_start, trace_enabled_);
         return ProcessResult::COMMITTED;
     }
 
@@ -209,10 +211,7 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
         }
 
         // Other keys: reject (pass through to app)
-        if (trace_enabled_) {
-            auto total_end = std::chrono::steady_clock::now();
-            trace_.total_us = std::chrono::duration_cast<std::chrono::microseconds>(total_end - total_start).count();
-        }
+        record_total_us(trace_, total_start, trace_enabled_);
         return ProcessResult::REJECTED;
     }
 

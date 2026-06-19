@@ -83,11 +83,16 @@ CandidatePage MixedTranslator::translate(const std::string& input, int page_inde
 }
 
 void MixedTranslator::update_recent(const std::string& key, const Candidate& candidate) {
-    pinyin_translator_.update_recent(key, candidate);
+    // Forward to the translator that produced this candidate
+    if (candidate.source == CandidateSource::kWubi)
+        wubi_translator_.update_recent(key, candidate);
+    else
+        pinyin_translator_.update_recent(key, candidate);
 }
 
 void MixedTranslator::clear_recent() {
     pinyin_translator_.clear_recent();
+    wubi_translator_.clear_recent();
 }
 
 } // namespace cxxime
