@@ -91,10 +91,6 @@ Section "Install"
 
     WriteRegStr HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Run" "CxxIMEServer" '"$INSTDIR\cxxime-server.exe"'
 
-    CreateDirectory "$SMPROGRAMS\CxxIME"
-    CreateShortCut "$SMPROGRAMS\CxxIME\CxxIME Settings.lnk" "$INSTDIR\cxxime-settings.exe"
-    CreateShortCut "$SMPROGRAMS\CxxIME\Uninstall CxxIME.lnk" "$INSTDIR\uninstall.exe"
-
     WriteRegStr HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\CxxIME" "DisplayName" "CxxIME"
     WriteRegStr HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\CxxIME" "DisplayVersion" "${VERSION}"
     WriteRegStr HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\CxxIME" "Publisher" "${PUBLISHER}"
@@ -102,12 +98,18 @@ Section "Install"
     WriteRegDWORD HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\CxxIME" "NoModify" 1
     WriteRegDWORD HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\CxxIME" "NoRepair" 1
     WriteUninstaller "$INSTDIR\uninstall.exe"
+
+    SetShellVarContext all
+    CreateDirectory "$SMPROGRAMS\CxxIME"
+    CreateShortCut "$SMPROGRAMS\CxxIME\CxxIME Settings.lnk" "$INSTDIR\cxxime-settings.exe"
+    CreateShortCut "$SMPROGRAMS\CxxIME\Uninstall CxxIME.lnk" "$INSTDIR\uninstall.exe"
 SectionEnd
 
 Section "Uninstall"
     ${If} ${RunningX64}
         SetRegView 64
     ${EndIf}
+    SetShellVarContext all
 
     ; Stop server
     nsExec::Exec 'taskkill /im cxxime-server.exe'
