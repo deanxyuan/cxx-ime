@@ -710,8 +710,7 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
     // }
     _activated = true;
     if (_config.status_window.enable && _config.status_window.show_on_startup) {
-        if (!_update_input_focus_from_thread_mgr())
-            _inputFocused = _foreground_allows_input();
+        _update_input_focus_from_thread_mgr();
         if (_inputFocused) {
             _show_status_window_if_allowed();
             _client.focus_in(_sessionId);
@@ -801,7 +800,7 @@ STDMETHODIMP TextService::Deactivate() {
 // ITfKeyEventSink
 STDMETHODIMP TextService::OnSetFocus(BOOL fForeground) {
     if (fForeground) {
-        _inputFocused = _foreground_allows_input();
+        _update_input_focus_from_thread_mgr();
         if (_inputFocused) {
             _show_status_window_if_allowed();
             _client.focus_in(_sessionId);
