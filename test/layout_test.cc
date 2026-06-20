@@ -37,17 +37,17 @@ TEST(Layout, horizontal_single_row) {
     ReleaseDC(nullptr, hdc);
 }
 
-TEST(Layout, horizontal_wrap) {
+TEST(Layout, horizontal_width_limit_stops_when_next_candidate_does_not_fit) {
     HDC hdc = GetDC(nullptr);
-    std::vector<cxxime::Candidate> cands = {make_cand("abc"), make_cand("def"), make_cand("ghi")};
-    // Narrow width forces wrapping
+    std::vector<cxxime::Candidate> cands = {
+        make_cand("abc"),
+        make_cand("this_candidate_must_not_fit_after_first"),
+        make_cand("ghi"),
+    };
     auto lr = cxxime::calculate_horizontal_layout(hdc, cands, "Arial", 14, make_cfg(100));
 
-    ASSERT_EQ(lr.rects.size(), 3u);
-    // First two on same row
-    ASSERT_EQ(lr.rects[0].highlight_rect.top, lr.rects[1].highlight_rect.top);
-    // Third wraps to next row
-    ASSERT_TRUE(lr.rects[2].highlight_rect.top > lr.rects[1].highlight_rect.top);
+    ASSERT_EQ(lr.rects.size(), 1u);
+    ASSERT_EQ(lr.rects[0].index, 0);
 
     ReleaseDC(nullptr, hdc);
 }

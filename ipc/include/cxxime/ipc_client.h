@@ -36,6 +36,7 @@ public:
     bool switch_input_mode(uint32_t session_id, IPCResponse& response);
     bool switch_input_mode(uint32_t session_id, InputMode mode, IPCResponse& response);
     bool get_status(uint32_t session_id, IPCResponse& response);
+    bool sync_caps_lock(uint32_t session_id, bool caps_lock, IPCResponse& response);
     bool reload_config(uint32_t session_id, IPCResponse& response);
     bool add_user_entry(uint32_t session_id, const char* text, const char* code, IPCResponse& response);
 

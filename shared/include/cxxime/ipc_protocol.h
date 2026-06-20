@@ -40,6 +40,7 @@ enum class IPCCommand : uint32_t {
     GET_STATUS = 13,
     RELOAD_CONFIG = 14,
     ADD_USER_ENTRY = 15,
+    SYNC_CAPS_LOCK = 16,
 };
 
 enum class IPCStatus : uint32_t {

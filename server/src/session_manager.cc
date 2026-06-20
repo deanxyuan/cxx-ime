@@ -301,15 +301,24 @@ cxxime::IPCStatus SessionManager::sync_ascii_mode(uint32_t id, bool ascii_mode) 
     if (!entry) return cxxime::IPCStatus::ERR_INVALID_SESSION;
     std::lock_guard<std::mutex> lock(entry->mutex);
     entry->ime_status.chinese_mode = !ascii_mode;
+    entry->engine->ascii_composer().set_ascii_mode(ascii_mode);
+    entry->ime_status.revision++;
     return cxxime::IPCStatus::OK;
 }
 
-cxxime::IPCStatus SessionManager::sync_caps_lock(uint32_t id, bool caps_lock) {
+std::pair<cxxime::IPCStatus, cxxime::ImeStatus> SessionManager::sync_caps_lock(uint32_t id, bool caps_lock) {
     auto entry = lookup_session(id);
-    if (!entry) return cxxime::IPCStatus::ERR_INVALID_SESSION;
+    if (!entry) return {cxxime::IPCStatus::ERR_INVALID_SESSION, {}};
     std::lock_guard<std::mutex> lock(entry->mutex);
-    entry->ime_status.caps_lock = caps_lock;
-    return cxxime::IPCStatus::OK;
+    auto& s = *entry;
+    bool old_caps = s.ime_status.caps_lock;
+    bool old_chinese = s.ime_status.chinese_mode;
+    s.engine->ascii_composer().sync_caps_lock(caps_lock, s.engine->context());
+    s.ime_status.caps_lock = caps_lock;
+    s.ime_status.chinese_mode = !s.engine->ascii_composer().is_ascii_mode();
+    if (old_caps != s.ime_status.caps_lock || old_chinese != s.ime_status.chinese_mode)
+        s.ime_status.revision++;
+    return {cxxime::IPCStatus::OK, s.ime_status};
 }
 
 ProcessKeyResult SessionManager::process_key(uint32_t id, const cxxime::KeyEvent& event) {
@@ -342,8 +351,21 @@ ProcessKeyResult SessionManager::process_key(uint32_t id, const cxxime::KeyEvent
         }
     }
 
-    // 1. sync caps_lock (must happen before OutputOptions derivation)
-    s.ime_status.caps_lock = event.is_caps_lock();
+    // 1. Sync CapsLock before OutputOptions derivation. On first activation,
+    // TSF may not deliver a VK_CAPITAL event because CapsLock was already on.
+    // The physical modifier bit on the first real key is still authoritative.
+    bool is_caps_lock_key = event.keycode == VK_CAPITAL;
+    bool old_caps = s.ime_status.caps_lock;
+    bool old_ascii = !s.ime_status.chinese_mode;
+    if (!is_caps_lock_key && old_caps != event.is_caps_lock()) {
+        engine.ascii_composer().sync_caps_lock(event.is_caps_lock(), engine.context());
+        s.ime_status.caps_lock = event.is_caps_lock();
+        bool new_ascii = engine.ascii_composer().is_ascii_mode();
+        s.ime_status.chinese_mode = !new_ascii;
+        if (old_ascii != new_ascii) {
+            s.ime_status.revision++;
+        }
+    }
 
     // 2. derive OutputOptions
     auto opts = cxxime::OutputOptions::from(s.ime_status);
@@ -356,10 +378,15 @@ ProcessKeyResult SessionManager::process_key(uint32_t id, const cxxime::KeyEvent
     auto result = engine.process_key(event, opts);
 
     // 5. sync ascii_mode -> ime_status.chinese_mode
-    bool old_ascii = !s.ime_status.chinese_mode;
+    old_ascii = !s.ime_status.chinese_mode;
     bool new_ascii = engine.ascii_composer().is_ascii_mode();
     s.ime_status.chinese_mode = !new_ascii;
-    if (old_ascii != new_ascii) {
+    bool caps_changed = false;
+    if (is_caps_lock_key && s.ime_status.caps_lock != event.is_caps_lock()) {
+        s.ime_status.caps_lock = event.is_caps_lock();
+        caps_changed = true;
+    }
+    if (old_ascii != new_ascii || caps_changed) {
         s.ime_status.revision++;
     }
 

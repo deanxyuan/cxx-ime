@@ -717,19 +717,23 @@ TEST(Dict, user_dict_high_freq_in_scan_budget) {
 
 TEST(Dict, user_dict_stress_10k) {
     std::string path = make_temp_path("test_dict_stress.bin");
+    std::string user_path = make_temp_path("test_user_dict_stress.tsv");
     cxxime::Dict::create_test_dict(path, {{"de", "的", 1000}});
 
     cxxime::Dict dict;
     ASSERT_TRUE(dict.open_dict(path));
 
-    // Generate 10,000 user words
+    FILE* f = fopen(user_path.c_str(), "w");
+    ASSERT_TRUE(f != nullptr);
     for (int i = 0; i < 10000; ++i) {
         char code[16];
         snprintf(code, sizeof(code), "p%04d", i);
         char text[16];
         snprintf(text, sizeof(text), "t%04d", i);
-        dict.update_frequency(text, code);
+        fprintf(f, "%s\t%s\t1\n", text, code);
     }
+    fclose(f);
+    ASSERT_TRUE(dict.load_user_dict(user_path));
 
     // Query for a specific code — scan count should be O(1), not O(10000)
     cxxime::QueryTrace trace = {};
@@ -753,6 +757,7 @@ TEST(Dict, user_dict_stress_10k) {
 
     dict.close();
     DeleteFileA(path.c_str());
+    DeleteFileA(user_path.c_str());
 }
 
 // Ensure temp_path is initialized before any Dict tests run

@@ -257,6 +257,19 @@ cxxime::IPCResponse ServerApp::handle_request(const cxxime::IPCRequest& request)
         break;
     }
 
+    case cxxime::IPCCommand::SYNC_CAPS_LOCK: {
+        auto [status, ime_status] =
+            session_mgr_.sync_caps_lock(request.session_id, (request.modifiers & 0x08) != 0);
+        if (status != cxxime::IPCStatus::OK) {
+            response.status = status;
+            break;
+        }
+        response.status = cxxime::IPCStatus::OK;
+        response.ascii_mode = !ime_status.chinese_mode;
+        response.ime_status = ime_status;
+        break;
+    }
+
     case cxxime::IPCCommand::RELOAD_CONFIG:
         session_mgr_.reload_config();
         break;

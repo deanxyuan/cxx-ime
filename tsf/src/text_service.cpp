@@ -32,6 +32,10 @@ static bool should_sync_ime_status(cxxime::IPCStatus status) {
            status == cxxime::IPCStatus::ERR_ENGINE_PROCESS_FAILED;
 }
 
+static std::mutex g_last_status_mutex;
+static bool g_has_last_status = false;
+static cxxime::ImeStatus g_last_status;
+
 static const char* tsf_result_str(TextService::TsfResult r) {
     switch (r) {
         case TextService::TsfResult::IPC_FAILED: return "ipc_failed";
@@ -276,6 +280,11 @@ STDMETHODIMP_(ULONG) TextService::Release() {
 void TextService::_sync_ime_status(const cxxime::ImeStatus& status) {
     _chinese_mode = status.chinese_mode;
     _caps_lock = status.caps_lock;
+    {
+        std::lock_guard<std::mutex> lock(g_last_status_mutex);
+        g_last_status = status;
+        g_has_last_status = true;
+    }
 
     // Fix: 先更新按钮状态，再触发 compartment 通知。
     // compartment 变更会触发系统级通知，语言栏收到通知后重新调用 GetIcon 查询图标。
@@ -334,6 +343,111 @@ void TextService::_sync_conversion_mode_compartment(const cxxime::ImeStatus& sta
     compartment->Release();
 }
 
+bool TextService::_is_caps_lock_on(bool allow_recent_hint) const {
+    BYTE kb[256] = {};
+	if (GetKeyboardState(kb) && (kb[VK_CAPITAL] & 0x01))
+        return true;
+
+    if (GetKeyState(VK_CAPITAL) & 0x0001)
+        return true;
+
+    // Activation can run before the target thread has consumed any keyboard
+    // message. Use the recent physical press bit only as an initial hint; the
+    // first real key event will correct the state through its modifier flags.
+    return allow_recent_hint && (GetAsyncKeyState(VK_CAPITAL) & 0x0001) != 0;
+}
+
+bool TextService::_foreground_allows_input() const {
+	HWND foreground = GetForegroundWindow();
+	if (!foreground)
+		return false;
+
+	wchar_t class_name[64] = {};
+	GetClassNameW(foreground, class_name, ARRAYSIZE(class_name));
+	if (wcscmp(class_name, L"Progman") == 0 ||
+		wcscmp(class_name, L"WorkerW") == 0 ||
+		wcscmp(class_name, L"Shell_TrayWnd") == 0) {
+		return false;
+	}
+
+	return true;
+}
+
+bool TextService::_context_allows_input(ITfContext* context) const {
+	if (!context)
+		return false;
+	if (!_foreground_allows_input())
+		return false;
+
+	TF_STATUS status = {};
+	if (FAILED(context->GetStatus(&status)))
+		return true;
+
+	return (status.dwDynamicFlags & TF_SD_READONLY) == 0;
+}
+
+bool TextService::_document_allows_input(ITfDocumentMgr* doc_mgr) const {
+	if (!doc_mgr)
+		return false;
+
+	ITfContext* context = nullptr;
+	HRESULT hr = doc_mgr->GetBase(&context);
+	if (FAILED(hr) || !context)
+		return false;
+
+	bool allowed = _context_allows_input(context);
+	context->Release();
+	return allowed;
+}
+
+bool TextService::_update_input_focus_from_thread_mgr() {
+	bool focused = false;
+	if (_threadMgr) {
+		ITfDocumentMgr* doc_mgr = nullptr;
+		if (SUCCEEDED(_threadMgr->GetFocus(&doc_mgr)) && doc_mgr) {
+			focused = _document_allows_input(doc_mgr);
+			doc_mgr->Release();
+		}
+	}
+
+	_inputFocused = focused;
+	if (!focused && _statusController.is_initialized())
+		_statusController.hide();
+	return focused;
+}
+
+bool TextService::_sync_caps_lock_state(bool caps_lock, cxxime::ImeStatus* synced_status) {
+    if (!_sessionId)
+        return false;
+
+    cxxime::IPCResponse resp = {};
+    if (_client.sync_caps_lock(_sessionId, caps_lock, resp) &&
+        resp.status == cxxime::IPCStatus::OK) {
+        if (synced_status)
+            *synced_status = resp.ime_status;
+        _sync_ime_status(resp.ime_status);
+        return true;
+    }
+    return false;
+}
+
+bool TextService::_sync_physical_caps_lock(cxxime::ImeStatus* synced_status) {
+    bool caps_lock = _is_caps_lock_on();
+    if (!_seenKeyAfterActivate && _caps_lock && !caps_lock)
+        return false;
+
+    return _sync_caps_lock_state(caps_lock, synced_status);
+}
+
+void TextService::_show_status_window_if_allowed() {
+    if (_activated &&
+        _inputFocused &&
+        _config.status_window.enable &&
+        _statusController.is_initialized()) {
+        _statusController.show();
+    }
+}
+
 // ITfTextInputProcessorEx
 STDMETHODIMP TextService::Activate(ITfThreadMgr* ptim, TfClientId tid) {
     return ActivateEx(ptim, tid, 0);
@@ -351,6 +465,7 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
     _threadMgr->AddRef();
     _clientId = tid;
     _activateFlags = dwFlags;
+    _seenKeyAfterActivate = false;
 
     _register_key_event_sink();
     _register_preserved_key();
@@ -403,8 +518,17 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
     // Connect to server and query initial status before adding language bar buttons.
     // Pre-set the mode button to match the server before AddItem, so TSF reads the
     // correct icon on the first GetIcon call.
+    bool initial_foreground_allows_input = _foreground_allows_input();
     cxxime::ImeStatus initial_status = {};
     initial_status.chinese_mode = true; // fallback default matching CLangBarItemButton ctor
+    bool has_last_status = false;
+    {
+        std::lock_guard<std::mutex> lock(g_last_status_mutex);
+        has_last_status = g_has_last_status;
+        if (has_last_status)
+            initial_status = g_last_status;
+    }
+    bool initial_caps_lock = initial_foreground_allows_input && _is_caps_lock_on(!has_last_status);
     // Reuse existing connection if available (Deactivate no longer disconnects).
     // If server closed the pipe, start_session's send_request will auto-reconnect.
     if (!_client.is_connected()) {
@@ -415,19 +539,35 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
     if (_client.is_connected()) {
         _client.start_session(_sessionId);
         CXXIME_LOG(L"Connected to server, sessionId=%u", _sessionId);
-        cxxime::IPCResponse status_resp = {};
-        if (_client.get_status(_sessionId, status_resp) && status_resp.status == cxxime::IPCStatus::OK) {
-            initial_status = status_resp.ime_status;
+        if (initial_foreground_allows_input) {
+            _sync_caps_lock_state(initial_caps_lock, &initial_status);
+            cxxime::IPCResponse status_resp = {};
+            if (_client.get_status(_sessionId, status_resp) && status_resp.status == cxxime::IPCStatus::OK) {
+                initial_status = status_resp.ime_status;
+            }
+        }
+    }
+    if (initial_foreground_allows_input && initial_caps_lock) {
+        initial_status.caps_lock = true;
+        auto caps_it = _config.ascii_switch_key.find("Caps_Lock");
+        if (caps_it != _config.ascii_switch_key.end() && caps_it->second != "noop") {
+            initial_status.chinese_mode = false;
         }
     }
 
     // Pre-set TextService state so _sync_ime_status sees no delta
     _chinese_mode = initial_status.chinese_mode;
     _caps_lock = initial_status.caps_lock;
+    {
+        std::lock_guard<std::mutex> lock(g_last_status_mutex);
+        g_last_status = initial_status;
+        g_has_last_status = true;
+    }
 
     // Register language bar buttons
     ITfLangBarItemMgr* pLangBarItemMgr = nullptr;
-    if (SUCCEEDED(_threadMgr->QueryInterface(IID_ITfLangBarItemMgr, (void**)&pLangBarItemMgr))) {
+    if (initial_foreground_allows_input &&
+        SUCCEEDED(_threadMgr->QueryInterface(IID_ITfLangBarItemMgr, (void**)&pLangBarItemMgr))) {
         _modeButton = new CLangBarItemButton(tid, GUID_LBI_INPUTMODE);
 
         // Pre-set button state before AddItem to avoid flash
@@ -444,15 +584,12 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
     }
 
     // Initialize status window controller
-    if (_config.status_window.enable) {
-        bool first_init = !_statusController.is_initialized();
+    if (initial_foreground_allows_input && _config.status_window.enable) {
         if (!_statusController.initialize(nullptr, &_client, _sessionId, &_config)) {
             CXXIME_LOG(L"StatusController: window creation failed, disabled");
         } else {
             _statusController.update_config(_config);
-            if (first_init && _config.status_window.show_on_startup) {
-                _statusController.show();
-            }
+            _statusController.sync_status(initial_status);
         }
         // Set language bar callback for "显示/隐藏状态栏"
         if (_modeButton) {
@@ -461,7 +598,7 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
                 _statusController.update_config(_config);
                 _config.save(cxxime::user_data_path("default.json"));
                 if (_config.status_window.enable) {
-                    _statusController.show();
+                    _show_status_window_if_allowed();
                 } else {
                     _statusController.hide();
                 }
@@ -572,12 +709,22 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
     //     _sync_ime_status(resp.ime_status);
     // }
     _activated = true;
+    if (_config.status_window.enable && _config.status_window.show_on_startup) {
+        if (!_update_input_focus_from_thread_mgr())
+            _inputFocused = _foreground_allows_input();
+        if (_inputFocused) {
+            _show_status_window_if_allowed();
+            _client.focus_in(_sessionId);
+        }
+    }
     return S_OK;
 }
 
 STDMETHODIMP TextService::Deactivate() {
     CXXIME_LOG(L"Deactivate: sessionId=%u", _sessionId);
     _activated = false;
+    _inputFocused = false;
+    _seenKeyAfterActivate = false;
 
     // Hide status window immediately, then destroy — avoid clicks during IPC teardown
     _statusController.hide();
@@ -654,8 +801,16 @@ STDMETHODIMP TextService::Deactivate() {
 // ITfKeyEventSink
 STDMETHODIMP TextService::OnSetFocus(BOOL fForeground) {
     if (fForeground) {
-        _client.focus_in(_sessionId);
+        _inputFocused = _foreground_allows_input();
+        if (_inputFocused) {
+            _show_status_window_if_allowed();
+            _client.focus_in(_sessionId);
+        } else {
+            _client.focus_out(_sessionId);
+            _AbortComposition();
+        }
     } else {
+        _inputFocused = false;
         // Switching away from CxxIME — hide status window immediately.
         // OnKillThreadFocus may not fire when switching IMEs within the same thread.
         if (_statusController.is_initialized())
@@ -668,6 +823,15 @@ STDMETHODIMP TextService::OnSetFocus(BOOL fForeground) {
 
 STDMETHODIMP TextService::OnTestKeyDown(ITfContext* pic, WPARAM wParam, LPARAM lParam, BOOL* pfEaten) {
     _fTestKeyDownPending = true;
+    if (!_context_allows_input(pic)) {
+        _inputFocused = false;
+        if (_statusController.is_initialized())
+            _statusController.hide();
+        _candidateWindow.hide();
+        *pfEaten = FALSE;
+        return S_OK;
+    }
+
     *pfEaten = _ProcessKeyEvent(pic, wParam, lParam, pfEaten);
 
     // Modifier keys (Shift/Ctrl/Alt) must be eaten so TSF calls OnKeyDown,
@@ -676,7 +840,8 @@ STDMETHODIMP TextService::OnTestKeyDown(ITfContext* pic, WPARAM wParam, LPARAM l
     if (wParam == VK_LSHIFT || wParam == VK_RSHIFT || wParam == VK_SHIFT ||
         wParam == VK_LCONTROL || wParam == VK_RCONTROL || wParam == VK_CONTROL ||
         wParam == VK_LMENU || wParam == VK_RMENU ||
-        wParam == VK_LWIN || wParam == VK_RWIN) {
+        wParam == VK_LWIN || wParam == VK_RWIN ||
+        wParam == VK_CAPITAL) {
         *pfEaten = TRUE;
     }
 
@@ -721,6 +886,29 @@ STDMETHODIMP TextService::OnKeyUp(ITfContext* pic, WPARAM wParam, LPARAM lParam,
 bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam, BOOL* pfEaten) {
     *pfEaten = FALSE;
 
+    if (!_context_allows_input(pic)) {
+        _inputFocused = false;
+        if (_statusController.is_initialized())
+            _statusController.hide();
+        _candidateWindow.hide();
+        _AbortComposition();
+        return false;
+    }
+
+    _inputFocused = true;
+    _seenKeyAfterActivate = true;
+    uint32_t modifiers = _get_modifiers();
+    if (wParam == VK_CAPITAL) {
+        bool target_caps_lock = !_caps_lock;
+        if (target_caps_lock)
+            modifiers |= 0x08;
+        else
+            modifiers &= ~0x08;
+    }
+    bool physical_caps_lock = (modifiers & 0x08) != 0;
+    if (wParam != VK_CAPITAL && physical_caps_lock != _caps_lock)
+        _sync_caps_lock_state(physical_caps_lock);
+
     // Config is reloaded by watcher thread (not keypress-driven).
     // Copy to local _config for consistent use during this keypress.
     {
@@ -739,7 +927,6 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
     // Record key event start time
     _key_event_start = std::chrono::steady_clock::now();
 
-    uint32_t modifiers = _get_modifiers();
     CXXIME_LOG(L"_ProcessKeyEvent: vk=%u, mods=%u, composing=%d", (unsigned int)wParam, modifiers, _composing);
 
     cxxime::IPCResponse response = {};
@@ -1007,12 +1194,13 @@ STDMETHODIMP TextService::OnCompositionTerminated(TfEditCookie ecWrite, ITfCompo
 
 // ITfThreadFocusSink
 STDMETHODIMP TextService::OnSetThreadFocus() {
-    if (_activated && _statusController.is_initialized())
-        _statusController.show();
+    _update_input_focus_from_thread_mgr();
+    _show_status_window_if_allowed();
     return S_OK;
 }
 
 STDMETHODIMP TextService::OnKillThreadFocus() {
+    _inputFocused = false;
     if (_statusController.is_initialized())
         _statusController.hide();
     _client.focus_out(_sessionId);
@@ -1047,6 +1235,15 @@ STDMETHODIMP TextService::OnUninitDocumentMgr(ITfDocumentMgr* pDocMgr) {
 }
 
 STDMETHODIMP TextService::OnSetFocus(ITfDocumentMgr* pDocMgrFocus, ITfDocumentMgr* pDocMgrPrevFocus) {
+    _inputFocused = _document_allows_input(pDocMgrFocus);
+    if (!_inputFocused) {
+        if (_statusController.is_initialized())
+            _statusController.hide();
+        return S_OK;
+    }
+
+    _show_status_window_if_allowed();
+
     // Sync status on focus change (user may have toggled via language bar)
     cxxime::IPCResponse resp = {};
     if (_client.get_status(_sessionId, resp) && resp.status == cxxime::IPCStatus::OK) {

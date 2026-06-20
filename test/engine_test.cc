@@ -855,6 +855,59 @@ TEST(Engine, ascii_mode_shift_capslock_lowercase) {
     DeleteFileA(spellings_path.c_str());
 }
 
+TEST(Engine, capslock_overlay_shift_keeps_ascii_mode) {
+    std::string dict_path = make_temp_path("test_caps_shift_overlay_dict.bin");
+    std::string spellings_path = make_temp_path("test_caps_shift_overlay_spellings.bin");
+    cxxime::Dict::create_test_dict(dict_path, {{"ni", "ni", 100}});
+    ASSERT_TRUE(cxxime::SpellingsIndex::create_test_trie(spellings_path, {{"ni", "ni", 0, 0.0f}}));
+
+    cxxime::Config config;
+    config.ascii_switch_key["Shift_L"] = "code";
+    config.ascii_switch_key["Caps_Lock"] = "clear";
+
+    cxxime::Engine engine;
+    engine.initialize(dict_path, spellings_path);
+    engine.reload_config(config);
+
+    cxxime::KeyEvent caps_down;
+    caps_down.keycode = 0x14;  // VK_CAPITAL
+    caps_down.is_key_up = false;
+    caps_down.set_caps_lock();
+    engine.process_key(caps_down);
+    ASSERT_TRUE(engine.ascii_composer().is_ascii_mode());
+
+    cxxime::KeyEvent shift_down;
+    shift_down.keycode = VK_LSHIFT;
+    shift_down.is_key_up = false;
+    shift_down.modifiers = 0x09;  // Shift + CapsLock
+    engine.process_key(shift_down);
+
+    cxxime::KeyEvent shift_up = shift_down;
+    shift_up.is_key_up = true;
+    engine.process_key(shift_up);
+    ASSERT_TRUE(engine.ascii_composer().is_ascii_mode());
+
+    cxxime::KeyEvent n;
+    n.keycode = 'N';
+    n.is_key_up = false;
+    n.modifiers = 0x08;
+    auto result = engine.process_key(n);
+    ASSERT_EQ(result, cxxime::ProcessResult::COMMITTED);
+    ASSERT_EQ(engine.get_commit_text(), "N");
+
+    cxxime::KeyEvent i;
+    i.keycode = 'I';
+    i.is_key_up = false;
+    i.modifiers = 0x08;
+    result = engine.process_key(i);
+    ASSERT_EQ(result, cxxime::ProcessResult::COMMITTED);
+    ASSERT_EQ(engine.get_commit_text(), "I");
+
+    engine.finalize();
+    DeleteFileA(dict_path.c_str());
+    DeleteFileA(spellings_path.c_str());
+}
+
 // --- CapsLock v2: append / candidate / code / clear mode tests ---
 
 TEST(AsciiComposer, capslock_append_noop_during_composing) {
@@ -1125,7 +1178,7 @@ TEST(Engine, capslock_append_not_downgraded) {
 
 // --- CapsLock + Shift interaction tests ---
 
-TEST(AsciiComposer, capslock_on_shift_still_toggles_with_shift) {
+TEST(AsciiComposer, capslock_on_shift_does_not_toggle) {
     // CapsLock ON 时按 Shift 松开，不应切换模式（Shift 用于大小写反转）
     cxxime::Config config;
     config.ascii_switch_key["Shift_L"] = "code";
@@ -1142,9 +1195,9 @@ TEST(AsciiComposer, capslock_on_shift_still_toggles_with_shift) {
     // Step 2: Shift down (CapsLock still ON)
     ac.process_key(VK_LSHIFT, false, ctx, true);  // caps_lock = true
 
-    // Step 3: Shift up still toggles Chinese/English while CapsLock is ON.
+    // Step 3: Shift up must not toggle Chinese/English while CapsLock is ON.
     ac.process_key(VK_LSHIFT, true, ctx, true);  // caps_lock = true
-    ASSERT_TRUE(!ac.is_ascii_mode());
+    ASSERT_TRUE(ac.is_ascii_mode());
 }
 
 TEST(AsciiComposer, shift_held_capslock_no_double_toggle) {
