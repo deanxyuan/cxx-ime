@@ -223,14 +223,15 @@ TEST(EngineTrace, no_auto_trace_log) {
 // ─── MPSCQueue ────────────────────────────────────────────────────────
 
 struct TestNode : cxxime::MPSCQueue::Node {
+    explicit TestNode(int v) : value(v) {}
     int value;
 };
 
 TEST(MPSCQueue, basic_push_pop) {
     cxxime::MPSCQueue q;
-    auto* a = new TestNode{cxxime::MPSCQueue::Node{}, 1};
-    auto* b = new TestNode{cxxime::MPSCQueue::Node{}, 2};
-    auto* c = new TestNode{cxxime::MPSCQueue::Node{}, 3};
+    auto* a = new TestNode(1);
+    auto* b = new TestNode(2);
+    auto* c = new TestNode(3);
 
     q.push(a);
     q.push(b);
@@ -263,7 +264,7 @@ TEST(MPSCQueue, concurrent_push) {
 
     auto producer = [&](int start_val) {
         for (int i = 0; i < kPerThread; ++i) {
-            auto* node = new TestNode{cxxime::MPSCQueue::Node{}, start_val + i};
+            auto* node = new TestNode(start_val + i);
             q.push(node);
             pushed.fetch_add(1, std::memory_order_relaxed);
         }
@@ -298,7 +299,7 @@ TEST(MPSCQueue, empty_pop_returns_null) {
 TEST(MPSCQueue, interleaved_push_pop) {
     cxxime::MPSCQueue q;
     for (int round = 0; round < 100; ++round) {
-        auto* node = new TestNode{cxxime::MPSCQueue::Node{}, round};
+        auto* node = new TestNode(round);
         q.push(node);
         auto* r = static_cast<TestNode*>(q.pop());
         ASSERT_TRUE(r != nullptr);

@@ -38,6 +38,7 @@ public:
         caps_lock_overlay_active_ = false;
     }
     bool is_temporary_ascii() const { return temporary_ascii_; }
+    void sync_caps_lock(bool caps_lock, Context& ctx) { apply_caps_lock_overlay(caps_lock, ctx); }
 
     AsciiModeSwitchStyle get_binding(uint32_t key_code) const;
 

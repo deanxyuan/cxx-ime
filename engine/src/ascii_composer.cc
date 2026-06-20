@@ -115,6 +115,14 @@ bool AsciiComposer::process_key(uint32_t key_code, bool is_key_up, Context& ctx,
     bool is_win   = is_win_key(key_code);
 
     if (is_shift || is_ctrl || is_alt || is_win) {
+        if (caps_lock_overlay_active_ && caps_lock) {
+            shift_pressed_ = false;
+            ctrl_pressed_ = false;
+            alt_pressed_ = false;
+            win_pressed_ = false;
+            return false;
+        }
+
         if (is_key_up) {
             CXXIME_LOG(L"AsciiComposer::process_key: modifier key up, shift_pressed_=%d", shift_pressed_);
             if (shift_pressed_ || ctrl_pressed_ || alt_pressed_ || win_pressed_) {

@@ -3,6 +3,7 @@
 #include "util/testutil.h"
 #include <cstdio>
 #include <cstring>
+#include <fstream>
 #include <string>
 #include <windows.h>
 #include <cxxime/ipc_protocol.h>
@@ -26,6 +27,20 @@ static std::string setup_test_dict() {
         {"hao", "好", 800},
     });
     return dict_path;
+}
+
+static std::string setup_capslock_config() {
+    std::string config_path = make_temp_path("test_capslock_config.json");
+    std::ofstream out(config_path);
+    out << R"({
+        "ascii_composer": {
+            "switch_key": {
+                "Caps_Lock": "clear"
+            },
+            "good_old_caps_lock": false
+        }
+    })";
+    return config_path;
 }
 
 // ============================================================
@@ -119,8 +134,9 @@ TEST(SessionStatus, sync_caps_lock_sets_current_state) {
     auto [st0, s0] = mgr.get_ime_status(id);
     ASSERT_EQ(s0.caps_lock, false);
 
-    auto st1 = mgr.sync_caps_lock(id, true);
+    auto [st1, caps_on] = mgr.sync_caps_lock(id, true);
     ASSERT_EQ(st1, cxxime::IPCStatus::OK);
+    ASSERT_EQ(caps_on.caps_lock, true);
     auto [st2, s1] = mgr.get_ime_status(id);
     ASSERT_EQ(s1.caps_lock, true);
 
@@ -131,6 +147,71 @@ TEST(SessionStatus, sync_caps_lock_sets_current_state) {
     mgr.sync_caps_lock(id, false);
     auto [st4, s3] = mgr.get_ime_status(id);
     ASSERT_EQ(s3.caps_lock, false);
+}
+
+TEST(SessionStatus, sync_caps_lock_enables_ascii_overlay) {
+    SessionManager mgr;
+    mgr.initialize(setup_test_dict(), setup_capslock_config());
+    uint32_t id = mgr.create_session();
+    ASSERT_GT(id, (uint32_t)0);
+
+    auto [st1, s1] = mgr.sync_caps_lock(id, true);
+    ASSERT_EQ(st1, cxxime::IPCStatus::OK);
+    ASSERT_EQ(s1.caps_lock, true);
+    ASSERT_EQ(s1.chinese_mode, false);
+
+    cxxime::KeyEvent letter;
+    letter.keycode = 'N';
+    letter.set_caps_lock();
+    auto r = mgr.process_key(id, letter);
+    ASSERT_EQ(r.status, cxxime::IPCStatus::OK);
+    ASSERT_EQ(r.result, cxxime::ProcessResult::COMMITTED);
+    ASSERT_EQ(r.commit_text, "N");
+    ASSERT_TRUE(!r.composing);
+
+    auto [st2, s2] = mgr.sync_caps_lock(id, false);
+    ASSERT_EQ(st2, cxxime::IPCStatus::OK);
+    ASSERT_EQ(s2.caps_lock, false);
+    ASSERT_EQ(s2.chinese_mode, true);
+}
+
+TEST(SessionStatus, first_key_with_caps_lock_on_enables_ascii_overlay) {
+    SessionManager mgr;
+    mgr.initialize(setup_test_dict(), setup_capslock_config());
+    uint32_t id = mgr.create_session();
+    ASSERT_GT(id, (uint32_t)0);
+
+    cxxime::KeyEvent letter;
+    letter.keycode = 'N';
+    letter.set_caps_lock();
+
+    auto r = mgr.process_key(id, letter);
+    ASSERT_EQ(r.status, cxxime::IPCStatus::OK);
+    ASSERT_EQ(r.result, cxxime::ProcessResult::COMMITTED);
+    ASSERT_EQ(r.commit_text, "N");
+    ASSERT_TRUE(!r.composing);
+    ASSERT_EQ(r.ime_status.caps_lock, true);
+    ASSERT_EQ(r.ime_status.chinese_mode, false);
+}
+
+TEST(SessionStatus, caps_lock_key_off_restores_chinese_overlay) {
+    SessionManager mgr;
+    mgr.initialize(setup_test_dict(), setup_capslock_config());
+    uint32_t id = mgr.create_session();
+    ASSERT_GT(id, (uint32_t)0);
+
+    auto [st1, s1] = mgr.sync_caps_lock(id, true);
+    ASSERT_EQ(st1, cxxime::IPCStatus::OK);
+    ASSERT_EQ(s1.caps_lock, true);
+    ASSERT_EQ(s1.chinese_mode, false);
+
+    cxxime::KeyEvent caps_off;
+    caps_off.keycode = VK_CAPITAL;
+    caps_off.is_key_up = false;
+    auto r = mgr.process_key(id, caps_off);
+    ASSERT_EQ(r.status, cxxime::IPCStatus::OK);
+    ASSERT_EQ(r.ime_status.caps_lock, false);
+    ASSERT_EQ(r.ime_status.chinese_mode, true);
 }
 
 TEST(SessionStatus, get_ime_status) {

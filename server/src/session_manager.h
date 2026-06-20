@@ -69,7 +69,7 @@ public:
     std::pair<cxxime::IPCStatus, cxxime::ImeStatus> switch_input_mode(uint32_t id);
     std::pair<cxxime::IPCStatus, cxxime::ImeStatus> switch_input_mode(uint32_t id, cxxime::InputMode mode);
     cxxime::IPCStatus sync_ascii_mode(uint32_t id, bool ascii_mode);
-    cxxime::IPCStatus sync_caps_lock(uint32_t id, bool caps_lock);
+    std::pair<cxxime::IPCStatus, cxxime::ImeStatus> sync_caps_lock(uint32_t id, bool caps_lock);
 
     ProcessKeyResult process_key(uint32_t id, const cxxime::KeyEvent& event);
     ProcessKeyResult select_candidate(uint32_t id, int index);

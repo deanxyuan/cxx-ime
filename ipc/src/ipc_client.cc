@@ -234,6 +234,15 @@ bool IpcClient::get_status(uint32_t session_id, IPCResponse& response) {
     return send_request(req, response);
 }
 
+bool IpcClient::sync_caps_lock(uint32_t session_id, bool caps_lock, IPCResponse& response) {
+    IPCRequest req = {};
+    req.command = IPCCommand::SYNC_CAPS_LOCK;
+    req.session_id = session_id;
+    if (caps_lock)
+        req.modifiers |= 0x08;
+    return send_request(req, response);
+}
+
 bool IpcClient::reload_config(uint32_t session_id, IPCResponse& response) {
     IPCRequest req = {};
     req.command = IPCCommand::RELOAD_CONFIG;

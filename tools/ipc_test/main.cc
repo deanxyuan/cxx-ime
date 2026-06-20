@@ -9,6 +9,7 @@
 #include <thread>
 #include <chrono>
 #include <vector>
+#include <atomic>
 #include <windows.h>
 #include <cxxime/ipc_client.h>
 #include <cxxime/ipc_protocol.h>
