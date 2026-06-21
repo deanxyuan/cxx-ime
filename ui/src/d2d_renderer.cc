@@ -21,7 +21,13 @@ static IDWriteTextFormat* mkfmt(IDWriteFactory* f, const wchar_t* name, float sz
     f->CreateTextFormat(name, nullptr, DWRITE_FONT_WEIGHT_NORMAL,
                         DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
                         sz, L"zh-cn", &fmt);
-    if (fmt) { fmt->SetTextAlignment(ha); fmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER); }
+    if (fmt) {
+        fmt->SetTextAlignment(ha);
+        fmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        fmt->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+        DWRITE_TRIMMING trimming = {DWRITE_TRIMMING_GRANULARITY_CHARACTER, 0, 0};
+        fmt->SetTrimming(&trimming, nullptr);
+    }
     return fmt;
 }
 
@@ -33,6 +39,10 @@ bool D2DRenderer::initialize(HWND hwnd, int font_size, const wchar_t* font_name)
         D2D1::RenderTargetProperties(),
         D2D1::HwndRenderTargetProperties(hwnd, D2D1::SizeU(rc.right-rc.left, rc.bottom-rc.top)), &render_target_);
     if (FAILED(hr)) return false;
+    // CandidateWindow computes layout and HWND size in physical pixels.
+    // Keep D2D coordinates in the same pixel space; otherwise high-DPI render
+    // targets interpret our rectangles as DIP and the content gets clipped.
+    render_target_->SetDpi(96.0f, 96.0f);
     render_target_->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Black), &text_brush_);
     render_target_->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &bg_brush_);
     render_target_->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::DodgerBlue), &highlight_brush_);
@@ -41,6 +51,7 @@ bool D2DRenderer::initialize(HWND hwnd, int font_size, const wchar_t* font_name)
     render_target_->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Gray), &preedit_brush_);
     render_target_->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Gray), &label_brush_);
     render_target_->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Gray), &nav_brush_);
+    render_target_->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Gray), &border_brush_);
     hr = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), reinterpret_cast<IUnknown**>(&dwrite_factory_));
     if (FAILED(hr)) return false;
     HDC dc = GetDC(hwnd);
@@ -52,18 +63,13 @@ bool D2DRenderer::initialize(HWND hwnd, int font_size, const wchar_t* font_name)
     fmt_right_  = mkfmt(dwrite_factory_, font_name, fsize, DWRITE_TEXT_ALIGNMENT_LEADING);
     fmt_preedit_ = mkfmt(dwrite_factory_, font_name, psize, DWRITE_TEXT_ALIGNMENT_LEADING);
     fmt_small_  = mkfmt(dwrite_factory_, font_name, 9.0f * dpi / 72.0f, DWRITE_TEXT_ALIGNMENT_CENTER);
-    // Set trimming on candidate text format only (safety net for layout truncation)
-    if (fmt_left_) {
-        DWRITE_TRIMMING trimming = {DWRITE_TRIMMING_GRANULARITY_CHARACTER, 0, 0};
-        fmt_left_->SetTrimming(&trimming, nullptr);
-    }
     return fmt_left_ && fmt_right_ && fmt_preedit_ && fmt_small_;
 }
 
 void D2DRenderer::finalize() {
     for (auto* p : {&fmt_small_, &fmt_preedit_, &fmt_right_, &fmt_left_}) { if (*p) { (*p)->Release(); *p = nullptr; } }
     if (dwrite_factory_) { dwrite_factory_->Release(); dwrite_factory_ = nullptr; }
-    for (auto* p : {&nav_brush_, &label_brush_, &preedit_brush_, &hover_brush_,
+    for (auto* p : {&border_brush_, &nav_brush_, &label_brush_, &preedit_brush_, &hover_brush_,
                     &highlight_text_brush_, &highlight_brush_, &bg_brush_, &text_brush_})
     { if (*p) { (*p)->Release(); *p = nullptr; } }
     if (render_target_) { render_target_->Release(); render_target_ = nullptr; }
@@ -85,6 +91,7 @@ void D2DRenderer::render(const RenderContext& ctx) {
         preedit_brush_->SetColor(c2d(ctx.theme->preedit_text));
         label_brush_->SetColor(c2d(ctx.theme->label_text));
         nav_brush_->SetColor(c2d(ctx.theme->prev_page));
+        border_brush_->SetColor(c2d(ctx.theme->border));
         D2D1::ColorF hover_col((ctx.theme->background.r + ctx.theme->hilited_back.r) / 2.0f / 255.0f,
                                 (ctx.theme->background.g + ctx.theme->hilited_back.g) / 2.0f / 255.0f,
                                 (ctx.theme->background.b + ctx.theme->hilited_back.b) / 2.0f / 255.0f, 1.0f);
@@ -174,6 +181,17 @@ void D2DRenderer::render(const RenderContext& ctx) {
             auto* b = h ? highlight_text_brush_ : (ne ? nav_brush_ : preedit_brush_);
             render_target_->DrawText(L">", 1, fmt_small_, nr, b);
         }
+    }
+
+    if (ctx.theme && cfg && cfg->border_width > 0 && border_brush_) {
+        float bw = (float)cfg->border_width;
+        float inset = bw / 2.0f;
+        D2D1_ROUNDED_RECT rr = {
+            D2D1::RectF(inset, inset, sz.width - inset, sz.height - inset),
+            (float)cfg->round_corner_ex,
+            (float)cfg->round_corner_ex,
+        };
+        render_target_->DrawRoundedRectangle(rr, border_brush_, bw);
     }
 
     render_target_->EndDraw();

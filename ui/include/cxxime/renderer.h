@@ -28,6 +28,7 @@ private:
     ID2D1SolidColorBrush* preedit_brush_ = nullptr;
     ID2D1SolidColorBrush* label_brush_ = nullptr;
     ID2D1SolidColorBrush* nav_brush_ = nullptr;
+    ID2D1SolidColorBrush* border_brush_ = nullptr;
     IDWriteFactory* dwrite_factory_ = nullptr;
     IDWriteTextFormat* fmt_left_ = nullptr;
     IDWriteTextFormat* fmt_right_ = nullptr;

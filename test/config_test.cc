@@ -4,6 +4,8 @@
 #include <cstdio>
 #include <fstream>
 #include <cxxime/config.h>
+#include <cxxime/data_path.h>
+#include <json.hpp>
 
 TEST(Config, defaults) {
     cxxime::Config cfg;
@@ -124,6 +126,28 @@ TEST(Config, preedit_type_preview_all_fallback) {
     ASSERT_TRUE(cfg.preedit_type == "composition");  // preview_all removed, falls back
 
     std::remove(path);
+}
+
+TEST(Config, settings_presets_layouts) {
+    std::ifstream f(cxxime::data_path("settings_presets.json"));
+    ASSERT_TRUE(f.is_open());
+
+    nlohmann::json j = nlohmann::json::parse(f);
+    ASSERT_TRUE(j.contains("candidate_window"));
+    ASSERT_TRUE(j["candidate_window"].contains("layout_presets"));
+
+    auto& presets = j["candidate_window"]["layout_presets"];
+    ASSERT_TRUE(presets.contains("default"));
+    ASSERT_TRUE(presets.contains("recommended"));
+    ASSERT_TRUE(presets["default"].contains("horizontal"));
+    ASSERT_TRUE(presets["default"].contains("vertical"));
+    ASSERT_TRUE(presets["recommended"].contains("horizontal"));
+    ASSERT_TRUE(presets["recommended"].contains("vertical"));
+
+    ASSERT_EQ(presets["default"]["horizontal"]["candidate_spacing"].get<int>(), 11);
+    ASSERT_EQ(presets["default"]["vertical"]["candidate_spacing"].get<int>(), 2);
+    ASSERT_EQ(presets["recommended"]["horizontal"]["candidate_spacing"].get<int>(), 13);
+    ASSERT_EQ(presets["recommended"]["vertical"]["candidate_spacing"].get<int>(), 4);
 }
 
 RUN_ALL_TESTS()

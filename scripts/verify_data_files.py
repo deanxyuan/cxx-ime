@@ -26,6 +26,7 @@ REQUIRED_FILES = [
     "pinyin.spellings.bin",
     "pinyin.topn.bin",
     "default.json",
+    "settings_presets.json",
     "punctuation.json",
 ]
 

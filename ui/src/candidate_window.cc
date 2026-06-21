@@ -2,6 +2,7 @@
 
 #include <cxxime/candidate_window.h>
 #include <cxxime/config.h>
+#include <cmath>
 #include <string>
 #include "gdi_renderer.h"
 #include <cxxime/renderer.h>
@@ -10,6 +11,14 @@ namespace cxxime {
 
 class CandidateWindow::GdiRenderer : public cxxime::GdiRenderer {};
 class CandidateWindow::D2DRenderer : public cxxime::D2DRenderer {};
+
+static std::wstring to_wstr(const std::string& s) {
+    int len = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
+    if (len <= 1) return {};
+    std::wstring ws(len - 1, L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, &ws[0], len);
+    return ws;
+}
 
 bool CandidateWindow::create(HWND parent, const Config& config) {
     config_ = &config;
@@ -41,11 +50,45 @@ void CandidateWindow::init_gdi_renderer() {
 }
 void CandidateWindow::init_d2d_renderer() {
     d2d_renderer_ = new D2DRenderer();
-    auto wname = std::wstring(config_->font_name.begin(), config_->font_name.end());
+    auto wname = to_wstr(config_->font_name);
     if (!d2d_renderer_->initialize(hwnd_, config_->font_size, wname.c_str())) {
         delete d2d_renderer_; d2d_renderer_ = nullptr; backend_ = RenderBackend::GDI;
     }
 }
+
+bool CandidateWindow::refresh_dpi_scale() {
+    if (!hwnd_)
+        return false;
+
+    HDC dc = GetDC(hwnd_);
+    if (!dc)
+        return false;
+    float next_scale = GetDeviceCaps(dc, LOGPIXELSX) / 96.0f;
+    ReleaseDC(hwnd_, dc);
+
+    if (next_scale <= 0.0f)
+        next_scale = 1.0f;
+    if (std::fabs(next_scale - dpi_scale_) < 0.01f)
+        return false;
+
+    dpi_scale_ = next_scale;
+    return true;
+}
+
+void CandidateWindow::recreate_renderers_for_dpi() {
+    if (gdi_renderer_) {
+        gdi_renderer_->finalize();
+        gdi_renderer_->initialize(hwnd_, theme_);
+    }
+    if (d2d_renderer_) {
+        d2d_renderer_->finalize();
+        delete d2d_renderer_;
+        d2d_renderer_ = nullptr;
+        if (backend_ == RenderBackend::D2D)
+            init_d2d_renderer();
+    }
+}
+
 void CandidateWindow::destroy() {
     if (gdi_renderer_) { gdi_renderer_->finalize(); delete gdi_renderer_; gdi_renderer_ = nullptr; }
     if (d2d_renderer_) { d2d_renderer_->finalize(); delete d2d_renderer_; d2d_renderer_ = nullptr; }
@@ -54,6 +97,17 @@ void CandidateWindow::destroy() {
 }
 void CandidateWindow::show() { if (hwnd_) ShowWindow(hwnd_, SW_SHOWNOACTIVATE); }
 void CandidateWindow::hide() { if (hwnd_) ShowWindow(hwnd_, SW_HIDE); }
+void CandidateWindow::set_config(const Config& config) {
+    config_ = &config;
+    set_theme(build_theme_from_config(config));
+    RenderBackend next_backend = config.render_backend != "gdi" ? RenderBackend::D2D : RenderBackend::GDI;
+    if (d2d_renderer_) {
+        d2d_renderer_->finalize();
+        delete d2d_renderer_;
+        d2d_renderer_ = nullptr;
+    }
+    set_render_backend(next_backend);
+}
 void CandidateWindow::set_theme(const Theme& t) {
     theme_ = t;
     char dbg[128];
@@ -76,6 +130,7 @@ void CandidateWindow::set_page_info(int cur, int tot) { page_current_ = cur; pag
 void CandidateWindow::set_preedit(const std::string& p) { preedit_text_ = p; }
 void CandidateWindow::set_layout(const std::string& l) { layout_orientation_ = l; }
 void CandidateWindow::set_click_callback(ClickCallback cb) { click_cb_ = std::move(cb); }
+void CandidateWindow::set_draggable(bool draggable) { draggable_ = draggable; }
 void CandidateWindow::move_to_caret(const RECT& caretRect) {
     if (!hwnd_) return;
 
@@ -139,6 +194,9 @@ void CandidateWindow::rebuild_render_context(const LayoutConfig& cfg, int window
 
 void CandidateWindow::update(const CandidatePage& page) {
     if (!hwnd_) return;
+    if (refresh_dpi_scale())
+        recreate_renderers_for_dpi();
+
     static int up_cnt = 0;
     OutputDebugStringA((std::string("update #") + std::to_string(++up_cnt) + "\n").c_str());
     page_ = page;
@@ -155,6 +213,7 @@ void CandidateWindow::update(const CandidatePage& page) {
     scaled_cfg_.hilite_padding_y = (int)(scaled_cfg_.hilite_padding_y * s);
     scaled_cfg_.round_corner = (int)(scaled_cfg_.round_corner * s);
     scaled_cfg_.round_corner_ex = (int)(scaled_cfg_.round_corner_ex * s);
+    scaled_cfg_.border_width = (int)(scaled_cfg_.border_width * s);
     scaled_cfg_.max_width = (int)(scaled_cfg_.max_width * s);
     scaled_cfg_.max_height = (int)(scaled_cfg_.max_height * s);
     auto& cfg = scaled_cfg_;
@@ -171,7 +230,7 @@ void CandidateWindow::update(const CandidatePage& page) {
         int wlen = MultiByteToWideChar(CP_UTF8, 0, preedit_text_.c_str(), -1, nullptr, 0);
         std::wstring wpreedit(wlen > 0 ? wlen - 1 : 0, L'\0');
         if (wlen > 0) MultiByteToWideChar(CP_UTF8, 0, preedit_text_.c_str(), -1, &wpreedit[0], wlen);
-        auto wname = std::wstring(config_->font_name.begin(), config_->font_name.end());
+        auto wname = to_wstr(config_->font_name);
         int preedit_fs = config_->layout_config.label_font_point > 0
             ? config_->layout_config.label_font_point
             : (config_->font_size > 2 ? config_->font_size - 2 : config_->font_size);
@@ -218,11 +277,16 @@ void CandidateWindow::update(const CandidatePage& page) {
         int nav_bottom = render_ctx_.next_button_rect.bottom + cfg.hilite_padding_y;
         if (nav_bottom > lr.height) lr.height = nav_bottom;
     }
+    int border = cfg.border_width > 0 ? cfg.border_width : 0;
+    if (border > 0) {
+        lr.width += border * 2;
+        lr.height += border * 2;
+    }
     SetWindowPos(hwnd_, nullptr, 0, 0, lr.width, lr.height, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
     if (d2d_renderer_) d2d_renderer_->resize(lr.width, lr.height);
     // Rounded window corners (like Weasel's round_corner_ex)
     if (hrgn_) DeleteObject(hrgn_);
-    int wr = config_->layout_config.round_corner_ex;
+    int wr = cfg.round_corner_ex;
     hrgn_ = CreateRoundRectRgn(0, 0, lr.width + 1, lr.height + 1, wr, wr);
     SetWindowRgn(hwnd_, hrgn_, TRUE);
     InvalidateRect(hwnd_, nullptr, TRUE);
@@ -251,6 +315,11 @@ LRESULT CALLBACK CandidateWindow::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM
     }
     case WM_LBUTTONDOWN: {
         if (!self || self->page_.candidates.empty()) return 0;
+        if (self->draggable_) {
+            ReleaseCapture();
+            SendMessageW(hwnd, WM_NCLBUTTONDOWN, HTCAPTION, 0);
+            return 0;
+        }
         POINT pt = lp2pt(lp);
         if (PtInRect(&self->render_ctx_.prev_button_rect, pt) && self->page_current_ > 1) {
             if (self->click_cb_) self->click_cb_(-2); return 0;
@@ -295,6 +364,15 @@ LRESULT CALLBACK CandidateWindow::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM
     case WM_MOUSEACTIVATE: return MA_NOACTIVATE;  // prevent focus theft on click
     case WM_NCHITTEST: return HTCLIENT;  // prevent resize cursor at edges
     case WM_ERASEBKGND: return 1;
+    case WM_DPICHANGED:
+        if (self) {
+            float next_scale = HIWORD(wp) / 96.0f;
+            if (next_scale > 0.0f && std::fabs(next_scale - self->dpi_scale_) >= 0.01f) {
+                self->dpi_scale_ = next_scale;
+                self->recreate_renderers_for_dpi();
+            }
+        }
+        return 0;
     }
     return DefWindowProcW(hwnd, msg, wp, lp);
 }

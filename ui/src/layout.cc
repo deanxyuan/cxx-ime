@@ -6,13 +6,22 @@
 
 namespace cxxime {
 
+static std::wstring to_wstr(const std::string& s) {
+    int len = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
+    if (len <= 1) return {};
+    std::wstring ws(len - 1, L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, &ws[0], len);
+    return ws;
+}
+
 static int get_font_height(HDC hdc, const std::string& font_name, int font_size) {
+    std::wstring wfont = to_wstr(font_name);
     HFONT hf = CreateFontW(
         -MulDiv(font_size, GetDeviceCaps(hdc, LOGPIXELSY), 72),
         0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
         OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
         DEFAULT_PITCH | FF_DONTCARE,
-        std::wstring(font_name.begin(), font_name.end()).c_str());
+        wfont.c_str());
     TEXTMETRICW tm = {};
     if (hf) { HFONT old = (HFONT)SelectObject(hdc, hf); GetTextMetricsW(hdc, &tm); SelectObject(hdc, old); DeleteObject(hf); }
     return tm.tmHeight;
@@ -21,22 +30,15 @@ static int get_font_height(HDC hdc, const std::string& font_name, int font_size)
 static SIZE measure_wstr(HDC hdc, const std::wstring& text,
                          const std::string& font_name, int font_size) {
     SIZE sz = {};
+    std::wstring wfont = to_wstr(font_name);
     HFONT hf = CreateFontW(
         -MulDiv(font_size, GetDeviceCaps(hdc, LOGPIXELSY), 72),
         0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
         OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
         DEFAULT_PITCH | FF_DONTCARE,
-        std::wstring(font_name.begin(), font_name.end()).c_str());
+        wfont.c_str());
     if (hf) { HFONT old = (HFONT)SelectObject(hdc, hf); GetTextExtentPoint32W(hdc, text.c_str(), (int)text.size(), &sz); SelectObject(hdc, old); DeleteObject(hf); }
     return sz;
-}
-
-static std::wstring to_wstr(const std::string& s) {
-    int len = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
-    if (len <= 1) return {};
-    std::wstring ws(len - 1, L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, &ws[0], len);
-    return ws;
 }
 
 // ===== Horizontal layout (Weasel-style) =====
@@ -209,7 +211,7 @@ LayoutResult calculate_vertical_layout(HDC hdc,
         InflateRect(&cr.highlight_rect, cfg.hilite_padding_x, cfg.hilite_padding_y);
 
         result.rects.push_back(cr);
-        y += rh;
+        y += rh + cfg.candidate_spacing;
     }
 
     // Middle truncation: single candidate that exceeds available width
@@ -252,6 +254,8 @@ LayoutResult calculate_vertical_layout(HDC hdc,
     result.width = text_x + widest_text + cfg.hilite_padding_x + cfg.margin_x;
     if (result.width < cfg.min_width) result.width = cfg.min_width;
     if (cfg.max_width > 0 && result.width > cfg.max_width) result.width = cfg.max_width;
+    if (!result.rects.empty())
+        y -= cfg.candidate_spacing;
     result.height = y + cfg.margin_y;
     return result;
 }
