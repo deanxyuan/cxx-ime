@@ -9,6 +9,7 @@
 #include <utility>
 #include <unordered_map>
 #include <chrono>
+#include <vector>
 #include <cxxime/ipc_protocol.h>
 #include <cxxime/engine.h>
 #include <cxxime/spellings_index.h>
@@ -27,10 +28,12 @@ struct SharedResources {
     std::shared_ptr<const cxxime::PunctMapping> punct_mapping;
     std::string config_path;  // Stored for reload
     std::string punct_path;   // Stored for reload
+    std::string dict_path;    // Stored for user dict reload
 
     bool load(const std::string& dict_path, const std::string& config_path);
     bool load_punctuation(const std::string& path);
     void reload_config();
+    bool reload_user_dict(cxxime::UserDictKind kind);
 };
 
 struct SessionEntry {
@@ -77,7 +80,18 @@ public:
     cxxime::IPCStatus clear_composition(uint32_t id);
     cxxime::IPCStatus focus_out(uint32_t id);
 
-    cxxime::IPCStatus add_user_entry(uint32_t id, const std::string& text, const std::string& code);
+    cxxime::IPCStatus add_user_entry(uint32_t id, cxxime::UserDictKind kind,
+                                     const std::string& text, const std::string& code);
+    std::vector<cxxime::UserDictEntryInfo> query_user_entries(const std::string& query,
+                                                              cxxime::UserDictKind kind,
+                                                              size_t limit, size_t& total);
+    cxxime::IPCStatus delete_user_entry(cxxime::UserDictKind kind,
+                                        const std::string& text, const std::string& code);
+    cxxime::IPCStatus replace_user_entry(cxxime::UserDictKind kind,
+                                         const std::string& old_text, const std::string& old_code,
+                                         const std::string& new_text, const std::string& new_code);
+    cxxime::IPCStatus reload_user_dict(cxxime::UserDictKind kind);
+    cxxime::IPCStatus save_user_dict(cxxime::UserDictKind kind);
 
 private:
     cxxime::Engine* get_engine(uint32_t id);

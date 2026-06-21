@@ -4,6 +4,27 @@
 #include <cxxime/logging.h>
 #include <cxxime/data_path.h>
 #include <cstring>
+#include <algorithm>
+
+namespace {
+
+std::string request_text_field(const char* field, size_t size) {
+    return std::string(field, strnlen(field, size));
+}
+
+void response_copy_field(char* dst, size_t dst_size, const std::string& src) {
+    if (!dst || dst_size == 0)
+        return;
+    strncpy_s(dst, dst_size, src.c_str(), _TRUNCATE);
+}
+
+cxxime::UserDictKind request_user_dict_kind(const cxxime::IPCRequest& request) {
+    return request.modifiers == static_cast<uint32_t>(cxxime::UserDictKind::WUBI)
+           ? cxxime::UserDictKind::WUBI
+           : cxxime::UserDictKind::PINYIN;
+}
+
+} // namespace
 
 bool ServerApp::initialize(const std::string& dict_path, const std::string& config_path) {
     std::string resolved_dict = dict_path.empty() ? cxxime::data_path("pinyin.dict.bin") : dict_path;
@@ -275,11 +296,57 @@ cxxime::IPCResponse ServerApp::handle_request(const cxxime::IPCRequest& request)
         break;
 
     case cxxime::IPCCommand::ADD_USER_ENTRY: {
-        std::string text(request.text, strnlen(request.text, sizeof(request.text)));
-        std::string code(request.code, strnlen(request.code, sizeof(request.code)));
-        response.status = session_mgr_.add_user_entry(request.session_id, text, code);
+        std::string text = request_text_field(request.text, sizeof(request.text));
+        std::string code = request_text_field(request.code, sizeof(request.code));
+        response.status = session_mgr_.add_user_entry(
+            request.session_id, request_user_dict_kind(request), text, code);
         break;
     }
+
+    case cxxime::IPCCommand::QUERY_USER_ENTRIES: {
+        std::string query = request_text_field(request.text, sizeof(request.text));
+        size_t total = 0;
+        auto entries = session_mgr_.query_user_entries(
+            query, request_user_dict_kind(request), 32, total);
+        response.status = cxxime::IPCStatus::OK;
+        response.user_entry_total = static_cast<uint32_t>(
+            (std::min)(total, static_cast<size_t>(UINT32_MAX)));
+        response.user_entry_count = static_cast<uint32_t>(entries.size());
+        for (size_t i = 0; i < entries.size() && i < 32; ++i) {
+            response_copy_field(response.user_entries[i].text,
+                sizeof(response.user_entries[i].text), entries[i].text);
+            response_copy_field(response.user_entries[i].code,
+                sizeof(response.user_entries[i].code), entries[i].code);
+            response.user_entries[i].frequency = entries[i].frequency;
+        }
+        break;
+    }
+
+    case cxxime::IPCCommand::DELETE_USER_ENTRY: {
+        std::string text = request_text_field(request.text, sizeof(request.text));
+        std::string code = request_text_field(request.code, sizeof(request.code));
+        response.status = session_mgr_.delete_user_entry(request_user_dict_kind(request),
+                                                         text, code);
+        break;
+    }
+
+    case cxxime::IPCCommand::REPLACE_USER_ENTRY: {
+        std::string old_text = request_text_field(request.old_text, sizeof(request.old_text));
+        std::string old_code = request_text_field(request.old_code, sizeof(request.old_code));
+        std::string text = request_text_field(request.text, sizeof(request.text));
+        std::string code = request_text_field(request.code, sizeof(request.code));
+        response.status = session_mgr_.replace_user_entry(request_user_dict_kind(request),
+                                                          old_text, old_code, text, code);
+        break;
+    }
+
+    case cxxime::IPCCommand::RELOAD_USER_DICT:
+        response.status = session_mgr_.reload_user_dict(request_user_dict_kind(request));
+        break;
+
+    case cxxime::IPCCommand::SAVE_USER_DICT:
+        response.status = session_mgr_.save_user_dict(request_user_dict_kind(request));
+        break;
 
     default:
         response.status = cxxime::IPCStatus::ERR_UNKNOWN_COMMAND;

@@ -20,6 +20,13 @@ struct QueryTrace;
 struct QueryBudget;
 struct UserLookupStats;
 
+struct UserDictEntryInfo {
+    std::string text;
+    std::string code;
+    int frequency = 1;
+    uint64_t sequence = 0;
+};
+
 struct UserLookupStats {
     uint32_t scan_count = 0;
     bool truncated = false;
@@ -56,6 +63,11 @@ public:
     std::string reverse_lookup(const std::string& text);
     void update_frequency(const std::string& text, const std::string& code);
     void update_frequency(const std::string& text, const std::string& code, const std::string& syllables);
+    std::vector<UserDictEntryInfo> query_user_entries(const std::string& query,
+                                                      size_t limit = 32) const;
+    bool delete_user_entry(const std::string& text, const std::string& code = "");
+    bool replace_user_entry(const std::string& old_text, const std::string& old_code,
+                            const std::string& new_text, const std::string& new_code);
 
     // User dictionary persistence
     bool load_user_dict(const std::string& path);
@@ -68,6 +80,7 @@ public:
     // Phase 5: user dict version for cache invalidation
     uint64_t user_dict_version() const { return user_dict_version_; }
     bool has_user_entry(const std::string& text) const;
+    size_t user_entry_count() const;
 
     // Phase 5: internal indexed user dict query methods
     std::vector<Candidate> lookup_user_exact(const std::string& code, int limit,
