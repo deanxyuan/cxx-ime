@@ -34,16 +34,16 @@ void GdiRenderer::initialize(HWND hwnd, const Theme& theme) {
     hfont_ = CreateFontW(-MulDiv(theme.font_size, dpi, 72),
                          0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                          OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                         DEFAULT_PITCH | FF_DONTCARE, theme.font_name);
+                         DEFAULT_PITCH | FF_DONTCARE, theme.font_name.c_str());
     int preedit_pt = theme.font_size > 2 ? theme.font_size - 2 : theme.font_size;
     preedit_font_ = CreateFontW(-MulDiv(preedit_pt, dpi, 72),
                                 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                                 OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                                DEFAULT_PITCH | FF_DONTCARE, theme.font_name);
+                                DEFAULT_PITCH | FF_DONTCARE, theme.font_name.c_str());
     nav_font_ = CreateFontW(-MulDiv(9, dpi, 72),
                             0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                             OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                            DEFAULT_PITCH | FF_DONTCARE, theme.font_name);
+                            DEFAULT_PITCH | FF_DONTCARE, theme.font_name.c_str());
     ReleaseDC(hwnd_, dc);
 }
 
@@ -163,6 +163,19 @@ void GdiRenderer::render(HDC hdc, const RECT& clip, const RenderContext& ctx) {
             DrawTextW(hdc, L">", 1, const_cast<RECT*>(&ctx.next_button_rect), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         }
         SelectObject(hdc, old_nav);
+    }
+
+    if (ctx.theme && cfg && cfg->border_width > 0) {
+        int bw = cfg->border_width;
+        int inset = bw / 2;
+        HPEN border_pen = CreatePen(PS_SOLID, bw, clr(ctx.theme->border));
+        HPEN old_pen = (HPEN)SelectObject(hdc, border_pen);
+        HBRUSH old_brush = (HBRUSH)SelectObject(hdc, GetStockObject(NULL_BRUSH));
+        RoundRect(hdc, inset, inset, clip.right - inset, clip.bottom - inset,
+        cfg->round_corner_ex, cfg->round_corner_ex);
+        SelectObject(hdc, old_brush);
+        SelectObject(hdc, old_pen);
+        DeleteObject(border_pen);
     }
 
     SelectObject(hdc, old_font);

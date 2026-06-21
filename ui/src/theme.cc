@@ -7,6 +7,14 @@
 
 namespace cxxime {
 
+static std::wstring to_wstr(const std::string& s) {
+    int len = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
+    if (len <= 1) return {};
+    std::wstring ws(len - 1, L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, &ws[0], len);
+    return ws;
+}
+
 static Color to_color(int v) {
     return {(uint8_t)v, (uint8_t)(v>>8), (uint8_t)(v>>16), 255};
 }
@@ -38,6 +46,8 @@ Theme build_theme_from_config(const Config& cfg) {
         t.preedit_text = {248, 255, 255, 255};
         t.prev_page    = {100, 150, 198, 255};
         t.next_page    = {100, 150, 198, 255};
+        t.font_size    = cfg.font_size;
+        t.font_name    = to_wstr(cfg.font_name);
         return t;
     }
 
@@ -51,6 +61,8 @@ Theme build_theme_from_config(const Config& cfg) {
     t.preedit_text = to_color(s->hilited_text_color);
     t.prev_page    = to_color(s->prevpage_color);
     t.next_page    = to_color(s->nextpage_color);
+    t.font_size    = cfg.font_size;
+    t.font_name    = to_wstr(cfg.font_name);
     return t;
 }
 

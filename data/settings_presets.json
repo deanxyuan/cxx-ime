@@ -1,0 +1,74 @@
+{
+    "candidate_window": {
+        "layout_presets": {
+            "default": {
+                "horizontal": {
+                    "min_width": 160,
+                    "max_width": 0,
+                    "max_height": 0,
+                    "margin_x": 12,
+                    "margin_y": 12,
+                    "spacing": 10,
+                    "candidate_spacing": 11,
+                    "hilite_spacing": 4,
+                    "hilite_padding_x": 5,
+                    "hilite_padding_y": 2,
+                    "round_corner": 4,
+                    "round_corner_ex": 4,
+                    "label_font_point": 0,
+                    "border_width": 1
+                },
+                "vertical": {
+                    "min_width": 160,
+                    "max_width": 0,
+                    "max_height": 0,
+                    "margin_x": 10,
+                    "margin_y": 8,
+                    "spacing": 6,
+                    "candidate_spacing": 2,
+                    "hilite_spacing": 4,
+                    "hilite_padding_x": 5,
+                    "hilite_padding_y": 2,
+                    "round_corner": 4,
+                    "round_corner_ex": 4,
+                    "label_font_point": 0,
+                    "border_width": 1
+                }
+            },
+            "recommended": {
+                "horizontal": {
+                    "min_width": 160,
+                    "max_width": 0,
+                    "max_height": 0,
+                    "margin_x": 14,
+                    "margin_y": 12,
+                    "spacing": 10,
+                    "candidate_spacing": 13,
+                    "hilite_spacing": 4,
+                    "hilite_padding_x": 6,
+                    "hilite_padding_y": 3,
+                    "round_corner": 5,
+                    "round_corner_ex": 5,
+                    "label_font_point": 0,
+                    "border_width": 1
+                },
+                "vertical": {
+                    "min_width": 160,
+                    "max_width": 0,
+                    "max_height": 0,
+                    "margin_x": 12,
+                    "margin_y": 10,
+                    "spacing": 8,
+                    "candidate_spacing": 4,
+                    "hilite_spacing": 4,
+                    "hilite_padding_x": 6,
+                    "hilite_padding_y": 2,
+                    "round_corner": 5,
+                    "round_corner_ex": 5,
+                    "label_font_point": 0,
+                    "border_width": 1
+                }
+            }
+        }
+    }
+}

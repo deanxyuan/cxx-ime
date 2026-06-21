@@ -101,6 +101,13 @@ def copy_config() -> None:
     shutil.copy2(os.path.join(DATA, "default.json"), data_dir)
     print("  default.json")
 
+    presets = os.path.join(DATA, "settings_presets.json")
+    if os.path.isfile(presets):
+        shutil.copy2(presets, data_dir)
+        print("  settings_presets.json")
+    else:
+        print("  WARNING: settings_presets.json not found")
+
     themes = os.path.join(DATA, "themes.json")
     if os.path.isfile(themes):
         shutil.copy2(themes, data_dir)
@@ -291,6 +298,7 @@ def print_summary(config: str) -> None:
     print("  cxxime-settings.exe      Configuration editor")
     print("  data/")
     print("    default.json           Default configuration")
+    print("    settings_presets.json  Settings UI presets")
     print("    themes.json            Color themes")
     print("    punctuation.json       Punctuation mapping")
     print("    pinyin.dict.bin        Pinyin binary dictionary (runtime)")

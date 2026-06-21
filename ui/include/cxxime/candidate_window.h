@@ -25,17 +25,21 @@ public:
     void destroy();
     void show();
     void hide();
+    void set_config(const Config& config);
     void update(const CandidatePage& page);
     void set_preedit(const std::string& preedit);
     void set_layout(const std::string& layout);
     void move_to_caret(const RECT& caretRect);
     void set_click_callback(ClickCallback cb);
+    void set_draggable(bool draggable);
     void set_theme(const Theme& theme);
     void set_render_backend(RenderBackend backend);
     void set_page_info(int current, int total);
 
 private:
     void rebuild_render_context(const LayoutConfig& cfg, int window_width);
+    bool refresh_dpi_scale();
+    void recreate_renderers_for_dpi();
     void init_gdi_renderer();
     void init_d2d_renderer();
 
@@ -47,6 +51,7 @@ private:
     std::string preedit_text_;
     std::string layout_orientation_ = "horizontal";
     ClickCallback click_cb_;
+    bool draggable_ = false;
     std::vector<CandidateRect> candidate_rects_;
     RenderContext render_ctx_;
     Theme theme_;

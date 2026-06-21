@@ -10,6 +10,7 @@
 #include <cxxime/config.h>
 #include <cxxime/render_context.h>
 #include <cxxime/layout.h>
+#include <cxxime/candidate_window.h>
 
 namespace cxxime {
 namespace settings {
@@ -18,10 +19,9 @@ class EditorApp {
 public:
     static int run(HINSTANCE hInst, float dpiScale = 1.0f, bool quickPhrase = false);
 
-    // Preview (public for subclass proc access)
+    // Preview
     void update_preview();
     void update_cand_preview();
-    void draw_candidate_preview(HDC hdc, HWND hPreview, const cxxime::Config& preview_cfg);
     cxxime::Config build_appearance_preview_config();
     cxxime::Config build_cand_preview_config();
 
@@ -32,6 +32,14 @@ private:
     void save_config();
     void readback(HWND hwnd);
     void add_user_entry();
+    void apply_candidate_control(int control_id);
+    void apply_candidate_layout_to_edits(const cxxime::LayoutConfig& layout);
+    void apply_default_candidate_settings();
+    cxxime::LayoutConfig candidate_layout_from_edits() const;
+    void sync_candidate_controls_from_edits();
+    void show_candidate_preview_window();
+    void hide_candidate_preview_window();
+    void destroy_candidate_preview_window();
 
     HWND hwnd_ = nullptr;
     HWND hList_ = nullptr;
@@ -60,8 +68,17 @@ private:
     HWND hStatusWindow_ = nullptr;
     HWND hLabelFontPt_ = nullptr;
 
-    // Candidate panel (layout numeric fields)
+    // Candidate panel
+    HWND hCandDensity_ = nullptr;
+    HWND hCandHighlight_ = nullptr;
+    HWND hCandCorner_ = nullptr;
+    HWND hCandBorder_ = nullptr;
+    HWND hCandWidth_ = nullptr;
+    HWND hCandRecommendBtn_ = nullptr;
+    HWND hCandDefaultBtn_ = nullptr;
+    HWND hCandPreviewBtn_ = nullptr;
     HWND hCandEdits_[13] = {};
+    bool updatingCandControls_ = false;
 
     // Shortcuts
     HWND hKeyCombos_[5] = {};
@@ -72,8 +89,10 @@ private:
     HWND hPhraseAddBtn_ = nullptr;
 
     // Preview
-    HWND hPreview_ = nullptr;
-    HWND hCandPreview_ = nullptr;
+    cxxime::CandidateWindow candPreviewWindow_;
+    cxxime::Config candPreviewConfig_;
+    bool candPreviewCreated_ = false;
+    bool candPreviewVisible_ = false;
 
     cxxime::Config config_;
     std::wstring input_mode_ = L"拼音";
