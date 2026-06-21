@@ -158,8 +158,7 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
     }
 
     // Phase 2.5: intercept_key — in English + full-width mode, intercept digit keys
-    if (OutputComposer::intercept_key(event, opts, config_->good_old_caps_lock,
-                                      context_.committed_text)) {
+    if (OutputComposer::intercept_key(event, opts, context_.committed_text)) {
         context_.set_commit_source(CommitSource::kRawCode);
         record_total_us(trace_, total_start, trace_enabled_);
         return ProcessResult::COMMITTED;

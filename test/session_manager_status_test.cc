@@ -36,8 +36,7 @@ static std::string setup_capslock_config() {
         "ascii_composer": {
             "switch_key": {
                 "Caps_Lock": "clear"
-            },
-            "good_old_caps_lock": false
+            }
         }
     })";
     return config_path;

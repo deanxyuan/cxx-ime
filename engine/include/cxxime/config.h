@@ -52,7 +52,6 @@ struct Config {
 
     // ascii_composer
     std::unordered_map<std::string, std::string> ascii_switch_key;
-    bool good_old_caps_lock = false;
 
     // status_window
     struct StatusWindowConfig {

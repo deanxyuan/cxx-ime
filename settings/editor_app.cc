@@ -385,9 +385,6 @@ void EditorApp::create_controls(HWND hwnd) {
         hKeyCombos_[ci] = make_combo(1300 + ci, cx, t + ci * kRowH, S(130), p3);
         for (auto o : caps_opts) combo_add(hKeyCombos_[ci], o);
     }
-    cx = make_label(L"传统 Caps Lock:", kPanelPadLeft, t + 5 * kRowH, p3);
-    hCapsLock_ = make_check(1305, L"", cx, t + 5 * kRowH, S(20), p3);
-
     // ── Panel 4: Dictionary ─────────────────────────────────────────
     HWND p4 = hPanels_[4]; t = kPanelPadTop;
     auto mk_dict_row = [&](const wchar_t* label, const std::string& val, int y) {
@@ -574,8 +571,6 @@ void EditorApp::load_config() {
             v = "clear";
         combo_sel_str(hKeyCombos_[i], v);
     }
-    set_check(hCapsLock_, config_.good_old_caps_lock);
-
     // Set input mode combo based on config
     combo_sel(hInputMode_, (config_.input_mode == 2) ? L"混输" : (config_.input_mode == 1) ? L"五笔" : L"拼音");
 
@@ -619,8 +614,6 @@ void EditorApp::readback(HWND) {
         c.layout_config.round_corner = get_edit_int(hCandEdits_[10]);
         c.layout_config.round_corner_ex = get_edit_int(hCandEdits_[11]);
         c.layout_config.border_width = get_edit_int(hCandEdits_[12]);
-    } else if (panel_ == 3) {
-        c.good_old_caps_lock = get_check(hCapsLock_);
     }
 }
 

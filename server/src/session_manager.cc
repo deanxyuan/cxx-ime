@@ -416,8 +416,7 @@ ProcessKeyResult SessionManager::process_key(uint32_t id, const cxxime::KeyEvent
 
     if (result == cxxime::ProcessResult::COMMITTED) {
         auto [raw, source] = engine.take_commit_text_with_source();
-        ret.commit_text = cxxime::OutputComposer::transform(raw, opts, source,
-                                                            s.config_snapshot->good_old_caps_lock);
+        ret.commit_text = cxxime::OutputComposer::transform(raw, opts, source);
         ret.composing = false;
     } else if (result == cxxime::ProcessResult::TOGGLE_PUNCT
             || result == cxxime::ProcessResult::TOGGLE_SHAPE) {
@@ -462,8 +461,7 @@ ProcessKeyResult SessionManager::select_candidate(uint32_t id, int index) {
 
     if (s.engine->select_candidate(index)) {
         auto [raw, source] = s.engine->take_commit_text_with_source();
-        ret.commit_text = cxxime::OutputComposer::transform(raw, opts, source,
-                                                            s.config_snapshot->good_old_caps_lock);
+        ret.commit_text = cxxime::OutputComposer::transform(raw, opts, source);
         ret.result = cxxime::ProcessResult::COMMITTED;
     } else {
         ret.result = cxxime::ProcessResult::REJECTED;
@@ -492,8 +490,7 @@ ProcessKeyResult SessionManager::commit_composition(uint32_t id) {
 
     auto [raw, source] = s.engine->commit_composition_with_source();
     if (!raw.empty()) {
-        ret.commit_text = cxxime::OutputComposer::transform(raw, opts, source,
-                                                            s.config_snapshot->good_old_caps_lock);
+        ret.commit_text = cxxime::OutputComposer::transform(raw, opts, source);
         ret.result = cxxime::ProcessResult::COMMITTED;
     } else {
         ret.result = cxxime::ProcessResult::ACCEPTED;
