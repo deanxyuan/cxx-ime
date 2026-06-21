@@ -83,7 +83,6 @@ bool Config::load(const std::string& path) {
 
         if (j.contains("ascii_composer") && j["ascii_composer"].is_object()) {
             auto& ac = j["ascii_composer"];
-            load_bool(ac, "good_old_caps_lock", good_old_caps_lock);
             if (ac.contains("switch_key") && ac["switch_key"].is_object()) {
                 for (auto& [key, val] : ac["switch_key"].items()) {
                     if (val.is_string()) ascii_switch_key[key] = val.get<std::string>();
@@ -185,7 +184,6 @@ bool Config::save(const std::string& path) const {
     j["status_window"]["show_on_startup"] = status_window.show_on_startup;
 
     nlohmann::json ac;
-    ac["good_old_caps_lock"] = good_old_caps_lock;
     nlohmann::json sk;
     for (auto& [k, v] : ascii_switch_key)
         sk[k] = v;

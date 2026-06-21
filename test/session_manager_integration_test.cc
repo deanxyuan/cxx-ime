@@ -121,7 +121,7 @@ TEST(SessionIntegration, append_enter_preserves_case_through_output_composer) {
     std::string cfg_path = make_temp_path("test_append_config.json");
     {
         std::ofstream f(cfg_path);
-        f << R"({"ascii_composer":{"switch_key":{"Caps_Lock":"append"},"good_old_caps_lock":false}})";
+        f << R"({"ascii_composer":{"switch_key":{"Caps_Lock":"append"}}})";
     }
 
     SessionManager mgr;

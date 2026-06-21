@@ -65,7 +65,6 @@ private:
 
     // Shortcuts
     HWND hKeyCombos_[5] = {};
-    HWND hCapsLock_ = nullptr;
 
     // Dictionary panel (quick phrase)
     HWND hPhraseText_ = nullptr;

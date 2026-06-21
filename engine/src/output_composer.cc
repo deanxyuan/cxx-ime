@@ -15,7 +15,7 @@
 namespace cxxime {
 
 bool OutputComposer::intercept_key(const KeyEvent& event, const OutputOptions& opts,
-                                   bool good_old_caps_lock, std::string& committed_text) {
+                                   std::string& committed_text) {
     // 1. key-up: don't intercept
     if (event.is_key_up)
         return false;
@@ -50,7 +50,7 @@ bool OutputComposer::intercept_key(const KeyEvent& event, const OutputOptions& o
 }
 
 std::string OutputComposer::transform(const std::string& text, const OutputOptions& opts,
-                                      CommitSource source, bool good_old_caps_lock) {
+                                      CommitSource source) {
     // Candidate text and engine-prepared text: no conversion at all
     if (source == CommitSource::kCandidate ||
         source == CommitSource::kRawCodePreserveCase ||
@@ -64,7 +64,7 @@ std::string OutputComposer::transform(const std::string& text, const OutputOptio
     std::string result;
     result.reserve(text.size());
 
-    bool do_caps = opts.caps_lock && !good_old_caps_lock;
+    bool do_caps = opts.caps_lock;
 
     for (size_t i = 0; i < text.size(); ++i) {
         unsigned char ch = static_cast<unsigned char>(text[i]);
