@@ -14,6 +14,7 @@
 #include <cstring>
 #include <shellapi.h>
 #include <shlobj.h>
+#include <unordered_map>
 
 // Slow query thresholds (microseconds)
 static constexpr int64_t kSlowIpcUs = 2000;       // IPC round-trip >= 2ms
@@ -35,6 +36,10 @@ static bool should_sync_ime_status(cxxime::IPCStatus status) {
 static std::mutex g_last_status_mutex;
 static bool g_has_last_status = false;
 static cxxime::ImeStatus g_last_status;
+
+static constexpr UINT kStatePollIntervalMs = 30;
+static std::mutex g_state_poll_timer_mutex;
+static std::unordered_map<UINT_PTR, TextService*> g_state_poll_timers;
 
 static const char* tsf_result_str(TextService::TsfResult r) {
     switch (r) {
@@ -226,7 +231,9 @@ void TextService::_enqueue_trace(const TsfTrace& trace) {
 
 TextService::TextService() {}
 
-TextService::~TextService() {}
+TextService::~TextService() {
+    _stop_state_poll_timer();
+}
 
 // Called from DllMain(DLL_PROCESS_DETACH) via globals.cpp
 void TextService::shutdown_trace() {
@@ -400,7 +407,7 @@ bool TextService::_document_allows_input(ITfDocumentMgr* doc_mgr) const {
 	return allowed;
 }
 
-bool TextService::_update_input_focus_from_thread_mgr() {
+bool TextService::_query_input_focus_from_thread_mgr() const {
 	bool focused = false;
 	if (_threadMgr) {
 		ITfDocumentMgr* doc_mgr = nullptr;
@@ -410,7 +417,21 @@ bool TextService::_update_input_focus_from_thread_mgr() {
 		}
 	}
 
-	_inputFocused = focused;
+	return focused;
+}
+
+bool TextService::_update_input_focus_from_thread_mgr() {
+	bool focused = _query_input_focus_from_thread_mgr();
+
+    _inputFocused = focused;
+    if (focused) {
+    // Keep the poll timer alive while activated. It is cheap and only acts
+    // when the foreground is not an editable context, covering desktop
+    // clicks where TSF may not send focus/key callbacks.
+        _start_state_poll_timer();
+    } else {
+        _start_state_poll_timer();
+    }
 	if (!focused && _statusController.is_initialized())
 		_statusController.hide();
 	return focused;
@@ -437,6 +458,121 @@ bool TextService::_sync_physical_caps_lock(cxxime::ImeStatus* synced_status) {
         return false;
 
     return _sync_caps_lock_state(caps_lock, synced_status);
+}
+
+void TextService::_start_state_poll_timer() {
+    if (_statePollTimer || !_activated)
+        return;
+
+    UINT_PTR timer = SetTimer(nullptr, 0, kStatePollIntervalMs, _state_poll_timer_proc);
+    if (!timer)
+        return;
+
+    {
+        std::lock_guard<std::mutex> lock(g_state_poll_timer_mutex);
+        g_state_poll_timers[timer] = this;
+    }
+    _statePollTimer = timer;
+    _pollShiftDown = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0 ||
+                     (GetAsyncKeyState(VK_LSHIFT) & 0x8000) != 0 ||
+                     (GetAsyncKeyState(VK_RSHIFT) & 0x8000) != 0;
+    _pollShiftKey = VK_SHIFT;
+}
+
+void TextService::_stop_state_poll_timer() {
+    if (!_statePollTimer)
+        return;
+
+    UINT_PTR timer = _statePollTimer;
+    _statePollTimer = 0;
+    {
+        std::lock_guard<std::mutex> lock(g_state_poll_timer_mutex);
+        g_state_poll_timers.erase(timer);
+    }
+    KillTimer(nullptr, timer);
+    _pollShiftDown = false;
+    _pollShiftKey = VK_SHIFT;
+}
+
+VOID CALLBACK TextService::_state_poll_timer_proc(HWND, UINT, UINT_PTR id_event, DWORD) {
+    TextService* service = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(g_state_poll_timer_mutex);
+        auto it = g_state_poll_timers.find(id_event);
+        if (it != g_state_poll_timers.end())
+            service = it->second;
+    }
+    if (service)
+        service->_poll_unfocused_state_keys();
+}
+
+bool TextService::_sync_status_key_edge(WPARAM key, bool key_down) {
+    if (!_sessionId)
+        return false;
+
+    uint32_t modifiers = 0;
+    if (key_down)
+        modifiers |= 0x01;
+    if (_caps_lock)
+        modifiers |= 0x08;
+
+    cxxime::IPCResponse response = {};
+    bool ok = _client.process_key(_sessionId, static_cast<uint32_t>(key), modifiers, response, !key_down);
+    if (!ok && _client.connect()) {
+        _client.start_session(_sessionId);
+        ok = _client.process_key(_sessionId, static_cast<uint32_t>(key), modifiers, response, !key_down);
+    }
+
+    if (ok && should_sync_ime_status(response.status))
+        _sync_ime_status(response.ime_status);
+    return ok;
+}
+
+void TextService::_poll_unfocused_state_keys() {
+    if (!_activated || !_sessionId)
+        return;
+
+    bool focused = _query_input_focus_from_thread_mgr();
+    if (focused) {
+        if (!_inputFocused) {
+            _inputFocused = true;
+            _show_status_window_if_allowed();
+            _client.focus_in(_sessionId);
+        }
+        return;
+    }
+
+    if (_inputFocused) {
+        _inputFocused = false;
+        _client.focus_out(_sessionId);
+        _AbortComposition();
+    }
+    if (_statusController.is_initialized())
+        _statusController.hide();
+    _candidateWindow.hide();
+
+    bool physical_caps_lock = _is_caps_lock_on(false);
+    if (physical_caps_lock != _caps_lock) {
+        _sync_caps_lock_state(physical_caps_lock);
+    } else if ((GetAsyncKeyState(VK_CAPITAL) & 0x0001) != 0) {
+        _sync_caps_lock_state(_is_caps_lock_on(false));
+    }
+
+    bool left_shift_down = (GetAsyncKeyState(VK_LSHIFT) & 0x8000) != 0;
+    bool right_shift_down = (GetAsyncKeyState(VK_RSHIFT) & 0x8000) != 0;
+    bool generic_shift_down = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
+    bool shift_down = left_shift_down || right_shift_down || generic_shift_down;
+    if (shift_down != _pollShiftDown) {
+        WPARAM key = shift_down
+            ? (right_shift_down ? VK_RSHIFT : (left_shift_down ? VK_LSHIFT : VK_SHIFT))
+            : _pollShiftKey;
+        _sync_status_key_edge(key, shift_down);
+        _pollShiftDown = shift_down;
+        if (shift_down)
+            _pollShiftKey = key;
+        else
+            _pollShiftKey = VK_SHIFT;
+    }
 }
 
 void TextService::_show_status_window_if_allowed() {
@@ -541,10 +677,10 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
         CXXIME_LOG(L"Connected to server, sessionId=%u", _sessionId);
         if (initial_foreground_allows_input) {
             _sync_caps_lock_state(initial_caps_lock, &initial_status);
-            cxxime::IPCResponse status_resp = {};
-            if (_client.get_status(_sessionId, status_resp) && status_resp.status == cxxime::IPCStatus::OK) {
-                initial_status = status_resp.ime_status;
-            }
+        }
+        cxxime::IPCResponse status_resp = {};
+        if (_client.get_status(_sessionId, status_resp) && status_resp.status == cxxime::IPCStatus::OK) {
+            initial_status = status_resp.ime_status;
         }
     }
     if (initial_foreground_allows_input && initial_caps_lock) {
@@ -566,8 +702,7 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
 
     // Register language bar buttons
     ITfLangBarItemMgr* pLangBarItemMgr = nullptr;
-    if (initial_foreground_allows_input &&
-        SUCCEEDED(_threadMgr->QueryInterface(IID_ITfLangBarItemMgr, (void**)&pLangBarItemMgr))) {
+    if (SUCCEEDED(_threadMgr->QueryInterface(IID_ITfLangBarItemMgr, (void**)&pLangBarItemMgr))) {
         _modeButton = new CLangBarItemButton(tid, GUID_LBI_INPUTMODE);
 
         // Pre-set button state before AddItem to avoid flash
@@ -709,6 +844,9 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
     //     _sync_ime_status(resp.ime_status);
     // }
     _activated = true;
+    _start_state_poll_timer();
+    if (!initial_foreground_allows_input)
+        _sync_caps_lock_state(_is_caps_lock_on(false));
     if (_config.status_window.enable && _config.status_window.show_on_startup) {
         _update_input_focus_from_thread_mgr();
         if (_inputFocused) {
@@ -724,6 +862,7 @@ STDMETHODIMP TextService::Deactivate() {
     _activated = false;
     _inputFocused = false;
     _seenKeyAfterActivate = false;
+    _stop_state_poll_timer();
 
     // Hide status window immediately, then destroy — avoid clicks during IPC teardown
     _statusController.hide();
@@ -810,6 +949,7 @@ STDMETHODIMP TextService::OnSetFocus(BOOL fForeground) {
         }
     } else {
         _inputFocused = false;
+        _start_state_poll_timer();
         // Switching away from CxxIME — hide status window immediately.
         // OnKillThreadFocus may not fire when switching IMEs within the same thread.
         if (_statusController.is_initialized())
@@ -822,8 +962,15 @@ STDMETHODIMP TextService::OnSetFocus(BOOL fForeground) {
 
 STDMETHODIMP TextService::OnTestKeyDown(ITfContext* pic, WPARAM wParam, LPARAM lParam, BOOL* pfEaten) {
     _fTestKeyDownPending = true;
-    if (!_context_allows_input(pic)) {
+    bool status_key =
+        wParam == VK_LSHIFT || wParam == VK_RSHIFT || wParam == VK_SHIFT ||
+        wParam == VK_LCONTROL || wParam == VK_RCONTROL || wParam == VK_CONTROL ||
+        wParam == VK_LMENU || wParam == VK_RMENU ||
+        wParam == VK_LWIN || wParam == VK_RWIN ||
+        wParam == VK_CAPITAL;
+    if (!_context_allows_input(pic) && !status_key) {
         _inputFocused = false;
+        _start_state_poll_timer();
         if (_statusController.is_initialized())
             _statusController.hide();
         _candidateWindow.hide();
@@ -885,8 +1032,16 @@ STDMETHODIMP TextService::OnKeyUp(ITfContext* pic, WPARAM wParam, LPARAM lParam,
 bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam, BOOL* pfEaten) {
     *pfEaten = FALSE;
 
-    if (!_context_allows_input(pic)) {
+    bool status_key =
+        wParam == VK_LSHIFT || wParam == VK_RSHIFT || wParam == VK_SHIFT ||
+        wParam == VK_LCONTROL || wParam == VK_RCONTROL || wParam == VK_CONTROL ||
+        wParam == VK_LMENU || wParam == VK_RMENU ||
+        wParam == VK_LWIN || wParam == VK_RWIN ||
+        wParam == VK_CAPITAL;
+    bool input_allowed = _context_allows_input(pic);
+    if (!input_allowed && !status_key) {
         _inputFocused = false;
+        _start_state_poll_timer();
         if (_statusController.is_initialized())
             _statusController.hide();
         _candidateWindow.hide();
@@ -894,7 +1049,16 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
         return false;
     }
 
-    _inputFocused = true;
+    _inputFocused = input_allowed;
+    if (_inputFocused) {
+        _start_state_poll_timer();
+    } else {
+        _start_state_poll_timer();
+        if (_statusController.is_initialized())
+            _statusController.hide();
+        _candidateWindow.hide();
+        _AbortComposition();
+    }
     _seenKeyAfterActivate = true;
     uint32_t modifiers = _get_modifiers();
     if (wParam == VK_CAPITAL) {
@@ -1200,6 +1364,7 @@ STDMETHODIMP TextService::OnSetThreadFocus() {
 
 STDMETHODIMP TextService::OnKillThreadFocus() {
     _inputFocused = false;
+    _start_state_poll_timer();
     if (_statusController.is_initialized())
         _statusController.hide();
     _client.focus_out(_sessionId);
@@ -1236,11 +1401,13 @@ STDMETHODIMP TextService::OnUninitDocumentMgr(ITfDocumentMgr* pDocMgr) {
 STDMETHODIMP TextService::OnSetFocus(ITfDocumentMgr* pDocMgrFocus, ITfDocumentMgr* pDocMgrPrevFocus) {
     _inputFocused = _document_allows_input(pDocMgrFocus);
     if (!_inputFocused) {
+        _start_state_poll_timer();
         if (_statusController.is_initialized())
             _statusController.hide();
         return S_OK;
     }
 
+    _start_state_poll_timer();
     _show_status_window_if_allowed();
 
     // Sync status on focus change (user may have toggled via language bar)

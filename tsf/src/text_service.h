@@ -116,10 +116,16 @@ private:
     bool _foreground_allows_input() const;
     bool _context_allows_input(ITfContext* context) const;
     bool _document_allows_input(ITfDocumentMgr* doc_mgr)const;
+    bool _query_input_focus_from_thread_mgr() const;
     bool _update_input_focus_from_thread_mgr();
     bool _sync_caps_lock_state(bool caps_lock, cxxime::ImeStatus* synced_status = nullptr);
     bool _sync_physical_caps_lock(cxxime::ImeStatus* synced_status = nullptr);
     void _show_status_window_if_allowed();
+    void _start_state_poll_timer();
+    void _stop_state_poll_timer();
+    void _poll_unfocused_state_keys();
+    bool _sync_status_key_edge(WPARAM key, bool key_down);
+    static VOID CALLBACK _state_poll_timer_proc(HWND hhwnd, UINT msg, UINT_PTR id_event, DWORD time);
 
     LONG _cRef = 1;
     ITfThreadMgr* _threadMgr = nullptr;
@@ -139,6 +145,9 @@ private:
     bool _seenKeyAfterActivate = false;
     bool _fTestKeyDownPending = false;
     bool _fTestKeyUpPending = false;
+    UINT_PTR _statePollTimer = 0;
+    bool _pollShiftDown = false;
+    WPARAM _pollShiftKey = VK_SHIFT;
     cxxime::CandidateWindow _candidateWindow;
     cxxime::Config _config;
 
