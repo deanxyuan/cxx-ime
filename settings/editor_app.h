@@ -7,10 +7,12 @@
 #include <windows.h>
 #include <commctrl.h>
 #include <string>
+#include <vector>
 #include <cxxime/config.h>
 #include <cxxime/render_context.h>
 #include <cxxime/layout.h>
 #include <cxxime/candidate_window.h>
+#include <cxxime/ipc_protocol.h>
 
 namespace cxxime {
 namespace settings {
@@ -31,7 +33,17 @@ private:
     void load_config();
     void save_config();
     void readback(HWND hwnd);
+    void refresh_user_entries();
+    void query_user_entries();
+    void clear_user_entry_form();
     void add_user_entry();
+    void save_user_entry();
+    void delete_user_entry();
+    void import_user_dict();
+    void export_user_dict();
+    void open_user_dict_dir();
+    void update_user_dict_status();
+    void on_user_entry_selected();
     void apply_candidate_control(int control_id);
     void apply_candidate_layout_to_edits(const cxxime::LayoutConfig& layout);
     void apply_default_candidate_settings();
@@ -83,10 +95,18 @@ private:
     // Shortcuts
     HWND hKeyCombos_[5] = {};
 
-    // Dictionary panel (quick phrase)
-    HWND hPhraseText_ = nullptr;
-    HWND hPhraseCode_ = nullptr;
-    HWND hPhraseAddBtn_ = nullptr;
+    // Dictionary panel
+    HWND hDictStatus_ = nullptr;
+    HWND hDictKind_ = nullptr;
+    HWND hDictQuery_ = nullptr;
+    HWND hDictList_ = nullptr;
+    HWND hDictText_ = nullptr;
+    HWND hDictCode_ = nullptr;
+    HWND hDictUserPath_ = nullptr;
+    std::wstring selectedDictText_;
+    std::wstring selectedDictCode_;
+    cxxime::UserDictKind current_user_dict_kind() const;
+    std::string current_user_dict_path() const;
 
     // Preview
     cxxime::CandidateWindow candPreviewWindow_;

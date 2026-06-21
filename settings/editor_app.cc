@@ -7,6 +7,8 @@
 #include <commctrl.h>
 #include <cstring>
 #include <fstream>
+#include <cstdio>
+#include <shellapi.h>
 #include <utility>
 #include <json.hpp>
 #include <cxxime/data_path.h>
@@ -16,6 +18,7 @@
 
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "uxtheme.lib")
+#pragma comment(lib, "shell32.lib")
 
 namespace cxxime {
 namespace settings {
@@ -134,10 +137,53 @@ void combo_sel_str(HWND cb, const std::string& s) {
     combo_sel(cb, ws.c_str());
 }
 
+std::string wstr_to_utf8(const std::wstring& w) {
+    int len = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, nullptr, 0, nullptr, nullptr);
+    if (len <= 1) return {};
+    std::string s(len - 1, '\0');
+    WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, &s[0], len, nullptr, nullptr);
+    return s;
+}
+
+std::string edit_text_utf8(HWND h) {
+    int len = GetWindowTextLengthW(h);
+    if (len <= 0)
+        return {};
+    std::wstring text(len + 1, L'\0');
+    GetWindowTextW(h, &text[0], len + 1);
+    text.resize(len);
+    return wstr_to_utf8(text);
+}
+
 std::wstring path_for_display(const std::string& path) {
     std::string normalized = path;
     std::replace(normalized.begin(), normalized.end(), '/', '\\');
     return utf8_to_wstr(normalized);
+}
+
+std::wstring file_last_write_time_text(const std::string& path) {
+    std::wstring wpath = path_for_display(path);
+    WIN32_FILE_ATTRIBUTE_DATA data = {};
+    if (!GetFileAttributesExW(wpath.c_str(), GetFileExInfoStandard, &data))
+        return L"未创建";
+
+    FILETIME localFt = {};
+    SYSTEMTIME st = {};
+    if (!FileTimeToLocalFileTime(&data.ftLastWriteTime, &localFt) ||
+        !FileTimeToSystemTime(&localFt, &st)) {
+        return L"未知";
+    }
+
+    wchar_t buf[64] = {};
+    swprintf_s(buf, L"%04u-%02u-%02u %02u:%02u",
+               st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute);
+    return buf;
+}
+
+bool copy_file_utf8_path(const std::string& src, const std::string& dst) {
+    std::wstring wsrc = path_for_display(src);
+    std::wstring wdst = path_for_display(dst);
+    return CopyFileW(wsrc.c_str(), wdst.c_str(), FALSE) != FALSE;
 }
 
 void set_edit_int(HWND e, int v) {
@@ -254,6 +300,10 @@ static LRESULT CALLBACK PanelForwardProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         SendMessageW((HWND)refData, WM_COMMAND, wp, lp);
         return 0;
     }
+    if (msg == WM_NOTIFY) {
+        SendMessageW((HWND)refData, WM_NOTIFY, wp, lp);
+        return 0;
+    }
     if (msg == WM_NCDESTROY) {
         RemoveWindowSubclass(hwnd, PanelForwardProc, idSubclass);
     }
@@ -270,7 +320,7 @@ int EditorApp::run(HINSTANCE hInst, float dpiScale, bool quickPhrase) {
     g_app = &app;
     app.quick_phrase_ = quickPhrase;
 
-    INITCOMMONCONTROLSEX icc = {sizeof(icc), ICC_STANDARD_CLASSES};
+    INITCOMMONCONTROLSEX icc = {sizeof(icc), ICC_STANDARD_CLASSES | ICC_LISTVIEW_CLASSES};
     InitCommonControlsEx(&icc);
 
     WNDCLASSEXW wc = {};
@@ -510,52 +560,98 @@ void EditorApp::create_controls(HWND hwnd) {
     }
     // ── Panel 4: Dictionary ─────────────────────────────────────────
     HWND p4 = hPanels_[4]; t = kPanelPadTop;
-    auto mk_dict_row = [&](const wchar_t* label, const std::string& val, int y) {
-        int valX = make_label(label, kPanelPadLeft, y, p4);
-        std::wstring wv = path_for_display(val);
-        HWND h = CreateWindowExW(0, L"STATIC", wv.c_str(), WS_CHILD | WS_VISIBLE | SS_LEFT,
-                                 valX, y, panelW - valX - S(10), kCtrlH, p4,
-                                 nullptr, GetModuleHandle(nullptr), nullptr);
+    SetWindowSubclass(p4, PanelForwardProc, 4000, (DWORD_PTR)hwnd);
+
+    cx = make_label(L"词典:", kPanelPadLeft, t, p4);
+    hDictKind_ = make_combo(4013, cx, t, S(110), p4);
+    combo_add(hDictKind_, L"拼音");
+    combo_add(hDictKind_, L"五笔");
+    combo_sel(hDictKind_, L"拼音");
+
+    hDictStatus_ = CreateWindowExW(0, L"STATIC", L"用户词典: 连接中...",
+                                   WS_CHILD | WS_VISIBLE | SS_LEFT,
+                                   cx + S(128), t, panelW - cx - S(144), kCtrlH, p4,
+                                   nullptr, GetModuleHandle(nullptr), nullptr);
+    SendMessageW(hDictStatus_, WM_SETFONT, (WPARAM)get_font(), TRUE);
+
+    int queryY = t + kRowH;
+    cx = make_label(L"查询:", kPanelPadLeft, queryY, p4);
+    hDictQuery_ = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
+                                  WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
+                                  cx, queryY, S(190), kCtrlH, p4, (HMENU)4000,
+                                  GetModuleHandle(nullptr), nullptr);
+    SendMessageW(hDictQuery_, WM_SETFONT, (WPARAM)get_font(), TRUE);
+
+    auto make_dict_button = [&](int id, const wchar_t* text, int x, int y, int w) {
+        HWND h = CreateWindowExW(0, L"BUTTON", text,
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+            x, y, w, kCtrlH, p4, (HMENU)(INT_PTR)id,
+            GetModuleHandle(nullptr), nullptr);
         SendMessageW(h, WM_SETFONT, (WPARAM)get_font(), TRUE);
+        return h;
     };
-    std::string dd = cxxime::data_dir();
-    mk_dict_row(L"数据目录:", dd, t);
-    mk_dict_row(L"拼音词典:", dd + "pinyin.dict.bin", t + kRowH);
-    mk_dict_row(L"五笔词典:", dd + "wubi86.dict.bin", t + kRowH * 2);
-    mk_dict_row(L"用户词典:", cxxime::user_data_path("user.tsv"), t + kRowH * 3);
+    make_dict_button(4001, L"查询", cx + S(202), queryY, S(68));
+    make_dict_button(4002, L"刷新", cx + S(278), queryY, S(68));
 
-    // Quick phrase section
-    int phraseY = t + kRowH * 5;
-    HFONT hPhraseTitle = CreateFontW(-S(kFontPt + 2), 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
-                                     DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                                     CLEARTYPE_QUALITY, 0, L"Microsoft YaHei UI");
-    HWND hPhraseLabel = CreateWindowExW(0, L"STATIC", L"快捷造词", WS_CHILD | WS_VISIBLE | SS_LEFT,
-                                        kPanelPadLeft, phraseY, S(200), kCtrlH, p4,
-                                        nullptr, GetModuleHandle(nullptr), nullptr);
-    SendMessageW(hPhraseLabel, WM_SETFONT, (WPARAM)hPhraseTitle, TRUE);
+    int listY = queryY + kRowH;
+    int listW = panelW - kPanelPadLeft - S(10);
+    int dictListH = S(132);
+    hDictList_ = CreateWindowExW(WS_EX_CLIENTEDGE, WC_LISTVIEWW, L"",
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP |
+        LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS,
+        kPanelPadLeft, listY, listW, dictListH, p4, (HMENU)4003,
+        GetModuleHandle(nullptr), nullptr);
+    SendMessageW(hDictList_, WM_SETFONT, (WPARAM)get_font(), TRUE);
+    ListView_SetExtendedListViewStyle(hDictList_, LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES);
+    LVCOLUMNW col = {};
+    col.mask = LVCF_TEXT | LVCF_WIDTH | LVCF_SUBITEM;
+    col.pszText = const_cast<LPWSTR>(L"编码");
+    col.cx = S(120);
+    ListView_InsertColumn(hDictList_, 0, &col);
+    col.pszText = const_cast<LPWSTR>(L"词语");
+    col.cx = S(200);
+    col.iSubItem = 1;
+    ListView_InsertColumn(hDictList_, 1, &col);
+    col.pszText = const_cast<LPWSTR>(L"频率");
+    col.cx = S(70);
+    col.iSubItem = 2;
+    ListView_InsertColumn(hDictList_, 2, &col);
 
-    int phraseRow1Y = phraseY + kRowH;
-    int phraseRow2Y = phraseY + kRowH * 2;
-    int phraseEditW = S(200);
-    cx = make_label(L"词语:", kPanelPadLeft, phraseRow1Y, p4);
-    hPhraseText_ = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
-                                   WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
-                                   cx, phraseRow1Y, phraseEditW, kCtrlH, p4, (HMENU)4001,
-                                   GetModuleHandle(nullptr), nullptr);
-    SendMessageW(hPhraseText_, WM_SETFONT, (WPARAM)get_font(), TRUE);
+    int editY = listY + dictListH + S(8);
+    int dictEditW = S(170);
+    cx = make_label(L"词语:", kPanelPadLeft, editY, p4);
+    hDictText_ = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
+                                 WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
+                                 cx, editY, dictEditW, kCtrlH, p4, (HMENU)4004,
+                                 GetModuleHandle(nullptr), nullptr);
+    SendMessageW(hDictText_, WM_SETFONT, (WPARAM)get_font(), TRUE);
 
-    cx = make_label(L"编码:", kPanelPadLeft, phraseRow2Y, p4);
-    hPhraseCode_ = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
-                                   WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
-                                   cx, phraseRow2Y, phraseEditW, kCtrlH, p4, (HMENU)4002,
-                                   GetModuleHandle(nullptr), nullptr);
-    SendMessageW(hPhraseCode_, WM_SETFONT, (WPARAM)get_font(), TRUE);
+    int codeX = cx + dictEditW + S(14);
+    int codeLabelX = make_label(L"编码:", codeX, editY, p4);
+    hDictCode_ = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
+                                 WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
+                                 codeLabelX, editY, S(120), kCtrlH, p4, (HMENU)4005,
+                                 GetModuleHandle(nullptr), nullptr);
+    SendMessageW(hDictCode_, WM_SETFONT, (WPARAM)get_font(), TRUE);
 
-    hPhraseAddBtn_ = CreateWindowExW(0, L"BUTTON", L"添加",
-                                     WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
-                                     cx + phraseEditW + S(12), phraseRow2Y, S(80), kCtrlH, p4,
-                                     (HMENU)4003, GetModuleHandle(nullptr), nullptr);
-    SendMessageW(hPhraseAddBtn_, WM_SETFONT, (WPARAM)get_font(), TRUE);
+    int actionY = editY + kRowH;
+    int btnX = kPanelPadLeft;
+    make_dict_button(4006, L"新增", btnX, actionY, S(64));
+    make_dict_button(4007, L"保存修改", btnX + S(72), actionY, S(86));
+    make_dict_button(4008, L"删除选中", btnX + S(166), actionY, S(86));
+    make_dict_button(4009, L"清空输入", btnX + S(260), actionY, S(78));
+
+    int fileY = actionY + kRowH;
+    make_dict_button(4010, L"导入", kPanelPadLeft, fileY, S(64));
+    make_dict_button(4011, L"导出", kPanelPadLeft + S(72), fileY, S(64));
+    make_dict_button(4012, L"打开目录", kPanelPadLeft + S(144), fileY, S(86));
+
+    hDictUserPath_ = CreateWindowExW(0, L"STATIC", L"",
+        WS_CHILD | WS_VISIBLE | SS_LEFT,
+        kPanelPadLeft, fileY + kRowH,
+        panelW - kPanelPadLeft - S(10), kCtrlH, p4,
+        nullptr, GetModuleHandle(nullptr), nullptr);
+    SendMessageW(hDictUserPath_, WM_SETFONT, (WPARAM)get_font(), TRUE);
 
     // ── Panel 5: About ──────────────────────────────────────────────
     HWND p5 = hPanels_[5]; t = kPanelPadTop;
@@ -614,6 +710,8 @@ void EditorApp::show_panel(int idx) {
 
     if (idx == 1 || idx == 2)
         update_cand_preview();
+    if (idx == 4)
+        query_user_entries();
     if (hCandPreviewBtn_)
         SetWindowTextW(hCandPreviewBtn_,
                        candPreviewVisible_ ? L"关闭预览"
@@ -647,6 +745,17 @@ void EditorApp::destroy_candidate_preview_window() {
         candPreviewWindow_.destroy();
     candPreviewCreated_ = false;
     candPreviewVisible_ = false;
+}
+
+cxxime::UserDictKind EditorApp::current_user_dict_kind() const {
+    int idx = combo_index(hDictKind_);
+    return idx == 1 ? cxxime::UserDictKind::WUBI : cxxime::UserDictKind::PINYIN;
+}
+
+std::string EditorApp::current_user_dict_path() const {
+    return cxxime::user_data_path(current_user_dict_kind() == cxxime::UserDictKind::WUBI
+                                      ? "user_wubi.tsv"
+                                      : "user_pinyin.tsv");
 }
 
 LayoutConfig EditorApp::candidate_layout_from_edits() const {
@@ -965,57 +1074,270 @@ void EditorApp::save_config() {
     cxxime::notify_config_changed();
 }
 
-void EditorApp::add_user_entry() {
-    wchar_t wtext[64] = {};
-    wchar_t wcode[32] = {};
-    GetWindowTextW(hPhraseText_, wtext, 64);
-    GetWindowTextW(hPhraseCode_, wcode, 32);
-
-    if (wtext[0] == L'\0' || wcode[0] == L'\0') {
-        MessageBoxW(hwnd_, L"请输入词语和编码。", L"CxxIME", MB_OK | MB_ICONWARNING);
-        return;
+void EditorApp::update_user_dict_status() {
+    std::string path = current_user_dict_path();
+    if (hDictUserPath_) {
+        std::wstring pathText = L"用户词典: " + path_for_display(path);
+        SetWindowTextW(hDictUserPath_, pathText.c_str());
     }
 
-    auto w2s = [](const wchar_t* w) {
-        int len = WideCharToMultiByte(CP_UTF8, 0, w, -1, nullptr, 0, nullptr, nullptr);
-        std::string s(len - 1, '\0');
-        WideCharToMultiByte(CP_UTF8, 0, w, -1, &s[0], len, nullptr, nullptr);
-        return s;
-    };
+    if (!hDictStatus_)
+        return;
 
-    std::string text = w2s(wtext);
-    std::string code = w2s(wcode);
+    std::wstring modified = file_last_write_time_text(path);
+    int shown = hDictList_ ? ListView_GetItemCount(hDictList_) : 0;
+    wchar_t buf[160] = {};
+    swprintf_s(buf, L"用户词典: 显示 %d 条，最后更新 %s",
+        shown, modified.c_str());
+    SetWindowTextW(hDictStatus_, buf);
+}
 
+void EditorApp::refresh_user_entries() {
+    if (hDictQuery_)
+        SetWindowTextW(hDictQuery_, L"");
+    query_user_entries();
+}
+
+void EditorApp::query_user_entries() {
+    if (!hDictList_)
+        return;
+
+    ListView_DeleteAllItems(hDictList_);
+
+    std::string query = edit_text_utf8(hDictQuery_);
     cxxime::IpcClient client;
     if (!client.connect()) {
-        MessageBoxW(hwnd_, L"无法连接到 CxxIME 服务。请确保输入法正在运行。",
-                    L"CxxIME", MB_OK | MB_ICONERROR);
+        SetWindowTextW(hDictStatus_, L"用户词典: 无法连接到 CxxIME 服务");
         return;
     }
 
     cxxime::IPCResponse resp = {};
-    bool ok = client.add_user_entry(0, text.c_str(), code.c_str(), resp);
+    bool ok = client.query_user_entries(query.c_str(), resp, current_user_dict_kind());
     client.disconnect();
+    if (!ok || resp.status != cxxime::IPCStatus::OK) {
+        SetWindowTextW(hDictStatus_, L"用户词典: 查询失败");
+        return;
+    }
 
-    if (ok && resp.status == cxxime::IPCStatus::OK) {
-        SetWindowTextW(hPhraseText_, L"");
-        SetWindowTextW(hPhraseCode_, L"");
-        std::wstring msg = L"已添加词条: " + std::wstring(wtext) + L" (" + std::wstring(wcode) + L")";
-        MessageBoxW(hwnd_, msg.c_str(), L"CxxIME", MB_OK | MB_ICONINFORMATION);
-    } else {
-        MessageBoxW(hwnd_, L"添加词条失败。", L"CxxIME", MB_OK | MB_ICONERROR);
+    for (uint32_t i = 0; i < resp.user_entry_count && i < 32; ++i) {
+        std::wstring code = utf8_to_wstr(resp.user_entries[i].code);
+        std::wstring text = utf8_to_wstr(resp.user_entries[i].text);
+        wchar_t freq[32] = {};
+        swprintf_s(freq, L"%d", resp.user_entries[i].frequency);
+
+        LVITEMW item = {};
+        item.mask = LVIF_TEXT;
+        item.iItem = static_cast<int>(i);
+        item.pszText = const_cast<LPWSTR>(code.c_str());
+        int row = ListView_InsertItem(hDictList_, &item);
+        ListView_SetItemText(hDictList_, row, 1, const_cast<LPWSTR>(text.c_str()));
+        ListView_SetItemText(hDictList_, row, 2, freq);
+    }
+
+    std::wstring modified = file_last_write_time_text(current_user_dict_path());
+    wchar_t buf[192] = {};
+    swprintf_s(buf, L"用户词典: 共 %u 条，当前显示 %u 条，最后更新 %s",
+               resp.user_entry_total, resp.user_entry_count, modified.c_str());
+    SetWindowTextW(hDictStatus_, buf);
+    if (hDictUserPath_) {
+        std::wstring pathText = L"用户词典: " + path_for_display(current_user_dict_path());
+        SetWindowTextW(hDictUserPath_, pathText.c_str());
     }
 }
 
-// ─── Preview ──────────────────────────────────────────────────────────
-
-static std::string wstr_to_utf8(const std::wstring& w) {
-    int len = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, nullptr, 0, nullptr, nullptr);
-    if (len <= 1) return {};
-    std::string s(len - 1, '\0');
-    WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, &s[0], len, nullptr, nullptr);
-    return s;
+void EditorApp::clear_user_entry_form() {
+    selectedDictText_.clear();
+    selectedDictCode_.clear();
+    if (hDictText_) SetWindowTextW(hDictText_, L"");
+    if (hDictCode_) SetWindowTextW(hDictCode_, L"");
+    if (hDictList_) ListView_SetItemState(hDictList_, -1, 0, LVIS_SELECTED);
 }
+
+void EditorApp::add_user_entry() {
+    std::string text = edit_text_utf8(hDictText_);
+    std::string code = edit_text_utf8(hDictCode_);
+    if (text.empty() || code.empty()) {
+        MessageBoxW(hwnd_, L"请输入词语和编码。", L"CxxIME", MB_OK | MB_ICONWARNING);
+        return;
+    }
+
+    cxxime::IpcClient client;
+    if (!client.connect()) {
+        MessageBoxW(hwnd_, L"无法连接到 CxxIME 服务。请确保输入法正在运行。",
+            L"CxxIME", MB_OK | MB_ICONERROR);
+        return;
+    }
+
+    cxxime::IPCResponse resp = {};
+    bool ok = client.add_user_entry(0, text.c_str(), code.c_str(), resp,
+                                    current_user_dict_kind());
+    client.disconnect();
+
+    if (!ok || resp.status != cxxime::IPCStatus::OK) {
+        MessageBoxW(hwnd_, L"新增词条失败。", L"CxxIME", MB_OK | MB_ICONERROR);
+        return;
+    }
+
+    clear_user_entry_form();
+    query_user_entries();
+}
+
+void EditorApp::save_user_entry() {
+    if (selectedDictText_.empty()) {
+        MessageBoxW(hwnd_, L"请先在列表中选择一个词条。", L"CxxIME", MB_OK | MB_ICONWARNING);
+        return;
+    }
+
+    std::string oldText = wstr_to_utf8(selectedDictText_);
+    std::string oldCode = wstr_to_utf8(selectedDictCode_);
+    std::string text = edit_text_utf8(hDictText_);
+    std::string code = edit_text_utf8(hDictCode_);
+    if (text.empty() || code.empty()) {
+        MessageBoxW(hwnd_, L"请输入词语和编码。", L"CxxIME", MB_OK | MB_ICONWARNING);
+        return;
+    }
+
+    cxxime::IpcClient client;
+    if (!client.connect()) {
+        MessageBoxW(hwnd_, L"无法连接到 CxxIME 服务。请确保输入法正在运行。",
+            L"CxxIME", MB_OK | MB_ICONERROR);
+        return;
+    }
+
+    cxxime::IPCResponse resp = {};
+    bool ok = client.replace_user_entry(oldText.c_str(), oldCode.c_str(),
+                                        text.c_str(), code.c_str(), resp,
+                                        current_user_dict_kind());
+    client.disconnect();
+    if (!ok || resp.status != cxxime::IPCStatus::OK) {
+        MessageBoxW(hwnd_, L"保存修改失败。可能存在同名用户词条。", L"CxxIME",
+            MB_OK | MB_ICONERROR);
+        return;
+    }
+
+    selectedDictText_ = utf8_to_wstr(text);
+    selectedDictCode_ = utf8_to_wstr(code);
+    query_user_entries();
+}
+
+void EditorApp::delete_user_entry() {
+    if (selectedDictText_.empty()) {
+        MessageBoxW(hwnd_, L"请先在列表中选择一个词条。", L"CxxIME", MB_OK | MB_ICONWARNING);
+        return;
+    }
+    std::wstring msg = L"删除用户词条 \"" + selectedDictText_ + L"\"？";
+    if (MessageBoxW(hwnd_, msg.c_str(), L"CxxIME", MB_YESNO | MB_ICONWARNING) != IDYES)
+        return;
+
+    std::string text = wstr_to_utf8(selectedDictText_);
+    std::string code = wstr_to_utf8(selectedDictCode_);
+    cxxime::IpcClient client;
+    if (!client.connect()) {
+        MessageBoxW(hwnd_, L"无法连接到 CxxIME 服务。请确保输入法正在运行。",
+            L"CxxIME", MB_OK | MB_ICONERROR);
+        return;
+    }
+
+    cxxime::IPCResponse resp = {};
+    bool ok = client.delete_user_entry(text.c_str(), code.c_str(), resp,
+                                       current_user_dict_kind());
+    client.disconnect();
+    if (!ok || resp.status != cxxime::IPCStatus::OK) {
+        MessageBoxW(hwnd_, L"删除词条失败。", L"CxxIME", MB_OK | MB_ICONERROR);
+        return;
+    }
+
+    clear_user_entry_form();
+    query_user_entries();
+}
+
+void EditorApp::import_user_dict() {
+    wchar_t file[MAX_PATH] = {};
+    OPENFILENAMEW ofn = {sizeof(ofn)};
+    ofn.hwndOwner = hwnd_;
+    ofn.lpstrFilter = L"TSV 用户词典 (*.tsv)\0*.tsv\0所有文件 (*.*)\0*.*\0";
+    ofn.lpstrFile = file;
+    ofn.nMaxFile = MAX_PATH;
+    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+    if (!GetOpenFileNameW(&ofn))
+        return;
+
+    if (MessageBoxW(hwnd_, L"导入会覆盖当前用户词典，是否继续？", L"CxxIME",
+            MB_YESNO | MB_ICONWARNING) != IDYES)
+        return;
+
+    std::string src = wstr_to_utf8(file);
+    std::string dst = current_user_dict_path();
+    if (!copy_file_utf8_path(src, dst)) {
+        MessageBoxW(hwnd_, L"导入失败，无法复制词典文件。", L"CxxIME", MB_OK | MB_ICONERROR);
+        return;
+    }
+
+    cxxime::IpcClient client;
+    cxxime::IPCResponse resp = {};
+    if (client.connect()) {
+        client.reload_user_dict(resp, current_user_dict_kind());
+        client.disconnect();
+    }
+    clear_user_entry_form();
+    query_user_entries();
+}
+
+void EditorApp::export_user_dict() {
+    wchar_t file[MAX_PATH] = {};
+    wcscpy_s(file, current_user_dict_kind() == cxxime::UserDictKind::WUBI
+                    ? L"user_wubi.tsv"
+                    : L"user_pinyin.tsv");
+    OPENFILENAMEW ofn = {sizeof(ofn)};
+    ofn.hwndOwner = hwnd_;
+    ofn.lpstrFilter = L"TSV 用户词典 (*.tsv)\0*.tsv\0所有文件 (*.*)\0*.*\0";
+    ofn.lpstrFile = file;
+    ofn.nMaxFile = MAX_PATH;
+    ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
+    ofn.lpstrDefExt = L"tsv";
+    if (!GetSaveFileNameW(&ofn))
+        return;
+
+    cxxime::IpcClient client;
+    cxxime::IPCResponse resp = {};
+    if (client.connect()) {
+        client.save_user_dict(resp, current_user_dict_kind());
+        client.disconnect();
+    }
+
+    std::string src = current_user_dict_path();
+    std::string dst = wstr_to_utf8(file);
+    if (!copy_file_utf8_path(src, dst)) {
+        MessageBoxW(hwnd_, L"导出失败，无法复制词典文件。", L"CxxIME", MB_OK | MB_ICONERROR);
+        return;
+    }
+    update_user_dict_status();
+}
+
+void EditorApp::open_user_dict_dir() {
+    std::wstring dir = path_for_display(cxxime::user_data_dir());
+    ShellExecuteW(hwnd_, L"open", dir.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+}
+
+void EditorApp::on_user_entry_selected() {
+    if (!hDictList_)
+        return;
+
+    int row = ListView_GetNextItem(hDictList_, -1, LVNI_SELECTED);
+    if (row < 0)
+        return;
+
+    wchar_t code[64] = {};
+    wchar_t text[128] = {};
+    ListView_GetItemText(hDictList_, row, 0, code, 64);
+    ListView_GetItemText(hDictList_, row, 1, text, 128);
+    selectedDictCode_ = code;
+    selectedDictText_ = text;
+    SetWindowTextW(hDictCode_, code);
+    SetWindowTextW(hDictText_, text);
+}
+
+// ─── Preview ──────────────────────────────────────────────────────────
 
 cxxime::Config EditorApp::build_appearance_preview_config() {
     cxxime::Config cfg = config_;
@@ -1245,8 +1567,38 @@ LRESULT CALLBACK EditorApp::wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             }
             break;
         }
-        case 4003: // Add user entry button
+        case 4001:
+            a->query_user_entries();
+            break;
+        case 4002:
+            a->refresh_user_entries();
+            break;
+        case 4006:
             a->add_user_entry();
+            break;
+        case 4007:
+            a->save_user_entry();
+            break;
+        case 4008:
+            a->delete_user_entry();
+            break;
+        case 4009:
+            a->clear_user_entry_form();
+            break;
+        case 4010:
+            a->import_user_dict();
+            break;
+        case 4011:
+            a->export_user_dict();
+            break;
+        case 4012:
+            a->open_user_dict_dir();
+            break;
+        case 4013:
+            if (HIWORD(wp) == CBN_SELCHANGE) {
+                a->clear_user_entry_form();
+                a->refresh_user_entries();
+            }
             break;
         case 1000: // input mode combo
             if (HIWORD(wp) == CBN_SELCHANGE) {
@@ -1297,6 +1649,17 @@ LRESULT CALLBACK EditorApp::wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             a->update_cand_preview();
         }
         return 0;
+    case WM_NOTIFY: {
+        LPNMHDR hdr = reinterpret_cast<LPNMHDR>(lp);
+        if (hdr && hdr->idFrom == 4003 && hdr->code == LVN_ITEMCHANGED) {
+            auto* item = reinterpret_cast<LPNMLISTVIEW>(lp);
+            if ((item->uChanged & LVIF_STATE) && (item->uNewState & LVIS_SELECTED)) {
+                a->on_user_entry_selected();
+                return 0;
+            }
+        }
+        break;
+    }
     case WM_MEASUREITEM: {
         if (wp == 1) {
             LPMEASUREITEMSTRUCT mis = (LPMEASUREITEMSTRUCT)lp;

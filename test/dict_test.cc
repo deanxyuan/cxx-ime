@@ -556,6 +556,41 @@ TEST(Dict, user_dict_update_frequency_code_change) {
     DeleteFileA(path.c_str());
 }
 
+TEST(Dict, user_dict_management_query_replace_delete) {
+    std::string path = make_temp_path("test_dict_manage.bin");
+    std::string user_path = make_temp_path("test_dict_manage_user.tsv");
+    cxxime::Dict::create_test_dict(path, {{"de", "的", 1000}});
+
+    cxxime::Dict dict;
+    ASSERT_TRUE(dict.open(path, user_path));
+
+    dict.update_frequency("hello", "nihao");
+    dict.update_frequency("hello", "nihao");
+    dict.update_frequency("alt", "nihao");
+    dict.update_frequency("input", "shurufa");
+    ASSERT_EQ(dict.user_entry_count(), static_cast<size_t>(3));
+
+    auto by_code = dict.query_user_entries("ni", 10);
+    ASSERT_EQ(by_code.size(), static_cast<size_t>(2));
+    ASSERT_TRUE(by_code[0].code == "nihao");
+
+    auto by_text = dict.query_user_entries("inp", 10);
+    ASSERT_EQ(by_text.size(), static_cast<size_t>(1));
+    ASSERT_EQ(by_text[0].text, "input");
+
+    ASSERT_TRUE(dict.replace_user_entry("alt", "nihao", "alt2", "nihao"));
+    ASSERT_TRUE(!dict.has_user_entry("alt"));
+    ASSERT_TRUE(dict.has_user_entry("alt2"));
+
+    ASSERT_TRUE(dict.delete_user_entry("alt2", "nihao"));
+    ASSERT_TRUE(!dict.has_user_entry("alt2"));
+    ASSERT_EQ(dict.user_entry_count(), static_cast<size_t>(2));
+
+    dict.close();
+    DeleteFileA(path.c_str());
+    DeleteFileA(user_path.c_str());
+}
+
 TEST(Dict, user_dict_scan_count_bounded) {
     std::string path = make_temp_path("test_dict_scan_bound.bin");
     cxxime::Dict::create_test_dict(path, {{"de", "的", 1000}});

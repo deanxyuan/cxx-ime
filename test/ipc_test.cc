@@ -231,6 +231,52 @@ TEST(IPC, commit_composition) {
     ASSERT_EQ(resp.status, cxxime::IPCStatus::OK);
 }
 
+TEST(IPC, user_dict_commands) {
+    TestServer ts;
+    ASSERT_TRUE(ts.start([](const cxxime::IPCRequest& req) -> cxxime::IPCResponse {
+        cxxime::IPCResponse resp = {};
+        resp.status = cxxime::IPCStatus::OK;
+        if (req.command == cxxime::IPCCommand::QUERY_USER_ENTRIES) {
+            ASSERT_TRUE(strcmp(req.text, "ni") == 0);
+            resp.user_entry_total = 2;
+            resp.user_entry_count = 1;
+            strcpy_s(resp.user_entries[0].text, "你好");
+            strcpy_s(resp.user_entries[0].code, "nihao");
+            resp.user_entries[0].frequency = 3;
+        } else if (req.command == cxxime::IPCCommand::DELETE_USER_ENTRY) {
+            ASSERT_TRUE(strcmp(req.text, "你好") == 0);
+            ASSERT_TRUE(strcmp(req.code, "nihao") == 0);
+        } else if (req.command == cxxime::IPCCommand::REPLACE_USER_ENTRY) {
+            ASSERT_TRUE(strcmp(req.old_text, "你好") == 0);
+            ASSERT_TRUE(strcmp(req.old_code, "nihao") == 0);
+            ASSERT_TRUE(strcmp(req.text, "您好") == 0);
+            ASSERT_TRUE(strcmp(req.code, "ninhao") == 0);
+        } else if (req.command == cxxime::IPCCommand::RELOAD_USER_DICT ||
+                   req.command == cxxime::IPCCommand::SAVE_USER_DICT) {
+        } else {
+            resp.status = cxxime::IPCStatus::ERR_UNKNOWN_COMMAND;
+        }
+        return resp;
+    }));
+
+    cxxime::IpcClient client;
+    ASSERT_TRUE(client.connect(cxxime::IPC_PIPE_BASE_NAME, 2000));
+
+    cxxime::IPCResponse resp = {};
+    ASSERT_TRUE(client.query_user_entries("ni", resp));
+    ASSERT_EQ(resp.user_entry_total, static_cast<uint32_t>(2));
+    ASSERT_EQ(resp.user_entry_count, static_cast<uint32_t>(1));
+    ASSERT_TRUE(strcmp(resp.user_entries[0].text, "你好") == 0);
+    ASSERT_TRUE(strcmp(resp.user_entries[0].code, "nihao") == 0);
+    ASSERT_EQ(resp.user_entries[0].frequency, 3);
+
+    ASSERT_TRUE(client.delete_user_entry("你好", "nihao", resp));
+    ASSERT_TRUE(client.replace_user_entry("你好", "nihao", "您好", "ninhao", resp));
+    ASSERT_TRUE(client.reload_user_dict(resp));
+    ASSERT_TRUE(client.save_user_dict(resp));
+    client.disconnect();
+}
+
 TEST(IPC, focus_in_out) {
     TestServer ts;
     ASSERT_TRUE(ts.start([](const cxxime::IPCRequest&) -> cxxime::IPCResponse {

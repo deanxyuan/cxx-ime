@@ -802,6 +802,117 @@ bool Dict::has_user_entry(const std::string& text) const {
            !user_entries_[it->second].deleted;
 }
 
+size_t Dict::user_entry_count() const {
+    std::shared_lock<std::shared_mutex> lock(user_mutex_);
+    size_t count = 0;
+    for (const auto& e : user_entries_) {
+        if (!e.deleted)
+            ++count;
+    }
+    return count;
+}
+
+std::vector<UserDictEntryInfo> Dict::query_user_entries(const std::string& query,
+                                                        size_t limit) const {
+    std::vector<UserDictEntryInfo> results;
+    if (limit == 0)
+        return results;
+
+    std::shared_lock<std::shared_mutex> lock(user_mutex_);
+    for (const auto& e : user_entries_) {
+        if (e.deleted)
+            continue;
+
+        bool matched = query.empty();
+        if (!matched) {
+            matched = e.text.find(query) != std::string::npos ||
+                      e.code.find(query) != std::string::npos;
+        }
+        if (!matched)
+            continue;
+
+        UserDictEntryInfo info;
+        info.text = e.text;
+        info.code = e.code;
+        info.frequency = e.frequency;
+        info.sequence = e.sequence;
+        results.push_back(std::move(info));
+    }
+
+    std::sort(results.begin(), results.end(),
+        [](const UserDictEntryInfo& a, const UserDictEntryInfo& b) {
+            if (a.sequence != b.sequence) return a.sequence > b.sequence;
+            if (a.frequency != b.frequency) return a.frequency > b.frequency;
+            if (a.code != b.code) return a.code < b.code;
+            return a.text < b.text;
+        });
+    if (results.size() > limit)
+        results.resize(limit);
+    return results;
+}
+
+bool Dict::delete_user_entry(const std::string& text, const std::string& code) {
+    std::unique_lock<std::shared_mutex> lock(user_mutex_);
+    auto it = user_text_index_.find(text);
+    if (it == user_text_index_.end() || it->second >= user_entries_.size())
+        return false;
+
+    auto id = static_cast<UserEntryId>(it->second);
+    auto& e = user_entries_[id];
+    if (e.deleted)
+        return false;
+    if (!code.empty() && e.code != code)
+        return false;
+
+    remove_user_from_indexes(id);
+    user_text_index_.erase(text);
+    user_dirty_ = true;
+    user_dict_version_++;
+    return true;
+}
+
+bool Dict::replace_user_entry(const std::string& old_text, const std::string& old_code,
+    const std::string& new_text, const std::string& new_code) {
+    if (new_text.empty() || new_code.empty())
+        return false;
+
+    std::unique_lock<std::shared_mutex> lock(user_mutex_);
+    auto old_it = user_text_index_.find(old_text);
+    if (old_it == user_text_index_.end() || old_it->second >= user_entries_.size())
+        return false;
+
+    auto old_id = static_cast<UserEntryId>(old_it->second);
+    auto& old_entry = user_entries_[old_id];
+    if (old_entry.deleted)
+        return false;
+    if (!old_code.empty() && old_entry.code != old_code)
+        return false;
+
+    auto existing_it = user_text_index_.find(new_text);
+    if (existing_it != user_text_index_.end() && existing_it->second < user_entries_.size() &&
+        existing_it->second != old_id && !user_entries_[existing_it->second].deleted) {
+        return false;
+    }
+
+    remove_user_from_indexes(old_id);
+    user_text_index_.erase(old_text);
+
+    old_entry.text = new_text;
+    old_entry.code = new_code;
+    old_entry.deleted = false;
+    old_entry.sequence = ++user_sequence_;
+    user_text_index_[new_text] = old_id;
+    insert_user_into_indexes(old_id);
+    std::sort(user_code_sorted_.begin(), user_code_sorted_.end(),
+        [this](UserEntryId a, UserEntryId b) {
+            return user_entries_[a].code < user_entries_[b].code;
+        });
+
+    user_dirty_ = true;
+    user_dict_version_++;
+    return true;
+}
+
 void Dict::update_frequency(const std::string& text, const std::string& code) {
     // Best-effort: no syllables available from 2-arg call
     update_frequency(text, code, "");

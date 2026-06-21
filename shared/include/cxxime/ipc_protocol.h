@@ -15,6 +15,11 @@ enum class InputMode : uint32_t {
     MIXED = 2,  // 五笔拼音混输
 };
 
+enum class UserDictKind : uint32_t {
+    PINYIN = 0,
+    WUBI = 1,
+};
+
 struct ImeStatus {
     bool chinese_mode = true;
     bool caps_lock = false;
@@ -41,6 +46,11 @@ enum class IPCCommand : uint32_t {
     RELOAD_CONFIG = 14,
     ADD_USER_ENTRY = 15,
     SYNC_CAPS_LOCK = 16,
+    QUERY_USER_ENTRIES = 17,
+    DELETE_USER_ENTRY = 18,
+    REPLACE_USER_ENTRY = 19,
+    RELOAD_USER_DICT = 20,
+    SAVE_USER_DICT = 21,
 };
 
 enum class IPCStatus : uint32_t {
@@ -56,11 +66,19 @@ struct IPCRequest {
     IPCCommand command;
     uint32_t session_id = 0;
     uint32_t key_code = 0;
-    uint32_t modifiers = 0;
+    uint32_t modifiers = 0;  // key modifiers; user dict commands carry UserDictKind here
     uint32_t candidate_index = 0;
     bool is_key_up = false;
-    char text[64] = {};   // ADD_USER_ENTRY: word text
-    char code[32] = {};   // ADD_USER_ENTRY: input code
+    char text[64] = {};       // user dict: text or query
+    char code[32] = {};       // user dict: code
+    char old_text[64] = {};   // REPLACE_USER_ENTRY
+    char old_code[32] = {};   // REPLACE_USER_ENTRY
+};
+
+struct IPCUserEntry {
+    char text[64] = {};
+    char code[32] = {};
+    int32_t frequency = 0;
 };
 
 struct IPCResponse {
@@ -75,6 +93,9 @@ struct IPCResponse {
     ImeStatus ime_status;
     uint32_t page_current = 1;
     uint32_t page_total = 1;
+    uint32_t user_entry_count = 0;
+    uint32_t user_entry_total = 0;
+    IPCUserEntry user_entries[32] = {};
 };
 #pragma pack(pop)
 

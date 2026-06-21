@@ -38,7 +38,17 @@ public:
     bool get_status(uint32_t session_id, IPCResponse& response);
     bool sync_caps_lock(uint32_t session_id, bool caps_lock, IPCResponse& response);
     bool reload_config(uint32_t session_id, IPCResponse& response);
-    bool add_user_entry(uint32_t session_id, const char* text, const char* code, IPCResponse& response);
+    bool add_user_entry(uint32_t session_id, const char* text, const char* code, IPCResponse& response,
+                        UserDictKind kind = UserDictKind::PINYIN);
+    bool query_user_entries(const char* query, IPCResponse& response,
+                            UserDictKind kind = UserDictKind::PINYIN);
+    bool delete_user_entry(const char* text, const char* code, IPCResponse& response,
+                           UserDictKind kind = UserDictKind::PINYIN);
+    bool replace_user_entry(const char* old_text, const char* old_code,
+                            const char* new_text, const char* new_code, IPCResponse& response,
+                            UserDictKind kind = UserDictKind::PINYIN);
+    bool reload_user_dict(IPCResponse& response, UserDictKind kind = UserDictKind::PINYIN);
+    bool save_user_dict(IPCResponse& response, UserDictKind kind = UserDictKind::PINYIN);
 
     int64_t last_ipc_us() const { return last_ipc_us_; }
 

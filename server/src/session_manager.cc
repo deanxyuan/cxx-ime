@@ -9,6 +9,16 @@
 
 namespace {
 
+std::string user_dict_path_for(cxxime::UserDictKind kind) {
+    return cxxime::user_data_path(kind == cxxime::UserDictKind::WUBI
+                                  ? "user_wubi.tsv"
+                                  : "user_pinyin.tsv");
+}
+
+cxxime::Dict& dict_for_kind(SharedResources& shared, cxxime::UserDictKind kind) {
+    return kind == cxxime::UserDictKind::WUBI ? shared.wubi_dict : shared.dict;
+}
+
 void parse_punct_section(const nlohmann::json& j, const char* section,
                          std::unordered_map<std::string, cxxime::PunctEntry>& target) {
     if (!j.contains(section) || !j[section].is_object())
@@ -44,7 +54,8 @@ void parse_punct_section(const nlohmann::json& j, const char* section,
 }  // anonymous namespace
 
 bool SharedResources::load(const std::string& dict_path, const std::string& cfg_path) {
-    std::string user_dict_path = cxxime::user_data_path("user.tsv");
+    this->dict_path = dict_path;
+    std::string user_dict_path = user_dict_path_for(cxxime::UserDictKind::PINYIN);
     if (!dict.open(dict_path, user_dict_path)) {
         CXXIME_LOG(L"SharedResources: dict.open FAILED");
         return false;
@@ -53,7 +64,7 @@ bool SharedResources::load(const std::string& dict_path, const std::string& cfg_
     if (!cfg_path.empty()) {
         config_path = cfg_path;
         cfg->load(config_path);
-        // Overlay user config from %APPDATA%
+        // Overlay user config from %USERPROFILE%\cxxime
         cfg->load(cxxime::user_data_path("default.json"));
         cfg->load_themes(cxxime::data_path("themes.json"));
     }
@@ -68,7 +79,7 @@ bool SharedResources::load(const std::string& dict_path, const std::string& cfg_
 
     // 加载五笔词典（可选，失败不影响）
     std::string wubi_dict_path = cxxime::data_path("wubi86.dict.bin");
-    if (!wubi_dict.open(wubi_dict_path)) {
+    if (!wubi_dict.open(wubi_dict_path, user_dict_path_for(cxxime::UserDictKind::WUBI))) {
         CXXIME_LOG(L"SharedResources: wubi dict not found, wubi mode disabled");
     } else {
         CXXIME_LOG(L"SharedResources: wubi dict loaded");
@@ -197,6 +208,10 @@ void SharedResources::reload_config() {
     if (!punct_path.empty()) {
         load_punctuation(punct_path);
     }
+}
+
+bool SharedResources::reload_user_dict(cxxime::UserDictKind kind) {
+    return dict_for_kind(*this, kind).load_user_dict(user_dict_path_for(kind));
 }
 
 void SessionManager::reload_config() {
@@ -518,11 +533,71 @@ cxxime::IPCStatus SessionManager::focus_out(uint32_t id) {
     return cxxime::IPCStatus::OK;
 }
 
-cxxime::IPCStatus SessionManager::add_user_entry(uint32_t id, const std::string& text, const std::string& code) {
+cxxime::IPCStatus SessionManager::add_user_entry(uint32_t id, cxxime::UserDictKind kind,
+                                                 const std::string& text, const std::string& code) {
     if (text.empty() || code.empty()) return cxxime::IPCStatus::ERR_UNKNOWN_COMMAND;
     // Operates on shared dict — no session validation needed.
-    shared_.dict.update_frequency(text, code);
-    shared_.dict.save_user_dict();
+    auto& dict = dict_for_kind(shared_, kind);
+    if (!dict.is_open())
+        return cxxime::IPCStatus::ERR_ENGINE_NOT_INITIALIZED;
+    dict.update_frequency(text, code);
+    dict.save_user_dict();
+    return cxxime::IPCStatus::OK;
+}
+
+std::vector<cxxime::UserDictEntryInfo> SessionManager::query_user_entries(
+    const std::string& query, cxxime::UserDictKind kind, size_t limit, size_t& total) {
+    auto& dict = dict_for_kind(shared_, kind);
+    total = dict.is_open() ? dict.user_entry_count() : 0;
+    return dict.is_open() ? dict.query_user_entries(query, limit)
+                          : std::vector<cxxime::UserDictEntryInfo>{};
+}
+
+cxxime::IPCStatus SessionManager::delete_user_entry(cxxime::UserDictKind kind,
+                                                    const std::string& text,
+                                                    const std::string& code) {
+    if (text.empty())
+        return cxxime::IPCStatus::ERR_UNKNOWN_COMMAND;
+    auto& dict = dict_for_kind(shared_, kind);
+    if (!dict.is_open())
+        return cxxime::IPCStatus::ERR_ENGINE_NOT_INITIALIZED;
+    if (!dict.delete_user_entry(text, code))
+        return cxxime::IPCStatus::ERR_UNKNOWN_COMMAND;
+    dict.save_user_dict();
+    return cxxime::IPCStatus::OK;
+}
+
+cxxime::IPCStatus SessionManager::replace_user_entry(cxxime::UserDictKind kind,
+                                                     const std::string& old_text,
+                                                     const std::string& old_code,
+                                                     const std::string& new_text,
+                                                     const std::string& new_code) {
+    if (old_text.empty() || new_text.empty() || new_code.empty())
+        return cxxime::IPCStatus::ERR_UNKNOWN_COMMAND;
+    auto& dict = dict_for_kind(shared_, kind);
+    if (!dict.is_open())
+        return cxxime::IPCStatus::ERR_ENGINE_NOT_INITIALIZED;
+    if (!dict.replace_user_entry(old_text, old_code, new_text, new_code))
+        return cxxime::IPCStatus::ERR_UNKNOWN_COMMAND;
+    dict.save_user_dict();
+    return cxxime::IPCStatus::OK;
+}
+
+cxxime::IPCStatus SessionManager::reload_user_dict(cxxime::UserDictKind kind) {
+    auto& dict = dict_for_kind(shared_, kind);
+    if (!dict.is_open())
+        return cxxime::IPCStatus::ERR_ENGINE_NOT_INITIALIZED;
+    if (!shared_.reload_user_dict(kind))
+        return cxxime::IPCStatus::ERR_UNKNOWN_COMMAND;
+    return cxxime::IPCStatus::OK;
+}
+
+cxxime::IPCStatus SessionManager::save_user_dict(cxxime::UserDictKind kind) {
+    auto& dict = dict_for_kind(shared_, kind);
+    if (!dict.is_open())
+        return cxxime::IPCStatus::ERR_ENGINE_NOT_INITIALIZED;
+    if (!dict.save_user_dict())
+        return cxxime::IPCStatus::ERR_UNKNOWN_COMMAND;
     return cxxime::IPCStatus::OK;
 }
 
