@@ -8,11 +8,12 @@
 namespace cxxime {
 
 constexpr wchar_t IPC_PIPE_BASE_NAME[] = L"\\\\.\\pipe\\CxxIME";
+constexpr uint32_t IPC_SWITCH_INPUT_MODE_EXPLICIT = 0x01;
 
 enum class InputMode : uint32_t {
     PINYIN = 0,
     WUBI = 1,
-    MIXED = 2,  // 五笔拼音混输
+    MIXED = 2,
 };
 
 enum class UserDictKind : uint32_t {
@@ -51,6 +52,8 @@ enum class IPCCommand : uint32_t {
     REPLACE_USER_ENTRY = 19,
     RELOAD_USER_DICT = 20,
     SAVE_USER_DICT = 21,
+    PING = 22,
+    RELOAD_DICTIONARIES = 23,
 };
 
 enum class IPCStatus : uint32_t {

@@ -138,6 +138,21 @@ TEST(IPC, end_session) {
     ASSERT_TRUE(client.end_session(1));
 }
 
+TEST(IPC, ping) {
+    TestServer ts;
+    ASSERT_TRUE(ts.start([](const cxxime::IPCRequest& req) -> cxxime::IPCResponse {
+        cxxime::IPCResponse resp = {};
+        resp.status = req.command == cxxime::IPCCommand::PING
+            ? cxxime::IPCStatus::OK
+            : cxxime::IPCStatus::ERR_UNKNOWN_COMMAND;
+        return resp;
+    }));
+
+    cxxime::IpcClient client;
+    ASSERT_TRUE(client.connect(cxxime::IPC_PIPE_BASE_NAME, 2000));
+    ASSERT_TRUE(client.ping());
+}
+
 TEST(IPC, process_key_preedit) {
     TestServer ts;
     ASSERT_TRUE(ts.start([](const cxxime::IPCRequest& req) -> cxxime::IPCResponse {
@@ -159,6 +174,20 @@ TEST(IPC, process_key_preedit) {
     ASSERT_EQ(resp.status, cxxime::IPCStatus::OK);
     ASSERT_EQ(strcmp(resp.preedit, "ni"), 0);
     ASSERT_EQ(resp.candidate_count, (uint32_t)2);
+}
+
+TEST(IPC, request_timeout_disconnects_client) {
+    TestServer ts;
+    ASSERT_TRUE(ts.start([](const cxxime::IPCRequest&) -> cxxime::IPCResponse {
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+        return make_response(cxxime::IPCStatus::OK);
+    }));
+
+    cxxime::IpcClient client;
+    ASSERT_TRUE(client.connect(cxxime::IPC_PIPE_BASE_NAME, 100));
+    cxxime::IPCResponse resp = {};
+    ASSERT_TRUE(!client.ping(&resp));
+    ASSERT_TRUE(!client.is_connected());
 }
 
 TEST(IPC, process_key_commit) {
@@ -237,6 +266,7 @@ TEST(IPC, user_dict_commands) {
         cxxime::IPCResponse resp = {};
         resp.status = cxxime::IPCStatus::OK;
         if (req.command == cxxime::IPCCommand::QUERY_USER_ENTRIES) {
+            ASSERT_EQ(req.modifiers, static_cast<uint32_t>(cxxime::UserDictKind::PINYIN));
             ASSERT_TRUE(strcmp(req.text, "ni") == 0);
             resp.user_entry_total = 2;
             resp.user_entry_count = 1;
@@ -244,15 +274,24 @@ TEST(IPC, user_dict_commands) {
             strcpy_s(resp.user_entries[0].code, "nihao");
             resp.user_entries[0].frequency = 3;
         } else if (req.command == cxxime::IPCCommand::DELETE_USER_ENTRY) {
+            ASSERT_EQ(req.modifiers, static_cast<uint32_t>(cxxime::UserDictKind::WUBI));
             ASSERT_TRUE(strcmp(req.text, "你好") == 0);
             ASSERT_TRUE(strcmp(req.code, "nihao") == 0);
         } else if (req.command == cxxime::IPCCommand::REPLACE_USER_ENTRY) {
+            ASSERT_EQ(req.modifiers, static_cast<uint32_t>(cxxime::UserDictKind::WUBI));
             ASSERT_TRUE(strcmp(req.old_text, "你好") == 0);
             ASSERT_TRUE(strcmp(req.old_code, "nihao") == 0);
             ASSERT_TRUE(strcmp(req.text, "您好") == 0);
             ASSERT_TRUE(strcmp(req.code, "ninhao") == 0);
-        } else if (req.command == cxxime::IPCCommand::RELOAD_USER_DICT ||
-                   req.command == cxxime::IPCCommand::SAVE_USER_DICT) {
+        } else if (req.command == cxxime::IPCCommand::RELOAD_USER_DICT) {
+            ASSERT_EQ(req.modifiers, static_cast<uint32_t>(cxxime::UserDictKind::WUBI));
+        } else if (req.command == cxxime::IPCCommand::RELOAD_DICTIONARIES) {
+            ASSERT_EQ(req.modifiers, static_cast<uint32_t>(0));
+        } else if (req.command == cxxime::IPCCommand::SAVE_USER_DICT) {
+            ASSERT_EQ(req.modifiers, static_cast<uint32_t>(cxxime::UserDictKind::WUBI));
+        } else if (req.command == cxxime::IPCCommand::SWITCH_INPUT_MODE) {
+            ASSERT_EQ(req.modifiers, cxxime::IPC_SWITCH_INPUT_MODE_EXPLICIT);
+            ASSERT_EQ(req.candidate_index, static_cast<uint32_t>(cxxime::InputMode::PINYIN));
         } else {
             resp.status = cxxime::IPCStatus::ERR_UNKNOWN_COMMAND;
         }
@@ -270,10 +309,13 @@ TEST(IPC, user_dict_commands) {
     ASSERT_TRUE(strcmp(resp.user_entries[0].code, "nihao") == 0);
     ASSERT_EQ(resp.user_entries[0].frequency, 3);
 
-    ASSERT_TRUE(client.delete_user_entry("你好", "nihao", resp));
-    ASSERT_TRUE(client.replace_user_entry("你好", "nihao", "您好", "ninhao", resp));
-    ASSERT_TRUE(client.reload_user_dict(resp));
-    ASSERT_TRUE(client.save_user_dict(resp));
+    ASSERT_TRUE(client.delete_user_entry("你好", "nihao", resp, cxxime::UserDictKind::WUBI));
+    ASSERT_TRUE(client.replace_user_entry("你好", "nihao", "您好", "ninhao", resp,
+                                          cxxime::UserDictKind::WUBI));
+    ASSERT_TRUE(client.reload_user_dict(resp, cxxime::UserDictKind::WUBI));
+    ASSERT_TRUE(client.reload_dictionaries(resp));
+    ASSERT_TRUE(client.save_user_dict(resp, cxxime::UserDictKind::WUBI));
+    ASSERT_TRUE(client.switch_input_mode(1, cxxime::InputMode::PINYIN, resp));
     client.disconnect();
 }
 

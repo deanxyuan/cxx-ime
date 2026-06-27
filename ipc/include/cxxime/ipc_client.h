@@ -17,6 +17,7 @@ public:
     bool connect(const std::wstring& pipe_name = IPC_PIPE_BASE_NAME, int timeout_ms = 3000);
     void disconnect();
     bool is_connected() const;
+    bool ensure_connected();
 
     bool send_request(const IPCRequest& request, IPCResponse& response);
 
@@ -48,7 +49,9 @@ public:
                             const char* new_text, const char* new_code, IPCResponse& response,
                             UserDictKind kind = UserDictKind::PINYIN);
     bool reload_user_dict(IPCResponse& response, UserDictKind kind = UserDictKind::PINYIN);
+    bool reload_dictionaries(IPCResponse& response);
     bool save_user_dict(IPCResponse& response, UserDictKind kind = UserDictKind::PINYIN);
+    bool ping(IPCResponse* response = nullptr);
 
     int64_t last_ipc_us() const { return last_ipc_us_; }
 

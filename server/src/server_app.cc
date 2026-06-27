@@ -107,6 +107,10 @@ cxxime::IPCResponse ServerApp::handle_request(const cxxime::IPCRequest& request)
     response.status = cxxime::IPCStatus::OK;
 
     switch (request.command) {
+    case cxxime::IPCCommand::PING:
+        response.status = cxxime::IPCStatus::OK;
+        break;
+
     case cxxime::IPCCommand::START_SESSION: {
         uint32_t id = session_mgr_.create_session();
         if (id == 0) {
@@ -210,6 +214,7 @@ cxxime::IPCResponse ServerApp::handle_request(const cxxime::IPCRequest& request)
         break;
 
     case cxxime::IPCCommand::FOCUS_IN:
+        session_mgr_.touch_session(request.session_id);
         break;
 
     case cxxime::IPCCommand::FOCUS_OUT:
@@ -248,14 +253,14 @@ cxxime::IPCResponse ServerApp::handle_request(const cxxime::IPCRequest& request)
     }
 
     case cxxime::IPCCommand::SWITCH_INPUT_MODE: {
-        // candidate_index carries target mode: 1=WUBI, 2=MIXED.
-        // 0 = legacy toggle behavior (backward compat with old toggle callback).
+        // Explicit calls carry target mode in candidate_index. Legacy toggle
+        // calls leave modifiers clear and keep the old cycle behavior.
         std::pair<cxxime::IPCStatus, cxxime::ImeStatus> result;
-        if (request.candidate_index == 0) {
-            result = session_mgr_.switch_input_mode(request.session_id);
-        } else {
+        if ((request.modifiers & cxxime::IPC_SWITCH_INPUT_MODE_EXPLICIT) != 0) {
             auto mode = static_cast<cxxime::InputMode>(request.candidate_index);
             result = session_mgr_.switch_input_mode(request.session_id, mode);
+        } else {
+            result = session_mgr_.switch_input_mode(request.session_id);
         }
         auto [status, ime_status] = result;
         if (status != cxxime::IPCStatus::OK) {
@@ -293,6 +298,10 @@ cxxime::IPCResponse ServerApp::handle_request(const cxxime::IPCRequest& request)
 
     case cxxime::IPCCommand::RELOAD_CONFIG:
         session_mgr_.reload_config();
+        break;
+
+    case cxxime::IPCCommand::RELOAD_DICTIONARIES:
+        response.status = session_mgr_.reload_dictionaries();
         break;
 
     case cxxime::IPCCommand::ADD_USER_ENTRY: {

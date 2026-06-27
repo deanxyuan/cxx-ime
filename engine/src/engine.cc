@@ -50,21 +50,7 @@ bool Engine::initialize(Dict& dict, SpellingsIndex& spellings,
     syllabifier_ = syllabifier;
     config_ = &config;
 
-    // Create processor and translator instances
-    processor_ = std::make_unique<PinyinProcessor>();
-    auto pinyin_trans = std::make_unique<PinyinTranslator>();
-    pinyin_trans->set_dict(pinyin_dict_);
-    if (syllabifier_) {
-        pinyin_trans->set_syllabifier(syllabifier_);
-    }
-    if (pinyin_dict_->has_short_cache()) {
-        pinyin_trans->set_short_cache(&pinyin_dict_->short_cache());
-        CXXIME_LOG(L"Engine: short_cache loaded");
-    } else {
-        CXXIME_LOG(L"Engine: short_cache NOT loaded");
-    }
-    translator_ = std::move(pinyin_trans);
-
+    rebuild_pipeline(InputMode::PINYIN, true);
     init_per_session(config);
     return true;
 }
@@ -83,6 +69,15 @@ void Engine::finalize() {
 void Engine::reload_config(const Config& config) {
     config_ = &config;
     ascii_composer_.load_config(config);
+}
+
+void Engine::rebind_shared_resources(Dict& dict, SpellingsIndex& spellings,
+                                     Syllabifier* syllabifier, Dict* wubi_dict) {
+    pinyin_dict_ = &dict;
+    spellings_ = &spellings;
+    syllabifier_ = syllabifier;
+    wubi_dict_ = wubi_dict;
+    rebuild_pipeline(mode_, true);
 }
 
 ProcessResult Engine::process_key(const KeyEvent& event) {
@@ -119,11 +114,11 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
 
     // Phase 2.3: keyboard shortcuts for toggles
     if (!event.is_key_up) {
-        // Shift+Space → toggle full/half shape
+        // Shift+Space toggles full/half shape.
         if (event.keycode == 0x20 && event.is_shift() && !event.is_ctrl() && !event.is_alt()) {
             return ProcessResult::TOGGLE_SHAPE;
         }
-        // Ctrl+. → toggle Chinese/English punctuation
+        // Ctrl+. toggles Chinese/English punctuation.
         if (event.keycode == 0xBE && event.is_ctrl() && !event.is_alt()) {
             return ProcessResult::TOGGLE_PUNCT;
         }
@@ -138,7 +133,7 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
     // Propagate CapsLock style to Context for PinyinProcessor
     context_.caps_lock_style = ascii_composer_.get_binding(VK_CAPITAL);
 
-    // Phase 2.4: CapsLock + letter → commit directly with case inversion
+    // Phase 2.4: CapsLock + letter commits directly with case inversion.
     // When CapsLock is not configured as an IME switch, keep the OS CapsLock
     // behavior: letters commit directly with case inversion.
     if (!event.is_key_up && event.is_caps_lock() && !ascii_composer_.is_ascii_mode() &&
@@ -157,7 +152,7 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
         }
     }
 
-    // Phase 2.5: intercept_key — in English + full-width mode, intercept digit keys
+    // Phase 2.5: intercept digit keys in English full-width mode.
     if (OutputComposer::intercept_key(event, opts, context_.committed_text)) {
         context_.set_commit_source(CommitSource::kRawCode);
         record_total_us(trace_, total_start, trace_enabled_);
@@ -171,7 +166,7 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
         // Letter keys (A-Z): commit as single ASCII char, respect Shift and CapsLock
         if (vk >= 'A' && vk <= 'Z') {
             char ch = static_cast<char>(vk);
-            // Shift XOR CapsLock → uppercase; neither or both → lowercase
+            // Shift XOR CapsLock means uppercase; neither or both means lowercase.
             bool upper = event.is_shift() != event.is_caps_lock();
             if (!upper)
                 ch = static_cast<char>(tolower(ch));
@@ -258,7 +253,7 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
     }
 
     // Set commit_source based on pinyin_buffer state.
-    // Note: pinyin_buffer.empty() is a heuristic — the authoritative fallback
+    // Note: pinyin_buffer.empty() is a heuristic; the authoritative fallback
     // is in Context::commit_with_source() which overrides to kCandidate
     // when candidates.highlighted is valid.
     // Skip if already set (e.g. append mode or engine-prepared ASCII output).
@@ -266,9 +261,9 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
         context_.commit_source() != CommitSource::kRawCodePreserveCase &&
         context_.commit_source() != CommitSource::kRawCodePretransformed) {
         if (context_.pinyin_buffer.empty()) {
-            context_.set_commit_source(CommitSource::kRawCode);   // Enter 提交拼音
+            context_.set_commit_source(CommitSource::kRawCode);
         } else {
-            context_.set_commit_source(CommitSource::kCandidate); // 选词
+            context_.set_commit_source(CommitSource::kCandidate);
         }
     }
 
@@ -313,7 +308,7 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
             trace_.candidate_count = (int)context_.candidates.candidates.size();
         }
 
-        // 五笔/混输模式：四码唯一候选自动上屏
+        // Auto-commit a unique 4-code candidate in Wubi or mixed mode.
         if (!append_raw && config_->wubi_auto_commit_4code &&
             (mode_ == InputMode::WUBI || mode_ == InputMode::MIXED) &&
             result == ProcessResult::ACCEPTED) {
@@ -409,7 +404,7 @@ bool Engine::handle_punctuation(const KeyEvent& event, Context& context, const O
     if (!should_process)
         return false;
 
-    // Step 1: VK → character
+    // Step 1: convert virtual key to character.
     char ch = vk_to_char(event.keycode, event.is_shift());
     if (ch == '\0')
         return false;
@@ -482,7 +477,7 @@ bool Engine::handle_full_shape(const KeyEvent& event, Context& context, const Ou
     if (!opts.full_shape)
         return false;
 
-    // Step 1: VK → character
+    // Step 1: convert virtual key to character.
     char ch = vk_to_char(event.keycode, event.is_shift());
     if (ch == '\0') {
         // vk_to_char handles OEM punctuation + digit keys; only letters remain
@@ -576,7 +571,7 @@ void Engine::clear() {
 
 void Engine::clear_composition() {
     context_.reset();
-    // Preserve session recent cache — don't call translator_->clear_recent()
+    // Preserve session recent cache; do not call translator_->clear_recent().
 }
 
 void Engine::set_wubi_dict(Dict* dict) {
@@ -588,23 +583,25 @@ void Engine::set_fuzzy_enabled(bool enabled) {
 }
 
 void Engine::switch_mode(InputMode mode) {
-    // 五笔词典未加载时，强制回退拼音模式
+    rebuild_pipeline(mode);
+}
+
+void Engine::rebuild_pipeline(InputMode mode, bool force) {
+    // Fall back to pinyin when the optional Wubi dictionary is unavailable.
     if ((mode == InputMode::WUBI || mode == InputMode::MIXED) && !wubi_dict_)
         mode = InputMode::PINYIN;
 
-    if (mode == mode_) return;
+    if (!force && mode == mode_) return;
 
     context_.reset();
 
     mode_ = mode;
     if (mode == InputMode::WUBI) {
-        // 五笔模式：创建 WubiProcessor 和 WubiTranslator
         processor_ = std::make_unique<WubiProcessor>();
         auto wubi_trans = std::make_unique<WubiTranslator>();
         wubi_trans->set_dict(wubi_dict_);
         translator_ = std::move(wubi_trans);
     } else if (mode == InputMode::MIXED) {
-        // 混输模式：复用 PinyinProcessor，新建 MixedTranslator 同时查询两个词典
         processor_ = std::make_unique<PinyinProcessor>();
         auto mixed_trans = std::make_unique<MixedTranslator>();
         mixed_trans->set_pinyin_dict(pinyin_dict_);
@@ -617,7 +614,6 @@ void Engine::switch_mode(InputMode mode) {
         }
         translator_ = std::move(mixed_trans);
     } else {
-        // 拼音模式：恢复 PinyinProcessor 和 PinyinTranslator
         processor_ = std::make_unique<PinyinProcessor>();
         auto pinyin_trans = std::make_unique<PinyinTranslator>();
         pinyin_trans->set_dict(pinyin_dict_);
@@ -632,8 +628,8 @@ void Engine::switch_mode(InputMode mode) {
 }
 
 std::string Engine::derive_spellings_path(const std::string& dict_path) {
-    // pinyin.dict.bin → pinyin.spellings.bin
-    // pinyin.dict.db  → pinyin.spellings.bin
+    // pinyin.dict.bin -> pinyin.spellings.bin
+    // pinyin.dict.db  -> pinyin.spellings.bin
     static const char kDictBinExt[] = ".dict.bin";
     static const char kDictDbExt[] = ".dict.db";
     static const char kSpellingsExt[] = ".spellings.bin";
@@ -653,7 +649,7 @@ std::string Engine::derive_spellings_path(const std::string& dict_path) {
     if (replace_ext(kDictDbExt, kSpellingsExt))
         return path;
 
-    // Unknown extension — append .spellings.bin
+    // Unknown extension: append .spellings.bin.
     return path + kSpellingsExt;
 }
 

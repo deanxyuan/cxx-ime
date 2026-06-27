@@ -9,13 +9,28 @@
 
 namespace {
 
+struct DictionaryResources {
+    std::shared_ptr<cxxime::Dict> dict;
+    std::shared_ptr<cxxime::Dict> wubi_dict;
+    std::shared_ptr<cxxime::SpellingsIndex> spellings;
+    std::shared_ptr<cxxime::Syllabifier> syllabifier;
+    std::string dict_path;
+    std::string wubi_dict_path;
+};
+
 std::string user_dict_path_for(cxxime::UserDictKind kind) {
     return cxxime::user_data_path(kind == cxxime::UserDictKind::WUBI
                                   ? "user_wubi.tsv"
                                   : "user_pinyin.tsv");
 }
 
-cxxime::Dict& dict_for_kind(SharedResources& shared, cxxime::UserDictKind kind) {
+std::shared_ptr<cxxime::Dict>& dict_slot_for(SharedResources& shared,
+                                             cxxime::UserDictKind kind) {
+    return kind == cxxime::UserDictKind::WUBI ? shared.wubi_dict : shared.dict;
+}
+
+const std::shared_ptr<cxxime::Dict>& dict_slot_for(const SharedResources& shared,
+                                                   cxxime::UserDictKind kind) {
     return kind == cxxime::UserDictKind::WUBI ? shared.wubi_dict : shared.dict;
 }
 
@@ -51,69 +66,158 @@ void parse_punct_section(const nlohmann::json& j, const char* section,
     }
 }
 
-}  // anonymous namespace
-
-bool SharedResources::load(const std::string& dict_path, const std::string& cfg_path) {
-    this->dict_path = dict_path;
+bool load_dictionary_resources(const std::string& dict_path, DictionaryResources& out) {
+    auto loaded_dict = std::make_shared<cxxime::Dict>();
     std::string user_dict_path = user_dict_path_for(cxxime::UserDictKind::PINYIN);
-    if (!dict.open(dict_path, user_dict_path)) {
+    if (!loaded_dict->open(dict_path, user_dict_path)) {
         CXXIME_LOG(L"SharedResources: dict.open FAILED");
         return false;
     }
-    auto cfg = std::make_shared<cxxime::Config>();
-    if (!cfg_path.empty()) {
-        config_path = cfg_path;
-        cfg->load(config_path);
-        // Overlay user config from %USERPROFILE%\cxxime
-        cfg->load(cxxime::user_data_path("default.json"));
-        cfg->load_themes(cxxime::data_path("themes.json"));
-    }
-    config = std::move(cfg);
 
-    // Load punctuation mapping (non-fatal)
-    load_punctuation(cxxime::data_path("punctuation.json"));
+    auto loaded_spellings = std::make_shared<cxxime::SpellingsIndex>();
+    std::shared_ptr<cxxime::Syllabifier> loaded_syllabifier;
     std::string sp_path = cxxime::Engine::derive_spellings_path(dict_path);
-    if (!sp_path.empty() && spellings.load(sp_path) && spellings.has_spellings()) {
-        syllabifier = std::make_unique<cxxime::Syllabifier>(spellings);
+    if (!sp_path.empty() && loaded_spellings->load(sp_path) && loaded_spellings->has_spellings()) {
+        loaded_syllabifier = std::make_shared<cxxime::Syllabifier>(*loaded_spellings);
     }
 
-    // 加载五笔词典（可选，失败不影响）
     std::string wubi_dict_path = cxxime::data_path("wubi86.dict.bin");
-    if (!wubi_dict.open(wubi_dict_path, user_dict_path_for(cxxime::UserDictKind::WUBI))) {
+    auto loaded_wubi_dict = std::make_shared<cxxime::Dict>();
+    if (!loaded_wubi_dict->open(wubi_dict_path, user_dict_path_for(cxxime::UserDictKind::WUBI))) {
+        loaded_wubi_dict.reset();
         CXXIME_LOG(L"SharedResources: wubi dict not found, wubi mode disabled");
     } else {
         CXXIME_LOG(L"SharedResources: wubi dict loaded");
     }
 
+    out.dict = std::move(loaded_dict);
+    out.wubi_dict = std::move(loaded_wubi_dict);
+    out.spellings = std::move(loaded_spellings);
+    out.syllabifier = std::move(loaded_syllabifier);
+    out.dict_path = dict_path;
+    out.wubi_dict_path = std::move(wubi_dict_path);
     return true;
 }
 
-bool SharedResources::load_punctuation(const std::string& path) {
-    if (path.empty()) return true;
+std::shared_ptr<const cxxime::PunctMapping> load_punctuation_mapping(const std::string& path) {
+    if (path.empty()) return nullptr;
 
     std::ifstream file(path);
     if (!file.is_open()) {
         CXXIME_LOG(L"SharedResources: punctuation file not found: %S", path.c_str());
-        return false;
+        return nullptr;
     }
 
     try {
         nlohmann::json j = nlohmann::json::parse(file);
-
         auto mapping = std::make_shared<cxxime::PunctMapping>();
 
         parse_punct_section(j, "half_shape", mapping->half_shape);
         parse_punct_section(j, "full_shape", mapping->full_shape);
 
-        punct_mapping = std::move(mapping);
-        punct_path = path;
         CXXIME_LOG(L"SharedResources: punctuation loaded (%zu half, %zu full)",
-                   punct_mapping->half_shape.size(), punct_mapping->full_shape.size());
-        return true;
+                   mapping->half_shape.size(), mapping->full_shape.size());
+        return mapping;
     } catch (const nlohmann::json::exception& e) {
         CXXIME_LOG(L"SharedResources: punctuation parse error: %S", e.what());
-        return false;
+        return nullptr;
     }
+}
+
+}  // anonymous namespace
+
+bool SharedResources::load(const std::string& dict_path, const std::string& cfg_path) {
+    DictionaryResources dictionaries;
+    if (!load_dictionary_resources(dict_path, dictionaries))
+        return false;
+
+    auto loaded_config = std::make_shared<cxxime::Config>();
+    std::string loaded_config_path;
+    if (!cfg_path.empty()) {
+        loaded_config_path = cfg_path;
+        loaded_config->load(loaded_config_path);
+        // Overlay user config from %USERPROFILE%\cxxime
+        loaded_config->load(cxxime::user_data_path("default.json"));
+        loaded_config->load_themes(cxxime::data_path("themes.json"));
+    }
+
+    // Load punctuation mapping (non-fatal)
+    std::string loaded_punct_path = cxxime::data_path("punctuation.json");
+    auto loaded_punct_mapping = load_punctuation_mapping(loaded_punct_path);
+
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        this->dict_path = std::move(dictionaries.dict_path);
+        wubi_dict_path = std::move(dictionaries.wubi_dict_path);
+        config_path = std::move(loaded_config_path);
+        dict = std::move(dictionaries.dict);
+        wubi_dict = std::move(dictionaries.wubi_dict);
+        spellings = std::move(dictionaries.spellings);
+        syllabifier = std::move(dictionaries.syllabifier);
+        config = std::move(loaded_config);
+        punct_mapping = std::move(loaded_punct_mapping);
+        punct_path = punct_mapping ? std::move(loaded_punct_path) : std::string{};
+    }
+
+    return true;
+}
+
+SharedResourceSnapshot SharedResources::snapshot() const {
+    std::lock_guard<std::mutex> lock(mutex);
+    SharedResourceSnapshot s;
+    s.dict = dict;
+    s.wubi_dict = wubi_dict;
+    s.spellings = spellings;
+    s.syllabifier = syllabifier;
+    s.config = config;
+    s.punct_mapping = punct_mapping;
+    return s;
+}
+
+std::shared_ptr<cxxime::Dict> SharedResources::dict_for_kind(cxxime::UserDictKind kind) const {
+    std::lock_guard<std::mutex> lock(mutex);
+    return dict_slot_for(*this, kind);
+}
+
+bool SharedResources::load_punctuation(const std::string& path) {
+    if (path.empty()) return true;
+
+    auto mapping = load_punctuation_mapping(path);
+    if (!mapping)
+        return false;
+
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        punct_mapping = std::move(mapping);
+        punct_path = path;
+    }
+    return true;
+}
+
+bool SharedResources::reload_dictionaries() {
+    std::lock_guard<std::mutex> lock(mutex);
+    std::string current_dict_path = dict_path;
+    if (current_dict_path.empty())
+        return false;
+
+    if (dict)
+        dict->save_user_dict();
+    if (wubi_dict)
+        wubi_dict->save_user_dict();
+
+    DictionaryResources dictionaries;
+    if (!load_dictionary_resources(current_dict_path, dictionaries))
+        return false;
+
+    dict = std::move(dictionaries.dict);
+    wubi_dict = std::move(dictionaries.wubi_dict);
+    spellings = std::move(dictionaries.spellings);
+    syllabifier = std::move(dictionaries.syllabifier);
+    dict_path = std::move(dictionaries.dict_path);
+    wubi_dict_path = std::move(dictionaries.wubi_dict_path);
+
+    CXXIME_LOG(L"SharedResources: dictionaries reloaded");
+    return true;
 }
 
 bool SessionManager::initialize(const std::string& dict_path, const std::string& config_path) {
@@ -122,28 +226,26 @@ bool SessionManager::initialize(const std::string& dict_path, const std::string&
 
 uint32_t SessionManager::create_session() {
     auto engine = std::make_unique<cxxime::Engine>();
-    // Snapshot config under mutex (reload_config may race)
-    std::shared_ptr<const cxxime::Config> cfg_snapshot;
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        cfg_snapshot = shared_.config;
-    }
-    if (!cfg_snapshot) return 0;
-    if (!engine->initialize(shared_.dict, shared_.spellings,
-                            shared_.syllabifier.get(), *cfg_snapshot))
+    auto resources = shared_.snapshot();
+    if (!resources.config || !resources.dict || !resources.spellings)
         return 0;
-    if (shared_.wubi_dict.is_open()) {
-        engine->set_wubi_dict(&shared_.wubi_dict);
+
+    if (!engine->initialize(*resources.dict, *resources.spellings,
+            resources.syllabifier.get(), *resources.config))
+        return 0;
+    if (resources.wubi_dict && resources.wubi_dict->is_open()) {
+        engine->set_wubi_dict(resources.wubi_dict.get());
     }
+
     std::lock_guard<std::mutex> lock(mutex_);
     uint32_t id = next_id_++;
     auto entry = std::make_shared<SessionEntry>();
     entry->engine = std::move(engine);
     entry->last_activity = std::chrono::steady_clock::now();
-    entry->config_snapshot = std::move(cfg_snapshot);
-    entry->ime_status.input_mode = static_cast<cxxime::InputMode>(entry->config_snapshot->input_mode);
+    entry->resources = std::move(resources);
+    entry->ime_status.input_mode = static_cast<cxxime::InputMode>(entry->resources.config->input_mode);
     entry->engine->switch_mode(entry->ime_status.input_mode);
-    entry->engine->set_fuzzy_enabled(entry->config_snapshot->fuzzy_pinyin);
+    entry->engine->set_fuzzy_enabled(entry->resources.config->fuzzy_pinyin);
     sessions_[id] = entry;
     return id;
 }
@@ -194,56 +296,197 @@ size_t SessionManager::cleanup_idle_sessions(uint32_t timeout_ms) {
 }
 
 void SharedResources::reload_config() {
-    if (config_path.empty())
+    std::string current_config_path;
+    std::string current_punct_path;
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        current_config_path = config_path;
+        current_punct_path = punct_path;
+    }
+
+    if (current_config_path.empty())
         return;
-    CXXIME_LOG(L"SharedResources: reloading config from %S", config_path.c_str());
+    CXXIME_LOG(L"SharedResources: reloading config from %S", current_config_path.c_str());
     auto cfg = std::make_shared<cxxime::Config>();
-    cfg->load(config_path);
+    cfg->load(current_config_path);
     cfg->load(cxxime::user_data_path("default.json"));
     cfg->load_themes(cxxime::data_path("themes.json"));
-    config = std::move(cfg);
-    CXXIME_LOG(L"SharedResources: config reloaded");
+    auto mapping = current_punct_path.empty()
+        ? std::shared_ptr<const cxxime::PunctMapping>{}
+        : load_punctuation_mapping(current_punct_path);
 
-    // Reload punctuation mapping
-    if (!punct_path.empty()) {
-        load_punctuation(punct_path);
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        config = std::move(cfg);
+        if (mapping) {
+            punct_mapping = std::move(mapping);
+        }
     }
+    CXXIME_LOG(L"SharedResources: config reloaded");
+}
+
+static void apply_resource_snapshot(SessionEntry& entry, const SharedResourceSnapshot& resources) {
+    if (resources.dict && resources.spellings &&
+        (resources.dict.get() != entry.resources.dict.get() ||
+         resources.spellings.get() != entry.resources.spellings.get() ||
+         resources.syllabifier.get() != entry.resources.syllabifier.get() ||
+         resources.wubi_dict.get() != entry.resources.wubi_dict.get())) {
+        auto old_mode = entry.ime_status.input_mode;
+        entry.engine->rebind_shared_resources(*resources.dict, *resources.spellings,
+            resources.syllabifier.get(),
+            resources.wubi_dict ? resources.wubi_dict.get() : nullptr);
+        entry.resources.dict = resources.dict;
+        entry.resources.spellings = resources.spellings;
+        entry.resources.syllabifier = resources.syllabifier;
+        entry.resources.wubi_dict = resources.wubi_dict;
+        entry.ime_status.input_mode = entry.engine->mode();
+        if (entry.resources.config) {
+            entry.engine->set_fuzzy_enabled(entry.resources.config->fuzzy_pinyin);
+        }
+        if (old_mode != entry.ime_status.input_mode)
+            entry.ime_status.revision++;
+    }
+    entry.resources.punct_mapping = resources.punct_mapping;
 }
 
 bool SharedResources::reload_user_dict(cxxime::UserDictKind kind) {
-    return dict_for_kind(*this, kind).load_user_dict(user_dict_path_for(kind));
+    std::lock_guard<std::mutex> lock(mutex);
+    auto dict = dict_slot_for(*this, kind);
+    return dict && dict->load_user_dict(user_dict_path_for(kind));
+}
+
+cxxime::IPCStatus SharedResources::add_user_entry(cxxime::UserDictKind kind,
+        const std::string& text,
+        const std::string& code) {
+    if (text.empty() || code.empty())
+        return cxxime::IPCStatus::ERR_UNKNOWN_COMMAND;
+    std::lock_guard<std::mutex> lock(mutex);
+    auto dict = dict_slot_for(*this, kind);
+    if (!dict || !dict->is_open())
+        return cxxime::IPCStatus::ERR_ENGINE_NOT_INITIALIZED;
+    dict->update_frequency(text, code);
+    if (!dict->save_user_dict())
+        return cxxime::IPCStatus::ERR_UNKNOWN_COMMAND;
+    return cxxime::IPCStatus::OK;
+}
+
+std::vector<cxxime::UserDictEntryInfo> SharedResources::query_user_entries(
+        const std::string& query, cxxime::UserDictKind kind, size_t limit, size_t& total) {
+    std::lock_guard<std::mutex> lock(mutex);
+    auto dict = dict_slot_for(*this, kind);
+    total = dict && dict->is_open() ? dict->user_entry_count() : 0;
+    return dict && dict->is_open() ? dict->query_user_entries(query, limit)
+                                   : std::vector<cxxime::UserDictEntryInfo>{};
+}
+
+cxxime::IPCStatus SharedResources::delete_user_entry(cxxime::UserDictKind kind,
+        const std::string& text,
+        const std::string& code) {
+    if (text.empty())
+        return cxxime::IPCStatus::ERR_UNKNOWN_COMMAND;
+    std::lock_guard<std::mutex> lock(mutex);
+    auto dict = dict_slot_for(*this, kind);
+    if (!dict || !dict->is_open())
+        return cxxime::IPCStatus::ERR_ENGINE_NOT_INITIALIZED;
+    if (!dict->delete_user_entry(text, code))
+        return cxxime::IPCStatus::ERR_UNKNOWN_COMMAND;
+    if (!dict->save_user_dict())
+        return cxxime::IPCStatus::ERR_UNKNOWN_COMMAND;
+    return cxxime::IPCStatus::OK;
+}
+
+cxxime::IPCStatus SharedResources::replace_user_entry(cxxime::UserDictKind kind,
+        const std::string& old_text,
+        const std::string& old_code,
+        const std::string& new_text,
+        const std::string& new_code) {
+    if (old_text.empty() || new_text.empty() || new_code.empty())
+        return cxxime::IPCStatus::ERR_UNKNOWN_COMMAND;
+    std::lock_guard<std::mutex> lock(mutex);
+    auto dict = dict_slot_for(*this, kind);
+    if (!dict || !dict->is_open())
+        return cxxime::IPCStatus::ERR_ENGINE_NOT_INITIALIZED;
+    if (!dict->replace_user_entry(old_text, old_code, new_text, new_code))
+        return cxxime::IPCStatus::ERR_UNKNOWN_COMMAND;
+    if (!dict->save_user_dict())
+        return cxxime::IPCStatus::ERR_UNKNOWN_COMMAND;
+    return cxxime::IPCStatus::OK;
+}
+
+cxxime::IPCStatus SharedResources::save_user_dict(cxxime::UserDictKind kind) {
+    std::lock_guard<std::mutex> lock(mutex);
+    auto dict = dict_slot_for(*this, kind);
+    if (!dict || !dict->is_open())
+        return cxxime::IPCStatus::ERR_ENGINE_NOT_INITIALIZED;
+    if (!dict->save_user_dict())
+        return cxxime::IPCStatus::ERR_UNKNOWN_COMMAND;
+    return cxxime::IPCStatus::OK;
 }
 
 void SessionManager::reload_config() {
-    // Hold sessions_mutex_ to synchronize with process_key's first-phase lookup
-    std::lock_guard<std::mutex> lock(mutex_);
-    auto new_mode = shared_.config ? static_cast<cxxime::InputMode>(shared_.config->input_mode)
-                                   : cxxime::InputMode::PINYIN;
     shared_.reload_config();
+    auto resources = shared_.snapshot();
+
+    std::vector<std::shared_ptr<SessionEntry>> entries;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        entries.reserve(sessions_.size());
+        for (auto& item : sessions_) {
+            entries.push_back(item.second);
+        }
+    }
+
     // Sync input_mode from config to all active sessions
-    if (shared_.config) {
-        auto target = static_cast<cxxime::InputMode>(shared_.config->input_mode);
-        for (auto& [id, entry] : sessions_) {
-            std::lock_guard<std::mutex> elock(entry->mutex);
+    if (resources.config) {
+        auto target = static_cast<cxxime::InputMode>(resources.config->input_mode);
+        bool fuzzy = resources.config->fuzzy_pinyin;
+        for (auto& entry : entries) {
+            std::lock_guard<std::mutex> lock(entry->mutex);
+            apply_resource_snapshot(*entry, resources);
+            if (resources.config.get() != entry->resources.config.get()) {
+                entry->engine->reload_config(*resources.config);
+                entry->resources.config = resources.config;
+            }
             if (entry->ime_status.input_mode != target) {
                 entry->engine->switch_mode(target);
                 entry->ime_status.input_mode = target;
                 entry->ime_status.revision++;
             }
-        }
-        {
-            bool fuzzy = shared_.config->fuzzy_pinyin;
-            for (auto& [id, entry] : sessions_) {
-                std::lock_guard<std::mutex> elock(entry->mutex);
-                entry->engine->set_fuzzy_enabled(fuzzy);
-            }
+            entry->engine->set_fuzzy_enabled(fuzzy);
         }
     }
-    CXXIME_LOG(L"SessionManager: config reloaded, %zu active sessions", sessions_.size());
+    CXXIME_LOG(L"SessionManager: config reloaded, %zu active sessions", entries.size());
+}
+
+cxxime::IPCStatus SessionManager::reload_dictionaries() {
+    std::vector<std::shared_ptr<SessionEntry>> entries;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        entries.reserve(sessions_.size());
+        for (auto& item : sessions_) {
+            entries.push_back(item.second);
+        }
+    }
+
+    std::vector<std::unique_lock<std::mutex>> entry_locks;
+    entry_locks.reserve(entries.size());
+    for (auto& entry : entries) {
+        entry_locks.emplace_back(entry->mutex);
+    }
+
+    if (!shared_.reload_dictionaries())
+        return cxxime::IPCStatus::ERR_ENGINE_NOT_INITIALIZED;
+
+    auto resources = shared_.snapshot();
+    for (auto& entry : entries) {
+        apply_resource_snapshot(*entry, resources);
+    }
+
+    CXXIME_LOG(L"SessionManager: dictionaries reloaded, %zu active sessions", entries.size());
+    return cxxime::IPCStatus::OK;
 }
 
 bool SessionManager::reload_punctuation(const std::string& path) {
-    std::lock_guard<std::mutex> lock(mutex_);
     return shared_.load_punctuation(path);
 }
 
@@ -352,18 +595,14 @@ ProcessKeyResult SessionManager::process_key(uint32_t id, const cxxime::KeyEvent
     std::lock_guard<std::mutex> lock(entry->mutex);
     auto& s = *entry;
     auto& engine = *s.engine;
+    auto resources = shared_.snapshot();
+    apply_resource_snapshot(s, resources);
 
-    // 0. Check config snapshot — detect hot reload
-    {
-        std::shared_ptr<const cxxime::Config> current_cfg;
-        {
-            std::lock_guard<std::mutex> map_lock(mutex_);
-            current_cfg = shared_.config;
-        }
-        if (current_cfg && current_cfg.get() != s.config_snapshot.get()) {
-            engine.reload_config(*current_cfg);
-            s.config_snapshot = std::move(current_cfg);
-        }
+    // 0. Check config snapshot to detect hot reload.
+    if (resources.config && resources.config.get() != s.resources.config.get()) {
+        engine.reload_config(*resources.config);
+        engine.set_fuzzy_enabled(resources.config->fuzzy_pinyin);
+        s.resources.config = resources.config;
     }
 
     // 1. Sync CapsLock before OutputOptions derivation. On first activation,
@@ -384,7 +623,7 @@ ProcessKeyResult SessionManager::process_key(uint32_t id, const cxxime::KeyEvent
 
     // 2. derive OutputOptions
     auto opts = cxxime::OutputOptions::from(s.ime_status);
-    opts.punct_mapping = shared_.punct_mapping.get();
+    opts.punct_mapping = resources.punct_mapping.get();
 
     // 3. set trace
     engine.set_trace_session_id(id);
@@ -413,7 +652,7 @@ ProcessKeyResult SessionManager::process_key(uint32_t id, const cxxime::KeyEvent
     ret.status = cxxime::IPCStatus::OK;
     ret.result = result;
 
-    // Handle toggle results — flip status and return updated ImeStatus
+    // Handle toggle results and return updated ImeStatus.
     if (result == cxxime::ProcessResult::TOGGLE_SHAPE) {
         s.ime_status.full_shape = !s.ime_status.full_shape;
         s.ime_status.revision++;
@@ -435,7 +674,7 @@ ProcessKeyResult SessionManager::process_key(uint32_t id, const cxxime::KeyEvent
         ret.composing = false;
     } else if (result == cxxime::ProcessResult::TOGGLE_PUNCT
             || result == cxxime::ProcessResult::TOGGLE_SHAPE) {
-        // Toggle results should not carry stale preedit — clear the composition
+        // Toggle results should not carry stale preedit. Clear the composition
         // so the TSF client ends the inline display cleanly.
         engine.clear_composition();
         ret.composing = false;
@@ -535,36 +774,18 @@ cxxime::IPCStatus SessionManager::focus_out(uint32_t id) {
 
 cxxime::IPCStatus SessionManager::add_user_entry(uint32_t id, cxxime::UserDictKind kind,
                                                  const std::string& text, const std::string& code) {
-    if (text.empty() || code.empty()) return cxxime::IPCStatus::ERR_UNKNOWN_COMMAND;
-    // Operates on shared dict — no session validation needed.
-    auto& dict = dict_for_kind(shared_, kind);
-    if (!dict.is_open())
-        return cxxime::IPCStatus::ERR_ENGINE_NOT_INITIALIZED;
-    dict.update_frequency(text, code);
-    dict.save_user_dict();
-    return cxxime::IPCStatus::OK;
+    return shared_.add_user_entry(kind, text, code);
 }
 
 std::vector<cxxime::UserDictEntryInfo> SessionManager::query_user_entries(
     const std::string& query, cxxime::UserDictKind kind, size_t limit, size_t& total) {
-    auto& dict = dict_for_kind(shared_, kind);
-    total = dict.is_open() ? dict.user_entry_count() : 0;
-    return dict.is_open() ? dict.query_user_entries(query, limit)
-                          : std::vector<cxxime::UserDictEntryInfo>{};
+    return shared_.query_user_entries(query, kind, limit, total);
 }
 
 cxxime::IPCStatus SessionManager::delete_user_entry(cxxime::UserDictKind kind,
                                                     const std::string& text,
                                                     const std::string& code) {
-    if (text.empty())
-        return cxxime::IPCStatus::ERR_UNKNOWN_COMMAND;
-    auto& dict = dict_for_kind(shared_, kind);
-    if (!dict.is_open())
-        return cxxime::IPCStatus::ERR_ENGINE_NOT_INITIALIZED;
-    if (!dict.delete_user_entry(text, code))
-        return cxxime::IPCStatus::ERR_UNKNOWN_COMMAND;
-    dict.save_user_dict();
-    return cxxime::IPCStatus::OK;
+    return shared_.delete_user_entry(kind, text, code);
 }
 
 cxxime::IPCStatus SessionManager::replace_user_entry(cxxime::UserDictKind kind,
@@ -572,33 +793,17 @@ cxxime::IPCStatus SessionManager::replace_user_entry(cxxime::UserDictKind kind,
                                                      const std::string& old_code,
                                                      const std::string& new_text,
                                                      const std::string& new_code) {
-    if (old_text.empty() || new_text.empty() || new_code.empty())
-        return cxxime::IPCStatus::ERR_UNKNOWN_COMMAND;
-    auto& dict = dict_for_kind(shared_, kind);
-    if (!dict.is_open())
-        return cxxime::IPCStatus::ERR_ENGINE_NOT_INITIALIZED;
-    if (!dict.replace_user_entry(old_text, old_code, new_text, new_code))
-        return cxxime::IPCStatus::ERR_UNKNOWN_COMMAND;
-    dict.save_user_dict();
-    return cxxime::IPCStatus::OK;
+    return shared_.replace_user_entry(kind, old_text, old_code, new_text, new_code);
 }
 
 cxxime::IPCStatus SessionManager::reload_user_dict(cxxime::UserDictKind kind) {
-    auto& dict = dict_for_kind(shared_, kind);
-    if (!dict.is_open())
-        return cxxime::IPCStatus::ERR_ENGINE_NOT_INITIALIZED;
-    if (!shared_.reload_user_dict(kind))
-        return cxxime::IPCStatus::ERR_UNKNOWN_COMMAND;
-    return cxxime::IPCStatus::OK;
+    return shared_.reload_user_dict(kind)
+        ? cxxime::IPCStatus::OK
+        : cxxime::IPCStatus::ERR_ENGINE_NOT_INITIALIZED;
 }
 
 cxxime::IPCStatus SessionManager::save_user_dict(cxxime::UserDictKind kind) {
-    auto& dict = dict_for_kind(shared_, kind);
-    if (!dict.is_open())
-        return cxxime::IPCStatus::ERR_ENGINE_NOT_INITIALIZED;
-    if (!dict.save_user_dict())
-        return cxxime::IPCStatus::ERR_UNKNOWN_COMMAND;
-    return cxxime::IPCStatus::OK;
+    return shared_.save_user_dict(kind);
 }
 
 void SessionManager::persist_input_mode(cxxime::InputMode mode) {
