@@ -20,6 +20,8 @@
 static constexpr int64_t kSlowIpcUs = 2000;       // IPC round-trip >= 2ms
 static constexpr int64_t kSlowWindowUs = 5000;    // candidate window >= 5ms
 static constexpr int64_t kSlowTotalUs = 10000;    // PROCESS_KEY total >= 10ms
+static constexpr auto kIpcHeartbeatInterval = std::chrono::milliseconds(1500);
+static constexpr int kTsfIpcTimeoutMs = 800;
 
 // Async queue configuration
 static constexpr int kTsfQueueCapacity = 128;
@@ -27,10 +29,18 @@ static constexpr int kTsfBatchSize = 16;
 static constexpr auto kTsfFlushInterval = std::chrono::milliseconds(200);
 
 // Sync ime_status only when server filled valid data (OK or ENGINE_PROCESS_FAILED).
-// ERR_INVALID_SESSION means server didn't fill ime_status — don't overwrite local state.
+// ERR_INVALID_SESSION means server did not fill ime_status; keep local state.
 static bool should_sync_ime_status(cxxime::IPCStatus status) {
     return status == cxxime::IPCStatus::OK ||
            status == cxxime::IPCStatus::ERR_ENGINE_PROCESS_FAILED;
+}
+
+static bool same_visible_status(const cxxime::ImeStatus& a, const cxxime::ImeStatus& b) {
+    return a.chinese_mode == b.chinese_mode &&
+           a.caps_lock == b.caps_lock &&
+           a.full_shape == b.full_shape &&
+           a.chinese_punct == b.chinese_punct &&
+           a.input_mode == b.input_mode;
 }
 
 static std::mutex g_last_status_mutex;
@@ -68,7 +78,7 @@ bool TextService::TsfTrace::should_log() const {
     return false;
 }
 
-// ─── Async trace queue (bounded, single writer thread) ───────────────
+// Async trace queue (bounded, single writer thread)
 
 struct TsfTraceEntry {
     char json[512];
@@ -224,10 +234,10 @@ void TextService::_enqueue_trace(const TsfTrace& trace) {
     if (entry.len <= 0) return;
 
     tsf_ensure_writer_started();
-    tsf_queue_try_push(entry);  // Drop if full — never block hot path
+    tsf_queue_try_push(entry);  // Drop if full; never block hot path.
 }
 
-// ─── TextService lifecycle ───────────────────────────────────────────
+// TextService lifecycle
 
 TextService::TextService() {}
 
@@ -285,18 +295,23 @@ STDMETHODIMP_(ULONG) TextService::Release() {
 }
 
 void TextService::_sync_ime_status(const cxxime::ImeStatus& status) {
+    bool local_changed = _chinese_mode != status.chinese_mode ||
+                         _caps_lock != status.caps_lock;
+    bool visible_changed = true;
     _chinese_mode = status.chinese_mode;
     _caps_lock = status.caps_lock;
     {
         std::lock_guard<std::mutex> lock(g_last_status_mutex);
+        visible_changed = !g_has_last_status || !same_visible_status(g_last_status, status);
         g_last_status = status;
         g_has_last_status = true;
     }
+    if (!local_changed && !visible_changed)
+        return;
 
-    // Fix: 先更新按钮状态，再触发 compartment 通知。
-    // compartment 变更会触发系统级通知，语言栏收到通知后重新调用 GetIcon 查询图标。
-    // 如果按钮状态尚未更新，语言栏会拿到旧图标，随后 _pSink->OnUpdate 又触发一次
-    // 刷新拿到新图标，两次渲染造成闪烁。
+    // Update button state before notifying the compartment. The language bar
+    // queries GetIcon during the notification, so stale button state causes a
+    // second refresh and visible flicker.
     if (_modeButton) _modeButton->update_from_status(status);
     if (_statusController.is_initialized()) _statusController.sync_status(status);
     _sync_conversion_mode_compartment(status);
@@ -437,8 +452,115 @@ bool TextService::_update_input_focus_from_thread_mgr() {
 	return focused;
 }
 
+bool TextService::_ensure_ipc_session() {
+    if (_sessionId && _client.is_connected())
+        return true;
+
+    if (!_client.is_connected() &&
+        !_client.connect(cxxime::IPC_PIPE_BASE_NAME, kTsfIpcTimeoutMs)) {
+        if (_ipcHealthy) {
+            CXXIME_LOG(L"IPC unavailable");
+        }
+        _ipcHealthy = false;
+        return false;
+    }
+
+    uint32_t session_id = 0;
+    if (!_client.start_session(session_id) || session_id == 0) {
+        CXXIME_LOG(L"Failed to start IPC session");
+        _sessionId = 0;
+        _ipcHealthy = false;
+        _client.disconnect();
+        return false;
+    }
+
+    _sessionId = session_id;
+    _ipcHealthy = true;
+    _lastIpcHeartbeat = std::chrono::steady_clock::now();
+    CXXIME_LOG(L"IPC session ready, sessionId=%u", _sessionId);
+    return true;
+}
+
+bool TextService::_recreate_ipc_session_preserving_status() {
+    cxxime::ImeStatus desired_status = {};
+    bool has_desired_status = false;
+    {
+        std::lock_guard<std::mutex> lock(g_last_status_mutex);
+        has_desired_status = g_has_last_status;
+        if (has_desired_status)
+            desired_status = g_last_status;
+    }
+    bool desired_chinese_mode = has_desired_status ? desired_status.chinese_mode : _chinese_mode;
+    bool physical_caps_lock = _is_caps_lock_on(false);
+
+    _sessionId = 0;
+    _ipcHealthy = false;
+    if (!_ensure_ipc_session())
+        return false;
+
+    cxxime::ImeStatus synced_status = {};
+    if (!_sync_caps_lock_state(physical_caps_lock, &synced_status))
+        return false;
+
+    if (!physical_caps_lock && synced_status.chinese_mode != desired_chinese_mode) {
+        cxxime::IPCResponse toggle_resp = {};
+        if (_client.toggle_chinese(_sessionId, toggle_resp) &&
+            toggle_resp.status == cxxime::IPCStatus::OK) {
+            _sync_ime_status(toggle_resp.ime_status);
+        } else {
+            return false;
+        }
+    }
+    if (has_desired_status && synced_status.input_mode != desired_status.input_mode) {
+        cxxime::IPCResponse mode_resp = {};
+        if (_client.switch_input_mode(_sessionId, desired_status.input_mode, mode_resp) &&
+            mode_resp.status == cxxime::IPCStatus::OK) {
+            _sync_ime_status(mode_resp.ime_status);
+        } else {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool TextService::_heartbeat_ipc() {
+    if (!_activated || !_sessionId)
+        return false;
+
+    auto now = std::chrono::steady_clock::now();
+    if (_lastIpcHeartbeat.time_since_epoch().count() != 0 &&
+        now - _lastIpcHeartbeat < kIpcHeartbeatInterval) {
+        return _ipcHealthy;
+    }
+    _lastIpcHeartbeat = now;
+
+    if (!_client.ensure_connected()) {
+        CXXIME_LOG(L"IPC heartbeat reconnect failed");
+        _sessionId = 0;
+        _ipcHealthy = false;
+        return false;
+    }
+
+    cxxime::IPCResponse resp = {};
+    if (_client.get_status(_sessionId, resp) && resp.status == cxxime::IPCStatus::OK) {
+        _ipcHealthy = true;
+        _sync_ime_status(resp.ime_status);
+        return true;
+    }
+    if (resp.status == cxxime::IPCStatus::ERR_INVALID_SESSION) {
+        CXXIME_LOG(L"IPC heartbeat detected invalid session, recreating");
+        return _recreate_ipc_session_preserving_status();
+    }
+
+    CXXIME_LOG(L"IPC heartbeat failed, reconnecting");
+    _client.disconnect();
+    _sessionId = 0;
+    _ipcHealthy = false;
+    return false;
+}
+
 bool TextService::_sync_caps_lock_state(bool caps_lock, cxxime::ImeStatus* synced_status) {
-    if (!_sessionId)
+    if (!_ensure_ipc_session())
         return false;
 
     cxxime::IPCResponse resp = {};
@@ -460,6 +582,17 @@ bool TextService::_sync_physical_caps_lock(cxxime::ImeStatus* synced_status) {
     return _sync_caps_lock_state(caps_lock, synced_status);
 }
 
+void TextService::_reset_poll_shift_state() {
+    bool left_shift_down = (GetAsyncKeyState(VK_LSHIFT) & 0x8000) != 0;
+    bool right_shift_down = (GetAsyncKeyState(VK_RSHIFT) & 0x8000) != 0;
+    bool generic_shift_down = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
+
+    _pollShiftDown = left_shift_down || right_shift_down || generic_shift_down;
+    _pollShiftKey = _pollShiftDown
+        ? (right_shift_down ? VK_RSHIFT : (left_shift_down ? VK_LSHIFT : VK_SHIFT))
+        : VK_SHIFT;
+}
+
 void TextService::_start_state_poll_timer() {
     if (_statePollTimer || !_activated)
         return;
@@ -473,10 +606,7 @@ void TextService::_start_state_poll_timer() {
         g_state_poll_timers[timer] = this;
     }
     _statePollTimer = timer;
-    _pollShiftDown = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0 ||
-                     (GetAsyncKeyState(VK_LSHIFT) & 0x8000) != 0 ||
-                     (GetAsyncKeyState(VK_RSHIFT) & 0x8000) != 0;
-    _pollShiftKey = VK_SHIFT;
+    _reset_poll_shift_state();
 }
 
 void TextService::_stop_state_poll_timer() {
@@ -507,7 +637,7 @@ VOID CALLBACK TextService::_state_poll_timer_proc(HWND, UINT, UINT_PTR id_event,
 }
 
 bool TextService::_sync_status_key_edge(WPARAM key, bool key_down) {
-    if (!_sessionId)
+    if (!_ensure_ipc_session())
         return false;
 
     uint32_t modifiers = 0;
@@ -518,8 +648,19 @@ bool TextService::_sync_status_key_edge(WPARAM key, bool key_down) {
 
     cxxime::IPCResponse response = {};
     bool ok = _client.process_key(_sessionId, static_cast<uint32_t>(key), modifiers, response, !key_down);
-    if (!ok && _client.connect()) {
-        _client.start_session(_sessionId);
+    if (ok && response.status == cxxime::IPCStatus::ERR_INVALID_SESSION) {
+        ok = false;
+        if (_recreate_ipc_session_preserving_status()) {
+            response = {};
+            ok = _client.process_key(_sessionId, static_cast<uint32_t>(key), modifiers, response, !key_down);
+        }
+    }
+    if (!ok) {
+        _client.disconnect();
+        _sessionId = 0;
+    }
+    if (!ok && _recreate_ipc_session_preserving_status()) {
+        response = {};
         ok = _client.process_key(_sessionId, static_cast<uint32_t>(key), modifiers, response, !key_down);
     }
 
@@ -529,23 +670,31 @@ bool TextService::_sync_status_key_edge(WPARAM key, bool key_down) {
 }
 
 void TextService::_poll_unfocused_state_keys() {
-    if (!_activated || !_sessionId)
+    if (!_activated)
+        return;
+
+    _heartbeat_ipc();
+    if (!_sessionId)
         return;
 
     bool focused = _query_input_focus_from_thread_mgr();
     if (focused) {
         if (!_inputFocused) {
             _inputFocused = true;
+            _reset_poll_shift_state();
             _show_status_window_if_allowed();
-            _client.focus_in(_sessionId);
+            if (_sessionId && _client.ensure_connected())
+                _client.focus_in(_sessionId);
         }
         return;
     }
 
     if (_inputFocused) {
         _inputFocused = false;
-        _client.focus_out(_sessionId);
+        if (_sessionId && _client.is_connected())
+            _client.focus_out(_sessionId);
         _AbortComposition();
+        _reset_poll_shift_state();
     }
     if (_statusController.is_initialized())
         _statusController.hide();
@@ -623,7 +772,14 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
     _candidateWindow.set_layout(_config.layout);
     _candidateWindow.set_click_callback([this](int index) {
         cxxime::IPCResponse resp = {};
-        if (_client.select_candidate(_sessionId, index, resp)) {
+        if (_ensure_ipc_session() && _client.select_candidate(_sessionId, index, resp)) {
+            if (resp.status == cxxime::IPCStatus::ERR_INVALID_SESSION) {
+                _recreate_ipc_session_preserving_status();
+                _candidateWindow.set_preedit("");
+                _candidateWindow.hide();
+                _composing = false;
+                return;
+            }
             if (resp.commit_text[0] != '\0') {
                 std::wstring commit_text;
                 int len = MultiByteToWideChar(CP_UTF8, 0, resp.commit_text, -1, nullptr, 0);
@@ -633,7 +789,7 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
                 }
                 if (!commit_text.empty()) {
                     insert_text(commit_text);
-                    // Need ITfContext to end composition — get from thread manager
+                    // Need ITfContext to end composition; get it from thread manager.
                     ITfDocumentMgr* pDocMgr = nullptr;
                     if (SUCCEEDED(_threadMgr->GetFocus(&pDocMgr)) && pDocMgr) {
                         ITfContext* pContext = nullptr;
@@ -665,21 +821,14 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
             initial_status = g_last_status;
     }
     bool initial_caps_lock = initial_foreground_allows_input && _is_caps_lock_on(!has_last_status);
-    // Reuse existing connection if available (Deactivate no longer disconnects).
-    // If server closed the pipe, start_session's send_request will auto-reconnect.
-    if (!_client.is_connected()) {
-        if (!_client.connect()) {
-            CXXIME_LOG(L"Failed to connect to server");
-        }
-    }
-    if (_client.is_connected()) {
-        _client.start_session(_sessionId);
-        CXXIME_LOG(L"Connected to server, sessionId=%u", _sessionId);
+    _sessionId = 0;
+    if (_ensure_ipc_session()) {
         if (initial_foreground_allows_input) {
             _sync_caps_lock_state(initial_caps_lock, &initial_status);
         }
         cxxime::IPCResponse status_resp = {};
-        if (_client.get_status(_sessionId, status_resp) && status_resp.status == cxxime::IPCStatus::OK) {
+        if (_ensure_ipc_session() &&
+            _client.get_status(_sessionId, status_resp) && status_resp.status == cxxime::IPCStatus::OK) {
             initial_status = status_resp.ime_status;
         }
     }
@@ -726,7 +875,7 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
             _statusController.update_config(_config);
             _statusController.sync_status(initial_status);
         }
-        // Set language bar callback for "显示/隐藏状态栏"
+        // Set language bar callback for showing or hiding the status window.
         if (_modeButton) {
             _modeButton->set_show_status_callback([this]() {
                 _config.status_window.enable = !_config.status_window.enable;
@@ -746,7 +895,8 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
             _modeButton->set_menu_callback([this](int menu_id) {
                 CXXIME_LOG(L"menu_callback: menu_id=%d, sessionId=%u", menu_id, _sessionId);
                 cxxime::IPCResponse resp = {};
-                _client.toggle_chinese(_sessionId, resp);
+                if (_ensure_ipc_session())
+                    _client.toggle_chinese(_sessionId, resp);
                 CXXIME_LOG(L"menu_callback: toggle_chinese result status=%d, chinese=%d",
                            (int)resp.status, resp.ime_status.chinese_mode);
                 if (resp.status == cxxime::IPCStatus::OK) {
@@ -754,11 +904,12 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
                 }
             });
 
-            // Set toggle input mode callback (拼音/五笔切换)
+            // Set toggle input mode callback.
             _modeButton->set_toggle_input_mode_callback([this]() {
                 CXXIME_LOG(L"toggle_input_mode_callback: sessionId=%u", _sessionId);
                 cxxime::IPCResponse resp = {};
-                _client.switch_input_mode(_sessionId, resp);
+                if (_ensure_ipc_session())
+                    _client.switch_input_mode(_sessionId, resp);
                 if (resp.status == cxxime::IPCStatus::OK) {
                     _sync_ime_status(resp.ime_status);
                 }
@@ -792,17 +943,18 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
                 show_about_dialog();
             });
 
-            // Set switch input mode callback (纯拼音/纯五笔/混输)
+            // Set explicit input mode callback.
             _modeButton->set_switch_input_mode_callback([this](int mode) {
                 CXXIME_LOG(L"switch_input_mode_callback: mode=%d, sessionId=%u", mode, _sessionId);
                 cxxime::IPCResponse resp = {};
-                _client.switch_input_mode(_sessionId, static_cast<cxxime::InputMode>(mode), resp);
+                if (_ensure_ipc_session())
+                    _client.switch_input_mode(_sessionId, static_cast<cxxime::InputMode>(mode), resp);
                 if (resp.status == cxxime::IPCStatus::OK) {
                     _sync_ime_status(resp.ime_status);
                 }
             });
 
-            // Set quick phrase callback (快捷造词)
+            // Set quick phrase callback.
             _modeButton->set_quick_phrase_callback([this]() {
                 CXXIME_LOG(L"quick_phrase_callback: sessionId=%u", _sessionId);
                 HWND existing = FindWindowW(nullptr, L"CxxIME 设置");
@@ -833,12 +985,9 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
         }
     }
 
-    // Fix: 移除冗余的 get_status IPC 调用。
-    // 状态已在激活开头通过 initial_status 获取并预设到 _chinese_mode/_caps_lock
-    // 和 _modeButton->update_from_status，此处再调一次 get_status + _sync_ime_status：
-    //   1. 多一次同步 IPC 阻塞 UI 线程（数百毫秒闪烁的根源）
-    //   2. 若服务器返回相同状态 → _sync_ime_status 无变化 → 纯浪费
-    //   3. 若服务器返回不同状态 → 触发 _pSink->OnUpdate → 图标闪烁
+    // Avoid a redundant get_status IPC here. initial_status was already read
+    // before language bar registration, so a second sync can block the UI
+    // thread and trigger an extra icon refresh.
     // cxxime::IPCResponse resp = {};
     // if (_client.get_status(_sessionId, resp) && resp.status == cxxime::IPCStatus::OK) {
     //     _sync_ime_status(resp.ime_status);
@@ -851,7 +1000,8 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
         _update_input_focus_from_thread_mgr();
         if (_inputFocused) {
             _show_status_window_if_allowed();
-            _client.focus_in(_sessionId);
+            if (_sessionId && _client.ensure_connected())
+                _client.focus_in(_sessionId);
         }
     }
     return S_OK;
@@ -864,7 +1014,7 @@ STDMETHODIMP TextService::Deactivate() {
     _seenKeyAfterActivate = false;
     _stop_state_poll_timer();
 
-    // Hide status window immediately, then destroy — avoid clicks during IPC teardown
+    // Hide status window immediately, then destroy it to avoid clicks during IPC teardown.
     _statusController.hide();
     _statusController.shutdown();
 
@@ -888,10 +1038,10 @@ STDMETHODIMP TextService::Deactivate() {
         _client.end_session(_sessionId);
         _sessionId = 0;
     }
-    // Fix: 不在 Deactivate 中断开连接，保持管道复用。
-    // 下次 ActivateEx 时如果服务器端已关闭连接，send_request 会自动重连。
-    // 这样避免了 connect() 中 WaitNamedPipeW 的阻塞等待（最长 3 秒）。
-    // _client.disconnect();
+    _lastIpcHeartbeat = {};
+    _ipcHealthy = true;
+    // Keep the pipe connection for reuse. The next ActivateEx will create a
+    // fresh server session and reconnect if the pipe has been closed.
 
     release_config_monitor_ref();
 
@@ -942,19 +1092,22 @@ STDMETHODIMP TextService::OnSetFocus(BOOL fForeground) {
         _update_input_focus_from_thread_mgr();
         if (_inputFocused) {
             _show_status_window_if_allowed();
-            _client.focus_in(_sessionId);
+            if (_sessionId && _client.ensure_connected())
+                _client.focus_in(_sessionId);
         } else {
-            _client.focus_out(_sessionId);
+            if (_sessionId && _client.is_connected())
+                _client.focus_out(_sessionId);
             _AbortComposition();
         }
     } else {
         _inputFocused = false;
         _start_state_poll_timer();
-        // Switching away from CxxIME — hide status window immediately.
+        // Switching away from CxxIME: hide status window immediately.
         // OnKillThreadFocus may not fire when switching IMEs within the same thread.
         if (_statusController.is_initialized())
             _statusController.hide();
-        _client.focus_out(_sessionId);
+        if (_sessionId && _client.is_connected())
+            _client.focus_out(_sessionId);
         _AbortComposition();
     }
     return S_OK;
@@ -1008,7 +1161,7 @@ STDMETHODIMP TextService::OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM lPara
     if (_fTestKeyDownPending) {
         _fTestKeyDownPending = false;
         // OnTestKeyDown already sent the key to the server.
-        // Re-read *pfEaten — it was set by _ProcessKeyEvent called from OnTestKeyDown.
+        // Re-read *pfEaten; _ProcessKeyEvent set it during OnTestKeyDown.
         // Don't override it here; the value is already in *pfEaten from the OnTestKeyDown call.
         return S_OK;
     }
@@ -1094,21 +1247,33 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
 
     cxxime::IPCResponse response = {};
     auto ipc_start = std::chrono::steady_clock::now();
-    bool ok = _client.process_key(_sessionId, (uint32_t)wParam, modifiers, response);
+    bool ok = _ensure_ipc_session() &&
+              _client.process_key(_sessionId, (uint32_t)wParam, modifiers, response);
+    if (ok && response.status == cxxime::IPCStatus::ERR_INVALID_SESSION) {
+        ok = false;
+        if (_recreate_ipc_session_preserving_status()) {
+            response = {};
+            ok = _client.process_key(_sessionId, (uint32_t)wParam, modifiers, response);
+        }
+    }
     auto ipc_end = std::chrono::steady_clock::now();
     _last_ipc_us = std::chrono::duration_cast<std::chrono::microseconds>(ipc_end - ipc_start).count();
 
-    // If IPC failed, try to reconnect and re-create session
+    // If IPC failed, reconnect and create a fresh server session.
     if (!ok) {
-        if (_client.connect()) {
-            _client.start_session(_sessionId);
+        _client.disconnect();
+        _sessionId = 0;
+        _ipcHealthy = false;
+        if (_recreate_ipc_session_preserving_status()) {
             CXXIME_LOG(L"Reconnected, new sessionId=%u", _sessionId);
             ipc_start = std::chrono::steady_clock::now();
+            response = {};
             ok = _client.process_key(_sessionId, (uint32_t)wParam, modifiers, response);
             ipc_end = std::chrono::steady_clock::now();
             _last_ipc_us = std::chrono::duration_cast<std::chrono::microseconds>(ipc_end - ipc_start).count();
         }
     }
+    _ipcHealthy = ok;
 
     // Build trace (populated at all exit paths)
     TsfTrace trace;
@@ -1129,7 +1294,7 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
     CXXIME_LOG(L"_ProcessKeyEvent: ok, vk=%u, ascii=%d, commit='%S', preedit='%S', composing=%d",
                (unsigned int)wParam, response.ascii_mode, response.commit_text, response.preedit, response.composing);
 
-    // Sync mode state from engine — only when server filled valid ime_status
+    // Sync mode state from engine only when server filled valid ime_status.
     if (should_sync_ime_status(response.status)) {
         _sync_ime_status(response.ime_status);
     }
@@ -1281,17 +1446,29 @@ void TextService::_ProcessKeyUp(WPARAM wParam) {
                _sessionId);
 
     cxxime::IPCResponse response = {};
-    bool ok = _client.process_key(_sessionId, (uint32_t)wParam, modifiers, response, true);
-
-    // If IPC failed, try to reconnect and re-create session
-    if (!ok) {
-        CXXIME_LOG(L"_ProcessKeyUp: IPC failed, attempting reconnect");
-        if (_client.connect()) {
-            _client.start_session(_sessionId);
-            CXXIME_LOG(L"_ProcessKeyUp: Reconnected, new sessionId=%u", _sessionId);
+    bool ok = _ensure_ipc_session() &&
+              _client.process_key(_sessionId, (uint32_t)wParam, modifiers, response, true);
+    if (ok && response.status == cxxime::IPCStatus::ERR_INVALID_SESSION) {
+        ok = false;
+        if (_recreate_ipc_session_preserving_status()) {
+            response = {};
             ok = _client.process_key(_sessionId, (uint32_t)wParam, modifiers, response, true);
         }
     }
+
+    // If IPC failed, reconnect and create a fresh server session.
+    if (!ok) {
+        CXXIME_LOG(L"_ProcessKeyUp: IPC failed, attempting reconnect");
+        _client.disconnect();
+        _sessionId = 0;
+        _ipcHealthy = false;
+        if (_recreate_ipc_session_preserving_status()) {
+            CXXIME_LOG(L"_ProcessKeyUp: Reconnected, new sessionId=%u", _sessionId);
+            response = {};
+            ok = _client.process_key(_sessionId, (uint32_t)wParam, modifiers, response, true);
+        }
+    }
+    _ipcHealthy = ok;
 
     CXXIME_LOG(L"_ProcessKeyUp: ok=%d, ascii_mode=%d, commit='%S', composing=%d",
                ok, response.ascii_mode, response.commit_text, response.composing);
@@ -1334,7 +1511,8 @@ STDMETHODIMP TextService::OnPreservedKey(ITfContext* pic, REFGUID rguid, BOOL* p
     if (IsEqualGUID(rguid, c_guidPreservedKey_Toggle) && !_composing) {
         //_chinese_mode = !_chinese_mode;
         cxxime::IPCResponse resp = {};
-        if (_client.toggle_chinese(_sessionId, resp) && resp.status == cxxime::IPCStatus::OK) {
+        if (_ensure_ipc_session() &&
+            _client.toggle_chinese(_sessionId, resp) && resp.status == cxxime::IPCStatus::OK) {
             _sync_ime_status(resp.ime_status);
         }
         CXXIME_LOG(L"Mode toggled (preserved key): %s", _chinese_mode ? L"Chinese" : L"English");
@@ -1367,7 +1545,8 @@ STDMETHODIMP TextService::OnKillThreadFocus() {
     _start_state_poll_timer();
     if (_statusController.is_initialized())
         _statusController.hide();
-    _client.focus_out(_sessionId);
+    if (_sessionId && _client.is_connected())
+        _client.focus_out(_sessionId);
     _AbortComposition();
     return S_OK;
 }
@@ -1412,15 +1591,17 @@ STDMETHODIMP TextService::OnSetFocus(ITfDocumentMgr* pDocMgrFocus, ITfDocumentMg
 
     // Sync status on focus change (user may have toggled via language bar)
     cxxime::IPCResponse resp = {};
-    if (_client.get_status(_sessionId, resp) && resp.status == cxxime::IPCStatus::OK) {
+    if (_ensure_ipc_session() &&
+        _client.get_status(_sessionId, resp) && resp.status == cxxime::IPCStatus::OK) {
         _sync_ime_status(resp.ime_status);
     }
 
-    // Document focus changed — hide candidate window if switching away
+    // Document focus changed; hide candidate window if switching away.
     if (_composing) {
         _candidateWindow.hide();
         _candidateWindow.set_preedit("");
-        _client.focus_out(_sessionId);
+        if (_sessionId && _client.is_connected())
+            _client.focus_out(_sessionId);
         // End composition in the previous context
         if (pDocMgrPrevFocus) {
             ITfContext* pContext = nullptr;

@@ -42,9 +42,13 @@ private:
     void recreate_renderers_for_dpi();
     void init_gdi_renderer();
     void init_d2d_renderer();
+    void move_window_now(int x, int y);
+    void animate_to(int x, int y);
+    void tick_animation();
+    void stop_animation();
+    void update_window_region(int width, int height, int corner);
 
     HWND hwnd_ = nullptr;
-    HRGN hrgn_ = nullptr;
     float dpi_scale_ = 1.0f;
     LayoutConfig scaled_cfg_;
     CandidatePage page_;
@@ -62,6 +66,14 @@ private:
     class D2DRenderer; D2DRenderer* d2d_renderer_ = nullptr;
 
     int page_current_ = 1, page_total_ = 1;
+    int window_width_ = 0, window_height_ = 0, window_corner_ = -1;
+
+    static constexpr UINT_PTR kAnimationTimerId = 1;
+    static constexpr DWORD kMoveDurationMs = 80;
+    bool move_animating_ = false;
+    POINT move_start_{};
+    POINT move_target_{};
+    ULONGLONG move_start_tick_ = 0;
 
     static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
 };

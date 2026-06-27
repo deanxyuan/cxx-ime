@@ -41,6 +41,22 @@ static cxxime::KeyEvent make_key(uint32_t vk, bool shift = false, bool caps = fa
     return e;
 }
 
+static ProcessKeyResult type_kao(SessionManager& mgr, uint32_t id) {
+    ProcessKeyResult r;
+    r = mgr.process_key(id, make_key('K'));
+    r = mgr.process_key(id, make_key('A'));
+    r = mgr.process_key(id, make_key('O'));
+    return r;
+}
+
+static bool candidate_contains(const cxxime::CandidatePage& page, const std::string& text) {
+    for (const auto& c : page.candidates) {
+        if (c.text == text)
+            return true;
+    }
+    return false;
+}
+
 // ============================================================
 // process_key tests
 // ============================================================
@@ -382,6 +398,58 @@ TEST(SessionIntegration, independent_sessions_output_composer) {
 // ============================================================
 // Punctuation IPC integration
 // ============================================================
+
+TEST(SessionIntegration, reload_dictionaries_updates_active_session) {
+    std::string dict_path = make_temp_path("test_hot_reload_dict.bin");
+    ASSERT_TRUE(cxxime::Dict::create_test_dict(dict_path, {
+        {"kao", "stage3-old", 100},
+    }));
+
+    SessionManager mgr;
+    ASSERT_TRUE(mgr.initialize(dict_path));
+    uint32_t id = mgr.create_session();
+    ASSERT_GT(id, (uint32_t)0);
+
+    auto old_result = type_kao(mgr, id);
+    ASSERT_EQ(old_result.status, cxxime::IPCStatus::OK);
+    ASSERT_TRUE(old_result.composing);
+    ASSERT_TRUE(candidate_contains(old_result.candidates, "stage3-old"));
+
+    ASSERT_EQ(mgr.clear_composition(id), cxxime::IPCStatus::OK);
+    ASSERT_TRUE(cxxime::Dict::create_test_dict(dict_path, {
+        {"kao", "stage3-new", 100},
+    }));
+    ASSERT_EQ(mgr.reload_dictionaries(), cxxime::IPCStatus::OK);
+
+    auto new_result = type_kao(mgr, id);
+    ASSERT_EQ(new_result.status, cxxime::IPCStatus::OK);
+    ASSERT_TRUE(new_result.composing);
+    ASSERT_TRUE(candidate_contains(new_result.candidates, "stage3-new"));
+    ASSERT_TRUE(!candidate_contains(new_result.candidates, "stage3-old"));
+
+    DeleteFileA(dict_path.c_str());
+}
+
+TEST(SessionIntegration, reload_dictionaries_failure_keeps_active_session_resources) {
+    std::string dict_path = make_temp_path("test_hot_reload_failure_dict.bin");
+    ASSERT_TRUE(cxxime::Dict::create_test_dict(dict_path, {
+        {"kao", "stage3-still-live", 100},
+    }));
+
+    SessionManager mgr;
+    ASSERT_TRUE(mgr.initialize(dict_path));
+    uint32_t id = mgr.create_session();
+    ASSERT_GT(id, (uint32_t)0);
+
+    ASSERT_EQ(mgr.clear_composition(id), cxxime::IPCStatus::OK);
+    ASSERT_TRUE(DeleteFileA(dict_path.c_str()));
+    ASSERT_EQ(mgr.reload_dictionaries(), cxxime::IPCStatus::ERR_ENGINE_NOT_INITIALIZED);
+
+    auto result = type_kao(mgr, id);
+    ASSERT_EQ(result.status, cxxime::IPCStatus::OK);
+    ASSERT_TRUE(result.composing);
+    ASSERT_TRUE(candidate_contains(result.candidates, "stage3-still-live"));
+}
 
 static std::string write_temp_punct_json(const char* name, const char* content) {
     std::string path = make_temp_path(name);

@@ -35,8 +35,13 @@ public:
     void finalize();
 
     // Hot-reload config: update config_ pointer and rebuild AsciiComposer.
-    // The new Config object must outlive this Engine (managed by SessionEntry::config_snapshot).
+    // The new Config object must outlive this Engine.
     void reload_config(const Config& config);
+
+    // Rebind replaceable shared resources used by server sessions. The caller
+    // owns the resource lifetime and must keep them alive for the Engine.
+    void rebind_shared_resources(Dict& dict, SpellingsIndex& spellings,
+                                 Syllabifier* syllabifier, Dict* wubi_dict);
 
     ProcessResult process_key(const KeyEvent& event);
     ProcessResult process_key(const KeyEvent& event, const OutputOptions& opts);
@@ -64,7 +69,7 @@ public:
             owned_config_.page_size = size;
     }
 
-    // Query budget (scan limits) — deadline is set separately via set_query_deadline_ms()
+    // Query budget (scan limits); deadline is set separately via set_query_deadline_ms().
     void set_query_budget(const QueryBudget& budget) { budget_ = budget; }
     const QueryBudget& query_budget() const { return budget_; }
 
@@ -86,6 +91,7 @@ public:
 
 private:
     void init_per_session(const Config& config);
+    void rebuild_pipeline(InputMode mode, bool force = false);
 
     std::unique_ptr<IProcessor> processor_;
     std::unique_ptr<ITranslator> translator_;
@@ -114,7 +120,7 @@ private:
     bool trace_enabled_ = true;
     static std::atomic<uint64_t> next_query_id_;
 
-    // Query budget (scan limits only — deadline is per-query via QueryDeadline)
+    // Query budget (scan limits only); deadline is per-query via QueryDeadline.
     QueryBudget budget_;
     uint32_t query_deadline_ms_ = 30;  // default 30ms deadline
 

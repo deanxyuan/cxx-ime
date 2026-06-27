@@ -5,6 +5,7 @@
 
 #include <cxxime/ipc_client.h>
 #include <windows.h>
+#include <algorithm>
 #include <cstring>
 #include <chrono>
 
@@ -17,6 +18,40 @@ void copy_field(char* dst, size_t dst_size, const char* src) {
         return;
     strncpy(dst, src, dst_size - 1);
     dst[dst_size - 1] = '\0';
+}
+
+bool overlapped_io(HANDLE pipe, bool write, void* buffer, DWORD size,
+                   DWORD timeout_ms, DWORD& bytes_transferred) {
+    bytes_transferred = 0;
+
+    OVERLAPPED ol = {};
+    ol.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    if (!ol.hEvent)
+        return false;
+
+    BOOL ok = write
+        ? WriteFile(pipe, buffer, size, nullptr, &ol)
+        : ReadFile(pipe, buffer, size, nullptr, &ol);
+
+    if (!ok) {
+        DWORD err = GetLastError();
+        if (err != ERROR_IO_PENDING) {
+            CloseHandle(ol.hEvent);
+            return false;
+        }
+
+        DWORD wait = WaitForSingleObject(ol.hEvent, timeout_ms);
+        if (wait != WAIT_OBJECT_0) {
+            CancelIoEx(pipe, &ol);
+            GetOverlappedResult(pipe, &ol, &bytes_transferred, TRUE);
+            CloseHandle(ol.hEvent);
+            return false;
+        }
+    }
+
+    ok = GetOverlappedResult(pipe, &ol, &bytes_transferred, FALSE);
+    CloseHandle(ol.hEvent);
+    return ok != FALSE;
 }
 
 } // namespace
@@ -59,13 +94,14 @@ bool IpcClient::connect(const std::wstring& pipe_name, int timeout_ms) {
             break;  // pipe not available within timeout
 
         pipe_handle_ = CreateFileW(pipe_name_.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
-                                   OPEN_EXISTING, 0, nullptr);
+                                   OPEN_EXISTING, FILE_FLAG_OVERLAPPED, nullptr);
         if (pipe_handle_ != INVALID_HANDLE_VALUE) {
             DWORD mode = PIPE_READMODE_MESSAGE;
-            SetNamedPipeHandleState((HANDLE)pipe_handle_, &mode, nullptr, nullptr);
+            DWORD pipe_timeout = static_cast<DWORD>((std::max)(timeout_ms, 1));
+            SetNamedPipeHandleState((HANDLE)pipe_handle_, &mode, nullptr, &pipe_timeout);
             return true;
         }
-        // Instance consumed by another thread — retry WaitNamedPipeW for next instance
+        // Instance consumed by another thread; retry WaitNamedPipeW for next instance.
     }
 
     pipe_handle_ = nullptr;
@@ -90,6 +126,10 @@ bool IpcClient::is_connected() const {
     return pipe_handle_ != nullptr;
 }
 
+bool IpcClient::ensure_connected() {
+    return is_connected() || try_reconnect();
+}
+
 // ============================================================
 // Core send/recv
 // Reference: weasel PipeChannel::_Send / _ReceiveResponse
@@ -105,18 +145,20 @@ bool IpcClient::send_request(const IPCRequest& request, IPCResponse& response) {
 
         HANDLE pipe = (HANDLE)pipe_handle_;
 
-        // Synchronous WriteFile — no FlushFileBuffers needed for message-mode pipe
-        // Reference: weasel PipeChannelBase::_WritePipe
+        // No FlushFileBuffers needed for message-mode pipe.
         DWORD bytes_written = 0;
-        if (!WriteFile(pipe, &request, sizeof(request), &bytes_written, nullptr) ||
+        IPCRequest writable_request = request;
+        if (!overlapped_io(pipe, true, &writable_request, sizeof(writable_request),
+                           static_cast<DWORD>(timeout_ms_), bytes_written) ||
             bytes_written != sizeof(request)) {
             disconnect();
             continue;
         }
-        // Synchronous ReadFile
-        // Reference: weasel PipeChannelBase::_Receive
+
+        response = {};
         DWORD bytes_read = 0;
-        if (!ReadFile(pipe, &response, sizeof(response), &bytes_read, nullptr) ||
+        if (!overlapped_io(pipe, false, &response, sizeof(response),
+                           static_cast<DWORD>(timeout_ms_), bytes_read) ||
             bytes_read < sizeof(IPCStatus)) {
             disconnect();
             continue;
@@ -234,6 +276,7 @@ bool IpcClient::switch_input_mode(uint32_t session_id, InputMode mode, IPCRespon
     IPCRequest req = {};
     req.command = IPCCommand::SWITCH_INPUT_MODE;
     req.session_id = session_id;
+    req.modifiers = IPC_SWITCH_INPUT_MODE_EXPLICIT;
     req.candidate_index = static_cast<uint32_t>(mode);
     return send_request(req, response);
 }
@@ -310,11 +353,26 @@ bool IpcClient::reload_user_dict(IPCResponse& response, UserDictKind kind) {
     return send_request(req, response);
 }
 
+bool IpcClient::reload_dictionaries(IPCResponse& response) {
+    IPCRequest req = {};
+    req.command = IPCCommand::RELOAD_DICTIONARIES;
+    return send_request(req, response);
+}
+
 bool IpcClient::save_user_dict(IPCResponse& response, UserDictKind kind) {
     IPCRequest req = {};
     req.command = IPCCommand::SAVE_USER_DICT;
     req.modifiers = static_cast<uint32_t>(kind);
     return send_request(req, response);
+}
+
+bool IpcClient::ping(IPCResponse* response) {
+    IPCRequest req = {};
+    req.command = IPCCommand::PING;
+
+    IPCResponse local = {};
+    IPCResponse& resp = response ? *response : local;
+    return send_request(req, resp) && resp.status == IPCStatus::OK;
 }
 
 } // namespace cxxime

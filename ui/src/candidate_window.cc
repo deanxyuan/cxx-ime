@@ -2,6 +2,7 @@
 
 #include <cxxime/candidate_window.h>
 #include <cxxime/config.h>
+#include <algorithm>
 #include <cmath>
 #include <string>
 #include "gdi_renderer.h"
@@ -90,13 +91,16 @@ void CandidateWindow::recreate_renderers_for_dpi() {
 }
 
 void CandidateWindow::destroy() {
+    stop_animation();
     if (gdi_renderer_) { gdi_renderer_->finalize(); delete gdi_renderer_; gdi_renderer_ = nullptr; }
     if (d2d_renderer_) { d2d_renderer_->finalize(); delete d2d_renderer_; d2d_renderer_ = nullptr; }
-    if (hrgn_) { DeleteObject(hrgn_); hrgn_ = nullptr; }
     if (hwnd_) { DestroyWindow(hwnd_); hwnd_ = nullptr; }
 }
 void CandidateWindow::show() { if (hwnd_) ShowWindow(hwnd_, SW_SHOWNOACTIVATE); }
-void CandidateWindow::hide() { if (hwnd_) ShowWindow(hwnd_, SW_HIDE); }
+void CandidateWindow::hide() {
+    stop_animation();
+    if (hwnd_) ShowWindow(hwnd_, SW_HIDE);
+}
 void CandidateWindow::set_config(const Config& config) {
     config_ = &config;
     set_theme(build_theme_from_config(config));
@@ -110,11 +114,6 @@ void CandidateWindow::set_config(const Config& config) {
 }
 void CandidateWindow::set_theme(const Theme& t) {
     theme_ = t;
-    char dbg[128];
-    snprintf(dbg, sizeof(dbg), "set_theme bg=(%d,%d,%d) hl=(%d,%d,%d)\n",
-             t.background.r, t.background.g, t.background.b,
-             t.hilited_back.r, t.hilited_back.g, t.hilited_back.b);
-    OutputDebugStringA(dbg);
     if (gdi_renderer_) {
         gdi_renderer_->finalize();
         gdi_renderer_->initialize(hwnd_, t);
@@ -131,6 +130,77 @@ void CandidateWindow::set_preedit(const std::string& p) { preedit_text_ = p; }
 void CandidateWindow::set_layout(const std::string& l) { layout_orientation_ = l; }
 void CandidateWindow::set_click_callback(ClickCallback cb) { click_cb_ = std::move(cb); }
 void CandidateWindow::set_draggable(bool draggable) { draggable_ = draggable; }
+
+void CandidateWindow::move_window_now(int x, int y) {
+    SetWindowPos(hwnd_, nullptr, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
+void CandidateWindow::stop_animation() {
+    if (!hwnd_)
+        return;
+    if (move_animating_) {
+        KillTimer(hwnd_, kAnimationTimerId);
+        move_animating_ = false;
+    }
+}
+
+void CandidateWindow::animate_to(int x, int y) {
+    RECT wr = {};
+    GetWindowRect(hwnd_, &wr);
+    int dx = x - wr.left;
+    int dy = y - wr.top;
+    int distance2 = dx * dx + dy * dy;
+
+    if (!IsWindowVisible(hwnd_) || distance2 <= 4 || distance2 > 40000) {
+        stop_animation();
+        move_window_now(x, y);
+        return;
+    }
+
+    move_start_ = {wr.left, wr.top};
+    move_target_ = {x, y};
+    move_start_tick_ = GetTickCount64();
+    move_animating_ = true;
+    SetTimer(hwnd_, kAnimationTimerId, 15, nullptr);
+    tick_animation();
+}
+
+void CandidateWindow::tick_animation() {
+    if (!hwnd_ || !move_animating_)
+        return;
+
+    ULONGLONG elapsed = GetTickCount64() - move_start_tick_;
+    double t = static_cast<double>((std::min<ULONGLONG>)(elapsed, kMoveDurationMs)) /
+               static_cast<double>(kMoveDurationMs);
+    double eased = 1.0 - (1.0 - t) * (1.0 - t);
+    int x = move_start_.x + static_cast<int>((move_target_.x - move_start_.x) * eased + 0.5);
+    int y = move_start_.y + static_cast<int>((move_target_.y - move_start_.y) * eased + 0.5);
+    move_window_now(x, y);
+
+    if (elapsed >= kMoveDurationMs) {
+        stop_animation();
+        move_window_now(move_target_.x, move_target_.y);
+    }
+}
+
+void CandidateWindow::update_window_region(int width, int height, int corner) {
+    if (!hwnd_ || width <= 0 || height <= 0)
+        return;
+    if (width == window_width_ && height == window_height_ && corner == window_corner_)
+        return;
+
+    HRGN region = CreateRoundRectRgn(0, 0, width + 1, height + 1, corner, corner);
+    if (region) {
+        if (SetWindowRgn(hwnd_, region, TRUE)) {
+            window_width_ = width;
+            window_height_ = height;
+            window_corner_ = corner;
+        } else {
+            DeleteObject(region);
+        }
+    }
+}
+
 void CandidateWindow::move_to_caret(const RECT& caretRect) {
     if (!hwnd_) return;
 
@@ -155,7 +225,7 @@ void CandidateWindow::move_to_caret(const RECT& caretRect) {
     }
     if (y < mi.rcWork.top) y = mi.rcWork.top;
 
-    SetWindowPos(hwnd_, nullptr, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    animate_to(x, y);
 }
 
 void CandidateWindow::rebuild_render_context(const LayoutConfig& cfg, int window_width) {
@@ -197,8 +267,6 @@ void CandidateWindow::update(const CandidatePage& page) {
     if (refresh_dpi_scale())
         recreate_renderers_for_dpi();
 
-    static int up_cnt = 0;
-    OutputDebugStringA((std::string("update #") + std::to_string(++up_cnt) + "\n").c_str());
     page_ = page;
     candidate_rects_.clear();
 
@@ -282,14 +350,13 @@ void CandidateWindow::update(const CandidatePage& page) {
         lr.width += border * 2;
         lr.height += border * 2;
     }
-    SetWindowPos(hwnd_, nullptr, 0, 0, lr.width, lr.height, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    if (lr.width != window_width_ || lr.height != window_height_) {
+        SetWindowPos(hwnd_, nullptr, 0, 0, lr.width, lr.height,
+                     SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    }
     if (d2d_renderer_) d2d_renderer_->resize(lr.width, lr.height);
-    // Rounded window corners (like Weasel's round_corner_ex)
-    if (hrgn_) DeleteObject(hrgn_);
-    int wr = cfg.round_corner_ex;
-    hrgn_ = CreateRoundRectRgn(0, 0, lr.width + 1, lr.height + 1, wr, wr);
-    SetWindowRgn(hwnd_, hrgn_, TRUE);
-    InvalidateRect(hwnd_, nullptr, TRUE);
+    update_window_region(lr.width, lr.height, cfg.round_corner_ex);
+    InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
 // --- WndProc ---
@@ -302,10 +369,6 @@ LRESULT CALLBACK CandidateWindow::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM
     case WM_PAINT: {
         PAINTSTRUCT ps; HDC hdc = BeginPaint(hwnd, &ps); RECT rc; GetClientRect(hwnd, &rc);
         if (self && self->gdi_renderer_) {
-            static int paint_count = 0;
-            char dbg[64];
-            snprintf(dbg, sizeof(dbg), "WM_PAINT #%d renderer=%p\n", ++paint_count, self->gdi_renderer_);
-            OutputDebugStringA(dbg);
             if (self->backend_ == RenderBackend::D2D && self->d2d_renderer_)
                 self->d2d_renderer_->render(self->render_ctx_);
             else
@@ -313,6 +376,12 @@ LRESULT CALLBACK CandidateWindow::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM
         }
         EndPaint(hwnd, &ps); return 0;
     }
+    case WM_TIMER:
+        if (self && wp == kAnimationTimerId) {
+            self->tick_animation();
+            return 0;
+        }
+        break;
     case WM_LBUTTONDOWN: {
         if (!self || self->page_.candidates.empty()) return 0;
         if (self->draggable_) {

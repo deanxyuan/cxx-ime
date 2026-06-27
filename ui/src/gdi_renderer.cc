@@ -48,11 +48,33 @@ void GdiRenderer::initialize(HWND hwnd, const Theme& theme) {
 }
 
 void GdiRenderer::render(HDC hdc, const RECT& clip, const RenderContext& ctx) {
-    static int render_count = 0;
-    char dbg[64];
-    snprintf(dbg, sizeof(dbg), "GDI render #%d bg_brush=%p\n", ++render_count, bg_brush_);
-    OutputDebugStringA(dbg);
-    FillRect(hdc, &clip, bg_brush_);
+    HDC target_dc = hdc;
+    HDC buffer_dc = nullptr;
+    HBITMAP buffer_bitmap = nullptr;
+    HBITMAP old_bitmap = nullptr;
+    int width = clip.right - clip.left;
+    int height = clip.bottom - clip.top;
+
+    if (width > 0 && height > 0) {
+        buffer_dc = CreateCompatibleDC(hdc);
+        buffer_bitmap = CreateCompatibleBitmap(hdc, width, height);
+        if (buffer_dc && buffer_bitmap) {
+            old_bitmap = (HBITMAP)SelectObject(buffer_dc, buffer_bitmap);
+            SetViewportOrgEx(buffer_dc, -clip.left, -clip.top, nullptr);
+            target_dc = buffer_dc;
+        } else {
+            if (buffer_dc) {
+                DeleteDC(buffer_dc);
+                buffer_dc = nullptr;
+            }
+            if (buffer_bitmap) {
+                DeleteObject(buffer_bitmap);
+                buffer_bitmap = nullptr;
+            }
+        }
+    }
+
+    FillRect(target_dc, &clip, bg_brush_);
     auto* cfg = ctx.layout_cfg;
     int margin = cfg ? cfg->margin_x : 12;
     int corner = cfg ? cfg->round_corner : 4;
@@ -60,33 +82,42 @@ void GdiRenderer::render(HDC hdc, const RECT& clip, const RenderContext& ctx) {
     if (!ctx.rects || ctx.rects->empty()) {
         // No candidates — show preedit if available, otherwise placeholder
         if (!ctx.preedit.empty() && ctx.preedit_rect.right > ctx.preedit_rect.left && preedit_font_) {
-            SelectObject(hdc, preedit_font_);
+            HFONT old = (HFONT)SelectObject(target_dc, preedit_font_);
             std::wstring wp = to_wstr(ctx.preedit);
             if (!wp.empty()) {
-                SetBkMode(hdc, TRANSPARENT); SetTextColor(hdc, preedit_color_);
-                DrawTextW(hdc, wp.c_str(), -1, const_cast<RECT*>(&ctx.preedit_rect),
-                          DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+                SetBkMode(target_dc, TRANSPARENT);
+                SetTextColor(target_dc, preedit_color_);
+                DrawTextW(target_dc, wp.c_str(), -1, const_cast<RECT*>(&ctx.preedit_rect),
+                    DT_LEFT | DT_VCENTER | DT_SINGLELINE);
             }
+            SelectObject(target_dc, old);
         } else {
-            SetBkMode(hdc, TRANSPARENT); SetTextColor(hdc, preedit_color_);
-            DrawTextW(hdc, L"CxxIME", -1, const_cast<RECT*>(&clip), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+            SetBkMode(target_dc, TRANSPARENT);
+            SetTextColor(target_dc, preedit_color_);
+            DrawTextW(target_dc, L"CxxIME", -1, const_cast<RECT*>(&clip), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        }
+        if (buffer_dc) {
+            BitBlt(hdc, clip.left, clip.top, width, height, buffer_dc, 0, 0, SRCCOPY);
+            SelectObject(buffer_dc, old_bitmap);
+            DeleteObject(buffer_bitmap);
+            DeleteDC(buffer_dc);
         }
         return;
     }
 
-    HFONT old_font = (HFONT)SelectObject(hdc, hfont_);
-    SetBkMode(hdc, TRANSPARENT);
+    HFONT old_font = (HFONT)SelectObject(target_dc, hfont_);
+    SetBkMode(target_dc, TRANSPARENT);
 
     // Preedit (smaller font)
     if (!ctx.preedit.empty() && ctx.preedit_rect.right > ctx.preedit_rect.left && preedit_font_) {
-        SelectObject(hdc, preedit_font_);
+        SelectObject(target_dc, preedit_font_);
         std::wstring wp = to_wstr(ctx.preedit);
         if (!wp.empty()) {
-            SetTextColor(hdc, preedit_color_);
-            DrawTextW(hdc, wp.c_str(), -1, const_cast<RECT*>(&ctx.preedit_rect),
-                      DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+            SetTextColor(target_dc, preedit_color_);
+            DrawTextW(target_dc, wp.c_str(), -1, const_cast<RECT*>(&ctx.preedit_rect),
+                DT_LEFT | DT_VCENTER | DT_SINGLELINE);
         }
-        SelectObject(hdc, hfont_);
+        SelectObject(target_dc, hfont_);
         // Thin separator line between preedit and candidates
         int sep_y = ctx.preedit_rect.bottom + (cfg ? cfg->spacing / 3 : 5);
         // Subtle separator: 75% background + 25% text
@@ -95,10 +126,10 @@ void GdiRenderer::render(HDC hdc, const RECT& clip, const RenderContext& ctx) {
             (uint8_t)((ctx.theme->background.g * 3 + ctx.theme->text.g) / 4),
             (uint8_t)((ctx.theme->background.b * 3 + ctx.theme->text.b) / 4), 255};
         HPEN sep = CreatePen(PS_SOLID, 1, clr(sep_col));
-        HPEN old_p = (HPEN)SelectObject(hdc, sep);
-        MoveToEx(hdc, margin + 2, sep_y, nullptr);
-        LineTo(hdc, clip.right - margin - 2, sep_y);
-        SelectObject(hdc, old_p);
+        HPEN old_p = (HPEN)SelectObject(target_dc, sep);
+        MoveToEx(target_dc, margin + 2, sep_y, nullptr);
+        LineTo(target_dc, clip.right - margin - 2, sep_y);
+        SelectObject(target_dc, old_p);
         DeleteObject(sep);
     }
 
@@ -110,75 +141,87 @@ void GdiRenderer::render(HDC hdc, const RECT& clip, const RenderContext& ctx) {
 
         if (hl || hv) {
             HBRUSH use = hl ? hl_brush_ : hover_brush_;
-            HBRUSH ob = (HBRUSH)SelectObject(hdc, use);
-            HPEN op = (HPEN)SelectObject(hdc, GetStockObject(NULL_PEN));
-            RoundRect(hdc, cr.highlight_rect.left, cr.highlight_rect.top,
-                      cr.highlight_rect.right, cr.highlight_rect.bottom, corner, corner);
-            SelectObject(hdc, op); SelectObject(hdc, ob);
+            HBRUSH ob = (HBRUSH)SelectObject(target_dc, use);
+            HPEN op = (HPEN)SelectObject(target_dc, GetStockObject(NULL_PEN));
+            RoundRect(target_dc, cr.highlight_rect.left, cr.highlight_rect.top,
+                cr.highlight_rect.right, cr.highlight_rect.bottom, corner, corner);
+            SelectObject(target_dc, op);
+            SelectObject(target_dc, ob);
         }
 
         // Label "N. "
-        SetTextColor(hdc, hl ? hl_text_color_ : label_color_);
+        SetTextColor(target_dc, hl ? hl_text_color_ : label_color_);
         std::wstring label = std::to_wstring(i + 1) + L".";
-        DrawTextW(hdc, label.c_str(), -1, const_cast<RECT*>(&cr.label_rect),
-                  DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        DrawTextW(target_dc, label.c_str(), -1, const_cast<RECT*>(&cr.label_rect),
+            DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
         // Candidate text
-        SetTextColor(hdc, hl ? hl_text_color_ : text_color_);
-        DrawTextW(hdc, to_wstr(cr.text).c_str(), -1, const_cast<RECT*>(&cr.text_rect),
-                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        SetTextColor(target_dc, hl ? hl_text_color_ : text_color_);
+        DrawTextW(target_dc, to_wstr(cr.text).c_str(), -1, const_cast<RECT*>(&cr.text_rect),
+            DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     }
 
     // Page nav (always visible, dimmed when disabled)
     if (ctx.page_total > 1 && nav_font_) {
-        HFONT old_nav = (HFONT)SelectObject(hdc, nav_font_);
+        HFONT old_nav = (HFONT)SelectObject(target_dc, nav_font_);
         int nc = corner > 2 ? corner - 1 : 1;
         bool pe = (ctx.page_current > 1), ne = (ctx.page_current < ctx.page_total);
         // Dim color for disabled state: close to background
         COLORREF dim = clr({(uint8_t)((ctx.theme->background.r * 3 + ctx.theme->text.r) / 4),
-                            (uint8_t)((ctx.theme->background.g * 3 + ctx.theme->text.g) / 4),
-                            (uint8_t)((ctx.theme->background.b * 3 + ctx.theme->text.b) / 4), 255});
+            (uint8_t)((ctx.theme->background.g * 3 + ctx.theme->text.g) / 4),
+            (uint8_t)((ctx.theme->background.b * 3 + ctx.theme->text.b) / 4), 255});
         // <
         {
             bool h = pe && (ctx.hovered_index == -2);
             if (h) {
-                HBRUSH ob = (HBRUSH)SelectObject(hdc, hl_brush_); HPEN op = (HPEN)SelectObject(hdc, GetStockObject(NULL_PEN));
-                RoundRect(hdc, ctx.prev_button_rect.left, ctx.prev_button_rect.top,
-                          ctx.prev_button_rect.right, ctx.prev_button_rect.bottom, nc, nc);
-                SelectObject(hdc, op); SelectObject(hdc, ob);
+                HBRUSH ob = (HBRUSH)SelectObject(target_dc, hl_brush_);
+                HPEN op = (HPEN)SelectObject(target_dc, GetStockObject(NULL_PEN));
+                RoundRect(target_dc, ctx.prev_button_rect.left, ctx.prev_button_rect.top,
+                    ctx.prev_button_rect.right, ctx.prev_button_rect.bottom, nc, nc);
+                SelectObject(target_dc, op);
+                SelectObject(target_dc, ob);
             }
-            SetTextColor(hdc, h ? hl_text_color_ : (pe ? nav_color_ : dim));
-            DrawTextW(hdc, L"<", 1, const_cast<RECT*>(&ctx.prev_button_rect), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+            SetTextColor(target_dc, h ? hl_text_color_ : (pe ? nav_color_ : dim));
+            DrawTextW(target_dc, L"<", 1, const_cast<RECT*>(&ctx.prev_button_rect), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         }
         // >
         {
             bool h = ne && (ctx.hovered_index == -3);
             if (h) {
-                HBRUSH ob = (HBRUSH)SelectObject(hdc, hl_brush_); HPEN op = (HPEN)SelectObject(hdc, GetStockObject(NULL_PEN));
-                RoundRect(hdc, ctx.next_button_rect.left, ctx.next_button_rect.top,
-                          ctx.next_button_rect.right, ctx.next_button_rect.bottom, nc, nc);
-                SelectObject(hdc, op); SelectObject(hdc, ob);
+                HBRUSH ob = (HBRUSH)SelectObject(target_dc, hl_brush_);
+                HPEN op = (HPEN)SelectObject(target_dc, GetStockObject(NULL_PEN));
+                RoundRect(target_dc, ctx.next_button_rect.left, ctx.next_button_rect.top,
+                    ctx.next_button_rect.right, ctx.next_button_rect.bottom, nc, nc);
+                SelectObject(target_dc, op);
+                SelectObject(target_dc, ob);
             }
-            SetTextColor(hdc, h ? hl_text_color_ : (ne ? nav_color_ : dim));
-            DrawTextW(hdc, L">", 1, const_cast<RECT*>(&ctx.next_button_rect), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+            SetTextColor(target_dc, h ? hl_text_color_ : (ne ? nav_color_ : dim));
+            DrawTextW(target_dc, L">", 1, const_cast<RECT*>(&ctx.next_button_rect), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         }
-        SelectObject(hdc, old_nav);
+        SelectObject(target_dc, old_nav);
     }
 
     if (ctx.theme && cfg && cfg->border_width > 0) {
         int bw = cfg->border_width;
         int inset = bw / 2;
         HPEN border_pen = CreatePen(PS_SOLID, bw, clr(ctx.theme->border));
-        HPEN old_pen = (HPEN)SelectObject(hdc, border_pen);
-        HBRUSH old_brush = (HBRUSH)SelectObject(hdc, GetStockObject(NULL_BRUSH));
-        RoundRect(hdc, inset, inset, clip.right - inset, clip.bottom - inset,
-        cfg->round_corner_ex, cfg->round_corner_ex);
-        SelectObject(hdc, old_brush);
-        SelectObject(hdc, old_pen);
+        HPEN old_pen = (HPEN)SelectObject(target_dc, border_pen);
+        HBRUSH old_brush = (HBRUSH)SelectObject(target_dc, GetStockObject(NULL_BRUSH));
+        RoundRect(target_dc, inset, inset, clip.right - inset, clip.bottom - inset,
+            cfg->round_corner_ex, cfg->round_corner_ex);
+        SelectObject(target_dc, old_brush);
+        SelectObject(target_dc, old_pen);
         DeleteObject(border_pen);
     }
 
-    SelectObject(hdc, old_font);
+    SelectObject(target_dc, old_font);
+
+    if (buffer_dc) {
+        BitBlt(hdc, clip.left, clip.top, width, height, buffer_dc, 0, 0, SRCCOPY);
+        SelectObject(buffer_dc, old_bitmap);
+        DeleteObject(buffer_bitmap);
+        DeleteDC(buffer_dc);
+    }
 }
 
 void GdiRenderer::finalize() {

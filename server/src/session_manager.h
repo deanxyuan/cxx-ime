@@ -18,29 +18,56 @@
 #include <cxxime/output_composer.h>
 #include <cxxime/punct_types.h>
 
-// Read-only resources shared across all sessions, loaded once at server startup.
-struct SharedResources {
-    cxxime::Dict dict;
-    cxxime::Dict wubi_dict;
-    cxxime::SpellingsIndex spellings;
+struct SharedResourceSnapshot {
+    std::shared_ptr<cxxime::Dict> dict;
+    std::shared_ptr<cxxime::Dict> wubi_dict;
+    std::shared_ptr<cxxime::SpellingsIndex> spellings;
+    std::shared_ptr<cxxime::Syllabifier> syllabifier;
     std::shared_ptr<const cxxime::Config> config;
-    std::unique_ptr<cxxime::Syllabifier> syllabifier;
+    std::shared_ptr<const cxxime::PunctMapping> punct_mapping;
+};
+
+// Replaceable resources shared across all sessions.
+struct SharedResources {
+    std::shared_ptr<cxxime::Dict> dict;
+    std::shared_ptr<cxxime::Dict> wubi_dict;
+    std::shared_ptr<cxxime::SpellingsIndex> spellings;
+    std::shared_ptr<cxxime::Syllabifier> syllabifier;
+    std::shared_ptr<const cxxime::Config> config;
     std::shared_ptr<const cxxime::PunctMapping> punct_mapping;
     std::string config_path;  // Stored for reload
     std::string punct_path;   // Stored for reload
-    std::string dict_path;    // Stored for user dict reload
+    std::string dict_path;    // Stored for dictionary reload
+    std::string wubi_dict_path;
+    mutable std::mutex mutex;
 
     bool load(const std::string& dict_path, const std::string& config_path);
+    SharedResourceSnapshot snapshot() const;
+    std::shared_ptr<cxxime::Dict> dict_for_kind(cxxime::UserDictKind kind) const;
     bool load_punctuation(const std::string& path);
     void reload_config();
+    bool reload_dictionaries();
+    cxxime::IPCStatus add_user_entry(cxxime::UserDictKind kind,
+        const std::string& text, const std::string& code);
+    std::vector<cxxime::UserDictEntryInfo> query_user_entries(
+        const std::string& query, cxxime::UserDictKind kind, size_t limit, size_t& total);
+    cxxime::IPCStatus delete_user_entry(cxxime::UserDictKind kind,
+                                        const std::string& text,
+                                        const std::string& code);
+    cxxime::IPCStatus replace_user_entry(cxxime::UserDictKind kind,
+                                         const std::string& old_text,
+                                         const std::string& old_code,
+                                         const std::string& new_text,
+                                         const std::string& new_code);
     bool reload_user_dict(cxxime::UserDictKind kind);
+    cxxime::IPCStatus save_user_dict(cxxime::UserDictKind kind);
 };
 
 struct SessionEntry {
     std::unique_ptr<cxxime::Engine> engine;
     std::chrono::steady_clock::time_point last_activity;
     cxxime::ImeStatus ime_status;
-    std::shared_ptr<const cxxime::Config> config_snapshot;  // Keeps Engine::config_ pointer valid
+    SharedResourceSnapshot resources;
     std::mutex mutex;  // per-session concurrency protection
 };
 
@@ -63,6 +90,7 @@ public:
 
     size_t cleanup_idle_sessions(uint32_t timeout_ms);
     void reload_config();
+    cxxime::IPCStatus reload_dictionaries();
     bool reload_punctuation(const std::string& path);
 
     std::pair<cxxime::IPCStatus, cxxime::ImeStatus> get_ime_status(uint32_t id);
