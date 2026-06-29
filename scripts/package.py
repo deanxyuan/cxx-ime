@@ -6,9 +6,12 @@
 # Usage:
 #   python scripts/package.py                # Release build + package
 #   python scripts/package.py --debug        # Debug build + package
-#   python scripts/package.py --clean        # Clean rebuild (delete build/)
+#   python scripts/package.py --clean        # Clean rebuild (delete build-package/)
 #   python scripts/package.py --skip-build   # Skip cmake build (already built)
 #   python scripts/package.py --skip-dict    # Skip dictionary generation
+#   python scripts/package.py --generator "Visual Studio 17 2022" --platform x64
+
+from __future__ import annotations
 
 import argparse
 import os
@@ -20,10 +23,17 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCRIPTS = os.path.join(ROOT, "scripts")
 DATA = os.path.join(ROOT, "data")
-BUILD_DIR = os.path.join(ROOT, "build")
+DEFAULT_BUILD_DIR = os.path.join(ROOT, "build-package")
 DIST_DIR = os.path.join(ROOT, "dist")
 OUTPUT_DIR = os.path.join(ROOT, "..", "output")
 VERSION = "0.1.0"
+SINGLE_CONFIG_GENERATORS = (
+    "NMake Makefiles",
+    "NMake Makefiles JOM",
+    "Ninja",
+    "Unix Makefiles",
+    "MinGW Makefiles",
+)
 
 
 def step(msg: str) -> None:
@@ -35,27 +45,70 @@ def run(cmd: list[str], **kwargs) -> None:
     """Run a command, raising on failure."""
     subprocess.run(cmd, check=True, **kwargs)
 
+def choose_cmake_generator(
+    generator: str | None,
+    platform: str | None,
+) -> tuple[str | None, str | None]:
+    """Choose CMake generator/platform from explicit args or environment."""
+    if generator:
+        return generator, platform
+    
+    env_generator = os.environ.get("CXXIME_CMAKE_GENERATOR") or os.environ.get("CMAKE_GENERATOR")
+    env_platform = os.environ.get("CXXIME_CMAKE_PLATFORM") or os.environ.get("CMAKE_GENERATOR_PLATFORM")
+    return env_generator, env_platform
 
-def build(config: str, clean: bool = False, skip_tests: bool = False, skip_tools: bool = False) -> None:
+def is_single_config_generator(generator: str | None) -> bool:
+    """Return true for generators that use CMAKE_BUILD_TYPE."""
+    if not generator:
+        return False
+    return any(generator == name or generator.startswith(name + " ") for name in SINGLE_CONFIG_GENERATORS)
+
+def build(
+    build_dir: str,
+    config: str,
+    clean: bool = False,
+    skip_tests: bool = False,
+    skip_tools: bool = False,
+    generator: str | None = None,
+    platform: str | None = None,
+) -> None:
     """Configure and build the project."""
-    if clean and os.path.exists(BUILD_DIR):
-        print(f"Cleaning build directory: {BUILD_DIR}")
-        shutil.rmtree(BUILD_DIR)
+    if clean and os.path.exists(build_dir):
+        print(f"Cleaning build directory: {build_dir}")
+        shutil.rmtree(build_dir)
 
     print(f"Building {config} with PRODUCTION=ON...")
-    os.makedirs(BUILD_DIR, exist_ok=True)
+    os.makedirs(build_dir, exist_ok=True)
+
+    generator, platform = choose_cmake_generator(generator, platform)
+    if generator:
+        print(f"  CMake generator: {generator}")
+    single_config = is_single_config_generator(generator)
+    if single_config:
+        platform = None
+    if platform:
+        print(f"  CMake platform: {platform}")
 
     cmake_args = [
-        "cmake", "-S", ROOT, "-B", BUILD_DIR,
-        "-G", "Visual Studio 17 2022", "-A", "x64",
+        "cmake", "-S", ROOT, "-B", build_dir,
         "-DCXXIME_PRODUCTION_BUILD=ON",
     ]
+    if generator:
+        cmake_args.extend(["-G", generator])
+    if platform:
+        cmake_args.extend(["-A", platform])
     if skip_tests:
         cmake_args.append("-DCXXIME_BUILD_TESTS=OFF")
     if skip_tools:
         cmake_args.append("-DCXXIME_BUILD_TOOLS=OFF")
+    if single_config:
+        cmake_args.append(f"-DCMAKE_BUILD_TYPE={config}")
+        build_cmd = ["cmake", "--build", build_dir]
+    else:
+        build_cmd = ["cmake", "--build", build_dir, "--config", config]
+
     run(cmake_args)
-    run(["cmake", "--build", BUILD_DIR, "--config", config])
+    run(build_cmd)
 
 
 def clean_dist(keep_data: bool = False) -> None:
@@ -79,14 +132,17 @@ def clean_dist(keep_data: bool = False) -> None:
     os.makedirs(os.path.join(DIST_DIR, "data"), exist_ok=True)
 
 
-def copy_binaries(config: str) -> None:
+def copy_binaries(build_dir: str, config: str) -> None:
     """Copy built binaries to dist."""
     for name in ["cxxime_tsf.dll", "cxxime-server.exe", "cxxime-settings.exe"]:
-        src_dir = {
-            "cxxime_tsf.dll": os.path.join(BUILD_DIR, "tsf", config),
-            "cxxime-server.exe": os.path.join(BUILD_DIR, "server", config),
-            "cxxime-settings.exe": os.path.join(BUILD_DIR, "settings", config),
+        target_dir = {
+            "cxxime_tsf.dll": os.path.join(build_dir, "tsf"),
+            "cxxime-server.exe": os.path.join(build_dir, "server"),
+            "cxxime-settings.exe": os.path.join(build_dir, "settings"),
         }[name]
+        src_dir = os.path(target_dir, config)
+        if not os.path.isdir(src_dir):
+            src_dir = target_dir
         src = os.path.join(src_dir, name)
         if not os.path.isfile(src):
             print(f"  ERROR: binary not found: {src}", file=sys.stderr)
@@ -316,7 +372,7 @@ def print_summary(config: str) -> None:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="CxxIME packaging — build, prepare dicts, create installer"
+        description="CxxIME packaging - build, prepare dicts, create installer"
     )
     parser.add_argument(
         "--debug", action="store_true",
@@ -324,7 +380,11 @@ def main():
     )
     parser.add_argument(
         "--clean", action="store_true",
-        help="Clean rebuild — delete build/ directory before cmake",
+        help="Clean rebuild - delete package build directory before cmake",
+    )
+    parser.add_argument(
+        "--build-dir", default=DEFAULT_BUILD_DIR,
+        help="CMake build directory for package builds (default: build-package)",
     )
     parser.add_argument(
         "--skip-build", action="store_true",
@@ -358,25 +418,42 @@ def main():
         "--with-tools", action="store_false", dest="skip_tools",
         help="Build development tools",
     )
+    parser.add_argument(
+        "--generator",
+        help="CMake generator (default: let CMake choose, or USE CMAKE_GENERATOR)",
+    )
+    parser.add_argument(
+        "--platform",
+        help="CMake platform for generators that support -A, such as Visual Studio",
+    )
     args = parser.parse_args()
 
     config = "Debug" if args.debug else "Release"
+    build_dir = os.path.abspath(args.build_dir)
 
     print(f"=== CxxIME Packager v{VERSION} ({config}) ===")
 
     # 1. Build
     if args.skip_build:
-        print(f"\nSkipping build (--skip-build). Using existing binaries in {BUILD_DIR}.")
+        print(f"\nSkipping build (--skip-build). Using existing binaries in {build_dir}.")
     else:
         step("[1/6] Building...")
-        build(config, clean=args.clean, skip_tests=args.skip_tests, skip_tools=args.skip_tools)
+        build(
+            build_dir,
+            config,
+            clean=args.clean,
+            skip_tests=args.skip_tests,
+            skip_tools=args.skip_tools,
+            generator=args.generator,
+            platform=args.platform,
+        )
 
     # 2. Clean + copy
     step("[2/6] Preparing distribution directory...")
     clean_dist(keep_data=args.skip_dict)
 
     print("  Copying binaries...")
-    copy_binaries(config)
+    copy_binaries(build_dir, config)
 
     print("  Copying config and themes...")
     copy_config()

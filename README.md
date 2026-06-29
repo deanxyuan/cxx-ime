@@ -119,20 +119,23 @@ zf.write('pinyin.dict.db'); zf.close()
 构建 + 词典转换 + NSIS 安装程序编译：
 
 ```cmd
-scripts\package.bat              # Release 打包 → cxxime-v0.1.0-setup.exe
-scripts\package.bat debug        # Debug 打包
+scripts\package.py                     # Release 打包 → ..\output\cxxime-v0.1.0-setup.exe
+scripts\package.py --debug             # Debug 打包
+scripts\package.py --fast --skip-dict  # 快速复用已有 dist/data 词典打包
 ```
 
-需要预先安装 [NSIS 3.x](https://nsis.sourceforge.io/) 并确保 `makensis.exe` 在 PATH 中。如果未安装 NSIS，`package.bat` 会跳过安装程序生成，`dist/` 目录中保留原始分发文件。
+需要预先安装 [NSIS 3.x](https://nsis.sourceforge.io/) 并确保 `makensis.exe` 在 PATH 中。如果未安装 NSIS，`package.py` 会跳过安装程序生成，`dist/` 目录中保留原始分发文件。
 
-`package.bat` 执行流程：构建 → 词典转换（`.db` → `.bin`）→ NSIS 编译 → 输出单文件安装程序。
+`package.py` 执行流程：构建 → 复制配置 → 词典转换（`.db` → `.bin`）→ 数据校验 → NSIS 编译 → 输出单文件安装程序。
+
+打包脚本默认使用 `build-package\` 构建目录，避免和 `build.bat` 的开发构建目录互相污染。CMake 生成器默认交给 CMake 和当前命令行环境决定，也可以通过 `--generator`、`--platform` 或环境变量 `CXXIME_CMAKE_GENERATOR`、`CXXIME_CMAKE_PLATFORM` 覆盖。
 
 ## 安装
 
 运行 `cxxime-v0.1.0-setup.exe`，按向导提示操作：
 
-1. 选择安装模式：用户目录（默认 `%USERPROFILE%\cxxime\`）或程序目录
-2. 程序目录模式下可自定义安装路径，数据文件将放在安装目录下的 `data\` 子目录
+1. 选择程序安装目录，默认安装到 `C:\Program Files\CxxIME`
+2. 程序文件和出厂数据安装到安装目录，用户配置初始化到 `%USERPROFILE%\cxxime\`
 3. 安装程序自动注册 TSF DLL、配置自启动、创建开始菜单快捷方式
 4. 安装完成后**注销并重新登录**即可使用
 
@@ -141,9 +144,11 @@ scripts\package.bat debug        # Debug 打包
 - 开始菜单 → CxxIME → 卸载 CxxIME
 - 或控制面板 → 添加/删除程序 → CxxIME
 
+卸载默认只清理程序文件、开始菜单快捷方式、TSF 注册项、自启动项和卸载项，保留 `%USERPROFILE%\cxxime\` 下的用户配置和用户词典。
+
 ## 配置
 
-编辑安装目录下的 `data/default.json`：
+编辑用户目录下的 `%USERPROFILE%\cxxime\data\default.json`，或通过开始菜单打开 CxxIME Settings：
 
 ```json
 {
@@ -200,7 +205,7 @@ ctest -C Debug
 | 用户词典 | ✅ 就绪 | 内存数据结构 + TSV 持久化，shared_mutex 并发读写 |
 | TSF DLL | ✅ 就绪 | 按键捕获、编辑会话、候选上屏、候选窗口定位（GetTextExt 四层降级链）、DisplayAttributeProvider |
 | 候选窗口 | ✅ 就绪 | D2D 渲染（默认），可切换 GDI，14 套配色，DPI 缩放，屏幕边缘 clamp，圆角窗口 |
-| 安装部署 | ✅ 就绪 | NSIS 安装程序，支持用户目录/程序目录两种模式，开始菜单快捷方式，控制面板卸载 |
+| 安装部署 | ✅ 就绪 | NSIS 安装程序，程序安装到 Program Files，用户配置保存在 `%USERPROFILE%\cxxime\`，开始菜单快捷方式，控制面板卸载 |
 | 配置编辑器 | ✅ 就绪 | Win32 原生 GUI，左侧导航 + 右侧面板，支持所有配置项 |
 | 配置系统 | ✅ 就绪 | JSON 配置（page_size, font, theme, layout spacing/padding） |
 
