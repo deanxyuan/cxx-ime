@@ -17,17 +17,42 @@
 
 ### should_log() 采样策略
 
-分级采样，避免普通查询全量写日志：
+分级采样，避免普通查询全量写日志。策略由 `default.json` 的 `diagnostics` 段控制：
 
 | 条件 | 采样率 | 说明 |
 |------|--------|------|
 | `deadline_exceeded` 或 `cancelled` | 100% | 异常查询强制记录 |
 | `total_us >= 30ms` | 100% | 慢查询强制记录 |
 | `!cache_hit && total_us >= 10ms` | 100% | 缓存未命中且较慢 |
-| `truncated` | 1% | 被截断的查询（采样） |
-| 其他正常查询 | 0.1% | 低频采样 |
+| `truncated` | 默认 1% | 被截断的查询（采样） |
+| 其他正常查询 | 默认关闭 | 普通快速输入默认不采样 |
 
 采样函数 `should_sample(session_id, revision, rate)` 使用 mix64 哈希，同输入同结果（确定性）。
+
+
+### diagnostics 配置
+
+```json
+'diagnostics": {
+    "trace_mode": "normal",
+    "log_max_size": 8388608,
+    "log_max_files": 4,
+    "normal_sample_rate": 0,
+    "truncated_sample_rate": 100,
+    "slow_query_us": 30000,
+    "cache_miss_slow_us": 10000,
+    "slow_ipc_us": 2000,
+    "slow_window_us": 5000,
+    "slow_total_us": 10000
+}
+```
+
+`trace_mode` 取值:
+
+- `off`：完全关闭JSONL trace写入。
+- `error`：只记录失败、超时、取消等错误路径。
+- `normal`：记录错误、慢路径和少量截断采样。
+- `verbose`：短期复现问题时使用,记录所有 trace。
 
 ### 单一日志出口
 
@@ -37,9 +62,9 @@ Engine 只填充 `last_trace()` 字段，**不自动调用** `trace_.log()`。Se
 
 要求：
 
-- release 默认采样记录，debug 全量记录
-- 字符串字段限制长度，例如 `raw_input` 最多 128 字节
-- 采样率硬编码在 `should_log()` 中（非配置项）
+- Release 默认低噪声记录，用户可以通过 `trace_mode=off` 关闭记录。
+- 字符串字段限制长度，例如 `raw_input` 最多 128 字节。
+- 采样率和慢路径阈值由 `diagnostics` 配置配置。
 
 ### CXXIME_LOG 热路径日志
 
@@ -132,9 +157,9 @@ MPSCQueue 的使用层包装，增加长度限制：
 
 ### 日志轮转
 
-- 单文件上限 64 MiB
-- 保留 4 代（`.1` 到 `.4`）
-- 日志目录总量上限 512 MiB，超过时按最后写入时间清理到 384 MiB
+- 单文件上限由 `diagnostics.log_max_size` 控制，默认8 MiB。
+- 保留代数由 `diagnostics.log_max_files` 控制，默认 4代。
+- 日志目录总量超过配置派生上限时，按最后写入时间清理旧的 `.log` / `.jsonl` 文件。
 - `tsf-*` 临时日志保留 7 天
 
 ## query_bench 工具

@@ -186,6 +186,29 @@ bool copy_file_utf8_path(const std::string& src, const std::string& dst) {
     return CopyFileW(wsrc.c_str(), wdst.c_str(), FALSE) != FALSE;
 }
 
+std::wstring module_dir() {
+    wchar_t path[MAX_PATH] = {};
+    if (!GetModuleFileNameW(nullptr, path, MAX_PATH))
+        return {};
+    std::wstring dir(path);
+    size_t pos = dir.find_last_of(L"\\/");
+    if (pos != std::wstring::npos)
+        dir.resize(pos);
+    return dir;
+}
+
+std::wstring find_collect_diagnostics_script() {
+    std::wstring dir = module_dir();
+    if (dir.empty())
+        return {};
+
+    std::wstring script = dir + L"\\collect_diagnostics.ps1";
+    DWORD attr = GetFileAttributesW(script.c_str());
+    if (attr != INVALID_FILE_ATTRIBUTES && !(attr & FILE_ATTRIBUTE_DIRECTORY))
+        return script;
+    return {};
+}
+
 void set_edit_int(HWND e, int v) {
     wchar_t b[32]; _itow_s(v, b, 10); SetWindowTextW(e, b);
 }
@@ -655,6 +678,7 @@ void EditorApp::create_controls(HWND hwnd) {
 
     // ── Panel 5: About ──────────────────────────────────────────────
     HWND p5 = hPanels_[5]; t = kPanelPadTop;
+    SetWindowSubclass(p5, PanelForwardProc, 5000, (DWORD_PTR)hwnd);
     HFONT hAboutTitle = CreateFontW(-S(kFontPt + 2), 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
                                     DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                                     CLEARTYPE_QUALITY, 0, L"Microsoft YaHei UI");
@@ -670,6 +694,11 @@ void EditorApp::create_controls(HWND hwnd) {
     mk_about(L"轻量级 Windows TSF 输入法（拼音 / 五笔）", t + kRowH * 2, kCtrlH, get_font());
     mk_about(L"https://gitee.com/shadowyuan/cxx-ime", t + kRowH * 3, kCtrlH, get_font());
     mk_about(L"https://github.com/deanxyuan/cxx-ime", t + kRowH * 4, kCtrlH, get_font());
+    HWND hDiag = CreateWindowExW(0, L"BUTTON", L"导出诊断包",
+                                 WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+                                 kPanelPadLeft, t + kRowH * 6, S(120), kCtrlH, p5,
+                                 (HMENU)5001, GetModuleHandle(nullptr), nullptr);
+    SendMessageW(hDiag, WM_SETFONT, (WPARAM)get_font(), TRUE);
 
     // Buttons (saveX/cancelX/appX/by calculated above)
     CreateWindowExW(0, L"BUTTON", L"确定",
@@ -1319,6 +1348,31 @@ void EditorApp::open_user_dict_dir() {
     ShellExecuteW(hwnd_, L"open", dir.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
 }
 
+void EditorApp::export_diagnostics() {
+    std::wstring script = find_collect_diagnostics_script();
+    if (script.empty()) {
+        MessageBoxW(hwnd_,
+                    L"未找到 collect_diagnostics.ps1。请确认当前版本已完整安装。",
+                    L"CxxIME", MB_OK | MB_ICONERROR);
+        return;
+    }
+
+    std::wstring dir = script;
+    size_t pos = dir.find_last_of(L"\\/");
+    if (pos != std::wstring::npos)
+        dir.resize(pos);
+
+    std::wstring params = L"-NoProfile -ExecutionPolicy Bypass -File \"" + script + L"\"";
+    HINSTANCE result = ShellExecuteW(hwnd_, L"open", L"powershell.exe", params.c_str(),
+                                     dir.empty() ? nullptr : dir.c_str(), SW_SHOWNORMAL);
+    if ((INT_PTR)result <= 32) {
+        MessageBoxW(hwnd_, L"启动诊断导出失败。", L"CxxIME", MB_OK | MB_ICONERROR);
+        return;
+    }
+    MessageBoxW(hwnd_, L"正在导出诊断包，完成后会在桌面生成 cxxime-diagnostics-*.zip。",
+                L"CxxIME", MB_OK | MB_ICONINFORMATION);
+}
+
 void EditorApp::on_user_entry_selected() {
     if (!hDictList_)
         return;
@@ -1599,6 +1653,10 @@ LRESULT CALLBACK EditorApp::wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 a->clear_user_entry_form();
                 a->refresh_user_entries();
             }
+            break;
+        case 5001:
+            if (HIWORD(wp) == BN_CLICKED)
+                a->export_diagnostics();
             break;
         case 1000: // input mode combo
             if (HIWORD(wp) == CBN_SELCHANGE) {

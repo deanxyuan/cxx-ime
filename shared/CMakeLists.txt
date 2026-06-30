@@ -4,6 +4,7 @@ add_library(cxxime-shared STATIC
     src/key_event.cc
     src/data_path.cc
     src/config_monitor.cc
+    src/diagnostics_config.cc
     src/mpscq.cc
     src/query_trace_log.cc
 )
@@ -13,3 +14,4 @@ target_include_directories(cxxime-shared PUBLIC
 )
 
 target_link_libraries(cxxime-shared PUBLIC shell32)
+target_link_libraries(cxxime-shared PUBLIC nlohmann_json)

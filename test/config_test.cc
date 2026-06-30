@@ -72,6 +72,42 @@ TEST(Config, load_partial_json) {
     std::remove(path);
 }
 
+TEST(Config, load_diagnostics_section) {
+    const char* path = "test_diagnostics_config.json";
+    {
+        std::ofstream f(path);
+        f << R"({
+            "diagnostics": {
+                "trace_mode": "error",
+                "log_max_size": 1048576,
+                "log_max_files": 2,
+                "normal_sample_rate": 0,
+                "truncated_sample_rate": 50,
+                "slow_query_us": 20000,
+                "cache_miss_slow_us": 5000,
+                "slow_ipc_us": 1000,
+                "slow_window_us": 3000,
+                "slow_total_us": 7000
+            }
+        })";
+    }
+
+    cxxime::Config cfg;
+    ASSERT_TRUE(cfg.load(path));
+    ASSERT_EQ(cfg.diagnostics.trace_mode, cxxime::DiagnosticTraceMode::kError);
+    ASSERT_EQ(cfg.diagnostics.log_max_size, (size_t)1048576);
+    ASSERT_EQ(cfg.diagnostics.log_max_files, 2);
+    ASSERT_EQ(cfg.diagnostics.normal_sample_rate, 0);
+    ASSERT_EQ(cfg.diagnostics.truncated_sample_rate, 50);
+    ASSERT_EQ(cfg.diagnostics.slow_query_us, 20000);
+    ASSERT_EQ(cfg.diagnostics.cache_miss_slow_us, 5000);
+    ASSERT_EQ(cfg.diagnostics.slow_ipc_us, 1000);
+    ASSERT_EQ(cfg.diagnostics.slow_window_us, 3000);
+    ASSERT_EQ(cfg.diagnostics.slow_total_us, 7000);
+
+    std::remove(path);
+}
+
 TEST(Config, inline_preedit_false) {
     const char* path = "test_preedit_config.json";
     {

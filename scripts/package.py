@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import shutil
@@ -45,6 +46,7 @@ def run(cmd: list[str], **kwargs) -> None:
     """Run a command, raising on failure."""
     subprocess.run(cmd, check=True, **kwargs)
 
+
 def choose_cmake_generator(
     generator: str | None,
     platform: str | None,
@@ -52,16 +54,18 @@ def choose_cmake_generator(
     """Choose CMake generator/platform from explicit args or environment."""
     if generator:
         return generator, platform
-    
+
     env_generator = os.environ.get("CXXIME_CMAKE_GENERATOR") or os.environ.get("CMAKE_GENERATOR")
     env_platform = os.environ.get("CXXIME_CMAKE_PLATFORM") or os.environ.get("CMAKE_GENERATOR_PLATFORM")
-    return env_generator, env_platform
+    return env_generator, platform or env_platform
+
 
 def is_single_config_generator(generator: str | None) -> bool:
     """Return true for generators that use CMAKE_BUILD_TYPE."""
     if not generator:
         return False
     return any(generator == name or generator.startswith(name + " ") for name in SINGLE_CONFIG_GENERATORS)
+
 
 def build(
     build_dir: str,
@@ -87,7 +91,7 @@ def build(
     if single_config:
         platform = None
     if platform:
-        print(f"  CMake platform: {platform}")
+        print(f"  CMake platform:  {platform}")
 
     cmake_args = [
         "cmake", "-S", ROOT, "-B", build_dir,
@@ -97,10 +101,8 @@ def build(
         cmake_args.extend(["-G", generator])
     if platform:
         cmake_args.extend(["-A", platform])
-    if skip_tests:
-        cmake_args.append("-DCXXIME_BUILD_TESTS=OFF")
-    if skip_tools:
-        cmake_args.append("-DCXXIME_BUILD_TOOLS=OFF")
+    cmake_args.append(f"-DCXXIME_BUILD_TESTS={'OFF' if skip_tests else 'ON'}")
+    cmake_args.append(f"-DCXXIME_BUILD_TOOLS={'OFF' if skip_tools else 'ON'}")
     if single_config:
         cmake_args.append(f"-DCMAKE_BUILD_TYPE={config}")
         build_cmd = ["cmake", "--build", build_dir]
@@ -140,7 +142,7 @@ def copy_binaries(build_dir: str, config: str) -> None:
             "cxxime-server.exe": os.path.join(build_dir, "server"),
             "cxxime-settings.exe": os.path.join(build_dir, "settings"),
         }[name]
-        src_dir = os.path(target_dir, config)
+        src_dir = os.path.join(target_dir, config)
         if not os.path.isdir(src_dir):
             src_dir = target_dir
         src = os.path.join(src_dir, name)
@@ -260,15 +262,18 @@ def check_hot_path_logs() -> None:
 
 
 def check_log_rotation() -> None:
-    """Check that log_max_size is configured."""
+    """Check that diagnostics log rotation is configured."""
     print("  Checking log rotation config...")
     default_json = os.path.join(DIST_DIR, "data", "default.json")
     if os.path.isfile(default_json):
         with open(default_json, encoding="utf-8") as f:
-            if "log_max_size" in f.read():
-                print("  Log rotation config found.")
+            cfg = json.load(f)
+            diag = cfg.get("diagnostics", {})
+            required = ("trace_mode", "log_max_size", "log_max_files")
+            if isinstance(diag, dict) and all(k in diag for k in required):
+                print("  Diagnostics log rotation config found.")
                 return
-    print("  WARNING: default.json does not contain log_max_size.")
+    print("  WARNING: default.json does not contain diagnostics log rotation config.")
 
 
 def copy_installer_scripts(config: str) -> None:
@@ -276,6 +281,7 @@ def copy_installer_scripts(config: str) -> None:
     files = [
         "install.bat", "uninstall.bat",
         "install.ps1", "uninstall.ps1",
+        "collect_diagnostics.ps1",
     ]
     for fn in files:
         src = os.path.join(SCRIPTS, fn)
@@ -366,6 +372,7 @@ def print_summary(config: str) -> None:
     print("  uninstall.bat            Uninstaller (run as admin)")
     print("  install.ps1              PowerShell installer (optional)")
     print("  uninstall.ps1            PowerShell uninstaller (optional)")
+    print("  collect_diagnostics.ps1  Diagnostics collector")
     print("  cxxime-setup.nsi         NSIS script")
     print("  license.txt              License")
 
@@ -420,7 +427,7 @@ def main():
     )
     parser.add_argument(
         "--generator",
-        help="CMake generator (default: let CMake choose, or USE CMAKE_GENERATOR)",
+        help="CMake generator (default: let CMake choose, or use CMAKE_GENERATOR)",
     )
     parser.add_argument(
         "--platform",

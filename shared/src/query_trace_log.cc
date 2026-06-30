@@ -3,6 +3,7 @@
 #include <cxxime/query_trace.h>
 #include <cxxime/mpscq.h>
 #include <cxxime/logging.h>
+#include <cxxime/diagnostics_config.h>
 #include <windows.h>
 #include <shlobj.h>
 #include <cstdio>
@@ -20,22 +21,12 @@ namespace cxxime {
 
 // ─── Configuration ───────────────────────────────────────────
 
-static constexpr size_t kMaxLogSize = 64 * 1024 * 1024;       // 64 MiB per file
-static constexpr int kMaxLogGenerations = 4;                   // Keep 4 generations
-static constexpr size_t kMaxTotalLogSize = 512 * 1024 * 1024;  // 512 MiB total
-static constexpr size_t kTargetTotalLogSize = 384 * 1024 * 1024; // Clean to 384 MiB
-
 // Async queue configuration
 static constexpr int kQueueCapacity = 256;                     // Bounded queue size
 static constexpr int kBatchSize = 32;                          // Write batch size
 static constexpr auto kFlushInterval = std::chrono::milliseconds(100); // Flush interval
 
 // ─── Slow query thresholds ───────────────────────────────────
-
-static constexpr int64_t kSlowQueryUs = 30000;     // 30ms
-static constexpr int64_t kCacheMissSlowUs = 10000; // 10ms (non-cache-hit slow threshold)
-static constexpr int64_t kSlowIpcUs = 2000;        // 2ms
-static constexpr int64_t kSlowWindowUs = 5000;     // 5ms
 
 // ─── Queue entry (fixed size, no heap allocation) ────────────
 
@@ -168,7 +159,7 @@ static void ensure_log_dir() {
     }
 }
 
-static void rotate_log_file(FILE*& file, size_t& file_size) {
+static void rotate_log_file(FILE*& file, size_t& file_size, const DiagnosticsConfig& config) {
     if (file) {
         fclose(file);
         file = nullptr;
@@ -177,11 +168,11 @@ static void rotate_log_file(FILE*& file, size_t& file_size) {
     std::string base_path = get_trace_path();
 
     // Delete oldest generation
-    std::string oldest = base_path + "." + std::to_string(kMaxLogGenerations);
+    std::string oldest = base_path + "." + std::to_string(config.log_max_files);
     DeleteFileA(oldest.c_str());
 
     // Rotate existing files
-    for (int i = kMaxLogGenerations - 1; i >= 1; --i) {
+    for (int i = config.log_max_files - 1; i >= 1; --i) {
         std::string from = base_path + "." + std::to_string(i);
         std::string to = base_path + "." + std::to_string(i + 1);
         MoveFileA(from.c_str(), to.c_str());
@@ -218,7 +209,7 @@ static void cleanup_old_tsf_logs() {
     FindClose(hFind);
 }
 
-static void cleanup_oversized_logs() {
+static void cleanup_oversized_logs(const DiagnosticsConfig& config) {
     std::string dir = get_log_dir();
     if (dir.empty()) return;
 
@@ -253,7 +244,11 @@ static void cleanup_oversized_logs() {
     } while (FindNextFileA(hFind, &find_data));
     FindClose(hFind);
 
-    if (total_size > kMaxTotalLogSize) {
+    ULONGLONG max_total = static_cast<ULONGLONG>(config.log_max_size) *
+                          static_cast<ULONGLONG>(config.log_max_files + 1) * 2ULL;
+    ULONGLONG target_total = max_total * 3ULL / 4ULL;
+
+    if (total_size > max_total) {
         std::sort(files.begin(), files.end(),
             [](const FileInfo& a, const FileInfo& b) {
                 ULARGE_INTEGER a_time, b_time;
@@ -265,7 +260,7 @@ static void cleanup_oversized_logs() {
             });
 
         for (const auto& file : files) {
-            if (total_size <= kTargetTotalLogSize) break;
+            if (total_size <= target_total) break;
             DeleteFileA(file.path.c_str());
             total_size -= file.size;
         }
@@ -323,10 +318,11 @@ static void writer_thread_func() {
         // Write batch
         for (int i = 0; i < count; ++i) {
             const auto& entry = batch[i];
+            DiagnosticsConfig config = diagnostics_config();
 
             // Check rotation
-            if (file_size + entry.len + 1 > kMaxLogSize) {
-                rotate_log_file(file, file_size);
+            if (file_size + entry.len + 1 > config.log_max_size) {
+                rotate_log_file(file, file_size, config);
                 file = fopen(path.c_str(), "a");
                 if (!file) break;
                 file_size = 0;
@@ -346,7 +342,7 @@ static void writer_thread_func() {
         // Periodic cleanup
         write_count += count;
         if (write_count >= 1000) {
-            cleanup_oversized_logs();
+            cleanup_oversized_logs(diagnostics_config());
             write_count = 0;
         }
     }
@@ -358,8 +354,9 @@ static void writer_thread_func() {
         while (count > 0) {
             for (int i = 0; i < count; ++i) {
                 const auto& entry = batch[i];
-                if (file_size + entry.len + 1 > kMaxLogSize) {
-                    rotate_log_file(file, file_size);
+                DiagnosticsConfig config = diagnostics_config();
+                if (file_size + entry.len + 1 > config.log_max_size) {
+                    rotate_log_file(file, file_size, config);
                     file = fopen(path.c_str(), "a");
                     if (!file) break;
                     file_size = 0;
@@ -447,32 +444,42 @@ static inline uint64_t mix64(uint64_t x) {
 }
 
 bool QueryTrace::should_sample(uint32_t session_id, uint64_t revision, uint64_t query_id, int rate) {
+    if (rate <= 0)
+        return false;
     uint64_t h = mix64((uint64_t(session_id) << 32) ^ revision ^ query_id);
     return (h % rate) == 0;
 }
 
 bool QueryTrace::should_log() const {
-    // Always log if deadline exceeded or cancelled
+    DiagnosticsConfig config = diagnostics_config();
+    if (config.trace_mode == DiagnosticTraceMode::kOff)
+        return false;
+
     if (deadline_exceeded || cancelled)
         return true;
 
-    // Log slow queries
-    if (total_us >= kSlowQueryUs)
+    if (config.trace_mode == DiagnosticTraceMode::kError)
+        return false;
+
+    if (total_us >= config.slow_query_us)
         return true;
 
-    // Log cache-miss queries that are moderately slow
-    if (!cache_hit && total_us >= kCacheMissSlowUs)
+    if (!cache_hit && total_us >= config.cache_miss_slow_us)
         return true;
 
-    // Truncated queries: sample at 1%
+    if (config.trace_mode == DiagnosticTraceMode::kVerbose)
+        return true;
+
     if (truncated)
-        return should_sample(session_id, revision, query_id, 100);
+        return should_sample(session_id, revision, query_id, config.truncated_sample_rate);
 
-    // Normal queries: sample at 0.1%
-    return should_sample(session_id, revision, query_id, 1000);
+    return should_sample(session_id, revision, query_id, config.normal_sample_rate);
 }
 
 void QueryTrace::log() const {
+    if (!should_log())
+        return;
+
     char json_buf[1024];
     int len = to_json(json_buf, sizeof(json_buf));
     if (len <= 0) return;

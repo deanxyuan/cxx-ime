@@ -4,6 +4,7 @@
 #include <windows.h>
 #include <cxxime/logging.h>
 #include <cxxime/data_path.h>
+#include <cxxime/diagnostics_config.h>
 #include <json.hpp>
 #include <fstream>
 
@@ -139,6 +140,7 @@ bool SharedResources::load(const std::string& dict_path, const std::string& cfg_
         // Overlay user config from %USERPROFILE%\cxxime
         loaded_config->load(cxxime::user_data_path("default.json"));
         loaded_config->load_themes(cxxime::data_path("themes.json"));
+        cxxime::set_diagnostics_config(loaded_config->diagnostics);
     }
 
     // Load punctuation mapping (non-fatal)
@@ -311,6 +313,7 @@ void SharedResources::reload_config() {
     cfg->load(current_config_path);
     cfg->load(cxxime::user_data_path("default.json"));
     cfg->load_themes(cxxime::data_path("themes.json"));
+    cxxime::set_diagnostics_config(cfg->diagnostics);
     auto mapping = current_punct_path.empty()
         ? std::shared_ptr<const cxxime::PunctMapping>{}
         : load_punctuation_mapping(current_punct_path);
@@ -597,6 +600,12 @@ ProcessKeyResult SessionManager::process_key(uint32_t id, const cxxime::KeyEvent
     auto& engine = *s.engine;
     auto resources = shared_.snapshot();
     apply_resource_snapshot(s, resources);
+    bool trace_enabled = true;
+    if (resources.config) {
+        trace_enabled =
+            resources.config->diagnostics.trace_mode != cxxime::DiagnosticTraceMode::kOff;
+    }
+    engine.set_trace_enabled(trace_enabled);
 
     // 0. Check config snapshot to detect hot reload.
     if (resources.config && resources.config.get() != s.resources.config.get()) {
@@ -687,7 +696,7 @@ ProcessKeyResult SessionManager::process_key(uint32_t id, const cxxime::KeyEvent
     }
 
     // trace log
-    if (engine.last_trace().should_log()) {
+    if (trace_enabled && engine.last_trace().should_log()) {
         engine.last_trace().log();
     }
 

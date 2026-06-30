@@ -81,6 +81,10 @@ bool Config::load(const std::string& path) {
             load_bool(sw, "show_on_startup", status_window.show_on_startup);
         }
 
+        if (j.contains("diagnostics") && j["diagnostics"].is_object()) {
+            cxxime::load_diagnostics_config(path, &diagnostics);
+        }
+
         if (j.contains("ascii_composer") && j["ascii_composer"].is_object()) {
             auto& ac = j["ascii_composer"];
             if (ac.contains("switch_key") && ac["switch_key"].is_object()) {
@@ -182,6 +186,17 @@ bool Config::save(const std::string& path) const {
     j["status_window"]["x"] = status_window.x;
     j["status_window"]["y"] = status_window.y;
     j["status_window"]["show_on_startup"] = status_window.show_on_startup;
+
+    j["diagnostics"]["trace_mode"] = diagnostic_trace_mode_name(diagnostics.trace_mode);
+    j["diagnostics"]["log_max_size"] = diagnostics.log_max_size;
+    j["diagnostics"]["log_max_files"] = diagnostics.log_max_files;
+    j["diagnostics"]["normal_sample_rate"] = diagnostics.normal_sample_rate;
+    j["diagnostics"]["truncated_sample_rate"] = diagnostics.truncated_sample_rate;
+    j["diagnostics"]["slow_query_us"] = diagnostics.slow_query_us;
+    j["diagnostics"]["cache_miss_slow_us"] = diagnostics.cache_miss_slow_us;
+    j["diagnostics"]["slow_ipc_us"] = diagnostics.slow_ipc_us;
+    j["diagnostics"]["slow_window_us"] = diagnostics.slow_window_us;
+    j["diagnostics"]["slow_total_us"] = diagnostics.slow_total_us;
 
     nlohmann::json ac;
     nlohmann::json sk;
