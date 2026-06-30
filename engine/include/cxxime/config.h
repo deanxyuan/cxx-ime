@@ -5,6 +5,7 @@
 
 #include <string>
 #include <unordered_map>
+#include <cxxime/diagnostics_config.h>
 
 namespace cxxime {
 
@@ -61,6 +62,9 @@ struct Config {
         bool show_on_startup = true;
     };
     StatusWindowConfig status_window;
+
+    // diagnostics
+    DiagnosticsConfig diagnostics;
 
     // Color scheme loaded from themes.json.
     // Fields default to -1 = "not set" (resolved to Weasel-style fallbacks in load_themes).

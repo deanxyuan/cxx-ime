@@ -12,6 +12,7 @@
 #include <cxxime/query_scratch.h>
 #include <cxxime/mpscq.h>
 #include <cxxime/logging.h>
+#include <cxxime/diagnostics_config.h>
 #include <cxxime/engine.h>
 
 static std::string data_path(const char* rel) {
@@ -21,31 +22,36 @@ static std::string data_path(const char* rel) {
 // ─── QueryTrace::should_log() ──────────────────────────────────────────
 
 TEST(QueryTrace, should_log_deadline_exceeded) {
+    cxxime::reset_diagnostics_config();
     cxxime::QueryTrace t;
     t.deadline_exceeded = true;
     ASSERT_TRUE(t.should_log());
 }
 
 TEST(QueryTrace, should_log_cancelled) {
+    cxxime::reset_diagnostics_config();
     cxxime::QueryTrace t;
     t.cancelled = true;
     ASSERT_TRUE(t.should_log());
 }
 
 TEST(QueryTrace, should_log_slow_query) {
+    cxxime::reset_diagnostics_config();
     cxxime::QueryTrace t;
-    t.total_us = 50001;  // > kSlowQueryUs (50000)
+    t.total_us = 30001;
     ASSERT_TRUE(t.should_log());
 }
 
 TEST(QueryTrace, should_log_cache_miss_slow) {
+    cxxime::reset_diagnostics_config();
     cxxime::QueryTrace t;
     t.cache_hit = false;
-    t.total_us = 10001;  // > kCacheMissSlowUs (10000)
+    t.total_us = 10001;
     ASSERT_TRUE(t.should_log());
 }
 
 TEST(QueryTrace, should_log_fast_normal_not_logged) {
+    cxxime::reset_diagnostics_config();
     // A fast, non-truncated, normal query should mostly NOT be logged
     // (0.1% sampling rate means < 1 in 100 should log)
     cxxime::QueryTrace t;
@@ -68,6 +74,7 @@ TEST(QueryTrace, should_log_fast_normal_not_logged) {
 }
 
 TEST(QueryTrace, should_log_truncated_sampled) {
+    cxxime::reset_diagnostics_config();
     // Truncated queries use 1% sampling rate
     cxxime::QueryTrace t;
     t.truncated = true;
@@ -87,6 +94,41 @@ TEST(QueryTrace, should_log_truncated_sampled) {
     // With 1% rate, expect ~100 out of 10000. Allow 20-300 range.
     ASSERT_TRUE(logged_count > 20) << "logged_count=" << logged_count;
     ASSERT_TRUE(logged_count < 300) << "logged_count=" << logged_count;
+}
+
+TEST(QueryTrace, trace_mode_off_logs_nothing) {
+    cxxime::DiagnosticsConfig cfg;
+    cfg.trace_mode = cxxime::DiagnosticTraceMode::kOff;
+    cxxime::set_diagnostics_config(cfg);
+    cxxime::QueryTrace t;
+    t.deadline_exceeded = true;
+    t.cancelled = true;
+    t.total_us = 100000;
+    ASSERT_TRUE(!t.should_log());
+    cxxime::reset_diagnostics_config();
+}
+
+TEST(QueryTrace, trace_mode_error_logs_only_error_paths) {
+    cxxime::DiagnosticsConfig cfg;
+    cfg.trace_mode = cxxime::DiagnosticTraceMode::kError;
+    cxxime::set_diagnostics_config(cfg);
+    cxxime::QueryTrace t;
+    t.total_us = 100000;
+    ASSERT_TRUE(!t.should_log());
+    t.deadline_exceeded = true;
+    ASSERT_TRUE(t.should_log());
+    cxxime::reset_diagnostics_config();
+}
+
+TEST(QueryTrace, trace_mode_verbose_logs_fast_queries) {
+    cxxime::DiagnosticsConfig cfg;
+    cfg.trace_mode = cxxime::DiagnosticTraceMode::kVerbose;
+    cxxime::set_diagnostics_config(cfg);
+    cxxime::QueryTrace t;
+    t.cache_hit = true;
+    t.total_us = 10;
+    ASSERT_TRUE(t.should_log());
+    cxxime::reset_diagnostics_config();
 }
 
 // ─── should_sample() ──────────────────────────────────────────────────

@@ -6,6 +6,7 @@
 #include "display_attribute.h"
 #include <cxxime/logging.h>
 #include <cxxime/data_path.h>
+#include <cxxime/diagnostics_config.h>
 #include <cxxime/render_context.h>
 #include "preedit_mode.h"
 #include "language_bar.h"
@@ -16,10 +17,6 @@
 #include <shlobj.h>
 #include <unordered_map>
 
-// Slow query thresholds (microseconds)
-static constexpr int64_t kSlowIpcUs = 2000;       // IPC round-trip >= 2ms
-static constexpr int64_t kSlowWindowUs = 5000;    // candidate window >= 5ms
-static constexpr int64_t kSlowTotalUs = 10000;    // PROCESS_KEY total >= 10ms
 static constexpr auto kIpcHeartbeatInterval = std::chrono::milliseconds(1500);
 static constexpr int kTsfIpcTimeoutMs = 800;
 
@@ -73,7 +70,14 @@ int TextService::TsfTrace::to_json(char* buf, int size) const {
 }
 
 bool TextService::TsfTrace::should_log() const {
+    cxxime::DiagnosticsConfig config = cxxime::diagnostics_config();
+    if (config.trace_mode == cxxime::DiagnosticTraceMode::kOff)
+        return false;
     if (result == TsfResult::IPC_FAILED) return true;
+    if (config.trace_mode == cxxime::DiagnosticTraceMode::kError)
+        return false;
+    if (config.trace_mode == cxxime::DiagnosticTraceMode::kVerbose)
+        return true;
     if (slow) return true;
     return false;
 }
@@ -132,11 +136,14 @@ static std::string tsf_get_log_dir() {
     return utf8;
 }
 
-static void tsf_rotate_log(FILE*& file, size_t& file_size, const std::string& path) {
+static void tsf_rotate_log(FILE*& file, size_t& file_size, const std::string& path,
+                           const cxxime::DiagnosticsConfig& config) {
     if (file) { fclose(file); file = nullptr; }
-    DeleteFileA((path + ".3").c_str());
-    MoveFileA((path + ".2").c_str(), (path + ".3").c_str());
-    MoveFileA((path + ".1").c_str(), (path + ".2").c_str());
+    DeleteFileA((path + "." + std::to_string(config.log_max_files)).c_str());
+    for (int i = config.log_max_files - 1; i >= 1; --i) {
+        MoveFileA((path + "." + std::to_string(i)).c_str(),
+                  (path + "." + std::to_string(i + 1)).c_str());
+    }
     MoveFileA(path.c_str(), (path + ".1").c_str());
     file_size = 0;
 }
@@ -151,7 +158,6 @@ static void tsf_writer_thread_func() {
 
     FILE* file = nullptr;
     size_t file_size = 0;
-    static constexpr size_t kMaxFileSize = 64 * 1024 * 1024; // 64 MiB
 
     file = fopen(path.c_str(), "a");
     if (file) {
@@ -188,8 +194,9 @@ static void tsf_writer_thread_func() {
         }
 
         for (int i = 0; i < count; ++i) {
-            if (file_size + batch[i].len + 1 > kMaxFileSize) {
-                tsf_rotate_log(file, file_size, path);
+            cxxime::DiagnosticsConfig config = cxxime::diagnostics_config();
+            if (file_size + batch[i].len + 1 > config.log_max_size) {
+                tsf_rotate_log(file, file_size, path, config);
                 file = fopen(path.c_str(), "a");
                 if (!file) break;
             }
@@ -208,8 +215,9 @@ static void tsf_writer_thread_func() {
     if (file) {
         TsfTraceEntry entry;
         while (tsf_queue_pop_batch(&entry, 1) == 1) {
-            if (file_size + entry.len + 1 > kMaxFileSize) {
-                tsf_rotate_log(file, file_size, path);
+            cxxime::DiagnosticsConfig config = cxxime::diagnostics_config();
+            if (file_size + entry.len + 1 > config.log_max_size) {
+                tsf_rotate_log(file, file_size, path, config);
                 file = fopen(path.c_str(), "a");
                 if (!file) break;
             }
@@ -1286,7 +1294,11 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
         trace.result = TsfResult::IPC_FAILED;
         auto total_end = std::chrono::steady_clock::now();
         trace.total_us = std::chrono::duration_cast<std::chrono::microseconds>(total_end - _key_event_start).count();
-        trace.slow = (trace.ipc_us >= kSlowIpcUs) || (trace.total_us >= kSlowTotalUs);
+        {
+            cxxime::DiagnosticsConfig diag = cxxime::diagnostics_config();
+            trace.slow = (trace.ipc_us >= diag.slow_ipc_us) ||
+                         (trace.total_us >= diag.slow_total_us);
+        }
         _enqueue_trace(trace);
         return false;
     }
@@ -1431,7 +1443,12 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
     // Finalize and enqueue trace (async, non-blocking)
     auto total_end = std::chrono::steady_clock::now();
     trace.total_us = std::chrono::duration_cast<std::chrono::microseconds>(total_end - _key_event_start).count();
-    trace.slow = (trace.ipc_us >= kSlowIpcUs) || (trace.window_us >= kSlowWindowUs) || (trace.total_us >= kSlowTotalUs);
+    {
+        cxxime::DiagnosticsConfig diag = cxxime::diagnostics_config();
+        trace.slow = (trace.ipc_us >= diag.slow_ipc_us) ||
+                     (trace.window_us >= diag.slow_window_us) ||
+                     (trace.total_us >= diag.slow_total_us);
+    }
     _enqueue_trace(trace);
 
     return *pfEaten != FALSE;

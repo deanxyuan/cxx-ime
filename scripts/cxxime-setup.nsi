@@ -70,6 +70,7 @@ Section "Install"
     File "cxxime_tsf.dll"
     File "cxxime-server.exe"
     File "cxxime-settings.exe"
+    File "collect_diagnostics.ps1"
 
     !ifdef FAST
         SetCompress off
@@ -93,9 +94,9 @@ Section "Install"
     IfFileExists "$PROFILE\cxxime\default.json" user_default_exists 0
         File "data\default.json"
     user_default_exists:
-    IfFileExists "$PROFILE\cxxime\themes.json" user_theme_exists 0
+    IfFileExists "$PROFILE\cxxime\themes.json" user_themes_exists 0
         File "data\themes.json"
-    user_theme_exists:
+    user_themes_exists:
     IfFileExists "$PROFILE\cxxime\punctuation.json" user_punctuation_exists 0
         File "data\punctuation.json"
     user_punctuation_exists:
@@ -117,6 +118,7 @@ Section "Install"
     SetShellVarContext all
     CreateDirectory "$SMPROGRAMS\CxxIME"
     CreateShortCut "$SMPROGRAMS\CxxIME\CxxIME Settings.lnk" "$INSTDIR\cxxime-settings.exe"
+    CreateShortCut "$SMPROGRAMS\CxxIME\Collect Diagnostics.lnk" "$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" '-NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\collect_diagnostics.ps1"'
     CreateShortCut "$SMPROGRAMS\CxxIME\Uninstall CxxIME.lnk" "$INSTDIR\uninstall.exe"
 SectionEnd
 
@@ -169,6 +171,7 @@ Section "Uninstall"
         Delete /REBOOTOK "$INSTDIR\cxxime_tsf.dll.old"
     tsf_old_deleted:
 
+    Delete "$INSTDIR\collect_diagnostics.ps1"
     Delete "$INSTDIR\cxxime-server.exe"
     Delete "$INSTDIR\cxxime-settings.exe"
     Delete "$INSTDIR\data\default.json"

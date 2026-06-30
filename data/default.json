@@ -51,5 +51,17 @@
         "x": -1,
         "y": -1,
         "show_on_startup": true
+    },
+    "diagnostics": {
+        "trace_mode": "normal",
+        "log_max_size": 8388608,
+        "log_max_files": 4,
+        "normal_sample_rate": 0,
+        "truncated_sample_rate": 100,
+        "slow_query_us": 30000,
+        "cache_miss_slow_us": 10000,
+        "slow_ipc_us": 2000,
+        "slow_window_us": 5000,
+        "slow_total_us": 10000
     }
 }

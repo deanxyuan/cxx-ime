@@ -9,6 +9,7 @@
 #include <cxxime/config.h>
 #include <cxxime/data_path.h>
 #include <cxxime/logging.h>
+#include <cxxime/diagnostics_config.h>
 #include <atomic>
 
 // Forward declarations for DllRegisterServer/DllUnregisterServer
@@ -28,6 +29,7 @@ void reload_global_config() {
     g_config = cxxime::Config();
     g_config.load(cxxime::data_path("default.json"));
     g_config.load(cxxime::user_data_path("default.json"));
+    cxxime::set_diagnostics_config(g_config.diagnostics);
 }
 
 void init_config_monitor() {
