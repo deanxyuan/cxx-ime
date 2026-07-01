@@ -400,7 +400,130 @@ bool TextService::_foreground_allows_input() const {
 		return false;
 	}
 
+    bool shell_surface = 
+        wcscmp(class_name, L"CabinetWClass") == 0 ||
+        wcscmp(class_name, L"ExploreWClass") == 0 ||
+        wcscmp(class_name, L"ShellTabWindowClass") == 0 ||
+        wcscmp(class_name, L"#32770") == 0;
+    if (!shell_surface)
+        return true;
+
+    DWORD foreground_thread = GetWindowThreadProcessId(foreground, nullptr);
+    GUITHREADINFO gti = { sizeof(gti) };
+    if (!foreground_thread || !GetGUIThreadInfo(foreground_thread, &gti))
+        return true;
+
+    auto belongs_to_foreground = [foreground](HWND hwnd) {
+        return hwnd && (hwnd == foreground || IsChild(foreground, hwnd));
+    };
+
+    if (belongs_to_foreground(gti.hwndCaret))
+        return true;
+    
+    if (!belongs_to_foreground(gti.hwndFocus))
+        return true;
+
+    wchar_t focus_class[64] = {};
+    GetClassNameW(gti.hwndFocus, focus_class, ARRAYSIZE(focus_class));
+    if (wcscmp(focus_class, L"Edit") == 0 ||
+        wcscmp(focus_class, L"RichEdit") == 0 ||
+        wcscmp(focus_class, L"RICHEDIT50W") == 0) {
+        return true;
+    }
+
+    if (wcscmp(focus_class, L"SysListView32") == 0 ||
+        wcscmp(focus_class, L"SysTreeView32") == 0 ||
+        wcscmp(focus_class, L"DirectUIHWND") == 0 ||
+        wcscmp(focus_class, L"DUIViewWndClassName") == 0 ||
+        wcscmp(focus_class, L"SHELLDLL_DefView") == 0) {
+        return false;
+    }
+
 	return true;
+}
+
+bool TextService::_context_belongs_to_foreground(ITfContext* context) const {
+    if (!context)
+        return false;
+
+    HWND foreground = GetForegroundWindow();
+    if (!foreground)
+        return false;
+
+    ITfContextView* view = nullptr;
+    if (FAILED(context->GetActiveView(&view)) || !view)
+        return true;
+
+    HWND context_hwnd = nullptr;
+    HRESULT hr = view->GetWnd(&context_hwnd);
+    view->Release();
+
+    if (FAILED(hr) || !context_hwnd)
+        return true;
+
+    if (context_hwnd == foreground || IsChild(foreground, context_hwnd))
+        return true;
+
+    HWND context_root = GetAncestor(context_hwnd, GA_ROOT);
+    HWND foreground_root = GetAncestor(foreground, GA_ROOT);
+    return context_root && context_root == foreground_root;
+}
+
+bool TextService::_read_context_compartment_bool(ITfContext* context, REFGUID guid,
+                                                 bool* value) const {
+    if (!context || !value)
+        return false;
+
+    ITfCompartmentMgr* compartment_mgr = nullptr;
+    if (FAILED(context->QueryInterface(IID_ITfCompartmentMgr,
+                                       reinterpret_cast<void**>(&compartment_mgr))) ||
+        !compartment_mgr) {
+        return false;
+    }
+
+    ITfCompartment* compartment = nullptr;
+    HRESULT hr = compartment_mgr->GetCompartment(guid, &compartment);
+    compartment_mgr->Release();
+    if (FAILED(hr) || !compartment)
+        return false;
+    
+    VARIANT current = {};
+    VariantInit(&current);
+    bool found = false;
+    if (SUCCEEDED(compartment->GetValue(&current))) {
+        if (current.vt == VT_I4 || current.vt == VT_INT) {
+            *value = current.lVal != 0;
+            found = true;
+        } else if (current.vt == VT_UI4 || current.vt == VT_UINT) {
+            *value = current.ulVal != 0;
+            found = true;
+        } else if (current.vt == VT_BOOL) {
+            *value = current.boolVal != VARIANT_FALSE;
+            found = true;
+        }
+    }
+    VariantClear(&current);
+    compartment->Release();
+    return found;
+}
+
+bool TextService::_context_keyboard_disabled(ITfContext* context) const {
+    if (!context)
+        return true;
+
+    bool disabled = false;
+    if (_read_context_compartment_bool(context, GUID_COMPARTMENT_KEYBOARD_DISABLED, &disabled) &&
+        disabled) {
+        return true;
+    }
+
+    bool empty_context = false;
+    if (_read_context_compartment_bool(context, GUID_COMPARTMENT_EMPTYCONTEXT, &empty_context) &&
+        empty_context) {
+        return true;
+    }
+
+    return false;
 }
 
 bool TextService::_context_allows_input(ITfContext* context) const {
@@ -408,6 +531,10 @@ bool TextService::_context_allows_input(ITfContext* context) const {
 		return false;
 	if (!_foreground_allows_input())
 		return false;
+    if (!_context_belongs_to_foreground(context))
+        return false;
+    if (_context_keyboard_disabled(context))
+        return false;
 
 	TF_STATUS status = {};
 	if (FAILED(context->GetStatus(&status)))
@@ -421,7 +548,7 @@ bool TextService::_document_allows_input(ITfDocumentMgr* doc_mgr) const {
 		return false;
 
 	ITfContext* context = nullptr;
-	HRESULT hr = doc_mgr->GetBase(&context);
+	HRESULT hr = doc_mgr->GetTop(&context);
 	if (FAILED(hr) || !context)
 		return false;
 
@@ -818,7 +945,7 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
     // Connect to server and query initial status before adding language bar buttons.
     // Pre-set the mode button to match the server before AddItem, so TSF reads the
     // correct icon on the first GetIcon call.
-    bool initial_foreground_allows_input = _foreground_allows_input();
+    bool initial_input_allows_input = _query_input_focus_from_thread_mgr();
     cxxime::ImeStatus initial_status = {};
     initial_status.chinese_mode = true; // fallback default matching CLangBarItemButton ctor
     bool has_last_status = false;
@@ -828,10 +955,10 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
         if (has_last_status)
             initial_status = g_last_status;
     }
-    bool initial_caps_lock = initial_foreground_allows_input && _is_caps_lock_on(!has_last_status);
+    bool initial_caps_lock = initial_input_allows_input && _is_caps_lock_on(!has_last_status);
     _sessionId = 0;
     if (_ensure_ipc_session()) {
-        if (initial_foreground_allows_input) {
+        if (initial_input_allows_input) {
             _sync_caps_lock_state(initial_caps_lock, &initial_status);
         }
         cxxime::IPCResponse status_resp = {};
@@ -840,7 +967,7 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
             initial_status = status_resp.ime_status;
         }
     }
-    if (initial_foreground_allows_input && initial_caps_lock) {
+    if (initial_input_allows_input && initial_caps_lock) {
         initial_status.caps_lock = true;
         auto caps_it = _config.ascii_switch_key.find("Caps_Lock");
         if (caps_it != _config.ascii_switch_key.end() && caps_it->second != "noop") {
@@ -875,122 +1002,121 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
         CXXIME_LOG(L"Failed to get ITfLangBarItemMgr interface");
     }
 
-    // Initialize status window controller
-    if (initial_foreground_allows_input && _config.status_window.enable) {
-        if (!_statusController.initialize(nullptr, &_client, _sessionId, &_config)) {
-            CXXIME_LOG(L"StatusController: window creation failed, disabled");
-        } else {
+    // Initialize status window controller hidden; visibility is gated by input focus.
+    if (!_statusController.initialize(nullptr, &_client, _sessionId, &_config)) {
+        CXXIME_LOG(L"StatusController: window creation failed, disabled");
+    } else {
+        _statusController.update_config(_config);
+        _statusController.sync_status(initial_status);
+    }
+
+    // Set language bar callback for showing or hiding the status window.
+    if (_modeButton) {
+        _modeButton->set_show_status_callback([this]() {
+            _config.status_window.enable = !_config.status_window.enable;
             _statusController.update_config(_config);
-            _statusController.sync_status(initial_status);
-        }
-        // Set language bar callback for showing or hiding the status window.
-        if (_modeButton) {
-            _modeButton->set_show_status_callback([this]() {
-                _config.status_window.enable = !_config.status_window.enable;
-                _statusController.update_config(_config);
-                _config.save(cxxime::user_data_path("default.json"));
-                if (_config.status_window.enable) {
-                    _show_status_window_if_allowed();
-                } else {
-                    _statusController.hide();
-                }
-                _modeButton->set_status_visible(_config.status_window.enable);
-            });
-        }
-
-        // Set menu callback for left-click IPC toggle
-        if (_modeButton) {
-            _modeButton->set_menu_callback([this](int menu_id) {
-                CXXIME_LOG(L"menu_callback: menu_id=%d, sessionId=%u", menu_id, _sessionId);
-                cxxime::IPCResponse resp = {};
-                if (_ensure_ipc_session())
-                    _client.toggle_chinese(_sessionId, resp);
-                CXXIME_LOG(L"menu_callback: toggle_chinese result status=%d, chinese=%d",
-                           (int)resp.status, resp.ime_status.chinese_mode);
-                if (resp.status == cxxime::IPCStatus::OK) {
-                    _sync_ime_status(resp.ime_status);
-                }
-            });
-
-            // Set toggle input mode callback.
-            _modeButton->set_toggle_input_mode_callback([this]() {
-                CXXIME_LOG(L"toggle_input_mode_callback: sessionId=%u", _sessionId);
-                cxxime::IPCResponse resp = {};
-                if (_ensure_ipc_session())
-                    _client.switch_input_mode(_sessionId, resp);
-                if (resp.status == cxxime::IPCStatus::OK) {
-                    _sync_ime_status(resp.ime_status);
-                }
-            });
-
-            // Set open settings callback
-            _modeButton->set_open_settings_callback([]() {
-                HWND existing = FindWindowW(nullptr, L"CxxIME 设置");
-                if (existing) {
-                    SetForegroundWindow(existing);
-                    return;
-                }
-                wchar_t dll_path[MAX_PATH] = {};
-                GetModuleFileNameW(g_hInst, dll_path, MAX_PATH);
-                wchar_t* last_slash = wcsrchr(dll_path, L'\\');
-                if (last_slash) *(last_slash + 1) = L'\0';
-                std::wstring settings_path = std::wstring(dll_path) + L"cxxime-settings.exe";
-                STARTUPINFOW si = {};
-                si.cb = sizeof(si);
-                PROCESS_INFORMATION pi = {};
-                CreateProcessW(settings_path.c_str(), nullptr, nullptr, nullptr,
-                               FALSE, 0, nullptr, nullptr, &si, &pi);
-                if (pi.hProcess) {
-                    CloseHandle(pi.hProcess);
-                    CloseHandle(pi.hThread);
-                }
-            });
-
-            // Set about callback
-            _modeButton->set_about_callback([]() {
-                show_about_dialog();
-            });
-
-            // Set explicit input mode callback.
-            _modeButton->set_switch_input_mode_callback([this](int mode) {
-                CXXIME_LOG(L"switch_input_mode_callback: mode=%d, sessionId=%u", mode, _sessionId);
-                cxxime::IPCResponse resp = {};
-                if (_ensure_ipc_session())
-                    _client.switch_input_mode(_sessionId, static_cast<cxxime::InputMode>(mode), resp);
-                if (resp.status == cxxime::IPCStatus::OK) {
-                    _sync_ime_status(resp.ime_status);
-                }
-            });
-
-            // Set quick phrase callback.
-            _modeButton->set_quick_phrase_callback([this]() {
-                CXXIME_LOG(L"quick_phrase_callback: sessionId=%u", _sessionId);
-                HWND existing = FindWindowW(nullptr, L"CxxIME 设置");
-                if (existing) {
-                    // TODO: send message to switch to dictionary panel
-                    SetForegroundWindow(existing);
-                    return;
-                }
-                wchar_t dll_path[MAX_PATH] = {};
-                GetModuleFileNameW(g_hInst, dll_path, MAX_PATH);
-                wchar_t* last_slash = wcsrchr(dll_path, L'\\');
-                if (last_slash) *(last_slash + 1) = L'\0';
-                std::wstring settings_path = std::wstring(dll_path) + L"cxxime-settings.exe";
-                std::wstring cmd_line = L"\"" + settings_path + L"\" --quick-phrase";
-                STARTUPINFOW si = {};
-                si.cb = sizeof(si);
-                PROCESS_INFORMATION pi = {};
-                CreateProcessW(nullptr, &cmd_line[0], nullptr, nullptr,
-                               FALSE, 0, nullptr, nullptr, &si, &pi);
-                if (pi.hProcess) {
-                    CloseHandle(pi.hProcess);
-                    CloseHandle(pi.hThread);
-                }
-            });
-
-            // Set status visible state
+            _config.save(cxxime::user_data_path("default.json"));
+            if (_config.status_window.enable) {
+                _show_status_window_if_allowed();
+            } else {
+                _statusController.hide();
+            }
             _modeButton->set_status_visible(_config.status_window.enable);
-        }
+        });
+    }
+
+    // Set menu callback for left-click IPC toggle
+    if (_modeButton) {
+        _modeButton->set_menu_callback([this](int menu_id) {
+            CXXIME_LOG(L"menu_callback: menu_id=%d, sessionId=%u", menu_id, _sessionId);
+            cxxime::IPCResponse resp = {};
+            if (_ensure_ipc_session())
+                _client.toggle_chinese(_sessionId, resp);
+            CXXIME_LOG(L"menu_callback: toggle_chinese result status=%d, chinese=%d",
+                        (int)resp.status, resp.ime_status.chinese_mode);
+            if (resp.status == cxxime::IPCStatus::OK) {
+                _sync_ime_status(resp.ime_status);
+            }
+        });
+
+        // Set toggle input mode callback.
+        _modeButton->set_toggle_input_mode_callback([this]() {
+            CXXIME_LOG(L"toggle_input_mode_callback: sessionId=%u", _sessionId);
+            cxxime::IPCResponse resp = {};
+            if (_ensure_ipc_session())
+                _client.switch_input_mode(_sessionId, resp);
+            if (resp.status == cxxime::IPCStatus::OK) {
+                _sync_ime_status(resp.ime_status);
+            }
+        });
+
+        // Set open settings callback
+        _modeButton->set_open_settings_callback([]() {
+            HWND existing = FindWindowW(nullptr, L"CxxIME 设置");
+            if (existing) {
+                SetForegroundWindow(existing);
+                return;
+            }
+            wchar_t dll_path[MAX_PATH] = {};
+            GetModuleFileNameW(g_hInst, dll_path, MAX_PATH);
+            wchar_t* last_slash = wcsrchr(dll_path, L'\\');
+            if (last_slash) *(last_slash + 1) = L'\0';
+            std::wstring settings_path = std::wstring(dll_path) + L"cxxime-settings.exe";
+            STARTUPINFOW si = {};
+            si.cb = sizeof(si);
+            PROCESS_INFORMATION pi = {};
+            CreateProcessW(settings_path.c_str(), nullptr, nullptr, nullptr,
+                            FALSE, 0, nullptr, nullptr, &si, &pi);
+            if (pi.hProcess) {
+                CloseHandle(pi.hProcess);
+                CloseHandle(pi.hThread);
+            }
+        });
+
+        // Set about callback
+        _modeButton->set_about_callback([]() {
+            show_about_dialog();
+        });
+
+        // Set explicit input mode callback.
+        _modeButton->set_switch_input_mode_callback([this](int mode) {
+            CXXIME_LOG(L"switch_input_mode_callback: mode=%d, sessionId=%u", mode, _sessionId);
+            cxxime::IPCResponse resp = {};
+            if (_ensure_ipc_session())
+                _client.switch_input_mode(_sessionId, static_cast<cxxime::InputMode>(mode), resp);
+            if (resp.status == cxxime::IPCStatus::OK) {
+                _sync_ime_status(resp.ime_status);
+            }
+        });
+
+        // Set quick phrase callback.
+        _modeButton->set_quick_phrase_callback([this]() {
+            CXXIME_LOG(L"quick_phrase_callback: sessionId=%u", _sessionId);
+            HWND existing = FindWindowW(nullptr, L"CxxIME 设置");
+            if (existing) {
+                // TODO: send message to switch to dictionary panel
+                SetForegroundWindow(existing);
+                return;
+            }
+            wchar_t dll_path[MAX_PATH] = {};
+            GetModuleFileNameW(g_hInst, dll_path, MAX_PATH);
+            wchar_t* last_slash = wcsrchr(dll_path, L'\\');
+            if (last_slash) *(last_slash + 1) = L'\0';
+            std::wstring settings_path = std::wstring(dll_path) + L"cxxime-settings.exe";
+            std::wstring cmd_line = L"\"" + settings_path + L"\" --quick-phrase";
+            STARTUPINFOW si = {};
+            si.cb = sizeof(si);
+            PROCESS_INFORMATION pi = {};
+            CreateProcessW(nullptr, &cmd_line[0], nullptr, nullptr,
+                            FALSE, 0, nullptr, nullptr, &si, &pi);
+            if (pi.hProcess) {
+                CloseHandle(pi.hProcess);
+                CloseHandle(pi.hThread);
+            }
+        });
+
+        // Set status visible state
+        _modeButton->set_status_visible(_config.status_window.enable);
     }
 
     // Avoid a redundant get_status IPC here. initial_status was already read
@@ -1002,7 +1128,7 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
     // }
     _activated = true;
     _start_state_poll_timer();
-    if (!initial_foreground_allows_input)
+    if (!initial_input_allows_input)
         _sync_caps_lock_state(_is_caps_lock_on(false));
     if (_config.status_window.enable && _config.status_window.show_on_startup) {
         _update_input_focus_from_thread_mgr();
