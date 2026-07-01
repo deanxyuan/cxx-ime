@@ -114,6 +114,9 @@ private:
     void _sync_ime_status(const cxxime::ImeStatus& status);
     void _sync_conversion_mode_compartment(const cxxime::ImeStatus& status);
     bool _foreground_allows_input() const;
+    bool _context_belongs_to_foreground(ITfContext* context) const;
+    bool _read_context_compartment_bool(ITfContext* context, REFGUID guid, bool* value) const;
+    bool _context_keyboard_disabled(ITfContext* context) const;
     bool _context_allows_input(ITfContext* context) const;
     bool _document_allows_input(ITfDocumentMgr* doc_mgr) const;
     bool _query_input_focus_from_thread_mgr() const;
