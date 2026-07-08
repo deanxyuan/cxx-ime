@@ -87,11 +87,13 @@ python tools/dict_convert.py input.yaml output.db
 | `pinyin.dict.bin` | `build_binary.py` 生成 | 否 | 拼音二进制词典（运行时） |
 | `pinyin.spellings.bin` | `build_binary.py` 生成 | 否 | Patricia trie 拼写索引（运行时） |
 | `pinyin.dict.idx` | `build_binary.py` 生成 | 否 | 音节 ID 索引（运行时） |
+| `pinyin.topn.bin` | `build_short_cache.py` 生成 | 否 | 短码候选缓存（运行时） |
 | `wubi86.dict.bin` | `build_binary.py` 生成 | 否 | 五笔二进制词典（运行时） |
+| `dictionary_manifest.json` | `prepare_dict.py` 生成 | 否 | 运行时词典 bundle 清单与校验哈希 |
 
 ### 词典维护
 
-数据来源链路：**zip → db → algebra → bin/idx/spellings**
+数据来源链路：**zip → db → algebra → bin/idx/spellings/topn → manifest**
 
 ```cmd
 # 0. 拉取后先解压（仅首次）

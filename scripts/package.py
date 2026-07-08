@@ -195,6 +195,15 @@ def prepare_dictionaries() -> None:
         sys.exit(1)
 
 
+def write_dictionary_manifest_for_existing_data() -> None:
+    """Rebuild manifest for existing dist/data dictionary files."""
+    from prepare_dict import write_dictionary_manifest
+
+    data_dir = os.path.join(DIST_DIR, "data")
+    manifest = write_dictionary_manifest(data_dir)
+    print(f"  {os.path.basename(manifest)}")
+
+
 def verify_data_files() -> None:
     """Run verify_data_files.py."""
     script = os.path.join(SCRIPTS, "verify_data_files.py")
@@ -363,6 +372,7 @@ def print_summary(config: str) -> None:
     print("    settings_presets.json  Settings UI presets")
     print("    themes.json            Color themes")
     print("    punctuation.json       Punctuation mapping")
+    print("    dictionary_manifest.json Dictionary bundle manifest")
     print("    pinyin.dict.bin        Pinyin binary dictionary (runtime)")
     print("    pinyin.dict.idx        Pinyin syllable index (runtime)")
     print("    pinyin.spellings.bin   Pinyin spelling trie (runtime)")
@@ -469,6 +479,7 @@ def main():
     if args.skip_dict:
         step("[3/6] Skipping dictionary generation (--skip-dict).")
         print("  Using existing files in dist/data/.")
+        write_dictionary_manifest_for_existing_data()
     else:
         step("[3/6] Preparing dictionaries...")
         prepare_dictionaries()

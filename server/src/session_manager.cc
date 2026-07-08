@@ -5,6 +5,7 @@
 #include <cxxime/logging.h>
 #include <cxxime/data_path.h>
 #include <cxxime/diagnostics_config.h>
+#include <cxxime/dictionary_manifest.h>
 #include <json.hpp>
 #include <fstream>
 
@@ -17,6 +18,7 @@ struct DictionaryResources {
     std::shared_ptr<cxxime::Syllabifier> syllabifier;
     std::string dict_path;
     std::string wubi_dict_path;
+    std::string manifest_path;
 };
 
 std::string user_dict_path_for(cxxime::UserDictKind kind) {
@@ -67,24 +69,53 @@ void parse_punct_section(const nlohmann::json& j, const char* section,
     }
 }
 
-bool load_dictionary_resources(const std::string& dict_path, DictionaryResources& out) {
+std::string manifest_role_path(const cxxime::DictionaryManifest& manifest,
+                               const char* role) {
+    const auto* file = manifest.find_role(role);
+    return file ? file->absolute_path : std::string{};
+}
+
+bool load_dictionary_resources(const std::string& manifest_path, DictionaryResources& out) {
+    cxxime::DictionaryManifest manifest;
+    std::string manifest_error;
+    if (!cxxime::load_dictionary_manifest(manifest_path, manifest, &manifest_error)) {
+        CXXIME_LOG(L"SharedResources: manifest load FAILED: %S", manifest_error.c_str());
+        return false;
+    }
+    if (!cxxime::validate_dictionary_manifest(manifest, &manifest_error)) {
+        CXXIME_LOG(L"SharedResources: manifest validate FAILED: %S", manifest_error.c_str());
+        return false;
+    }
+
+    std::string dict_path = manifest_role_path(manifest, "pinyin_dict");
+    std::string dict_idx_path = manifest_role_path(manifest, "pinyin_idx");
+    std::string topn_path = manifest_role_path(manifest, "pinyin_topn");
+    std::string spellings_path = manifest_role_path(manifest, "pinyin_spellings");
+    std::string wubi_dict_path = manifest_role_path(manifest, "wubi_dict");
+    std::string wubi_idx_path = manifest_role_path(manifest, "wubi_idx");
+
     auto loaded_dict = std::make_shared<cxxime::Dict>();
     std::string user_dict_path = user_dict_path_for(cxxime::UserDictKind::PINYIN);
-    if (!loaded_dict->open(dict_path, user_dict_path)) {
+    if (!loaded_dict->open_bundle(dict_path, user_dict_path, dict_idx_path, topn_path)) {
         CXXIME_LOG(L"SharedResources: dict.open FAILED");
         return false;
     }
 
     auto loaded_spellings = std::make_shared<cxxime::SpellingsIndex>();
     std::shared_ptr<cxxime::Syllabifier> loaded_syllabifier;
-    std::string sp_path = cxxime::Engine::derive_spellings_path(dict_path);
-    if (!sp_path.empty() && loaded_spellings->load(sp_path) && loaded_spellings->has_spellings()) {
+    if (!spellings_path.empty()) {
+        if (!loaded_spellings->load(spellings_path) || !loaded_spellings->has_spellings()) {
+            CXXIME_LOG(L"SharedResources: spellings load FAILED");
+            return false;
+        }
         loaded_syllabifier = std::make_shared<cxxime::Syllabifier>(*loaded_spellings);
     }
 
-    std::string wubi_dict_path = cxxime::data_path("wubi86.dict.bin");
     auto loaded_wubi_dict = std::make_shared<cxxime::Dict>();
-    if (!loaded_wubi_dict->open(wubi_dict_path, user_dict_path_for(cxxime::UserDictKind::WUBI))) {
+    if (wubi_dict_path.empty() ||
+        !loaded_wubi_dict->open_bundle(wubi_dict_path,
+                                       user_dict_path_for(cxxime::UserDictKind::WUBI),
+                                       wubi_idx_path, {})) {
         loaded_wubi_dict.reset();
         CXXIME_LOG(L"SharedResources: wubi dict not found, wubi mode disabled");
     } else {
@@ -97,6 +128,7 @@ bool load_dictionary_resources(const std::string& dict_path, DictionaryResources
     out.syllabifier = std::move(loaded_syllabifier);
     out.dict_path = dict_path;
     out.wubi_dict_path = std::move(wubi_dict_path);
+    out.manifest_path = manifest_path;
     return true;
 }
 
@@ -128,8 +160,9 @@ std::shared_ptr<const cxxime::PunctMapping> load_punctuation_mapping(const std::
 }  // anonymous namespace
 
 bool SharedResources::load(const std::string& dict_path, const std::string& cfg_path) {
+    std::string manifest_path = cxxime::dictionary_manifest_path_for_dict(dict_path);
     DictionaryResources dictionaries;
-    if (!load_dictionary_resources(dict_path, dictionaries))
+    if (!load_dictionary_resources(manifest_path, dictionaries))
         return false;
 
     auto loaded_config = std::make_shared<cxxime::Config>();
@@ -151,6 +184,7 @@ bool SharedResources::load(const std::string& dict_path, const std::string& cfg_
         std::lock_guard<std::mutex> lock(mutex);
         this->dict_path = std::move(dictionaries.dict_path);
         wubi_dict_path = std::move(dictionaries.wubi_dict_path);
+        this->manifest_path = std::move(dictionaries.manifest_path);
         config_path = std::move(loaded_config_path);
         dict = std::move(dictionaries.dict);
         wubi_dict = std::move(dictionaries.wubi_dict);
@@ -197,28 +231,40 @@ bool SharedResources::load_punctuation(const std::string& path) {
 }
 
 bool SharedResources::reload_dictionaries() {
-    std::lock_guard<std::mutex> lock(mutex);
-    std::string current_dict_path = dict_path;
-    if (current_dict_path.empty())
+    std::string current_manifest_path;
+    std::shared_ptr<cxxime::Dict> old_dict;
+    std::shared_ptr<cxxime::Dict> old_wubi_dict;
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        current_manifest_path = manifest_path;
+        old_dict = dict;
+        old_wubi_dict = wubi_dict;
+    }
+    if (current_manifest_path.empty())
         return false;
 
-    if (dict)
-        dict->save_user_dict();
-    if (wubi_dict)
-        wubi_dict->save_user_dict();
+    if (old_dict)
+        old_dict->save_user_dict();
+    if (old_wubi_dict)
+        old_wubi_dict->save_user_dict();
 
     DictionaryResources dictionaries;
-    if (!load_dictionary_resources(current_dict_path, dictionaries))
+    if (!load_dictionary_resources(current_manifest_path, dictionaries))
         return false;
 
-    dict = std::move(dictionaries.dict);
-    wubi_dict = std::move(dictionaries.wubi_dict);
-    spellings = std::move(dictionaries.spellings);
-    syllabifier = std::move(dictionaries.syllabifier);
-    dict_path = std::move(dictionaries.dict_path);
-    wubi_dict_path = std::move(dictionaries.wubi_dict_path);
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        dict = std::move(dictionaries.dict);
+        wubi_dict = std::move(dictionaries.wubi_dict);
+        spellings = std::move(dictionaries.spellings);
+        syllabifier = std::move(dictionaries.syllabifier);
+        dict_path = std::move(dictionaries.dict_path);
+        wubi_dict_path = std::move(dictionaries.wubi_dict_path);
+        manifest_path = std::move(dictionaries.manifest_path);
+    }
 
-    CXXIME_LOG(L"SharedResources: dictionaries reloaded");
+    CXXIME_LOG(L"SharedResources: dictionaries reloaded generation=%S",
+               current_manifest_path.c_str());
     return true;
 }
 
@@ -427,6 +473,8 @@ cxxime::IPCStatus SharedResources::save_user_dict(cxxime::UserDictKind kind) {
 }
 
 void SessionManager::reload_config() {
+    std::lock_guard<std::mutex> reload_lock(reload_mutex_);
+
     shared_.reload_config();
     auto resources = shared_.snapshot();
 
@@ -462,6 +510,8 @@ void SessionManager::reload_config() {
 }
 
 cxxime::IPCStatus SessionManager::reload_dictionaries() {
+    std::lock_guard<std::mutex> reload_lock(reload_mutex_);
+
     std::vector<std::shared_ptr<SessionEntry>> entries;
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -490,6 +540,7 @@ cxxime::IPCStatus SessionManager::reload_dictionaries() {
 }
 
 bool SessionManager::reload_punctuation(const std::string& path) {
+    std::lock_guard<std::mutex> reload_lock(reload_mutex_);
     return shared_.load_punctuation(path);
 }
 

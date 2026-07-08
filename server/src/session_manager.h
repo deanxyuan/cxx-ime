@@ -39,6 +39,7 @@ struct SharedResources {
     std::string punct_path;   // Stored for reload
     std::string dict_path;    // Stored for dictionary reload
     std::string wubi_dict_path;
+    std::string manifest_path;
     mutable std::mutex mutex;
 
     bool load(const std::string& dict_path, const std::string& config_path);
@@ -134,6 +135,7 @@ private:
     std::unordered_map<uint32_t, std::shared_ptr<SessionEntry>> sessions_;
     uint32_t next_id_ = 1;
     std::mutex mutex_;
+    std::mutex reload_mutex_;
 };
 
 #endif // CXXIME_SESSION_MANAGER_H_

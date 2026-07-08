@@ -12,6 +12,7 @@ data/*.dict.bin
 data/*.spellings.bin
 data/*.dict.idx
 data/*.topn.bin
+data/dictionary_manifest.json
 
 # Benchmark output
 *.jsonl

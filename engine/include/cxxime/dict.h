@@ -43,6 +43,10 @@ public:
 
     // Convenience: load main dict (.bin) + open user dict (TSV file)
     bool open(const std::string& dict_path, const std::string& user_dict_path = "");
+    bool open_bundle(const std::string& dict_path,
+                     const std::string& user_dict_path,
+                     const std::string& idx_path,
+                     const std::string& topn_path);
     void close();   // saves user dict before closing
     bool is_open() const;
 
@@ -100,6 +104,11 @@ public:
 
 private:
     bool load_id_index(const std::string& dict_bin_path);
+    bool load_id_index_file(const std::string& idx_path);
+    bool open_dict_with_aux(const std::string& bin_path,
+                            const std::string& idx_path,
+                            const std::string& topn_path,
+                            bool derive_aux_paths);
     void build_syllabary();
     void build_id_index();
     void unload_id_index();

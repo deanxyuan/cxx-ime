@@ -8,6 +8,7 @@
 #   2. Magic bytes correct for each binary file
 #   3. pinyin.topn.bin contains required short input keys
 #   4. pinyin.dict.idx and pinyin.dict.bin version consistency
+#   5. dictionary_manifest.json describes the complete pinyin bundle
 #
 # Usage: python verify_data_files.py --data-dir <dir>
 #
@@ -16,11 +17,14 @@
 #   1 = verification failed
 
 import argparse
+import hashlib
+import json
 import os
 import struct
 import sys
 
 REQUIRED_FILES = [
+    "dictionary_manifest.json",
     "pinyin.dict.bin",
     "pinyin.dict.idx",
     "pinyin.spellings.bin",
@@ -32,12 +36,27 @@ REQUIRED_FILES = [
 
 REQUIRED_TOPN_KEYS = ["s", "sd", "sdf", "sddf", "bj", "srf", "shrf"]
 
+REQUIRED_MANIFEST_ROLES = {
+    "pinyin_dict",
+    "pinyin_idx",
+    "pinyin_spellings",
+    "pinyin_topn",
+}
+
 # Magic values (first 8 bytes of each binary file)
 DICT_MAGIC_V1 = b"CXDIC\x01\x00\x00"
 DICT_MAGIC_V2 = b"CXDIC\x02\x00\x00"
 IDX_MAGIC = b"CXIDX\x00\x00\x00"
 SPELLINGS_MAGIC_V2 = b"CXSPL\x02\x00\x00"
 TOPN_MAGIC = b"CXTOPN\x01\x00"
+
+
+def sha256_file(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(block)
+    return h.hexdigest()
 
 
 def check_file_exists(data_dir, filename, errors):
@@ -157,6 +176,94 @@ def check_version_consistency(dict_ver, idx_ver, errors):
     return True
 
 
+def is_safe_manifest_path(path):
+    if not path:
+        return False
+    if path.startswith(("\\", "/")):
+        return False
+    if os.path.isabs(path):
+        return False
+    if ":" in path:
+        return False
+    parts = path.replace("\\", "/").split("/")
+    return all(part and part not in (".", "..") for part in parts)
+
+
+def check_dictionary_manifest(data_dir, errors):
+    path = os.path.join(data_dir, "dictionary_manifest.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            manifest = json.load(f)
+    except Exception as e:
+        errors.append(f"dictionary_manifest.json: cannot read manifest: {e}")
+        return False
+
+    if manifest.get("schema") != 1:
+        errors.append("dictionary_manifest.json: unsupported schema")
+        return False
+    files = manifest.get("files")
+    if not isinstance(files, list):
+        errors.append("dictionary_manifest.json: files must be an array")
+        return False
+
+    roles = set()
+    paths = set()
+    for item in files:
+        if not isinstance(item, dict):
+            errors.append("dictionary_manifest.json: file entry must be object")
+            return False
+        role = item.get("role")
+        rel = item.get("path")
+        expected_size = item.get("size")
+        expected_hash = item.get("sha256")
+        if (not role or not rel or not isinstance(expected_size, int) or
+                expected_size <= 0 or not expected_hash):
+            errors.append("dictionary_manifest.json: file entry missing role/path/size/sha256")
+            return False
+        if role in roles:
+            errors.append(f"dictionary_manifest.json: duplicate role: {role}")
+            return False
+        if rel.lower() in paths:
+            errors.append(f"dictionary_manifest.json: duplicate path: {rel}")
+            return False
+        if not is_safe_manifest_path(rel):
+            errors.append(f"dictionary_manifest.json: unsafe path: {rel}")
+            return False
+        if not isinstance(expected_hash, str) or len(expected_hash) != 64:
+            errors.append(f"dictionary_manifest.json: invalid sha256 for {rel}")
+            return False
+        try:
+            int(expected_hash, 16)
+        except ValueError:
+            errors.append(f"dictionary_manifest.json: invalid sha256 for {rel}")
+            return False
+        roles.add(role)
+        paths.add(rel.lower())
+        file_path = os.path.join(data_dir, rel)
+        if not os.path.isfile(file_path):
+            errors.append(f"dictionary_manifest.json: listed file missing: {rel}")
+            return False
+        actual_size = os.path.getsize(file_path)
+        if actual_size != expected_size:
+            errors.append(
+                f"dictionary_manifest.json: size mismatch for {rel}: "
+                f"expected {expected_size}, actual {actual_size}"
+            )
+            return False
+        actual_hash = sha256_file(file_path)
+        if actual_hash.lower() != expected_hash.lower():
+            errors.append(f"dictionary_manifest.json: sha256 mismatch for {rel}")
+            return False
+
+    missing_roles = sorted(REQUIRED_MANIFEST_ROLES - roles)
+    if missing_roles:
+        errors.append(
+            "dictionary_manifest.json: missing role(s): " + ", ".join(missing_roles)
+        )
+        return False
+    return True
+
+
 def verify(data_dir):
     """Run all checks. Return list of error strings (empty = pass)."""
     errors = []
@@ -170,6 +277,7 @@ def verify(data_dir):
         return errors
 
     # 2. Magic and version checks
+    check_dictionary_manifest(data_dir, errors)
     dict_ver = check_dict_bin(data_dir, errors)
     idx_ver = check_dict_idx(data_dir, errors)
     check_spellings_bin(data_dir, errors)
