@@ -66,6 +66,7 @@ public:
     // Helper
     HRESULT insert_text(const std::wstring& text, bool sync = false);
     void update_composition(ITfContext* pic, const std::wstring& preedit);
+    bool apply_composition_display_attribute(ITfContext* pic, ITfRange* range, TfEditCookie ec);
     ITfComposition* get_composition() const { return _composition; }
     void set_composition(ITfComposition* comp) { _composition = comp; }
     void set_composing(bool val) { _composing = val; }
@@ -103,6 +104,7 @@ private:
     HRESULT _unregister_key_event_sink();
     HRESULT _register_preserved_key();
     HRESULT _unregister_preserved_key();
+    bool _register_display_attribute_atom();
     HRESULT _start_composition(ITfContext* pic);
     HRESULT _end_composition(ITfContext* pic);
     HRESULT _update_composition_text(ITfContext* pic, const std::wstring& text, TfEditCookie ec);
@@ -141,6 +143,7 @@ private:
     DWORD _activateFlags = 0;
     DWORD _dwThreadFocusCookie = TF_INVALID_COOKIE;
     DWORD _dwThreadMgrEventCookie = TF_INVALID_COOKIE;
+    TfGuidAtom _displayAttributeAtom = 0;
 
     cxxime::IpcClient _client;
     uint32_t _sessionId = 0;
