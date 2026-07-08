@@ -886,6 +886,7 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
     _clientId = tid;
     _activateFlags = dwFlags;
     _seenKeyAfterActivate = false;
+    _register_display_attribute_atom();
 
     _register_key_event_sink();
     _register_preserved_key();
@@ -1898,6 +1899,50 @@ HRESULT TextService::_unregister_preserved_key() {
     HRESULT hr = pKeystrokeMgr->UnpreserveKey(c_guidPreservedKey_Toggle, nullptr);
     pKeystrokeMgr->Release();
     return hr;
+}
+
+bool TextService::_register_display_attribute_atom() {
+    ITfCategoryMgr* category_mgr = nullptr;
+    HRESULT hr = CoCreateInstance(CLSID_TF_CategoryMgr, nullptr, CLSCTX_INPROC_SERVER,
+                                  IID_ITfCategoryMgr, reinterpret_cast<void**>(&category_mgr));
+    if (FAILED(hr) || !category_mgr)
+        return false;
+    
+    hr = category_mgr->RegisterGUID(c_guidDisplayAttribute, &_displayAttributeAtom);
+    category_mgr->Release();
+    if (FAILED(hr)) {
+        _displayAttributeAtom = 0;
+        CXXIME_LOG(L"Register display attribute atom failed: hr=0x%08x", hr);
+        return false;
+    }
+
+    return true;
+}
+
+bool TextService::apply_composition_display_attribute(ITfContext* pic,
+                                                      ITfRange* range,
+                                                      TfEditCookie ec) {
+    if (!pic || !range || !_displayAttributeAtom)
+        return false;
+
+    ITfProperty* property = nullptr;
+    HRESULT hr = pic->GetProperty(GUID_PROP_ATTRIBUTE, &property);
+    if (FAILED(hr) || !property)
+        return false;
+
+    VARIANT value = {};
+    VariantInit(&value);
+    value.vt = VT_I4;
+    value.lVal = _displayAttributeAtom;
+    hr = property->SetValue(ec, range, &value);
+    VariantClear(&value);
+    property->Release();
+
+    if (FAILED(hr)) {
+        CXXIME_LOG(L"Set composition display attribute failed: hr=0x%08x", hr);
+        return false;
+    }
+    return true;
 }
 
 HRESULT TextService::_start_composition(ITfContext* pic) {
