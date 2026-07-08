@@ -3,6 +3,8 @@
 #include "server_app.h"
 #include <cxxime/logging.h>
 #include <cxxime/data_path.h>
+#include <cxxime/dictionary_manifest.h>
+#include <cxxime/ipc_protocol.h>
 #include <cstring>
 #include <algorithm>
 
@@ -71,11 +73,18 @@ bool ServerApp::initialize(const std::string& dict_path, const std::string& conf
         return false;
     }
 
-    // Start config change watcher — reload config directly on change
+    // Start config change watcher; reload config directly on change.
     config_monitor_.initialize();
     config_monitor_.start([this]() {
         session_mgr_.reload_config();
     });
+
+    std::string manifest_path = cxxime::dictionary_manifest_path_for_dict(resolved_dict);
+    if (!dictionary_monitor_.start({manifest_path}, [this]() {
+            return session_mgr_.reload_dictionaries() == cxxime::IPCStatus::OK;
+        })) {
+        CXXIME_LOG(L"%s", L"DictionaryMonitor: start failed");
+    }
 
     return true;
 }
@@ -89,6 +98,7 @@ void ServerApp::run() {
 }
 
 void ServerApp::finalize() {
+    dictionary_monitor_.stop();
     config_monitor_.stop();
     ipc_server_.stop();
 

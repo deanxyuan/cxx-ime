@@ -37,11 +37,28 @@ bool Dict::open(const std::string& dict_path, const std::string& user_dict_path)
     return true;
 }
 
+bool Dict::open_bundle(const std::string& dict_path,
+                       const std::string& user_dict_path,
+                       const std::string& idx_path,
+                       const std::string& topn_path) {
+    if (!open_dict_with_aux(dict_path, idx_path, topn_path, false))
+        return false;
+    load_user_dict(user_dict_path);
+    return true;
+}
+
 bool Dict::is_open() const {
     return dict_data_ != nullptr;
 }
 
 bool Dict::open_dict(const std::string& bin_path) {
+    return open_dict_with_aux(bin_path, {}, {}, true);
+}
+
+bool Dict::open_dict_with_aux(const std::string& bin_path,
+                              const std::string& idx_path,
+                              const std::string& topn_path,
+                              bool derive_aux_paths) {
     unload_dict();
     CXXIME_LOG(L"Dict::open_dict path=%S", bin_path.c_str());
 
@@ -109,14 +126,25 @@ bool Dict::open_dict(const std::string& bin_path) {
     CXXIME_LOG(L"Dict::open_dict OK entries=%u", dict_entry_count_);
 
     // Try to load pre-built ID index (.dict.idx); build from scratch if absent
-    if (!load_id_index(bin_path)) {
+    bool index_loaded = false;
+    if (derive_aux_paths) {
+        index_loaded = load_id_index(bin_path);
+    } else if (!idx_path.empty()) {
+        index_loaded = load_id_index_file(idx_path);
+        if (!index_loaded) {
+            CXXIME_LOG(L"Dict::open_dict manifest idx not loaded");
+            unload_dict();
+            return false;
+        }
+    }
+    if (!index_loaded) {
         build_syllabary();
         build_id_index();
     }
 
     // Phase 4: try to load short code cache (pinyin.topn.bin)
-    // Derive path from dict_bin_path: pinyin.dict.bin → pinyin.topn.bin
-    {
+    if (derive_aux_paths) {
+        // Derive path from dict_bin_path: pinyin.dict.bin -> pinyin.topn.bin
         std::string topn_path = bin_path;
         auto pos = topn_path.rfind(".dict.bin");
         if (pos != std::string::npos)
@@ -124,8 +152,15 @@ bool Dict::open_dict(const std::string& bin_path) {
         else
             topn_path += ".topn.bin";
         if (!short_cache_.load(topn_path)) {
-            CXXIME_LOG(L"Dict::open_dict short cache not loaded (dev mode fallback)");
-            // Not fatal — translator will fall back to bounded lookup
+            CXXIME_LOG(L"Dict::open_dict short cache not loaded (standalone mode)");
+            // Not fatal for standalone tools/tests. Server runtime uses open_bundle()
+            // with manifest-declared topn_path and treats load failure as fatal.
+        }
+    } else if (!topn_path.empty()) {
+        if (!short_cache_.load(topn_path)) {
+            CXXIME_LOG(L"Dict::open_dict manifest topn not loaded");
+            unload_dict();
+            return false;
         }
     }
 
@@ -140,7 +175,7 @@ static std::string default_user_dict_path() {
         return {};
     std::wstring user_dir = std::wstring(profile) + L"\\cxxime";
     CreateDirectoryW(user_dir.c_str(), nullptr);
-    std::wstring path = user_dir + L"\\user.tsv";
+    std::wstring path = user_dir + L"\\user_pinyin.tsv";
     char path_utf8[MAX_PATH * 3] = {};
     WideCharToMultiByte(CP_UTF8, 0, path.c_str(), -1, path_utf8, sizeof(path_utf8), nullptr, nullptr);
     return path_utf8;
@@ -1321,7 +1356,10 @@ bool Dict::load_id_index(const std::string& dict_bin_path) {
             return false;
     }
     idx_path.replace(pos, std::string::npos, ".dict.idx");
+    return load_id_index_file(idx_path);
+}
 
+bool Dict::load_id_index_file(const std::string& idx_path) {
     HANDLE hFile = CreateFileA(idx_path.c_str(), GENERIC_READ, FILE_SHARE_READ,
                                nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (hFile == INVALID_HANDLE_VALUE)
@@ -1368,10 +1406,23 @@ bool Dict::load_id_index(const std::string& dict_bin_path) {
 
     // Syllabary
     const uint32_t* syl_offs = (const uint32_t*)(base + 28);
+    if (28ULL + (uint64_t)syl_count * sizeof(uint32_t) > file_size) {
+        unload_id_index();
+        return false;
+    }
     const char* syl_strs = (const char*)(syl_offs + syl_count);
+    const char* file_end = base + file_size;
+    if (syl_strs > file_end || syl_strs + syl_str_size > file_end) {
+        unload_id_index();
+        return false;
+    }
     syllabary_.resize(syl_count);
     syllable_to_id_.clear();
     for (uint32_t i = 0; i < syl_count; ++i) {
+        if (syl_offs[i] >= syl_str_size) {
+            unload_id_index();
+            return false;
+        }
         const char* s = syl_strs + syl_offs[i];
         syllabary_[i] = s;
         syllable_to_id_[s] = i;
@@ -1383,14 +1434,37 @@ bool Dict::load_id_index(const std::string& dict_bin_path) {
         // v3: zero-copy — offsets table + data section
         const uint32_t* id_offsets = (const uint32_t*)after_syl;
         const uint8_t*  id_data    = after_syl + idx_count * 4;
+        const uint8_t*  id_end     = id_data + idx_data_size;
+        if (after_syl + (uint64_t)idx_count * 4 > (const uint8_t*)file_end ||
+            id_end > (const uint8_t*)file_end) {
+            unload_id_index();
+            return false;
+        }
 
         id_index_.clear();
         id_index_.reserve(idx_count);
         for (uint32_t i = 0; i < idx_count; ++i) {
+            if (id_offsets[i] >= idx_data_size) {
+                unload_id_index();
+                return false;
+            }
             const uint8_t* e = id_data + id_offsets[i];
+            if (e + 8 > id_end) {
+                unload_id_index();
+                return false;
+            }
             uint32_t cnt = *(const uint32_t*)e;
+            if (e + 4 + (uint64_t)cnt * 4 + 4 > id_end) {
+                unload_id_index();
+                return false;
+            }
+            uint32_t dict_index = *(const uint32_t*)(e + 4 + cnt * 4);
+            if (dict_index >= dict_entry_count_) {
+                unload_id_index();
+                return false;
+            }
             id_index_.push_back({(const uint32_t*)(e + 4), cnt,
-                                 *(const uint32_t*)(e + 4 + cnt * 4)});
+                                 dict_index});
         }
     } else {
         // v2: parse variable-length entries (backward compat)
@@ -1398,12 +1472,27 @@ bool Dict::load_id_index(const std::string& dict_bin_path) {
         id_index_.reserve(idx_count);
         const uint8_t* p = after_syl;
         const uint8_t* end = p + idx_data_size;
+        if (end > (const uint8_t*)file_end) {
+            unload_id_index();
+            return false;
+        }
         for (uint32_t i = 0; i < idx_count && p < end; ++i) {
-            uint32_t cnt = *(const uint32_t*)p; p += 4;
+            if (p + 4 > end)
+                break;
+            uint32_t cnt = *(const uint32_t*)p;
+            p += 4;
             if (p + cnt * 4 + 4 > end) break;
             const uint32_t* ids = (const uint32_t*)p; p += cnt * 4;
             uint32_t idx = *(const uint32_t*)p; p += 4;
+            if (idx >= dict_entry_count_) {
+                unload_id_index();
+                return false;
+            }
             id_index_.push_back({ids, cnt, idx});
+        }
+        if (id_index_.size() != idx_count) {
+            unload_id_index();
+            return false;
         }
     }
 

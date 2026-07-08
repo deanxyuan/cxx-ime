@@ -251,7 +251,7 @@ bool SpellingsIndex::create_test_trie(const std::string& path,
             for (auto& [c, ci] : nodes[cur].children) {
                 if (c == fc) {
                     // Check how much of the node's key matches
-                    auto& child = nodes[ci];
+                    Node child = nodes[ci];
                     size_t match = 0;
                     while (pos + match < input.size() && match < child.key.size() &&
                            input[pos + match] == child.key[match])
@@ -267,12 +267,11 @@ bool SpellingsIndex::create_test_trie(const std::string& path,
                         // Partial match: split node
                         size_t split_idx = nodes.size();
                         nodes.push_back(Node{child.key.substr(0, match)});
-                        auto& split = nodes[split_idx];
 
                         // Old child becomes sub-child
                         size_t old_idx = nodes.size();
                         nodes.push_back(Node{child.key.substr(match), child.spellings, child.children});
-                        split.children.push_back({(uint8_t)child.key[match], old_idx});
+                        nodes[split_idx].children.push_back({(uint8_t)child.key[match], old_idx});
 
                         // Replace old child with split
                         for (auto& [cc, ci2] : nodes[cur].children) {
