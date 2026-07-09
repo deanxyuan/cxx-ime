@@ -15,6 +15,22 @@
 
 namespace cxxime {
 
+namespace {
+
+void unblock_accept_thread(const std::wstring& pipe_name) {
+    for (int i = 0; i < 50; i++) {
+        HANDLE dummy = CreateFileW(pipe_name.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
+                                   OPEN_EXISTING, 0, nullptr);
+        if (dummy == INVALID_HANDLE_VALUE) {
+            CloseHandle(dummy);
+            return;
+        }
+        Sleep(10);
+    }
+}
+
+} // namespace
+
 // ============================================================
 // Per-user pipe name
 // ============================================================
@@ -58,17 +74,12 @@ void IpcServer::stop() {
     if (!running_.exchange(false))
         return;
 
-    // 1. Unblock accept thread's ConnectNamedPipe by making a dummy connection.
-    //    CancelSynchronousIo is racy — the accept thread might not be in a
-    //    cancellable wait when it fires. A dummy client connection reliably
-    //    unblocks ConnectNamedPipe regardless of timing.
-    HANDLE dummy = CreateFileW(pipe_name_.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
-                               OPEN_EXISTING, 0, nullptr);
-    if (dummy != INVALID_HANDLE_VALUE)
-        CloseHandle(dummy);
-
-    if (accept_thread_.joinable())
+    // 1. Unblock accept thread's synchronous ConnectNamedPipe wait.
+    if (accept_thread_.joinable()) {
+        CancelSynchronousIo(static_cast<HANDLE>(accept_thread_.native_handle()));
+        unblock_accept_thread(pipe_name_);
         accept_thread_.join();
+    }
 
     // 2. Cancel all pending client I/O (pending overlapped reads)
     {

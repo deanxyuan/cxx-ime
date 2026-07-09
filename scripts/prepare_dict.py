@@ -10,6 +10,8 @@
 #   python scripts/prepare_dict.py --data-dir data/ --output dist/data/
 #   python scripts/prepare_dict.py --data-dir data/ --output dist/data/ --skip-wubi
 
+from __future__ import annotations
+
 import argparse
 import datetime
 import hashlib

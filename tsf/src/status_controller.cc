@@ -2,7 +2,7 @@
 
 #include "status_controller.h"
 #include "globals.h"
-#include "resource.h"
+#include "resource_loader.h"
 #include "about_dialog.h"
 #include <cxxime/ipc_client.h>
 #include <cxxime/config.h>
@@ -29,11 +29,8 @@ bool StatusController::initialize(HWND parent, IpcClient* client, uint32_t sessi
         return false;
     }
 
-    // Load logo icon from TSF DLL resources
-    HICON logo = (HICON)LoadImageW(
-        g_hInst, MAKEINTRESOURCE(IDI_FREEDLY),
-        IMAGE_ICON, 16, 16, LR_DEFAULTCOLOR);
-    if (logo) window_.set_logo_icon(logo);
+    logo_icon_ = cxxime_tsf::load_resource_icon(IDI_FREEDLY, 16, 16);
+    if (logo_icon_) window_.set_logo_icon(logo_icon_);
 
     window_.set_click_callback([this](StatusButton btn) { on_button_click(btn); });
     window_.set_position_callback([this](int x, int y) { on_position_change(x, y); });
@@ -46,6 +43,10 @@ bool StatusController::initialize(HWND parent, IpcClient* client, uint32_t sessi
 void StatusController::shutdown() {
     if (!initialized_) return;
     window_.destroy();
+    if (logo_icon_) {
+        DestroyIcon(logo_icon_);
+        logo_icon_ = nullptr;
+    }
     initialized_ = false;
     ipc_healthy_ = true;
 }

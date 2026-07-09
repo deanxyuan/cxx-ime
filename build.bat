@@ -34,7 +34,8 @@ if errorlevel 1 (
 echo.
 echo === Build succeeded (%CONFIG%) ===
 echo Output: %BUILD_DIR%\server\%CONFIG%\cxxime-server.exe
-echo         %BUILD_DIR%\tsf\%CONFIG%\cxxime_tsf.dll
+echo         %BUILD_DIR%\tsf\%CONFIG%\cxxime_tsf_*.dll
+echo         %BUILD_DIR%\resource\%CONFIG%\cxxime-resources.dll
 echo         %BUILD_DIR%\test\%CONFIG%\cxxime-test.exe
 
 endlocal

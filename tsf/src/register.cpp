@@ -1,11 +1,11 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 //
-// register_server / unregister_server: original code (no changes)
-// register_profiles: uses ITfInputProcessorProfileMgr::RegisterProfile (Windows 8+ API)
-//   to register with TEXTSERVICE_ICON_INDEX — this is what makes the TSF icon work.
+// The input profile icon is registered from cxxime-resources.dll. The TSF
+// module does not embed icon resources.
 
 #include "register.h"
 #include "globals.h"
+#include "resource_loader.h"
 #include <shlwapi.h>
 
 #pragma comment(lib, "shlwapi.lib")
@@ -55,18 +55,20 @@ HRESULT unregister_server() {
     return S_OK;
 }
 
-// ── Profile registration (Windows 8+ API) ───────────────────────────────
+// Profile registration (Windows 8+ API).
 
 HRESULT register_profiles() {
+    WCHAR achIconFile[MAX_PATH] = {};
+    if (!cxxime_tsf::get_resource_dll_path(achIconFile, ARRAYSIZE(achIconFile))) {
+        return E_FAIL;
+    }
+    ULONG cchIconFile = (ULONG)wcslen(achIconFile);
+
     ITfInputProcessorProfileMgr* pProfileMgr = nullptr;
     HRESULT hr = CoCreateInstance(CLSID_TF_InputProcessorProfiles, nullptr, CLSCTX_ALL,
                                   IID_ITfInputProcessorProfileMgr, (void**)&pProfileMgr);
     if (FAILED(hr))
         return hr;
-
-    WCHAR achIconFile[MAX_PATH] = {};
-    GetModuleFileNameW(g_hInst, achIconFile, ARRAYSIZE(achIconFile));
-    ULONG cchIconFile = (ULONG)wcslen(achIconFile);
 
     // Register simplified Chinese profile (HKL = NULL for pure TSF IME)
     hr = pProfileMgr->RegisterProfile(
@@ -78,7 +80,7 @@ HRESULT register_profiles() {
         achIconFile,
         cchIconFile,
         TEXTSERVICE_ICON_INDEX,
-        nullptr,  // hkl — NULL for pure TSF without IMM32 fallback
+        nullptr,  // hkl is NULL for a pure TSF input method.
         0,        // flags
         TRUE,     // enable
         0);
@@ -100,7 +102,7 @@ HRESULT unregister_profiles() {
     return S_OK;
 }
 
-// ── Category registration (aligned with weasel) ─────────────────────────
+// Category registration.
 
 static const GUID kSupportCategories[] = {
     GUID_TFCAT_CATEGORY_OF_TIP,

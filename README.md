@@ -43,7 +43,8 @@ build.bat clean        # 清理构建目录
 ```
 
 构建产物在 `build/<config>/` 目录下：
-- `cxxime_tsf.dll` — TSF 文本服务 DLL
+- `cxxime_tsf_x64.dll` / `cxxime_tsf_x86.dll` — TSF 文本服务 DLL
+- `cxxime-resources.dll` — 输入法 profile 资源 DLL
 - `cxxime-server.exe` — 后台服务进程
 - `cxxime-settings.exe` — 配置编辑器
 - `test/` — 测试可执行文件（每个测试文件一个 exe）

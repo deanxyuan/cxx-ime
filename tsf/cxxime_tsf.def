@@ -1,4 +1,3 @@
-LIBRARY cxxime_tsf
 EXPORTS
     DllGetClassObject       PRIVATE
     DllCanUnloadNow         PRIVATE
