@@ -50,6 +50,7 @@ private:
     Config* config_ = nullptr;
     uint32_t session_id_ = 0;
     ImeStatus current_status_;
+    HICON logo_icon_ = nullptr;
     bool initialized_ = false;
     bool ipc_healthy_ = true;
 };

@@ -6,7 +6,6 @@
 # Usage:
 #   python scripts/package.py                # Release build + package
 #   python scripts/package.py --debug        # Debug build + package
-#   python scripts/package.py --clean        # Clean rebuild (delete build-package/)
 #   python scripts/package.py --skip-build   # Skip cmake build (already built)
 #   python scripts/package.py --skip-dict    # Skip dictionary generation
 #   python scripts/package.py --generator "Visual Studio 17 2022" --platform x64
@@ -25,6 +24,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCRIPTS = os.path.join(ROOT, "scripts")
 DATA = os.path.join(ROOT, "data")
 DEFAULT_BUILD_DIR = os.path.join(ROOT, "build-package")
+DEFAULT_X86_BUILD_DIR = os.path.join(ROOT, "build-package-x86")
 DIST_DIR = os.path.join(ROOT, "dist")
 OUTPUT_DIR = os.path.join(ROOT, "..", "output")
 VERSION = "0.1.0"
@@ -67,22 +67,45 @@ def is_single_config_generator(generator: str | None) -> bool:
     return any(generator == name or generator.startswith(name + " ") for name in SINGLE_CONFIG_GENERATORS)
 
 
+def supports_cmake_platform(generator: str | None) -> bool:
+    """Return true for generators that support CMake -A platform selection."""
+    return generator is None or generator.startswith("Visual Studio")
+
+
+def is_child_path(parent: str, child: str) -> bool:
+    """Return true if child is strictly inside parent."""
+    parent_abs = os.path.normcase(os.path.abspath(parent))
+    child_abs = os.path.normcase(os.path.abspath(child))
+    try:
+        return os.path.commonpath([parent_abs, child_abs]) == parent_abs and child_abs != parent_abs
+    except ValueError:
+        return False
+
+
+def recreate_build_dir(build_dir: str) -> None:
+    """Recreate a package build directory from scratch."""
+    if not is_child_path(ROOT, build_dir):
+        print(f"  ERROR: refusing to delete build directory outside repository: {build_dir}", file=sys.stderr)
+        sys.exit(1)
+
+    if os.path.exists(build_dir):
+        print(f"Recreating build directory: {build_dir}")
+        shutil.rmtree(build_dir)
+    else:
+        print(f"Creating build directory: {build_dir}")
+
+
 def build(
     build_dir: str,
     config: str,
-    clean: bool = False,
     skip_tests: bool = False,
     skip_tools: bool = False,
     generator: str | None = None,
     platform: str | None = None,
+    target: str | None = None,
 ) -> None:
     """Configure and build the project."""
-    if clean and os.path.exists(build_dir):
-        print(f"Cleaning build directory: {build_dir}")
-        shutil.rmtree(build_dir)
-
     print(f"Building {config} with PRODUCTION=ON...")
-    os.makedirs(build_dir, exist_ok=True)
 
     generator, platform = choose_cmake_generator(generator, platform)
     if generator:
@@ -90,8 +113,13 @@ def build(
     single_config = is_single_config_generator(generator)
     if single_config:
         platform = None
+    elif supports_cmake_platform(generator) and not platform:
+        platform = "x64"
     if platform:
         print(f"  CMake platform:  {platform}")
+
+    recreate_build_dir(build_dir)
+    os.makedirs(build_dir, exist_ok=True)
 
     cmake_args = [
         "cmake", "-S", ROOT, "-B", build_dir,
@@ -108,9 +136,48 @@ def build(
         build_cmd = ["cmake", "--build", build_dir]
     else:
         build_cmd = ["cmake", "--build", build_dir, "--config", config]
+    if target:
+        build_cmd.extend(["--target", target])
 
     run(cmake_args)
     run(build_cmd)
+
+
+def build_x86_tsf(
+    build_dir: str,
+    config: str,
+    generator: str | None = None,
+) -> None:
+    """Build only the 32-bit TSF DLL with a platform-aware generator."""
+    generator, _ = choose_cmake_generator(generator, None)
+    if generator and is_single_config_generator(generator):
+        print(
+            "  ERROR: x86 TSF packaging requires a platform-aware CMake generator "
+            "(for example Visual Studio) or an explicit 32-bit native build.",
+            file=sys.stderr,
+        )
+        print(
+            "  Use --generator \"Visual Studio 17 2022\" --platform x64 for release "
+            "packaging, or --skip-x86-tsf --skip-nsis for local dist-only checks.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if generator and not supports_cmake_platform(generator):
+        print(
+            f"  ERROR: x86 TSF packaging requires a generator with -A support, got: {generator}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    build(
+        build_dir,
+        config,
+        skip_tests=True,
+        skip_tools=True,
+        generator=generator,
+        platform="Win32",
+        target="cxxime-tsf",
+    )
 
 
 def clean_dist(keep_data: bool = False) -> None:
@@ -134,23 +201,28 @@ def clean_dist(keep_data: bool = False) -> None:
     os.makedirs(os.path.join(DIST_DIR, "data"), exist_ok=True)
 
 
-def copy_binaries(build_dir: str, config: str) -> None:
+def copy_binary(build_dir: str, config: str, subdir: str, name: str) -> None:
+    """Copy one built binary to dist."""
+    target_dir = os.path.join(build_dir, subdir)
+    src_dir = os.path.join(target_dir, config)
+    if not os.path.isdir(src_dir):
+        src_dir = target_dir
+    src = os.path.join(src_dir, name)
+    if not os.path.isfile(src):
+        print(f"  ERROR: binary not found: {src}", file=sys.stderr)
+        sys.exit(1)
+    shutil.copy2(src, os.path.join(DIST_DIR, name))
+    print(f"  {name}")
+
+
+def copy_binaries(build_dir: str, x86_build_dir: str, config: str, include_x86_tsf: bool) -> None:
     """Copy built binaries to dist."""
-    for name in ["cxxime_tsf.dll", "cxxime-server.exe", "cxxime-settings.exe"]:
-        target_dir = {
-            "cxxime_tsf.dll": os.path.join(build_dir, "tsf"),
-            "cxxime-server.exe": os.path.join(build_dir, "server"),
-            "cxxime-settings.exe": os.path.join(build_dir, "settings"),
-        }[name]
-        src_dir = os.path.join(target_dir, config)
-        if not os.path.isdir(src_dir):
-            src_dir = target_dir
-        src = os.path.join(src_dir, name)
-        if not os.path.isfile(src):
-            print(f"  ERROR: binary not found: {src}", file=sys.stderr)
-            sys.exit(1)
-        shutil.copy2(src, os.path.join(DIST_DIR, name))
-        print(f"  {name}")
+    copy_binary(build_dir, config, "tsf", "cxxime_tsf_x64.dll")
+    if include_x86_tsf:
+        copy_binary(x86_build_dir, config, "tsf", "cxxime_tsf_x86.dll")
+    copy_binary(build_dir, config, "resource", "cxxime-resources.dll")
+    copy_binary(build_dir, config, "server", "cxxime-server.exe")
+    copy_binary(build_dir, config, "settings", "cxxime-settings.exe")
 
 
 def copy_config() -> None:
@@ -222,8 +294,16 @@ def check_debug_crt(config: str) -> None:
     debug_crts = {"ucrtbased.dll", "vcruntimed.dll"}
     has_debug = False
 
-    for name in ["cxxime_tsf.dll", "cxxime-server.exe", "cxxime-settings.exe"]:
+    for name in [
+        "cxxime_tsf_x64.dll",
+        "cxxime_tsf_x86.dll",
+        "cxxime-resources.dll",
+        "cxxime-server.exe",
+        "cxxime-settings.exe",
+    ]:
         path = os.path.join(DIST_DIR, name)
+        if not os.path.isfile(path):
+            continue
         try:
             result = subprocess.run(
                 ["dumpbin", "/dependents", path],
@@ -283,6 +363,15 @@ def check_log_rotation() -> None:
                 print("  Diagnostics log rotation config found.")
                 return
     print("  WARNING: default.json does not contain diagnostics log rotation config.")
+
+
+def verify_package_layout(include_x86_tsf: bool) -> None:
+    """Run static dist package preflight checks."""
+    script = os.path.join(SCRIPTS, "verify_package.py")
+    cmd = [sys.executable, script, "--dist-dir", DIST_DIR]
+    if not include_x86_tsf:
+        cmd.append("--allow-missing-x86")
+    run(cmd)
 
 
 def copy_installer_scripts(config: str) -> None:
@@ -355,7 +444,7 @@ def build_nsis(config: str, fast: bool = False) -> None:
         print("  ERROR: NSIS completed but installer not found.", file=sys.stderr)
 
 
-def print_summary(config: str) -> None:
+def print_summary(config: str, include_x86_tsf: bool) -> None:
     """Print final distribution summary."""
     print(f"\n{'=' * 60}")
     print("=== Packaging complete ===")
@@ -364,7 +453,10 @@ def print_summary(config: str) -> None:
     print(f"Distribution:  {DIST_DIR}")
     print()
     print("Contents:")
-    print("  cxxime_tsf.dll           TSF text service DLL")
+    print("  cxxime_tsf_x64.dll       64-bit TSF text service DLL")
+    if include_x86_tsf:
+        print("  cxxime_tsf_x86.dll       32-bit TSF text service DLL")
+    print("  cxxime-resources.dll     Stable input profile resources")
     print("  cxxime-server.exe        Background server process")
     print("  cxxime-settings.exe      Configuration editor")
     print("  data/")
@@ -378,10 +470,15 @@ def print_summary(config: str) -> None:
     print("    pinyin.spellings.bin   Pinyin spelling trie (runtime)")
     print("    pinyin.topn.bin        Short code cache (runtime)")
     print("    wubi86.dict.bin        Wubi binary dictionary (if available)")
-    print("  install.bat              Installer (run as admin)")
-    print("  uninstall.bat            Uninstaller (run as admin)")
-    print("  install.ps1              PowerShell installer (optional)")
-    print("  uninstall.ps1            PowerShell uninstaller (optional)")
+    optional_scripts = [
+        ("install.bat", "Installer helper"),
+        ("uninstall.bat", "Uninstaller helper"),
+        ("install.ps1", "PowerShell installer helper"),
+        ("uninstall.ps1", "PowerShell uninstaller helper"),
+    ]
+    for filename, description in optional_scripts:
+        if os.path.isfile(os.path.join(DIST_DIR, filename)):
+            print(f"  {filename:<24} {description}")
     print("  collect_diagnostics.ps1  Diagnostics collector")
     print("  cxxime-setup.nsi         NSIS script")
     print("  license.txt              License")
@@ -396,12 +493,12 @@ def main():
         help="Build Debug configuration (default: Release)",
     )
     parser.add_argument(
-        "--clean", action="store_true",
-        help="Clean rebuild - delete package build directory before cmake",
-    )
-    parser.add_argument(
         "--build-dir", default=DEFAULT_BUILD_DIR,
         help="CMake build directory for package builds (default: build-package)",
+    )
+    parser.add_argument(
+        "--x86-build-dir", default=DEFAULT_X86_BUILD_DIR,
+        help="CMake build directory for the 32-bit TSF build (default: build-package-x86)",
     )
     parser.add_argument(
         "--skip-build", action="store_true",
@@ -418,6 +515,10 @@ def main():
     parser.add_argument(
         "--skip-nsis", action="store_true",
         help="Skip NSIS installer build (only update dist/ contents)",
+    )
+    parser.add_argument(
+        "--skip-x86-tsf", action="store_true",
+        help="Skip the 32-bit TSF build for local dist-only checks (requires --skip-nsis)",
     )
     parser.add_argument(
         "--skip-tests", action="store_true", default=True,
@@ -445,8 +546,14 @@ def main():
     )
     args = parser.parse_args()
 
+    if args.skip_x86_tsf and not args.skip_nsis:
+        parser.error("--skip-x86-tsf requires --skip-nsis because the installer requires both TSF DLLs")
+
     config = "Debug" if args.debug else "Release"
     build_dir = os.path.abspath(args.build_dir)
+    x86_build_dir = os.path.abspath(args.x86_build_dir)
+    if not args.skip_x86_tsf and os.path.normcase(build_dir) == os.path.normcase(x86_build_dir):
+        parser.error("--x86-build-dir must be different from --build-dir")
 
     print(f"=== CxxIME Packager v{VERSION} ({config}) ===")
 
@@ -454,55 +561,65 @@ def main():
     if args.skip_build:
         print(f"\nSkipping build (--skip-build). Using existing binaries in {build_dir}.")
     else:
-        step("[1/6] Building...")
+        step("[1/8] Building x64 product...")
         build(
             build_dir,
             config,
-            clean=args.clean,
             skip_tests=args.skip_tests,
             skip_tools=args.skip_tools,
             generator=args.generator,
             platform=args.platform,
         )
+        if not args.skip_x86_tsf:
+            step("[2/8] Building x86 TSF...")
+            build_x86_tsf(
+                x86_build_dir,
+                config,
+                generator=args.generator,
+            )
 
     # 2. Clean + copy
-    step("[2/6] Preparing distribution directory...")
+    step("[3/8] Preparing distribution directory...")
     clean_dist(keep_data=args.skip_dict)
 
     print("  Copying binaries...")
-    copy_binaries(build_dir, config)
+    copy_binaries(build_dir, x86_build_dir, config, include_x86_tsf=not args.skip_x86_tsf)
 
     print("  Copying config and themes...")
     copy_config()
 
     # 3. Dictionary preparation
     if args.skip_dict:
-        step("[3/6] Skipping dictionary generation (--skip-dict).")
+        step("[4/8] Skipping dictionary generation (--skip-dict).")
         print("  Using existing files in dist/data/.")
         write_dictionary_manifest_for_existing_data()
     else:
-        step("[3/6] Preparing dictionaries...")
+        step("[4/8] Preparing dictionaries...")
         prepare_dictionaries()
 
     # 4. Verification
-    step("[4/6] Verifying data files...")
+    step("[5/8] Verifying data files...")
     verify_data_files()
     check_debug_crt(config)
     check_hot_path_logs()
     check_log_rotation()
 
     # 5. Installer scripts
-    step("[5/6] Copying installer scripts...")
+    step("[6/8] Copying installer scripts...")
     copy_installer_scripts(config)
 
-    # 6. NSIS
+    # 6. Package layout
+    step("[7/8] Verifying package layout...")
+    verify_package_layout(include_x86_tsf=not args.skip_x86_tsf)
+
+    # 7. NSIS
     if args.skip_nsis:
-        step("[6/6] Skipping NSIS installer (--skip-nsis).")
+        step("[8/8] Skipping NSIS installer (--skip-nsis).")
     else:
-        step("[6/6] Building NSIS installer...")
+        step("[8/8] Building NSIS installer...")
         build_nsis(config, fast=args.fast)
 
-    print_summary(config)
+    print_summary(config, include_x86_tsf=not args.skip_x86_tsf)
 
 
 if __name__ == "__main__":

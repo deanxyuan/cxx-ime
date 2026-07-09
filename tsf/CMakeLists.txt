@@ -9,19 +9,15 @@ add_library(cxxime-tsf SHARED
     src/edit_session.cpp
     src/display_attribute.cpp
     src/register.cpp
+    src/resource_loader.cc
     src/language_bar.cpp
     src/status_controller.cc
     cxxime_tsf.def
-    cxxime_tsf.rc
-)
-
-# Resource compiler needs the project root as include path to find resource/*.ico
-set_source_files_properties(cxxime_tsf.rc PROPERTIES
-    COMPILE_FLAGS "/i${CMAKE_CURRENT_SOURCE_DIR}/.."
 )
 
 target_include_directories(cxxime-tsf PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/resource
 )
 
 target_link_libraries(cxxime-tsf PRIVATE
@@ -35,7 +31,15 @@ target_link_libraries(cxxime-tsf PRIVATE
     advapi32
 )
 
+if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+    set(CXXIME_TSF_OUTPUT_NAME "cxxime_tsf_x64")
+elseif(CMAKE_SIZEOF_VOID_P EQUAL 4)
+    set(CXXIME_TSF_OUTPUT_NAME "cxxime_tsf_x86")
+else()
+    message(FATAL_ERROR "Unsupported TSF target pointer size: ${CMAKE_SIZEOF_VOID_P}")
+endif()
+
 set_target_properties(cxxime-tsf PROPERTIES
-    OUTPUT_NAME "cxxime_tsf"
+    OUTPUT_NAME "${CXXIME_TSF_OUTPUT_NAME}"
     SUFFIX ".dll"
 )

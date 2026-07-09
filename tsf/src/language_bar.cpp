@@ -2,7 +2,7 @@
 
 #include "language_bar.h"
 #include "globals.h"
-#include "resource.h"
+#include "resource_loader.h"
 #include <cxxime/logging.h>
 
 #ifndef CONNECT_E_CANNOTCONNECT
@@ -28,12 +28,9 @@ CLangBarItemButton::CLangBarItemButton(TfClientId tid, REFGUID guid)
     DllAddRef();
     int cx = GetSystemMetrics(SM_CXSMICON);
     int cy = GetSystemMetrics(SM_CYSMICON);
-    _hIconZh = (HICON)LoadImageW(g_hInst, MAKEINTRESOURCEW(IDI_ICON_ZH),
-                                 IMAGE_ICON, cx, cy, LR_DEFAULTCOLOR);
-    _hIconEn = (HICON)LoadImageW(g_hInst, MAKEINTRESOURCEW(IDI_ICON_EN),
-                                 IMAGE_ICON, cx, cy, LR_DEFAULTCOLOR);
-    _hIconCaps = (HICON)LoadImageW(g_hInst, MAKEINTRESOURCEW(IDI_ICON_C),
-                                   IMAGE_ICON, cx, cy, LR_DEFAULTCOLOR);
+    _hIconZh = cxxime_tsf::load_resource_icon(IDI_ICON_ZH, cx, cy);
+    _hIconEn = cxxime_tsf::load_resource_icon(IDI_ICON_EN, cx, cy);
+    _hIconCaps = cxxime_tsf::load_resource_icon(IDI_ICON_C, cx, cy);
     if (!_hIconZh || !_hIconEn || !_hIconCaps) {
         CXXIME_LOG(L"ModeButton icons load failed: zh=%d, en=%d, caps=%d",
                    _hIconZh ? 1 : 0, _hIconEn ? 1 : 0, _hIconCaps ? 1 : 0);

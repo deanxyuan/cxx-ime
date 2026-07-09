@@ -1,0 +1,13 @@
+// Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
+
+#ifndef CXXIME_RESOURCE_CXXIME_RESOURCE_IDS_H_
+#define CXXIME_RESOURCE_CXXIME_RESOURCE_IDS_H_
+
+#define IDI_CXXIME 100
+#define IDI_ICON_ZH 102
+#define IDI_ICON_EN 103
+#define IDI_ICON_C 104
+#define IDI_FREEDLY 105
+#define IDI_ICON_DISABLE 106
+
+#endif  // CXXIME_RESOURCE_CXXIME_RESOURCE_IDS_H_

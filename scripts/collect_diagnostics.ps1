@@ -74,7 +74,7 @@ function Get-FileInfoSafe {
 
     if (-not $Path -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) {
         return [ordered]@{
-            path   = $Path
+            path = $Path
             exists = $false
         }
     }
@@ -88,11 +88,11 @@ function Get-FileInfoSafe {
     }
 
     return [ordered]@{
-        path       = $item.FullName
-        exists     = $true
-        size       = $item.Length
+        path = $item.FullName
+        exists = $true
+        size = $item.Length
         last_write = $item.LastWriteTime.ToString("yyyy-MM-dd HH:mm:ss")
-        sha256     = $hash
+        sha256 = $hash
     }
 }
 
@@ -101,15 +101,15 @@ function Get-DirectoryInfoSafe {
 
     if (-not $Path -or -not (Test-Path -LiteralPath $Path -PathType Container)) {
         return [ordered]@{
-            path   = $Path
+            path = $Path
             exists = $false
         }
     }
 
     $item = Get-Item -LiteralPath $Path
     return [ordered]@{
-        path       = $item.FullName
-        exists     = $true
+        path = $item.FullName
+        exists = $true
         last_write = $item.LastWriteTime.ToString("yyyy-MM-dd HH:mm:ss")
     }
 }
@@ -151,8 +151,8 @@ function Get-LogInventory {
         Sort-Object LastWriteTime -Descending |
         ForEach-Object {
             [ordered]@{
-                name       = $_.Name
-                size       = $_.Length
+                name = $_.Name
+                size = $_.Length
                 last_write = $_.LastWriteTime.ToString("yyyy-MM-dd HH:mm:ss")
             }
         })
@@ -190,23 +190,21 @@ function Write-RecentTraceSummary {
         $lines.Add("File: $($file.Name)")
         $lines.Add("  Size: $($file.Length)")
         $lines.Add("  LastWrite: $($file.LastWriteTime.ToString("yyyy-MM-dd HH:mm:ss"))")
-        $lines.Add("")
 
-        $deadline  = 0
+        $deadline = 0
         $cancelled = 0
         $ipcFailed = 0
-        $slow      = 0
+        $slow = 0
         $truncated = 0
-        $recent    = @()
-
+        $recent = @()
         try {
             $recent = @(Get-Content -LiteralPath $file.FullName -Tail 200 -ErrorAction Stop)
             foreach ($line in $recent) {
-                if ($line -match '"deadline":true')   { $deadline++ }
-                if ($line -match '"cancelled":true')  { $cancelled++ }
+                if ($line -match '"deadline":true') { $deadline++ }
+                if ($line -match '"cancelled":true') { $cancelled++ }
                 if ($line -match '"result":"ipc_failed"') { $ipcFailed++ }
-                if ($line -match '"slow":true')       { $slow++ }
-                if ($line -match '"truncated":true')  { $truncated++ }
+                if ($line -match '"slow":true') { $slow++ }
+                if ($line -match '"truncated":true') { $truncated++ }
             }
         } catch {
             $lines.Add("  ReadError: $($_.Exception.Message)")
@@ -228,50 +226,59 @@ function Get-OsInfoSafe {
     try {
         $os = Get-CimInstance Win32_OperatingSystem -ErrorAction Stop | Select-Object -First 1
         return [ordered]@{
-            caption      = $os.Caption
-            version      = $os.Version
+            caption = $os.Caption
+            version = $os.Version
             build_number = $os.BuildNumber
             architecture = $os.OSArchitecture
         }
     } catch {
         return [ordered]@{
-            caption      = [Environment]::OSVersion.VersionString
-            version      = [Environment]::OSVersion.Version.ToString()
+            caption = [Environment]::OSVersion.VersionString
+            version = [Environment]::OSVersion.Version.ToString()
             build_number = ""
             architecture = $env:PROCESSOR_ARCHITECTURE
-            error        = $_.Exception.Message
+            error = $_.Exception.Message
         }
     }
 }
 
 $installDir = Get-CxxImeInstallDir -ExplicitInstallDir $InstallDir
-$userDir    = Join-Path $env:USERPROFILE "cxxime"
-$dataDir    = if ($installDir) { Join-Path $installDir "data" } else { "" }
-$logsDir    = Join-Path $userDir "logs"
-$root       = New-DiagnosticRoot -ExplicitOutputDir $OutputDir
+$userDir = Join-Path $env:USERPROFILE "cxxime"
+$dataDir = if ($installDir) { Join-Path $installDir "data" } else { "" }
+$logsDir = Join-Path $userDir "logs"
+$root = New-DiagnosticRoot -ExplicitOutputDir $OutputDir
+$cxxImeClsid = "{B7E1E5A2-8F3D-4A9C-B6E7-2C4D8F1A3B5E}"
 
 $report = [ordered]@{
-    product         = "CxxIME"
+    product = "CxxIME"
     package_version = "0.1.0"
-    collected_at    = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss zzz")
-    machine         = [ordered]@{
+    collected_at = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss zzz")
+    machine = [ordered]@{
         computer_name = $env:COMPUTERNAME
-        user_name     = $env:USERNAME
-        os            = Get-OsInfoSafe
-        powershell    = $PSVersionTable.PSVersion.ToString()
-        culture       = [System.Globalization.CultureInfo]::CurrentCulture.Name
+        user_name = $env:USERNAME
+        os = Get-OsInfoSafe
+        powershell = $PSVersionTable.PSVersion.ToString()
+        culture = [System.Globalization.CultureInfo]::CurrentCulture.Name
     }
-    directories     = [ordered]@{
+    directories = [ordered]@{
         install = Get-DirectoryInfoSafe $installDir
-        data    = Get-DirectoryInfoSafe $dataDir
-        user    = Get-DirectoryInfoSafe $userDir
-        logs    = Get-DirectoryInfoSafe $logsDir
+        data = Get-DirectoryInfoSafe $dataDir
+        user = Get-DirectoryInfoSafe $userDir
+        logs = Get-DirectoryInfoSafe $logsDir
     }
-    log_inventory   = Get-LogInventory $logsDir
+    expected_registration = [ordered]@{
+        clsid = $cxxImeClsid
+        tsf_x64 = if ($installDir) { Join-Path $installDir "cxxime_tsf_x64.dll" } else { "" }
+        tsf_x86 = if ($installDir) { Join-Path $installDir "cxxime_tsf_x86.dll" } else { "" }
+        resources = if ($installDir) { Join-Path $installDir "cxxime-resources.dll" } else { "" }
+    }
+    log_inventory = Get-LogInventory $logsDir
 }
 
 $programFiles = @(
-    "cxxime_tsf.dll",
+    "cxxime_tsf_x64.dll",
+    "cxxime_tsf_x86.dll",
+    "cxxime-resources.dll",
     "cxxime-server.exe",
     "cxxime-settings.exe",
     "collect_diagnostics.ps1",
@@ -329,8 +336,26 @@ Write-RecentTraceSummary -LogsDir $logsDir -OutputPath (Join-Path $root "trace-s
 Save-CommandOutput -Path (Join-Path $root "registry-uninstall.txt") -Command {
     reg.exe query "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\CxxIME" /s
 }
+Save-CommandOutput -Path (Join-Path $root "registry-uninstall-64.txt") -Command {
+    reg.exe query "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\CxxIME" /s /reg:64
+}
+Save-CommandOutput -Path (Join-Path $root "registry-uninstall-32.txt") -Command {
+    reg.exe query "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\CxxIME" /s /reg:32
+}
+Save-CommandOutput -Path (Join-Path $root "registry-clsid-64.txt") -Command {
+    reg.exe query "HKLM\SOFTWARE\Classes\CLSID\$cxxImeClsid" /s /reg:64
+}
+Save-CommandOutput -Path (Join-Path $root "registry-clsid-32.txt") -Command {
+    reg.exe query "HKLM\SOFTWARE\Classes\CLSID\$cxxImeClsid" /s /reg:32
+}
 Save-CommandOutput -Path (Join-Path $root "registry-tip.txt") -Command {
     reg.exe query "HKLM\SOFTWARE\Microsoft\CTF\TIP" /s /f "CxxIME"
+}
+Save-CommandOutput -Path (Join-Path $root "registry-tip-64.txt") -Command {
+    reg.exe query "HKLM\SOFTWARE\Microsoft\CTF\TIP" /s /f "CxxIME" /reg:64
+}
+Save-CommandOutput -Path (Join-Path $root "registry-tip-32.txt") -Command {
+    reg.exe query "HKLM\SOFTWARE\Microsoft\CTF\TIP" /s /f "CxxIME" /reg:32
 }
 Save-CommandOutput -Path (Join-Path $root "keyboard-preload.txt") -Command {
     reg.exe query "HKCU\Keyboard Layout\Preload"
@@ -340,7 +365,8 @@ Save-CommandOutput -Path (Join-Path $root "tasklist-cxxime.txt") -Command {
     tasklist.exe /v /fi "imagename eq cxxime-settings.exe"
 }
 Save-CommandOutput -Path (Join-Path $root "tasklist-tsf-module.txt") -Command {
-    tasklist.exe /m cxxime_tsf.dll
+    tasklist.exe /m cxxime_tsf_x64.dll
+    tasklist.exe /m cxxime_tsf_x86.dll
 }
 
 $readme = @"
@@ -349,18 +375,15 @@ CxxIME diagnostics package
 Generated: $((Get-Date).ToString("yyyy-MM-dd HH:mm:ss zzz"))
 
 Included by default:
-  - diagnostics.json with version, OS, install path, data path, user path,
-    file metadata and hashes.
+  - diagnostics.json with version, OS, install path, data path, user path, file metadata and hashes.
   - trace-summary.txt with log file metadata and recent error/slow-event counters.
-  - registry query output for uninstall, TIP and keyboard preload state.
-  - tasklist output for CxxIME processes and cxxime_tsf.dll module ownership.
+  - registry query output for uninstall, CLSID, TIP and keyboard preload state.
+  - tasklist output for CxxIME processes and cxxime_tsf_x64.dll / cxxime_tsf_x86.dll module ownership.
 
 Optional:
-  - Use -IncludeLogs to copy %USERPROFILE%\cxxime\logs. Trace logs may contain
-    raw input codes.
+  - Use -IncludeLogs to copy %USERPROFILE%\cxxime\logs. Trace logs may contain raw input codes.
   - Use -IncludeUserConfig to copy user configuration files.
-  - Use -IncludeUserDict to copy user dictionary files. User dictionaries
-    contain personal phrases.
+  - Use -IncludeUserDict to copy user dictionary files. User dictionaries contain personal phrases.
 "@
 $readme | Out-File -Encoding UTF8 -FilePath (Join-Path $root "README.txt")
 
