@@ -327,6 +327,21 @@ TEST(SessionIntegration, english_capslock_keeps_english_and_outputs_uppercase) {
     ASSERT_EQ(text, "NIHAO");
 }
 
+TEST(SessionIntegration, english_enter_passes_to_application) {
+    SessionManager mgr;
+    mgr.initialize(setup_test_dict());
+    uint32_t id = mgr.create_session();
+
+    mgr.toggle_chinese(id);
+
+    auto r = mgr.process_key(id, make_key(VK_RETURN));
+    ASSERT_EQ(r.status, cxxime::IPCStatus::OK);
+    ASSERT_EQ(r.result, cxxime::ProcessResult::REJECTED);
+    ASSERT_TRUE(r.commit_text.empty());
+    ASSERT_TRUE(!r.composing);
+    ASSERT_EQ(r.ime_status.chinese_mode, false);
+}
+
 TEST(SessionIntegration, append_enter_preserves_case_through_output_composer) {
     std::string cfg_path = make_temp_path("test_append_config.json");
     {

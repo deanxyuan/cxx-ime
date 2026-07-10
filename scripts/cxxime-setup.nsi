@@ -121,6 +121,7 @@ Section "Install"
     File "data\pinyin.spellings.bin"
     File "data\pinyin.topn.bin"
     File /nonfatal "data\wubi86.dict.bin"
+    File /nonfatal "data\wubi86.dict.idx"
 
     SetCompress auto
 
@@ -234,6 +235,7 @@ Section "Uninstall"
     Delete "$INSTDIR\data\pinyin.spellings.bin"
     Delete "$INSTDIR\data\pinyin.topn.bin"
     Delete "$INSTDIR\data\wubi86.dict.bin"
+    Delete "$INSTDIR\data\wubi86.dict.idx"
     Delete "$INSTDIR\uninstall.exe"
     RMDir /r "$INSTDIR\data"
     RMDir /REBOOTOK "$INSTDIR"

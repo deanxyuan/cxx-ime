@@ -855,6 +855,29 @@ TEST(Engine, ascii_mode_shift_capslock_lowercase) {
     DeleteFileA(spellings_path.c_str());
 }
 
+TEST(Engine, ascii_mode_enter_passes_to_application) {
+    std::string dict_path = make_temp_path("test_ascii_enter_dict.bin");
+    std::string spellings_path = make_temp_path("test_ascii_enter_spellings.bin");
+    cxxime::Dict::create_test_dict(dict_path, {{"a", "a", 100}});
+    ASSERT_TRUE(cxxime::SpellingsIndex::create_test_trie(spellings_path, {{"a", "a", 0, 0.0f}}));
+
+    cxxime::Engine engine;
+    engine.initialize(dict_path, spellings_path);
+    engine.ascii_composer().set_ascii_mode(true);
+
+    cxxime::KeyEvent enter;
+    enter.keycode = VK_RETURN;
+    enter.is_key_up = false;
+
+    auto result = engine.process_key(enter);
+    ASSERT_EQ(result, cxxime::ProcessResult::REJECTED);
+    ASSERT_TRUE(engine.get_commit_text().empty());
+
+    engine.finalize();
+    DeleteFileA(dict_path.c_str());
+    DeleteFileA(spellings_path.c_str());
+}
+
 TEST(Engine, capslock_overlay_shift_keeps_ascii_mode) {
     std::string dict_path = make_temp_path("test_caps_shift_overlay_dict.bin");
     std::string spellings_path = make_temp_path("test_caps_shift_overlay_spellings.bin");

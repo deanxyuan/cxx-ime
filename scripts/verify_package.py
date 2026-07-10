@@ -84,19 +84,59 @@ def forbid_text(errors: list[str], text: str, needle: str, label: str) -> None:
         add_error(errors, f"{label}: forbidden obsolete text `{needle}`")
 
 
-def check_dictionary_manifest(errors: list[str], dist_dir: str) -> None:
+def normalize_manifest_path(path: object) -> str | None:
+    if not isinstance(path, str) or not path:
+        return None
+    normalized = os.path.normpath(path.replace("\\", os.sep).replace("/", os.sep))
+    if os.path.isabs(normalized):
+        return None
+    if normalized == ".." or normalized.startswith(".." + os.sep):
+        return None
+    return normalized
+
+
+def check_dictionary_manifest(errors: list[str], dist_dir: str) -> list[str]:
     manifest_path = os.path.join(dist_dir, "data", "dictionary_manifest.json")
     if not require_file(errors, manifest_path, dist_dir):
-        return
+        return []
 
     try:
         with open(manifest_path, "r", encoding="utf-8") as f:
             manifest = json.load(f)
     except (OSError, json.JSONDecodeError) as exc:
         add_error(errors, f"invalid dictionary manifest: {exc}")
-        return
+        return []
 
-    roles = {item.get("role") for item in manifest.get("files", []) if isinstance(item, dict)}
+    files = manifest.get("files")
+    if not isinstance(files, list):
+        add_error(errors, "dictionary manifest files must be an array")
+        return []
+
+    roles: set[str] = set()
+    manifest_files: list[str] = []
+    seen_paths: set[str] = set()
+    for index, item in enumerate(files):
+        if not isinstance(item, dict):
+            add_error(errors, f"dictionary manifest file entry #{index} must be an object")
+            continue
+
+        role = item.get("role")
+        if isinstance(role, str) and role:
+            roles.add(role)
+
+        normalized_path = normalize_manifest_path(item.get("path"))
+        if normalized_path is None:
+            add_error(errors, f"dictionary manifest file entry #{index} has unsafe path")
+            continue
+
+        path_key = normalized_path.lower()
+        if path_key in seen_paths:
+            add_error(errors, f"dictionary manifest duplicate path: {normalized_path}")
+            continue
+        seen_paths.add(path_key)
+        manifest_files.append(normalized_path.replace(os.sep, "\\"))
+        require_file(errors, os.path.join(dist_dir, "data", normalized_path), dist_dir)
+
     required_roles = {
         "pinyin_dict",
         "pinyin_idx",
@@ -107,8 +147,15 @@ def check_dictionary_manifest(errors: list[str], dist_dir: str) -> None:
     if missing:
         add_error(errors, "dictionary manifest missing role(s): " + ", ".join(missing))
 
+    return manifest_files
 
-def check_installer_script(errors: list[str], dist_dir: str, require_x86: bool) -> None:
+
+def check_installer_script(
+    errors: list[str],
+    dist_dir: str,
+    require_x86: bool,
+    manifest_files: list[str],
+) -> None:
     nsi_path = os.path.join(dist_dir, "cxxime-setup.nsi")
     if not require_file(errors, nsi_path, dist_dir):
         return
@@ -118,6 +165,16 @@ def check_installer_script(errors: list[str], dist_dir: str, require_x86: bool) 
 
     require_text(errors, text, 'File "cxxime_tsf_x64.dll"', label)
     require_text(errors, text, 'File "cxxime-resources.dll"', label)
+    installer_data_files = [
+        "default.json",
+        "settings_presets.json",
+        "themes.json",
+        "punctuation.json",
+        "dictionary_manifest.json",
+    ] + manifest_files
+    for name in installer_data_files:
+        require_text(errors, text, f'"data\\{name}"', label)
+        require_text(errors, text, f'"$INSTDIR\\data\\{name}"', label)
     require_text(
         errors,
         text,
@@ -150,7 +207,12 @@ def check_installer_script(errors: list[str], dist_dir: str, require_x86: bool) 
     forbid_text(errors, text, "cxxime_tsf.dll", label)
 
 
-def check_diagnostics_script(errors: list[str], dist_dir: str, require_x86: bool) -> None:
+def check_diagnostics_script(
+    errors: list[str],
+    dist_dir: str,
+    require_x86: bool,
+    manifest_files: list[str],
+) -> None:
     script_path = os.path.join(dist_dir, "collect_diagnostics.ps1")
     if not require_file(errors, script_path, dist_dir):
         return
@@ -161,6 +223,8 @@ def check_diagnostics_script(errors: list[str], dist_dir: str, require_x86: bool
     require_text(errors, text, '"cxxime-resources.dll"', label)
     require_text(errors, text, "registry-clsid-64.txt", label)
     require_text(errors, text, "registry-tip-64.txt", label)
+    for name in ["dictionary_manifest.json"] + manifest_files:
+        require_text(errors, text, f'"{name}"', label)
     if require_x86:
         require_text(errors, text, '"cxxime_tsf_x86.dll"', label)
         require_text(errors, text, "registry-clsid-32.txt", label)
@@ -202,9 +266,9 @@ def run_checks(dist_dir: str, require_x86: bool) -> list[str]:
     if require_x86:
         require_machine(errors, os.path.join(dist_dir, "cxxime_tsf_x86.dll"), dist_dir, MACHINE_X86)
 
-    check_dictionary_manifest(errors, dist_dir)
-    check_installer_script(errors, dist_dir, require_x86)
-    check_diagnostics_script(errors, dist_dir, require_x86)
+    manifest_files = check_dictionary_manifest(errors, dist_dir)
+    check_installer_script(errors, dist_dir, require_x86, manifest_files)
+    check_diagnostics_script(errors, dist_dir, require_x86, manifest_files)
 
     return errors
 

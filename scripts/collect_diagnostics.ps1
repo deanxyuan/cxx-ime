@@ -289,11 +289,13 @@ $dataFiles = @(
     "settings_presets.json",
     "themes.json",
     "punctuation.json",
+    "dictionary_manifest.json",
     "pinyin.dict.bin",
     "pinyin.dict.idx",
     "pinyin.spellings.bin",
     "pinyin.topn.bin",
-    "wubi86.dict.bin"
+    "wubi86.dict.bin",
+    "wubi86.dict.idx"
 )
 $userFiles = @(
     "default.json",

@@ -281,7 +281,6 @@ def verify_data_files() -> None:
     script = os.path.join(SCRIPTS, "verify_data_files.py")
     data_dir = os.path.join(DIST_DIR, "data")
     run([sys.executable, script, "--data-dir", data_dir])
-    print("  All data file checks PASSED.")
 
 
 def check_debug_crt(config: str) -> None:
@@ -291,6 +290,11 @@ def check_debug_crt(config: str) -> None:
         return
 
     print("  Checking for Debug CRT dependencies...")
+    dumpbin = shutil.which("dumpbin")
+    if not dumpbin:
+        print("  dumpbin not available; skipping optional Debug CRT dependency check.")
+        return
+
     debug_crts = {"ucrtbased.dll", "vcruntimed.dll"}
     has_debug = False
 
@@ -306,16 +310,22 @@ def check_debug_crt(config: str) -> None:
             continue
         try:
             result = subprocess.run(
-                ["dumpbin", "/dependents", path],
-                capture_output=True, text=True,
+                [dumpbin, "/dependents", path],
+                capture_output=True,
+                text=True,
+                errors="replace",
             )
-            for crt in debug_crts:
-                if crt.lower() in result.stdout.lower():
-                    print(f"  ERROR: {name} links to Debug CRT ({crt})", file=sys.stderr)
-                    has_debug = True
         except FileNotFoundError:
-            print(f"  WARNING: dumpbin not available, skipping CRT check for {name}")
+            print("  dumpbin not available; skipping optional Debug CRT dependency check.")
             return
+        if result.returncode != 0:
+            print(f"  WARNING: dumpbin failed for {name}, skipping CRT check for this file.")
+            continue
+        output = (result.stdout or "") + "\n" + (result.stderr or "")
+        for crt in debug_crts:
+            if crt.lower() in output.lower():
+                print(f"  ERROR: {name} links to Debug CRT ({crt})", file=sys.stderr)
+                has_debug = True
 
     if has_debug:
         print("  ERROR: Release build must not depend on Debug CRT.", file=sys.stderr)
@@ -323,28 +333,66 @@ def check_debug_crt(config: str) -> None:
     print("  No Debug CRT dependencies.")
 
 
+def count_logs_in_functions(path: str, function_names: list[str]) -> int:
+    with open(path, encoding="utf-8") as f:
+        lines = f.readlines()
+
+    count = 0
+    for function_name in function_names:
+        in_signature = False
+        in_body = False
+        brace_depth = 0
+        for line in lines:
+            if not in_signature and function_name not in line:
+                continue
+            if not in_signature:
+                in_signature = True
+
+            if in_signature and not in_body and "{" in line:
+                in_body = True
+
+            if in_body:
+                stripped = line.strip()
+                if stripped.startswith("CXXIME_LOG") and not stripped.startswith("//"):
+                    count += 1
+                brace_depth += line.count("{") - line.count("}")
+                if brace_depth <= 0:
+                    in_signature = False
+                    in_body = False
+                    brace_depth = 0
+
+    return count
+
+
 def check_hot_path_logs() -> None:
     """Warn about CXXIME_LOG calls in hot paths."""
     print("  Checking for high-frequency CXXIME_LOG in hot paths...")
-    hot_files = [
-        os.path.join(ROOT, "engine", "src", "pinyin_translator.cc"),
-        os.path.join(ROOT, "engine", "src", "dict.cc"),
-        os.path.join(ROOT, "ipc", "src", "ipc_server.cc"),
+    hot_file_checks = [
+        (os.path.join(ROOT, "engine", "src", "pinyin_translator.cc"), None),
+        (
+            os.path.join(ROOT, "engine", "src", "dict.cc"),
+            [
+                "Dict::lookup(",
+                "Dict::lookup_by_syllables(",
+                "Dict::lookup_by_ids(",
+                "Dict::lookup_user_exact(",
+                "Dict::lookup_user_prefix(",
+                "Dict::lookup_user_short(",
+                "Dict::has_prefix(",
+            ],
+        ),
+        (os.path.join(ROOT, "ipc", "src", "ipc_server.cc"), None),
     ]
-    log_pattern = re.compile(r"^\s*CXXIME_LOG", re.MULTILINE)
 
-    for path in hot_files:
+    for path, functions in hot_file_checks:
         if not os.path.isfile(path):
             continue
-        with open(path, encoding="utf-8") as f:
-            content = f.read()
-        # Count non-commented CXXIME_LOG lines
-        lines = content.split("\n")
-        count = 0
-        for line in lines:
-            stripped = line.strip()
-            if stripped.startswith("CXXIME_LOG") and not stripped.startswith("//"):
-                count += 1
+        if functions:
+            count = count_logs_in_functions(path, functions)
+        else:
+            with open(path, encoding="utf-8") as f:
+                content = f.read()
+            count = len(re.findall(r"^\s*CXXIME_LOG", content, re.MULTILINE))
         if count > 0:
             basename = os.path.basename(path)
             print(f"  WARNING: {basename}: {count} CXXIME_LOG call(s) in hot path")
@@ -470,6 +518,7 @@ def print_summary(config: str, include_x86_tsf: bool) -> None:
     print("    pinyin.spellings.bin   Pinyin spelling trie (runtime)")
     print("    pinyin.topn.bin        Short code cache (runtime)")
     print("    wubi86.dict.bin        Wubi binary dictionary (if available)")
+    print("    wubi86.dict.idx        Wubi code index (if available)")
     optional_scripts = [
         ("install.bat", "Installer helper"),
         ("uninstall.bat", "Uninstaller helper"),
