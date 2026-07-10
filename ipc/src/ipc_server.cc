@@ -1,7 +1,7 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 //
 // IOCP-based named pipe IPC server.
-// Accept loop uses synchronous ConnectNamedPipe (infrequent).
+// Accept loop uses overlapped ConnectNamedPipe and hands connected clients to IOCP.
 // All client I/O uses overlapped ReadFile/WriteFile serviced by an IOCP
 // thread pool. A read_pending flag on the context distinguishes read vs.
 // write completions so a single OVERLAPPED can be reused per client.
@@ -17,11 +17,13 @@ namespace cxxime {
 
 namespace {
 
+constexpr DWORD kAcceptWaitMs = 100;
+
 void unblock_accept_thread(const std::wstring& pipe_name) {
-    for (int i = 0; i < 50; i++) {
+    for (int i = 0; i < 50; ++i) {
         HANDLE dummy = CreateFileW(pipe_name.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
                                    OPEN_EXISTING, 0, nullptr);
-        if (dummy == INVALID_HANDLE_VALUE) {
+        if (dummy != INVALID_HANDLE_VALUE) {
             CloseHandle(dummy);
             return;
         }
@@ -29,7 +31,44 @@ void unblock_accept_thread(const std::wstring& pipe_name) {
     }
 }
 
-} // namespace
+bool connect_pipe_instance(HANDLE pipe, const std::atomic<bool>& running) {
+    OVERLAPPED ol = {};
+    ol.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    if (!ol.hEvent)
+        return false;
+
+    bool connected = false;
+    BOOL ok = ConnectNamedPipe(pipe, &ol);
+    if (ok) {
+        connected = true;
+    } else {
+        DWORD err = GetLastError();
+        if (err == ERROR_PIPE_CONNECTED) {
+            connected = true;
+        } else if (err == ERROR_IO_PENDING) {
+            while (running.load(std::memory_order_acquire)) {
+                DWORD wait = WaitForSingleObject(ol.hEvent, kAcceptWaitMs);
+                if (wait == WAIT_OBJECT_0) {
+                    DWORD bytes = 0;
+                    connected = GetOverlappedResult(pipe, &ol, &bytes, FALSE) != FALSE;
+                    break;
+                }
+                if (wait != WAIT_TIMEOUT)
+                    break;
+            }
+            if (!connected && !running.load(std::memory_order_acquire)) {
+                CancelIoEx(pipe, &ol);
+                DWORD bytes = 0;
+                GetOverlappedResult(pipe, &ol, &bytes, TRUE);
+            }
+        }
+    }
+
+    CloseHandle(ol.hEvent);
+    return connected;
+}
+
+}  // namespace
 
 // ============================================================
 // Per-user pipe name
@@ -74,9 +113,8 @@ void IpcServer::stop() {
     if (!running_.exchange(false))
         return;
 
-    // 1. Unblock accept thread's synchronous ConnectNamedPipe wait.
+    // 1. Unblock accept thread's pending ConnectNamedPipe wait.
     if (accept_thread_.joinable()) {
-        CancelSynchronousIo(static_cast<HANDLE>(accept_thread_.native_handle()));
         unblock_accept_thread(pipe_name_);
         accept_thread_.join();
     }
@@ -144,10 +182,10 @@ void IpcServer::accept_loop() {
             continue;
         }
 
-        // Synchronous accept
-        if (!ConnectNamedPipe(pipe, nullptr) && GetLastError() != ERROR_PIPE_CONNECTED) {
+        if (!connect_pipe_instance(pipe, running_)) {
             CloseHandle(pipe);
             if (!running_.load()) break;
+            Sleep(10);
             continue;
         }
 

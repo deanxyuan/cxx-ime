@@ -197,18 +197,14 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
             return ProcessResult::COMMITTED;
         }
 
-        // Enter: commit pending text and newline
+        // Enter is an application command in ASCII mode. Let the host handle it
+        // so address bars and dialogs can navigate/confirm.
         if (vk == 0x0D) {  // VK_RETURN
-            context_.committed_text = "\r\n";
-            context_.set_commit_source(CommitSource::kRawCode);
-            if (ascii_composer_.is_temporary_ascii()) {
-                ascii_composer_.set_ascii_mode(false);
-            }
             if (trace_enabled_) {
                 auto total_end = std::chrono::steady_clock::now();
                 trace_.total_us = std::chrono::duration_cast<std::chrono::microseconds>(total_end - total_start).count();
             }
-            return ProcessResult::COMMITTED;
+            return ProcessResult::REJECTED;
         }
 
         // Punctuation / full-shape handling

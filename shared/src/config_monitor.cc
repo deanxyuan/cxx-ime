@@ -81,9 +81,11 @@ int ConfigMonitor::ref_count() const {
 
 void ConfigMonitor::watcher_func() {
     while (running_.load(std::memory_order_relaxed)) {
-        WaitForSingleObject(event_, 100);  // 100ms timeout as fallback
+        DWORD wait = WaitForSingleObject(event_, 100);  // 100ms timeout as fallback
         if (!running_.load(std::memory_order_relaxed))
             break;
+        if (wait == WAIT_OBJECT_0)
+            ResetEvent(event_);
 
         // Read version from already-mapped view (no per-loop MapViewOfFile)
         LONG ver = view_->config_version;
