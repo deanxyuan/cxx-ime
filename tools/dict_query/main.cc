@@ -35,6 +35,7 @@ static void run_wubi_binary(const std::string& dict_path) {
         std::fprintf(stderr, "ERROR: Cannot open dict: %s\n", dict_path.c_str());
         return;
     }
+    dict.set_user_scoring_profile(cxxime::UserScoringProfile::kWubi);
 
     std::puts("Wubi mode (binary). Type :q to quit.\n");
 
@@ -74,6 +75,7 @@ static void run_pinyin(const std::string& dict_path, const std::string& spelling
         std::fprintf(stderr, "ERROR: Cannot open dict: %s\n", dict_path.c_str());
         return;
     }
+    dict.set_user_scoring_profile(cxxime::UserScoringProfile::kPinyin);
 
     cxxime::SpellingsIndex spellings;
     cxxime::Syllabifier* syllabifier = nullptr;

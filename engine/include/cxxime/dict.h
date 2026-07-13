@@ -34,6 +34,11 @@ struct UserLookupStats {
     bool deadline_exceeded = false;
 };
 
+enum class UserScoringProfile {
+    kPinyin,
+    kWubi,
+};
+
 class Dict {
 public:
     Dict() = default;
@@ -85,6 +90,8 @@ public:
     uint64_t user_dict_version() const { return user_dict_version_; }
     bool has_user_entry(const std::string& text) const;
     size_t user_entry_count() const;
+    void set_user_scoring_profile(UserScoringProfile profile) { user_scoring_profile_ = profile; }
+    UserScoringProfile user_scoring_profile() const { return user_scoring_profile_; }
 
     // Phase 5: internal indexed user dict query methods
     std::vector<Candidate> lookup_user_exact(const std::string& code, int limit,
@@ -164,6 +171,7 @@ private:
     std::vector<UserEntryId> user_code_sorted_;
     uint64_t user_dict_version_ = 0;
     uint64_t user_sequence_ = 0;
+    UserScoringProfile user_scoring_profile_ = UserScoringProfile::kPinyin;
 
     mutable std::shared_mutex user_mutex_;
     std::atomic<bool> user_dirty_{false};

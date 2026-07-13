@@ -11,6 +11,78 @@
 
 namespace cxxime {
 
+namespace {
+
+enum class MixedOrder {
+    kPinyinFirst,
+    kWubiFirst,
+    kAmbiguousInterleave,
+};
+
+bool is_alpha_key(const std::string& input) {
+    for (char c : input) {
+        if (c < 'a' || c > 'z')
+            return false;
+    }
+    return !input.empty();
+}
+
+MixedOrder choose_order(const std::string& input,
+                        const std::vector<Candidate>& pinyin_candidates,
+                        const std::vector<Candidate>& wubi_candidates) {
+    if (wubi_candidates.empty())
+        return MixedOrder::kPinyinFirst;
+    if (pinyin_candidates.empty())
+        return MixedOrder::kWubiFirst;
+    if (is_alpha_key(input) && input.size() == 4)
+        return MixedOrder::kWubiFirst;
+    if (input.size() <= 3)
+        return MixedOrder::kAmbiguousInterleave;
+    return MixedOrder::kPinyinFirst;
+}
+
+void update_duplicate_source(std::vector<Candidate>& output, const Candidate& candidate,
+                                CandidateSource preferred_source) {
+    if (candidate.source != preferred_source)
+        return;
+    for (auto& existing : output) {
+        if (existing.text == candidate.text) {
+            existing = candidate;
+            return;
+        }
+    }
+}
+
+void append_unique(std::vector<Candidate>& output, std::unordered_set<std::string>& seen,
+                    const Candidate& candidate, bool update_duplicate,
+                    CandidateSource preferred_source) {
+    if (seen.insert(candidate.text).second) {
+        output.push_back(candidate);
+    } else if (update_duplicate) {
+        update_duplicate_source(output, candidate, preferred_source);
+    }
+}
+
+void append_all(std::vector<Candidate>& output, std::unordered_set<std::string>& seen,
+                const std::vector<Candidate>& candidates) {
+    for (const auto& candidate : candidates)
+        append_unique(output, seen, candidate, false, CandidateSource::kPinyin);
+}
+
+void append_interleaved(std::vector<Candidate>& output, std::unordered_set<std::string>& seen,
+                            const std::vector<Candidate>& first,
+                            const std::vector<Candidate>& second) {
+    size_t fi = 0, si = 0;
+    while (fi < first.size() || si < second.size()) {
+        if (fi < first.size())
+            append_unique(output, seen, first[fi++], false, CandidateSource::kWubi);
+        if (si < second.size())
+            append_unique(output, seen, second[si++], true, CandidateSource::kWubi);
+    }
+}
+
+} // namespace
+
 void MixedTranslator::set_pinyin_dict(Dict* dict) {
     pinyin_translator_.set_dict(dict);
 }
@@ -45,24 +117,22 @@ CandidatePage MixedTranslator::translate(const std::string& input, int page_inde
     auto wubi_page = wubi_translator_.translate(input, 0, need, nullptr, nullptr, nullptr);
     auto& wb = wubi_page.candidates;
 
-    // Interleave: alternate pinyin and wubi candidates so both are visible
     std::vector<Candidate> merged;
     merged.reserve(py.size() + wb.size());
     std::unordered_set<std::string> seen;
-    size_t pi = 0, wi = 0;
-    while (pi < py.size() || wi < wb.size()) {
-        // Take next pinyin candidate
-        if (pi < py.size()) {
-            if (seen.insert(py[pi].text).second)
-                merged.push_back(py[pi]);
-            ++pi;
-        }
-        // Take next wubi candidate
-        if (wi < wb.size()) {
-            if (seen.insert(wb[wi].text).second)
-                merged.push_back(wb[wi]);
-            ++wi;
-        }
+
+    switch (choose_order(input, py, wb)) {
+    case MixedOrder::kWubiFirst:
+        append_all(merged, seen, wb);
+        append_all(merged, seen, py);
+        break;
+    case MixedOrder::kAmbiguousInterleave:
+        append_interleaved(merged, seen, py, wb);
+        break;
+    case MixedOrder::kPinyinFirst:
+        append_all(merged, seen, py);
+        append_all(merged, seen, wb);
+        break;
     }
 
     // Paginate

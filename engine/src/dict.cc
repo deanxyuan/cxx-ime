@@ -26,6 +26,80 @@ static bool contains_text(const std::vector<Candidate>& items, const std::string
     return false;
 }
 
+static void merge_candidate_by_score(std::vector<Candidate>& items, Candidate candidate) {
+    for (auto& item : items) {
+        if (item.text == candidate.text) {
+            if (candidate.frequency > item.frequency)
+                item = std::move(candidate);
+            return;
+        }
+    }
+    items.push_back(std::move(candidate));
+}
+
+static void sort_candidates_by_score(std::vector<Candidate>& items) {
+    std::sort(items.begin(), items.end(),
+        [](const Candidate& a, const Candidate& b) {
+            if (a.frequency != b.frequency) return a.frequency > b.frequency;
+            if (a.text.size() != b.text.size()) return a.text.size() < b.text.size();
+            return a.text < b.text;
+        });
+}
+
+enum class UserMatchKind {
+    kExact,
+    kPrefix,
+    kAbbreviation,
+    kMixed,
+};
+
+static int bounded_user_frequency(int frequency) {
+    if (frequency < 1)
+        return 1;
+    return std::min(frequency, 50000);
+}
+
+static int user_recent_bonus(uint64_t current_sequence, uint64_t entry_sequence) {
+    uint64_t delta = current_sequence >= entry_sequence
+        ? current_sequence - entry_sequence
+        : 0;
+    return (delta <= 1000) ? (int)(1000 - delta) : 0;
+}
+
+static int score_user_match(UserScoringProfile profile, UserMatchKind kind,
+                            size_t key_len, size_t code_len, int frequency,
+                            uint64_t current_sequence,
+                            uint64_t entry_sequence) {
+    static constexpr int kExactBase = 200000000;
+    static constexpr int kPatternBase = 120000000;
+    static constexpr int kNearPrefixBase = 800000;
+    static constexpr int kMidPrefixBase = 160000;
+    static constexpr int kWeakPrefixBase = 4000;
+
+    int base = kWeakPrefixBase;
+    if (kind == UserMatchKind::kExact || key_len == code_len) {
+        base = kExactBase;
+    } else if (kind == UserMatchKind::kAbbreviation ||
+               kind == UserMatchKind::kMixed) {
+        base = kPatternBase;
+    } else if (profile == UserScoringProfile::kWubi) {
+        base = kWeakPrefixBase;
+    } else if (kind == UserMatchKind::kPrefix) {
+        if (key_len <= 2) {
+            base = kWeakPrefixBase;
+        } else if (key_len + 1 >= code_len) {
+            base = kNearPrefixBase;
+        } else if (key_len * 2 >= code_len) {
+            base = kMidPrefixBase;
+        } else {
+            base = kWeakPrefixBase;
+        }
+    }
+
+    return base + bounded_user_frequency(frequency) +
+           user_recent_bonus(current_sequence, entry_sequence);
+}
+
 Dict::~Dict() {
     close();
 }
@@ -601,7 +675,7 @@ std::vector<Candidate> Dict::lookup_by_syllables(
         c.text.assign(dict_strings_ + e.text_offset, e.text_len);
         c.frequency = e.frequency;
         if (!contains_text(results, c.text)) {
-            results.push_back(std::move(c));
+            merge_candidate_by_score(results, std::move(c));
             if ((int)results.size() >= limit)
                 break;
         }
@@ -609,27 +683,18 @@ std::vector<Candidate> Dict::lookup_by_syllables(
     }
 
     // Phase 5: query user dict via exact index
-    if ((int)results.size() < limit) {
-        std::string concat_code;
-        for (auto& s : syllables) concat_code += s;
+    std::string concat_code;
+    for (auto& s : syllables) concat_code += s;
 
-        QueryBudget ub;
-        UserLookupStats ustats;
-        auto user_results = lookup_user_exact(concat_code, limit - (int)results.size(),
-                                              ub, trace, &ustats);
-        for (auto& c : user_results) {
-            if (!contains_text(results, c.text))
-                results.push_back(std::move(c));
-            if ((int)results.size() >= limit)
-                break;
-        }
+    QueryBudget ub;
+    UserLookupStats ustats;
+    auto user_results = lookup_user_exact(concat_code, limit, ub, trace, &ustats);
+    for (auto& c : user_results) {
+        merge_candidate_by_score(results, std::move(c));
     }
 
     // Sort by frequency descending
-    std::sort(results.begin(), results.end(),
-        [](const Candidate& a, const Candidate& b) {
-            return a.frequency > b.frequency;
-        });
+    sort_candidates_by_score(results);
 
     if ((int)results.size() > limit)
         results.resize(limit);
@@ -678,8 +743,7 @@ std::vector<Candidate> Dict::lookup(const std::string& code_prefix, int limit, Q
         c.frequency = (e.syllable_ids_len == prefix_len ? 100000 : 0)
                     + (100 - (int)e.syllable_ids_len) * 100
                     + e.frequency;
-        if (!contains_text(results, c.text))
-            results.push_back(std::move(c));
+        merge_candidate_by_score(results, std::move(c));
         ++lo;
     }
 
@@ -687,22 +751,13 @@ std::vector<Candidate> Dict::lookup(const std::string& code_prefix, int limit, Q
     {
         QueryBudget ub;
         UserLookupStats ustats;
-        int remain = limit - (int)results.size();
-        if (remain > 0) {
-            auto user_results = lookup_user_prefix(code_prefix, remain, ub, trace, &ustats);
-            for (auto& c : user_results) {
-                if (!contains_text(results, c.text))
-                    results.push_back(std::move(c));
-                if ((int)results.size() >= limit)
-                    break;
-            }
+        auto user_results = lookup_user_prefix(code_prefix, limit, ub, trace, &ustats);
+        for (auto& c : user_results) {
+            merge_candidate_by_score(results, std::move(c));
         }
     }
 
-    std::sort(results.begin(), results.end(),
-        [](const Candidate& a, const Candidate& b) {
-            return a.frequency > b.frequency;
-        });
+    sort_candidates_by_score(results);
 
     if ((int)results.size() > limit)
         results.resize(limit);
@@ -1030,9 +1085,10 @@ std::vector<Candidate> Dict::lookup_user_exact(
     for (auto id : it->second.ids) {
         auto& e = user_entries_[id];
         if (e.deleted) continue;
-        uint64_t delta = user_sequence_ - e.sequence;
-        int recent_bonus = (delta <= 1000) ? (int)(1000 - delta) : 0;
-        scored.push_back({id, 50000 + e.frequency + recent_bonus});
+            scored.push_back({id, score_user_match(user_scoring_profile_,
+                                                       UserMatchKind::kExact, code.size(),
+                                                       e.code.size(), e.frequency,
+                                                       user_sequence_, e.sequence)});
     }
     std::sort(scored.begin(), scored.end(),
         [](const ScoredId& a, const ScoredId& b) { return a.score > b.score; });
@@ -1085,9 +1141,11 @@ std::vector<Candidate> Dict::lookup_user_prefix(
         for (auto id : it->second.ids) {
             auto& e = user_entries_[id];
             if (e.deleted) continue;
-            uint64_t delta = user_sequence_ - e.sequence;
-            int recent_bonus = (delta <= 1000) ? (int)(1000 - delta) : 0;
-            scored.push_back({id, 50000 + e.frequency + recent_bonus});
+            scored.push_back({id, score_user_match(user_scoring_profile_,
+                                                       UserMatchKind::kPrefix,
+                                                       prefix.size(), e.code.size(),
+                                                       e.frequency, user_sequence_,
+                                                       e.sequence)});
         }
         std::sort(scored.begin(), scored.end(),
             [](const ScoredId& a, const ScoredId& b) { return a.score > b.score; });
@@ -1137,19 +1195,17 @@ std::vector<Candidate> Dict::lookup_user_prefix(
 
             Candidate c;
             c.text = e.text;
-            uint64_t delta = user_sequence_ - e.sequence;
-            int recent_bonus = (delta <= 1000) ? (int)(1000 - delta) : 0;
-            c.frequency = 50000 + e.frequency + recent_bonus;
+                c.frequency = score_user_match(user_scoring_profile_,
+                                       UserMatchKind::kPrefix, prefix.size(),
+                                       e.code.size(), e.frequency,
+                                       user_sequence_, e.sequence);
             results.push_back(std::move(c));
             if ((int)results.size() >= limit)
                 break;
         }
     }
 
-    std::sort(results.begin(), results.end(),
-        [](const Candidate& a, const Candidate& b) {
-            return a.frequency > b.frequency;
-        });
+    sort_candidates_by_score(results);
     if (trace) {
         trace->user_scan_count += stats->scan_count;
         if (stats->truncated) trace->truncated = true;
@@ -1165,7 +1221,8 @@ std::vector<Candidate> Dict::lookup_user_short(
     std::vector<Candidate> results;
     std::shared_lock<std::shared_mutex> lock(user_mutex_);
 
-    auto try_add = [&](UserEntryId id) -> bool {
+    auto try_add = [&](UserEntryId id, UserMatchKind kind,
+const std::string& match_key) -> bool {
         if (stats->scan_count >= budget.max_user_scan) {
             stats->truncated = true;
             stats->scan_budget_truncated = true;
@@ -1179,14 +1236,12 @@ std::vector<Candidate> Dict::lookup_user_short(
         auto& e = user_entries_[id];
         if (e.deleted) return true;
         ++stats->scan_count;
-        if (!contains_text(results, e.text)) {
-            Candidate c;
-            c.text = e.text;
-            uint64_t delta = user_sequence_ - e.sequence;
-            int recent_bonus = (delta <= 1000) ? (int)(1000 - delta) : 0;
-            c.frequency = 50000 + e.frequency + recent_bonus;
-            results.push_back(std::move(c));
-        }
+        Candidate c;
+        c.text = e.text;
+        c.frequency = score_user_match(user_scoring_profile_, kind,
+                                       match_key.size(), e.code.size(),
+                                       e.frequency, user_sequence_, e.sequence);
+        merge_candidate_by_score(results, std::move(c));
         return (int)results.size() < limit;
     };
 
@@ -1194,7 +1249,7 @@ std::vector<Candidate> Dict::lookup_user_short(
     auto eit = user_exact_index_.find(key);
     if (eit != user_exact_index_.end()) {
         for (auto id : eit->second.ids)
-            if (!try_add(id)) break;
+            if (!try_add(id, UserMatchKind::kExact, key)) break;
     }
 
     // 2. Prefix match (key length ≤ 6)
@@ -1202,7 +1257,7 @@ std::vector<Candidate> Dict::lookup_user_short(
         auto pit = user_prefix_index_.find(key);
         if (pit != user_prefix_index_.end()) {
             for (auto id : pit->second.ids)
-                if (!try_add(id)) break;
+                if (!try_add(id, UserMatchKind::kPrefix, key)) break;
         }
     }
 
@@ -1211,7 +1266,7 @@ std::vector<Candidate> Dict::lookup_user_short(
         auto ait = user_abbr_index_.find(key);
         if (ait != user_abbr_index_.end()) {
             for (auto id : ait->second.ids)
-                if (!try_add(id)) break;
+                if (!try_add(id, UserMatchKind::kAbbreviation, key)) break;
         }
     }
 
@@ -1225,7 +1280,7 @@ std::vector<Candidate> Dict::lookup_user_short(
                 trace->mixed_cache_hit = true;
             }
             for (auto id : mit->second.ids) {
-                if (!try_add(id)) break;
+                if (!try_add(id, UserMatchKind::kMixed, key)) break;
             }
             if (trace)
                 trace->mixed_scan_count += stats->scan_count;
@@ -1240,32 +1295,29 @@ std::vector<Candidate> Dict::lookup_user_short(
             auto eit2 = user_exact_index_.find(rewritten);
             if (eit2 != user_exact_index_.end())
                 for (auto id : eit2->second.ids)
-                    if (!try_add(id)) break;
+                    if (!try_add(id, UserMatchKind::kExact, rewritten)) break;
             if ((int)results.size() < limit && rewritten.size() <= 6) {
                 auto pit2 = user_prefix_index_.find(rewritten);
                 if (pit2 != user_prefix_index_.end())
                     for (auto id : pit2->second.ids)
-                        if (!try_add(id)) break;
+                        if (!try_add(id, UserMatchKind::kPrefix, rewritten)) break;
             }
             if ((int)results.size() < limit) {
                 auto ait2 = user_abbr_index_.find(rewritten);
                 if (ait2 != user_abbr_index_.end())
                     for (auto id : ait2->second.ids)
-                        if (!try_add(id)) break;
+                        if (!try_add(id, UserMatchKind::kAbbreviation, rewritten)) break;
             }
             if ((int)results.size() < limit) {
                 auto mit2 = user_mixed_index_.find(rewritten);
                 if (mit2 != user_mixed_index_.end())
                     for (auto id : mit2->second.ids)
-                        if (!try_add(id)) break;
+                        if (!try_add(id, UserMatchKind::kMixed, rewritten)) break;
             }
         }
     }
 
-    std::sort(results.begin(), results.end(),
-        [](const Candidate& a, const Candidate& b) {
-            return a.frequency > b.frequency;
-        });
+    sort_candidates_by_score(results);
     if (trace) {
         trace->user_scan_count += stats->scan_count;
         if (stats->truncated) trace->truncated = true;

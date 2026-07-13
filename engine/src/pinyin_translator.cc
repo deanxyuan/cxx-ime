@@ -19,6 +19,26 @@ static bool contains_text(const std::vector<Candidate>& items, const std::string
     return false;
 }
 
+static void merge_candidate_by_score(std::vector<Candidate>& items, Candidate candidate) {
+    for (auto& item : items) {
+        if (item.text == candidate.text) {
+            if (candidate.frequency > item.frequency)
+                item = std::move(candidate);
+            return;
+        }
+    }
+    items.push_back(std::move(candidate));
+}
+
+static void sort_candidates_by_score(std::vector<Candidate>& items) {
+    std::sort(items.begin(), items.end(),
+        [](const Candidate& a, const Candidate& b) {
+            if (a.frequency != b.frequency) return a.frequency > b.frequency;
+            if (a.text.size() != b.text.size()) return a.text.size() < b.text.size();
+            return a.text < b.text;
+        });
+}
+
 static bool contains_ids(const std::vector<std::vector<uint32_t>>& items,
                          const std::vector<uint32_t>& ids) {
     for (auto& v : items)
@@ -28,6 +48,8 @@ static bool contains_ids(const std::vector<std::vector<uint32_t>>& items,
 
 void PinyinTranslator::set_dict(Dict* dict) {
     dict_ = dict;
+    if (dict_)
+        dict_->set_user_scoring_profile(UserScoringProfile::kPinyin);
 }
 
 void PinyinTranslator::set_syllabifier(Syllabifier* syllabifier) {
@@ -99,34 +121,38 @@ void PinyinTranslator::update_recent(const std::string& key, const Candidate& ca
 PinyinTranslator::ShortFastResult PinyinTranslator::lookup_short_fast(
     const std::string& key, int limit, QueryTrace* trace) const {
     ShortFastResult result;
+    if (limit <= 0)
+        return result;
 
     // 1. Session recent cache (highest priority)
     // Phase 5: filter entries whose user dict entry has been deleted
     uint64_t current_version = dict_ ? dict_->user_dict_version() : 0;
     bool version_changed = (current_version != cached_user_dict_version_);
     for (auto& rc : recent_cache_) {
-        if (rc.key == key && (int)result.candidates.size() < limit) {
+        if (rc.key == key) {
             // Skip if user dict entry was deleted since this was cached
             if (version_changed && dict_ && !dict_->has_user_entry(rc.candidate.text))
                 continue;
-            if (!contains_text(result.candidates, rc.candidate.text))
-                result.candidates.push_back(rc.candidate);
+        Candidate candidate = rc.candidate;
+        uint64_t delta = recent_sequence_ >= rc.sequence ? recent_sequence_ - rc.sequence : 0;
+        int recent_bonus = delta <= 1000 ? (int)(1000 - delta) : 0;
+        candidate.frequency = std::max(
+            candidate.frequency,
+            210000000 + recent_bonus);
+        merge_candidate_by_score(result.candidates, std::move(candidate));
         }
     }
     if (version_changed)
         cached_user_dict_version_ = current_version;
 
-    // 2. Phase 5: User dictionary short index (after recent, before system cache)
+    // 2. Phase 5: User dictionary short index
     if (dict_) {
         QueryBudget ub;
         ub.max_user_scan = 64;  // tight budget for fast path
         UserLookupStats ustats;
         auto user_results = dict_->lookup_user_short(key, limit, ub, trace, &ustats);
         for (auto& c : user_results) {
-            if ((int)result.candidates.size() >= limit)
-                break;
-            if (!contains_text(result.candidates, c.text))
-                result.candidates.push_back(std::move(c));
+            merge_candidate_by_score(result.candidates, std::move(c));
         }
     }
 
@@ -134,13 +160,13 @@ PinyinTranslator::ShortFastResult PinyinTranslator::lookup_short_fast(
     if (short_cache_ && short_cache_->is_loaded()) {
         auto cached = short_cache_->lookup(key, limit, trace);
         for (auto& c : cached) {
-            if ((int)result.candidates.size() >= limit)
-                break;
-            if (!contains_text(result.candidates, c.text))
-                result.candidates.push_back(std::move(c));
+            merge_candidate_by_score(result.candidates, std::move(c));
         }
     }
 
+    sort_candidates_by_score(result.candidates);
+    if ((int)result.candidates.size() > limit)
+        result.candidates.resize(limit);
     result.hit = !result.candidates.empty();
     return result;
 }
