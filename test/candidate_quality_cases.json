@@ -1,0 +1,264 @@
+{
+  "schema": 1,
+  "defaults": {
+    "page_size": 9,
+    "require_unique": true,
+    "max_elapsed_us": 80000
+  },
+  "cases": [
+    {
+      "id": "pinyin-full-nihao",
+      "mode": "pinyin",
+      "input": "nihao",
+      "contains": [
+        { "text": "你好", "max_rank": 1 }
+      ],
+      "expect_sources": {
+        "你好": "pinyin"
+      },
+      "require_cache_hit": true
+    },
+    {
+      "id": "pinyin-full-shijie",
+      "mode": "pinyin",
+      "input": "shijie",
+      "contains": [
+        { "text": "世界", "max_rank": 1 }
+      ],
+      "expect_sources": {
+        "世界": "pinyin"
+      },
+      "require_cache_hit": true
+    },
+    {
+      "id": "pinyin-full-zhongguo",
+      "mode": "pinyin",
+      "input": "zhongguo",
+      "contains": [
+        { "text": "中国", "max_rank": 1 }
+      ],
+      "expect_sources": {
+        "中国": "pinyin"
+      },
+      "require_cache_hit": false
+    },
+    {
+      "id": "pinyin-short-srf-cache",
+      "mode": "pinyin",
+      "input": "srf",
+      "min_candidates": 1,
+      "require_cache_hit": true
+    },
+    {
+      "id": "pinyin-user-exact-short-code-promotes",
+      "mode": "pinyin",
+      "input": "ddd",
+      "setup_user_entries": [
+        { "text": "淡淡的", "code": "ddd", "repeat": 3 }
+      ],
+      "contains": [
+        { "text": "淡淡的", "max_rank": 1 }
+      ],
+      "expect_sources": {
+        "淡淡的": "pinyin"
+      },
+      "require_cache_hit": true
+    },
+    {
+      "id": "pinyin-short-prefix-suppresses-long-user-word",
+      "mode": "pinyin",
+      "input": "d",
+      "setup_user_entries": [
+        { "text": "淡淡的", "code": "ddd", "repeat": 3 }
+      ],
+      "min_candidates": 1,
+      "forbid_top1": [
+        "淡淡的"
+      ],
+      "require_cache_hit": true
+    },
+    {
+      "id": "wubi-short-a",
+      "mode": "wubi",
+      "input": "a",
+      "contains": [
+        { "text": "工", "max_rank": 1 }
+      ],
+      "expect_sources": {
+        "工": "wubi"
+      }
+    },
+    {
+      "id": "wubi-short-aa",
+      "mode": "wubi",
+      "input": "aa",
+      "contains": [
+        { "text": "式", "max_rank": 1 }
+      ],
+      "expect_sources": {
+        "式": "wubi"
+      }
+    },
+    {
+      "id": "wubi-short-gg",
+      "mode": "wubi",
+      "input": "gg",
+      "contains": [
+        { "text": "五", "max_rank": 1 }
+      ],
+      "expect_sources": {
+        "五": "wubi"
+      }
+    },
+    {
+      "id": "wubi-user-full-code-promotes",
+      "mode": "wubi",
+      "input": "aaaa",
+      "setup_user_entries": [
+        { "mode": "wubi", "text": "自定义词", "code": "aaaa", "repeat": 3 }
+      ],
+      "contains": [
+        { "text": "自定义词", "max_rank": 1 }
+      ],
+      "expect_sources": {
+        "自定义词": "wubi"
+      }
+    },
+    {
+      "id": "wubi-one-code-protects-system-order",
+      "mode": "wubi",
+      "input": "a",
+      "setup_user_entries": [
+        { "mode": "wubi", "text": "自定义词", "code": "aaaa", "repeat": 3 }
+      ],
+      "contains": [
+        { "text": "工", "max_rank": 1 }
+      ],
+      "forbid_top1": [
+        "自定义词"
+      ],
+      "expect_sources": {
+        "工": "wubi"
+      }
+    },
+    {
+      "id": "wubi-three-code-protects-system-order",
+      "mode": "wubi",
+      "input": "aaa",
+      "setup_user_entries": [
+        { "mode": "wubi", "text": "自定义词", "code": "aaaa", "repeat": 3 }
+      ],
+      "contains": [
+        { "text": "工", "max_rank": 1 }
+      ],
+      "forbid_top1": [
+        "自定义词"
+      ],
+      "expect_sources": {
+        "工": "wubi"
+      }
+    },
+    {
+      "id": "wubi-user-dict-does-not-affect-pinyin",
+      "mode": "pinyin",
+      "input": "nihao",
+      "setup_user_entries": [
+        { "mode": "wubi", "text": "五笔污染", "code": "nihao", "repeat": 3 }
+      ],
+      "contains": [
+        { "text": "你好", "max_rank": 1 }
+      ],
+      "expect_sources": {
+        "你好": "pinyin"
+      },
+      "require_cache_hit": true
+    },
+    {
+      "id": "pinyin-user-dict-does-not-affect-wubi",
+      "mode": "wubi",
+      "input": "a",
+      "setup_user_entries": [
+        { "mode": "pinyin", "text": "拼音污染", "code": "a", "repeat": 3 }
+      ],
+      "contains": [
+        { "text": "工", "max_rank": 1 }
+      ],
+      "forbid_top1": [
+        "拼音污染"
+      ],
+      "expect_sources": {
+        "工": "wubi"
+      }
+    },
+    {
+      "id": "mixed-obvious-pinyin-nihao",
+      "mode": "mixed",
+      "input": "nihao",
+      "contains": [
+        { "text": "你好", "max_rank": 1 }
+      ],
+      "expect_sources": {
+        "你好": "pinyin"
+      },
+      "require_cache_hit": true
+    },
+    {
+      "id": "mixed-obvious-pinyin-wubi-word",
+      "mode": "mixed",
+      "input": "wubi",
+      "contains": [
+        { "text": "五笔", "max_rank": 5 }
+      ],
+      "expect_sources": {
+        "五笔": "pinyin"
+      }
+    },
+    {
+      "id": "mixed-obvious-wubi-four-code",
+      "mode": "mixed",
+      "input": "aaaa",
+      "contains": [
+        { "text": "工", "max_rank": 1 }
+      ],
+      "expect_sources": {
+        "工": "wubi"
+      }
+    },
+    {
+      "id": "mixed-wubi-user-full-code-keeps-source",
+      "mode": "mixed",
+      "input": "aaaa",
+      "setup_user_entries": [
+        { "mode": "wubi", "text": "自定义词", "code": "aaaa", "repeat": 3 }
+      ],
+      "contains": [
+        { "text": "自定义词", "max_rank": 1 }
+      ],
+      "expect_sources": {
+        "自定义词": "wubi"
+      }
+    },
+    {
+      "id": "mixed-ambiguous-aa-exposes-wubi",
+      "mode": "mixed",
+      "input": "aa",
+      "contains": [
+        { "text": "式", "max_rank": 3 }
+      ],
+      "expect_sources": {
+        "式": "wubi"
+      }
+    },
+    {
+      "id": "mixed-ambiguous-gg-exposes-wubi",
+      "mode": "mixed",
+      "input": "gg",
+      "contains": [
+        { "text": "五", "max_rank": 3 }
+      ],
+      "expect_sources": {
+        "五": "wubi"
+      }
+    }
+  ]
+}

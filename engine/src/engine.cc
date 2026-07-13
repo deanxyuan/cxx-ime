@@ -572,6 +572,8 @@ void Engine::clear_composition() {
 
 void Engine::set_wubi_dict(Dict* dict) {
     wubi_dict_ = dict;
+    if (wubi_dict_)
+        wubi_dict_->set_user_scoring_profile(UserScoringProfile::kWubi);
 }
 
 void Engine::set_fuzzy_enabled(bool enabled) {

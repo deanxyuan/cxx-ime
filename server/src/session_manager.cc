@@ -100,6 +100,7 @@ bool load_dictionary_resources(const std::string& manifest_path, DictionaryResou
         CXXIME_LOG(L"SharedResources: dict.open FAILED");
         return false;
     }
+    loaded_dict->set_user_scoring_profile(cxxime::UserScoringProfile::kPinyin);
 
     auto loaded_spellings = std::make_shared<cxxime::SpellingsIndex>();
     std::shared_ptr<cxxime::Syllabifier> loaded_syllabifier;
@@ -119,6 +120,7 @@ bool load_dictionary_resources(const std::string& manifest_path, DictionaryResou
         loaded_wubi_dict.reset();
         CXXIME_LOG(L"SharedResources: wubi dict not found, wubi mode disabled");
     } else {
+        loaded_wubi_dict->set_user_scoring_profile(cxxime::UserScoringProfile::kWubi);
         CXXIME_LOG(L"SharedResources: wubi dict loaded");
     }
 

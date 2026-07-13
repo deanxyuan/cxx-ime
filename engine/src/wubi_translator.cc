@@ -7,6 +7,8 @@ namespace cxxime {
 
 void WubiTranslator::set_dict(Dict* dict) {
     dict_ = dict;
+    if (dict_)
+        dict_->set_user_scoring_profile(UserScoringProfile::kWubi);
 }
 
 void WubiTranslator::update_recent(const std::string& key, const Candidate& candidate) {
