@@ -105,6 +105,19 @@ TEST(WubiEngine, processor_space_select_first) {
     ASSERT_EQ(ctx.committed_text, "工");
 }
 
+TEST(WubiEngine, processor_space_without_candidates_clears) {
+    cxxime::WubiProcessor proc;
+    cxxime::Context ctx;
+
+    ctx.pinyin_buffer = "niwe";
+
+    auto r = proc.process_key(make_key(VK_SPACE), ctx);
+    ASSERT_EQ(r, cxxime::ProcessResult::ACCEPTED);
+    ASSERT_TRUE(ctx.pinyin_buffer.empty());
+    ASSERT_TRUE(ctx.committed_text.empty());
+    ASSERT_TRUE(ctx.candidates.candidates.empty());
+}
+
 // --- WubiTranslator tests ---
 
 TEST(WubiEngine, translator_basic_lookup) {
@@ -251,6 +264,41 @@ TEST(WubiEngine, engine_wubi_auto_commit_4code) {
     // 四码唯一候选应自动上屏
     ASSERT_EQ(r, cxxime::ProcessResult::COMMITTED);
     ASSERT_EQ(engine.context().committed_text, "中");
+
+    engine.finalize();
+    wubi_dict.close();
+    DeleteFileA(pinyin_path.c_str());
+    DeleteFileA(wubi_path.c_str());
+}
+
+TEST(WubiEngine, engine_wubi_space_without_candidates_clears) {
+    std::string pinyin_path = make_temp_path("test_wubi_space_clear_pinyin.bin");
+    std::string wubi_path = make_temp_path("test_wubi_space_clear_wubi.bin");
+
+    cxxime::Dict::create_test_dict(pinyin_path, {{"ni:hao", "你好", 100}});
+    cxxime::Dict::create_test_dict(wubi_path, {{"a", "工", 300}});
+
+    cxxime::Engine engine;
+    ASSERT_TRUE(engine.initialize(pinyin_path));
+
+    cxxime::Dict wubi_dict;
+    ASSERT_TRUE(wubi_dict.open(wubi_path));
+    engine.set_wubi_dict(&wubi_dict);
+    engine.switch_mode(cxxime::InputMode::WUBI);
+
+    engine.process_key(make_key('N'));
+    engine.process_key(make_key('I'));
+    engine.process_key(make_key('W'));
+    auto r = engine.process_key(make_key('E'));
+    ASSERT_EQ(r, cxxime::ProcessResult::ACCEPTED);
+    ASSERT_TRUE(engine.context().is_composing());
+    ASSERT_TRUE(engine.context().candidates.candidates.empty());
+
+    r = engine.process_key(make_key(VK_SPACE));
+    ASSERT_EQ(r, cxxime::ProcessResult::ACCEPTED);
+    ASSERT_TRUE(!engine.context().is_composing());
+    ASSERT_TRUE(engine.context().committed_text.empty());
+    ASSERT_TRUE(engine.context().candidates.candidates.empty());
 
     engine.finalize();
     wubi_dict.close();
