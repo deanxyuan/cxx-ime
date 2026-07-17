@@ -14,6 +14,45 @@ static std::wstring to_wstr(const std::string& s) {
 }
 static COLORREF clr(Color c) { return RGB(c.r, c.g, c.b); }
 
+static Color separator_color(const Theme* theme) {
+    if (!theme)
+        return {160, 160, 160, 255};
+    return {
+        (uint8_t)((theme->background.r * 3 + theme->text.r) / 4),
+        (uint8_t)((theme->background.g * 3 + theme->text.g) / 4),
+        (uint8_t)((theme->background.b * 3 + theme->text.b) / 4),
+        255,
+    };
+}
+
+static void draw_preedit_separator(HDC dc, const RECT& clip, const RenderContext& ctx,
+                                   int margin) {
+    auto* cfg = ctx.layout_cfg;
+    int sep_y = ctx.preedit_rect.bottom + (cfg ? cfg->spacing / 3 : 5);
+    HPEN sep = CreatePen(PS_SOLID, 1, clr(separator_color(ctx.theme)));
+    HPEN old_p = (HPEN)SelectObject(dc, sep);
+    MoveToEx(dc, margin + 2, sep_y, nullptr);
+    LineTo(dc, clip.right - margin - 2, sep_y);
+    SelectObject(dc, old_p);
+    DeleteObject(sep);
+}
+
+static void draw_border(HDC dc, const RECT& clip, const RenderContext& ctx) {
+    auto* cfg = ctx.layout_cfg;
+    if (!ctx.theme || !cfg || cfg->border_width <= 0)
+        return;
+    int bw = cfg->border_width;
+    int inset = bw / 2;
+    HPEN border_pen = CreatePen(PS_SOLID, bw, clr(ctx.theme->border));
+    HPEN old_pen = (HPEN)SelectObject(dc, border_pen);
+    HBRUSH old_brush = (HBRUSH)SelectObject(dc, GetStockObject(NULL_BRUSH));
+    RoundRect(dc, inset, inset, clip.right - inset, clip.bottom - inset,
+              cfg->round_corner_ex, cfg->round_corner_ex);
+    SelectObject(dc, old_brush);
+    SelectObject(dc, old_pen);
+    DeleteObject(border_pen);
+}
+
 void GdiRenderer::initialize(HWND hwnd, const Theme& theme) {
     hwnd_ = hwnd;
     bg_brush_      = CreateSolidBrush(clr(theme.background));
@@ -96,6 +135,9 @@ void GdiRenderer::render(HDC hdc, const RECT& clip, const RenderContext& ctx) {
             SetTextColor(target_dc, preedit_color_);
             DrawTextW(target_dc, L"CxxIME", -1, const_cast<RECT*>(&clip), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         }
+        if (!ctx.preedit.empty() && ctx.preedit_rect.right > ctx.preedit_rect.left)
+            draw_preedit_separator(target_dc, clip, ctx, margin);
+        draw_border(target_dc, clip, ctx);
         if (buffer_dc) {
             BitBlt(hdc, clip.left, clip.top, width, height, buffer_dc, 0, 0, SRCCOPY);
             SelectObject(buffer_dc, old_bitmap);
@@ -119,18 +161,7 @@ void GdiRenderer::render(HDC hdc, const RECT& clip, const RenderContext& ctx) {
         }
         SelectObject(target_dc, hfont_);
         // Thin separator line between preedit and candidates
-        int sep_y = ctx.preedit_rect.bottom + (cfg ? cfg->spacing / 3 : 5);
-        // Subtle separator: 75% background + 25% text
-        Color sep_col = {
-            (uint8_t)((ctx.theme->background.r * 3 + ctx.theme->text.r) / 4),
-            (uint8_t)((ctx.theme->background.g * 3 + ctx.theme->text.g) / 4),
-            (uint8_t)((ctx.theme->background.b * 3 + ctx.theme->text.b) / 4), 255};
-        HPEN sep = CreatePen(PS_SOLID, 1, clr(sep_col));
-        HPEN old_p = (HPEN)SelectObject(target_dc, sep);
-        MoveToEx(target_dc, margin + 2, sep_y, nullptr);
-        LineTo(target_dc, clip.right - margin - 2, sep_y);
-        SelectObject(target_dc, old_p);
-        DeleteObject(sep);
+        draw_preedit_separator(target_dc, clip, ctx, margin);
     }
 
     // Candidates
@@ -201,18 +232,7 @@ void GdiRenderer::render(HDC hdc, const RECT& clip, const RenderContext& ctx) {
         SelectObject(target_dc, old_nav);
     }
 
-    if (ctx.theme && cfg && cfg->border_width > 0) {
-        int bw = cfg->border_width;
-        int inset = bw / 2;
-        HPEN border_pen = CreatePen(PS_SOLID, bw, clr(ctx.theme->border));
-        HPEN old_pen = (HPEN)SelectObject(target_dc, border_pen);
-        HBRUSH old_brush = (HBRUSH)SelectObject(target_dc, GetStockObject(NULL_BRUSH));
-        RoundRect(target_dc, inset, inset, clip.right - inset, clip.bottom - inset,
-            cfg->round_corner_ex, cfg->round_corner_ex);
-        SelectObject(target_dc, old_brush);
-        SelectObject(target_dc, old_pen);
-        DeleteObject(border_pen);
-    }
+    draw_border(target_dc, clip, ctx);
 
     SelectObject(target_dc, old_font);
 

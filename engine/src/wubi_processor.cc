@@ -41,7 +41,11 @@ ProcessResult WubiProcessor::process_key(const KeyEvent& event, Context& context
                 return ProcessResult::COMMITTED;
             }
         }
-        // 空输入时按 Space，上屏空格
+        if (context.is_composing()) {
+            context.reset();
+            return ProcessResult::ACCEPTED;
+        }
+        // 空输入时按 Space，透传给应用
         return ProcessResult::REJECTED;
     }
 

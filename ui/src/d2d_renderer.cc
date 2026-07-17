@@ -8,6 +8,16 @@ namespace cxxime {
 
 static D2D1_COLOR_F c2d(const Color& c) { return D2D1::ColorF(c.r/255.0f, c.g/255.0f, c.b/255.0f, c.a/255.0f); }
 
+static D2D1_COLOR_F separator_color(const Theme* theme) {
+    if (!theme)
+        return D2D1::ColorF(160.0f / 255.0f, 160.0f / 255.0f, 160.0f / 255.0f, 1.0f);
+    return D2D1::ColorF(
+        (float)(theme->background.r * 3 + theme->text.r) / 4.0f / 255.0f,
+        (float)(theme->background.g * 3 + theme->text.g) / 4.0f / 255.0f,
+        (float)(theme->background.b * 3 + theme->text.b) / 4.0f / 255.0f,
+        1.0f);
+}
+
 static std::wstring dec(const std::string& s) {
     int len = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
     if (len <= 1) return {};
@@ -101,6 +111,31 @@ void D2DRenderer::render(const RenderContext& ctx) {
     D2D1_SIZE_F sz = render_target_->GetSize();
     render_target_->FillRectangle(D2D1::RectF(0,0,sz.width,sz.height), bg_brush_);
 
+    auto draw_preedit_separator = [&]() {
+        if (ctx.preedit.empty() || ctx.preedit_rect.right <= ctx.preedit_rect.left ||
+            !preedit_brush_)
+            return;
+        float sep_y = (float)ctx.preedit_rect.bottom + (cfg ? (float)cfg->spacing/3 : 5.0f);
+        preedit_brush_->SetColor(separator_color(ctx.theme));
+        render_target_->DrawLine({margin + 2.0f, sep_y}, {sz.width - margin - 2.0f, sep_y},
+                                 preedit_brush_, 1.0f);
+        if (ctx.theme)
+            preedit_brush_->SetColor(c2d(ctx.theme->preedit_text));
+    };
+
+    auto draw_border = [&]() {
+        if (ctx.theme && cfg && cfg->border_width > 0 && border_brush_) {
+            float bw = (float)cfg->border_width;
+            float inset = bw / 2.0f;
+            D2D1_ROUNDED_RECT rr = {
+                D2D1::RectF(inset, inset, sz.width - inset, sz.height - inset),
+                (float)cfg->round_corner_ex,
+                (float)cfg->round_corner_ex,
+            };
+            render_target_->DrawRoundedRectangle(rr, border_brush_, bw);
+        }
+    };
+
     if (!ctx.rects || ctx.rects->empty()) {
         // No candidates — show preedit if available, otherwise placeholder
         if (!ctx.preedit.empty() && ctx.preedit_rect.right > ctx.preedit_rect.left) {
@@ -113,6 +148,8 @@ void D2DRenderer::render(const RenderContext& ctx) {
         } else {
             render_target_->DrawText(L"CxxIME", 6, fmt_left_, D2D1::RectF(0,0,sz.width,sz.height), preedit_brush_);
         }
+        draw_preedit_separator();
+        draw_border();
         render_target_->EndDraw(); return;
     }
 
@@ -124,15 +161,7 @@ void D2DRenderer::render(const RenderContext& ctx) {
                               (float)ctx.preedit_rect.right, (float)ctx.preedit_rect.bottom};
             render_target_->DrawText(wp.c_str(), (UINT32)wp.length(), fmt_preedit_, pr, preedit_brush_);
         }
-        // Thin separator
-        float sep_y = (float)ctx.preedit_rect.bottom + (cfg ? (float)cfg->spacing/3 : 5.0f);
-        auto mid = [](uint8_t a, uint8_t b) { return (float)((int)a + b) / 2.0f / 255.0f; };
-        D2D1::ColorF sep_col(mid(ctx.theme->text.r, ctx.theme->background.r),
-                             mid(ctx.theme->text.g, ctx.theme->background.g),
-                             mid(ctx.theme->text.b, ctx.theme->background.b), 1.0f);
-        preedit_brush_->SetColor(sep_col);
-        render_target_->DrawLine({margin + 2.0f, sep_y}, {sz.width - margin - 2.0f, sep_y},
-                                 preedit_brush_, 1.0f);
+        draw_preedit_separator();
     }
 
     // Candidates
@@ -183,16 +212,7 @@ void D2DRenderer::render(const RenderContext& ctx) {
         }
     }
 
-    if (ctx.theme && cfg && cfg->border_width > 0 && border_brush_) {
-        float bw = (float)cfg->border_width;
-        float inset = bw / 2.0f;
-        D2D1_ROUNDED_RECT rr = {
-            D2D1::RectF(inset, inset, sz.width - inset, sz.height - inset),
-            (float)cfg->round_corner_ex,
-            (float)cfg->round_corner_ex,
-        };
-        render_target_->DrawRoundedRectangle(rr, border_brush_, bw);
-    }
+    draw_border();
 
     render_target_->EndDraw();
 }
