@@ -8,7 +8,6 @@
 #
 # Usage:
 #   python scripts/prepare_dict.py --data-dir data/ --output dist/data/
-#   python scripts/prepare_dict.py --data-dir data/ --output dist/data/ --skip-wubi
 
 from __future__ import annotations
 
@@ -42,6 +41,8 @@ REQUIRED_MANIFEST_ROLES = {
     "pinyin_idx",
     "pinyin_spellings",
     "pinyin_topn",
+    "wubi_dict",
+    "wubi_idx",
 }
 
 
@@ -82,10 +83,17 @@ def run_spelling_algebra(db_path: str) -> None:
     )
 
 
-def run_build_binary(db_path: str, output_prefix: str, skip_idx: bool = False) -> None:
+def run_build_binary(
+    db_path: str,
+    output_prefix: str,
+    skip_idx: bool = False,
+    dict_only: bool = False,
+) -> None:
     """Convert .dict.db to binary mmap files."""
     script = os.path.join(DATA_TOOLS, "build_binary.py")
     cmd = [sys.executable, script, "--input", db_path, "--output", output_prefix]
+    if dict_only:
+        cmd.append("--dict-only")
     if skip_idx:
         cmd.append("--skip-idx")
     print(f"  Building binary dicts: {os.path.basename(output_prefix)}.*")
@@ -151,7 +159,6 @@ def write_dictionary_manifest(output_dir: str) -> str:
 def prepare_dict(
     data_dir: str,
     output_dir: str,
-    skip_wubi: bool = False,
 ) -> list[str]:
     """Run full dictionary preparation pipeline.
 
@@ -193,25 +200,24 @@ def prepare_dict(
             generated.append(topn_path)
 
     # ---- Wubi86 dictionary ----
-    if skip_wubi:
-        print("--- Wubi86: skipped ---")
-    else:
-        print("--- Wubi86 dictionary ---")
-        src = find_source(data_dir, "wubi86")
-        if src is None:
-            print("  WARNING: wubi86.dict.db(.zip) not found, skipping")
+    print("--- Wubi86 dictionary ---")
+    src = find_source(data_dir, "wubi86")
+    if src is None:
+        raise RuntimeError("wubi86.dict.db(.zip) not found")
+    with tempfile.TemporaryDirectory(prefix="cxxime_prep_") as tmpdir:
+        if src.endswith(".zip"):
+            db_path = extract_zip(src, tmpdir)
         else:
-            with tempfile.TemporaryDirectory(prefix="cxxime_prep_") as tmpdir:
-                if src.endswith(".zip"):
-                    db_path = extract_zip(src, tmpdir)
-                else:
-                    db_copy = os.path.join(tmpdir, os.path.basename(src))
-                    shutil.copy2(src, db_copy)
-                    db_path = db_copy
+            db_copy = os.path.join(tmpdir, os.path.basename(src))
+            shutil.copy2(src, db_copy)
+            db_path = db_copy
 
-                output_prefix = os.path.join(output_dir, "wubi86")
-                run_build_binary(db_path, output_prefix, skip_idx=True)
-                generated.append(output_prefix + ".dict.bin")
+        output_prefix = os.path.join(output_dir, "wubi86")
+        run_build_binary(db_path, output_prefix, dict_only=True)
+        generated.extend([
+            output_prefix + ".dict.bin",
+            output_prefix + ".dict.idx",
+        ])
 
     manifest_path = write_dictionary_manifest(output_dir)
     generated.append(manifest_path)
@@ -230,10 +236,6 @@ def main():
         "--output-dir", required=True,
         help="Output directory for binary dictionary files",
     )
-    parser.add_argument(
-        "--skip-wubi", action="store_true",
-        help="Skip wubi86 dictionary processing",
-    )
     args = parser.parse_args()
 
     data_dir = os.path.abspath(args.data_dir)
@@ -248,7 +250,7 @@ def main():
     print()
 
     try:
-        generated = prepare_dict(data_dir, output_dir, skip_wubi=args.skip_wubi)
+        generated = prepare_dict(data_dir, output_dir)
     except subprocess.CalledProcessError as e:
         print(f"ERROR: subprocess failed: {e}", file=sys.stderr)
         return 1

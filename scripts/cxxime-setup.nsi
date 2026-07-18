@@ -15,6 +15,10 @@ RequestExecutionLevel admin
 SetCompressor lzma
 
 Var LaunchSettings
+Var UninstallRemoveUserData
+Var UninstallRemoveUserDataCheckbox
+Var UninstallUserDataDir
+Var UninstallUserDataDirSuffix
 
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_LICENSE "license.txt"
@@ -22,6 +26,7 @@ Var LaunchSettings
 !insertmacro MUI_PAGE_INSTFILES
 Page custom FinishPage FinishPageLeave
 !insertmacro MUI_UNPAGE_CONFIRM
+UninstPage custom un.UserDataPage un.UserDataPageLeave
 !insertmacro MUI_UNPAGE_INSTFILES
 !insertmacro MUI_LANGUAGE "SimpChinese"
 
@@ -34,6 +39,11 @@ Function .onInit
     ${If} ${RunningX64}
         StrCpy $INSTDIR "$PROGRAMFILES64\CxxIME"
     ${EndIf}
+FunctionEnd
+
+Function un.onInit
+    StrCpy $UninstallRemoveUserData 0
+    StrCpy $UninstallUserDataDir "$PROFILE\cxxime"
 FunctionEnd
 
 Function .onInstSuccess
@@ -53,6 +63,30 @@ FunctionEnd
 
 Function FinishPageLeave
     ${NSD_GetState} $1 $LaunchSettings
+FunctionEnd
+
+Function un.UserDataPage
+    nsDialogs::Create 1018
+    Pop $0
+    ${If} $0 == error
+        Abort
+    ${EndIf}
+
+    ${NSD_CreateLabel} 20u 16u 100% 24u "Choose whether to remove CxxIME user data. By default it is kept."
+    Pop $0
+    ${NSD_CreateLabel} 20u 46u 100% 12u "User data directory:"
+    Pop $0
+    ${NSD_CreateText} 28u 60u 100% 12u "$UninstallUserDataDir"
+    Pop $0
+    SendMessage $0 0x00CF 1 0
+    ${NSD_CreateCheckbox} 20u 88u 100% 20u "Remove user configuration and dictionary data"
+    Pop $UninstallRemoveUserDataCheckbox
+    ${NSD_SetState} $UninstallRemoveUserDataCheckbox $UninstallRemoveUserData
+    nsDialogs::Show
+FunctionEnd
+
+Function un.UserDataPageLeave
+    ${NSD_GetState} $UninstallRemoveUserDataCheckbox $UninstallRemoveUserData
 FunctionEnd
 
 Section "Install"
@@ -120,8 +154,8 @@ Section "Install"
     File "data\pinyin.dict.idx"
     File "data\pinyin.spellings.bin"
     File "data\pinyin.topn.bin"
-    File /nonfatal "data\wubi86.dict.bin"
-    File /nonfatal "data\wubi86.dict.idx"
+    File "data\wubi86.dict.bin"
+    File "data\wubi86.dict.idx"
 
     SetCompress auto
 
@@ -145,7 +179,7 @@ Section "Install"
     WriteRegStr HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\CxxIME" "DisplayName" "CxxIME"
     WriteRegStr HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\CxxIME" "DisplayVersion" "${VERSION}"
     WriteRegStr HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\CxxIME" "Publisher" "${PUBLISHER}"
-    WriteRegStr HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\CxxIME" "DisplayIcon" "$INSTDIR\cxxime-settings.exe"
+    WriteRegStr HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\CxxIME" "DisplayIcon" '"$INSTDIR\cxxime-resources.dll",-100'
     WriteRegStr HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\CxxIME" "InstallLocation" "$INSTDIR"
     WriteRegStr HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\CxxIME" "UninstallString" "$INSTDIR\uninstall.exe"
     WriteRegDWORD HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\CxxIME" "NoModify" 1
@@ -240,5 +274,11 @@ Section "Uninstall"
     RMDir /r "$INSTDIR\data"
     RMDir /REBOOTOK "$INSTDIR"
 
-    ; Preserve user configuration and dictionaries in $PROFILE\cxxime by default.
+    ${If} $UninstallRemoveUserData == ${BST_CHECKED}
+        StrCpy $UninstallUserDataDirSuffix $UninstallUserDataDir 7 -7
+        ${If} $UninstallUserDataDir != ""
+        ${AndIf} $UninstallUserDataDirSuffix == "\cxxime"
+            RMDir /r "$UninstallUserDataDir"
+        ${EndIf}
+    ${EndIf}
 SectionEnd

@@ -517,8 +517,8 @@ def print_summary(config: str, include_x86_tsf: bool) -> None:
     print("    pinyin.dict.idx        Pinyin syllable index (runtime)")
     print("    pinyin.spellings.bin   Pinyin spelling trie (runtime)")
     print("    pinyin.topn.bin        Short code cache (runtime)")
-    print("    wubi86.dict.bin        Wubi binary dictionary (if available)")
-    print("    wubi86.dict.idx        Wubi code index (if available)")
+    print("    wubi86.dict.bin        Wubi binary dictionary")
+    print("    wubi86.dict.idx        Wubi code index")
     optional_scripts = [
         ("install.bat", "Installer helper"),
         ("uninstall.bat", "Uninstaller helper"),
