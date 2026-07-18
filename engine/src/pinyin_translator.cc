@@ -183,12 +183,12 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
 
     int offset = page_index * page_size;
     int fetch_limit = page_size;
+    const int need = offset + fetch_limit + 1;
 
     // Phase 4: short input fast path (before syllabifier)
     // Try cache for all page indices; fall back to bounded lookup if insufficient.
     ShortFastResult fast;
     if (is_short_key(pinyin)) {
-        int need = offset + fetch_limit + 1;
         fast = lookup_short_fast(pinyin, need, trace);
         if (fast.hit && (int)fast.candidates.size() > offset) {
             // Enough candidates from cache for this page
@@ -218,6 +218,18 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
         }
         // Cache miss or not enough: seed merged collector with fast results,
         // then fall through to bounded lookup for remaining candidates.
+    }
+
+    // Long pinyin input bypasses the short fast path. Query user entries by raw
+    // code here so learned full codes and near-complete prefixes participate in
+    // the same TopK merge as system dictionary candidates.
+    std::vector<Candidate> user_seed;
+    if (!is_short_key(pinyin)) {
+        QueryBudget ub;
+        if (budget)
+            ub.deadline = budget->deadline;
+        UserLookupStats ustats;
+        user_seed = dict_->lookup_user_prefix(pinyin, need, ub, trace, &ustats);
     }
 
     // Collect syllable ID sequences to try (use scratch if available)
@@ -315,6 +327,11 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
     TopKCollector merged(topk_cap);
 
     // Phase 4: seed collector with fast-path candidates (dedup by text)
+    for (auto& c : user_seed) {
+        if (!contains_text(merged.items(), c.text))
+            merged.offer(std::move(c));
+    }
+
     if (fast.hit) {
         for (auto& c : fast.candidates) {
             if (!contains_text(merged.items(), c.text)) {

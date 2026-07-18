@@ -27,6 +27,17 @@ bool is_alpha_key(const std::string& input) {
     return !input.empty();
 }
 
+bool pinyin_top_is_stronger(const std::vector<Candidate>& pinyin_candidates,
+                            const std::vector<Candidate>& wubi_candidates) {
+    if (pinyin_candidates.empty() || wubi_candidates.empty())
+        return false;
+    CandidateOrigin origin = pinyin_candidates.front().origin;
+    if (origin != CandidateOrigin::kSystem && origin != CandidateOrigin::kCache)
+        return false;
+    return pinyin_candidates.front().frequency >= 500000 &&
+           pinyin_candidates.front().frequency >= wubi_candidates.front().frequency * 2;
+}
+
 MixedOrder choose_order(const std::string& input,
                         const std::vector<Candidate>& pinyin_candidates,
                         const std::vector<Candidate>& wubi_candidates) {
@@ -34,7 +45,8 @@ MixedOrder choose_order(const std::string& input,
         return MixedOrder::kPinyinFirst;
     if (pinyin_candidates.empty())
         return MixedOrder::kWubiFirst;
-    if (is_alpha_key(input) && input.size() == 4)
+    if (is_alpha_key(input) && input.size() == 4 &&
+        !pinyin_top_is_stronger(pinyin_candidates, wubi_candidates))
         return MixedOrder::kWubiFirst;
     if (input.size() <= 3)
         return MixedOrder::kAmbiguousInterleave;

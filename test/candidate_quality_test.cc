@@ -52,7 +52,9 @@ struct QualityCase {
     bool require_cache_hit = false;
     std::vector<ExpectedCandidate> contains;
     std::vector<std::string> forbid_top1;
+    std::vector<std::string> forbid_visible;
     std::unordered_map<std::string, std::string> expect_sources;
+    std::unordered_map<std::string, std::string> expect_origins;
     std::vector<UserEntrySetup> setup_user_entries;
 };
 
@@ -70,6 +72,18 @@ std::string source_name(cxxime::CandidateSource source) {
     return source == cxxime::CandidateSource::kWubi ? "wubi" : "pinyin";
 }
 
+std::string origin_name(cxxime::CandidateOrigin origin) {
+    switch (origin) {
+    case cxxime::CandidateOrigin::kUser:
+        return "user";
+    case cxxime::CandidateOrigin::kCache:
+        return "cache";
+    case cxxime::CandidateOrigin::kSystem:
+    default:
+        return "system";
+    }
+}
+
 std::string candidate_summary(const cxxime::CandidatePage& page) {
     std::string out;
     for (size_t i = 0; i < page.candidates.size(); ++i) {
@@ -81,6 +95,8 @@ std::string candidate_summary(const cxxime::CandidatePage& page) {
         out += c.text;
         out += "/";
         out += source_name(c.source);
+        out += "/";
+        out += origin_name(c.origin);
         out += "/";
         out += std::to_string(c.frequency);
     }
@@ -167,9 +183,19 @@ QualityCase parse_case(const json& item, const json& defaults) {
         for (const auto& text : item.at("forbid_top1"))
             q.forbid_top1.push_back(text.get<std::string>());
     }
+    if (item.contains("forbid_visible")) {
+        for (const auto& text : item.at("forbid_visible"))
+            q.forbid_visible.push_back(text.get<std::string>());
+    }
     if (item.contains("expect_sources")) {
-        for (auto it = item.at("expect_sources").begin(); it != item.at("expect_sources").end(); ++it)
+        for (auto it = item.at("expect_sources").begin();
+             it != item.at("expect_sources").end(); ++it)
             q.expect_sources[it.key()] = it.value().get<std::string>();
+    }
+    if (item.contains("expect_origins")) {
+        for (auto it = item.at("expect_origins").begin();
+             it != item.at("expect_origins").end(); ++it)
+            q.expect_origins[it.key()] = it.value().get<std::string>();
     }
     if (item.contains("setup_user_entries")) {
         for (const auto& setup : item.at("setup_user_entries"))
@@ -360,12 +386,27 @@ void assert_quality_case(QualityHarness& harness, const QualityCase& q) {
         }
     }
 
+    for (const auto& forbidden : q.forbid_visible) {
+        ASSERT_EQ(rank_of(page, forbidden), 0)
+            << q.id << " forbidden visible candidate: " << forbidden
+            << " candidates: " << summary;
+    }
+
     for (const auto& [text, expected_source] : q.expect_sources) {
         const auto* candidate = find_candidate(page, text);
         ASSERT_TRUE(candidate != nullptr) << q.id << " missing source target: " << text
             << " candidates: " << summary;
         ASSERT_EQ(source_name(candidate->source), expected_source)
             << q.id << " source mismatch for " << text
+            << " candidates: " << summary;
+    }
+
+    for (const auto& [text, expected_origin] : q.expect_origins) {
+        const auto* candidate = find_candidate(page, text);
+        ASSERT_TRUE(candidate != nullptr) << q.id << " missing origin target: " << text
+            << " candidates: " << summary;
+        ASSERT_EQ(origin_name(candidate->origin), expected_origin)
+            << q.id << " origin mismatch for " << text
             << " candidates: " << summary;
     }
 

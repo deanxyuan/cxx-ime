@@ -46,6 +46,21 @@ static void sort_candidates_by_score(std::vector<Candidate>& items) {
         });
 }
 
+static std::string compact_syllable_code(const char* syllable_ids, uint32_t len) {
+    std::string code;
+    code.reserve(len);
+    for (uint32_t i = 0; i < len; ++i) {
+        if (syllable_ids[i] != ':')
+            code.push_back(syllable_ids[i]);
+    }
+    return code;
+}
+
+static void set_candidate_code(Candidate& candidate, const char* syllable_ids, uint32_t len) {
+    candidate.syllables.assign(syllable_ids, len);
+    candidate.code = compact_syllable_code(syllable_ids, len);
+}
+
 enum class UserMatchKind {
     kExact,
     kPrefix,
@@ -646,6 +661,9 @@ std::vector<Candidate> Dict::lookup_by_syllables(
         if (i > 0) key += ":";
         key += syllables[i];
     }
+    std::string concat_code;
+    for (const auto& s : syllables)
+        concat_code += s;
     const uint32_t key_len = (uint32_t)key.size();
     const char* key_data = key.data();
 
@@ -673,6 +691,8 @@ std::vector<Candidate> Dict::lookup_by_syllables(
 
         Candidate c;
         c.text.assign(dict_strings_ + e.text_offset, e.text_len);
+        c.code = concat_code;
+        c.syllables = key;
         c.frequency = e.frequency;
         if (!contains_text(results, c.text)) {
             merge_candidate_by_score(results, std::move(c));
@@ -683,9 +703,6 @@ std::vector<Candidate> Dict::lookup_by_syllables(
     }
 
     // Phase 5: query user dict via exact index
-    std::string concat_code;
-    for (auto& s : syllables) concat_code += s;
-
     QueryBudget ub;
     UserLookupStats ustats;
     auto user_results = lookup_user_exact(concat_code, limit, ub, trace, &ustats);
@@ -738,6 +755,8 @@ std::vector<Candidate> Dict::lookup(const std::string& code_prefix, int limit, Q
 
         Candidate c;
         c.text.assign(dict_strings_ + e.text_offset, e.text_len);
+        set_candidate_code(c, dict_strings_ + e.syllable_ids_offset,
+                           e.syllable_ids_len);
         // Exact match first, then shorter codes before longer codes,
         // then by original frequency. Encode as: exact*100000 + (100-len)*100 + freq
         c.frequency = (e.syllable_ids_len == prefix_len ? 100000 : 0)
@@ -1107,7 +1126,10 @@ std::vector<Candidate> Dict::lookup_user_exact(
         ++stats->scan_count;
         Candidate c;
         c.text = user_entries_[s.id].text;
+        c.code = user_entries_[s.id].code;
+        c.syllables = user_entries_[s.id].syllables;
         c.frequency = s.score;
+        c.origin = CandidateOrigin::kUser;
         results.push_back(std::move(c));
         if ((int)results.size() >= limit)
             break;
@@ -1164,7 +1186,10 @@ std::vector<Candidate> Dict::lookup_user_prefix(
             ++stats->scan_count;
             Candidate c;
             c.text = user_entries_[s.id].text;
+            c.code = user_entries_[s.id].code;
+            c.syllables = user_entries_[s.id].syllables;
             c.frequency = s.score;
+            c.origin = CandidateOrigin::kUser;
             results.push_back(std::move(c));
             if ((int)results.size() >= limit)
                 break;
@@ -1176,6 +1201,8 @@ std::vector<Candidate> Dict::lookup_user_prefix(
                 return user_entries_[id].code < val;
             });
 
+        struct ScoredId { UserEntryId id; int score; };
+        std::vector<ScoredId> scored;
         for (auto it = lo; it != user_code_sorted_.end(); ++it) {
             auto& e = user_entries_[*it];
             if (e.code.compare(0, prefix.size(), prefix) != 0)
@@ -1192,13 +1219,23 @@ std::vector<Candidate> Dict::lookup_user_prefix(
             }
             if (e.deleted) continue;
             ++stats->scan_count;
+            scored.push_back({*it, score_user_match(user_scoring_profile_,
+                                                    UserMatchKind::kPrefix,
+                                                    prefix.size(), e.code.size(),
+                                                    e.frequency, user_sequence_,
+                                                    e.sequence)});
+        }
 
+        std::sort(scored.begin(), scored.end(),
+            [](const ScoredId& a, const ScoredId& b) { return a.score > b.score; });
+
+        for (auto& s : scored) {
             Candidate c;
-            c.text = e.text;
-                c.frequency = score_user_match(user_scoring_profile_,
-                                       UserMatchKind::kPrefix, prefix.size(),
-                                       e.code.size(), e.frequency,
-                                       user_sequence_, e.sequence);
+            c.text = user_entries_[s.id].text;
+            c.code = user_entries_[s.id].code;
+            c.syllables = user_entries_[s.id].syllables;
+            c.frequency = s.score;
+            c.origin = CandidateOrigin::kUser;
             results.push_back(std::move(c));
             if ((int)results.size() >= limit)
                 break;
@@ -1222,7 +1259,7 @@ std::vector<Candidate> Dict::lookup_user_short(
     std::shared_lock<std::shared_mutex> lock(user_mutex_);
 
     auto try_add = [&](UserEntryId id, UserMatchKind kind,
-const std::string& match_key) -> bool {
+                       const std::string& match_key) -> bool {
         if (stats->scan_count >= budget.max_user_scan) {
             stats->truncated = true;
             stats->scan_budget_truncated = true;
@@ -1238,9 +1275,12 @@ const std::string& match_key) -> bool {
         ++stats->scan_count;
         Candidate c;
         c.text = e.text;
+        c.code = e.code;
+        c.syllables = e.syllables;
         c.frequency = score_user_match(user_scoring_profile_, kind,
                                        match_key.size(), e.code.size(),
                                        e.frequency, user_sequence_, e.sequence);
+        c.origin = CandidateOrigin::kUser;
         merge_candidate_by_score(results, std::move(c));
         return (int)results.size() < limit;
     };
@@ -1745,6 +1785,8 @@ std::vector<Candidate> Dict::lookup_by_ids(const std::vector<uint32_t>& query_id
         const auto& e = dict_entries_[id_index_[pos].index];
         Candidate c;
         c.text.assign(dict_strings_ + e.text_offset, e.text_len);
+        set_candidate_code(c, dict_strings_ + e.syllable_ids_offset,
+                           e.syllable_ids_len);
         c.frequency = e.frequency + 100000;  // exact match boost
         if (!contains_text(collector.items(), c.text)) {
             if (collector.full() && trace) {
@@ -1797,6 +1839,8 @@ std::vector<Candidate> Dict::lookup_by_ids(const std::vector<uint32_t>& query_id
             const auto& e = dict_entries_[id_index_[pos].index];
             Candidate c;
             c.text.assign(dict_strings_ + e.text_offset, e.text_len);
+            set_candidate_code(c, dict_strings_ + e.syllable_ids_offset,
+                               e.syllable_ids_len);
             c.frequency = e.frequency;
             if (!contains_text(collector.items(), c.text)) {
                 if (collector.full() && trace) {

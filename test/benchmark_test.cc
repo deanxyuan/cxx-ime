@@ -14,6 +14,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <memory>
 #include <sstream>
 #include <string>
 #include <set>
@@ -22,6 +23,44 @@
 static std::string project_path(const char* rel) {
     return std::string(CXXIME_PROJECT_DIR) + rel;
 }
+
+class BenchmarkEngineFixture {
+public:
+    explicit BenchmarkEngineFixture(const char* tag)
+        : user_dict_path_(project_path(
+              (std::string("data/_bench_user_") + tag + ".tsv").c_str())) {
+        std::remove(user_dict_path_.c_str());
+    }
+
+    ~BenchmarkEngineFixture() {
+        engine.finalize();
+        dict_.close();
+        std::remove(user_dict_path_.c_str());
+    }
+
+    bool initialize() {
+        std::string dict_path = project_path("data/pinyin.dict.bin");
+        if (!dict_.open(dict_path, user_dict_path_))
+            return false;
+
+        config_.load(project_path("data/default.json"));
+
+        std::string sp_path = cxxime::Engine::derive_spellings_path(dict_path);
+        if (!sp_path.empty() && spellings_.load(sp_path) && spellings_.has_spellings())
+            syllabifier_ = std::make_unique<cxxime::Syllabifier>(spellings_);
+
+        return engine.initialize(dict_, spellings_, syllabifier_.get(), config_);
+    }
+
+    cxxime::Engine engine;
+
+private:
+    cxxime::Dict dict_;
+    cxxime::SpellingsIndex spellings_;
+    std::unique_ptr<cxxime::Syllabifier> syllabifier_;
+    cxxime::Config config_;
+    std::string user_dict_path_;
+};
 
 static const char* kTestInputs[] = {
     "s", "sd", "sdf", "sddf", "bj", "srf", "shrf", "zguo", "nihao", "nihaoshijie"
@@ -34,11 +73,10 @@ static int64_t percentile(const std::vector<int64_t>& sorted, double p) {
 }
 
 TEST(Benchmark, TraceFieldsPopulated) {
-    cxxime::Engine engine;
-    std::string dict_path = project_path("data/pinyin.dict.bin").c_str();
-    std::string config_path = project_path("data/default.json").c_str();
+    BenchmarkEngineFixture fixture("trace_fields");
+    auto& engine = fixture.engine;
 
-    if (!engine.initialize(dict_path, config_path)) {
+    if (!fixture.initialize()) {
         return;
     }
 
@@ -84,13 +122,10 @@ TEST(Benchmark, TraceFieldsPopulated) {
 }
 
 TEST(Benchmark, TraceOverhead) {
-    // Initialize engine
-    cxxime::Engine engine;
-    std::string dict_path = project_path("data/pinyin.dict.bin").c_str();
-    std::string config_path = project_path("data/default.json").c_str();
+    BenchmarkEngineFixture fixture("trace_overhead");
+    auto& engine = fixture.engine;
 
-    if (!engine.initialize(dict_path, config_path)) {
-        // Skip if dict not available
+    if (!fixture.initialize()) {
         return;
     }
 
@@ -239,10 +274,9 @@ static int64_t percentile_vec(const std::vector<int64_t>& sorted, double p) {
 // ---- Phase 7: JSONL field completeness ----
 
 TEST(Benchmark, JsonlFieldsComplete) {
-    cxxime::Engine engine;
-    std::string dict_path = project_path("data/pinyin.dict.bin").c_str();
-    std::string config_path = project_path("data/default.json").c_str();
-    if (!engine.initialize(dict_path, config_path)) return;
+    BenchmarkEngineFixture fixture("jsonl_fields");
+    auto& engine = fixture.engine;
+    if (!fixture.initialize()) return;
 
     engine.set_query_deadline_ms(0);
     engine.set_trace_enabled(true);
@@ -281,10 +315,9 @@ TEST(Benchmark, JsonlFieldsComplete) {
 // ---- Phase 7: repeat count exactness ----
 
 TEST(Benchmark, RepeatCountExact) {
-    cxxime::Engine engine;
-    std::string dict_path = project_path("data/pinyin.dict.bin").c_str();
-    std::string config_path = project_path("data/default.json").c_str();
-    if (!engine.initialize(dict_path, config_path)) return;
+    BenchmarkEngineFixture fixture("repeat_count");
+    auto& engine = fixture.engine;
+    if (!fixture.initialize()) return;
 
     engine.set_query_deadline_ms(0);
     engine.set_trace_enabled(true);
@@ -328,10 +361,9 @@ TEST(Benchmark, RepeatCountExact) {
 // ---- Phase 7: page_size affects candidate_count ----
 
 TEST(Benchmark, PageSizeAffectsCandidates) {
-    cxxime::Engine engine;
-    std::string dict_path = project_path("data/pinyin.dict.bin").c_str();
-    std::string config_path = project_path("data/default.json").c_str();
-    if (!engine.initialize(dict_path, config_path)) return;
+    BenchmarkEngineFixture fixture("page_size");
+    auto& engine = fixture.engine;
+    if (!fixture.initialize()) return;
 
     engine.set_query_deadline_ms(0);
     engine.set_trace_enabled(true);
@@ -372,10 +404,9 @@ TEST(Benchmark, PageSizeAffectsCandidates) {
 // ---- Phase 7: deadline triggering ----
 
 TEST(Benchmark, DeadlineTriggered) {
-    cxxime::Engine engine;
-    std::string dict_path = project_path("data/pinyin.dict.bin").c_str();
-    std::string config_path = project_path("data/default.json").c_str();
-    if (!engine.initialize(dict_path, config_path)) return;
+    BenchmarkEngineFixture fixture("deadline");
+    auto& engine = fixture.engine;
+    if (!fixture.initialize()) return;
 
     engine.set_trace_enabled(true);
     engine.set_config_page_size(7);
@@ -469,10 +500,9 @@ TEST(Benchmark, CheckQueryBenchPass) {
     std::string threshold_path = project_path("tools/query_bench/thresholds.local.json");
 
     {
-        cxxime::Engine engine;
-        std::string dict_path = project_path("data/pinyin.dict.bin");
-        std::string config_path = project_path("data/default.json");
-        if (!engine.initialize(dict_path, config_path)) return;
+        BenchmarkEngineFixture fixture("check_pass");
+        auto& engine = fixture.engine;
+        if (!fixture.initialize()) return;
 
         engine.set_query_deadline_ms(0);
         engine.set_trace_enabled(true);
@@ -538,10 +568,9 @@ TEST(Benchmark, CheckQueryBenchFail) {
 
 TEST(Benchmark, CacheHitScanZero) {
     // Short input "s" should hit topn cache with all scan counts = 0
-    cxxime::Engine engine;
-    std::string dict_path = project_path("data/pinyin.dict.bin");
-    std::string config_path = project_path("data/default.json");
-    if (!engine.initialize(dict_path, config_path)) return;
+    BenchmarkEngineFixture fixture("cache_hit");
+    auto& engine = fixture.engine;
+    if (!fixture.initialize()) return;
 
     engine.set_query_deadline_ms(0);
     engine.set_trace_enabled(true);
@@ -567,10 +596,9 @@ TEST(Benchmark, CacheHitScanZero) {
 
 TEST(Benchmark, CacheMissScanPositive) {
     // Long input "nihaoshijie" should miss cache, scan counts > 0
-    cxxime::Engine engine;
-    std::string dict_path = project_path("data/pinyin.dict.bin");
-    std::string config_path = project_path("data/default.json");
-    if (!engine.initialize(dict_path, config_path)) return;
+    BenchmarkEngineFixture fixture("cache_miss");
+    auto& engine = fixture.engine;
+    if (!fixture.initialize()) return;
 
     engine.set_query_deadline_ms(0);
     engine.set_trace_enabled(true);
@@ -598,10 +626,9 @@ TEST(Benchmark, CacheMissScanPositive) {
 
 TEST(Benchmark, TruncationWhenExcessCandidates) {
     // With page_size=1, a common input should produce truncated=true
-    cxxime::Engine engine;
-    std::string dict_path = project_path("data/pinyin.dict.bin");
-    std::string config_path = project_path("data/default.json");
-    if (!engine.initialize(dict_path, config_path)) return;
+    BenchmarkEngineFixture fixture("truncation");
+    auto& engine = fixture.engine;
+    if (!fixture.initialize()) return;
 
     engine.set_query_deadline_ms(0);
     engine.set_trace_enabled(true);
@@ -626,10 +653,9 @@ TEST(Benchmark, TruncationWhenExcessCandidates) {
 
 TEST(Benchmark, DeadlineAndTruncatedCoupled) {
     // When deadline is exceeded, truncated must also be true
-    cxxime::Engine engine;
-    std::string dict_path = project_path("data/pinyin.dict.bin");
-    std::string config_path = project_path("data/default.json");
-    if (!engine.initialize(dict_path, config_path)) return;
+    BenchmarkEngineFixture fixture("deadline_coupled");
+    auto& engine = fixture.engine;
+    if (!fixture.initialize()) return;
 
     engine.set_trace_enabled(true);
     engine.set_config_page_size(7);
@@ -656,10 +682,9 @@ TEST(Benchmark, DeadlineAndTruncatedCoupled) {
 
 TEST(Benchmark, NormalInputNoDeadline) {
     // Short input with generous deadline should not exceed deadline
-    cxxime::Engine engine;
-    std::string dict_path = project_path("data/pinyin.dict.bin");
-    std::string config_path = project_path("data/default.json");
-    if (!engine.initialize(dict_path, config_path)) return;
+    BenchmarkEngineFixture fixture("normal_deadline");
+    auto& engine = fixture.engine;
+    if (!fixture.initialize()) return;
 
     engine.set_trace_enabled(true);
     engine.set_config_page_size(7);
