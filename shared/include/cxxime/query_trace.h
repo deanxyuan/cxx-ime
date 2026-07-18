@@ -63,6 +63,7 @@ struct QueryTrace {
 
     // Log to async queue (non-blocking, drops if queue full)
     void log() const;
+    void log_unchecked() const;
 
     // Shutdown writer thread (call at process exit)
     static void shutdown();

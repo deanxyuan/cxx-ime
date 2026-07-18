@@ -9,6 +9,7 @@
 #include <fstream>
 #include <cstdio>
 #include <shellapi.h>
+#include <thread>
 #include <utility>
 #include <json.hpp>
 #include <cxxime/data_path.h>
@@ -37,6 +38,7 @@ const int kPanelCount = 6;
 
 const int kFontPt = 14;
 const int kNavFontPt = kFontPt + 1;
+constexpr UINT WM_CXXIME_DIAGNOSTICS_COMPLETE = WM_APP + 101;
 
 int kListW, kPadX, kPadY, kCtrlH, kRowH, kPanelPadTop, kPanelPadLeft;
 int kLblW, kCtlX;
@@ -1127,6 +1129,13 @@ void EditorApp::refresh_user_entries() {
     query_user_entries();
 }
 
+void EditorApp::set_user_dict_status(const std::wstring& text) {
+    if (!hDictStatus_)
+        return;
+    std::wstring status = L"用户词典: " + text;
+    SetWindowTextW(hDictStatus_, status.c_str());
+}
+
 void EditorApp::query_user_entries() {
     if (!hDictList_)
         return;
@@ -1180,6 +1189,7 @@ void EditorApp::clear_user_entry_form() {
     if (hDictText_) SetWindowTextW(hDictText_, L"");
     if (hDictCode_) SetWindowTextW(hDictCode_, L"");
     if (hDictList_) ListView_SetItemState(hDictList_, -1, 0, LVIS_SELECTED);
+    set_user_dict_status(L"输入已清空");
 }
 
 void EditorApp::add_user_entry() {
@@ -1209,6 +1219,7 @@ void EditorApp::add_user_entry() {
 
     clear_user_entry_form();
     query_user_entries();
+    set_user_dict_status(L"已新增词条，列表已刷新");
 }
 
 void EditorApp::save_user_entry() {
@@ -1247,6 +1258,7 @@ void EditorApp::save_user_entry() {
     selectedDictText_ = utf8_to_wstr(text);
     selectedDictCode_ = utf8_to_wstr(code);
     query_user_entries();
+    set_user_dict_status(L"已保存修改，列表已刷新");
 }
 
 void EditorApp::delete_user_entry() {
@@ -1278,6 +1290,7 @@ void EditorApp::delete_user_entry() {
 
     clear_user_entry_form();
     query_user_entries();
+    set_user_dict_status(L"已删除词条，列表已刷新");
 }
 
 void EditorApp::import_user_dict() {
@@ -1304,12 +1317,25 @@ void EditorApp::import_user_dict() {
 
     cxxime::IpcClient client;
     cxxime::IPCResponse resp = {};
+    bool reload_ok = false;
     if (client.connect()) {
-        client.reload_user_dict(resp, current_user_dict_kind());
+        reload_ok = client.reload_user_dict(resp, current_user_dict_kind()) &&
+                    resp.status == cxxime::IPCStatus::OK;
         client.disconnect();
     }
     clear_user_entry_form();
     query_user_entries();
+    if (reload_ok) {
+        set_user_dict_status(L"导入完成，列表已刷新");
+        MessageBoxW(hwnd_, L"用户词典已导入并重新加载。", L"CxxIME",
+                    MB_OK | MB_ICONINFORMATION);
+    } else {
+        set_user_dict_status(L"已复制词典文件，但服务未能立即重新加载");
+        MessageBoxW(hwnd_,
+                    L"用户词典文件已导入，但 CxxIME 服务未能立即重新加载。"
+                    L"重新切换输入法或重启服务后会使用新词典。",
+                    L"CxxIME", MB_OK | MB_ICONWARNING);
+    }
 }
 
 void EditorApp::export_user_dict() {
@@ -1329,8 +1355,12 @@ void EditorApp::export_user_dict() {
 
     cxxime::IpcClient client;
     cxxime::IPCResponse resp = {};
+    bool save_requested = false;
+    bool save_ok = false;
     if (client.connect()) {
-        client.save_user_dict(resp, current_user_dict_kind());
+        save_requested = true;
+        save_ok = client.save_user_dict(resp, current_user_dict_kind()) &&
+                  resp.status == cxxime::IPCStatus::OK;
         client.disconnect();
     }
 
@@ -1341,11 +1371,20 @@ void EditorApp::export_user_dict() {
         return;
     }
     update_user_dict_status();
+    std::wstring msg = L"用户词典已导出到:\n" + path_for_display(dst);
+    if (save_requested && !save_ok) {
+        msg += L"\n\n注意: 服务未能立即保存最新内存状态，已导出现有词典文件。";
+    }
+    MessageBoxW(hwnd_, msg.c_str(), L"CxxIME", MB_OK | MB_ICONINFORMATION);
 }
 
 void EditorApp::open_user_dict_dir() {
     std::wstring dir = path_for_display(cxxime::user_data_dir());
-    ShellExecuteW(hwnd_, L"open", dir.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+    HINSTANCE result = ShellExecuteW(hwnd_, L"open", dir.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+    if ((INT_PTR)result <= 32) {
+        std::wstring msg = L"无法打开用户词典目录:\n" + dir;
+        MessageBoxW(hwnd_, msg.c_str(), L"CxxIME", MB_OK | MB_ICONERROR);
+    }
 }
 
 void EditorApp::export_diagnostics() {
@@ -1363,14 +1402,36 @@ void EditorApp::export_diagnostics() {
         dir.resize(pos);
 
     std::wstring params = L"-NoProfile -ExecutionPolicy Bypass -File \"" + script + L"\"";
-    HINSTANCE result = ShellExecuteW(hwnd_, L"open", L"powershell.exe", params.c_str(),
-                                     dir.empty() ? nullptr : dir.c_str(), SW_SHOWNORMAL);
-    if ((INT_PTR)result <= 32) {
+    SHELLEXECUTEINFOW sei = {};
+    sei.cbSize = sizeof(sei);
+    sei.fMask = SEE_MASK_NOCLOSEPROCESS;
+    sei.hwnd = hwnd_;
+    sei.lpVerb = L"open";
+    sei.lpFile = L"powershell.exe";
+    sei.lpParameters = params.c_str();
+    sei.lpDirectory = dir.empty() ? nullptr : dir.c_str();
+    sei.nShow = SW_SHOWNORMAL;
+
+    if (!ShellExecuteExW(&sei)) {
         MessageBoxW(hwnd_, L"启动诊断导出失败。", L"CxxIME", MB_OK | MB_ICONERROR);
         return;
     }
-    MessageBoxW(hwnd_, L"正在导出诊断包，完成后会在桌面生成 cxxime-diagnostics-*.zip。",
+    MessageBoxW(hwnd_, L"已开始导出诊断包，完成后会再次提示结果。",
                 L"CxxIME", MB_OK | MB_ICONINFORMATION);
+
+    if (sei.hProcess) {
+        HWND hwnd = hwnd_;
+        HANDLE process = sei.hProcess;
+        std::thread([hwnd, process]() {
+            WaitForSingleObject(process, INFINITE);
+            DWORD exit_code = 1;
+            GetExitCodeProcess(process, &exit_code);
+            CloseHandle(process);
+            if (IsWindow(hwnd))
+                PostMessageW(hwnd, WM_CXXIME_DIAGNOSTICS_COMPLETE,
+                             static_cast<WPARAM>(exit_code), 0);
+        }).detach();
+    }
 }
 
 void EditorApp::on_user_entry_selected() {
@@ -1493,6 +1554,17 @@ LRESULT CALLBACK EditorApp::wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
         break;
     }
+    case WM_CXXIME_DIAGNOSTICS_COMPLETE:
+        if (wp == 0) {
+            MessageBoxW(hwnd,
+                        L"诊断包导出完成。请检查桌面的 cxxime-diagnostics-*.zip。",
+                        L"CxxIME", MB_OK | MB_ICONINFORMATION);
+        } else {
+            MessageBoxW(hwnd,
+                        L"诊断导出已结束，但脚本返回失败。请查看打开的 PowerShell 窗口输出。",
+                        L"CxxIME", MB_OK | MB_ICONERROR);
+        }
+        return 0;
     case WM_DPICHANGED: {
         float oldDpi = g_dpi;
         g_dpi = (float)LOWORD(wp) / 96.0f;

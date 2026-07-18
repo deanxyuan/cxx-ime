@@ -16,6 +16,7 @@ class CLangBarItemButton;
 #include <cstdint>
 #include <cstdio>
 #include <mutex>
+#include <string>
 
 class TextService : public ITfTextInputProcessorEx,
                     public ITfKeyEventSink,
@@ -119,6 +120,7 @@ private:
     bool _context_belongs_to_foreground(ITfContext* context) const;
     bool _read_context_compartment_bool(ITfContext* context, REFGUID guid, bool* value) const;
     bool _context_keyboard_disabled(ITfContext* context) const;
+    const char* _input_context_block_reason(ITfContext* context) const;
     bool _context_allows_input(ITfContext* context) const;
     bool _document_allows_input(ITfDocumentMgr* doc_mgr) const;
     bool _query_input_focus_from_thread_mgr() const;
@@ -128,11 +130,15 @@ private:
     bool _ensure_ipc_session();
     bool _recreate_ipc_session_preserving_status();
     bool _heartbeat_ipc();
-    void _show_status_window_if_allowed();
+    void _show_status_window_if_allowed(const char* reason = "input_allowed");
+    void _hide_status_window(const char* reason);
+    void _show_candidate_window(const char* reason);
+    void _hide_candidate_window(const char* reason);
+    void _trace_input_decision(const char* block_reason);
     void _start_state_poll_timer();
     void _stop_state_poll_timer();
-    void _poll_unfocused_state_keys();
     void _reset_poll_shift_state();
+    void _poll_unfocused_state_keys();
     bool _sync_status_key_edge(WPARAM key, bool key_down);
     static VOID CALLBACK _state_poll_timer_proc(HWND hwnd, UINT msg, UINT_PTR id_event, DWORD time);
 
@@ -160,6 +166,7 @@ private:
     WPARAM _pollShiftKey = VK_SHIFT;
     std::chrono::steady_clock::time_point _lastIpcHeartbeat = {};
     bool _ipcHealthy = true;
+    std::string _lastInputBlockReason;
     cxxime::CandidateWindow _candidateWindow;
     cxxime::Config _config;
 
@@ -177,6 +184,7 @@ private:
 
     // Async trace writer (bounded queue, writer thread, batch flush)
     void _enqueue_trace(const TsfTrace& trace);
+    void _enqueue_event_trace(const char* event, const char* detail, bool important = false);
 };
 
 #endif // CXXIME_TSF_TEXT_SERVICE_H_

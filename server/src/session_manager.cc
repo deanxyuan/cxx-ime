@@ -750,7 +750,7 @@ ProcessKeyResult SessionManager::process_key(uint32_t id, const cxxime::KeyEvent
 
     // trace log
     if (trace_enabled && engine.last_trace().should_log()) {
-        engine.last_trace().log();
+        engine.last_trace().log_unchecked();
     }
 
     return ret;
