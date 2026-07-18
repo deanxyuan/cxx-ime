@@ -26,6 +26,42 @@ CxxIME 采用三层架构处理拼音到汉字的转换：
 └─────────────┘
 ```
 
+### 1.1 三层架构详解
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ 第一层: Spelling Algebra (构建时规则引擎)                        │
+│                                                                 │
+│ 输入: 音节表 {ni, hao, da, di, cha, ca, ...}                    │
+│ 规则: abbrev/fuzz/derive/xform/erase/xlit (regex-based)         │
+│ 输出: Script = map<输入串, list<Spelling{syllable, type, cred}>> │
+│                                                                 │
+│ 效果: 音节表被展开为所有可能的输入串→音节映射                     │
+├─────────────────────────────────────────────────────────────────┤
+│ 第二层: Prism (构建时建索引, 运行时前缀搜索)                     │
+│                                                                 │
+│ 构建: Patricia trie 存 Script 所有 key                           │
+│       Node.spellings[] = [{syllable, type, cred}...]            │
+│ 运行: prefix_search(input) → spellings[{syllable, type, cred}]  │
+│                                                                 │
+│ 效果: O(输入长度) 找到所有匹配的音节                             │
+├─────────────────────────────────────────────────────────────────┤
+│ 第三层: Table (构建时建索引, 运行时按音节序列查询)               │
+│                                                                 │
+│ 构建: 按 syllable_ids 序列索引词条                               │
+│ 运行: SyllableGraph indices → Code(syllable_ids) → DictEntry    │
+│                                                                 │
+│ 效果: O(音节数) 精确查找词条                                     │
+├─────────────────────────────────────────────────────────────────┤
+│ Syllabifier (运行时, 连接第二层和第三层)                         │
+│                                                                 │
+│ BFS 走 trie 前缀搜索:                                           │
+│   每步 prefix_search(input[pos:]) → {syllable, type, cred}       │
+│   构建 SyllableGraph (edges: pos→pos → {syllable_id→props})     │
+│   DFS 枚举路径 → lookup_by_syllables() → 候选                   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
 ### 核心类关系
 
 ```
@@ -33,16 +69,71 @@ Engine
   ├── PinyinProcessor       按键处理（字母、退格、空格、数字选候选）
   ├── PinyinTranslator      翻译器，组合分词 + 词典查询
   │     ├── Dict*            词典指针
-  │     └── PinyinSegmentor  分词器（当前使用简版，非 Syllabifier）
-  ├── Dict                   主词典（二进制加载）+ 用户词典（内存+TSV）
+  │     ├── Syllabifier*     主分词路径（BFS+DFS 音节图）
+  │     └── PinyinSegmentor  简版分词器（Syllabifier 不可用时回退）
+  ├── Dict                   主词典（二进制加载）+ 用户词典（内存+TSV，多路索引）
   ├── SpellingsIndex         拼写索引（二进制加载），供 Syllabifier 使用
   ├── Context                输入状态（拼音缓冲、候选列表、已提交文本）
   └── Config                 配置（字体、布局、主题）
 ```
 
-## 2. 二进制格式规范
+## 2. 查询流示例
 
-### 2.1 spellings.bin — 拼写索引（Prism 层）
+### 2.1 输入 "dd"（缩写匹配）
+
+```
+第一层 Spelling Algebra (构建时):
+  音节表: {da, di, ni, hao, ...}
+  规则: abbrev/^(.+).$/$1/  (取首字母)
+  Script 产出:
+    "d"  → [("da", abbrev, -0.693), ("di", abbrev, -0.693)]
+    "da" → [("da", normal, 0)]
+    "di" → [("di", normal, 0)]
+    "n"  → [("ni", abbrev, -0.693)]
+    "ni" → [("ni", normal, 0)]
+    ...
+
+第二层 Prism (运行时):
+  输入 "dd":
+    pos=0: prefix_search("dd") → 匹配 "d"
+      QuerySpelling("d") → {da:abbrev, di:abbrev}
+      edges[0][1] = {da, di}
+    pos=1: prefix_search("d") → 匹配 "d"
+      edges[1][2] = {da, di}
+
+  SyllableGraph:
+    edges: {0→1: {da,di}, 1→2: {da,di}}
+    Transpose → indices: {0: {da,di}, 1: {da,di}}
+
+第三层 Table (运行时):
+  遍历 indices 路径:
+    [da,da] → lookup_by_syllables → 无结果
+    [da,di] → lookup_by_syllables → 无结果
+    [di,da] → lookup_by_syllables → 无结果
+    [di,di] → lookup_by_syllables → "弟弟" ✓, "笛笛" ✓
+```
+
+### 2.2 输入 "ca"（模糊拼音）
+
+```
+第一层 (构建时):
+  规则: derive/^([zcs])h/$1/  (zh↔z, ch↔c, sh↔s)
+  Script:
+    "ca"  → [("ca", normal, 0), ("cha", fuzzy, -0.693)]
+    "cha" → [("cha", normal, 0)]
+
+第二层 (运行时):
+  pos=0: prefix_search("ca") → 匹配 "ca"
+    QuerySpelling("ca") → {ca:normal, cha:fuzzy}
+
+第三层 (运行时):
+  路径 [ca]  → "擦" ✓
+  路径 [cha] → "差" ✓  ← 模糊匹配
+```
+
+## 3. 二进制格式规范
+
+### 3.1 spellings.bin — 拼写索引（Prism 层）
 
 将输入字符串映射到音节解释。例如 `"d"` → `["da"(缩写), "di"(缩写), "de"(缩写)]`。
 
@@ -148,7 +239,7 @@ while current_node < node_count:
 
 复杂度: O(k)，k = 前缀长度。
 
-### 2.2 dict.bin — 主词典（Table 层）
+### 3.2 dict.bin — 主词典（Table 层）
 
 存储拼音到汉字的映射，按 `syllable_ids` 排序，支持 O(log n) 二分查找。
 
@@ -201,20 +292,22 @@ Python 格式: `"<IIIIi"`
 
 线性扫描所有条目，比较 `text` 字段。复杂度 O(n)，因为 dict.bin 按 syllable_ids 排序而非 text。
 
-### 2.3 格式版本兼容
+### 3.3 格式版本兼容
 
 通过文件头 magic 字节自动检测版本：
 
-| 格式 | magic (hex) | 说明 |
-|------|-------------|------|
-| spellings v1 | `43 58 53 50 4C 01 00 00` | 平坦排序数组（旧格式，向后兼容） |
-| spellings v2 | `43 58 53 50 4C 02 00 00` | Patricia trie（当前生产格式） |
-| dict v1 | `43 58 44 49 43 01 00 00` | 平坦排序数组 |
-| dict v2 | `43 58 44 49 43 02 00 00` | 平坦排序数组（布局相同，版本号升级） |
+| 格式 | magic (hex/ASCII) | 说明 |
+|------|-------------------|------|
+| spellings v1 | `43 58 53 50 4C 01 00 00` / `CXSPL\x01\x00\x00` | 平坦排序数组（旧格式，向后兼容） |
+| spellings v2 | `43 58 53 50 4C 02 00 00` / `CXSPL\x02\x00\x00` | Patricia trie（当前生产格式） |
+| dict v1 | `43 58 44 49 43 01 00 00` / `CXDIC\x01\x00\x00` | 平坦排序数组 |
+| dict v2 | `43 58 44 49 43 02 00 00` / `CXDIC\x02\x00\x00` | 平坦排序数组（布局相同，版本号升级） |
+| dict.idx v2/v3 | `43 58 49 44 58 00 00 00 00` / `CXIDX\0\0\0\0` | 整数 ID 索引（音节→词条，v2 变长解析，v3 zero-copy） |
+| topn.bin v1 | `43 58 54 4F 50 4E 01 00` / `CXTOPN\x01\0` | 短码候选缓存（短输入快速路径） |
 
-## 3. 数据存储方案
+## 4. 数据存储方案
 
-### 3.1 存储层选择
+### 4.1 存储层选择
 
 | 数据 | 格式 | 原因 |
 |------|------|------|
@@ -222,30 +315,33 @@ Python 格式: `"<IIIIi"`
 | 拼写索引 (spellings.bin) | 堆内存二进制加载 | 只读，一次性读入，O(k) trie 遍历 |
 | 用户词典 (user.tsv) | 内存 vector + map | 运行时 UPSERT，TSV 持久化 |
 
-### 3.2 文件大小对比
+### 4.2 文件大小对比
 
-| 文件 | SQLite (.db) | 二进制 (.bin) | 压缩 (.zip) |
-|------|-------------|---------------|-------------|
-| pinyin 词典 | 146 MB | 69 MB (dict.bin) | 57 MB |
-| pinyin 拼写 | — | 2.9 MB (spellings.bin) | — |
-| wubi86 词典 | 3.2 MB | — | 1.7 MB |
+| 文件 | SQLite (.db) | 二进制 (.bin / .idx) | 压缩 (.zip) |
+|------|-------------|----------------------|-------------|
+| pinyin 主词典 | 146 MB | 72.8 MB (dict.bin) | 57 MB |
+| pinyin 整数 ID 索引 | — | 48.4 MB (dict.idx) | — |
+| pinyin 短码候选缓存 | — | 363 MB (topn.bin) | — |
+| pinyin 拼写索引 | — | 2.9 MB (spellings.bin) | — |
+| wubi86 主词典 | 3.2 MB | 2.6 MB (dict.bin) | 1.7 MB |
+| wubi86 整数 ID 索引 | — | 2.1 MB (dict.idx) | — |
 
-### 3.3 为什么不用 SQLite 存主词典
+### 4.3 为什么不用 SQLite 存主词典
 
 - SQLite 需要编译 120MB 的 sqlite3.c
 - SQL `LIKE` 查询 + C++ 过滤比纯内存数据结构慢一个数量级
 - 页开销 + 索引冗余导致文件体积膨胀
 - 主词典是只读数据，不需要事务/写入能力
 
-### 3.4 为什么不用 DARTS+MARISA
+### 4.4 为什么不用 DARTS+MARISA
 
 - DARTS (Double-Array Trie) 和 MARISA Trie 需要引入外部依赖
 - Patricia trie 在零依赖条件下实现 O(k) 搜索，性能相当
 - 字符串去重对短字符串（拼音键平均 4-6 字节）不划算：2.69M × 8 字节引用开销 > 去重节省
 
-## 4. 构建流程
+## 5. 构建流程
 
-### 4.1 数据源
+### 5.1 数据源
 
 原始词典存储在 SQLite `.dict.db` 文件中（以 `.zip` 压缩提交到 git）：
 
@@ -267,7 +363,7 @@ CREATE TABLE dict (
 );
 ```
 
-### 4.2 构建工具
+### 5.2 构建工具
 
 `data/tools/build_binary.py` — 将 SQLite 转换为二进制格式：
 
@@ -287,7 +383,7 @@ python data/tools/build_binary.py -i data/pinyin.dict.db -o data/pinyin --dict-o
 - `data/pinyin.spellings.bin` — Patricia trie 拼写索引
 - `data/pinyin.dict.bin` — 排序数组主词典
 
-### 4.3 构建管线
+### 5.3 构建管线
 
 ```
 fetch_dict.py / fetch_wubi.py    从网络获取词典数据
@@ -305,7 +401,7 @@ fetch_dict.py / fetch_wubi.py    从网络获取词典数据
    pinyin.dict.bin                 运行时内存加载
 ```
 
-### 4.4 Patricia Trie 构建过程
+### 5.4 Patricia Trie 构建过程
 
 1. 从 SQLite 读取所有 `(input, syllable, type, credibility)` 条目
 2. 逐条插入 Patricia trie：
@@ -316,7 +412,7 @@ fetch_dict.py / fetch_wubi.py    从网络获取词典数据
 3. BFS 遍历分配节点索引
 4. 序列化：header + 节点数据 + 字符串数据
 
-### 4.5 SQLite → 二进制的数据流
+### 5.5 SQLite → 二进制的数据流
 
 ```
 SQLite spellings 表          Patricia Trie              spellings.bin
@@ -328,40 +424,26 @@ SQLite spellings 表          Patricia Trie              spellings.bin
 └─────────────────┘         a  e  i
 ```
 
-## 5. 用户词典 (user_dict)
+## 6. 用户词典 (user_dict)
 
-### 5.1 内存数据结构
+采用多路内存索引 + TSV 持久化。每条词条存储 `text`、`code`、`syllables`（冒号分隔音节键）、`abbr_code`、`mixed_keys`，支持 `frequency`、`sequence`（版本计数）、`deleted`（软删除）。
 
-```cpp
-struct UserDictEntry {
-    std::string text;      // "你好"
-    std::string code;      // "ni:hao"
-    int frequency = 1;
-};
+索引分四路：
 
-// Dict 类成员
-std::vector<UserDictEntry> user_entries_;             // 主存储
-std::unordered_map<std::string, size_t> user_text_index_;  // text → entries 索引
-mutable std::shared_mutex user_mutex_;                 // 读写锁
-std::atomic<bool> user_dirty_{false};
-```
+| 索引 | 用途 |
+|------|------|
+| `user_exact_index_` | 完整 code 精确匹配 |
+| `user_prefix_index_` | 短前缀匹配（长度 1..6） |
+| `user_abbr_index_` | 缩写匹配（首字母组合） |
+| `user_mixed_index_` | 混合匹配（声母增强 / 首音节展开 / 前两音节展开 / 长词首字母码） |
 
-### 5.2 词频更新
-
-每次用户选择候选词时，通过 map 查找更新或插入频率，O(1) 操作。脏标记 `user_dirty_` 在 shutdown 或定期触发 TSV 文件持久化。
-
-### 5.3 持久化格式
-
-TSV 文件（制表符分隔），每行：`text\tcode\tfrequency`
-
-- 默认路径: `%USERPROFILE%\cxxime\user.tsv`
-- 读写锁 `shared_mutex` 保证并发安全，读操作无阻塞
+用户词评分分双档：`kPinyin` 和 `kWubi`，通过 `set_user_scoring_profile()` 设置。
 
 详见 [用户词典设计](user-dictionary.md)。
 
-## 6. 二进制加载
+## 7. 二进制加载
 
-### 6.1 加载流程
+### 7.1 加载流程
 
 ```cpp
 HANDLE hFile = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, ...);
@@ -372,7 +454,7 @@ CloseHandle(hFile);
 // 验证 magic → 设置指针 → 构建索引
 ```
 
-### 6.2 资源管理
+### 7.2 资源管理
 
 ```cpp
 ~SpellingsIndex() {
@@ -380,31 +462,37 @@ CloseHandle(hFile);
 }
 ```
 
-### 6.3 优势
+### 7.3 优势
 
 - 一次性读入：避免 mmap 的 page-out 延迟（防病毒软件/文件系统过滤驱动干扰）
 - 无解析开销：二进制布局与内存布局一致，指针直接偏移
 - 确定性：内存占用等于文件大小，无按需加载的不确定性
 
-## 7. 当前构建状态
+## 8. 当前构建状态
 
-### 7.1 已编译的文件 (engine/CMakeLists.txt)
+### 8.1 已编译的文件 (engine/CMakeLists.txt)
 
 ```
-src/dict.cc               ← 二进制加载主词典 + 内存用户词典
+src/dict.cc               ← 二进制加载主词典 + 内存用户词典（多路索引）
 src/spellings_index.cc    ← Patricia trie 拼写索引
-src/syllabifier.cc        ← 音节分词器
-src/pinyin_translator.cc
-src/pinyin_segmentor.cc
-src/pinyin_processor.cc
-src/engine.cc
-src/context.cc
-src/config.cc
+src/syllabifier.cc        ← 音节分词器（BFS+DFS）
+src/pinyin_translator.cc  ← 拼音翻译（主路径，含长查询页缓存）
+src/pinyin_segmentor.cc   ← 简版拼音分词器（Syllabifier 回退）
+src/pinyin_processor.cc   ← 拼音按键处理
+src/wubi_translator.cc    ← 五笔翻译
+src/wubi_processor.cc     ← 五笔按键处理
+src/mixed_translator.cc   ← 混合模式翻译（拼音+五笔交叉排序）
+src/output_composer.cc    ← 输出合成（全角/CapsLock/按键拦截）
+src/ascii_composer.cc     ← 中英文切换
+src/short_code_cache.cc   ← 短码候选缓存（topn.bin）
+src/engine.cc             ← 引擎入口
+src/context.cc            ← 输入状态上下文
+src/config.cc             ← JSON 配置加载
 ```
 
-## 8. 测试
+## 9. 测试
 
-### 8.1 测试框架
+### 9.1 测试框架
 
 自定义轻量级测试框架 (`test/util/testutil.h`)，无外部依赖：
 
@@ -414,26 +502,41 @@ ASSERT_TRUE(cond) / ASSERT_EQ(a, b) / ...  // 断言宏（fatal）
 RUN_ALL_TESTS()                            // main 入口，自动发现并运行
 ```
 
-### 8.2 测试覆盖
+### 9.2 测试覆盖
 
-每个测试文件编译为独立的可执行文件（10 个 exe）：
+共 22 个 C++ 测试可执行文件 + 1 个 Python 测试（23 个 ctest 条目），合计 380+ 个 `TEST()` 用例：
 
 | 测试文件 | 用例数 | 测试内容 |
 |----------|--------|----------|
-| `engine_test` | 13 | 按键处理（字母/退格/空格/数字/ESC）、集成翻译（"shurufa"/"nihao"/简拼"dd""bj""srf"/混合拼音"zhg""zguo"/模糊音"zongguo""cifan"） |
-| `segmentor_test` | 5 | 标准拼音切分（"nihao"/"xian"/"zhongguo"/"a"/空输入） |
-| `dict_test` | 6 | 词典打开/前缀查找/音节查找/空查询/反查/用户词频更新 |
-| `config_test` | 6 | 默认值/JSON加载/缺失文件/无效JSON/preedit模式/回退 |
-| `layout_test` | 6 | 文本宽度估算（空/ASCII/CJK）/水平布局/换行/空列表/垂直布局 |
-| `preedit_mode_test` | 6 | 合成模式/预览模式/预览全部/无内联/无候选回退 |
-| `ipc_test` | 14 | 协议结构体/服务器启停/客户端连接断开/会话管理/按键处理/候选选择/多客户端并发/服务器重启重连 |
-| `wubi_test` | 8 | Wubi86 基本查找/前缀匹配/去重/不存在编码/边界/频率排序 |
-| **合计** | **64** | |
+| `engine_test` | 66 | 按键处理、集成翻译、多种输入模式 |
+| `engine_source_test` | 22 | 引擎源码级测试 |
+| `segmentor_test` | 5 | 标准拼音切分 |
+| `dict_test` | 26 | 词典打开/前缀查找/音节查找/空查询/反查/用户词频更新 |
+| `config_test` | 12 | 默认值/JSON加载/缺失文件/无效JSON |
+| `layout_test` | 6 | 文本宽度估算/水平布局/换行/垂直布局 |
+| `preedit_mode_test` | 5 | 合成模式/预览模式/内联 |
+| `ipc_test` | 29 | 协议结构体/服务器启停/会话管理/多客户端 |
+| `wubi_test` | 7 | Wubi86 基本查找/前缀匹配/去重 |
+| `wubi_engine_test` | 22 | 五笔引擎集成测试 |
+| `candidate_window_test` | 10 | 候选窗口渲染与交互 |
+| `candidate_quality_test` | 1 | 候选质量排序 |
+| `status_window_test` | 18 | 状态窗口渲染 |
+| `benchmark_test` | 16 | 性能基准测试 |
+| `short_cache_test` | 9 | 短码缓存查询 |
+| `trace_test` | 21 | 查询链路追踪 |
+| `mpscq_test` | 3 | 多生产者单消费者队列 |
+| `config_monitor_test` | 10 | 配置变更监控 |
+| `dictionary_monitor_test` | 3 | 词典 manifest 监控 |
+| `output_composer_test` | 44 | 输出合成（全角/CapsLock/按键拦截） |
+| `session_manager_status_test` | 18 | 会话管理器状态 |
+| `session_manager_integration_test` | 27 | 会话管理器集成 |
+| `build_short_cache_test` | (Python) | 短码缓存构建验证 |
+| **合计** | **380+** | |
 
-### 8.3 运行测试
+### 9.3 运行测试
 
 ```bash
 cd build
-ctest -C Debug                          # 运行全部测试
+ctest -C Debug                          # 运行全部测试（23 个）
 build\test\Debug\engine_test.exe        # 单独运行某个测试
 ```

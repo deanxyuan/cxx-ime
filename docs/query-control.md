@@ -38,7 +38,7 @@ struct QueryBudget {
     uint32_t max_prefix_scan = 2048;    // 前缀匹配最大扫描条目数
     uint32_t max_user_scan = 256;       // 用户词索引最大扫描条目数
     uint32_t max_results_before_merge = 64;  // TopK 容量（每次 lookup 的候选收集上限）
-    uint32_t topk = 0;                  // translator 层合并容量上限（预留，当前未使用）
+    uint32_t topk = 0;                  // translator 层合并容量上限，make_budget 设为 page_size
     QueryDeadline deadline;             // 时间预算
 };
 ```
@@ -64,16 +64,48 @@ public:
 ```cpp
 // shared/include/cxxime/query_trace.h
 struct QueryTrace {
-    // ... 计数字段 ...
-    bool cache_hit = false;         // 是否命中缓存（预留）
-    bool deadline_exceeded = false; // 是否触发 deadline
-    bool cancelled = false;         // 是否被取消（预留）
-    bool truncated = false;         // 是否被截断（scan budget / TopK / deadline）
-    // ... 耗时字段 ...
+    uint64_t query_id = 0;
+    uint32_t session_id = 0;
+    uint64_t revision = 0;
+    char raw_input[128] = {};
+    int page_index = 0;
+    int page_size = 0;
+
+    // Path counts
+    int syllable_path_count = 0;    // Syllabifier 生成路径数
+    int live_path_count = 0;        // 词典中存在对应 N 元音节的路径数
+    int candidate_count = 0;        // 最终候选数
+
+    // Scan counts
+    uint32_t exact_scan_count = 0;  // 系统词典精确匹配扫描数
+    uint32_t prefix_scan_count = 0; // 系统词典前缀匹配扫描数
+    uint32_t user_scan_count = 0;   // 用户词典索引扫描数
+    uint32_t mixed_scan_count = 0;  // Mixed 索引项扫描数
+    uint32_t mixed_bucket_size = 0; // Mixed 索引 bucket 大小
+    bool mixed_cache_hit = false;   // Mixed 索引贡献了候选
+
+    // Status flags
+    bool cache_hit = false;             // 命中任意缓存
+    bool deadline_exceeded = false;     // 时间预算耗尽
+    bool cancelled = false;             // 外部取消信号
+    bool truncated = false;             // 任意截断（以下三个的并集）
+    bool scan_budget_truncated = false; // 扫描条目超限
+    bool topk_truncated = false;        // TopK 收集器满
+    bool page_truncated = false;        // 分页裁剪
+
+    // Timing (microseconds)
+    int64_t processor_us = 0;
+    int64_t translate_us = 0;
+    int64_t lookup_us = 0;
+    int64_t merge_us = 0;
+    int64_t total_us = 0;
+
+    // Per-producer timing (up to 8 producers)
+    std::array<int64_t, 8> producer_us = {};
 };
 ```
 
-`deadline_exceeded` 和 `truncated` 在查询管道中被设置。`should_log()` 方法在 `deadline_exceeded` 时强制记录日志。
+`deadline_exceeded` 和 `truncated` 在查询管道中被设置。`should_log()` 方法在 `deadline_exceeded` 时强制记录日志。`cancelled` 用于 revision 过期或 Escape 等外部取消场景，与 deadline（时间耗尽）语义分离。
 
 ## 动态预算：make_budget()
 
@@ -109,7 +141,7 @@ Engine::process_key()
   ▼
 PinyinTranslator::translate(budget, trace)
   │ 检查 deadline → 超时则跳过 Syllabifier
-  │ Syllabifier::segment(deadline) — DFS 路径上限 256 + 每 32 次递归检查 deadline
+  │ Syllabifier::segment(deadline) — DFS 路径上限 256 + 首次调用检查 + 其后每 32 次递归检查 deadline
   │ 检查 deadline → 每条路径 has_prefix 前检查
   │ has_prefix 路径过滤
   │ 检查 deadline → 每条路径 lookup 前检查
@@ -130,7 +162,7 @@ Dict::lookup_by_ids(budget, trace)
 | 检查点 | 位置 | 超时行为 | 截断行为 |
 |--------|------|----------|----------|
 | Engine 入口 | `engine.cc` | 跳过 translate，返回空候选 | 设置 `deadline_exceeded` + `truncated` |
-| Syllabifier DFS | `syllabifier.cc` 每 32 次递归 + 路径上限 256 | 中断路径枚举，返回已生成路径 | 设置 `deadline_exceeded` + `truncated` |
+| Syllabifier DFS | `syllabifier.cc` 首次调用 + 其后每 32 次递归检查 + 路径上限 256 | 中断路径枚举，返回已生成路径 | 设置 `deadline_exceeded` + `truncated` |
 | has_prefix 前 | `pinyin_translator.cc` | 跳过当前路径及后续路径 | 设置 `deadline_exceeded` + `truncated` |
 | lookup 前 | `pinyin_translator.cc` | 跳过当前路径及后续路径 | 设置 `deadline_exceeded` + `truncated` |
 | Dict 循环前 | `dict.cc` | 跳过扫描 | 设置 `deadline_exceeded` + `truncated` |
@@ -145,9 +177,9 @@ Dict::lookup_by_ids(budget, trace)
 `Syllabifier::enumerate_paths()` 有两个互斥的终止条件：
 
 1. **路径数上限**：`kMaxPaths = 256`。DFS 生成 256 条完整路径后立即停止。
-2. **Deadline**：每 32 次递归调用检查一次 `deadline->expired()`，过期时中断。
+2. **Deadline**：首次调用检查 + 其后每 32 次递归调用检查一次 `deadline->expired()`，过期时中断。
 
-路径上限的依据：`PinyinTranslator::translate()` 只取前 `kMaxPaths = 8` 条路径（见 `pinyin_translator.cc`），256 条已留出 32 倍余量。密集缩写图（如 11 字符全拼产生 154 条边）在无上限时可生成 10,000+ 条路径，DFS 递归调用达 7,000+ 次，耗时 50ms+。降至 256 后同一输入 <1ms 完成。
+路径上限的依据：`PinyinTranslator::translate()` 只取前 `kMaxPaths = 64` 条路径（见 `pinyin_translator.cc`），256 条已留出 4 倍余量。密集缩写图（如 11 字符全拼产生 154 条边）在无上限时可生成 10,000+ 条路径，DFS 递归调用达 7,000+ 次，耗时 50ms+。降至 256 后同一输入 <1ms 完成。
 
 ## 扫描流程
 
@@ -256,7 +288,7 @@ Scan budget 和 TopK 由 `make_budget()` 自动管理，无需手动设置。Dea
 详见 [候选词选词算法](candidate-selection.md)。Deadline 检查点嵌入在四步流程的每一步之间：
 
 1. **拼写图构建** — Syllabifier `build_graph()` 无 deadline 检查（BFS 阶段耗时稳定，非瓶颈）
-2. **路径枚举** — `enumerate_paths()` 路径上限 256 + 每 32 次递归检查 deadline，过期时返回已生成路径
+2. **路径枚举** — `enumerate_paths()` 路径上限 256 + 首次调用检查 + 其后每 32 次递归检查 deadline，过期时返回已生成路径
 3. **路径过滤** — 每条路径 `has_prefix` 前检查 deadline
 4. **候选查找** — 循环前检查 + 每条路径 `lookup_by_ids` 前检查 + 扫描中每 `check_interval` 条检查
 

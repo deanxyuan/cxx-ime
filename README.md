@@ -1,27 +1,41 @@
 # CxxIME
 
-轻量级 Windows TSF 输入法（拼音 / 五笔）
+轻量级 Windows TSF 输入法（拼音 / 五笔 / 混输）
 
-A lightweight Windows TSF (Text Services Framework) input method (Pinyin + Wubi).
+A lightweight Windows TSF (Text Services Framework) input method (Pinyin + Wubi + Mixed).
+
+> 项目已进入日常试用阶段：核心输入功能、安装部署与配置体系均已完成。
 
 ## 项目简介
 
-CxxIME 是一个基于 Windows TSF (Text Services Framework) 的输入法，支持拼音和五笔两种模式，采用客户端/服务端架构设计。TSF DLL 负责捕获按键并通过 IPC 与后台服务端通信，服务端执行拼音解析、词典查询和候选生成。
+CxxIME 是一个基于 Windows TSF (Text Services Framework) 的输入法，支持拼音、五笔和拼音五笔混输三种模式，采用客户端/服务端架构设计。TSF DLL 负责捕获按键并通过 IPC 与后台服务端通信，服务端执行拼音解析、词典查询和候选生成。
+
+## 功能特性
+
+- **三种输入模式**：拼音（全拼/简拼/模糊音）、五笔 86（四码唯一自动上屏可配置）、混输（按候选强度智能排序拼音与五笔结果）
+- **用户词典与学习**：选词自动学习词频与音节键，学过的词可被简拼命中；支持 TSV 导入导出、设置界面增删改查
+- **性能**：二进制堆加载词典 + Patricia trie 拼写索引 + 短码候选缓存 + 长拼音查询页缓存，IPC 单次往返 < 1ms
+- **跨窗口状态一致**：中英文/大小写/全半角/标点/输入模式为全局状态，切换窗口不丢失
+- **界面**：候选窗口 + 状态窗口，Direct2D / GDI 双渲染后端，14 套配色主题，DPI 缩放，横排/竖排布局
+- **可观测性**：查询链路 trace（JSONL 采样落盘）、TSF 事件级追踪、一键诊断包导出
 
 ## 架构
 
 ```
 cxx-ime/
-├── shared/          共享类型、IPC 协议、日志工具
-├── engine/          拼音处理：分词器、翻译器、词典
-├── ipc/             命名管道 IPC 客户端/服务端
-├── server/          后台服务进程（系统托盘）
+├── shared/          共享类型、IPC 协议、日志、数据路径解析
+├── engine/          输入引擎：音节切分、翻译器（拼音/五笔/混输）、词典、配置
+├── ipc/             命名管道 IPC 客户端/服务端（IOCP）
+├── server/          后台服务进程（共享资源 + 会话管理 + 配置/词典热重载）
 ├── tsf/             TSF 文本服务 DLL（由 Windows 加载）
-├── ui/              候选窗口（D2D / GDI 双后端渲染）
-├── docs/            设计文档
+├── ui/              候选窗口 + 状态窗口（D2D / GDI 双后端渲染）
+├── settings/        配置编辑器 GUI（Win32 原生控件）
+├── docs/            项目文档（设计与实现、安装、配置指南）
 ├── data/            词典文件、Python 工具和默认配置
-├── tools/           开发工具（dict_query, sqlite_query, ipc_tool）
-├── test/            测试套件
+├── resource/        图标与资源 DLL 素材
+├── scripts/         打包、词典准备、校验脚本
+├── tools/           开发调试工具（9 个）
+├── test/            测试套件（22 个 C++ 测试 + 1 个 Python 测试）
 └── third_party/     sqlite3, nlohmann/json
 ```
 
@@ -43,7 +57,7 @@ build.bat clean        # 清理构建目录
 ```
 
 构建产物在 `build/<config>/` 目录下：
-- `cxxime_tsf_x64.dll` / `cxxime_tsf_x86.dll` — TSF 文本服务 DLL
+- `cxxime_tsf_x64.dll` / `cxxime_tsf_x86.dll` — TSF 文本服务 DLL（双架构）
 - `cxxime-resources.dll` — 输入法 profile 资源 DLL
 - `cxxime-server.exe` — 后台服务进程
 - `cxxime-settings.exe` — 配置编辑器
@@ -51,7 +65,7 @@ build.bat clean        # 清理构建目录
 
 ## 获取词典
 
-CxxIME 使用 SQLite 格式的词典作为**源数据**，运行时通过 `build_binary.py` 转换为二进制格式（一次性读入内存）。
+CxxIME 使用 SQLite 格式的词典作为**源数据**，构建时通过 `build_binary.py` 转换为二进制格式（一次性读入内存）。
 
 ### 拼音词典
 
@@ -90,7 +104,10 @@ python tools/dict_convert.py input.yaml output.db
 | `pinyin.dict.idx` | `build_binary.py` 生成 | 否 | 音节 ID 索引（运行时） |
 | `pinyin.topn.bin` | `build_short_cache.py` 生成 | 否 | 短码候选缓存（运行时） |
 | `wubi86.dict.bin` | `build_binary.py` 生成 | 否 | 五笔二进制词典（运行时） |
+| `wubi86.dict.idx` | `build_binary.py` 生成 | 否 | 五笔编码索引（运行时） |
 | `dictionary_manifest.json` | `prepare_dict.py` 生成 | 否 | 运行时词典 bundle 清单与校验哈希 |
+
+> 五笔词典为**必选**：打包流程缺失 wubi86 源数据会直接报错。
 
 ### 词典维护
 
@@ -115,6 +132,12 @@ zf.write('pinyin.dict.db'); zf.close()
 "
 ```
 
+一键完成上述全部步骤（含五笔与短码缓存）：
+
+```cmd
+python scripts/prepare_dict.py --data-dir data/ --output-dir dist/data/
+```
+
 > **注意：** `.db`、`.bin`、`.idx`、`.spellings.bin` 均在 `.gitignore` 中。仅 `.db.zip` 提交到仓库。其他开发者拉取后从步骤 0 开始。
 
 ## 打包
@@ -124,12 +147,13 @@ zf.write('pinyin.dict.db'); zf.close()
 ```cmd
 scripts\package.py                     # Release 打包 → ..\output\cxxime-v0.1.0-setup.exe
 scripts\package.py --debug             # Debug 打包
-scripts\package.py --fast --skip-dict  # 快速复用已有 dist/data 词典打包
+scripts\package.py --skip-dict         # 复用已有 dist/data 词典
+scripts\package.py --fast --skip-dict  # 快速调试包（NSIS 跳过大文件压缩）
 ```
 
 需要预先安装 [NSIS 3.x](https://nsis.sourceforge.io/) 并确保 `makensis.exe` 在 PATH 中。如果未安装 NSIS，`package.py` 会跳过安装程序生成，`dist/` 目录中保留原始分发文件。
 
-`package.py` 执行流程：构建 → 复制配置 → 词典转换（`.db` → `.bin`）→ 数据校验 → NSIS 编译 → 输出单文件安装程序。
+`package.py` 执行流程：构建（x64 + x86 双 TSF DLL）→ 复制配置 → 词典转换（`.db` → `.bin`）→ 数据校验 → NSIS 编译 → 输出单文件安装程序。
 
 打包脚本默认使用 `build-package\` 构建目录，避免和 `build.bat` 的开发构建目录互相污染。CMake 生成器默认交给 CMake 和当前命令行环境决定，也可以通过 `--generator`、`--platform` 或环境变量 `CXXIME_CMAKE_GENERATOR`、`CXXIME_CMAKE_PLATFORM` 覆盖。
 
@@ -139,24 +163,37 @@ scripts\package.py --fast --skip-dict  # 快速复用已有 dist/data 词典打�
 
 1. 选择程序安装目录，默认安装到 `C:\Program Files\CxxIME`
 2. 程序文件和出厂数据安装到安装目录，用户配置初始化到 `%USERPROFILE%\cxxime\`
-3. 安装程序自动注册 TSF DLL、配置自启动、创建开始菜单快捷方式
+3. 安装程序自动注册 TSF DLL（x64 + x86）、配置自启动、创建开始菜单快捷方式
 4. 安装完成后**注销并重新登录**即可使用
 
 ## 卸载
 
 - 开始菜单 → CxxIME → 卸载 CxxIME
-- 或控制面板 → 添加/删除程序 → CxxIME
+- 或 Windows 设置 → 应用 → CxxIME
 
-卸载默认只清理程序文件、开始菜单快捷方式、TSF 注册项、自启动项和卸载项，保留 `%USERPROFILE%\cxxime\` 下的用户配置和用户词典。
+卸载默认只清理程序文件、开始菜单快捷方式、TSF 注册项、自启动项和卸载项，**默认保留** `%USERPROFILE%\cxxime\` 下的用户配置和用户词典；卸载向导中可勾选「删除用户配置和词典数据」一并清除。
+
+## 快速上手
+
+| 按键 | 功能 |
+|------|------|
+| 字母键 | 输入拼音/五笔编码，空格或数字键选词 |
+| `PageUp` / `PageDown` | 候选翻页 |
+| `Shift` | 切换中英文（左右 Shift 行为可分别配置，出厂：左 Shift 提交编码并切换，右 Shift 切到英文） |
+| `CapsLock` | 切换到英文大写输入（关灯恢复原模式，行为可配置） |
+| `Shift+Space` | 全角/半角切换 |
+| `Ctrl+.` | 中文/英文标点切换 |
+
+中英文、全半角等状态跨窗口保持一致；详细按键配置见 [设置指南](docs/settings-guide.md)。
 
 ## 配置
 
-编辑用户目录下的 `%USERPROFILE%\cxxime\data\default.json`，或通过开始菜单打开 CxxIME Settings：
+编辑用户目录下的 `%USERPROFILE%\cxxime\default.json`，或通过开始菜单打开 CxxIME Settings：
 
 ```json
 {
     "engine": {
-        "page_size": 9
+        "page_size": 7
     },
     "style": {
         "font_face": "Microsoft YaHei UI",
@@ -168,6 +205,8 @@ scripts\package.py --fast --skip-dict  # 快速复用已有 dist/data 词典打�
 }
 ```
 
+配置与词典支持**热重载**：修改配置或更换词典后服务端自动生效，无需重启。
+
 ## 开发工具
 
 构建后在 `build/tools/<name>/Debug/` 下：
@@ -176,19 +215,17 @@ scripts\package.py --fast --skip-dict  # 快速复用已有 dist/data 词典打�
 |------|------|
 | `dict_query` | 拼音/五笔查词（`--mode pinyin\|wubi`，binary 词典） |
 | `sqlite_query` | 直读 `.db` 文件调试 |
-| `ipc_tool` | IPC 交互测试（connect / key / bench / stress 等） |
+| `ipc_tool` | IPC 交互测试（connect / key / bench / stress 等，源码在 `tools/ipc_test/`） |
+| `query_bench` | 查询性能基准（配合 `scripts/check_query_bench.py` 做回归） |
+| `punct_test` | 标点映射测试 |
 | `candidate_window_tool` | 候选窗口可视化测试（主题/布局/D2D/preedit 切换） |
+| `status_window_tool` | 状态窗口可视化测试 |
+| `tray_icon_tool` | 托盘图标实验工具 |
 | `tsf_position_tool` | 候选窗口定位测试（光标移动、屏幕边缘 clamp、多显示器适配） |
 
 ## 测试
 
-开发构建需要指定数据目录：
-
-```cmd
-cmake .. -DCXXIME_PRODUCTION_BUILD=OFF
-```
-
-测试：
+`build.bat` / `build.bat debug` 默认为开发构建（`CXXIME_PRODUCTION_BUILD=OFF`，数据目录指向项目 `data/`，启用 tests 和 tools）。
 
 ```cmd
 cd build
@@ -197,22 +234,32 @@ ctest -C Debug
 
 或单独运行某个测试：`build\test\Debug\ipc_test.exe`
 
+当前共 23 个 ctest 条目（22 个 C++ 测试 exe + 1 个 Python 测试），380+ 用例。
+
+## 文档
+
+`docs/` 下为项目级文档（面向维护者、开发者与用户），主要入口：
+
+- [架构总览](docs/architecture.md) — 总体架构、模块划分、技术选型与专题文档索引
+- [安装与卸载](docs/installation.md) — 安装细节、手动注册与故障排查
+- [设置指南](docs/settings-guide.md) — 设置窗口与配置文件参考
+
 ## 模块状态
 
 | 模块 | 状态 | 说明 |
 |------|------|------|
-| 词典 | ✅ 就绪 | 二进制堆加载词典、Patricia trie 拼写索引、音节 ID 索引、拼音/五笔双模式 |
-| Engine | ✅ 就绪 | Syllabifier + Segmentor + Translator，缩写/模糊音/五笔简码 |
+| 词典 | ✅ 就绪 | 二进制堆加载词典、Patricia trie 拼写索引、音节 ID 索引、manifest 校验与热重载 |
+| Engine | ✅ 就绪 | Syllabifier + Segmentor + Translator（拼音/五笔/混输），缩写/模糊音/五笔简码，长拼音查询页缓存 |
 | IPC | ✅ 就绪 | IOCP 高性能命名管道，< 1ms 延迟，多客户端并发 |
-| 会话管理 | ✅ 就绪 | 共享资源预加载，session 瞬时创建 |
-| 用户词典 | ✅ 就绪 | 内存数据结构 + TSV 持久化，shared_mutex 并发读写 |
-| TSF DLL | ✅ 就绪 | 按键捕获、编辑会话、候选上屏、候选窗口定位（GetTextExt 四层降级链）、DisplayAttributeProvider |
+| 会话管理 | ✅ 就绪 | 共享资源预加载，session 瞬时创建，可见状态全局一致 |
+| 用户词典 | ✅ 就绪 | 内存多路索引 + TSV 持久化，选词学习（词频 + 音节键），设置界面管理与导入导出 |
+| TSF DLL | ✅ 就绪 | 按键捕获、编辑会话、候选上屏、候选窗口定位（GetTextExt 四层降级链）、DisplayAttributeProvider、事件级追踪 |
 | 候选窗口 | ✅ 就绪 | D2D 渲染（默认），可切换 GDI，14 套配色，DPI 缩放，屏幕边缘 clamp，圆角窗口 |
-| 安装部署 | ✅ 就绪 | NSIS 安装程序，程序安装到 Program Files，用户配置保存在 `%USERPROFILE%\cxxime\`，开始菜单快捷方式，控制面板卸载 |
-| 配置编辑器 | ✅ 就绪 | Win32 原生 GUI，左侧导航 + 右侧面板，支持所有配置项 |
-| 配置系统 | ✅ 就绪 | JSON 配置（page_size, font, theme, layout spacing/padding） |
-
-> 单元测试：64+ 个用例，10 个独立 exe，`ctest -C Debug` 全部通过。
+| 状态窗口 | ✅ 就绪 | 中英文/大小写状态显示，语言栏图标联动 |
+| 安装部署 | ✅ 就绪 | NSIS 安装程序，x64 + x86 双 TSF DLL，卸载可选清除用户数据 |
+| 配置编辑器 | ✅ 就绪 | Win32 原生 GUI，左侧导航 + 右侧面板，用户词典管理，诊断包导出 |
+| 配置系统 | ✅ 就绪 | JSON 配置 + 主题预设，配置/词典热重载 |
+| 可观测性 | ✅ 就绪 | 查询 trace JSONL 采样落盘、TSF 事件追踪、诊断收集脚本 |
 
 ## 许可证
 

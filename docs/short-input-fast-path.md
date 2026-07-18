@@ -161,8 +161,9 @@ struct RecentCandidate {
 
 ```cpp
 // pinyin_translator.cc — translate() 开头
+const int need = offset + fetch_limit + 1;
 if (is_short_key(pinyin)) {
-    fast = lookup_short_fast(pinyin, offset + fetch_limit, trace);
+    fast = lookup_short_fast(pinyin, need, trace);
     if (fast.hit && fast.candidates.size() > offset) {
         // 缓存足够 → 直接返回分页结果
         // 设置 cache_hit=true, exact_scan=0, prefix_scan=0, deadline_exceeded=false
@@ -188,7 +189,7 @@ bool is_short_key(const std::string& pinyin) {
 ### 合并规则
 
 1. Session recent 候选优先
-2. User dict short index 候选（按 `user_boost + frequency + recent_bonus` 评分）
+2. User dict short index 候选（按 `score_user_match()` 分层评分：精确/缩写/混合键高基数，前缀按接近程度分档，详见 [用户词典设计](user-dictionary.md)）
 3. ShortCodeCache 候选按构建时 score 排序
 4. 标准管道 (bounded dict lookup) 只用于补足缺失候选
 5. 按 `Candidate.text` 去重
@@ -200,7 +201,7 @@ Session recent cache 中的用户词候选在以下情况被过滤：
 - `user_dict_version` 发生变化（用户词典被重新加载或更新）
 - 候选 text 在当前用户词典中已不存在或被标记 `deleted`（`has_user_entry()` 返回 false）
 
-过滤在 `translate()` 开头执行，确保 stale 用户词不会出现在候选列表中。
+过滤在 `lookup_short_fast()` 扫描 recent 缓存时执行，确保 stale 用户词不会出现在候选列表中。
 
 ## Trace 语义
 
@@ -246,3 +247,14 @@ live_path_count = 0
 | `engine/src/pinyin_translator.cc` | 快速路径入口, 合并逻辑, session recent 管理, 用户词版本过滤 |
 | `engine/src/engine.cc` | select/commit 时更新 recent cache |
 | `test/short_cache_test.cc` | 单元测试 (9 cases) |
+
+## 长输入的查询页缓存
+
+作为短输入快速路径的姊妹机制，`PinyinTranslator` 为 >6 字符的长拼音查询提供了独立的查询页缓存：
+
+- **触发条件**：`input.size() > 6`，短输入走 `lookup_short_fast` 不触发此缓存
+- **容量**：LRU 64 条（`kMaxQueryCacheEntries = 64`），`sequence` 递增序号实现淘汰
+- **失效**：`user_dict_version` 变化后全部缓存自动失效
+- **非缓存场景**：deadline 命中或 deadline_exceeded 时不写入
+
+详细机制见 [候选词选词算法 — 长输入查询页缓存](candidate-selection.md#长输入查询页缓存)。

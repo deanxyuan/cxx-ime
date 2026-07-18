@@ -1,5 +1,9 @@
 # 性能基准数据
 
+> **本文定位**：本文为性能优化各阶段的历史基准记录，记录取舍与迭代过程，数据为当时快照，可能不再反映当前版本性能。
+>
+> **当前回归基准**：以 `tools/query_bench/`（离线查询 benchmark）和 `scripts/check_query_bench.py`（阈值回归检查）为准，运行 `build/tools/query_bench/Release/query_bench.exe` 获取最新定量数据。
+
 本文档记录各版本的查询延迟基准数据，用于回归对比。
 
 ## 测试条件

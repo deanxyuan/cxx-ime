@@ -34,7 +34,7 @@ C:\Users\<username>\cxxime\
 
 ## 路径解析函数
 
-声明在 `shared/include/cxxime/data_path.h`，全部 inline。
+声明在 `shared/include/cxxime/data_path.h`，实现在 `shared/src/data_path.cc`。
 
 ### data_dir()
 
@@ -125,13 +125,22 @@ static std::string project_path(const char* rel) {
     return std::string(CXXIME_PROJECT_DIR) + rel;
 }
 // project_path("data/pinyin.dict.bin")  → D:/gitee/cxx-ime/data/pinyin.dict.bin
-// project_path("scripts/check.py")      → D:/gitee/cxx-ime/scripts/check.py
+// project_path("data/default.json")     → D:/gitee/cxx-ime/data/default.json
 ```
 
 ## Python 脚本路径
 
-Python 脚本通过 `--input`/`--output` 参数接收路径，不依赖环境变量。package.bat 调用时传入绝对路径：
+Python 脚本分布在两个目录，职责不同：
 
-```bat
-python "%ROOT%\data\tools\build_binary.py" --input "%SRC%" --output "%DIST_DIR%\data\pinyin"
+| 目录 | 定位 | 脚本 |
+|------|------|------|
+| `scripts/` | **主入口脚本**：打包、词典准备、校验、基准回归 | `package.py`、`prepare_dict.py`、`build_short_cache.py`、`verify_data_files.py`、`verify_package.py`、`check_query_bench.py` |
+| `data/tools/` | **词典数据处理工具**：由 `scripts/` 入口调用，也可独立运行 | `fetch_dict.py`、`fetch_wubi.py`、`dict_convert.py`、`build_binary.py`、`spelling_algebra.py`、`fix_syllable_ids.py` |
+
+脚本通过 `--input`/`--output` 参数接收路径，不依赖环境变量。`scripts/package.py` 经 `scripts/prepare_dict.py` 调用 `data/tools/` 下的词典工具时传入绝对路径：
+
+```python
+# prepare_dict.py 内部
+cmd = [sys.executable, os.path.join(DATA_TOOLS, "build_binary.py"),
+       "--input", db_path, "--output", output_prefix]
 ```
