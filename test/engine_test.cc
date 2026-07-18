@@ -113,6 +113,52 @@ TEST(Engine, translate_dd_has_candidates) {
     DeleteFileA(spellings_path.c_str());
 }
 
+TEST(Engine, selected_pinyin_candidate_learns_syllable_keys) {
+    std::string dict_path = make_temp_path("test_engine_learn_syllables.bin");
+    std::string user_path = make_temp_path("test_engine_learn_syllables.tsv");
+    DeleteFileA(user_path.c_str());
+
+    cxxime::Dict::create_test_dict(dict_path, {
+        {"shu:ru:fa", "测试系统词", 300},
+    });
+
+    cxxime::Dict dict;
+    ASSERT_TRUE(dict.open(dict_path, user_path));
+
+    cxxime::SpellingsIndex spellings;
+    cxxime::Config config;
+    cxxime::Engine engine;
+    ASSERT_TRUE(engine.initialize(dict, spellings, nullptr, config));
+
+    for (char ch : std::string("SHURUFA")) {
+        cxxime::KeyEvent event;
+        event.keycode = ch;
+        event.is_key_up = false;
+        ASSERT_EQ(engine.process_key(event), cxxime::ProcessResult::ACCEPTED);
+    }
+
+    const auto& candidates = engine.context().candidates.candidates;
+    ASSERT_GE(candidates.size(), 1u);
+    ASSERT_EQ(candidates[0].text, "测试系统词");
+    ASSERT_TRUE(engine.select_candidate(0));
+
+    cxxime::QueryBudget budget;
+    cxxime::QueryTrace trace = {};
+    cxxime::UserLookupStats stats;
+    auto learned = dict.lookup_user_short("srf", 10, budget, &trace, &stats);
+    bool found = false;
+    for (const auto& c : learned) {
+        if (c.text == "测试系统词")
+            found = true;
+    }
+    ASSERT_TRUE(found);
+
+    engine.finalize();
+    dict.close();
+    DeleteFileA(dict_path.c_str());
+    DeleteFileA(user_path.c_str());
+}
+
 TEST(Engine, translate_valid_pinyin) {
     std::string dict_path = make_temp_path("test_engine_valid.bin");
     cxxime::Dict::create_test_dict(dict_path, {

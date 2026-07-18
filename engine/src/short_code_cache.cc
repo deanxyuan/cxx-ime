@@ -138,7 +138,9 @@ std::vector<Candidate> ShortCodeCache::lookup(const std::string& key, int limit,
             c.text.assign(strings_ + ce.text_offset, ce.text_len);
             if (ce.comment_len > 0)
                 c.comment.assign(strings_ + ce.comment_offset, ce.comment_len);
+            c.code = key;
             c.frequency = ce.frequency;
+            c.origin = CandidateOrigin::kCache;
             results.push_back(std::move(c));
         }
 

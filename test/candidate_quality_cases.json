@@ -78,6 +78,65 @@
       "require_cache_hit": true
     },
     {
+      "id": "pinyin-two-letter-prefix-suppresses-long-user-word",
+      "mode": "pinyin",
+      "input": "dd",
+      "setup_user_entries": [
+        { "text": "淡淡的", "code": "ddd", "repeat": 3 }
+      ],
+      "min_candidates": 1,
+      "forbid_top1": [
+        "淡淡的"
+      ],
+      "require_cache_hit": true
+    },
+    {
+      "id": "pinyin-long-user-exact-promotes",
+      "mode": "pinyin",
+      "input": "shurufa",
+      "setup_user_entries": [
+        {
+          "text": "输入法专题",
+          "code": "shurufa",
+          "syllables": "shu:ru:fa",
+          "repeat": 3
+        }
+      ],
+      "contains": [
+        { "text": "输入法专题", "max_rank": 1 }
+      ],
+      "expect_sources": {
+        "输入法专题": "pinyin"
+      },
+      "expect_origins": {
+        "输入法专题": "user"
+      },
+      "require_cache_hit": false
+    },
+    {
+      "id": "pinyin-near-prefix-user-word-visible",
+      "mode": "pinyin",
+      "input": "shuruf",
+      "setup_user_entries": [
+        {
+          "text": "输入法专题",
+          "code": "shurufa",
+          "syllables": "shu:ru:fa",
+          "repeat": 3
+        }
+      ],
+      "contains": [
+        { "text": "输入法专题", "max_rank": 1 }
+      ],
+      "expect_sources": {
+        "输入法专题": "pinyin"
+      },
+      "expect_origins": {
+        "输入法专题": "user"
+      },
+      "require_cache_hit": true
+    },
+    {
       "id": "wubi-short-a",
       "mode": "wubi",
       "input": "a",
@@ -86,6 +145,9 @@
       ],
       "expect_sources": {
         "工": "wubi"
+      },
+      "expect_origins": {
+        "工": "system"
       }
     },
     {
@@ -97,6 +159,9 @@
       ],
       "expect_sources": {
         "式": "wubi"
+      },
+      "expect_origins": {
+        "式": "system"
       }
     },
     {
@@ -108,6 +173,23 @@
       ],
       "expect_sources": {
         "五": "wubi"
+      }
+    },
+    {
+      "id": "wubi-two-code-protects-system-order",
+      "mode": "wubi",
+      "input": "aa",
+      "setup_user_entries": [
+        { "mode": "wubi", "text": "自定义词", "code": "aaaa", "repeat": 3 }
+      ],
+      "contains": [
+        { "text": "式", "max_rank": 1 }
+      ],
+      "forbid_top1": [
+        "自定义词"
+      ],
+      "expect_sources": {
+        "式": "wubi"
       }
     },
     {
@@ -171,6 +253,9 @@
       "expect_sources": {
         "你好": "pinyin"
       },
+      "forbid_visible": [
+        "五笔污染"
+      ],
       "require_cache_hit": true
     },
     {
@@ -184,6 +269,9 @@
         { "text": "工", "max_rank": 1 }
       ],
       "forbid_top1": [
+        "拼音污染"
+      ],
+      "forbid_visible": [
         "拼音污染"
       ],
       "expect_sources": {
@@ -214,6 +302,24 @@
       }
     },
     {
+      "id": "mixed-four-letter-pinyin-beats-weak-wubi",
+      "mode": "mixed",
+      "input": "yong",
+      "contains": [
+        { "text": "用", "max_rank": 1 }
+      ],
+      "forbid_top1": [
+        "恋情"
+      ],
+      "expect_sources": {
+        "用": "pinyin"
+      },
+      "expect_origins": {
+        "用": "cache"
+      },
+      "require_cache_hit": true
+    },
+    {
       "id": "mixed-obvious-wubi-four-code",
       "mode": "mixed",
       "input": "aaaa",
@@ -222,6 +328,9 @@
       ],
       "expect_sources": {
         "工": "wubi"
+      },
+      "expect_origins": {
+        "工": "system"
       }
     },
     {
@@ -236,6 +345,82 @@
       ],
       "expect_sources": {
         "自定义词": "wubi"
+      },
+      "expect_origins": {
+        "自定义词": "user"
+      }
+    },
+    {
+      "id": "mixed-pinyin-user-full-code-keeps-source",
+      "mode": "mixed",
+      "input": "shurufa",
+      "setup_user_entries": [
+        {
+          "mode": "pinyin",
+          "text": "输入法专题",
+          "code": "shurufa",
+          "syllables": "shu:ru:fa",
+          "repeat": 3
+        }
+      ],
+      "contains": [
+        { "text": "输入法专题", "max_rank": 1 }
+      ],
+      "expect_sources": {
+        "输入法专题": "pinyin"
+      },
+      "expect_origins": {
+        "输入法专题": "user"
+      }
+    },
+    {
+      "id": "mixed-obvious-pinyin-keeps-pinyin-first-with-wubi-user",
+      "mode": "mixed",
+      "input": "nihao",
+      "setup_user_entries": [
+        { "mode": "wubi", "text": "五笔污染", "code": "nihao", "repeat": 3 }
+      ],
+      "contains": [
+        { "text": "你好", "max_rank": 1 }
+      ],
+      "forbid_top1": [
+        "五笔污染"
+      ],
+      "expect_sources": {
+        "你好": "pinyin"
+      },
+      "require_cache_hit": true
+    },
+    {
+      "id": "mixed-obvious-wubi-keeps-wubi-first-with-pinyin-user",
+      "mode": "mixed",
+      "input": "aaaa",
+      "setup_user_entries": [
+        { "mode": "pinyin", "text": "拼音污染", "code": "aaaa", "repeat": 3 }
+      ],
+      "contains": [
+        { "text": "工", "max_rank": 1 }
+      ],
+      "forbid_top1": [
+        "拼音污染"
+      ],
+      "expect_sources": {
+        "工": "wubi"
+      }
+    },
+    {
+      "id": "mixed-ambiguous-duplicate-prefers-wubi-source",
+      "mode": "mixed",
+      "input": "aa",
+      "setup_user_entries": [
+        { "mode": "pinyin", "text": "共享词", "code": "aa", "repeat": 3 },
+        { "mode": "wubi", "text": "共享词", "code": "aa", "repeat": 3 }
+      ],
+      "contains": [
+        { "text": "共享词", "max_rank": 1 }
+      ],
+      "expect_sources": {
+        "共享词": "wubi"
       }
     },
     {

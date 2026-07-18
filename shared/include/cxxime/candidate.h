@@ -13,11 +13,20 @@ enum class CandidateSource {
     kWubi,
 };
 
+enum class CandidateOrigin {
+    kSystem,
+    kUser,
+    kCache,
+};
+
 struct Candidate {
     std::string text;
     std::string comment;
     int frequency = 0;
     CandidateSource source = CandidateSource::kPinyin;
+    std::string code;
+    std::string syllables;
+    CandidateOrigin origin = CandidateOrigin::kSystem;
 };
 
 struct CandidatePage {

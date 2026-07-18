@@ -15,6 +15,8 @@ void WubiTranslator::update_recent(const std::string& key, const Candidate& cand
     // Only cache short codes (1-3 chars)
     if (key.empty() || key.size() > 3)
         return;
+    if (!candidate.code.empty() && candidate.code != key)
+        return;
 
     // Check if already exists — update sequence if so
     for (auto& rc : recent_cache_) {
