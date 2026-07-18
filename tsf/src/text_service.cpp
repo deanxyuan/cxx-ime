@@ -48,6 +48,18 @@ static constexpr UINT kStatePollIntervalMs = 30;
 static std::mutex g_state_poll_timer_mutex;
 static std::unordered_map<UINT_PTR, TextService*> g_state_poll_timers;
 
+static bool is_shift_key(WPARAM key) {
+    return key == VK_LSHIFT || key == VK_RSHIFT || key == VK_SHIFT;
+}
+
+static bool is_status_key(WPARAM key) {
+    return is_shift_key(key) ||
+           key == VK_LCONTROL || key == VK_RCONTROL || key == VK_CONTROL ||
+           key == VK_LMENU || key == VK_RMENU ||
+           key == VK_LWIN || key == VK_RWIN ||
+           key == VK_CAPITAL;
+}
+
 static const char* tsf_result_str(TextService::TsfResult r) {
     switch (r) {
         case TextService::TsfResult::IPC_FAILED: return "ipc_failed";
@@ -785,17 +797,6 @@ bool TextService::_sync_physical_caps_lock(cxxime::ImeStatus* synced_status) {
     return _sync_caps_lock_state(caps_lock, synced_status);
 }
 
-void TextService::_reset_poll_shift_state() {
-    bool left_shift_down = (GetAsyncKeyState(VK_LSHIFT) & 0x8000) != 0;
-    bool right_shift_down = (GetAsyncKeyState(VK_RSHIFT) & 0x8000) != 0;
-    bool generic_shift_down = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
-
-    _pollShiftDown = left_shift_down || right_shift_down || generic_shift_down;
-    _pollShiftKey = _pollShiftDown
-        ? (right_shift_down ? VK_RSHIFT : (left_shift_down ? VK_LSHIFT : VK_SHIFT))
-        : VK_SHIFT;
-}
-
 void TextService::_start_state_poll_timer() {
     if (_statePollTimer || !_activated)
         return;
@@ -809,7 +810,6 @@ void TextService::_start_state_poll_timer() {
         g_state_poll_timers[timer] = this;
     }
     _statePollTimer = timer;
-    _reset_poll_shift_state();
 }
 
 void TextService::_stop_state_poll_timer() {
@@ -823,8 +823,6 @@ void TextService::_stop_state_poll_timer() {
         g_state_poll_timers.erase(timer);
     }
     KillTimer(nullptr, timer);
-    _pollShiftDown = false;
-    _pollShiftKey = VK_SHIFT;
 }
 
 VOID CALLBACK TextService::_state_poll_timer_proc(HWND, UINT, UINT_PTR id_event, DWORD) {
@@ -839,39 +837,6 @@ VOID CALLBACK TextService::_state_poll_timer_proc(HWND, UINT, UINT_PTR id_event,
         service->_poll_unfocused_state_keys();
 }
 
-bool TextService::_sync_status_key_edge(WPARAM key, bool key_down) {
-    if (!_ensure_ipc_session())
-        return false;
-
-    uint32_t modifiers = 0;
-    if (key_down)
-        modifiers |= 0x01;
-    if (_caps_lock)
-        modifiers |= 0x08;
-
-    cxxime::IPCResponse response = {};
-    bool ok = _client.process_key(_sessionId, static_cast<uint32_t>(key), modifiers, response, !key_down);
-    if (ok && response.status == cxxime::IPCStatus::ERR_INVALID_SESSION) {
-        ok = false;
-        if (_recreate_ipc_session_preserving_status()) {
-            response = {};
-            ok = _client.process_key(_sessionId, static_cast<uint32_t>(key), modifiers, response, !key_down);
-        }
-    }
-    if (!ok) {
-        _client.disconnect();
-        _sessionId = 0;
-    }
-    if (!ok && _recreate_ipc_session_preserving_status()) {
-        response = {};
-        ok = _client.process_key(_sessionId, static_cast<uint32_t>(key), modifiers, response, !key_down);
-    }
-
-    if (ok && should_sync_ime_status(response.status))
-        _sync_ime_status(response.ime_status);
-    return ok;
-}
-
 void TextService::_poll_unfocused_state_keys() {
     if (!_activated)
         return;
@@ -884,7 +849,6 @@ void TextService::_poll_unfocused_state_keys() {
     if (focused) {
         if (!_inputFocused) {
             _inputFocused = true;
-            _reset_poll_shift_state();
             _show_status_window_if_allowed("show:poll_focus_in");
             if (_sessionId && _client.ensure_connected())
                 _client.focus_in(_sessionId);
@@ -897,7 +861,6 @@ void TextService::_poll_unfocused_state_keys() {
         if (_sessionId && _client.is_connected())
             _client.focus_out(_sessionId);
         _AbortComposition();
-        _reset_poll_shift_state();
     }
     _hide_status_window("hide:poll_unfocused");
     _hide_candidate_window("hide:poll_unfocused");
@@ -907,22 +870,6 @@ void TextService::_poll_unfocused_state_keys() {
         _sync_caps_lock_state(physical_caps_lock);
     } else if ((GetAsyncKeyState(VK_CAPITAL) & 0x0001) != 0) {
         _sync_caps_lock_state(_is_caps_lock_on(false));
-    }
-
-    bool left_shift_down = (GetAsyncKeyState(VK_LSHIFT) & 0x8000) != 0;
-    bool right_shift_down = (GetAsyncKeyState(VK_RSHIFT) & 0x8000) != 0;
-    bool generic_shift_down = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
-    bool shift_down = left_shift_down || right_shift_down || generic_shift_down;
-    if (shift_down != _pollShiftDown) {
-        WPARAM key = shift_down
-            ? (right_shift_down ? VK_RSHIFT : (left_shift_down ? VK_LSHIFT : VK_SHIFT))
-            : _pollShiftKey;
-        _sync_status_key_edge(key, shift_down);
-        _pollShiftDown = shift_down;
-        if (shift_down)
-            _pollShiftKey = key;
-        else
-            _pollShiftKey = VK_SHIFT;
     }
 }
 
@@ -1353,12 +1300,7 @@ STDMETHODIMP TextService::OnSetFocus(BOOL fForeground) {
 
 STDMETHODIMP TextService::OnTestKeyDown(ITfContext* pic, WPARAM wParam, LPARAM lParam, BOOL* pfEaten) {
     _fTestKeyDownPending = true;
-    bool status_key =
-        wParam == VK_LSHIFT || wParam == VK_RSHIFT || wParam == VK_SHIFT ||
-        wParam == VK_LCONTROL || wParam == VK_RCONTROL || wParam == VK_CONTROL ||
-        wParam == VK_LMENU || wParam == VK_RMENU ||
-        wParam == VK_LWIN || wParam == VK_RWIN ||
-        wParam == VK_CAPITAL;
+    bool status_key = is_status_key(wParam);
     const char* test_block_reason = _input_context_block_reason(pic);
     _trace_input_decision(test_block_reason);
     if (test_block_reason && !status_key) {
@@ -1372,14 +1314,10 @@ STDMETHODIMP TextService::OnTestKeyDown(ITfContext* pic, WPARAM wParam, LPARAM l
 
     *pfEaten = _ProcessKeyEvent(pic, wParam, lParam, pfEaten);
 
-    // Modifier keys (Shift/Ctrl/Alt) must be eaten so TSF calls OnKeyDown,
-    // which sends the key event to the server via IPC. Without this, TSF
-    // passes the key directly to the app and OnKeyDown is never called.
-    if (wParam == VK_LSHIFT || wParam == VK_RSHIFT || wParam == VK_SHIFT ||
-        wParam == VK_LCONTROL || wParam == VK_RCONTROL || wParam == VK_CONTROL ||
-        wParam == VK_LMENU || wParam == VK_RMENU ||
-        wParam == VK_LWIN || wParam == VK_RWIN ||
-        wParam == VK_CAPITAL) {
+    // Status keys are already sent during OnTestKeyDown. Reporting them as
+    // eaten keeps TSF on the paired OnKeyDown/OnKeyUp path, where the pending
+    // flags prevent duplicate delivery.
+    if (is_status_key(wParam)) {
         *pfEaten = TRUE;
     }
 
@@ -1424,12 +1362,7 @@ STDMETHODIMP TextService::OnKeyUp(ITfContext* pic, WPARAM wParam, LPARAM lParam,
 bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam, BOOL* pfEaten) {
     *pfEaten = FALSE;
 
-    bool status_key =
-        wParam == VK_LSHIFT || wParam == VK_RSHIFT || wParam == VK_SHIFT ||
-        wParam == VK_LCONTROL || wParam == VK_RCONTROL || wParam == VK_CONTROL ||
-        wParam == VK_LMENU || wParam == VK_RMENU ||
-        wParam == VK_LWIN || wParam == VK_RWIN ||
-        wParam == VK_CAPITAL;
+    bool status_key = is_status_key(wParam);
     const char* block_reason = _input_context_block_reason(pic);
     bool input_allowed = block_reason == nullptr;
     _trace_input_decision(block_reason);

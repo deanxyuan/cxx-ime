@@ -137,9 +137,7 @@ private:
     void _trace_input_decision(const char* block_reason);
     void _start_state_poll_timer();
     void _stop_state_poll_timer();
-    void _reset_poll_shift_state();
     void _poll_unfocused_state_keys();
-    bool _sync_status_key_edge(WPARAM key, bool key_down);
     static VOID CALLBACK _state_poll_timer_proc(HWND hwnd, UINT msg, UINT_PTR id_event, DWORD time);
 
     LONG _cRef = 1;
@@ -162,8 +160,6 @@ private:
     bool _fTestKeyDownPending = false;
     bool _fTestKeyUpPending = false;
     UINT_PTR _statePollTimer = 0;
-    bool _pollShiftDown = false;
-    WPARAM _pollShiftKey = VK_SHIFT;
     std::chrono::steady_clock::time_point _lastIpcHeartbeat = {};
     bool _ipcHealthy = true;
     std::string _lastInputBlockReason;

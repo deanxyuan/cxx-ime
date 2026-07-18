@@ -499,9 +499,9 @@ TEST(SessionIntegration, focus_out_ok) {
     auto st = mgr.focus_out(id);
     ASSERT_EQ(st, cxxime::IPCStatus::OK);
 
-    // revision should increment
+    // focus_out only clears composition; visible state revision is global.
     auto [st1, s1] = mgr.get_ime_status(id);
-    ASSERT_EQ(s1.revision, rev_before + 1);
+    ASSERT_EQ(s1.revision, rev_before);
 }
 
 TEST(SessionIntegration, focus_out_invalid) {
@@ -579,29 +579,28 @@ TEST(SessionIntegration, chinese_mode_digit_not_intercepted) {
 }
 
 // ============================================================
-// Multiple sessions independence
+// Multiple sessions visible state
 // ============================================================
 
-TEST(SessionIntegration, independent_sessions_output_composer) {
+TEST(SessionIntegration, global_visible_state_drives_output_composer) {
     SessionManager mgr;
     mgr.initialize(setup_test_dict());
     uint32_t id1 = mgr.create_session();
     uint32_t id2 = mgr.create_session();
 
-    // Session 1: English + full_shape
+    // Session 1: English + full_shape. Session 2 must see the same visible state.
     mgr.toggle_chinese(id1);
     mgr.toggle_shape(id1);
 
-    // Session 2: Chinese mode (default)
-    // Type "ni" in session 2
-    mgr.process_key(id2, make_key('N'));
-    auto r2 = mgr.process_key(id2, make_key('I'));
-    ASSERT_TRUE(r2.composing);
+    auto [st, status] = mgr.get_ime_status(id2);
+    ASSERT_EQ(st, cxxime::IPCStatus::OK);
+    ASSERT_EQ(status.chinese_mode, false);
+    ASSERT_EQ(status.full_shape, true);
 
-    // Session 1: press digit → intercepted
-    auto r1 = mgr.process_key(id1, make_key('5'));
-    ASSERT_EQ(r1.result, cxxime::ProcessResult::COMMITTED);
-    ASSERT_EQ(r1.commit_text, "５");
+    // Session 2: press digit after global full_shape, intercepted.
+    auto r = mgr.process_key(id2, make_key('5'));
+    ASSERT_EQ(r.result, cxxime::ProcessResult::COMMITTED);
+    ASSERT_EQ(r.commit_text, cxxime::OutputComposer::to_full_width('5'));
 }
 
 // ============================================================

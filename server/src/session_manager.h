@@ -123,18 +123,30 @@ public:
     cxxime::IPCStatus save_user_dict(cxxime::UserDictKind kind);
 
 private:
+    struct GlobalVisibleState {
+        cxxime::ImeStatus status;
+        bool base_chinese_mode = true;
+    };
+
     cxxime::Engine* get_engine(uint32_t id);
 
     // Helper: two-phase lock lookup. Returns nullptr if session not found.
     std::shared_ptr<SessionEntry> lookup_session(uint32_t id);
+
+    void reset_global_state(const SharedResourceSnapshot& resources);
+    GlobalVisibleState snapshot_global_state();
+    cxxime::ImeStatus commit_global_state(GlobalVisibleState next);
+    void align_session_to_global(SessionEntry& entry);
 
     // Persist input_mode to config file so settings window stays in sync.
     void persist_input_mode(cxxime::InputMode mode);
 
     SharedResources shared_;
     std::unordered_map<uint32_t, std::shared_ptr<SessionEntry>> sessions_;
+    GlobalVisibleState global_state_;
     uint32_t next_id_ = 1;
     std::mutex mutex_;
+    std::mutex state_mutex_;
     std::mutex reload_mutex_;
 };
 
