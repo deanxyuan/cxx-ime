@@ -25,6 +25,7 @@ public:
     void destroy();
     void show();
     void hide();
+    bool is_visible() const;
     void set_config(const Config& config);
     void update(const CandidatePage& page);
     void set_preedit(const std::string& preedit);
@@ -43,6 +44,7 @@ private:
     void init_gdi_renderer();
     void init_d2d_renderer();
     void move_window_now(int x, int y);
+    bool calculate_target_position(const RECT& caret_rect, int width, int height, POINT& target) const;
     void animate_to(int x, int y);
     void tick_animation();
     void stop_animation();
@@ -67,9 +69,12 @@ private:
 
     int page_current_ = 1, page_total_ = 1;
     int window_width_ = 0, window_height_ = 0, window_corner_ = -1;
+    bool has_last_caret_rect_ = false;
+    RECT last_caret_rect_{};
 
     static constexpr UINT_PTR kAnimationTimerId = 1;
     static constexpr DWORD kMoveDurationMs = 80;
+    static constexpr int kPositionDeadzonePx = 2;
     bool move_animating_ = false;
     POINT move_start_{};
     POINT move_target_{};

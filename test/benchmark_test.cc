@@ -212,14 +212,61 @@ TEST(Benchmark, TraceOverhead) {
     double overhead_p50 = (p50_no > 0) ? (100.0 * (p50_with - p50_no) / p50_no) : 0.0;
     double overhead_p95 = (p95_no > 0) ? (100.0 * (p95_with - p95_no) / p95_no) : 0.0;
     double overhead_p99 = (p99_no > 0) ? (100.0 * (p99_with - p99_no) / p99_no) : 0.0;
+    int64_t overhead_abs_p95 = p95_with - p95_no;
 
     printf("Benchmark Results:\n");
     printf("  Without trace: P50=%lldus, P95=%lldus, P99=%lldus\n", p50_no, p95_no, p99_no);
     printf("  With trace:    P50=%lldus, P95=%lldus, P99=%lldus\n", p50_with, p95_with, p99_with);
-    printf("  Overhead:      P50=%.1f%%, P95=%.1f%%, P99=%.1f%%\n", overhead_p50, overhead_p95, overhead_p99);
+    printf("  Overhead:      P50=%.1f%%, P95=%.1f%% (%lldus), P99=%.1f%%\n",
+           overhead_p50, overhead_p95, overhead_abs_p95, overhead_p99);
 
-    // Verify overhead < 3%
-    ASSERT_LT(overhead_p95, 3.0) << "P95 overhead should be < 3%%, got " << overhead_p95 << "%%";
+    // Slow paths must keep percentage overhead low. Once the baseline is only a
+    // few milliseconds, fixed timer/trace bookkeeping is better judged by an
+    // absolute budget.
+    bool p95_ok = overhead_p95 < 3.0 || (p95_no < 10000 && overhead_abs_p95 < 500);
+    ASSERT_TRUE(p95_ok)
+        << "P95 overhead should be < 3%% on slow paths or < 500us absolute on fast paths, got "
+        << overhead_p95 << "%% (" << overhead_abs_p95 << "us)";
+
+    engine.finalize();
+}
+
+TEST(Benchmark, LongPinyinQueryCacheHitOnRepeat) {
+    BenchmarkEngineFixture fixture("long_query_cache");
+    auto& engine = fixture.engine;
+
+    if (!fixture.initialize()) {
+        return;
+    }
+
+    engine.set_query_deadline_ms(0);
+    engine.set_trace_enabled(true);
+
+    const char* input = "zhongguo";
+    for (const char* p = input; *p; ++p) {
+        cxxime::KeyEvent event;
+        event.keycode = *p - 'a' + 'A';
+        event.is_key_up = false;
+        engine.process_key(event);
+    }
+    auto first = engine.last_trace();
+    ASSERT_TRUE(!first.cache_hit) << "First long query should exercise the full pipeline";
+    ASSERT_GT(first.exact_scan_count + first.prefix_scan_count + first.user_scan_count, 0u);
+
+    engine.clear();
+    for (const char* p = input; *p; ++p) {
+        cxxime::KeyEvent event;
+        event.keycode = *p - 'a' + 'A';
+        event.is_key_up = false;
+        engine.process_key(event);
+    }
+    const auto& second = engine.last_trace();
+    ASSERT_TRUE(second.cache_hit) << "Repeated long query should hit query page cache";
+    ASSERT_EQ(second.exact_scan_count, 0u);
+    ASSERT_EQ(second.prefix_scan_count, 0u);
+    ASSERT_EQ(second.user_scan_count, 0u);
+    ASSERT_EQ(second.syllable_path_count, 0);
+    ASSERT_EQ(second.live_path_count, 0);
 
     engine.finalize();
 }

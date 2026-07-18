@@ -96,10 +96,17 @@ void CandidateWindow::destroy() {
     if (d2d_renderer_) { d2d_renderer_->finalize(); delete d2d_renderer_; d2d_renderer_ = nullptr; }
     if (hwnd_) { DestroyWindow(hwnd_); hwnd_ = nullptr; }
 }
-void CandidateWindow::show() { if (hwnd_) ShowWindow(hwnd_, SW_SHOWNOACTIVATE); }
+void CandidateWindow::show() {
+    if (hwnd_ && !IsWindowVisible(hwnd_))
+        ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
+}
 void CandidateWindow::hide() {
     stop_animation();
-    if (hwnd_) ShowWindow(hwnd_, SW_HIDE);
+    if (hwnd_ && IsWindowVisible(hwnd_))
+        ShowWindow(hwnd_, SW_HIDE);
+}
+bool CandidateWindow::is_visible() const {
+    return hwnd_ && IsWindowVisible(hwnd_) != FALSE;
 }
 void CandidateWindow::set_config(const Config& config) {
     config_ = &config;
@@ -135,6 +142,33 @@ void CandidateWindow::move_window_now(int x, int y) {
     SetWindowPos(hwnd_, nullptr, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
+bool CandidateWindow::calculate_target_position(const RECT& caret_rect, int width, int height,
+                                                POINT& target) const {
+    HMONITOR hMon = MonitorFromRect(&caret_rect, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO mi = {sizeof(mi)};
+    if (!GetMonitorInfo(hMon, &mi))
+        return false;
+
+    int x = caret_rect.left;
+    int y = caret_rect.bottom + 4;
+
+    if (x + width > mi.rcWork.right)
+        x = mi.rcWork.right - width;
+    if (x < mi.rcWork.left)
+        x = mi.rcWork.left;
+
+    if (y + height > mi.rcWork.bottom) {
+        y = caret_rect.top - height - 4;
+        if (y < mi.rcWork.top)
+            y = mi.rcWork.top;
+    }
+    if (y < mi.rcWork.top)
+        y = mi.rcWork.top;
+
+    target = {x, y};
+    return true;
+}
+
 void CandidateWindow::stop_animation() {
     if (!hwnd_)
         return;
@@ -145,13 +179,22 @@ void CandidateWindow::stop_animation() {
 }
 
 void CandidateWindow::animate_to(int x, int y) {
+    if (move_animating_ && move_target_.x == x && move_target_.y == y)
+        return;
+
     RECT wr = {};
     GetWindowRect(hwnd_, &wr);
     int dx = x - wr.left;
     int dy = y - wr.top;
     int distance2 = dx * dx + dy * dy;
+    bool visible = IsWindowVisible(hwnd_) != FALSE;
 
-    if (!IsWindowVisible(hwnd_) || distance2 <= 4 || distance2 > 40000) {
+    if (visible && distance2 <= kPositionDeadzonePx * kPositionDeadzonePx) {
+        stop_animation();
+        return;
+    }
+
+    if (!visible || distance2 > 40000) {
         stop_animation();
         move_window_now(x, y);
         return;
@@ -204,28 +247,19 @@ void CandidateWindow::update_window_region(int width, int height, int corner) {
 void CandidateWindow::move_to_caret(const RECT& caretRect) {
     if (!hwnd_) return;
 
-    HMONITOR hMon = MonitorFromRect(&caretRect, MONITOR_DEFAULTTONEAREST);
-    MONITORINFO mi = { sizeof(mi) };
-    if (!GetMonitorInfo(hMon, &mi)) return;
+    has_last_caret_rect_ = true;
+    last_caret_rect_ = caretRect;
 
     RECT wr = {};
     GetWindowRect(hwnd_, &wr);
     int ww = wr.right - wr.left;
     int wh = wr.bottom - wr.top;
 
-    int x = caretRect.left;
-    int y = caretRect.bottom + 4;
+    POINT target = {};
+    if (!calculate_target_position(caretRect, ww, wh, target))
+        return;
 
-    if (x + ww > mi.rcWork.right) x = mi.rcWork.right - ww;
-    if (x < mi.rcWork.left)       x = mi.rcWork.left;
-
-    if (y + wh > mi.rcWork.bottom) {
-        y = caretRect.top - wh - 4;
-        if (y < mi.rcWork.top) y = mi.rcWork.top;
-    }
-    if (y < mi.rcWork.top) y = mi.rcWork.top;
-
-    animate_to(x, y);
+    animate_to(target.x, target.y);
 }
 
 void CandidateWindow::rebuild_render_context(const LayoutConfig& cfg, int window_width) {
@@ -351,8 +385,19 @@ void CandidateWindow::update(const CandidatePage& page) {
         lr.height += border * 2;
     }
     if (lr.width != window_width_ || lr.height != window_height_) {
-        SetWindowPos(hwnd_, nullptr, 0, 0, lr.width, lr.height,
-                     SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+        POINT target = {};
+        bool moved_with_resize = false;
+        if (IsWindowVisible(hwnd_) && has_last_caret_rect_ &&
+            calculate_target_position(last_caret_rect_, lr.width, lr.height, target)) {
+            stop_animation();
+            SetWindowPos(hwnd_, nullptr, target.x, target.y, lr.width, lr.height,
+                         SWP_NOZORDER | SWP_NOACTIVATE);
+            moved_with_resize = true;
+        }
+        if (!moved_with_resize) {
+            SetWindowPos(hwnd_, nullptr, 0, 0, lr.width, lr.height,
+                         SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+        }
     }
     if (d2d_renderer_) d2d_renderer_->resize(lr.width, lr.height);
     update_window_region(lr.width, lr.height, cfg.round_corner_ex);

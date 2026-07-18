@@ -48,6 +48,8 @@ static bool contains_ids(const std::vector<std::vector<uint32_t>>& items,
 
 void PinyinTranslator::set_dict(Dict* dict) {
     dict_ = dict;
+    query_cache_.clear();
+    query_cache_sequence_ = 0;
     if (dict_)
         dict_->set_user_scoring_profile(UserScoringProfile::kPinyin);
 }
@@ -171,6 +173,70 @@ PinyinTranslator::ShortFastResult PinyinTranslator::lookup_short_fast(
     return result;
 }
 
+bool PinyinTranslator::lookup_query_cache(const std::string& input, int page_index, int page_size,
+                                          CandidatePage& page, QueryTrace* trace) {
+    if (input.size() <= 6 || !dict_)
+        return false;
+
+    uint64_t user_version = dict_->user_dict_version();
+    for (auto& entry : query_cache_) {
+        if (entry.input == input &&
+            entry.page_index == page_index &&
+            entry.page_size == page_size &&
+            entry.user_dict_version == user_version) {
+            entry.sequence = ++query_cache_sequence_;
+            page = entry.page;
+            if (trace) {
+                trace->cache_hit = true;
+                trace->exact_scan_count = 0;
+                trace->prefix_scan_count = 0;
+                trace->user_scan_count = 0;
+                trace->syllable_path_count = 0;
+                trace->live_path_count = 0;
+                trace->deadline_exceeded = false;
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
+void PinyinTranslator::store_query_cache(const std::string& input, int page_index, int page_size,
+                                         const CandidatePage& page) {
+    if (input.size() <= 6 || !dict_)
+        return;
+
+    uint64_t user_version = dict_->user_dict_version();
+    for (auto& entry : query_cache_) {
+        if (entry.input == input &&
+            entry.page_index == page_index &&
+            entry.page_size == page_size &&
+            entry.user_dict_version == user_version) {
+            entry.page = page;
+            entry.sequence = ++query_cache_sequence_;
+            return;
+        }
+    }
+
+    if (query_cache_.size() >= kMaxQueryCacheEntries) {
+        size_t oldest = 0;
+        for (size_t i = 1; i < query_cache_.size(); ++i) {
+            if (query_cache_[i].sequence < query_cache_[oldest].sequence)
+                oldest = i;
+        }
+        query_cache_.erase(query_cache_.begin() + oldest);
+    }
+
+    QueryCacheEntry entry;
+    entry.input = input;
+    entry.page_index = page_index;
+    entry.page_size = page_size;
+    entry.user_dict_version = user_version;
+    entry.sequence = ++query_cache_sequence_;
+    entry.page = page;
+    query_cache_.push_back(std::move(entry));
+}
+
 CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_index, int page_size,
                                            QueryTrace* trace, const QueryBudget* budget,
                                            QueryScratch* scratch) {
@@ -184,6 +250,9 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
     int offset = page_index * page_size;
     int fetch_limit = page_size;
     const int need = offset + fetch_limit + 1;
+
+    if (lookup_query_cache(pinyin, page_index, page_size, page, trace))
+        return page;
 
     // Phase 4: short input fast path (before syllabifier)
     // Try cache for all page indices; fall back to bounded lookup if insufficient.
@@ -255,9 +324,7 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
     // produce hundreds of paths before non-abbreviation paths appear.
     static constexpr size_t kMaxPaths = 64;
     bool deadline_hit = false;
-    std::chrono::steady_clock::time_point t_seg_start, t_seg_end;
     if (syllabifier_) {
-        if (trace) t_seg_start = std::chrono::steady_clock::now();
         // Check deadline before syllabifier (it can be slow on long inputs)
         if (budget && budget->deadline.expired()) {
             deadline_hit = true;
@@ -274,10 +341,6 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
                     trace->truncated = true;
                 }
             }
-        }
-        if (trace) {
-            t_seg_end = std::chrono::steady_clock::now();
-            trace->translate_us = std::chrono::duration_cast<std::chrono::microseconds>(t_seg_end - t_seg_start).count();
         }
     } else {
         id_sequences.reserve(2);
@@ -306,6 +369,7 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
     for (auto& ids : id_sequences) {
         // Check deadline before each has_prefix (syllabifier may have consumed most of the budget)
         if (budget && budget->deadline.expired()) {
+            deadline_hit = true;
             if (trace) {
                 trace->deadline_exceeded = true;
                 trace->truncated = true;
@@ -353,6 +417,7 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
         processed_ids.push_back(ids);
         // Check deadline before each lookup_by_ids
         if (budget && budget->deadline.expired()) {
+            deadline_hit = true;
             if (trace) {
                 trace->deadline_exceeded = true;
                 trace->truncated = true;
@@ -396,6 +461,9 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
         auto t_merge_end = std::chrono::steady_clock::now();
         trace->merge_us = std::chrono::duration_cast<std::chrono::microseconds>(t_merge_end - t_merge_start).count();
     }
+
+    if (!deadline_hit && !(trace && trace->deadline_exceeded))
+        store_query_cache(pinyin, page_index, page_size, page);
 
     return page;
 }

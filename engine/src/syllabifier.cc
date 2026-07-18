@@ -98,7 +98,7 @@ bool Syllabifier::enumerate_paths(
     // Also check on first entry (call_count == 0) to catch already-expired deadlines.
     ++call_count;
     if (deadline && deadline->enabled) {
-        if (deadline->expired() && (call_count <= 1 || (call_count & 31) == 0))
+        if ((call_count <= 1 || (call_count & 31) == 0) && deadline->expired())
             return true;
     }
 

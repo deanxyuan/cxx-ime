@@ -112,6 +112,36 @@ static bool tsf_queue_try_push(const TsfTraceEntry& entry) {
     return true;
 }
 
+static const char* bool_json(bool value) {
+    return value ? "true" : "false";
+}
+
+static bool tsf_should_log_event(bool important) {
+    cxxime::DiagnosticsConfig config = cxxime::diagnostics_config();
+    if (config.trace_mode == cxxime::DiagnosticTraceMode::kOff)
+        return false;
+    if (config.trace_mode == cxxime::DiagnosticTraceMode::kError)
+        return important;
+    return true;
+}
+
+static void foreground_class_utf8(char* out, int out_size) {
+    if (!out || out_size <= 0)
+        return;
+    out[0] = '\0';
+
+    HWND foreground = GetForegroundWindow();
+    if (!foreground)
+        return;
+
+    wchar_t class_name[64] = {};
+    if (!GetClassNameW(foreground, class_name, ARRAYSIZE(class_name)))
+        return;
+
+    WideCharToMultiByte(CP_UTF8, 0, class_name, -1, out, out_size, nullptr, nullptr);
+    out[out_size - 1] = '\0';
+}
+
 static int tsf_queue_pop_batch(TsfTraceEntry* batch, int max) {
     int count = 0;
     while (count < max) {
@@ -243,6 +273,27 @@ void TextService::_enqueue_trace(const TsfTrace& trace) {
 
     tsf_ensure_writer_started();
     tsf_queue_try_push(entry);  // Drop if full; never block hot path.
+}
+
+void TextService::_enqueue_event_trace(const char* event, const char* detail, bool important) {
+    if (!tsf_should_log_event(important))
+        return;
+
+    char foreground_class[96] = {};
+    foreground_class_utf8(foreground_class, sizeof(foreground_class));
+
+    TsfTraceEntry entry;
+    entry.len = snprintf(entry.json, sizeof(entry.json),
+                         "{\"event\":\"%s\",\"detail\":\"%s\",\"session\":%u,"
+                         "\"focused\":%s,\"chinese\":%s,\"caps\":%s,\"fg\":\"%s\"}",
+                         event ? event : "", detail ? detail : "", _sessionId,
+                         bool_json(_inputFocused), bool_json(_chinese_mode),
+                         bool_json(_caps_lock), foreground_class);
+    if (entry.len <= 0 || entry.len >= static_cast<int>(sizeof(entry.json)))
+        return;
+
+    tsf_ensure_writer_started();
+    tsf_queue_try_push(entry);
 }
 
 // TextService lifecycle
@@ -426,7 +477,7 @@ bool TextService::_foreground_allows_input() const {
     wchar_t focus_class[64] = {};
     GetClassNameW(gti.hwndFocus, focus_class, ARRAYSIZE(focus_class));
     if (wcscmp(focus_class, L"Edit") == 0 ||
-        wcscmp(focus_class, L"RichEdit") == 0 ||
+        wcsncmp(focus_class, L"RichEdit", 8) == 0 ||
         wcscmp(focus_class, L"RICHEDIT50W") == 0) {
         return true;
     }
@@ -526,21 +577,28 @@ bool TextService::_context_keyboard_disabled(ITfContext* context) const {
     return false;
 }
 
-bool TextService::_context_allows_input(ITfContext* context) const {
-	if (!context)
-		return false;
-	if (!_foreground_allows_input())
-		return false;
+const char* TextService::_input_context_block_reason(ITfContext* context) const {
+    if (!context)
+        return "no_context";
+    if (!_foreground_allows_input())
+        return "foreground_denied";
     if (!_context_belongs_to_foreground(context))
-        return false;
+        return "context_not_foreground";
     if (_context_keyboard_disabled(context))
-        return false;
+        return "keyboard_disabled";
 
-	TF_STATUS status = {};
-	if (FAILED(context->GetStatus(&status)))
-		return true;
+    TF_STATUS status = {};
+    if (FAILED(context->GetStatus(&status)))
+        return nullptr;
 
-	return (status.dwDynamicFlags & TF_SD_READONLY) == 0;
+    if ((status.dwDynamicFlags & TF_SD_READONLY) != 0)
+        return "readonly";
+
+    return nullptr;
+}
+
+bool TextService::_context_allows_input(ITfContext* context) const {
+    return _input_context_block_reason(context) == nullptr;
 }
 
 bool TextService::_document_allows_input(ITfDocumentMgr* doc_mgr) const {
@@ -582,8 +640,8 @@ bool TextService::_update_input_focus_from_thread_mgr() {
     } else {
         _start_state_poll_timer();
     }
-	if (!focused && _statusController.is_initialized())
-		_statusController.hide();
+	if (!focused)
+		_hide_status_window("hide:focus_query_unfocused");
 	return focused;
 }
 
@@ -595,6 +653,7 @@ bool TextService::_ensure_ipc_session() {
         !_client.connect(cxxime::IPC_PIPE_BASE_NAME, kTsfIpcTimeoutMs)) {
         if (_ipcHealthy) {
             CXXIME_LOG(L"IPC unavailable");
+            _enqueue_event_trace("ipc_session", "connect_failed", true);
         }
         _ipcHealthy = false;
         return false;
@@ -603,6 +662,8 @@ bool TextService::_ensure_ipc_session() {
     uint32_t session_id = 0;
     if (!_client.start_session(session_id) || session_id == 0) {
         CXXIME_LOG(L"Failed to start IPC session");
+        if (_ipcHealthy)
+            _enqueue_event_trace("ipc_session", "start_failed", true);
         _sessionId = 0;
         _ipcHealthy = false;
         _client.disconnect();
@@ -613,6 +674,7 @@ bool TextService::_ensure_ipc_session() {
     _ipcHealthy = true;
     _lastIpcHeartbeat = std::chrono::steady_clock::now();
     CXXIME_LOG(L"IPC session ready, sessionId=%u", _sessionId);
+    _enqueue_event_trace("ipc_session", "ready");
     return true;
 }
 
@@ -655,6 +717,7 @@ bool TextService::_recreate_ipc_session_preserving_status() {
             return false;
         }
     }
+    _enqueue_event_trace("ipc_session", "recreated", true);
     return true;
 }
 
@@ -671,6 +734,8 @@ bool TextService::_heartbeat_ipc() {
 
     if (!_client.ensure_connected()) {
         CXXIME_LOG(L"IPC heartbeat reconnect failed");
+        if (_ipcHealthy)
+            _enqueue_event_trace("ipc_session", "heartbeat_reconnect_failed", true);
         _sessionId = 0;
         _ipcHealthy = false;
         return false;
@@ -684,10 +749,13 @@ bool TextService::_heartbeat_ipc() {
     }
     if (resp.status == cxxime::IPCStatus::ERR_INVALID_SESSION) {
         CXXIME_LOG(L"IPC heartbeat detected invalid session, recreating");
+        _enqueue_event_trace("ipc_session", "heartbeat_invalid_session", true);
         return _recreate_ipc_session_preserving_status();
     }
 
     CXXIME_LOG(L"IPC heartbeat failed, reconnecting");
+    if (_ipcHealthy)
+        _enqueue_event_trace("ipc_session", "heartbeat_failed", true);
     _client.disconnect();
     _sessionId = 0;
     _ipcHealthy = false;
@@ -817,7 +885,7 @@ void TextService::_poll_unfocused_state_keys() {
         if (!_inputFocused) {
             _inputFocused = true;
             _reset_poll_shift_state();
-            _show_status_window_if_allowed();
+            _show_status_window_if_allowed("show:poll_focus_in");
             if (_sessionId && _client.ensure_connected())
                 _client.focus_in(_sessionId);
         }
@@ -831,9 +899,8 @@ void TextService::_poll_unfocused_state_keys() {
         _AbortComposition();
         _reset_poll_shift_state();
     }
-    if (_statusController.is_initialized())
-        _statusController.hide();
-    _candidateWindow.hide();
+    _hide_status_window("hide:poll_unfocused");
+    _hide_candidate_window("hide:poll_unfocused");
 
     bool physical_caps_lock = _is_caps_lock_on(false);
     if (physical_caps_lock != _caps_lock) {
@@ -859,13 +926,50 @@ void TextService::_poll_unfocused_state_keys() {
     }
 }
 
-void TextService::_show_status_window_if_allowed() {
+void TextService::_show_status_window_if_allowed(const char* reason) {
     if (_activated &&
         _inputFocused &&
         _config.status_window.enable &&
         _statusController.is_initialized()) {
+        if (!_statusController.is_visible())
+            _enqueue_event_trace("status_window", reason);
         _statusController.show();
     }
+}
+
+void TextService::_hide_status_window(const char* reason) {
+    if (!_statusController.is_initialized())
+        return;
+    if (_statusController.is_visible())
+        _enqueue_event_trace("status_window", reason);
+    _statusController.hide();
+}
+
+void TextService::_show_candidate_window(const char* reason) {
+    if (!_candidateWindow.is_visible())
+        _enqueue_event_trace("candidate_window", reason);
+    _candidateWindow.show();
+}
+
+void TextService::_hide_candidate_window(const char* reason) {
+    if (_candidateWindow.is_visible())
+        _enqueue_event_trace("candidate_window", reason);
+    _candidateWindow.hide();
+}
+
+void TextService::_trace_input_decision(const char* block_reason) {
+    if (!block_reason) {
+        if (!_lastInputBlockReason.empty()) {
+            _lastInputBlockReason.clear();
+            _enqueue_event_trace("input_context", "allowed");
+        }
+        return;
+    }
+
+    if (_lastInputBlockReason == block_reason)
+        return;
+    _lastInputBlockReason = block_reason;
+    _enqueue_event_trace("input_context", block_reason);
 }
 
 // ITfTextInputProcessorEx
@@ -912,7 +1016,7 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
             if (resp.status == cxxime::IPCStatus::ERR_INVALID_SESSION) {
                 _recreate_ipc_session_preserving_status();
                 _candidateWindow.set_preedit("");
-                _candidateWindow.hide();
+                _hide_candidate_window("hide:select_invalid_session");
                 _composing = false;
                 return;
             }
@@ -939,7 +1043,7 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
                 }
             }
             _candidateWindow.set_preedit("");
-            _candidateWindow.hide();
+            _hide_candidate_window("hide:select_commit");
         }
     });
 
@@ -1018,9 +1122,9 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
             _statusController.update_config(_config);
             _config.save(cxxime::user_data_path("default.json"));
             if (_config.status_window.enable) {
-                _show_status_window_if_allowed();
+                _show_status_window_if_allowed("show:language_bar_toggle");
             } else {
-                _statusController.hide();
+                _hide_status_window("hide:language_bar_toggle");
             }
             _modeButton->set_status_visible(_config.status_window.enable);
         });
@@ -1134,7 +1238,7 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
     if (_config.status_window.enable && _config.status_window.show_on_startup) {
         _update_input_focus_from_thread_mgr();
         if (_inputFocused) {
-            _show_status_window_if_allowed();
+            _show_status_window_if_allowed("show:activate_startup");
             if (_sessionId && _client.ensure_connected())
                 _client.focus_in(_sessionId);
         }
@@ -1150,7 +1254,7 @@ STDMETHODIMP TextService::Deactivate() {
     _stop_state_poll_timer();
 
     // Hide status window immediately, then destroy it to avoid clicks during IPC teardown.
-    _statusController.hide();
+    _hide_status_window("hide:deactivate");
     _statusController.shutdown();
 
     if (_sessionId) {
@@ -1226,7 +1330,7 @@ STDMETHODIMP TextService::OnSetFocus(BOOL fForeground) {
     if (fForeground) {
         _update_input_focus_from_thread_mgr();
         if (_inputFocused) {
-            _show_status_window_if_allowed();
+            _show_status_window_if_allowed("show:set_focus");
             if (_sessionId && _client.ensure_connected())
                 _client.focus_in(_sessionId);
         } else {
@@ -1239,8 +1343,7 @@ STDMETHODIMP TextService::OnSetFocus(BOOL fForeground) {
         _start_state_poll_timer();
         // Switching away from CxxIME: hide status window immediately.
         // OnKillThreadFocus may not fire when switching IMEs within the same thread.
-        if (_statusController.is_initialized())
-            _statusController.hide();
+        _hide_status_window("hide:ime_focus_lost");
         if (_sessionId && _client.is_connected())
             _client.focus_out(_sessionId);
         _AbortComposition();
@@ -1256,12 +1359,13 @@ STDMETHODIMP TextService::OnTestKeyDown(ITfContext* pic, WPARAM wParam, LPARAM l
         wParam == VK_LMENU || wParam == VK_RMENU ||
         wParam == VK_LWIN || wParam == VK_RWIN ||
         wParam == VK_CAPITAL;
-    if (!_context_allows_input(pic) && !status_key) {
+    const char* test_block_reason = _input_context_block_reason(pic);
+    _trace_input_decision(test_block_reason);
+    if (test_block_reason && !status_key) {
         _inputFocused = false;
         _start_state_poll_timer();
-        if (_statusController.is_initialized())
-            _statusController.hide();
-        _candidateWindow.hide();
+        _hide_status_window("hide:test_key_context_rejected");
+        _hide_candidate_window("hide:test_key_context_rejected");
         *pfEaten = FALSE;
         return S_OK;
     }
@@ -1326,13 +1430,14 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
         wParam == VK_LMENU || wParam == VK_RMENU ||
         wParam == VK_LWIN || wParam == VK_RWIN ||
         wParam == VK_CAPITAL;
-    bool input_allowed = _context_allows_input(pic);
+    const char* block_reason = _input_context_block_reason(pic);
+    bool input_allowed = block_reason == nullptr;
+    _trace_input_decision(block_reason);
     if (!input_allowed && !status_key) {
         _inputFocused = false;
         _start_state_poll_timer();
-        if (_statusController.is_initialized())
-            _statusController.hide();
-        _candidateWindow.hide();
+        _hide_status_window("hide:key_context_rejected");
+        _hide_candidate_window("hide:key_context_rejected");
         _AbortComposition();
         return false;
     }
@@ -1342,9 +1447,8 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
         _start_state_poll_timer();
     } else {
         _start_state_poll_timer();
-        if (_statusController.is_initialized())
-            _statusController.hide();
-        _candidateWindow.hide();
+        _hide_status_window("hide:key_context_status_only");
+        _hide_candidate_window("hide:key_context_status_only");
         _AbortComposition();
     }
     _seenKeyAfterActivate = true;
@@ -1440,7 +1544,7 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
 
     // Handle committed text (e.g. Shift toggle with commit_text, or normal candidate selection)
     if (response.commit_text[0] != '\0') {
-        _candidateWindow.hide();
+        _hide_candidate_window("hide:commit");
         _candidateWindow.set_preedit("");
         std::wstring commit_text;
         int len = MultiByteToWideChar(CP_UTF8, 0, response.commit_text, -1, nullptr, 0);
@@ -1536,9 +1640,9 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
                 caretRect = _resolve_caret_rect(pic);
 
             _candidateWindow.move_to_caret(caretRect);
-            _candidateWindow.show();
+            _show_candidate_window("show:preedit");
         } else {
-            _candidateWindow.hide();
+            _hide_candidate_window("hide:no_candidates");
         }
 
         auto window_end = std::chrono::steady_clock::now();
@@ -1553,7 +1657,7 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
     } else if (response.status == cxxime::IPCStatus::OK) {
         // Server accepted but no commit and no preedit (e.g. Escape cleared the buffer)
         bool was_composing = _composing;
-        _candidateWindow.hide();
+        _hide_candidate_window("hide:clear");
         _candidateWindow.set_preedit("");
         if (_composing && _composition) update_composition(pic, L"");
         _end_composition(pic);
@@ -1644,7 +1748,7 @@ void TextService::_ProcessKeyUp(WPARAM wParam) {
                     pDocMgr->Release();
                 }
                 _composing = false;
-                _candidateWindow.hide();
+                _hide_candidate_window("hide:key_up_commit");
                 _candidateWindow.set_preedit("");
             }
         }
@@ -1680,15 +1784,14 @@ STDMETHODIMP TextService::OnCompositionTerminated(TfEditCookie ecWrite, ITfCompo
 // ITfThreadFocusSink
 STDMETHODIMP TextService::OnSetThreadFocus() {
     _update_input_focus_from_thread_mgr();
-    _show_status_window_if_allowed();
+    _show_status_window_if_allowed("show:thread_focus");
     return S_OK;
 }
 
 STDMETHODIMP TextService::OnKillThreadFocus() {
     _inputFocused = false;
     _start_state_poll_timer();
-    if (_statusController.is_initialized())
-        _statusController.hide();
+    _hide_status_window("hide:thread_focus_lost");
     if (_sessionId && _client.is_connected())
         _client.focus_out(_sessionId);
     _AbortComposition();
@@ -1696,7 +1799,7 @@ STDMETHODIMP TextService::OnKillThreadFocus() {
 }
 
 void TextService::_AbortComposition() {
-    _candidateWindow.hide();
+    _hide_candidate_window("hide:abort_composition");
     _candidateWindow.set_preedit("");
     if (_composing) {
         ITfDocumentMgr* pDocMgr = nullptr;
@@ -1725,13 +1828,12 @@ STDMETHODIMP TextService::OnSetFocus(ITfDocumentMgr* pDocMgrFocus, ITfDocumentMg
     _inputFocused = _document_allows_input(pDocMgrFocus);
     if (!_inputFocused) {
         _start_state_poll_timer();
-        if (_statusController.is_initialized())
-            _statusController.hide();
+        _hide_status_window("hide:document_focus_unfocused");
         return S_OK;
     }
 
     _start_state_poll_timer();
-    _show_status_window_if_allowed();
+    _show_status_window_if_allowed("show:document_focus");
 
     // Sync status on focus change (user may have toggled via language bar)
     cxxime::IPCResponse resp = {};
@@ -1742,7 +1844,7 @@ STDMETHODIMP TextService::OnSetFocus(ITfDocumentMgr* pDocMgrFocus, ITfDocumentMg
 
     // Document focus changed; hide candidate window if switching away.
     if (_composing) {
-        _candidateWindow.hide();
+        _hide_candidate_window("hide:document_focus_switch");
         _candidateWindow.set_preedit("");
         if (_sessionId && _client.is_connected())
             _client.focus_out(_sessionId);

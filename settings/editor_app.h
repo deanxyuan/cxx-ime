@@ -43,6 +43,7 @@ private:
     void export_user_dict();
     void open_user_dict_dir();
     void export_diagnostics();
+    void set_user_dict_status(const std::wstring& text);
     void update_user_dict_status();
     void on_user_entry_selected();
     void apply_candidate_control(int control_id);

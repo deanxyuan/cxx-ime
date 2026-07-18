@@ -57,7 +57,19 @@ private:
         bool hit = false;
         std::vector<Candidate> candidates;
     };
+    struct QueryCacheEntry {
+        std::string input;
+        int page_index = 0;
+        int page_size = 0;
+        uint64_t user_dict_version = 0;
+        uint64_t sequence = 0;
+        CandidatePage page;
+    };
     ShortFastResult lookup_short_fast(const std::string& key, int limit, QueryTrace* trace) const;
+    bool lookup_query_cache(const std::string& input, int page_index, int page_size,
+                            CandidatePage& page, QueryTrace* trace);
+    void store_query_cache(const std::string& input, int page_index, int page_size,
+                           const CandidatePage& page);
 
     Dict* dict_ = nullptr;
     Syllabifier* syllabifier_ = nullptr;
@@ -66,10 +78,13 @@ private:
 
     // Phase 4: per-session recent candidate cache
     std::vector<RecentCandidate> recent_cache_;
+    std::vector<QueryCacheEntry> query_cache_;
     uint64_t recent_sequence_ = 0;
+    uint64_t query_cache_sequence_ = 0;
     mutable uint64_t cached_user_dict_version_ = 0;  // Phase 5: for cache invalidation
     static constexpr size_t kMaxRecentKeys = 128;
     static constexpr size_t kMaxRecentPerKey = 8;
+    static constexpr size_t kMaxQueryCacheEntries = 64;
 };
 
 } // namespace cxxime

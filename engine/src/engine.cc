@@ -612,7 +612,10 @@ void Engine::set_wubi_dict(Dict* dict) {
 }
 
 void Engine::set_fuzzy_enabled(bool enabled) {
-    if (spellings_) spellings_->set_fuzzy_enabled(enabled);
+    if (!spellings_)
+        return;
+    spellings_->set_fuzzy_enabled(enabled);
+    rebuild_pipeline(mode_, true);
 }
 
 void Engine::switch_mode(InputMode mode) {

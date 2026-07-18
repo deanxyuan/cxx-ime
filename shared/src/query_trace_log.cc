@@ -479,7 +479,10 @@ bool QueryTrace::should_log() const {
 void QueryTrace::log() const {
     if (!should_log())
         return;
+    log_unchecked();
+}
 
+void QueryTrace::log_unchecked() const {
     char json_buf[1024];
     int len = to_json(json_buf, sizeof(json_buf));
     if (len <= 0) return;
@@ -487,10 +490,14 @@ void QueryTrace::log() const {
 #ifdef _DEBUG
     // Debug: OutputDebugStringW (non-blocking)
     wchar_t wbuf[1024];
-    MultiByteToWideChar(CP_UTF8, 0, json_buf, len, wbuf, 1024);
-    wbuf[len] = L'\n';
-    wbuf[len + 1] = L'\0';
-    OutputDebugStringW(wbuf);
+    int wlen = MultiByteToWideChar(CP_UTF8, 0, json_buf, len, wbuf, 1023);
+    if (wlen > 0) {
+        if (wlen >= 1023)
+            wlen = 1022;
+        wbuf[wlen] = L'\n';
+        wbuf[wlen + 1] = L'\0';
+        OutputDebugStringW(wbuf);
+    }
 #endif
 
     // Async: enqueue to bounded queue (non-blocking, drop if full)
