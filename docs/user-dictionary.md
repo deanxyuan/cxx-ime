@@ -4,7 +4,7 @@
 
 用户词典存储用户选词频率记录，用于个性化候选排序。数据量极小（几百到几千条，< 1MB），全部驻留内存，通过 TSV 文件持久化。
 
-查询路径：用户词按 `code` 建立 `prefix`、`abbr`、`mixed` 和 `text` 四路内存索引，消除全表线性扫描。索引只保存 entry id（`uint32_t`），避免 `vector` 扩容导致指针失效。
+查询路径：用户词按 `code` 建立 `exact`、`prefix`、`abbr`、`mixed` 四路查询索引，另有 `text` 反查表和按 code 排序的二分数组，消除全表线性扫描。索引只保存 entry id（`uint32_t`），避免 `vector` 扩容导致指针失效。
 
 ## 数据结构
 
@@ -121,12 +121,26 @@ std::vector<Candidate> lookup_user_short(const std::string& key, int limit,
 
 ## 评分公式
 
-```
-score = user_boost + frequency + recent_bonus
+用户词得分由 `score_user_match()`（`dict.cc`）计算：
 
-user_boost   = 50000（用户词固定加分，低于系统词精确匹配的 100000）
-recent_bonus = min(1000, max(0, 1000 - (user_sequence_ - entry.sequence)))
 ```
+score = base + bounded_frequency + recent_bonus
+
+bounded_frequency = clamp(frequency, 1, 50000)
+recent_bonus      = (delta <= 1000) ? 1000 - delta : 0，delta = user_sequence_ - entry.sequence
+```
+
+`base` 按匹配类型与评分档位（`UserScoringProfile::kPinyin` / `kWubi`）分层：
+
+| 匹配情形 | base | 说明 |
+|---------|------|------|
+| 精确匹配（或 key 长度 == 码长） | `kExactBase = 200000000` | 学过的全码词强力置顶 |
+| 缩写 / 混合键匹配 | `kPatternBase = 120000000` | 简拼、首字母混合键命中 |
+| 前缀匹配，key ≤ 2 字符 | `kWeakPrefixBase = 4000` | 短前缀不干扰系统词序 |
+| 前缀匹配，key + 1 ≥ 码长 | `kNearPrefixBase = 800000` | 接近完整的前缀显著提升 |
+| 前缀匹配，key × 2 ≥ 码长 | `kMidPrefixBase = 160000` | 中等长度前缀适度提升 |
+| 其余前缀匹配 | `kWeakPrefixBase = 4000` | — |
+| 五笔档（kWubi）前缀匹配 | `kWeakPrefixBase = 4000` | 五笔前缀一律弱加分，保护系统简码词序 |
 
 `recent_bonus` 奖励最近使用的词条：最近使用的 entry bonus 接近 1000，超过 1000 次更新前的 entry bonus 为 0。
 
@@ -159,20 +173,11 @@ recent_bonus = min(1000, max(0, 1000 - (user_sequence_ - entry.sequence)))
 
 ## Cache 失效
 
-任何包含用户词候选的 cache 都记录 `user_dict_version`：
+包含用户词候选的缓存均以 `user_dict_version_` 判定新鲜度：
 
-```cpp
-struct CachedCandidatePage {
-    uint64_t user_dict_version = 0;
-    CandidatePage page;
-};
-```
-
-失效规则：
-
-- `user_dict_version` 不一致时丢弃该 cache
-- session recent cache 在同 session 内保留，但候选 text 已不存在或被标记 `deleted` 时过滤
-- 系统 `topn_cache.bin` 不受用户词版本影响
+- **长拼音查询页缓存**（`PinyinTranslator` 的 `QueryCacheEntry`）：缓存键包含 `user_dict_version`，版本不一致的条目不会命中，由 LRU 自然淘汰
+- **Session recent cache**：同 session 内保留，但版本变化后扫描时过滤——候选 text 已不存在或被标记 `deleted`（`has_user_entry()` 返回 false）时跳过
+- 系统短码缓存 `pinyin.topn.bin` 只含系统词，不受用户词版本影响
 
 ## 并发策略
 
@@ -195,15 +200,3 @@ text<TAB>code<TAB>frequency<TAB>syllables     （4 列，新格式）
 ```
 
 读取时同时接受两种格式。保存时使用 4 列格式，无 syllables 时省略第 4 列。
-
-## 修改文件
-
-| 文件 | 改动 |
-|------|------|
-| `engine/include/cxxime/dict.h` | 扩展 UserEntry、用户索引、版本号、内部查询 API |
-| `engine/src/dict.cc` | 索引构建、增量更新、bucket 排序、索引查询 |
-| `engine/src/pinyin_translator.cc` | 短输入快速路径接入用户词索引 |
-| `engine/src/engine.cc` | 选词和提交时调用带 syllables 的调频接口 |
-| `shared/include/cxxime/query_budget.h` | 新增 `max_user_scan` 字段 |
-| `shared/include/cxxime/candidate.h` | 新增 `CachedCandidatePage` 结构体 |
-| `test/dict_test.cc` | 用户词索引测试（12 项） |

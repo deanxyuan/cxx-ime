@@ -33,7 +33,7 @@
 ### diagnostics 配置
 
 ```json
-'diagnostics": {
+"diagnostics": {
     "trace_mode": "normal",
     "log_max_size": 8388608,
     "log_max_files": 4,
@@ -54,9 +54,16 @@
 - `normal`：记录错误、慢路径和少量截断采样。
 - `verbose`：短期复现问题时使用,记录所有 trace。
 
+### log() 与 log_unchecked() 拆分
+
+`QueryTrace` 提供两个写入入口：
+
+- **`log()`**：先调用 `should_log()` 进行采样判断，只有通过采样条件才写入。Engine、TSF 等上游组件使用此入口，避免在热路径中做不必要的 I/O。
+- **`log_unchecked()`**：跳过 `should_log()` 采样判断，直接写入。适用于调用方已经判定 `should_log()` 通过的场景（例如服务端在 IPC 请求完成后已确认需要记录），避免重复计算采样条件。
+
 ### 单一日志出口
 
-Engine 只填充 `last_trace()` 字段，**不自动调用** `trace_.log()`。ServerApp 在 IPC 请求完成后作为唯一出口调用 `trace_.log()`。Tools/tests 使用 Engine 自包含模式时可显式调用。
+Engine 只填充 `last_trace()` 字段，**不自动调用** `trace_.log()`。ServerApp 在 IPC 请求完成后作为唯一出口调用 `trace_.log()`（已判定 should_log 后直接 `log_unchecked()`）。Tools/tests 使用 Engine 自包含模式时可显式调用。
 
 详见 [查询预算与候选收集](query-control.md)。
 
@@ -161,6 +168,51 @@ MPSCQueue 的使用层包装，增加长度限制：
 - 保留代数由 `diagnostics.log_max_files` 控制，默认 4代。
 - 日志目录总量超过配置派生上限时，按最后写入时间清理旧的 `.log` / `.jsonl` 文件。
 - `tsf-*` 临时日志保留 7 天
+
+## TSF 事件级追踪
+
+TSF 层（`tsf/src/text_service.cpp`）拥有独立于 QueryTrace 的追踪系统，写入独立日志文件，不经过服务端 QueryTrace 采样路径。
+
+### 日志路径与格式
+
+文件写入 `%USERPROFILE%\cxxime\logs\tsf-<pid>-trace.jsonl`，每行一个 JSON 事件：
+
+```json
+{"event":"ipc_session","detail":"ready","session":1,"focused":true,"chinese":true,"caps":false,"fg":"Notepad"}
+```
+
+### 独立队列与写线程
+
+- **环形缓冲区**（非 MPSCQ）：容量 128 条，单生产者单消费者原子头尾索引
+- **批量消费**：每批 16 条，200ms 刷新间隔
+- **独立写线程**：TsfTrace 和事件追踪共享同一队列，不经过 QueryTrace 的锁自由队列和采样逻辑
+- **日志轮转**：与 QueryTrace 共用 `diagnostics.log_max_size` / `log_max_files` 配置
+
+### 事件类型
+
+| 事件 | detail 示例 | 触发时机 |
+|------|------------|----------|
+| `ipc_session` | `connect_failed`, `start_failed`, `ready`, `recreated`, `heartbeat_reconnect_failed`, `heartbeat_invalid_session`, `heartbeat_failed` | IPC 连接/重连/心跳 |
+| `status_window` | `hide:focus_query_unfocused`, `input_allowed` 等显隐原因字符串 | 状态窗口显示或隐藏时传递的 reason 参数 |
+| `candidate_window` | 显隐原因字符串 | 候选窗口显示或隐藏时传递的 reason 参数 |
+| `input_context` | `allowed` 或拒绝原因（如 `context_disabled`, `no_focus` 等） | `_trace_input_decision()` 在上下文状态变化时调用，重复原因自动去重 |
+
+### 过滤控制
+
+受 `diagnostics.trace_mode`（`DiagnosticTraceMode`）控制：
+
+| 模式 | 行为 |
+|------|------|
+| `off` | 不记录任何事件，`tsf_should_log_event()` 返回 false |
+| `error` | 仅记录 `important = true` 的事件（连接失败、会话重建、心跳异常等） |
+| `normal` / `verbose` | 记录所有事件 |
+
+### 关键代码
+
+```
+text_service.h:    void _enqueue_event_trace(const char* event, const char* detail, bool important = false);
+text_service.cpp:  tsf_should_log_event() → tsf_queue_try_push() → tsf_writer_thread_func()
+```
 
 ## query_bench 工具
 

@@ -35,7 +35,7 @@ scripts\package.py --fast --skip-dict # 快速复用已有 dist\data 词典打�
 需要预先安装 [NSIS 3.x](https://nsis.sourceforge.io/)。`package.py` 执行：
 
 1. 检查并触发构建（如未构建）
-2. 复制 `cxxime_tsf.dll`、`cxxime-server.exe`、`cxxime-settings.exe`
+2. 复制 `cxxime_tsf_x64.dll`、`cxxime_tsf_x86.dll`、`cxxime-resources.dll`、`cxxime-server.exe`、`cxxime-settings.exe`、`collect_diagnostics.ps1`
 3. 复制 `default.json`、`themes.json`、`settings_presets.json`、`punctuation.json`
 4. 调用 `prepare_dict.py` 将 `.db` 词典转换为 `.bin` / `.idx` / `.spellings.bin`
 5. 校验发布数据文件、CRT 依赖和热路径日志
@@ -54,42 +54,42 @@ python scripts\package.py --generator "Visual Studio 17 2022" --platform x64
 
 1. 许可协议
 2. 选择程序安装目录，默认 `C:\Program Files\CxxIME`
-3. 安装程序文件和出厂数据
-4. 初始化用户配置目录 `%USERPROFILE%\cxxime\`
-5. 注册 TSF DLL → 配置自启动 → 创建开始菜单快捷方式 → 启动服务端
+3. 停止已有 `cxxime-server.exe` 进程
+4. 反注册已有旧版 TSF DLL（x86 和 x64）
+5. 删除旧版 TSF DLL 及 `.old` 残留
+6. 复制程序文件：
+   - `cxxime_tsf_x64.dll`、`cxxime_tsf_x86.dll`、`cxxime-resources.dll`
+   - `cxxime-server.exe`、`cxxime-settings.exe`、`collect_diagnostics.ps1`
+7. 复制出厂数据（配置文件、主题、标点、二进制词典、清单）至 `<安装目录>\data\`
+8. 创建用户配置目录 `%USERPROFILE%\cxxime\`，首次安装时复制默认配置
+9. 注册 TSF DLL（x64: Sysnative regsvr32，x86: SysDir regsvr32）
+10. 写入注册表自启动项 `Run\CxxIMEServer`
+11. 写入卸载注册表项（`DisplayIcon` 引用 `cxxime-resources.dll`）
+12. 创建开始菜单快捷方式（设置、诊断收集、卸载）
+13. 启动 `cxxime-server.exe`
+14. 可选：启动 `cxxime-settings.exe`
 
 安装完成后**注销并重新登录**，输入法出现在系统输入法列表中。按 `Ctrl+Space` 或 `Win+Space` 切换。
-
-### 备用方式：批处理脚本
-
-如果无法使用 NSIS 安装程序，`dist/` 目录中保留了 `.bat` / `.ps1` 安装脚本：
-
-```cmd
-install.bat                         # 安装到 %USERPROFILE%\cxxime\
-install.bat "D:\MyData\CxxIME"      # 自定义数据目录
-```
 
 ## 卸载
 
 - **推荐：** 开始菜单 → CxxIME → 卸载 CxxIME
 - 或控制面板 → 添加/删除程序 → CxxIME
 
-卸载程序自动：停止服务端 → 反注册 TSF DLL → 移除自启动 → 清理注册表 → 删除文件。
+卸载过程如下：
 
-默认卸载只删除程序文件、开始菜单快捷方式、TSF 注册项、自启动项和卸载项。用户目录
-`%USERPROFILE%\cxxime\` 下的配置和用户词典会保留，便于重新安装或升级后继续使用。
+1. 停止 `cxxime-server.exe`
+2. 将系统键盘布局切换为英文（00000409），通过 `SendMessageTimeout` 通知 TSF 从所有进程卸载 CxxIME
+3. 等待 3 秒确保 TSF 通知完成
+4. 反注册 TSF DLL（x86: SysDir regsvr32 /u，x64: Sysnative regsvr32 /u）
+5. 移除注册表项：`Run\CxxIMEServer`、Uninstall、CLSID、`CTF\TIP`
+6. 删除开始菜单快捷方式
+7. 删除程序文件（TSF DLL、可执行文件、数据文件等）。若 DLL 仍被占用，调度重启删除（`/REBOOTOK`）
+8. **可选清除用户数据**：卸载向导中会出现"用户数据清理"页面（`un.UserDataPage`），默认保留。勾选"删除用户配置和词典数据"复选框并指定路径后，会删除 `%USERPROFILE%\cxxime\` 及其内容
 
-如果 `cxxime_tsf.dll` 仍被 TSF 或宿主进程占用，卸载程序会把 DLL 删除安排到系统
-重启时执行。卸载后如果安装目录暂时残留，重启后应自动清理。
+卸载后如果安装目录暂时残留，重启后应自动清理。
 
-### 备用方式
-
-```cmd
-uninstall.bat                       # 从默认位置卸载
-uninstall.bat "D:\MyData\CxxIME"    # 自定义路径
-```
-
-卸载后建议注销重新登录; 如果安装目录内有被占用的 DLL 残留，重启后再检查目录。
+> **注意**：卸载完成后建议注销重新登录。如果 TSF DLL 被占用，重启后才能完成清理。
 
 ## 诊断包
 
@@ -105,8 +105,8 @@ uninstall.bat "D:\MyData\CxxIME"    # 自定义路径
 默认不会复制日志、用户配置或用户词典。需要进一步排查时,可在安装目录运行:
 
 ```cmd
-powershell -NoProfile -ExecutionPolicy Bypass -File colllect_diagnostics.ps1 -IncludeLogs
-powershell -NoProfile -ExecutionPolicy Bypass -File colllect_diagnostics.ps1 -IncludeUserConfig -IncludeUserDict
+powershell -NoProfile -ExecutionPolicy Bypass -File collect_diagnostics.ps1 -IncludeLogs
+powershell -NoProfile -ExecutionPolicy Bypass -File collect_diagnostics.ps1 -IncludeUserConfig -IncludeUserDict
 ```
 
 注意:日志可能包含输入编码,用户词典包含个人词条。对外反馈问题前应确认是否可以附带这些内容。
@@ -117,8 +117,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File colllect_diagnostics.ps1 -In
 
 | 类型 | 位置 | 说明 |
 |---|---|---|
-| 程序文件 | `C:\Program Files\CxxIME\`，可在安装向导中修改 | `cxxime-server.exe`、`cxxime-settings.exe`、`cxxime tsf.dll` |
-| 出厂数据 | `<安装目录>\data\` | 出厂配置、主题、标点和二进制词典 |
+| 程序文件 | `C:\Program Files\CxxIME\`，可在安装向导中修改 | `cxxime-server.exe`、`cxxime-settings.exe`、`cxxime_tsf_x64.dll`、`cxxime_tsf_x86.dll`、`cxxime-resources.dll` |
+| 出厂数据 | `<安装目录>\data\` | 出厂配置、主题、标点、二进制词典及清单 |
 | 用户数据 | `%USERPROFILE%\cxxime\` | 用户配置、主题覆盖、标点覆盖和用户词典 |
 
 用户数据目录由安装器初始化，后续覆盖安装不会覆盖已有用户配置。
@@ -129,20 +129,25 @@ powershell -NoProfile -ExecutionPolicy Bypass -File colllect_diagnostics.ps1 -In
 
 ```
 <安装目录>\
-├── cxxime_tsf.dll
+├── cxxime_tsf_x64.dll
+├── cxxime_tsf_x86.dll
+├── cxxime-resources.dll
 ├── cxxime-server.exe
 ├── cxxime-settings.exe
+├── collect_diagnostics.ps1
 ├── uninstall.exe
 └── data\
     ├── default.json
+    ├── dictionary_manifest.json
     ├── settings_presets.json
     ├── themes.json
     ├── punctuation.json
     ├── pinyin.dict.bin
     ├── pinyin.dict.idx
     ├── pinyin.spellings.bin
-    ├── pinyin.topn.bin      (可选)
-    ├── wubi86.dict.bin      (可选)
+    ├── pinyin.topn.bin
+    ├── wubi86.dict.bin
+    └── wubi86.dict.idx
 ```
 
 ### 用户数据目录
@@ -182,12 +187,16 @@ cxxime-server.exe --config "D:\config.json"          # 指定配置文件
 ### 安装后输入法列表里找不到 CxxIME
 
 1. 确认已注销并重新登录
-2. 检查 `regsvr32` 是否成功：手动运行 `regsvr32 "%USERPROFILE%\cxxime\cxxime_tsf.dll"`
+2. 检查 `regsvr32` 是否成功：手动运行以下命令注册 x64 和 x86 两个架构的 DLL：
+   ```cmd
+   regsvr32 "C:\Program Files\CxxIME\cxxime_tsf_x64.dll"
+   regsvr32 "C:\Program Files\CxxIME\cxxime_tsf_x86.dll"
+   ```
 3. 在"设置 → 时间和语言 → 语言和区域 → 中文(简体)"中添加输入法
 
 ### 服务端启动后立即退出
 
-通常是词典文件缺失。检查 `%USERPROFILE%\cxxime%\pinyin.dict.bin` 是否存在。若缺失，重新运行 `package.bat` 生成二进制词典后重新安装。
+通常是词典文件缺失。检查 `C:\Program Files\CxxIME\data\pinyin.dict.bin` 是否存在。若缺失，重新运行 `scripts\package.py` 生成二进制词典后重新安装。
 
 ### 切换输入法后打字无反应
 
