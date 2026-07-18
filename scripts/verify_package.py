@@ -142,6 +142,8 @@ def check_dictionary_manifest(errors: list[str], dist_dir: str) -> list[str]:
         "pinyin_idx",
         "pinyin_spellings",
         "pinyin_topn",
+        "wubi_dict",
+        "wubi_idx",
     }
     missing = sorted(required_roles - roles)
     if missing:
@@ -188,6 +190,24 @@ def check_installer_script(
         label,
     )
     require_text(errors, text, "CxxIME requires 64-bit Windows.", label)
+    require_text(errors, text, 'File "data\\wubi86.dict.bin"', label)
+    require_text(errors, text, 'File "data\\wubi86.dict.idx"', label)
+    forbid_text(errors, text, 'File /nonfatal "data\\wubi86.dict.bin"', label)
+    forbid_text(errors, text, 'File /nonfatal "data\\wubi86.dict.idx"', label)
+    require_text(
+        errors,
+        text,
+        '"DisplayIcon" \'"$INSTDIR\\cxxime-resources.dll",-100\'',
+        label,
+    )
+    require_text(errors, text, "UninstPage custom un.UserDataPage un.UserDataPageLeave", label)
+    require_text(errors, text, "User data directory:", label)
+    require_text(errors, text, '${NSD_CreateText} 28u 60u 100% 12u "$UninstallUserDataDir"', label)
+    require_text(errors, text, "Remove user configuration and dictionary data", label)
+    require_text(errors, text, 'StrCpy $UninstallUserDataDir "$PROFILE\\cxxime"', label)
+    require_text(errors, text, 'StrCpy $UninstallUserDataDirSuffix $UninstallUserDataDir 7 -7', label)
+    require_text(errors, text, '${AndIf} $UninstallUserDataDirSuffix == "\\cxxime"', label)
+    require_text(errors, text, 'RMDir /r "$UninstallUserDataDir"', label)
 
     if require_x86:
         require_text(errors, text, 'File "cxxime_tsf_x86.dll"', label)

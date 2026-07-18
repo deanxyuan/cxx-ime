@@ -8,7 +8,7 @@
 #   2. Magic bytes correct for each binary file
 #   3. pinyin.topn.bin contains required short input keys
 #   4. pinyin.dict.idx and pinyin.dict.bin version consistency
-#   5. dictionary_manifest.json describes the complete pinyin bundle
+#   5. dictionary_manifest.json describes the complete pinyin and wubi bundle
 #
 # Usage: python verify_data_files.py --data-dir <dir>
 #
@@ -29,6 +29,8 @@ REQUIRED_FILES = [
     "pinyin.dict.idx",
     "pinyin.spellings.bin",
     "pinyin.topn.bin",
+    "wubi86.dict.bin",
+    "wubi86.dict.idx",
     "default.json",
     "settings_presets.json",
     "punctuation.json",
@@ -41,6 +43,8 @@ REQUIRED_MANIFEST_ROLES = {
     "pinyin_idx",
     "pinyin_spellings",
     "pinyin_topn",
+    "wubi_dict",
+    "wubi_idx",
 }
 
 # Magic values (first 8 bytes of each binary file)
@@ -78,41 +82,41 @@ def read_magic(path):
         return f.read(8)
 
 
-def check_dict_bin(data_dir, errors):
-    """Validate pinyin.dict.bin magic and version."""
-    path = os.path.join(data_dir, "pinyin.dict.bin")
+def check_dict_bin(data_dir, filename, errors):
+    """Validate dict.bin magic and version."""
+    path = os.path.join(data_dir, filename)
     with open(path, "rb") as f:
         data = f.read(28)  # DictHeader = 28 bytes
     if len(data) < 28:
-        errors.append("pinyin.dict.bin: file too small for header")
+        errors.append(f"{filename}: file too small for header")
         return None
     magic = data[0:8]
     if magic != DICT_MAGIC_V1 and magic != DICT_MAGIC_V2:
-        errors.append(f"pinyin.dict.bin: bad magic {magic!r}")
+        errors.append(f"{filename}: bad magic {magic!r}")
         return None
     version = struct.unpack_from("<I", data, 8)[0]
     if version not in (1, 2):
-        errors.append(f"pinyin.dict.bin: bad version {version}")
+        errors.append(f"{filename}: bad version {version}")
         return None
     return version
 
 
-def check_dict_idx(data_dir, errors):
-    """Validate pinyin.dict.idx magic and version."""
-    path = os.path.join(data_dir, "pinyin.dict.idx")
+def check_dict_idx(data_dir, filename, errors):
+    """Validate dict.idx magic and version."""
+    path = os.path.join(data_dir, filename)
     with open(path, "rb") as f:
         data = f.read(28)
     if len(data) < 28:
-        errors.append("pinyin.dict.idx: file too small for header")
+        errors.append(f"{filename}: file too small for header")
         return None
     magic = data[0:8]
     if magic != IDX_MAGIC:
-        errors.append(f"pinyin.dict.idx: bad magic {magic!r}")
+        errors.append(f"{filename}: bad magic {magic!r}")
         return None
     # Header: magic(8) version(4) syl_count(4) syl_str_size(4) idx_count(4) idx_data_size(4)
     version = struct.unpack_from("<I", data, 8)[0]
     if version < 2 or version > 3:
-        errors.append(f"pinyin.dict.idx: bad version {version}")
+        errors.append(f"{filename}: bad version {version}")
         return None
     return version
 
@@ -165,13 +169,13 @@ def check_topn_bin(data_dir, errors):
     return True
 
 
-def check_version_consistency(dict_ver, idx_ver, errors):
+def check_version_consistency(label, dict_ver, idx_ver, errors):
     """Check that dict.bin and idx versions are compatible."""
     if dict_ver is None or idx_ver is None:
         return  # Already reported errors
     # dict.bin v1/v2, idx v2/v3 — both should be >= 2 for current builds
     if dict_ver < 2 and idx_ver >= 2:
-        errors.append(f"version mismatch: dict.bin v{dict_ver}, idx v{idx_ver}")
+        errors.append(f"{label}: version mismatch: dict.bin v{dict_ver}, idx v{idx_ver}")
         return False
     return True
 
@@ -278,13 +282,16 @@ def verify(data_dir):
 
     # 2. Magic and version checks
     check_dictionary_manifest(data_dir, errors)
-    dict_ver = check_dict_bin(data_dir, errors)
-    idx_ver = check_dict_idx(data_dir, errors)
+    pinyin_dict_ver = check_dict_bin(data_dir, "pinyin.dict.bin", errors)
+    pinyin_idx_ver = check_dict_idx(data_dir, "pinyin.dict.idx", errors)
+    wubi_dict_ver = check_dict_bin(data_dir, "wubi86.dict.bin", errors)
+    wubi_idx_ver = check_dict_idx(data_dir, "wubi86.dict.idx", errors)
     check_spellings_bin(data_dir, errors)
     check_topn_bin(data_dir, errors)
 
     # 3. Version consistency
-    check_version_consistency(dict_ver, idx_ver, errors)
+    check_version_consistency("pinyin", pinyin_dict_ver, pinyin_idx_ver, errors)
+    check_version_consistency("wubi86", wubi_dict_ver, wubi_idx_ver, errors)
 
     return errors
 

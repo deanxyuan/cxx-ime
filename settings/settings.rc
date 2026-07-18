@@ -1,0 +1,5 @@
+// Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
+
+#include "resource/cxxime_resource_ids.h"
+
+IDI_CXXIME ICON "resource\\pinterest.ico"
