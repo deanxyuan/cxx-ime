@@ -181,7 +181,8 @@ Section "Install"
     WriteRegStr HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\CxxIME" "Publisher" "${PUBLISHER}"
     WriteRegStr HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\CxxIME" "DisplayIcon" '"$INSTDIR\cxxime-resources.dll",-100'
     WriteRegStr HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\CxxIME" "InstallLocation" "$INSTDIR"
-    WriteRegStr HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\CxxIME" "UninstallString" "$INSTDIR\uninstall.exe"
+    WriteRegStr HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\CxxIME" "UninstallString" '"$INSTDIR\uninstall.exe"'
+    WriteRegStr HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\CxxIME" "QuietUninstallString" '"$INSTDIR\uninstall.exe" /S'
     WriteRegDWORD HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\CxxIME" "NoModify" 1
     WriteRegDWORD HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\CxxIME" "NoRepair" 1
     WriteUninstaller "$INSTDIR\uninstall.exe"
@@ -207,7 +208,10 @@ Section "Uninstall"
     ; Switch system keyboard to English to trigger TSF to unload CxxIME from all processes
     DeleteRegValue HKCU "Keyboard Layout\Preload" "1"
     WriteRegStr HKCU "Keyboard Layout\Preload" "1" "00000409"
-    System::Call 'user32::SendMessageTimeout(i 0xFFFF, i 0x0050, i 0, i 0, i 0, i 2000, *i .r0)'
+    System::Call 'user32::LoadKeyboardLayoutW(w "00000409", i 0x00000001) p .r0'
+    ${If} $0 != 0
+        System::Call 'user32::SendMessageTimeoutW(p 0xFFFF, i 0x0050, p 0, p r0, i 0x0002, i 2000, *p .r1)'
+    ${EndIf}
     Sleep 1000
 
     ; Unregister TSF DLLs and wait for TSF to notify processes

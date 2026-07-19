@@ -200,6 +200,21 @@ def check_installer_script(
         '"DisplayIcon" \'"$INSTDIR\\cxxime-resources.dll",-100\'',
         label,
     )
+    require_text(
+        errors,
+        text,
+        '"UninstallString" \'"$INSTDIR\\uninstall.exe"\'',
+        label,
+    )
+    require_text(
+        errors,
+        text,
+        '"QuietUninstallString" \'"$INSTDIR\\uninstall.exe" /S\'',
+        label,
+    )
+    require_text(errors, text, 'LoadKeyboardLayoutW(w "00000409"', label)
+    require_text(errors, text, "SendMessageTimeoutW(p 0xFFFF, i 0x0050, p 0, p r0", label)
+    forbid_text(errors, text, "SendMessageTimeout(i 0xFFFF, i 0x0050, i 0, i 0", label)
     require_text(errors, text, "UninstPage custom un.UserDataPage un.UserDataPageLeave", label)
     require_text(errors, text, "User data directory:", label)
     require_text(errors, text, '${NSD_CreateText} 28u 60u 100% 12u "$UninstallUserDataDir"', label)
