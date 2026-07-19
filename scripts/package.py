@@ -143,16 +143,16 @@ def build(
     run(build_cmd)
 
 
-def build_x86_tsf(
+def build_x86_platform_modules(
     build_dir: str,
     config: str,
     generator: str | None = None,
 ) -> None:
-    """Build only the 32-bit TSF DLL with a platform-aware generator."""
+    """Build the 32-bit in-process IME modules with a platform-aware generator."""
     generator, _ = choose_cmake_generator(generator, None)
     if generator and is_single_config_generator(generator):
         print(
-            "  ERROR: x86 TSF packaging requires a platform-aware CMake generator "
+            "  ERROR: x86 IME packaging requires a platform-aware CMake generator "
             "(for example Visual Studio) or an explicit 32-bit native build.",
             file=sys.stderr,
         )
@@ -164,7 +164,7 @@ def build_x86_tsf(
         sys.exit(1)
     if generator and not supports_cmake_platform(generator):
         print(
-            f"  ERROR: x86 TSF packaging requires a generator with -A support, got: {generator}",
+            f"  ERROR: x86 IME packaging requires a generator with -A support, got: {generator}",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -176,7 +176,7 @@ def build_x86_tsf(
         skip_tools=True,
         generator=generator,
         platform="Win32",
-        target="cxxime-tsf",
+        target="cxxime-platform-modules",
     )
 
 
@@ -215,11 +215,13 @@ def copy_binary(build_dir: str, config: str, subdir: str, name: str) -> None:
     print(f"  {name}")
 
 
-def copy_binaries(build_dir: str, x86_build_dir: str, config: str, include_x86_tsf: bool) -> None:
+def copy_binaries(build_dir: str, x86_build_dir: str, config: str, include_x86_modules: bool) -> None:
     """Copy built binaries to dist."""
     copy_binary(build_dir, config, "tsf", "cxxime_tsf_x64.dll")
-    if include_x86_tsf:
+    copy_binary(build_dir, config, "legacy_ime", "cxxime_ime_x64.ime")
+    if include_x86_modules:
         copy_binary(x86_build_dir, config, "tsf", "cxxime_tsf_x86.dll")
+        copy_binary(x86_build_dir, config, "legacy_ime", "cxxime_ime_x86.ime")
     copy_binary(build_dir, config, "resource", "cxxime-resources.dll")
     copy_binary(build_dir, config, "server", "cxxime-server.exe")
     copy_binary(build_dir, config, "settings", "cxxime-settings.exe")
@@ -301,6 +303,8 @@ def check_debug_crt(config: str) -> None:
     for name in [
         "cxxime_tsf_x64.dll",
         "cxxime_tsf_x86.dll",
+        "cxxime_ime_x64.ime",
+        "cxxime_ime_x86.ime",
         "cxxime-resources.dll",
         "cxxime-server.exe",
         "cxxime-settings.exe",
@@ -413,11 +417,11 @@ def check_log_rotation() -> None:
     print("  WARNING: default.json does not contain diagnostics log rotation config.")
 
 
-def verify_package_layout(include_x86_tsf: bool) -> None:
+def verify_package_layout(include_x86_modules: bool) -> None:
     """Run static dist package preflight checks."""
     script = os.path.join(SCRIPTS, "verify_package.py")
     cmd = [sys.executable, script, "--dist-dir", DIST_DIR]
-    if not include_x86_tsf:
+    if not include_x86_modules:
         cmd.append("--allow-missing-x86")
     run(cmd)
 
@@ -492,7 +496,7 @@ def build_nsis(config: str, fast: bool = False) -> None:
         print("  ERROR: NSIS completed but installer not found.", file=sys.stderr)
 
 
-def print_summary(config: str, include_x86_tsf: bool) -> None:
+def print_summary(config: str, include_x86_modules: bool) -> None:
     """Print final distribution summary."""
     print(f"\n{'=' * 60}")
     print("=== Packaging complete ===")
@@ -502,8 +506,10 @@ def print_summary(config: str, include_x86_tsf: bool) -> None:
     print()
     print("Contents:")
     print("  cxxime_tsf_x64.dll       64-bit TSF text service DLL")
-    if include_x86_tsf:
+    print("  cxxime_ime_x64.ime       64-bit legacy IMM IME module")
+    if include_x86_modules:
         print("  cxxime_tsf_x86.dll       32-bit TSF text service DLL")
+        print("  cxxime_ime_x86.ime       32-bit legacy IMM IME module")
     print("  cxxime-resources.dll     Stable input profile resources")
     print("  cxxime-server.exe        Background server process")
     print("  cxxime-settings.exe      Configuration editor")
@@ -547,7 +553,7 @@ def main():
     )
     parser.add_argument(
         "--x86-build-dir", default=DEFAULT_X86_BUILD_DIR,
-        help="CMake build directory for the 32-bit TSF build (default: build-package-x86)",
+        help="CMake build directory for 32-bit IME module builds (default: build-package-x86)",
     )
     parser.add_argument(
         "--skip-build", action="store_true",
@@ -567,7 +573,7 @@ def main():
     )
     parser.add_argument(
         "--skip-x86-tsf", action="store_true",
-        help="Skip the 32-bit TSF build for local dist-only checks (requires --skip-nsis)",
+        help="Skip 32-bit TSF/legacy IME builds for local dist-only checks (requires --skip-nsis)",
     )
     parser.add_argument(
         "--skip-tests", action="store_true", default=True,
@@ -596,7 +602,7 @@ def main():
     args = parser.parse_args()
 
     if args.skip_x86_tsf and not args.skip_nsis:
-        parser.error("--skip-x86-tsf requires --skip-nsis because the installer requires both TSF DLLs")
+        parser.error("--skip-x86-tsf requires --skip-nsis because the installer requires both bitnesses")
 
     config = "Debug" if args.debug else "Release"
     build_dir = os.path.abspath(args.build_dir)
@@ -620,8 +626,8 @@ def main():
             platform=args.platform,
         )
         if not args.skip_x86_tsf:
-            step("[2/8] Building x86 TSF...")
-            build_x86_tsf(
+            step("[2/8] Building x86 platform modules...")
+            build_x86_platform_modules(
                 x86_build_dir,
                 config,
                 generator=args.generator,
@@ -632,7 +638,7 @@ def main():
     clean_dist(keep_data=args.skip_dict)
 
     print("  Copying binaries...")
-    copy_binaries(build_dir, x86_build_dir, config, include_x86_tsf=not args.skip_x86_tsf)
+    copy_binaries(build_dir, x86_build_dir, config, include_x86_modules=not args.skip_x86_tsf)
 
     print("  Copying config and themes...")
     copy_config()
@@ -659,7 +665,7 @@ def main():
 
     # 6. Package layout
     step("[7/8] Verifying package layout...")
-    verify_package_layout(include_x86_tsf=not args.skip_x86_tsf)
+    verify_package_layout(include_x86_modules=not args.skip_x86_tsf)
 
     # 7. NSIS
     if args.skip_nsis:
@@ -668,7 +674,7 @@ def main():
         step("[8/8] Building NSIS installer...")
         build_nsis(config, fast=args.fast)
 
-    print_summary(config, include_x86_tsf=not args.skip_x86_tsf)
+    print_summary(config, include_x86_modules=not args.skip_x86_tsf)
 
 
 if __name__ == "__main__":

@@ -45,12 +45,13 @@ STDMETHODIMP DisplayAttributeInfo::GetAttributeInfo(TF_DISPLAYATTRIBUTE* pda) {
     if (!pda)
         return E_INVALIDARG;
 
+    *pda = {};
     pda->crText.type = TF_CT_NONE;
     pda->crBk.type = TF_CT_NONE;
     pda->lsStyle = TF_LS_DOT;
     pda->fBoldLine = FALSE;
-    pda->crLine.type = TF_CT_SYSCOLOR;
-    pda->crLine.nIndex = COLOR_WINDOWTEXT;
+    pda->crLine.type = TF_CT_NONE;
+    pda->bAttr = TF_ATTR_INPUT;
     return S_OK;
 }
 

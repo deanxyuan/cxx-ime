@@ -29,10 +29,15 @@ add_subdirectory(third_party/nlohmann)
 add_subdirectory(shared)
 add_subdirectory(engine)
 add_subdirectory(ipc)
+add_subdirectory(legacy_ime)
 add_subdirectory(resource)
 add_subdirectory(tsf)
 add_subdirectory(server)
 add_subdirectory(ui)
+
+add_custom_target(cxxime-platform-modules
+    DEPENDS cxxime-ime cxxime-tsf
+)
 
 if(CXXIME_BUILD_TESTS)
     enable_testing()

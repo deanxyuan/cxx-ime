@@ -20,7 +20,14 @@ public:
     // ITfEditSession
     STDMETHODIMP DoEditSession(TfEditCookie ec) override;
 
-    enum class Action { INSERT_TEXT, START_COMPOSITION, END_COMPOSITION, UPDATE_COMPOSITION, QUERY_CARET };
+    enum class Action {
+        INSERT_TEXT,
+        END_COMPOSITION,
+        UPDATE_COMPOSITION,
+        ENSURE_COMPOSITION_TEXT,
+        COMMIT_COMPOSITION,
+        QUERY_CARET
+    };
     void set_action(Action action, const std::wstring& text = L"");
     bool get_caret_rect(RECT& out) const { if (_resultValid) { out = _resultRect; return true; } return false; }
 

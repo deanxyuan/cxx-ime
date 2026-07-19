@@ -117,6 +117,19 @@ Section "Install"
         Delete /REBOOTOK "$INSTDIR\cxxime_tsf_x86.dll"
     install_tsf_x86_deleted:
 
+    Delete "$INSTDIR\cxxime_ime_x64.ime"
+    IfFileExists "$INSTDIR\cxxime_ime_x64.ime" 0 install_ime_x64_deleted
+        Delete /REBOOTOK "$INSTDIR\cxxime_ime_x64.ime"
+    install_ime_x64_deleted:
+
+    Delete "$INSTDIR\cxxime_ime_x86.ime"
+    IfFileExists "$INSTDIR\cxxime_ime_x86.ime" 0 install_ime_x86_deleted
+        Delete /REBOOTOK "$INSTDIR\cxxime_ime_x86.ime"
+    install_ime_x86_deleted:
+
+    Delete "$WINDIR\Sysnative\cxxime.ime.new"
+    Delete "$SYSDIR\cxxime.ime.new"
+
     Delete "$INSTDIR\cxxime-resources.dll"
     IfFileExists "$INSTDIR\cxxime-resources.dll" 0 install_resources_dll_deleted
         Delete /REBOOTOK "$INSTDIR\cxxime-resources.dll"
@@ -135,6 +148,8 @@ Section "Install"
     SetOutPath "$INSTDIR"
     File "cxxime_tsf_x64.dll"
     File "cxxime_tsf_x86.dll"
+    File "cxxime_ime_x64.ime"
+    File "cxxime_ime_x86.ime"
     File "cxxime-resources.dll"
     File "cxxime-server.exe"
     File "cxxime-settings.exe"
@@ -170,6 +185,44 @@ Section "Install"
     IfFileExists "$PROFILE\cxxime\punctuation.json" user_punctuation_exists 0
         File "data\punctuation.json"
     user_punctuation_exists:
+
+    SetOutPath "$WINDIR\Sysnative"
+    ClearErrors
+    File /oname=cxxime.ime "cxxime_ime_x64.ime"
+    IfErrors 0 install_system_ime_x64_copied
+        Delete /REBOOTOK "$WINDIR\Sysnative\cxxime.ime"
+        ClearErrors
+        File /oname=cxxime.ime.new "cxxime_ime_x64.ime"
+        IfErrors 0 install_system_ime_x64_schedule
+            MessageBox MB_ICONSTOP "Failed to install 64-bit legacy IME module."
+            Abort
+        install_system_ime_x64_schedule:
+        ClearErrors
+        Rename /REBOOTOK "$WINDIR\Sysnative\cxxime.ime.new" "$WINDIR\Sysnative\cxxime.ime"
+        IfErrors 0 install_system_ime_x64_copied
+            MessageBox MB_ICONSTOP "Failed to schedule 64-bit legacy IME module replacement."
+            Abort
+    install_system_ime_x64_copied:
+
+    SetOutPath "$SYSDIR"
+    ClearErrors
+    File /oname=cxxime.ime "cxxime_ime_x86.ime"
+    IfErrors 0 install_system_ime_x86_copied
+        Delete /REBOOTOK "$SYSDIR\cxxime.ime"
+        ClearErrors
+        File /oname=cxxime.ime.new "cxxime_ime_x86.ime"
+        IfErrors 0 install_system_ime_x86_schedule
+            MessageBox MB_ICONSTOP "Failed to install 32-bit legacy IME module."
+            Abort
+        install_system_ime_x86_schedule:
+        ClearErrors
+        Rename /REBOOTOK "$SYSDIR\cxxime.ime.new" "$SYSDIR\cxxime.ime"
+        IfErrors 0 install_system_ime_x86_copied
+            MessageBox MB_ICONSTOP "Failed to schedule 32-bit legacy IME module replacement."
+            Abort
+    install_system_ime_x86_copied:
+
+    SetOutPath "$INSTDIR"
 
     nsExec::Exec '"$WINDIR\Sysnative\regsvr32.exe" /s "$INSTDIR\cxxime_tsf_x64.dll"'
     nsExec::Exec '"$SYSDIR\regsvr32.exe" /s "$INSTDIR\cxxime_tsf_x86.dll"'
@@ -255,6 +308,29 @@ Section "Uninstall"
     IfFileExists "$INSTDIR\cxxime_tsf_x86.dll.old" 0 tsf_x86_old_deleted
         Delete /REBOOTOK "$INSTDIR\cxxime_tsf_x86.dll.old"
     tsf_x86_old_deleted:
+
+    Delete "$WINDIR\Sysnative\cxxime.ime"
+    IfFileExists "$WINDIR\Sysnative\cxxime.ime" 0 system_ime_x64_deleted
+        Delete /REBOOTOK "$WINDIR\Sysnative\cxxime.ime"
+    system_ime_x64_deleted:
+
+    Delete "$SYSDIR\cxxime.ime"
+    IfFileExists "$SYSDIR\cxxime.ime" 0 system_ime_x86_deleted
+        Delete /REBOOTOK "$SYSDIR\cxxime.ime"
+    system_ime_x86_deleted:
+
+    Delete "$WINDIR\Sysnative\cxxime.ime.new"
+    Delete "$SYSDIR\cxxime.ime.new"
+
+    Delete "$INSTDIR\cxxime_ime_x64.ime"
+    IfFileExists "$INSTDIR\cxxime_ime_x64.ime" 0 ime_x64_deleted
+        Delete /REBOOTOK "$INSTDIR\cxxime_ime_x64.ime"
+    ime_x64_deleted:
+
+    Delete "$INSTDIR\cxxime_ime_x86.ime"
+    IfFileExists "$INSTDIR\cxxime_ime_x86.ime" 0 ime_x86_deleted
+        Delete /REBOOTOK "$INSTDIR\cxxime_ime_x86.ime"
+    ime_x86_deleted:
 
     Delete "$INSTDIR\cxxime-resources.dll"
     IfFileExists "$INSTDIR\cxxime-resources.dll" 0 resources_dll_deleted

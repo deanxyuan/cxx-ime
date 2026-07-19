@@ -7,6 +7,9 @@ add_library(cxxime-tsf SHARED
     src/text_service.cpp
     src/key_event_sink.cpp
     src/edit_session.cpp
+    src/imm_bridge.cpp
+    src/candidate_ui_element.cpp
+    src/reading_ui_element.cpp
     src/display_attribute.cpp
     src/register.cpp
     src/resource_loader.cc
@@ -29,6 +32,7 @@ target_link_libraries(cxxime-tsf PRIVATE
     oleaut32
     uuid
     advapi32
+    imm32
 )
 
 if(CMAKE_SIZEOF_VOID_P EQUAL 8)

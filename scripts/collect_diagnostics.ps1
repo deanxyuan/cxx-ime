@@ -248,6 +248,12 @@ $dataDir = if ($installDir) { Join-Path $installDir "data" } else { "" }
 $logsDir = Join-Path $userDir "logs"
 $root = New-DiagnosticRoot -ExplicitOutputDir $OutputDir
 $cxxImeClsid = "{B7E1E5A2-8F3D-4A9C-B6E7-2C4D8F1A3B5E}"
+$systemImeX64 = Join-Path $env:WINDIR "System32\cxxime.ime"
+$sysnativeImeX64 = Join-Path $env:WINDIR "Sysnative\cxxime.ime"
+if (Test-Path -LiteralPath (Split-Path -Parent $sysnativeImeX64)) {
+    $systemImeX64 = $sysnativeImeX64
+}
+$systemImeX86 = Join-Path $env:WINDIR "SysWOW64\cxxime.ime"
 
 $report = [ordered]@{
     product = "CxxIME"
@@ -270,6 +276,10 @@ $report = [ordered]@{
         clsid = $cxxImeClsid
         tsf_x64 = if ($installDir) { Join-Path $installDir "cxxime_tsf_x64.dll" } else { "" }
         tsf_x86 = if ($installDir) { Join-Path $installDir "cxxime_tsf_x86.dll" } else { "" }
+        ime_x64 = if ($installDir) { Join-Path $installDir "cxxime_ime_x64.ime" } else { "" }
+        ime_x86 = if ($installDir) { Join-Path $installDir "cxxime_ime_x86.ime" } else { "" }
+        system_ime_x64 = $systemImeX64
+        system_ime_x86 = $systemImeX86
         resources = if ($installDir) { Join-Path $installDir "cxxime-resources.dll" } else { "" }
     }
     log_inventory = Get-LogInventory $logsDir
@@ -278,6 +288,8 @@ $report = [ordered]@{
 $programFiles = @(
     "cxxime_tsf_x64.dll",
     "cxxime_tsf_x86.dll",
+    "cxxime_ime_x64.ime",
+    "cxxime_ime_x86.ime",
     "cxxime-resources.dll",
     "cxxime-server.exe",
     "cxxime-settings.exe",
@@ -329,6 +341,10 @@ foreach ($file in $userFiles) {
     $report.user_files += Get-FileInfoSafe (Join-Path $userDir $file)
 }
 
+$report.system_ime_files = @()
+$report.system_ime_files += Get-FileInfoSafe -Path $systemImeX64
+$report.system_ime_files += Get-FileInfoSafe -Path $systemImeX86
+
 $report.processes = Get-Process cxxime-server, cxxime-settings -ErrorAction SilentlyContinue |
     Select-Object ProcessName, Id, Path, StartTime
 
@@ -362,6 +378,9 @@ Save-CommandOutput -Path (Join-Path $root "registry-tip-32.txt") -Command {
 Save-CommandOutput -Path (Join-Path $root "keyboard-preload.txt") -Command {
     reg.exe query "HKCU\Keyboard Layout\Preload"
 }
+Save-CommandOutput -Path (Join-Path $root "registry-keyboard-layouts-cxxime.txt") -Command {
+    reg.exe query "HKLM\SYSTEM\CurrentControlSet\Control\Keyboard Layouts" /s /f "cxxime.ime"
+}
 Save-CommandOutput -Path (Join-Path $root "tasklist-cxxime.txt") -Command {
     tasklist.exe /v /fi "imagename eq cxxime-server.exe"
     tasklist.exe /v /fi "imagename eq cxxime-settings.exe"
@@ -369,6 +388,7 @@ Save-CommandOutput -Path (Join-Path $root "tasklist-cxxime.txt") -Command {
 Save-CommandOutput -Path (Join-Path $root "tasklist-tsf-module.txt") -Command {
     tasklist.exe /m cxxime_tsf_x64.dll
     tasklist.exe /m cxxime_tsf_x86.dll
+    tasklist.exe /m cxxime.ime
 }
 
 $readme = @"
@@ -378,9 +398,10 @@ Generated: $((Get-Date).ToString("yyyy-MM-dd HH:mm:ss zzz"))
 
 Included by default:
   - diagnostics.json with version, OS, install path, data path, user path, file metadata and hashes.
+  - diagnostics.json also records System32/SysWOW64 cxxime.ime file existence and hashes.
   - trace-summary.txt with log file metadata and recent error/slow-event counters.
-  - registry query output for uninstall, CLSID, TIP and keyboard preload state.
-  - tasklist output for CxxIME processes and cxxime_tsf_x64.dll / cxxime_tsf_x86.dll module ownership.
+  - registry query output for uninstall, CLSID, TIP, legacy HKL and keyboard preload state.
+  - tasklist output for CxxIME processes, TSF DLLs and cxxime.ime module ownership.
 
 Optional:
   - Use -IncludeLogs to copy %USERPROFILE%\cxxime\logs. Trace logs may contain raw input codes.

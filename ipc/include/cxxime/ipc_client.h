@@ -28,6 +28,7 @@ public:
                      bool is_key_up = false);
     bool select_candidate(uint32_t session_id, int index, IPCResponse& response);
     bool commit_composition(uint32_t session_id, IPCResponse& response);
+    bool clear_composition(uint32_t session_id);
     bool focus_in(uint32_t session_id);
     bool focus_out(uint32_t session_id);
 
