@@ -166,6 +166,7 @@ def check_installer_script(
     label = "cxxime-setup.nsi"
 
     require_text(errors, text, 'File "cxxime_tsf_x64.dll"', label)
+    require_text(errors, text, 'File "cxxime_ime_x64.ime"', label)
     require_text(errors, text, 'File "cxxime-resources.dll"', label)
     installer_data_files = [
         "default.json",
@@ -189,6 +190,15 @@ def check_installer_script(
         'nsExec::Exec \'"$WINDIR\\Sysnative\\regsvr32.exe" /u /s "$INSTDIR\\cxxime_tsf_x64.dll"\'',
         label,
     )
+    require_text(
+        errors,
+        text,
+        'SetOutPath "$WINDIR\\Sysnative"',
+        label,
+    )
+    require_text(errors, text, 'File /oname=cxxime.ime "cxxime_ime_x64.ime"', label)
+    require_text(errors, text, 'Delete "$WINDIR\\Sysnative\\cxxime.ime"', label)
+    require_text(errors, text, 'Delete /REBOOTOK "$WINDIR\\Sysnative\\cxxime.ime"', label)
     require_text(errors, text, "CxxIME requires 64-bit Windows.", label)
     require_text(errors, text, 'File "data\\wubi86.dict.bin"', label)
     require_text(errors, text, 'File "data\\wubi86.dict.idx"', label)
@@ -226,6 +236,7 @@ def check_installer_script(
 
     if require_x86:
         require_text(errors, text, 'File "cxxime_tsf_x86.dll"', label)
+        require_text(errors, text, 'File "cxxime_ime_x86.ime"', label)
         require_text(
             errors,
             text,
@@ -238,6 +249,15 @@ def check_installer_script(
             'nsExec::Exec \'"$SYSDIR\\regsvr32.exe" /u /s "$INSTDIR\\cxxime_tsf_x86.dll"\'',
             label,
         )
+        require_text(
+            errors,
+            text,
+            'SetOutPath "$SYSDIR"',
+            label,
+        )
+        require_text(errors, text, 'File /oname=cxxime.ime "cxxime_ime_x86.ime"', label)
+        require_text(errors, text, 'Delete "$SYSDIR\\cxxime.ime"', label)
+        require_text(errors, text, 'Delete /REBOOTOK "$SYSDIR\\cxxime.ime"', label)
 
     forbid_text(errors, text, "cxxime_tsf.dll", label)
 
@@ -255,13 +275,19 @@ def check_diagnostics_script(
     text = read_text(script_path)
     label = "collect_diagnostics.ps1"
     require_text(errors, text, '"cxxime_tsf_x64.dll"', label)
+    require_text(errors, text, '"cxxime_ime_x64.ime"', label)
     require_text(errors, text, '"cxxime-resources.dll"', label)
+    require_text(errors, text, "$report.system_ime_files", label)
+    require_text(errors, text, "Get-FileInfoSafe -Path $systemImeX64", label)
+    require_text(errors, text, "Get-FileInfoSafe -Path $systemImeX86", label)
     require_text(errors, text, "registry-clsid-64.txt", label)
     require_text(errors, text, "registry-tip-64.txt", label)
+    require_text(errors, text, "registry-keyboard-layouts-cxxime.txt", label)
     for name in ["dictionary_manifest.json"] + manifest_files:
         require_text(errors, text, f'"{name}"', label)
     if require_x86:
         require_text(errors, text, '"cxxime_tsf_x86.dll"', label)
+        require_text(errors, text, '"cxxime_ime_x86.ime"', label)
         require_text(errors, text, "registry-clsid-32.txt", label)
         require_text(errors, text, "registry-tip-32.txt", label)
 
@@ -271,6 +297,7 @@ def run_checks(dist_dir: str, require_x86: bool) -> list[str]:
 
     required_files = [
         "cxxime_tsf_x64.dll",
+        "cxxime_ime_x64.ime",
         "cxxime-resources.dll",
         "cxxime-server.exe",
         "cxxime-settings.exe",
@@ -284,6 +311,7 @@ def run_checks(dist_dir: str, require_x86: bool) -> list[str]:
     ]
     if require_x86:
         required_files.append("cxxime_tsf_x86.dll")
+        required_files.append("cxxime_ime_x86.ime")
 
     for name in required_files:
         require_file(errors, os.path.join(dist_dir, name), dist_dir)
@@ -295,11 +323,13 @@ def run_checks(dist_dir: str, require_x86: bool) -> list[str]:
             add_error(errors, f"obsolete file must not be packaged: {name}")
 
     require_machine(errors, os.path.join(dist_dir, "cxxime_tsf_x64.dll"), dist_dir, MACHINE_X64)
+    require_machine(errors, os.path.join(dist_dir, "cxxime_ime_x64.ime"), dist_dir, MACHINE_X64)
     require_machine(errors, os.path.join(dist_dir, "cxxime-resources.dll"), dist_dir, MACHINE_X64)
     require_machine(errors, os.path.join(dist_dir, "cxxime-server.exe"), dist_dir, MACHINE_X64)
     require_machine(errors, os.path.join(dist_dir, "cxxime-settings.exe"), dist_dir, MACHINE_X64)
     if require_x86:
         require_machine(errors, os.path.join(dist_dir, "cxxime_tsf_x86.dll"), dist_dir, MACHINE_X86)
+        require_machine(errors, os.path.join(dist_dir, "cxxime_ime_x86.ime"), dist_dir, MACHINE_X86)
 
     manifest_files = check_dictionary_manifest(errors, dist_dir)
     check_installer_script(errors, dist_dir, require_x86, manifest_files)
@@ -314,7 +344,7 @@ def main() -> int:
     parser.add_argument(
         "--allow-missing-x86",
         action="store_true",
-        help="Allow dist-only checks without cxxime_tsf_x86.dll.",
+        help="Allow dist-only checks without 32-bit TSF/legacy IME modules.",
     )
     args = parser.parse_args()
 

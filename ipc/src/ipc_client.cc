@@ -226,6 +226,15 @@ bool IpcClient::commit_composition(uint32_t session_id, IPCResponse& response) {
     return send_request(req, response) && response.status == IPCStatus::OK;
 }
 
+bool IpcClient::clear_composition(uint32_t session_id) {
+    IPCRequest req = {};
+    req.command = IPCCommand::CLEAR_COMPOSITION;
+    req.session_id = session_id;
+
+    IPCResponse resp = {};
+    return send_request(req, resp) && resp.status == IPCStatus::OK;
+}
+
 bool IpcClient::focus_in(uint32_t session_id) {
     IPCRequest req = {};
     req.command = IPCCommand::FOCUS_IN;

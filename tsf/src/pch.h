@@ -17,6 +17,7 @@
 
 #include <windows.h>
 #include <msctf.h>
+#include <ctffunc.h>
 #include <ctfutb.h>
 #include <combaseapi.h>
 #include <wrl.h>

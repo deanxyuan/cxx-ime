@@ -3,7 +3,10 @@
 #include "text_service.h"
 #include "globals.h"
 #include "edit_session.h"
+#include "candidate_ui_element.h"
+#include "reading_ui_element.h"
 #include "display_attribute.h"
+#include "imm_bridge.h"
 #include <cxxime/logging.h>
 #include <cxxime/data_path.h>
 #include <cxxime/diagnostics_config.h>
@@ -38,6 +41,53 @@ static bool same_visible_status(const cxxime::ImeStatus& a, const cxxime::ImeSta
            a.full_shape == b.full_shape &&
            a.chinese_punct == b.chinese_punct &&
            a.input_mode == b.input_mode;
+}
+
+static bool is_valid_caret_rect(const RECT& rc) {
+    return (rc.left != 0 || rc.top != 0) &&
+           rc.right >= rc.left && rc.bottom >= rc.top;
+}
+
+static bool foreground_is_fullscreen() {
+    HWND foreground = GetForegroundWindow();
+    if (!foreground || IsIconic(foreground) || !IsWindowVisible(foreground))
+        return false;
+
+    RECT client_rect = {};
+    if (!GetClientRect(foreground, &client_rect) ||
+        client_rect.right <= client_rect.left ||
+        client_rect.bottom <= client_rect.top) {
+        return false;
+    }
+
+    POINT client_top_left = { client_rect.left, client_rect.top };
+    POINT client_bottom_right = { client_rect.right, client_rect.bottom };
+    if (!ClientToScreen(foreground, &client_top_left) ||
+        !ClientToScreen(foreground, &client_bottom_right)) {
+        return false;
+    }
+
+    RECT screen_client_rect = {
+        client_top_left.x,
+        client_top_left.y,
+        client_bottom_right.x,
+        client_bottom_right.y,
+    };
+
+    HMONITOR monitor = MonitorFromWindow(foreground, MONITOR_DEFAULTTONULL);
+    if (!monitor)
+        return false;
+
+    MONITORINFO monitor_info = { sizeof(monitor_info) };
+    if (!GetMonitorInfoW(monitor, &monitor_info))
+        return false;
+
+    constexpr LONG tolerance = 2;
+    const RECT& screen = monitor_info.rcMonitor;
+    return screen_client_rect.left <= screen.left + tolerance &&
+           screen_client_rect.top <= screen.top + tolerance &&
+           screen_client_rect.right >= screen.right - tolerance &&
+           screen_client_rect.bottom >= screen.bottom - tolerance;
 }
 
 static std::mutex g_last_status_mutex;
@@ -128,6 +178,17 @@ static const char* bool_json(bool value) {
     return value ? "true" : "false";
 }
 
+static std::wstring utf8_to_wstring(const char* text) {
+    if (!text || text[0] == '\0')
+        return {};
+    int len = MultiByteToWideChar(CP_UTF8, 0, text, -1, nullptr, 0);
+    if (len <= 0)
+        return {};
+    std::wstring result(len - 1, L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, text, -1, &result[0], len);
+    return result;
+}
+
 static bool tsf_should_log_event(bool important) {
     cxxime::DiagnosticsConfig config = cxxime::diagnostics_config();
     if (config.trace_mode == cxxime::DiagnosticTraceMode::kOff)
@@ -151,6 +212,21 @@ static void foreground_class_utf8(char* out, int out_size) {
         return;
 
     WideCharToMultiByte(CP_UTF8, 0, class_name, -1, out, out_size, nullptr, nullptr);
+    out[out_size - 1] = '\0';
+}
+
+static void current_process_utf8(char* out, int out_size) {
+    if (!out || out_size <= 0)
+        return;
+    out[0] = '\0';
+
+    wchar_t path[MAX_PATH] = {};
+    if (!GetModuleFileNameW(nullptr, path, ARRAYSIZE(path)))
+        return;
+
+    const wchar_t* base = wcsrchr(path, L'\\');
+    base = base ? base + 1 : path;
+    WideCharToMultiByte(CP_UTF8, 0, base, -1, out, out_size, nullptr, nullptr);
     out[out_size - 1] = '\0';
 }
 
@@ -293,14 +369,17 @@ void TextService::_enqueue_event_trace(const char* event, const char* detail, bo
 
     char foreground_class[96] = {};
     foreground_class_utf8(foreground_class, sizeof(foreground_class));
+    char process_name[MAX_PATH] = {};
+    current_process_utf8(process_name, sizeof(process_name));
 
     TsfTraceEntry entry;
     entry.len = snprintf(entry.json, sizeof(entry.json),
                          "{\"event\":\"%s\",\"detail\":\"%s\",\"session\":%u,"
-                         "\"focused\":%s,\"chinese\":%s,\"caps\":%s,\"fg\":\"%s\"}",
+                         "\"focused\":%s,\"chinese\":%s,\"caps\":%s,"
+                         "\"proc\":\"%s\",\"fg\":\"%s\"}",
                          event ? event : "", detail ? detail : "", _sessionId,
                          bool_json(_inputFocused), bool_json(_chinese_mode),
-                         bool_json(_caps_lock), foreground_class);
+                         bool_json(_caps_lock), process_name, foreground_class);
     if (entry.len <= 0 || entry.len >= static_cast<int>(sizeof(entry.json)))
         return;
 
@@ -314,6 +393,7 @@ TextService::TextService() {}
 
 TextService::~TextService() {
     _stop_state_poll_timer();
+    set_composition_context(nullptr);
 }
 
 // Called from DllMain(DLL_PROCESS_DETACH) via globals.cpp
@@ -363,6 +443,37 @@ STDMETHODIMP_(ULONG) TextService::Release() {
     if (cr == 0)
         delete this;
     return cr;
+}
+
+void TextService::set_composition_context(ITfContext* context) {
+    if (_compositionContext == context)
+        return;
+
+    if (_compositionContext)
+        _compositionContext->Release();
+
+    _compositionContext = context;
+    if (_compositionContext)
+        _compositionContext->AddRef();
+}
+
+ITfContext* TextService::_current_edit_context_for_composition() const {
+    if (_compositionContext) {
+        _compositionContext->AddRef();
+        return _compositionContext;
+    }
+
+    if (!_threadMgr)
+        return nullptr;
+
+    ITfDocumentMgr* doc_mgr = nullptr;
+    if (FAILED(_threadMgr->GetFocus(&doc_mgr)) || !doc_mgr)
+        return nullptr;
+
+    ITfContext* context = nullptr;
+    doc_mgr->GetTop(&context);
+    doc_mgr->Release();
+    return context;
 }
 
 void TextService::_sync_ime_status(const cxxime::ImeStatus& status) {
@@ -864,6 +975,7 @@ void TextService::_poll_unfocused_state_keys() {
     }
     _hide_status_window("hide:poll_unfocused");
     _hide_candidate_window("hide:poll_unfocused");
+    _end_reading_ui_element("hide:poll_unfocused_reading");
 
     bool physical_caps_lock = _is_caps_lock_on(false);
     if (physical_caps_lock != _caps_lock) {
@@ -878,6 +990,10 @@ void TextService::_show_status_window_if_allowed(const char* reason) {
         _inputFocused &&
         _config.status_window.enable &&
         _statusController.is_initialized()) {
+        if (foreground_is_fullscreen()) {
+            _hide_status_window("hide:fullscreen_foreground");
+            return;
+        }
         if (!_statusController.is_visible())
             _enqueue_event_trace("status_window", reason);
         _statusController.show();
@@ -893,15 +1009,53 @@ void TextService::_hide_status_window(const char* reason) {
 }
 
 void TextService::_show_candidate_window(const char* reason) {
+    if (foreground_is_fullscreen()) {
+        _hide_external_candidate_window("hide:fullscreen_foreground");
+        return;
+    }
     if (!_candidateWindow.is_visible())
         _enqueue_event_trace("candidate_window", reason);
     _candidateWindow.show();
 }
 
-void TextService::_hide_candidate_window(const char* reason) {
+void TextService::_hide_external_candidate_window(const char* reason) {
     if (_candidateWindow.is_visible())
         _enqueue_event_trace("candidate_window", reason);
     _candidateWindow.hide();
+}
+
+void TextService::_hide_candidate_window(const char* reason) {
+    if (_candidateUiElement)
+        _candidateUiElement->end(_threadMgr);
+    _hide_external_candidate_window(reason);
+}
+
+void TextService::_update_reading_ui_element(ITfContext* context, const std::wstring& reading) {
+    if (!_readingUiElement || !context || reading.empty()) {
+        _end_reading_ui_element("hide:reading_empty");
+        return;
+    }
+
+    bool was_active = _readingUiElement->is_active();
+    _readingUiElement->set_reading(context, reading);
+    bool external = _readingUiElement->begin(_threadMgr);
+    _readingUiElement->notify_update(_threadMgr);
+
+    if (!was_active) {
+        char detail[64] = {};
+        snprintf(detail, sizeof(detail), "reading external=%s len=%u",
+                 external ? "true" : "false", static_cast<unsigned int>(reading.size()));
+        _enqueue_event_trace("ui_element", detail);
+    }
+}
+
+void TextService::_end_reading_ui_element(const char* reason) {
+    if (!_readingUiElement)
+        return;
+    bool was_active = _readingUiElement->is_active();
+    _readingUiElement->end(_threadMgr);
+    if (was_active)
+        _enqueue_event_trace("ui_element", reason ? reason : "hide:reading");
 }
 
 void TextService::_trace_input_decision(const char* block_reason) {
@@ -927,6 +1081,11 @@ STDMETHODIMP TextService::Activate(ITfThreadMgr* ptim, TfClientId tid) {
 STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD dwFlags) {
     OutputDebugStringA("[CxxIME] ActivateEx called\n");
     CXXIME_LOG(L"ActivateEx: clientId=%u, flags=%u", tid, dwFlags);
+    {
+        char detail[64] = {};
+        snprintf(detail, sizeof(detail), "flags=0x%08x", static_cast<unsigned int>(dwFlags));
+        _enqueue_event_trace("activate", detail, true);
+    }
 
     _config = get_config();
     init_config_monitor();
@@ -958,41 +1117,10 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
     _candidateWindow.create(nullptr, _config);
     _candidateWindow.set_layout(_config.layout);
     _candidateWindow.set_click_callback([this](int index) {
-        cxxime::IPCResponse resp = {};
-        if (_ensure_ipc_session() && _client.select_candidate(_sessionId, index, resp)) {
-            if (resp.status == cxxime::IPCStatus::ERR_INVALID_SESSION) {
-                _recreate_ipc_session_preserving_status();
-                _candidateWindow.set_preedit("");
-                _hide_candidate_window("hide:select_invalid_session");
-                _composing = false;
-                return;
-            }
-            if (resp.commit_text[0] != '\0') {
-                std::wstring commit_text;
-                int len = MultiByteToWideChar(CP_UTF8, 0, resp.commit_text, -1, nullptr, 0);
-                if (len > 0) {
-                    commit_text.resize(len - 1);
-                    MultiByteToWideChar(CP_UTF8, 0, resp.commit_text, -1, &commit_text[0], len);
-                }
-                if (!commit_text.empty()) {
-                    insert_text(commit_text);
-                    // Need ITfContext to end composition; get it from thread manager.
-                    ITfDocumentMgr* pDocMgr = nullptr;
-                    if (SUCCEEDED(_threadMgr->GetFocus(&pDocMgr)) && pDocMgr) {
-                        ITfContext* pContext = nullptr;
-                        if (SUCCEEDED(pDocMgr->GetBase(&pContext)) && pContext) {
-                            _end_composition(pContext);
-                            pContext->Release();
-                        }
-                        pDocMgr->Release();
-                    }
-                    _composing = false;
-                }
-            }
-            _candidateWindow.set_preedit("");
-            _hide_candidate_window("hide:select_commit");
-        }
+        select_candidate_from_ui(static_cast<UINT>(index));
     });
+    _candidateUiElement = new (std::nothrow) CandidateUIElement(this);
+    _readingUiElement = new (std::nothrow) ReadingUIElement(this);
 
     // Connect to server and query initial status before adding language bar buttons.
     // Pre-set the mode button to match the server before AddItem, so TSF reads the
@@ -1210,14 +1338,16 @@ STDMETHODIMP TextService::Deactivate() {
             cxxime::IPCResponse resp = {};
             _client.commit_composition(_sessionId, resp);
             if (resp.commit_text[0] != '\0' && _threadMgr) {
-                std::wstring commit_text;
-                int len = MultiByteToWideChar(CP_UTF8, 0, resp.commit_text, -1, nullptr, 0);
-                if (len > 0) {
-                    commit_text.resize(len - 1);
-                    MultiByteToWideChar(CP_UTF8, 0, resp.commit_text, -1, &commit_text[0], len);
+                std::wstring commit_text = utf8_to_wstring(resp.commit_text);
+                if (!commit_text.empty()) {
+                    ITfContext* pContext = _current_edit_context_for_composition();
+                    if (pContext) {
+                        _commit_text(pContext, commit_text, true);
+                        pContext->Release();
+                    } else {
+                        insert_text(commit_text, true);
+                    }
                 }
-                if (!commit_text.empty())
-                    insert_text(commit_text, true);  // sync for Deactivate
             }
             _composing = false;
         }
@@ -1231,6 +1361,17 @@ STDMETHODIMP TextService::Deactivate() {
 
     release_config_monitor_ref();
 
+    _hide_candidate_window("hide:deactivate_candidates");
+    _end_reading_ui_element("hide:deactivate_reading");
+    set_composition_context(nullptr);
+    if (_candidateUiElement) {
+        _candidateUiElement->Release();
+        _candidateUiElement = nullptr;
+    }
+    if (_readingUiElement) {
+        _readingUiElement->Release();
+        _readingUiElement = nullptr;
+    }
     _candidateWindow.destroy();
 
     // Unregister language bar button. The IME branding icon is provided by the TSF profile
@@ -1308,6 +1449,7 @@ STDMETHODIMP TextService::OnTestKeyDown(ITfContext* pic, WPARAM wParam, LPARAM l
         _start_state_poll_timer();
         _hide_status_window("hide:test_key_context_rejected");
         _hide_candidate_window("hide:test_key_context_rejected");
+        _end_reading_ui_element("hide:test_key_context_rejected_reading");
         *pfEaten = FALSE;
         return S_OK;
     }
@@ -1371,6 +1513,7 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
         _start_state_poll_timer();
         _hide_status_window("hide:key_context_rejected");
         _hide_candidate_window("hide:key_context_rejected");
+        _end_reading_ui_element("hide:key_context_rejected_reading");
         _AbortComposition();
         return false;
     }
@@ -1382,6 +1525,7 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
         _start_state_poll_timer();
         _hide_status_window("hide:key_context_status_only");
         _hide_candidate_window("hide:key_context_status_only");
+        _end_reading_ui_element("hide:key_context_status_only_reading");
         _AbortComposition();
     }
     _seenKeyAfterActivate = true;
@@ -1477,18 +1621,23 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
 
     // Handle committed text (e.g. Shift toggle with commit_text, or normal candidate selection)
     if (response.commit_text[0] != '\0') {
+        const bool ui_element_only =
+            (_activateFlags & TF_TMF_UIELEMENTENABLEDONLY) != 0;
         _hide_candidate_window("hide:commit");
+        _end_reading_ui_element("hide:commit_reading");
         _candidateWindow.set_preedit("");
-        std::wstring commit_text;
-        int len = MultiByteToWideChar(CP_UTF8, 0, response.commit_text, -1, nullptr, 0);
-        if (len > 0) {
-            commit_text.resize(len - 1);
-            MultiByteToWideChar(CP_UTF8, 0, response.commit_text, -1, &commit_text[0], len);
-        }
+        std::wstring commit_text = utf8_to_wstring(response.commit_text);
         if (!commit_text.empty()) {
-            insert_text(commit_text);
-            _end_composition(pic);
+        bool bridge_committed = ui_element_only && _immBridge.commit_text(commit_text);
+        if (ui_element_only && !bridge_committed) {
+            _enqueue_event_trace("imm_bridge",
+                                 _immBridge.last_error() ? _immBridge.last_error() : "commit:failed",
+                                 true);
+        }
+        if (!ui_element_only || !bridge_committed)
+            _commit_text(pic, commit_text);
             _composing = false;
+            _lastInlineCompositionText.clear();
             *pfEaten = TRUE;
         }
         trace.result = TsfResult::COMMITTED;
@@ -1520,17 +1669,38 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
                    decision.start_composition, _composing, _composition != nullptr,
                    decision.inline_text.c_str());
 
-        if (decision.start_composition) {
-            if (!_composing) _start_composition(pic);
-            update_composition(pic, decision.inline_text);
+        const bool ui_element_only =
+            (_activateFlags & TF_TMF_UIELEMENTENABLEDONLY) != 0;
+
+        _caretRect = {};
+        _lastInlineCompositionText = ui_element_only
+            ? preedit
+            : (decision.start_composition ? decision.inline_text : L"");
+        if (ui_element_only) {
+            _end_reading_ui_element("hide:uiless_imm_bridge_reading");
+            if (_composing && _composition)
+                _end_composition(pic);
+            _composing = true;
+            if (!_immBridge.update_preedit(preedit)) {
+                _enqueue_event_trace("imm_bridge",
+                                     _immBridge.last_error() ? _immBridge.last_error() : "preedit:failed",
+                                     true);
+                _update_reading_ui_element(pic, preedit);
+            }
+        } else if (decision.start_composition) {
+            _update_reading_ui_element(pic, preedit);
+            update_composition(pic, decision.inline_text, true, true);
         } else {
+            _update_reading_ui_element(pic, preedit);
             if (_composing && _composition) _end_composition(pic);
             _composing = true;
             update_composition(pic, L"");
         }
         *pfEaten = TRUE;
 
-        std::string popup_preedit = decision.show_preedit_in_popup ? response.preedit : "";
+        std::string popup_preedit =
+            ui_element_only ? response.preedit :
+            (decision.show_preedit_in_popup ? response.preedit : "");
         _candidateWindow.set_preedit(popup_preedit);
 
         bool has_candidates = response.candidate_count > 0;
@@ -1542,38 +1712,66 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
         auto window_start = std::chrono::steady_clock::now();
 
         if (has_candidates || has_preedit) {
+            cxxime::CandidatePage page;
             if (has_candidates) {
-                cxxime::CandidatePage page;
                 page.highlighted = (int)response.highlighted;
                 for (uint32_t i = 0; i < response.candidate_count && i < 10; ++i) {
                     cxxime::Candidate c;
                     c.text = response.candidates[i];
                     page.candidates.push_back(std::move(c));
                 }
+            }
+
+            bool external_candidate_window = true;
+            if (has_candidates && _candidateUiElement) {
+                _candidateUiElement->set_page(
+                    page, static_cast<int>(response.page_current), static_cast<int>(response.page_total));
+                bool was_candidate_active = _candidateUiElement->is_active();
+                external_candidate_window = _candidateUiElement->begin(_threadMgr);
+                _candidateUiElement->notify_update(_threadMgr);
+                if (!was_candidate_active) {
+                    char detail[80] = {};
+                    snprintf(detail, sizeof(detail), "candidate external=%s count=%u",
+                             external_candidate_window ? "true" : "false",
+                             static_cast<unsigned int>(response.candidate_count));
+                    _enqueue_event_trace("ui_element", detail);
+                }
+            } else if (_candidateUiElement) {
+                _candidateUiElement->end(_threadMgr);
+            }
+
+            if (external_candidate_window &&
+                (_activateFlags & TF_TMF_UIELEMENTENABLEDONLY) == 0) {
                 _candidateWindow.set_page_info((int)response.page_current, (int)response.page_total);
                 _candidateWindow.update(page);
+
+                // Query caret position via synchronous TSF edit session.
+                RECT caretRect = {};
+                bool caretResolved = is_valid_caret_rect(_caretRect);
+                if (caretResolved) {
+                    caretRect = _caretRect;
+                } else {
+                    EditSession* pCaretSession = new (std::nothrow) EditSession(this, pic);
+                    if (pCaretSession) {
+                        pCaretSession->set_action(EditSession::Action::QUERY_CARET);
+                        HRESULT hr = E_FAIL;
+                        pic->RequestEditSession(_clientId, pCaretSession,
+                                                TF_ES_READ | TF_ES_SYNC, &hr);
+                        if (SUCCEEDED(hr))
+                            caretResolved = pCaretSession->get_caret_rect(caretRect);
+                        pCaretSession->Release();
+                    }
+                }
+                if (!caretResolved)
+                    caretRect = _resolve_caret_rect(pic);
+
+                _candidateWindow.move_to_caret(caretRect);
+                _show_candidate_window("show:preedit");
+                } else if (external_candidate_window) {
+                    _hide_external_candidate_window("hide:ui_element_only");
             } else {
-                _candidateWindow.update({});
+                _hide_external_candidate_window("hide:tsf_ui_integrated");
             }
-
-            // Query caret position via synchronous TSF edit session
-            RECT caretRect = {};
-            bool caretResolved = false;
-            EditSession* pCaretSession = new (std::nothrow) EditSession(this, pic);
-            if (pCaretSession) {
-                pCaretSession->set_action(EditSession::Action::QUERY_CARET);
-                HRESULT hr = E_FAIL;
-                pic->RequestEditSession(_clientId, pCaretSession,
-                                        TF_ES_READ | TF_ES_SYNC, &hr);
-                if (SUCCEEDED(hr))
-                    caretResolved = pCaretSession->get_caret_rect(caretRect);
-                pCaretSession->Release();
-            }
-            if (!caretResolved)
-                caretRect = _resolve_caret_rect(pic);
-
-            _candidateWindow.move_to_caret(caretRect);
-            _show_candidate_window("show:preedit");
         } else {
             _hide_candidate_window("hide:no_candidates");
         }
@@ -1591,14 +1789,18 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
         // Server accepted but no commit and no preedit (e.g. Escape cleared the buffer)
         bool was_composing = _composing;
         _hide_candidate_window("hide:clear");
+        _end_reading_ui_element("hide:clear_reading");
         _candidateWindow.set_preedit("");
         if (_composing && _composition) update_composition(pic, L"");
+        if ((_activateFlags & TF_TMF_UIELEMENTENABLEDONLY) != 0)
+            _immBridge.clear();
         _end_composition(pic);
         _composing = false;
         // Only eat the key if there was an active composition to clean up.
         // Without this guard, keys like Backspace get eaten when not composing.
         if (was_composing)
             *pfEaten = TRUE;
+        _lastInlineCompositionText.clear();
         trace.result = TsfResult::CLEARED;
     } else {
         trace.result = TsfResult::REJECTED;
@@ -1663,25 +1865,29 @@ void TextService::_ProcessKeyUp(WPARAM wParam) {
 
         // Handle committed text from toggle (e.g. Shift with commit_text style)
         if (response.commit_text[0] != '\0') {
-            std::wstring commit_text;
-            int len = MultiByteToWideChar(CP_UTF8, 0, response.commit_text, -1, nullptr, 0);
-            if (len > 0) {
-                commit_text.resize(len - 1);
-                MultiByteToWideChar(CP_UTF8, 0, response.commit_text, -1, &commit_text[0], len);
-            }
+            std::wstring commit_text = utf8_to_wstring(response.commit_text);
             if (!commit_text.empty()) {
-                insert_text(commit_text);
-                ITfDocumentMgr* pDocMgr = nullptr;
-                if (_threadMgr && SUCCEEDED(_threadMgr->GetFocus(&pDocMgr)) && pDocMgr) {
-                    ITfContext* pContext = nullptr;
-                    if (SUCCEEDED(pDocMgr->GetBase(&pContext)) && pContext) {
-                        _end_composition(pContext);
+                const bool ui_element_only =
+                    (_activateFlags & TF_TMF_UIELEMENTENABLEDONLY) != 0;
+                bool bridge_committed = ui_element_only && _immBridge.commit_text(commit_text);
+                if (ui_element_only && !bridge_committed) {
+                    _enqueue_event_trace("imm_bridge",
+                                         _immBridge.last_error() ? _immBridge.last_error() : "commit:failed",
+                                         true);
+                }
+                if (!ui_element_only || !bridge_committed) {
+                    ITfContext* pContext = _current_edit_context_for_composition();
+                    if (pContext) {
+                        _commit_text(pContext, commit_text);
                         pContext->Release();
+                    } else {
+                        insert_text(commit_text);
                     }
-                    pDocMgr->Release();
                 }
                 _composing = false;
+                _lastInlineCompositionText.clear();
                 _hide_candidate_window("hide:key_up_commit");
+                _end_reading_ui_element("hide:key_up_commit_reading");
                 _candidateWindow.set_preedit("");
             }
         }
@@ -1706,11 +1912,18 @@ STDMETHODIMP TextService::OnPreservedKey(ITfContext* pic, REFGUID rguid, BOOL* p
 
 // ITfCompositionSink
 STDMETHODIMP TextService::OnCompositionTerminated(TfEditCookie ecWrite, ITfComposition* pComposition) {
+    UNREFERENCED_PARAMETER(ecWrite);
+    if (_composition && pComposition && _composition != pComposition)
+        return S_OK;
+
     _composing = false;
+    _lastInlineCompositionText.clear();
+    _end_reading_ui_element("hide:composition_terminated_reading");
     if (_composition) {
         _composition->Release();
         _composition = nullptr;
     }
+    set_composition_context(nullptr);
     return S_OK;
 }
 
@@ -1733,16 +1946,16 @@ STDMETHODIMP TextService::OnKillThreadFocus() {
 
 void TextService::_AbortComposition() {
     _hide_candidate_window("hide:abort_composition");
+    _end_reading_ui_element("hide:abort_composition_reading");
+    if ((_activateFlags & TF_TMF_UIELEMENTENABLEDONLY) != 0)
+        _immBridge.clear();
     _candidateWindow.set_preedit("");
+    _lastInlineCompositionText.clear();
     if (_composing) {
-        ITfDocumentMgr* pDocMgr = nullptr;
-        if (_threadMgr && SUCCEEDED(_threadMgr->GetFocus(&pDocMgr)) && pDocMgr) {
-            ITfContext* pContext = nullptr;
-            if (SUCCEEDED(pDocMgr->GetBase(&pContext)) && pContext) {
-                _end_composition(pContext);
-                pContext->Release();
-            }
-            pDocMgr->Release();
+        ITfContext* pContext = _current_edit_context_for_composition();
+        if (pContext) {
+            _end_composition(pContext);
+            pContext->Release();
         }
         _composing = false;
     }
@@ -1762,6 +1975,10 @@ STDMETHODIMP TextService::OnSetFocus(ITfDocumentMgr* pDocMgrFocus, ITfDocumentMg
     if (!_inputFocused) {
         _start_state_poll_timer();
         _hide_status_window("hide:document_focus_unfocused");
+        _hide_candidate_window("hide:document_focus_unfocused");
+        _end_reading_ui_element("hide:document_focus_unfocused_reading");
+        if ((_activateFlags & TF_TMF_UIELEMENTENABLEDONLY) != 0)
+            _immBridge.clear();
         return S_OK;
     }
 
@@ -1778,16 +1995,23 @@ STDMETHODIMP TextService::OnSetFocus(ITfDocumentMgr* pDocMgrFocus, ITfDocumentMg
     // Document focus changed; hide candidate window if switching away.
     if (_composing) {
         _hide_candidate_window("hide:document_focus_switch");
+        _end_reading_ui_element("hide:document_focus_switch_reading");
+        if ((_activateFlags & TF_TMF_UIELEMENTENABLEDONLY) != 0)
+            _immBridge.clear();
         _candidateWindow.set_preedit("");
         if (_sessionId && _client.is_connected())
             _client.focus_out(_sessionId);
         // End composition in the previous context
-        if (pDocMgrPrevFocus) {
-            ITfContext* pContext = nullptr;
-            if (SUCCEEDED(pDocMgrPrevFocus->GetBase(&pContext)) && pContext) {
-                _end_composition(pContext);
-                pContext->Release();
-            }
+        ITfContext* pContext = nullptr;
+        if (_compositionContext) {
+            pContext = _compositionContext;
+            pContext->AddRef();
+        } else if (pDocMgrPrevFocus) {
+            pDocMgrPrevFocus->GetTop(&pContext);
+        }
+        if (pContext) {
+            _end_composition(pContext);
+            pContext->Release();
         }
         _composing = false;
     }
@@ -1834,7 +2058,7 @@ HRESULT TextService::insert_text(const std::wstring& text, bool sync) {
         return E_FAIL;
 
     ITfContext* pContext = nullptr;
-    if (FAILED(pDocMgr->GetBase(&pContext)) || !pContext) {
+    if (FAILED(pDocMgr->GetTop(&pContext)) || !pContext) {
         pDocMgr->Release();
         return E_FAIL;
     }
@@ -1858,7 +2082,98 @@ HRESULT TextService::insert_text(const std::wstring& text, bool sync) {
     return hr;
 }
 
-void TextService::update_composition(ITfContext* pic, const std::wstring& preedit) {
+HRESULT TextService::_commit_text(ITfContext* pic, const std::wstring& text, bool sync) {
+    if (!pic)
+        return insert_text(text, sync);
+
+    EditSession* pSession = new (std::nothrow) EditSession(this, pic);
+    if (!pSession)
+        return E_OUTOFMEMORY;
+
+    pSession->set_action(EditSession::Action::COMMIT_COMPOSITION, text);
+
+    HRESULT hr = E_FAIL;
+    UNREFERENCED_PARAMETER(sync);
+    DWORD flags = TF_ES_READWRITE | TF_ES_ASYNCDONTCARE;
+    pic->RequestEditSession(_clientId, pSession, flags, &hr);
+    pSession->Release();
+    return hr;
+}
+
+bool TextService::select_candidate_from_ui(UINT index) {
+    cxxime::IPCResponse resp = {};
+    if (!_ensure_ipc_session() || !_client.select_candidate(_sessionId, index, resp))
+        return false;
+
+    if (resp.status == cxxime::IPCStatus::ERR_INVALID_SESSION) {
+        _recreate_ipc_session_preserving_status();
+        _candidateWindow.set_preedit("");
+        _hide_candidate_window("hide:select_invalid_session");
+        _end_reading_ui_element("hide:select_invalid_session_reading");
+        _composing = false;
+        return false;
+    }
+
+    std::wstring commit_text = utf8_to_wstring(resp.commit_text);
+    if (!commit_text.empty()) {
+        ITfContext* pContext = _current_edit_context_for_composition();
+
+        if (pContext) {
+            _commit_text(pContext, commit_text);
+            pContext->Release();
+        } else {
+            insert_text(commit_text);
+        }
+        _composing = false;
+    }
+
+    _candidateWindow.set_preedit("");
+    _hide_candidate_window("hide:select_commit");
+    _end_reading_ui_element("hide:select_commit_reading");
+    return true;
+}
+
+void TextService::abort_candidate_ui_from_tsf() {
+    if (_sessionId && _client.is_connected())
+        _client.clear_composition(_sessionId);
+    _AbortComposition();
+}
+
+HRESULT TextService::finalize_exact_candidate_ui_from_tsf() {
+    std::wstring commit_text = _lastInlineCompositionText;
+    if (commit_text.empty())
+        return E_NOTIMPL;
+
+    ITfContext* pContext = _current_edit_context_for_composition();
+
+    HRESULT hr = S_OK;
+    if (pContext) {
+        hr = _commit_text(pContext, commit_text);
+        pContext->Release();
+    } else if (!commit_text.empty()) {
+        hr = insert_text(commit_text);
+    }
+    if (_sessionId && _client.is_connected())
+        _client.clear_composition(_sessionId);
+    _candidateWindow.set_preedit("");
+    _hide_candidate_window("hide:finalize_exact");
+    _end_reading_ui_element("hide:finalize_exact_reading");
+    _composing = false;
+    _lastInlineCompositionText.clear();
+    return hr;
+}
+
+void TextService::trace_ui_element_method(const char* element, const char* method, bool important) {
+    char detail[96] = {};
+    snprintf(detail, sizeof(detail), "%s.%s",
+             element ? element : "unknown", method ? method : "unknown");
+    _enqueue_event_trace("ui_element_call", detail, important);
+}
+
+void TextService::update_composition(ITfContext* pic,
+                                     const std::wstring& preedit,
+                                     bool ensure,
+                                     bool sync) {
     if (!pic)
         return;
 
@@ -1866,10 +2181,18 @@ void TextService::update_composition(ITfContext* pic, const std::wstring& preedi
     if (!pSession)
         return;
 
-    pSession->set_action(EditSession::Action::UPDATE_COMPOSITION, preedit);
+    pSession->set_action(ensure ? EditSession::Action::ENSURE_COMPOSITION_TEXT
+                                : EditSession::Action::UPDATE_COMPOSITION,
+                         preedit);
 
-    HRESULT hr = E_FAIL;
-    pic->RequestEditSession(_clientId, pSession, TF_ES_READWRITE | TF_ES_ASYNCDONTCARE, &hr);
+    HRESULT edit_hr = E_FAIL;
+    DWORD flags = TF_ES_READWRITE | (sync ? TF_ES_SYNC : TF_ES_ASYNCDONTCARE);
+    HRESULT request_hr = pic->RequestEditSession(_clientId, pSession, flags, &edit_hr);
+    if (sync && (FAILED(request_hr) || FAILED(edit_hr))) {
+        edit_hr = E_FAIL;
+        pic->RequestEditSession(_clientId, pSession, TF_ES_READWRITE | TF_ES_ASYNCDONTCARE,
+                                &edit_hr);
+    }
 
     pSession->Release();
 }
@@ -1980,26 +2303,11 @@ bool TextService::apply_composition_display_attribute(ITfContext* pic,
     return true;
 }
 
-HRESULT TextService::_start_composition(ITfContext* pic) {
-    if (_composing)
-        return S_OK;
-
-    EditSession* pSession = new (std::nothrow) EditSession(this, pic);
-    if (!pSession)
-        return E_OUTOFMEMORY;
-
-    pSession->set_action(EditSession::Action::START_COMPOSITION);
-
-    HRESULT hr = E_FAIL;
-    pic->RequestEditSession(_clientId, pSession, TF_ES_READWRITE | TF_ES_ASYNC, &hr);
-
-    pSession->Release();
-    return hr;
-}
-
 HRESULT TextService::_end_composition(ITfContext* pic) {
     if (!_composing || !_composition)
         return S_OK;
+    if (!pic)
+        return E_FAIL;
 
     EditSession* pSession = new (std::nothrow) EditSession(this, pic);
     if (!pSession)
@@ -2031,15 +2339,18 @@ uint32_t TextService::_get_modifiers() const {
 }
 
 RECT TextService::_resolve_caret_rect(ITfContext* pic) {
-    if (_caretRect.left != 0 || _caretRect.right != 0 ||
-        _caretRect.top != 0 || _caretRect.bottom != 0) {
+    if (is_valid_caret_rect(_caretRect)) {
         return _caretRect;
     }
 
     RECT rc = {};
 
     GUITHREADINFO gti = { sizeof(gti) };
-    if (GetGUIThreadInfo(GetCurrentThreadId(), &gti) && gti.hwndCaret) {
+    HWND foreground = GetForegroundWindow();
+    DWORD foreground_thread = foreground ? GetWindowThreadProcessId(foreground, nullptr) : 0;
+    if (foreground_thread &&
+        GetGUIThreadInfo(foreground_thread, &gti) &&
+        gti.hwndCaret) {
         POINT pt = { gti.rcCaret.left, gti.rcCaret.top };
         ClientToScreen(gti.hwndCaret, &pt);
         SetRect(&rc, pt.x, pt.y, pt.x, pt.y + 20);
@@ -2050,6 +2361,21 @@ RECT TextService::_resolve_caret_rect(ITfContext* pic) {
     if (GetCaretPos(&pt)) {
         HWND focus = GetFocus();
         if (focus) ClientToScreen(focus, &pt);
+        SetRect(&rc, pt.x, pt.y, pt.x, pt.y + 20);
+        return rc;
+    }
+
+    if (foreground && GetWindowRect(foreground, &rc)) {
+        LONG x = rc.left + 24;
+        LONG y_offset = (rc.bottom - rc.top) * 2 / 3;
+        if (y_offset < 24)
+            y_offset = 24;
+        LONG y = rc.top + y_offset;
+        SetRect(&rc, x, y, x, y + 20);
+        return rc;
+    }
+
+    if (GetCursorPos(&pt)) {
         SetRect(&rc, pt.x, pt.y, pt.x, pt.y + 20);
         return rc;
     }

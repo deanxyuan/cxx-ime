@@ -5,12 +5,15 @@
 
 // Forward declarations for language bar buttons
 class CLangBarItemButton;
+class CandidateUIElement;
+class ReadingUIElement;
 
 #include "pch.h"
 #include <cxxime/ipc_client.h>
 #include <cxxime/ipc_protocol.h>
 #include <cxxime/candidate_window.h>
 #include <cxxime/config.h>
+#include "imm_bridge.h"
 #include "status_controller.h"
 #include <chrono>
 #include <cstdint>
@@ -66,10 +69,19 @@ public:
 
     // Helper
     HRESULT insert_text(const std::wstring& text, bool sync = false);
-    void update_composition(ITfContext* pic, const std::wstring& preedit);
+    bool select_candidate_from_ui(UINT index);
+    void abort_candidate_ui_from_tsf();
+    HRESULT finalize_exact_candidate_ui_from_tsf();
+    void trace_ui_element_method(const char* element, const char* method, bool important = false);
+    void update_composition(ITfContext* pic,
+                            const std::wstring& preedit,
+                            bool ensure = false,
+                            bool sync = false);
     bool apply_composition_display_attribute(ITfContext* pic, ITfRange* range, TfEditCookie ec);
     ITfComposition* get_composition() const { return _composition; }
     void set_composition(ITfComposition* comp) { _composition = comp; }
+    ITfContext* get_composition_context() const { return _compositionContext; }
+    void set_composition_context(ITfContext* context);
     void set_composing(bool val) { _composing = val; }
     void set_caret_rect(const RECT& rc) { _caretRect = rc; }
     RECT _resolve_caret_rect(ITfContext* pic);
@@ -106,12 +118,12 @@ private:
     HRESULT _register_preserved_key();
     HRESULT _unregister_preserved_key();
     bool _register_display_attribute_atom();
-    HRESULT _start_composition(ITfContext* pic);
     HRESULT _end_composition(ITfContext* pic);
-    HRESULT _update_composition_text(ITfContext* pic, const std::wstring& text, TfEditCookie ec);
+    HRESULT _commit_text(ITfContext* pic, const std::wstring& text, bool sync = false);
     bool _ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam, BOOL* pfEaten);
     void _ProcessKeyUp(WPARAM wParam);
     void _AbortComposition();
+    ITfContext* _current_edit_context_for_composition() const;
     uint32_t _get_modifiers() const;
     bool _is_caps_lock_on(bool allow_recent_hint = false) const;
     void _sync_ime_status(const cxxime::ImeStatus& status);
@@ -134,6 +146,9 @@ private:
     void _hide_status_window(const char* reason);
     void _show_candidate_window(const char* reason);
     void _hide_candidate_window(const char* reason);
+    void _hide_external_candidate_window(const char* reason);
+    void _update_reading_ui_element(ITfContext* context, const std::wstring& reading);
+    void _end_reading_ui_element(const char* reason);
     void _trace_input_decision(const char* block_reason);
     void _start_state_poll_timer();
     void _stop_state_poll_timer();
@@ -144,6 +159,7 @@ private:
     ITfThreadMgr* _threadMgr = nullptr;
     TfClientId _clientId = TF_CLIENTID_NULL;
     ITfComposition* _composition = nullptr;
+    ITfContext* _compositionContext = nullptr;
     DWORD _activateFlags = 0;
     DWORD _dwThreadFocusCookie = TF_INVALID_COOKIE;
     DWORD _dwThreadMgrEventCookie = TF_INVALID_COOKIE;
@@ -163,7 +179,11 @@ private:
     std::chrono::steady_clock::time_point _lastIpcHeartbeat = {};
     bool _ipcHealthy = true;
     std::string _lastInputBlockReason;
+    std::wstring _lastInlineCompositionText;
     cxxime::CandidateWindow _candidateWindow;
+    CandidateUIElement* _candidateUiElement = nullptr;
+    ReadingUIElement* _readingUiElement = nullptr;
+    cxxime_tsf::ImmBridge _immBridge;
     cxxime::Config _config;
 
     // Language bar buttons
