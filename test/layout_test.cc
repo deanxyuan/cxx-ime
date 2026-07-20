@@ -1,6 +1,7 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
 #include "util/testutil.h"
+#include <cwchar>
 #include <vector>
 #include <cxxime/layout.h>
 #include <cxxime/candidate.h>
@@ -17,6 +18,24 @@ static cxxime::LayoutConfig make_cfg(int max_width = 600) {
     cxxime::LayoutConfig cfg;
     cfg.max_width = max_width;
     return cfg;
+}
+
+static int measure_text_width(HDC hdc, const wchar_t* text,
+                              const wchar_t* font_name, int font_size) {
+    HFONT font = CreateFontW(
+        -MulDiv(font_size, GetDeviceCaps(hdc, LOGPIXELSY), 72),
+        0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+        OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+        DEFAULT_PITCH | FF_DONTCARE,
+        font_name);
+    SIZE size = {};
+    if (font) {
+        HFONT old = (HFONT)SelectObject(hdc, font);
+        GetTextExtentPoint32W(hdc, text, (int)wcslen(text), &size);
+        SelectObject(hdc, old);
+        DeleteObject(font);
+    }
+    return size.cx;
 }
 
 TEST(Layout, horizontal_single_row) {
@@ -78,6 +97,20 @@ TEST(Layout, horizontal_truncation) {
     ReleaseDC(nullptr, hdc);
 }
 
+TEST(Layout, horizontal_text_rect_keeps_dwrite_render_slack) {
+    HDC hdc = GetDC(nullptr);
+    std::vector<cxxime::Candidate> cands = {make_cand(u8"提出")};
+    auto lr = cxxime::calculate_horizontal_layout(
+        hdc, cands, "Microsoft YaHei UI", 14, make_cfg());
+
+    ASSERT_EQ(lr.rects.size(), 1u);
+    int text_width = lr.rects[0].text_rect.right - lr.rects[0].text_rect.left;
+    int measured_width = measure_text_width(hdc, L"提出", L"Microsoft YaHei UI", 14);
+    ASSERT_GT(text_width, measured_width);
+
+    ReleaseDC(nullptr, hdc);
+}
+
 TEST(Layout, vertical_basic) {
     HDC hdc = GetDC(nullptr);
     std::vector<cxxime::Candidate> cands = {make_cand("abc"), make_cand("def"), make_cand("ghi")};
@@ -103,6 +136,20 @@ TEST(Layout, vertical_width_max) {
 
     ASSERT_EQ(lr.rects.size(), 1u);
     ASSERT_LE(lr.width, 100);
+
+    ReleaseDC(nullptr, hdc);
+}
+
+TEST(Layout, vertical_text_rect_keeps_dwrite_render_slack) {
+    HDC hdc = GetDC(nullptr);
+    std::vector<cxxime::Candidate> cands = {make_cand(u8"提出"), make_cand(u8"提")};
+    auto lr = cxxime::calculate_vertical_layout(
+        hdc, cands, "Microsoft YaHei UI", 14, make_cfg());
+
+    ASSERT_EQ(lr.rects.size(), 2u);
+    int text_width = lr.rects[0].text_rect.right - lr.rects[0].text_rect.left;
+    int measured_width = measure_text_width(hdc, L"提出", L"Microsoft YaHei UI", 14);
+    ASSERT_GT(text_width, measured_width);
 
     ReleaseDC(nullptr, hdc);
 }

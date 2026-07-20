@@ -97,8 +97,25 @@ void CandidateWindow::destroy() {
     if (hwnd_) { DestroyWindow(hwnd_); hwnd_ = nullptr; }
 }
 void CandidateWindow::show() {
-    if (hwnd_ && !IsWindowVisible(hwnd_))
+    if (!hwnd_)
+        return;
+
+    if (!IsWindowVisible(hwnd_) && has_last_caret_rect_) {
+        RECT wr = {};
+        GetWindowRect(hwnd_, &wr);
+        POINT target = {};
+        if (calculate_target_position(last_caret_rect_,
+                                       wr.right - wr.left,
+                                       wr.bottom - wr.top,
+                                       target)) {
+            stop_animation();
+            move_window_now(target.x, target.y);
+        }
+    }
+
+    if (!IsWindowVisible(hwnd_))
         ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
+    RedrawWindow(hwnd_, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE);
 }
 void CandidateWindow::hide() {
     stop_animation();
@@ -259,7 +276,8 @@ void CandidateWindow::move_to_caret(const RECT& caretRect) {
     if (!calculate_target_position(caretRect, ww, wh, target))
         return;
 
-    animate_to(target.x, target.y);
+    stop_animation();
+    move_window_now(target.x, target.y);
 }
 
 void CandidateWindow::rebuild_render_context(const LayoutConfig& cfg, int window_width) {
@@ -401,7 +419,7 @@ void CandidateWindow::update(const CandidatePage& page) {
     }
     if (d2d_renderer_) d2d_renderer_->resize(lr.width, lr.height);
     update_window_region(lr.width, lr.height, cfg.round_corner_ex);
-    InvalidateRect(hwnd_, nullptr, FALSE);
+    RedrawWindow(hwnd_, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE);
 }
 
 // --- WndProc ---

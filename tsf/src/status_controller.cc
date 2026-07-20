@@ -29,7 +29,7 @@ bool StatusController::initialize(HWND parent, IpcClient* client, uint32_t sessi
         return false;
     }
 
-    logo_icon_ = cxxime_tsf::load_resource_icon(IDI_FREEDLY, 16, 16);
+    logo_icon_ = cxxime_tsf::load_resource_icon(IDI_FREEDLY, 64, 64);
     if (logo_icon_) window_.set_logo_icon(logo_icon_);
 
     window_.set_click_callback([this](StatusButton btn) { on_button_click(btn); });

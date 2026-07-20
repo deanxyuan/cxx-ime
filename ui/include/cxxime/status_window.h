@@ -4,14 +4,17 @@
 #define CXXIME_STATUS_WINDOW_H_
 
 #include <windows.h>
-#include <d2d1.h>
-#include <dwrite.h>
 #include <string>
 #include <functional>
 #include <vector>
 #include <cstdint>
 #include <cxxime/render_context.h>
 #include <cxxime/ipc_protocol.h>
+
+struct ID2D1Factory;
+struct ID2D1DCRenderTarget;
+struct IDWriteFactory;
+struct IDWriteTextFormat;
 
 namespace cxxime {
 
@@ -93,6 +96,7 @@ private:
     RECT GetLogoRect() const;
     RECT GetSeparatorRect() const;
     RECT GetPillButtonRect(int index) const;
+    int LogoIconSize(const RECT& logo_rc) const;
     int HitTest(int x, int y) const;
 
     void CreateFonts();

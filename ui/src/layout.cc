@@ -3,6 +3,7 @@
 
 #include <cxxime/layout.h>
 #include <cxxime/config.h>
+#include <algorithm>
 
 namespace cxxime {
 
@@ -41,6 +42,10 @@ static SIZE measure_wstr(HDC hdc, const std::wstring& text,
     return sz;
 }
 
+static int text_render_slack(int row_height) {
+    return std::max(2, row_height / 4);
+}
+
 // ===== Horizontal layout (Weasel-style) =====
 
 LayoutResult calculate_horizontal_layout(HDC hdc,
@@ -57,6 +62,7 @@ LayoutResult calculate_horizontal_layout(HDC hdc,
 
     int rh = get_font_height(hdc, font_name, font_size);
     result.row_height = rh;
+    int text_slack = text_render_slack(rh);
 
     int max_w = cfg.max_width > 0 ? cfg.max_width : 600;
 
@@ -74,7 +80,7 @@ LayoutResult calculate_horizontal_layout(HDC hdc,
         SIZE lsz = measure_wstr(hdc, label, font_name, font_size);
         SIZE tsz = measure_wstr(hdc, to_wstr(candidates[i].text), font_name, font_size);
 
-        int label_w = lsz.cx, text_w = tsz.cx;
+        int label_w = lsz.cx, text_w = tsz.cx + text_slack;
         int total_w = label_w + cfg.hilite_spacing + text_w;
 
         // Non-first candidate doesn't fit → stop (first candidate always added)
@@ -102,7 +108,7 @@ LayoutResult calculate_horizontal_layout(HDC hdc,
         int text_avail = max_w - cfg.margin_x * 2
                          - (cr.text_rect.left - cr.label_rect.left) - cfg.candidate_spacing;
         std::wstring wtext = to_wstr(cr.text);
-        int text_w = measure_wstr(hdc, wtext, font_name, font_size).cx;
+        int text_w = measure_wstr(hdc, wtext, font_name, font_size).cx + text_slack;
         if (text_w > text_avail) {
             std::wstring ellipsis = L"…";
             int ellipsis_w = measure_wstr(hdc, ellipsis, font_name, font_size).cx;
@@ -135,7 +141,7 @@ LayoutResult calculate_horizontal_layout(HDC hdc,
                     WideCharToMultiByte(CP_UTF8, 0, truncated.c_str(), -1, &cr.text[0], utf8_len, nullptr, nullptr);
                 }
                 // Recalculate text_rect width
-                int new_tw = measure_wstr(hdc, truncated, font_name, font_size).cx;
+int new_tw = measure_wstr(hdc, truncated, font_name, font_size).cx + text_slack;
                 cr.text_rect.right = cr.text_rect.left + new_tw;
                 cr.highlight_rect.right = cr.text_rect.right;
                 InflateRect(&cr.highlight_rect, cfg.hilite_padding_x, cfg.hilite_padding_y);
@@ -173,6 +179,7 @@ LayoutResult calculate_vertical_layout(HDC hdc,
 
     int rh = get_font_height(hdc, font_name, font_size);
     result.row_height = rh;
+int text_slack = text_render_slack(rh);
 
     int max_w = cfg.max_width > 0 ? cfg.max_width : 600;
     int max_h = cfg.max_height > 0 ? cfg.max_height : 0;  // 0 = no limit
@@ -182,7 +189,7 @@ LayoutResult calculate_vertical_layout(HDC hdc,
     for (int i = 0; i < (int)candidates.size(); ++i) {
         std::wstring label = std::to_wstring(i + 1) + L".";
         int lw = measure_wstr(hdc, label, font_name, font_size).cx;
-        int tw = measure_wstr(hdc, to_wstr(candidates[i].text), font_name, font_size).cx;
+        int tw = measure_wstr(hdc, to_wstr(candidates[i].text), font_name, font_size).cx + text_slack;
         if (lw > widest_label) widest_label = lw;
         if (tw > widest_text) widest_text = tw;
     }
@@ -218,7 +225,7 @@ LayoutResult calculate_vertical_layout(HDC hdc,
     if (result.rects.size() == 1) {
         auto& cr = result.rects[0];
         std::wstring wtext = to_wstr(cr.text);
-        int text_w = measure_wstr(hdc, wtext, font_name, font_size).cx;
+        int text_w = measure_wstr(hdc, wtext, font_name, font_size).cx + text_slack;
         if (text_w > widest_text) {
             std::wstring ellipsis = L"…";
             int ellipsis_w = measure_wstr(hdc, ellipsis, font_name, font_size).cx;

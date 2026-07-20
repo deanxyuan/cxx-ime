@@ -99,10 +99,10 @@ bool LegacyImeSession::process_key(UINT key_code, LPARAM key_data, const BYTE* k
     uint32_t modifiers = modifiers_from_key_state(key_state);
     const bool is_key_up = is_key_up_from_key_data(key_data);
     if (key_code == VK_CAPITAL && !is_key_up) {
-        if (caps_lock_) {
-            modifiers &= ~0x08;
-        } else {
+        if (GetKeyState(VK_CAPITAL) & 0x0001) {
             modifiers |= 0x08;
+        } else {
+            modifiers &= ~0x08;
         }
     }
 
