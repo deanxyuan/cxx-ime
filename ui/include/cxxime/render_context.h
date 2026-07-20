@@ -31,7 +31,7 @@ struct StatusTheme {
     Color back{243, 243, 243, 255};
     Color border{200, 200, 200, 255};
     Color inactive_back{232, 232, 232, 200};
-    Color inactive_text{72, 80, 90, 245};
+    Color inactive_text{72, 72, 72, 255};
     Color separator{212, 212, 212, 255};
     Color logo_back{232, 232, 232, 120};
 };

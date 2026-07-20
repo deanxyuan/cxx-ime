@@ -74,11 +74,23 @@ static bool same_root_window(HWND a, HWND b) {
     return root_a && root_a == root_b;
 }
 
-static bool caret_rect_far(const RECT& a, const RECT& b) {
+static bool is_top_level_window(HWND hwnd) {
+    HWND root = hwnd ? GetAncestor(hwnd, GA_ROOT) : nullptr;
+    return root && root == hwnd;
+}
+
+static bool same_caret_position(const RECT& a, const RECT& b) {
+    if (!is_valid_caret_rect(a) || !is_valid_caret_rect(b))
+        return false;
+
+    constexpr LONG kTolerancePx = 2;
     LONG dx = a.left - b.left;
     LONG dy = a.top - b.top;
-    constexpr LONG kTolerancePx = 24;
-    return dx * dx + dy * dy > kTolerancePx * kTolerancePx;
+    if (dx < 0)
+        dx = -dx;
+    if (dy < 0)
+        dy = -dy;
+    return dx <= kTolerancePx && dy <= kTolerancePx;
 }
 
 static bool foreground_is_fullscreen() {
@@ -128,6 +140,7 @@ static bool g_has_last_status = false;
 static cxxime::ImeStatus g_last_status;
 
 static constexpr UINT kStatePollIntervalMs = 30;
+static constexpr int kCandidatePendingFallbackDelayMs = 30;
 static std::mutex g_state_poll_timer_mutex;
 static std::unordered_map<UINT_PTR, TextService*> g_state_poll_timers;
 
@@ -492,23 +505,26 @@ void TextService::set_composition_context(ITfContext* context) {
         _compositionContext->AddRef();
 }
 
-void TextService::update_candidate_position(const RECT& rc) {
+void TextService::update_candidate_position(const RECT& rc,
+                                            ITfContext* context,
+                                            bool from_layout_change) {
     RECT final_rect = rc;
     bool resolved = is_valid_caret_rect(final_rect);
+    bool used_trusted_native = false;
     if (!resolved) {
         trace_caret_event("move", "invalid", false, &rc, E_INVALIDARG, true);
-        if (!_resolve_native_caret_rect(&final_rect))
+        if (context && _resolve_context_native_caret_rect(context, &final_rect)) {
+            used_trusted_native = true;
+        } else if (!_resolve_native_caret_rect(&final_rect)) {
             return;
+        }
         resolved = true;
         trace_caret_event("move", "native_fallback", true, &final_rect, S_FALSE, true);
     } else {
         RECT native_rect = {};
-        if (_resolve_native_caret_rect(&native_rect)) {
-            if (caret_rect_far(final_rect, native_rect)) {
-                trace_caret_event("move", "native_override", true, &native_rect,
-                                  S_FALSE, true);
-                final_rect = native_rect;
-            }
+        if (context && _resolve_context_native_caret_rect(context, &native_rect)) {
+            final_rect = native_rect;
+            used_trusted_native = true;
         }
     }
 
@@ -518,6 +534,26 @@ void TextService::update_candidate_position(const RECT& rc) {
         return;
     }
     if (!_candidateWindow.is_visible()) {
+        if (_candidateShowPending) {
+            if (!from_layout_change && !used_trusted_native &&
+                _candidatePendingHasStaleRect &&
+                same_caret_position(final_rect, _candidatePendingStaleRect)) {
+                auto now = std::chrono::steady_clock::now();
+                if (_candidateShowPendingSince.time_since_epoch().count() != 0 &&
+                    now - _candidateShowPendingSince <
+                        std::chrono::milliseconds(kCandidatePendingFallbackDelayMs)) {
+                    return;
+                }
+            }
+            _candidateShowPending = false;
+            _candidatePendingHasStaleRect = false;
+            _candidatePendingStaleRect = {};
+            _candidateShowPendingSince = {};
+            _candidateWindow.move_to_caret(final_rect);
+            trace_caret_event("move", "candidate_window", resolved, &final_rect);
+            _show_candidate_window("show:preedit");
+            return;
+        }
         trace_caret_event("move", "hidden", false, &final_rect);
         return;
     }
@@ -730,8 +766,8 @@ bool TextService::_advise_text_layout_sink(ITfDocumentMgr* doc_mgr) {
 
     DWORD cookie = TF_INVALID_COOKIE;
     HRESULT hr = source->AdviseSink(IID_ITfTextLayoutSink,
-                                     static_cast<ITfTextLayoutSink*>(this),
-                                     &cookie);
+                                    static_cast<ITfTextLayoutSink*>(this),
+                                    &cookie);
     source->Release();
     if (FAILED(hr)) {
         context->Release();
@@ -759,8 +795,10 @@ void TextService::_unadvise_text_layout_sink() {
     _dwTextLayoutSinkCookie = TF_INVALID_COOKIE;
 }
 
-void TextService::_request_candidate_position_update(ITfContext* pic, const char* reason) {
-    if (!pic || !_composing || !_candidateWindow.is_visible())
+void TextService::_request_candidate_position_update(ITfContext* pic, 
+                                                     const char* reason,
+                                                     bool from_layout_change) {
+    if (!pic || !_composing || (!_candidateWindow.is_visible() && !_candidateShowPending))
         return;
     if ((_activateFlags & TF_TMF_UIELEMENTENABLEDONLY) != 0) {
         trace_caret_event("request_update", "ui_element_only", false, nullptr);
@@ -774,6 +812,7 @@ void TextService::_request_candidate_position_update(ITfContext* pic, const char
     }
 
     session->set_action(EditSession::Action::UPDATE_CANDIDATE_POSITION);
+    session->set_position_update_from_layout_change(from_layout_change);
     HRESULT hr = E_FAIL;
     HRESULT request_hr =
         pic->RequestEditSession(_clientId, session, TF_ES_READ | TF_ES_ASYNCDONTCARE, &hr);
@@ -1105,6 +1144,13 @@ void TextService::_poll_unfocused_state_keys() {
             if (_sessionId && _client.ensure_connected())
                 _client.focus_in(_sessionId);
         }
+        if (_candidateShowPending && _composing) {
+            ITfContext* context = _current_edit_context_for_composition();
+            if (context) {
+                _request_candidate_position_update(context, "show:pending_timeout");
+                context->Release();
+            }
+        }
         return;
     }
 
@@ -1160,6 +1206,10 @@ void TextService::_show_candidate_window(const char* reason) {
 }
 
 void TextService::_hide_external_candidate_window(const char* reason) {
+    _candidateShowPending = false;
+    _candidatePendingHasStaleRect = false;
+    _candidatePendingStaleRect = {};
+    _candidateShowPendingSince = {};
     if (_candidateWindow.is_visible())
         _enqueue_event_trace("candidate_window", reason);
     _candidateWindow.hide();
@@ -1892,6 +1942,7 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
 
             if (external_candidate_window &&
                 (_activateFlags & TF_TMF_UIELEMENTENABLEDONLY) == 0) {
+                    bool candidate_was_visible = _candidateWindow.is_visible();
                 _candidateWindow.set_page_info((int)response.page_current, (int)response.page_total);
                 _candidateWindow.update(page);
 
@@ -1899,6 +1950,9 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
                 // still point to the previous composition after a commit/new preedit boundary.
                 RECT caretRect = {};
                 bool caretResolved = false;
+                RECT trustedNativeRect = {};
+                bool hasTrustedNativeCaret =
+                    _resolve_context_native_caret_rect(pic, &trustedNativeRect);
                 EditSession* pCaretSession = new (std::nothrow) EditSession(this, pic);
                 if (pCaretSession) {
                     pCaretSession->set_action(EditSession::Action::QUERY_CARET);
@@ -1914,25 +1968,46 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
                     pCaretSession->Release();
                 }
                 if (!caretResolved) {
-                    caretRect = _resolve_caret_rect(pic);
-                    trace_caret_event("show_query", "fallback", is_valid_caret_rect(caretRect),
-                                      &caretRect, S_FALSE, true);
-                    caretResolved = is_valid_caret_rect(caretRect);
-                } else {
-                    RECT nativeRect = {};
-                    if (_resolve_native_caret_rect(&nativeRect)) {
-                        if (caret_rect_far(caretRect, nativeRect)) {
-                            trace_caret_event("show_query", "native_override", true,
-                                              &nativeRect, S_FALSE, true);
-                            caretRect = nativeRect;
-                        }
+                    if (hasTrustedNativeCaret) {
+                        caretRect = trustedNativeRect;
+                        caretResolved = true;
+                    } else {
+                        caretRect = _resolve_caret_rect(pic);
+                        trace_caret_event("show_query", "fallback",
+                                          is_valid_caret_rect(caretRect), &caretRect, S_FALSE,
+                                          true);
+                        caretResolved = is_valid_caret_rect(caretRect);
                     }
+                } else if (hasTrustedNativeCaret) {
+                    caretRect = trustedNativeRect;
                 }
 
-                _candidateWindow.move_to_caret(caretRect);
-                trace_caret_event("show_move", "initial", true, &caretRect);
-                _show_candidate_window("show:preedit");
-                _request_candidate_position_update(pic, "show:preedit_layout_follow");
+                // HWND-backed editors expose a trustworthy native caret. TSF-only hosts can make
+                // GetTextExt lag one layout cycle after a new composition, and the stale rectangle
+                // is not always identical to the previous popup position. Defer first show in those
+                // hosts; the async edit session or OnLayoutChange will show the popup once the
+                // range rectangle catches up.
+                bool defer_show = !candidate_was_visible && !hasTrustedNativeCaret;
+                if (defer_show) {
+                    bool was_pending = _candidateShowPending;
+                    _candidateShowPending = true;
+                    _candidatePendingStaleRect = caretRect;
+                    _candidatePendingHasStaleRect = is_valid_caret_rect(caretRect);
+                    if (!was_pending ||
+                        _candidateShowPendingSince.time_since_epoch().count() == 0) {
+                        _candidateShowPendingSince = std::chrono::steady_clock::now();
+                    }
+                    _request_candidate_position_update(pic, "show:preedit_layout_follow");
+                } else {
+                    _candidateShowPending = false;
+                    _candidatePendingHasStaleRect = false;
+                    _candidatePendingStaleRect = {};
+                    _candidateShowPendingSince = {};
+                    _candidateWindow.move_to_caret(caretRect);
+                    trace_caret_event("show_move", "initial", true, &caretRect);
+                    _show_candidate_window("show:preedit");
+                    _request_candidate_position_update(pic, "show:preedit_layout_follow");
+                }
                 } else if (external_candidate_window) {
                     _hide_external_candidate_window("hide:ui_element_only");
             } else {
@@ -2216,7 +2291,7 @@ STDMETHODIMP TextService::OnLayoutChange(ITfContext* pic,
                  static_cast<int>(lcode), (_textLayoutSinkContext == pic) ? 1 : 0);
         _enqueue_event_trace("layout_change", detail);
     }
-    _request_candidate_position_update(pic, "layout_change");
+    _request_candidate_position_update(pic, "layout_change", true);
     return S_OK;
 }
 
@@ -2590,6 +2665,7 @@ bool TextService::_resolve_native_caret_rect(RECT* out) const {
     if (foreground_thread &&
         GetGUIThreadInfo(foreground_thread, &gti) &&
         gti.hwndCaret &&
+        !is_top_level_window(gti.hwndCaret) &&
         same_root_window(foreground, gti.hwndCaret)) {
         RECT rc = gti.rcCaret;
         POINT points[2] = {
@@ -2624,12 +2700,67 @@ bool TextService::_resolve_native_caret_rect(RECT* out) const {
     return false;
 }
 
+bool TextService::_resolve_context_native_caret_rect(ITfContext* context, RECT* out) const {
+    if (!context || !out)
+        return false;
+
+    ITfContextView* view = nullptr;
+    if (FAILED(context->GetActiveView(&view)) || !view)
+        return false;
+
+    HWND context_hwnd = nullptr;
+    HRESULT hr = view->GetWnd(&context_hwnd);
+    view->Release();
+    if (FAILED(hr) || !context_hwnd)
+        return false;
+    if (is_top_level_window(context_hwnd))
+        return false;
+
+    GUITHREADINFO gti = { sizeof(gti) };
+    DWORD context_thread = GetWindowThreadProcessId(context_hwnd, nullptr);
+    if (!context_thread || !GetGUIThreadInfo(context_thread, &gti) || !gti.hwndCaret)
+        return false;
+
+    // Classic HWND-backed editors can expose a fresher Win32 caret than TSF GetTextExt
+    // immediately after Enter/newline. TSF-only framework hosts can report a fake caret
+    // elsewhere in the same top-level window; only trust a caret owned by the active
+    // context view itself or one of its descendants.
+    if (is_top_level_window(gti.hwndCaret))
+        return false;
+    if (gti.hwndCaret != context_hwnd && !IsChild(context_hwnd, gti.hwndCaret))
+        return false;
+
+    RECT rc = gti.rcCaret;
+    POINT points[2] = {
+        { rc.left, rc.top },
+        { rc.right, rc.bottom },
+    };
+    MapWindowPoints(gti.hwndCaret, nullptr, points, 2);
+    SetRect(&rc, points[0].x, points[0].y, points[1].x, points[1].y);
+    normalize_caret_rect_size(&rc);
+    if (!is_valid_caret_rect(rc))
+        return false;
+
+    *out = rc;
+    return true;
+}
+
 RECT TextService::_resolve_caret_rect(ITfContext* pic) {
     (void)pic;
     RECT rc = {};
 
     if (_resolve_native_caret_rect(&rc))
         return rc;
+
+    if (is_valid_caret_rect(_caretRect)) {
+        return _caretRect;
+    }
+
+    POINT pt = {};
+    if (GetCursorPos(&pt)) {
+        SetRect(&rc, pt.x, pt.y, pt.x, pt.y + 20);
+        return rc;
+    }
 
     HWND foreground = GetForegroundWindow();
     if (foreground && GetWindowRect(foreground, &rc)) {
@@ -2639,16 +2770,6 @@ RECT TextService::_resolve_caret_rect(ITfContext* pic) {
             y_offset = 24;
         LONG y = rc.top + y_offset;
         SetRect(&rc, x, y, x, y + 20);
-        return rc;
-    }
-
-    if (is_valid_caret_rect(_caretRect)) {
-        return _caretRect;
-    }
-
-    POINT pt = {};
-    if (GetCursorPos(&pt)) {
-        SetRect(&rc, pt.x, pt.y, pt.x, pt.y + 20);
         return rc;
     }
 

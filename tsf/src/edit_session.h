@@ -30,6 +30,9 @@ public:
         UPDATE_CANDIDATE_POSITION
     };
     void set_action(Action action, const std::wstring& text = L"");
+    void set_position_update_from_layout_change(bool from_layout_change) {
+        _positionUpdateFromLayoutChange = from_layout_change;
+    }
     bool get_caret_rect(RECT& out) const { if (_resultValid) { out = _resultRect; return true; } return false; }
 
 private:
@@ -40,6 +43,7 @@ private:
     std::wstring _text;
     RECT _resultRect = {};
     bool _resultValid = false;
+    bool _positionUpdateFromLayoutChange = false;
 };
 
 #endif // CXXIME_TSF_EDIT_SESSION_H_

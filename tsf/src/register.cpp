@@ -411,11 +411,15 @@ HRESULT unregister_profiles() {
     if (FAILED(hr))
         return hr;
 
-    pProfileMgr->UnregisterProfile(c_clsidTextService, TEXTSERVICE_LANGID_HANS,
-                                    c_guidProfile, 0);
+    // Ask TSF to deactivate loaded instances first so TextService::Deactivate can
+    // remove its language bar item before the profile registration disappears.
+    pProfileMgr->ReleaseInputProcessor(c_clsidTextService, TF_RIP_FLAG_FREEUNUSEDLIBRARIES);
+
+    hr = pProfileMgr->UnregisterProfile(c_clsidTextService, TEXTSERVICE_LANGID_HANS,
+                                        c_guidProfile, 0);
     pProfileMgr->Release();
     unregister_legacy_ime_hkl(TEXTSERVICE_LANGID_HANS);
-    return S_OK;
+    return FAILED(hr) ? hr : S_OK;
 }
 
 // Category registration.
