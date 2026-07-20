@@ -12,7 +12,7 @@ static HICON load_freedly_icon() {
     if (!icon) {
         icon = (HICON)LoadImageW(nullptr,
             CXXIME_PROJECT_DIR L"resource/freedly.ico",
-            IMAGE_ICON, 16, 16, LR_LOADFROMFILE | LR_DEFAULTCOLOR);
+            IMAGE_ICON, 64, 64, LR_LOADFROMFILE | LR_DEFAULTCOLOR);
     }
     return icon;
 }

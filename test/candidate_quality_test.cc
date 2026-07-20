@@ -5,7 +5,9 @@
 #include <windows.h>
 #include <json.hpp>
 #include <cxxime/dict.h>
+#include <cxxime/context.h>
 #include <cxxime/mixed_translator.h>
+#include <cxxime/processor.h>
 #include <cxxime/query_budget.h>
 #include <cxxime/query_scratch.h>
 #include <cxxime/query_trace.h>
@@ -433,6 +435,36 @@ TEST(CandidateQuality, golden_cases) {
         assert_quality_case(harness, q);
         std::fprintf(stderr, " OK\n");
     }
+}
+
+TEST(CandidateQuality, pinyin_tc_candidate_and_space_commit_match) {
+    QualityHarness harness;
+    QualityCase q;
+    q.id = "pinyin-short-tc-top1";
+    q.mode = "pinyin";
+    q.input = "tc";
+    q.page_size = 9;
+
+    cxxime::QueryTrace trace = {};
+    int64_t elapsed_us = 0;
+    auto page = harness.translate(q, trace, elapsed_us);
+    std::string summary = candidate_summary(page);
+
+    ASSERT_TRUE(!page.candidates.empty()) << "tc candidates: " << summary;
+    ASSERT_EQ(page.highlighted, 0) << "tc candidates: " << summary;
+    ASSERT_EQ(page.candidates.front().text, u8"提出") << "tc candidates: " << summary;
+
+    cxxime::Context context;
+    context.pinyin_buffer = "tc";
+    context.update_candidates(std::move(page));
+
+    cxxime::PinyinProcessor processor;
+    cxxime::KeyEvent space;
+    space.keycode = VK_SPACE;
+    auto result = processor.process_key(space, context);
+
+    ASSERT_EQ(result, cxxime::ProcessResult::COMMITTED);
+    ASSERT_EQ(context.committed_text, u8"提出");
 }
 
 RUN_ALL_TESTS()

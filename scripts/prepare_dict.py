@@ -3,15 +3,16 @@
 #
 # Standalone dictionary preparation pipeline.
 #
-# Runs the full workflow: .zip extraction -> spelling algebra -> binary build
+# Runs the full workflow: .zip extraction -> spelling algebra -> binary build.
 # Supports both pinyin and wubi86 dictionaries.
 #
 # Usage:
-#   python scripts/prepare_dict.py --data-dir data/ --output dist/data/
+#   python scripts/prepare_dict.py --data-dir data/ --output-dir dist/data/
 
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import datetime
 import hashlib
 import json
@@ -71,11 +72,21 @@ def extract_zip(zip_path: str, work_dir: str) -> str:
     return os.path.join(work_dir, db_name)
 
 
+def prepare_source_copy(src: str, work_dir: str) -> str:
+    """Return a writable dictionary DB path in work_dir."""
+    if src.endswith(".zip"):
+        return extract_zip(src, work_dir)
+
+    db_copy = os.path.join(work_dir, os.path.basename(src))
+    shutil.copy2(src, db_copy)
+    return db_copy
+
+
 def run_spelling_algebra(db_path: str) -> None:
     """Regenerate spellings table from schema rules."""
     script = os.path.join(DATA_TOOLS, "spelling_algebra.py")
     schema = os.path.join(SCHEMAS, "pinyin.schema.yaml")
-    print(f"  Running spelling algebra...")
+    print("  Running spelling algebra...")
     subprocess.run(
         [sys.executable, script, db_path, schema],
         check=True,
@@ -103,7 +114,7 @@ def run_build_binary(
 def run_build_short_cache(db_path: str, output_path: str) -> None:
     """Build short code cache (topn) for fast path."""
     script = os.path.join(SCRIPTS, "build_short_cache.py")
-    print(f"  Building short code cache...")
+    print("  Building short code cache...")
     subprocess.run(
         [sys.executable, script, "--input", db_path, "--output", output_path],
         check=True,
@@ -156,68 +167,78 @@ def write_dictionary_manifest(output_dir: str) -> str:
     return path
 
 
-def prepare_dict(
-    data_dir: str,
-    output_dir: str,
-) -> list[str]:
-    """Run full dictionary preparation pipeline.
-
-    Returns list of generated files (for verification).
-    """
-    os.makedirs(output_dir, exist_ok=True)
-    generated = []
-
-    # ---- Pinyin dictionary ----
+def prepare_pinyin_dictionary(data_dir: str, output_dir: str) -> list[str]:
+    """Prepare pinyin binary dictionary files."""
     print("--- Pinyin dictionary ---")
     src = find_source(data_dir, "pinyin")
     if src is None:
         print("  WARNING: pinyin.dict.db(.zip) not found, skipping pinyin dictionary")
-    else:
-        with tempfile.TemporaryDirectory(prefix="cxxime_prep_") as tmpdir:
-            # Step 1: get .db file (extract .zip or copy .db to avoid mutating source)
-            if src.endswith(".zip"):
-                db_path = extract_zip(src, tmpdir)
-            else:
-                db_copy = os.path.join(tmpdir, os.path.basename(src))
-                shutil.copy2(src, db_copy)
-                db_path = db_copy
+        return []
 
-            # Step 2: spelling algebra (mutates .db — safe on copy)
-            run_spelling_algebra(db_path)
+    generated = []
+    with tempfile.TemporaryDirectory(prefix="cxxime_prep_pinyin_") as tmpdir:
+        db_path = prepare_source_copy(src, tmpdir)
+        run_spelling_algebra(db_path)
 
-            # Step 3: build binary (.bin, .idx, .spellings.bin)
-            output_prefix = os.path.join(output_dir, "pinyin")
-            run_build_binary(db_path, output_prefix)
-            generated.extend([
-                output_prefix + ".dict.bin",
-                output_prefix + ".dict.idx",
-                output_prefix + ".spellings.bin",
-            ])
+        output_prefix = os.path.join(output_dir, "pinyin")
+        run_build_binary(db_path, output_prefix)
+        generated.extend([
+            output_prefix + ".dict.bin",
+            output_prefix + ".dict.idx",
+            output_prefix + ".spellings.bin",
+        ])
 
-            # Step 4: short code cache (.topn.bin)
-            topn_path = os.path.join(output_dir, "pinyin.topn.bin")
-            run_build_short_cache(db_path, topn_path)
-            generated.append(topn_path)
+        topn_path = os.path.join(output_dir, "pinyin.topn.bin")
+        run_build_short_cache(db_path, topn_path)
+        generated.append(topn_path)
 
-    # ---- Wubi86 dictionary ----
+    return generated
+
+
+def prepare_wubi_dictionary(data_dir: str, output_dir: str) -> list[str]:
+    """Prepare wubi86 binary dictionary files."""
     print("--- Wubi86 dictionary ---")
     src = find_source(data_dir, "wubi86")
     if src is None:
         raise RuntimeError("wubi86.dict.db(.zip) not found")
-    with tempfile.TemporaryDirectory(prefix="cxxime_prep_") as tmpdir:
-        if src.endswith(".zip"):
-            db_path = extract_zip(src, tmpdir)
-        else:
-            db_copy = os.path.join(tmpdir, os.path.basename(src))
-            shutil.copy2(src, db_copy)
-            db_path = db_copy
 
+    generated = []
+    with tempfile.TemporaryDirectory(prefix="cxxime_prep_wubi86_") as tmpdir:
+        db_path = prepare_source_copy(src, tmpdir)
         output_prefix = os.path.join(output_dir, "wubi86")
         run_build_binary(db_path, output_prefix, dict_only=True)
         generated.extend([
             output_prefix + ".dict.bin",
             output_prefix + ".dict.idx",
         ])
+
+    return generated
+
+
+def prepare_dict(data_dir: str, output_dir: str, workers: int = 2) -> list[str]:
+    """Run dictionary preparation, using separate workers for pinyin and wubi86."""
+    os.makedirs(output_dir, exist_ok=True)
+    workers = max(1, min(workers, 2))
+    tasks = [
+        ("pinyin", prepare_pinyin_dictionary),
+        ("wubi86", prepare_wubi_dictionary),
+    ]
+    generated = []
+
+    if workers == 1:
+        for _, task in tasks:
+            generated.extend(task(data_dir, output_dir))
+    else:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = [
+                (name, executor.submit(task, data_dir, output_dir))
+                for name, task in tasks
+            ]
+            for name, future in futures:
+                try:
+                    generated.extend(future.result())
+                except Exception as e:
+                    raise RuntimeError(f"{name} dictionary preparation failed: {e}") from e
 
     manifest_path = write_dictionary_manifest(output_dir)
     generated.append(manifest_path)
@@ -236,6 +257,10 @@ def main():
         "--output-dir", required=True,
         help="Output directory for binary dictionary files",
     )
+    parser.add_argument(
+        "--workers", type=int, default=min(2, os.cpu_count() or 1),
+        help="Dictionary worker count (default: 2, capped by available dictionaries)",
+    )
     args = parser.parse_args()
 
     data_dir = os.path.abspath(args.data_dir)
@@ -244,13 +269,16 @@ def main():
     if not os.path.isdir(data_dir):
         print(f"ERROR: data directory not found: {data_dir}", file=sys.stderr)
         return 1
+    if args.workers < 1:
+        print("ERROR: --workers must be >= 1", file=sys.stderr)
+        return 1
 
     print(f"Data source: {data_dir}")
     print(f"Output:      {output_dir}")
     print()
 
     try:
-        generated = prepare_dict(data_dir, output_dir)
+        generated = prepare_dict(data_dir, output_dir, workers=args.workers)
     except subprocess.CalledProcessError as e:
         print(f"ERROR: subprocess failed: {e}", file=sys.stderr)
         return 1

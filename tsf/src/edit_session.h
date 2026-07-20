@@ -26,7 +26,8 @@ public:
         UPDATE_COMPOSITION,
         ENSURE_COMPOSITION_TEXT,
         COMMIT_COMPOSITION,
-        QUERY_CARET
+        QUERY_CARET,
+        UPDATE_CANDIDATE_POSITION
     };
     void set_action(Action action, const std::wstring& text = L"");
     bool get_caret_rect(RECT& out) const { if (_resultValid) { out = _resultRect; return true; } return false; }

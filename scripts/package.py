@@ -13,12 +13,14 @@
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import json
 import os
 import re
 import shutil
 import subprocess
 import sys
+import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCRIPTS = os.path.join(ROOT, "scripts")
@@ -45,6 +47,52 @@ def step(msg: str) -> None:
 def run(cmd: list[str], **kwargs) -> None:
     """Run a command, raising on failure."""
     subprocess.run(cmd, check=True, **kwargs)
+
+
+def default_job_count() -> int:
+    """Return the default parallel job budget for package builds."""
+    return max(1, os.cpu_count() or 1)
+
+
+def format_duration(seconds: float) -> str:
+    """Format elapsed seconds for package timing output."""
+    seconds = max(0.0, seconds)
+    minutes = int(seconds // 60)
+    secs = seconds - minutes * 60
+    if minutes:
+        return f"{minutes}m {secs:04.1f}s"
+    return f"{secs:.1f}s"
+
+
+def timed_call(fn, *args, **kwargs):
+    """Run a callable and return (elapsed_seconds, result)."""
+    start = time.perf_counter()
+    result = fn(*args, **kwargs)
+    return time.perf_counter() - start, result
+
+
+def wait_task(name: str, future: concurrent.futures.Future) -> float:
+    """Wait for a package task and print a clear failure label."""
+    try:
+        elapsed, _ = future.result()
+        print(f"  {name}: {format_duration(elapsed)}")
+        return elapsed
+    except SystemExit as e:
+        code = e.code if isinstance(e.code, int) else 1
+        sys.exit(code)
+    except Exception as e:
+        print(f"  ERROR: {name} failed: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def print_timing_summary(timings: list[tuple[str, float]], total_elapsed: float) -> None:
+    """Print final timing summary."""
+    print()
+    print("Timing:")
+    print("  Note: build and dictionary task timings may overlap.")
+    for name, elapsed in timings:
+        print(f"  {name:<30} {format_duration(elapsed)}")
+    print(f"  {'Total':<30} {format_duration(total_elapsed)}")
 
 
 def choose_cmake_generator(
@@ -103,9 +151,11 @@ def build(
     generator: str | None = None,
     platform: str | None = None,
     target: str | None = None,
+    jobs: int = 1,
 ) -> None:
     """Configure and build the project."""
     print(f"Building {config} with PRODUCTION=ON...")
+    jobs = max(1, jobs)
 
     generator, platform = choose_cmake_generator(generator, platform)
     if generator:
@@ -138,6 +188,8 @@ def build(
         build_cmd = ["cmake", "--build", build_dir, "--config", config]
     if target:
         build_cmd.extend(["--target", target])
+    build_cmd.extend(["--parallel", str(jobs)])
+    print(f"  Build parallelism: {jobs}")
 
     run(cmake_args)
     run(build_cmd)
@@ -147,6 +199,7 @@ def build_x86_platform_modules(
     build_dir: str,
     config: str,
     generator: str | None = None,
+    jobs: int = 1,
 ) -> None:
     """Build the 32-bit in-process IME modules with a platform-aware generator."""
     generator, _ = choose_cmake_generator(generator, None)
@@ -177,6 +230,7 @@ def build_x86_platform_modules(
         generator=generator,
         platform="Win32",
         target="cxxime-platform-modules",
+        jobs=jobs,
     )
 
 
@@ -255,14 +309,14 @@ def copy_config() -> None:
         print("  WARNING: punctuation.json not found")
 
 
-def prepare_dictionaries() -> None:
+def prepare_dictionaries(workers: int) -> None:
     """Run prepare_dict.py for pinyin and wubi."""
     from prepare_dict import prepare_dict as do_prepare
 
     data_dir = DATA
     output_dir = os.path.join(DIST_DIR, "data")
 
-    generated = do_prepare(data_dir, output_dir)
+    generated = do_prepare(data_dir, output_dir, workers=workers)
     if not generated:
         print("  ERROR: No dictionary files generated.", file=sys.stderr)
         print("  Need .dict.db or .dict.db.zip in data/.", file=sys.stderr)
@@ -599,10 +653,22 @@ def main():
         "--platform",
         help="CMake platform for generators that support -A, such as Visual Studio",
     )
+    parser.add_argument(
+        "-j", "--jobs", type=int, default=default_job_count(),
+        help="Total CMake build job budget (default: CPU count)",
+    )
+    parser.add_argument(
+        "--dict-workers", type=int, default=min(2, default_job_count()),
+        help="Dictionary preparation workers (default: 2, capped by CPU count)",
+    )
     args = parser.parse_args()
 
     if args.skip_x86_tsf and not args.skip_nsis:
         parser.error("--skip-x86-tsf requires --skip-nsis because the installer requires both bitnesses")
+    if args.jobs < 1:
+        parser.error("--jobs must be >= 1")
+    if args.dict_workers < 1:
+        parser.error("--dict-workers must be >= 1")
 
     config = "Debug" if args.debug else "Release"
     build_dir = os.path.abspath(args.build_dir)
@@ -611,70 +677,124 @@ def main():
         parser.error("--x86-build-dir must be different from --build-dir")
 
     print(f"=== CxxIME Packager v{VERSION} ({config}) ===")
+    total_start = time.perf_counter()
+    timings: list[tuple[str, float]] = []
 
-    # 1. Build
-    if args.skip_build:
-        print(f"\nSkipping build (--skip-build). Using existing binaries in {build_dir}.")
-    else:
-        step("[1/8] Building x64 product...")
-        build(
-            build_dir,
-            config,
-            skip_tests=args.skip_tests,
-            skip_tools=args.skip_tools,
-            generator=args.generator,
-            platform=args.platform,
-        )
-        if not args.skip_x86_tsf:
-            step("[2/8] Building x86 platform modules...")
-            build_x86_platform_modules(
-                x86_build_dir,
-                config,
-                generator=args.generator,
-            )
-
-    # 2. Clean + copy
-    step("[3/8] Preparing distribution directory...")
+    # 1. Clean dist before parallel tasks so dictionaries can be produced while builds run.
+    step("[1/9] Preparing distribution directory...")
+    stage_start = time.perf_counter()
     clean_dist(keep_data=args.skip_dict)
+    timings.append(("prepare distribution", time.perf_counter() - stage_start))
 
-    print("  Copying binaries...")
-    copy_binaries(build_dir, x86_build_dir, config, include_x86_modules=not args.skip_x86_tsf)
+    build_futures: list[tuple[str, concurrent.futures.Future]] = []
+    dict_future: concurrent.futures.Future | None = None
+    build_count = 0 if args.skip_build else (1 if args.skip_x86_tsf else 2)
+    package_workers = build_count + (0 if args.skip_dict else 1)
+    package_workers = max(1, package_workers)
 
-    print("  Copying config and themes...")
-    copy_config()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=package_workers) as executor:
+        if args.skip_build:
+            step("[2/9] Skipping build (--skip-build).")
+            print(f"  Using existing binaries in {build_dir}.")
+        else:
+            step("[2/9] Starting clean builds...")
+            x64_jobs = args.jobs
+            x86_jobs = args.jobs
+            if not args.skip_x86_tsf:
+                x64_jobs = max(1, (args.jobs + 1) // 2)
+                x86_jobs = max(1, args.jobs // 2)
+            print(f"  Build job budget: {args.jobs} (x64={x64_jobs}"
+                  f"{', x86=' + str(x86_jobs) if not args.skip_x86_tsf else ''})")
+            build_futures.append((
+                "x64 product build",
+                executor.submit(
+                    timed_call,
+                    build,
+                    build_dir,
+                    config,
+                    skip_tests=args.skip_tests,
+                    skip_tools=args.skip_tools,
+                    generator=args.generator,
+                    platform=args.platform,
+                    jobs=x64_jobs,
+                ),
+            ))
+            if not args.skip_x86_tsf:
+                build_futures.append((
+                    "x86 platform module build",
+                    executor.submit(
+                        timed_call,
+                        build_x86_platform_modules,
+                        x86_build_dir,
+                        config,
+                        generator=args.generator,
+                        jobs=x86_jobs,
+                    ),
+                ))
 
-    # 3. Dictionary preparation
-    if args.skip_dict:
-        step("[4/8] Skipping dictionary generation (--skip-dict).")
-        print("  Using existing files in dist/data/.")
-        write_dictionary_manifest_for_existing_data()
-    else:
-        step("[4/8] Preparing dictionaries...")
-        prepare_dictionaries()
+        if args.skip_dict:
+            step("[3/9] Skipping dictionary generation (--skip-dict).")
+            print("  Using existing files in dist/data/.")
+        else:
+            step("[3/9] Starting dictionary preparation...")
+            print(f"  Dictionary workers: {args.dict_workers}")
+            dict_future = executor.submit(timed_call, prepare_dictionaries, args.dict_workers)
+
+        # 2. Wait for build output before copying binaries.
+        step("[4/9] Waiting for build outputs...")
+        for name, future in build_futures:
+            timings.append((name, wait_task(name, future)))
+
+        # 3. Copy files while dictionary preparation continues.
+        step("[5/9] Preparing package files...")
+        stage_start = time.perf_counter()
+        print("  Copying binaries...")
+        copy_binaries(build_dir, x86_build_dir, config, include_x86_modules=not args.skip_x86_tsf)
+
+        print("  Copying config and themes...")
+        copy_config()
+        timings.append(("copy package files", time.perf_counter() - stage_start))
+
+        if dict_future is not None:
+            print("  Waiting for dictionaries...")
+            timings.append(("dictionary preparation", wait_task("dictionary preparation", dict_future)))
+        else:
+            stage_start = time.perf_counter()
+            write_dictionary_manifest_for_existing_data()
+            timings.append(("dictionary manifest", time.perf_counter() - stage_start))
 
     # 4. Verification
-    step("[5/8] Verifying data files...")
+    step("[6/9] Verifying data files...")
+    stage_start = time.perf_counter()
     verify_data_files()
     check_debug_crt(config)
     check_hot_path_logs()
     check_log_rotation()
+    timings.append(("verify data and checks", time.perf_counter() - stage_start))
 
     # 5. Installer scripts
-    step("[6/8] Copying installer scripts...")
+    step("[7/9] Copying installer scripts...")
+    stage_start = time.perf_counter()
     copy_installer_scripts(config)
+    timings.append(("copy installer scripts", time.perf_counter() - stage_start))
 
     # 6. Package layout
-    step("[7/8] Verifying package layout...")
+    step("[8/9] Verifying package layout...")
+    stage_start = time.perf_counter()
     verify_package_layout(include_x86_modules=not args.skip_x86_tsf)
+    timings.append(("verify package layout", time.perf_counter() - stage_start))
 
     # 7. NSIS
     if args.skip_nsis:
-        step("[8/8] Skipping NSIS installer (--skip-nsis).")
+        step("[9/9] Skipping NSIS installer (--skip-nsis).")
     else:
-        step("[8/8] Building NSIS installer...")
+        step("[9/9] Building NSIS installer...")
+        stage_start = time.perf_counter()
         build_nsis(config, fast=args.fast)
+        timings.append(("build nsis installer", time.perf_counter() - stage_start))
 
     print_summary(config, include_x86_modules=not args.skip_x86_tsf)
+    print_timing_summary(timings, time.perf_counter() - total_start)
 
 
 if __name__ == "__main__":

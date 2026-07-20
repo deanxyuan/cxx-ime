@@ -2,12 +2,23 @@
 
 #include <cxxime/status_window.h>
 #include <commctrl.h>
+#include <d2d1.h>
+#include <dwrite.h>
 #include <uxtheme.h>
-#include <gdiplus.h>
 #include <algorithm>
 #include <cstring>
 #include <mutex>
 #include <vector>
+
+// GDI+ SDK headers use unqualified min/max in namespace Gdiplus on older
+// Windows SDKs. The project defines NOMINMAX globally, so provide std::min/max
+// for that namespace before including gdiplus.h.
+namespace Gdiplus {
+using std::max;
+using std::min;
+}
+
+#include <gdiplus.h>
 
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "gdiplus.lib")
@@ -335,8 +346,8 @@ void StatusWindow::CreateFonts() {
                            CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_SWISS, name);
     };
 
-    font_cn_   = make_font(L"Microsoft YaHei UI", 11, FW_BOLD);
-    font_en_   = make_font(L"Segoe UI",           10, FW_SEMIBOLD);
+    font_cn_    = make_font(L"Microsoft YaHei UI", 11, FW_NORMAL);
+    font_en_    = make_font(L"Segoe UI",           10, FW_NORMAL);
     font_icon_  = make_font(L"Segoe MDL2 Assets",  11, FW_NORMAL);
 }
 
@@ -407,8 +418,8 @@ void StatusWindow::InitD2D() {
         return fmt;
     };
 
-    d2d_font_cn_   = mkfmt(L"Microsoft YaHei UI", 11, DWRITE_FONT_WEIGHT_BOLD);
-    d2d_font_en_   = mkfmt(L"Segoe UI",           10, DWRITE_FONT_WEIGHT_SEMI_BOLD);
+    d2d_font_cn_   = mkfmt(L"Microsoft YaHei UI", 11, DWRITE_FONT_WEIGHT_NORMAL);
+    d2d_font_en_   = mkfmt(L"Segoe UI",           10, DWRITE_FONT_WEIGHT_NORMAL);
     d2d_font_icon_ = mkfmt(L"Segoe MDL2 Assets",  11, DWRITE_FONT_WEIGHT_NORMAL);
 
     use_d2d_ = true;
@@ -635,7 +646,7 @@ void StatusWindow::PaintD2D() {
     // Draw logo icon on top (via GDI, since D2D has ended)
     if (logo_icon_) {
         RECT logo_rc = GetLogoRect();
-        int icon_sz = std::min(logo_rc.right - logo_rc.left, logo_rc.bottom - logo_rc.top) - 4;
+        int icon_sz = LogoIconSize(logo_rc);
         int ix = logo_rc.left + ((logo_rc.right - logo_rc.left) - icon_sz) / 2;
         int iy = logo_rc.top + ((logo_rc.bottom - logo_rc.top) - icon_sz) / 2;
         DrawIconEx(layered_dc_, ix, iy, logo_icon_, icon_sz, icon_sz, 0, nullptr, DI_NORMAL);
@@ -702,7 +713,7 @@ void StatusWindow::PaintGdiplus() {
             g.DrawPath(&pen, &path);
         }
         if (logo_icon_) {
-            int icon_sz = std::min(logo_rc.right - logo_rc.left, logo_rc.bottom - logo_rc.top) - 4;
+            int icon_sz = LogoIconSize(logo_rc);
             int ix = logo_rc.left + ((logo_rc.right - logo_rc.left) - icon_sz) / 2;
             int iy = logo_rc.top + ((logo_rc.bottom - logo_rc.top) - icon_sz) / 2;
             DrawIconEx(layered_dc_, ix, iy, logo_icon_, icon_sz, icon_sz, 0, nullptr, DI_NORMAL);
@@ -784,6 +795,13 @@ RECT StatusWindow::GetLogoRect() const {
     int x = Scaled(BASE_WINDOW_PADDING);
     int y = Scaled(BASE_WINDOW_PADDING);
     return {x, y, x + Scaled(BASE_LOGO_WIDTH), y + Scaled(BASE_BUTTON_HEIGHT)};
+}
+
+int StatusWindow::LogoIconSize(const RECT& logo_rc) const {
+    int width = logo_rc.right - logo_rc.left;
+    int height = logo_rc.bottom - logo_rc.top;
+    int max_icon = std::min(width, height) - Scaled(4);
+    return std::max(1, std::min(Scaled(16), max_icon));
 }
 
 RECT StatusWindow::GetSeparatorRect() const {

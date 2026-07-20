@@ -26,6 +26,7 @@ class TextService : public ITfTextInputProcessorEx,
                     public ITfCompositionSink,
                     public ITfThreadFocusSink,
                     public ITfThreadMgrEventSink,
+                    public ITfTextLayoutSink,
                     public ITfDisplayAttributeProvider {
 public:
     TextService();
@@ -63,6 +64,11 @@ public:
     STDMETHODIMP OnPushContext(ITfContext* pic) override;
     STDMETHODIMP OnPopContext(ITfContext* pic) override;
 
+    // ITfTextLayoutSink
+    STDMETHODIMP OnLayoutChange(ITfContext* pic,
+                                TfLayoutCode lcode,
+                                ITfContextView* view) override;
+
     // ITfDisplayAttributeProvider
     STDMETHODIMP EnumDisplayAttributeInfo(IEnumTfDisplayAttributeInfo** ppEnum) override;
     STDMETHODIMP GetDisplayAttributeInfo(REFGUID rguid, ITfDisplayAttributeInfo** ppInfo) override;
@@ -73,6 +79,12 @@ public:
     void abort_candidate_ui_from_tsf();
     HRESULT finalize_exact_candidate_ui_from_tsf();
     void trace_ui_element_method(const char* element, const char* method, bool important = false);
+    void trace_caret_event(const char* action,
+                           const char* source,
+                           bool resolved,
+                           const RECT* rect,
+                           HRESULT hr = S_OK,
+                           bool important = false);
     void update_composition(ITfContext* pic,
                             const std::wstring& preedit,
                             bool ensure = false,
@@ -81,9 +93,11 @@ public:
     ITfComposition* get_composition() const { return _composition; }
     void set_composition(ITfComposition* comp) { _composition = comp; }
     ITfContext* get_composition_context() const { return _compositionContext; }
+    bool is_composing() const { return _composing; }
     void set_composition_context(ITfContext* context);
     void set_composing(bool val) { _composing = val; }
     void set_caret_rect(const RECT& rc) { _caretRect = rc; }
+    void update_candidate_position(const RECT& rc);
     RECT _resolve_caret_rect(ITfContext* pic);
 
     // TSF layer trace (lightweight, no cross-module QueryTrace dependency)
@@ -130,6 +144,10 @@ private:
     void _sync_conversion_mode_compartment(const cxxime::ImeStatus& status);
     bool _foreground_allows_input() const;
     bool _context_belongs_to_foreground(ITfContext* context) const;
+    bool _advise_text_layout_sink(ITfDocumentMgr* doc_mgr);
+    void _unadvise_text_layout_sink();
+    void _request_candidate_position_update(ITfContext* pic, const char* reason);
+    bool _resolve_native_caret_rect(RECT* out) const;
     bool _read_context_compartment_bool(ITfContext* context, REFGUID guid, bool* value) const;
     bool _context_keyboard_disabled(ITfContext* context) const;
     const char* _input_context_block_reason(ITfContext* context) const;
@@ -163,7 +181,9 @@ private:
     DWORD _activateFlags = 0;
     DWORD _dwThreadFocusCookie = TF_INVALID_COOKIE;
     DWORD _dwThreadMgrEventCookie = TF_INVALID_COOKIE;
+    DWORD _dwTextLayoutSinkCookie = TF_INVALID_COOKIE;
     TfGuidAtom _displayAttributeAtom = 0;
+    ITfContext* _textLayoutSinkContext = nullptr;
 
     cxxime::IpcClient _client;
     uint32_t _sessionId = 0;

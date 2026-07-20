@@ -131,7 +131,7 @@ int main() {
     // Load logo icon
     HICON logo_icon = (HICON)LoadImageW(nullptr,
         CXXIME_PROJECT_DIR L"resource/freedly.ico",
-        IMAGE_ICON, 16, 16, LR_LOADFROMFILE | LR_DEFAULTCOLOR);
+        IMAGE_ICON, 64, 64, LR_LOADFROMFILE | LR_DEFAULTCOLOR);
 
     // Create parent window (keyboard focus)
     WNDCLASSEXW wc = {};

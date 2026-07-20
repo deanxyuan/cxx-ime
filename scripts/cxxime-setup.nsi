@@ -28,6 +28,8 @@ Page custom FinishPage FinishPageLeave
 !insertmacro MUI_UNPAGE_CONFIRM
 UninstPage custom un.UserDataPage un.UserDataPageLeave
 !insertmacro MUI_UNPAGE_INSTFILES
+!define MUI_FINISHPAGE_REBOOTLATER_DEFAULT
+!insertmacro MUI_UNPAGE_FINISH
 !insertmacro MUI_LANGUAGE "SimpChinese"
 
 Function .onInit

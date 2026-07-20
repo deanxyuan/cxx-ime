@@ -11,24 +11,136 @@ bool is_valid_rect(const RECT& rc) {
            rc.right >= rc.left && rc.bottom >= rc.top;
 }
 
-void update_caret_rect(TextService* service, ITfContext* context, TfEditCookie ec, ITfRange* range) {
-    if (!service || !context || !range)
+void normalize_text_ext_rect(RECT* rc) {
+    if (!rc || !is_valid_rect(*rc))
         return;
+
+    HWND foreground = GetForegroundWindow();
+    RECT foreground_rect = {};
+    if (!foreground || !GetWindowRect(foreground, &foreground_rect))
+        return;
+
+    if (rc->left >= foreground_rect.left && rc->left <= foreground_rect.right &&
+        rc->top >= foreground_rect.top && rc->top <= foreground_rect.bottom) {
+        return;
+    }
+
+    POINT caret = {};
+    bool has_caret = GetCaretPos(&caret) != FALSE;
+    LONG dx = foreground_rect.left - rc->left + (has_caret ? caret.x : 0);
+    LONG dy = foreground_rect.top - rc->top + (has_caret ? caret.y : 0);
+    OffsetRect(rc, dx, dy);
+}
+
+bool get_range_caret_rect(ITfContext* context,
+                          TfEditCookie ec,
+                          ITfRange* range,
+                          TfAnchor anchor,
+                          RECT* out) {
+    if (!context || !range || !out)
+        return false;
 
     ITfContextView* pView = nullptr;
     if (FAILED(context->GetActiveView(&pView)) || !pView)
-        return;
+        return false;
 
     ITfRange* caret_range = nullptr;
     if (SUCCEEDED(range->Clone(&caret_range)) && caret_range) {
-        caret_range->Collapse(ec, TF_ANCHOR_END);
-        RECT rc = {};
-        BOOL clipped = FALSE;
-        if (SUCCEEDED(pView->GetTextExt(ec, caret_range, &rc, &clipped)) && is_valid_rect(rc))
-            service->set_caret_rect(rc);
-        caret_range->Release();
+        caret_range->Collapse(ec, anchor);
+    } else {
+        caret_range = range;
+        caret_range->AddRef();
     }
+
+    RECT rc = {};
+    BOOL clipped = FALSE;
+    bool resolved = SUCCEEDED(pView->GetTextExt(ec, caret_range, &rc, &clipped)) &&
+                    is_valid_rect(rc);
+    if (resolved) {
+        normalize_text_ext_rect(&rc);
+        *out = rc;
+    }
+
+    caret_range->Release();
     pView->Release();
+    return resolved;
+}
+
+bool update_caret_rect_from_range(TextService* service,
+                                   ITfContext* context,
+                                   TfEditCookie ec,
+                                   ITfRange* range,
+                                   TfAnchor anchor,
+                                   RECT* out) {
+    RECT rc = {};
+    if (!get_range_caret_rect(context, ec, range, anchor, &rc))
+        return false;
+
+    if (service)
+        service->set_caret_rect(rc);
+    if (out)
+        *out = rc;
+    return true;
+}
+
+bool update_caret_rect_from_selection(TextService* service,
+                                       ITfContext* context,
+                                       TfEditCookie ec,
+                                       RECT* out) {
+    if (!context)
+        return false;
+
+    TF_SELECTION selection = {};
+    ULONG fetched = 0;
+    HRESULT hr = context->GetSelection(ec, TF_DEFAULT_SELECTION, 1, &selection, &fetched);
+    if (FAILED(hr) || fetched == 0 || !selection.range)
+        return false;
+
+    bool resolved = update_caret_rect_from_range(service, context, ec, selection.range,
+                                                 TF_ANCHOR_END, out);
+    selection.range->Release();
+    return resolved;
+}
+
+void update_caret_rect(TextService* service, ITfContext* context, TfEditCookie ec, ITfRange* range) {
+    if (!service || !context)
+        return;
+
+    update_caret_rect_from_range(service, context, ec, range, TF_ANCHOR_START, nullptr);
+}
+
+bool update_current_caret_rect(TextService* service,
+                                ITfContext* context,
+                                TfEditCookie ec,
+                                RECT* out,
+                                const char** source_out = nullptr) {
+    ITfComposition* composition =
+        service && service->is_composing() ? service->get_composition() : nullptr;
+    ITfRange* range = nullptr;
+    if (composition && SUCCEEDED(composition->GetRange(&range)) && range) {
+        RECT rc = {};
+        bool resolved = update_caret_rect_from_range(service, context, ec, range,
+                                                     TF_ANCHOR_START, &rc);
+        range->Release();
+        if (resolved && out)
+            *out = rc;
+        if (resolved && source_out)
+            *source_out = "composition_start";
+        return resolved;
+    }
+
+    RECT rc = {};
+    if (update_caret_rect_from_selection(service, context, ec, &rc)) {
+        if (out)
+            *out = rc;
+        if (source_out)
+            *source_out = "selection";
+        return true;
+    }
+
+    if (source_out)
+        *source_out = "none";
+    return false;
 }
 
 void set_selection_to_range(ITfContext* context, TfEditCookie ec, ITfRange* range) {
@@ -128,7 +240,8 @@ HRESULT get_or_create_composition_range(TextService* service,
     *range_out = nullptr;
 
     ITfComposition* composition = service->get_composition();
-    if (composition && SUCCEEDED(composition->GetRange(range_out)) && *range_out)
+    if (composition && service->is_composing() &&
+        SUCCEEDED(composition->GetRange(range_out)) && *range_out)
         return S_OK;
 
     return create_composition(service, context, ec, range_out);
@@ -259,40 +372,28 @@ STDMETHODIMP EditSession::DoEditSession(TfEditCookie ec) {
             insert_at_selection(_context, ec, _text);
         }
     } else if (_action == Action::QUERY_CARET) {
-        ITfRange* range = nullptr;
-        ITfComposition* composition = _service->get_composition();
-        if (composition)
-            composition->GetRange(&range);
-
-        if (!range) {
-            TF_SELECTION sel = {};
-            ULONG fetched = 0;
-            if (SUCCEEDED(_context->GetSelection(ec, TF_DEFAULT_SELECTION, 1, &sel, &fetched)) &&
-                fetched > 0) {
-                range = sel.range;
-            }
+        RECT rc = {};
+        const char* source = "none";
+        if (update_current_caret_rect(_service, _context, ec, &rc, &source)) {
+            _resultRect = rc;
+            _resultValid = true;
+            if (_service)
+                _service->trace_caret_event("query", source, true, &rc);
+        } else if (_service) {
+            _service->trace_caret_event("query", source, false, nullptr, E_FAIL, true);
         }
-
-        if (range) {
-            ITfRange* caret_range = nullptr;
-            if (SUCCEEDED(range->Clone(&caret_range)) && caret_range) {
-                caret_range->Collapse(ec, TF_ANCHOR_END);
-            } else {
-                caret_range = range;
-                caret_range->AddRef();
+    } else if (_action == Action::UPDATE_CANDIDATE_POSITION) {
+        RECT rc = {};
+        const char* source = "none";
+        if (update_current_caret_rect(_service, _context, ec, &rc, &source)) {
+            _resultRect = rc;
+            _resultValid = true;
+            if (_service) {
+                _service->trace_caret_event("layout_update", source, true, &rc);
+                _service->update_candidate_position(rc);
             }
-            ITfContextView* pView = nullptr;
-            if (SUCCEEDED(_context->GetActiveView(&pView)) && pView) {
-                BOOL clipped = FALSE;
-                if (SUCCEEDED(pView->GetTextExt(ec, caret_range, &_resultRect, &clipped)) &&
-                    is_valid_rect(_resultRect)) {
-                    _resultValid = true;
-                    _service->set_caret_rect(_resultRect);
-                }
-                pView->Release();
-            }
-            caret_range->Release();
-            range->Release();
+        } else if (_service) {
+            _service->trace_caret_event("layout_update", source, false, nullptr, E_FAIL, true);
         }
     }
     return S_OK;
