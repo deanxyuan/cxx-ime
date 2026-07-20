@@ -11,25 +11,100 @@ bool is_valid_rect(const RECT& rc) {
            rc.right >= rc.left && rc.bottom >= rc.top;
 }
 
-void normalize_text_ext_rect(RECT* rc) {
-    if (!rc || !is_valid_rect(*rc))
+void normalize_rect_size(RECT* rc) {
+    if (!rc)
         return;
+
+    if (rc->right < rc->left)
+        std::swap(rc->left, rc->right);
+    if (rc->bottom < rc->top)
+        std::swap(rc->top, rc->bottom);
+    if (rc->right == rc->left)
+        rc->right = rc->left + 1;
+    if (rc->bottom == rc->top)
+        rc->bottom = rc->top + 20;
+}
+
+bool rect_primary_point_in_rect(const RECT& outer, const RECT& inner) {
+    return inner.left >= outer.left && inner.left <= outer.right &&
+           inner.top >= outer.top && inner.top <= outer.bottom;
+}
+
+bool same_root_window(HWND a, HWND b) {
+    if (!a || !b)
+        return false;
+    if (a == b || IsChild(a, b) || IsChild(b, a))
+        return true;
+
+    HWND root_a = GetAncestor(a, GA_ROOT);
+    HWND root_b = GetAncestor(b, GA_ROOT);
+    return root_a && root_a == root_b;
+}
+
+bool map_client_rect_to_screen(HWND hwnd, const RECT& raw, RECT* mapped) {
+    if (!hwnd || !mapped)
+        return false;
+
+    RECT client = {};
+    if (!GetClientRect(hwnd, &client))
+        return false;
+    if (raw.left < client.left || raw.left > client.right ||
+        raw.top < client.top || raw.top > client.bottom) {
+        return false;
+    }
+
+    POINT points[2] = {
+        { raw.left, raw.top },
+        { raw.right, raw.bottom },
+    };
+    if (!MapWindowPoints(hwnd, nullptr, points, 2))
+        return false;
+
+    SetRect(mapped, points[0].x, points[0].y, points[1].x, points[1].y);
+    normalize_rect_size(mapped);
+    return is_valid_rect(*mapped);
+}
+
+bool normalize_text_ext_rect(ITfContextView* view, RECT* rc) {
+    if (!rc || !is_valid_rect(*rc))
+        return false;
+
+    normalize_rect_size(rc);
 
     HWND foreground = GetForegroundWindow();
     RECT foreground_rect = {};
-    if (!foreground || !GetWindowRect(foreground, &foreground_rect))
-        return;
+    bool has_foreground_rect = foreground && GetWindowRect(foreground, &foreground_rect);
 
-    if (rc->left >= foreground_rect.left && rc->left <= foreground_rect.right &&
-        rc->top >= foreground_rect.top && rc->top <= foreground_rect.bottom) {
-        return;
+    HWND view_hwnd = nullptr;
+    if (view)
+        view->GetWnd(&view_hwnd);
+
+    if (has_foreground_rect && rect_primary_point_in_rect(foreground_rect, *rc)) {
+        return true;
+    }
+
+    RECT mapped = {};
+    if (map_client_rect_to_screen(view_hwnd, *rc, &mapped)) {
+        if (!has_foreground_rect || rect_primary_point_in_rect(foreground_rect, mapped)) {
+            *rc = mapped;
+            return true;
+        }
     }
 
     POINT caret = {};
     bool has_caret = GetCaretPos(&caret) != FALSE;
-    LONG dx = foreground_rect.left - rc->left + (has_caret ? caret.x : 0);
-    LONG dy = foreground_rect.top - rc->top + (has_caret ? caret.y : 0);
-    OffsetRect(rc, dx, dy);
+    HWND focus = GetFocus();
+    if (!focus && view_hwnd)
+        focus = view_hwnd;
+    if (has_foreground_rect && has_caret && focus && same_root_window(foreground, focus)) {
+        LONG dx = foreground_rect.left - rc->left + caret.x;
+        LONG dy = foreground_rect.top - rc->top + caret.y;
+        OffsetRect(rc, dx, dy);
+        normalize_rect_size(rc);
+        return is_valid_rect(*rc);
+    }
+
+    return MonitorFromRect(rc, MONITOR_DEFAULTTONULL) != nullptr;
 }
 
 bool get_range_caret_rect(ITfContext* context,
@@ -55,11 +130,9 @@ bool get_range_caret_rect(ITfContext* context,
     RECT rc = {};
     BOOL clipped = FALSE;
     bool resolved = SUCCEEDED(pView->GetTextExt(ec, caret_range, &rc, &clipped)) &&
-                    is_valid_rect(rc);
-    if (resolved) {
-        normalize_text_ext_rect(&rc);
+                    normalize_text_ext_rect(pView, &rc);
+    if (resolved)
         *out = rc;
-    }
 
     caret_range->Release();
     pView->Release();
@@ -102,11 +175,43 @@ bool update_caret_rect_from_selection(TextService* service,
     return resolved;
 }
 
+bool update_caret_rect_from_composition(TextService* service,
+                                       ITfContext* context,
+                                       TfEditCookie ec,
+                                       RECT* out,
+                                       const char** source_out = nullptr) {
+    ITfComposition* composition =
+        service && service->is_composing() ? service->get_composition() : nullptr;
+    ITfRange* range = nullptr;
+    if (!composition || FAILED(composition->GetRange(&range)) || !range)
+        return false;
+
+    RECT rc = {};
+    bool resolved = update_caret_rect_from_range(service, context, ec, range,
+                                                 TF_ANCHOR_END, &rc);
+    const char* source = "composition_end";
+    if (!resolved) {
+        resolved = update_caret_rect_from_range(service, context, ec, range,
+                                                TF_ANCHOR_START, &rc);
+        source = "composition_start";
+    }
+    range->Release();
+    if (!resolved)
+        return false;
+
+    if (out)
+        *out = rc;
+    if (source_out)
+        *source_out = source;
+    return true;
+}
+
 void update_caret_rect(TextService* service, ITfContext* context, TfEditCookie ec, ITfRange* range) {
     if (!service || !context)
         return;
 
-    update_caret_rect_from_range(service, context, ec, range, TF_ANCHOR_START, nullptr);
+    if (!update_caret_rect_from_range(service, context, ec, range, TF_ANCHOR_END, nullptr))
+        update_caret_rect_from_selection(service, context, ec, nullptr);
 }
 
 bool update_current_caret_rect(TextService* service,
@@ -114,22 +219,13 @@ bool update_current_caret_rect(TextService* service,
                                 TfEditCookie ec,
                                 RECT* out,
                                 const char** source_out = nullptr) {
-    ITfComposition* composition =
-        service && service->is_composing() ? service->get_composition() : nullptr;
-    ITfRange* range = nullptr;
-    if (composition && SUCCEEDED(composition->GetRange(&range)) && range) {
-        RECT rc = {};
-        bool resolved = update_caret_rect_from_range(service, context, ec, range,
-                                                     TF_ANCHOR_START, &rc);
-        range->Release();
-        if (resolved && out)
+    RECT rc = {};
+    if (update_caret_rect_from_composition(service, context, ec, &rc, source_out)) {
+        if (out)
             *out = rc;
-        if (resolved && source_out)
-            *source_out = "composition_start";
-        return resolved;
+        return true;
     }
 
-    RECT rc = {};
     if (update_caret_rect_from_selection(service, context, ec, &rc)) {
         if (out)
             *out = rc;
@@ -390,7 +486,8 @@ STDMETHODIMP EditSession::DoEditSession(TfEditCookie ec) {
             _resultValid = true;
             if (_service) {
                 _service->trace_caret_event("layout_update", source, true, &rc);
-                _service->update_candidate_position(rc);
+                _service->update_candidate_position(rc, _context,
+                                                    _positionUpdateFromLayoutChange);
             }
         } else if (_service) {
             _service->trace_caret_event("layout_update", source, false, nullptr, E_FAIL, true);

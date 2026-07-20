@@ -97,7 +97,9 @@ public:
     void set_composition_context(ITfContext* context);
     void set_composing(bool val) { _composing = val; }
     void set_caret_rect(const RECT& rc) { _caretRect = rc; }
-    void update_candidate_position(const RECT& rc);
+    void update_candidate_position(const RECT& rc,
+    ITfContext* context = nullptr,
+    bool from_layout_change = false);
     RECT _resolve_caret_rect(ITfContext* pic);
 
     // TSF layer trace (lightweight, no cross-module QueryTrace dependency)
@@ -146,8 +148,11 @@ private:
     bool _context_belongs_to_foreground(ITfContext* context) const;
     bool _advise_text_layout_sink(ITfDocumentMgr* doc_mgr);
     void _unadvise_text_layout_sink();
-    void _request_candidate_position_update(ITfContext* pic, const char* reason);
+    void _request_candidate_position_update(ITfContext* pic,
+    const char* reason,
+    bool from_layout_change = false);
     bool _resolve_native_caret_rect(RECT* out) const;
+    bool _resolve_context_native_caret_rect(ITfContext* context, RECT* out) const;
     bool _read_context_compartment_bool(ITfContext* context, REFGUID guid, bool* value) const;
     bool _context_keyboard_disabled(ITfContext* context) const;
     const char* _input_context_block_reason(ITfContext* context) const;
@@ -195,6 +200,10 @@ private:
     bool _seenKeyAfterActivate = false;
     bool _fTestKeyDownPending = false;
     bool _fTestKeyUpPending = false;
+    bool _candidateShowPending = false;
+    bool _candidatePendingHasStaleRect = false;
+    RECT _candidatePendingStaleRect = {};
+std::chrono::steady_clock::time_point _candidateShowPendingSince = {};
     UINT_PTR _statePollTimer = 0;
     std::chrono::steady_clock::time_point _lastIpcHeartbeat = {};
     bool _ipcHealthy = true;

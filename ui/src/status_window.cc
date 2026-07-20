@@ -346,8 +346,8 @@ void StatusWindow::CreateFonts() {
                            CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_SWISS, name);
     };
 
-    font_cn_    = make_font(L"Microsoft YaHei UI", 11, FW_NORMAL);
-    font_en_    = make_font(L"Segoe UI",           10, FW_NORMAL);
+    font_cn_    = make_font(L"Microsoft YaHei UI", 11, FW_BOLD);
+    font_en_    = make_font(L"Segoe UI",           10, FW_BOLD);
     font_icon_  = make_font(L"Segoe MDL2 Assets",  11, FW_NORMAL);
 }
 
@@ -418,8 +418,8 @@ void StatusWindow::InitD2D() {
         return fmt;
     };
 
-    d2d_font_cn_   = mkfmt(L"Microsoft YaHei UI", 11, DWRITE_FONT_WEIGHT_NORMAL);
-    d2d_font_en_   = mkfmt(L"Segoe UI",           10, DWRITE_FONT_WEIGHT_NORMAL);
+    d2d_font_cn_   = mkfmt(L"Microsoft YaHei UI", 11, DWRITE_FONT_WEIGHT_BOLD);
+    d2d_font_en_   = mkfmt(L"Segoe UI",           10, DWRITE_FONT_WEIGHT_BOLD);
     d2d_font_icon_ = mkfmt(L"Segoe MDL2 Assets",  11, DWRITE_FONT_WEIGHT_NORMAL);
 
     use_d2d_ = true;
