@@ -5,11 +5,13 @@ add_library(cxxime-ime SHARED
     src/legacy_ime.cpp
     src/legacy_session.cpp
     src/legacy_ui.cpp
+    ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/legacy_stage_diagnostics.cc
     cxxime_ime.def
 )
 
 target_include_directories(cxxime-ime PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src
 )
 
 target_link_libraries(cxxime-ime PRIVATE

@@ -168,6 +168,8 @@ def check_installer_script(
     require_text(errors, text, 'File "cxxime_tsf_x64.dll"', label)
     require_text(errors, text, 'File "cxxime_ime_x64.ime"', label)
     require_text(errors, text, 'File "cxxime-resources.dll"', label)
+    require_text(errors, text, 'File "cxxime-ime-host-probe-x64.exe"', label)
+    require_text(errors, text, 'File "export_stage_trace.ps1"', label)
     installer_data_files = [
         "default.json",
         "settings_presets.json",
@@ -237,6 +239,7 @@ def check_installer_script(
     if require_x86:
         require_text(errors, text, 'File "cxxime_tsf_x86.dll"', label)
         require_text(errors, text, 'File "cxxime_ime_x86.ime"', label)
+        require_text(errors, text, 'File "cxxime-ime-host-probe-x86.exe"', label)
         require_text(
             errors,
             text,
@@ -302,6 +305,8 @@ def run_checks(dist_dir: str, require_x86: bool) -> list[str]:
         "cxxime-server.exe",
         "cxxime-settings.exe",
         "collect_diagnostics.ps1",
+        "export_stage_trace.ps1",
+        "cxxime-ime-host-probe-x64.exe",
         "cxxime-setup.nsi",
         "license.txt",
         os.path.join("data", "default.json"),
@@ -312,6 +317,7 @@ def run_checks(dist_dir: str, require_x86: bool) -> list[str]:
     if require_x86:
         required_files.append("cxxime_tsf_x86.dll")
         required_files.append("cxxime_ime_x86.ime")
+        required_files.append("cxxime-ime-host-probe-x86.exe")
 
     for name in required_files:
         require_file(errors, os.path.join(dist_dir, name), dist_dir)
@@ -327,9 +333,21 @@ def run_checks(dist_dir: str, require_x86: bool) -> list[str]:
     require_machine(errors, os.path.join(dist_dir, "cxxime-resources.dll"), dist_dir, MACHINE_X64)
     require_machine(errors, os.path.join(dist_dir, "cxxime-server.exe"), dist_dir, MACHINE_X64)
     require_machine(errors, os.path.join(dist_dir, "cxxime-settings.exe"), dist_dir, MACHINE_X64)
+    require_machine(
+        errors,
+        os.path.join(dist_dir, "cxxime-ime-host-probe-x64.exe"),
+        dist_dir,
+        MACHINE_X64,
+    )
     if require_x86:
         require_machine(errors, os.path.join(dist_dir, "cxxime_tsf_x86.dll"), dist_dir, MACHINE_X86)
         require_machine(errors, os.path.join(dist_dir, "cxxime_ime_x86.ime"), dist_dir, MACHINE_X86)
+        require_machine(
+            errors,
+            os.path.join(dist_dir, "cxxime-ime-host-probe-x86.exe"),
+            dist_dir,
+            MACHINE_X86,
+        )
 
     manifest_files = check_dictionary_manifest(errors, dist_dir)
     check_installer_script(errors, dist_dir, require_x86, manifest_files)

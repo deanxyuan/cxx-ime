@@ -1,6 +1,7 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
 #include "imm_bridge.h"
+#include "tsf_stage_diagnostics.h"
 
 #include <imm.h>
 #include <immdev.h>
@@ -134,18 +135,27 @@ bool append_message(HIMC himc, UINT message, WPARAM wparam, LPARAM lparam) {
     return ImmGenerateMessage(himc) != FALSE;
 }
 
-HIMC acquire_foreground_himc(HWND* hwnd_out) {
-    if (hwnd_out)
+HIMC acquire_foreground_himc(HWND* hwnd_out, const char** source_out) {
+    if (hwnd_out) {
         *hwnd_out = nullptr;
+    }
+    if (source_out) {
+        *source_out = "none";
+    }
 
     HWND hwnd = GetForegroundWindow();
-    if (!hwnd)
+    if (!hwnd) {
         return nullptr;
+    }
 
     HIMC himc = ImmGetContext(hwnd);
     if (himc) {
-        if (hwnd_out)
+        if (hwnd_out) {
             *hwnd_out = hwnd;
+        }
+        if (source_out) {
+            *source_out = "foreground";
+        }
         return himc;
     }
 
@@ -153,8 +163,14 @@ HIMC acquire_foreground_himc(HWND* hwnd_out) {
     GUITHREADINFO gti = { sizeof(gti) };
     if (thread_id && GetGUIThreadInfo(thread_id, &gti) && gti.hwndFocus) {
         himc = ImmGetContext(gti.hwndFocus);
-        if (himc && hwnd_out)
-            *hwnd_out = gti.hwndFocus;
+        if (himc) {
+            if (hwnd_out) {
+                *hwnd_out = gti.hwndFocus;
+            }
+            if (source_out) {
+                *source_out = "gui_thread_focus";
+            }
+        }
     }
     return himc;
 }
@@ -167,30 +183,39 @@ HIMC acquire_himc_for_window(HWND hwnd) {
 
 } // namespace
 
-bool ImmBridge::update_preedit(const std::wstring& preedit) {
+bool ImmBridge::update_preedit(const std::wstring& preedit,
+                               uint64_t input_id,
+                               uint64_t composition_id) {
     set_error(nullptr);
     if (preedit.empty()) {
-        clear();
+        clear(input_id, composition_id);
         return true;
     }
 
     HWND hwnd = nullptr;
-    HIMC himc = acquire_foreground_himc(&hwnd);
+    const char* source = nullptr;
+    HIMC himc = acquire_foreground_himc(&hwnd, &source);
+    trace_stage_imm_target("update_preedit", hwnd, himc, source, input_id, composition_id);
     if (!himc) {
         set_error("preedit:no_himc");
         return false;
     }
 
     bool ok = write_composition(himc, preedit, {});
+    trace_stage_imm_write("update_preedit", himc, preedit, {}, ok, input_id, composition_id);
     if (ok && (!_composing || _hwnd != hwnd)) {
         ok = append_message(himc, WM_IME_STARTCOMPOSITION, 0, 0);
+        trace_stage_imm_message(WM_IME_STARTCOMPOSITION, 0, ok, input_id, composition_id);
         if (ok) {
             _composing = true;
             _hwnd = hwnd;
         }
     }
-    if (ok)
+    if (ok) {
         ok = append_message(himc, WM_IME_COMPOSITION, 0, kCompositionFlags);
+        trace_stage_imm_message(
+            WM_IME_COMPOSITION, kCompositionFlags, ok, input_id, composition_id);
+    }
 
     ImmReleaseContext(hwnd, himc);
     if (!ok)
@@ -198,23 +223,33 @@ bool ImmBridge::update_preedit(const std::wstring& preedit) {
     return ok;
 }
 
-bool ImmBridge::commit_text(const std::wstring& text) {
+bool ImmBridge::commit_text(const std::wstring& text,
+                            uint64_t input_id,
+                            uint64_t composition_id) {
     set_error(nullptr);
     if (text.empty())
         return true;
 
     HWND hwnd = nullptr;
-    HIMC himc = acquire_foreground_himc(&hwnd);
+    const char* source = nullptr;
+    HIMC himc = acquire_foreground_himc(&hwnd, &source);
+    trace_stage_imm_target("commit", hwnd, himc, source, input_id, composition_id);
     if (!himc) {
         set_error("commit:no_himc");
         return false;
     }
 
     bool ok = write_composition(himc, {}, text);
-    if (ok)
+    trace_stage_imm_write("commit", himc, {}, text, ok, input_id, composition_id);
+    if (ok) {
         ok = append_message(himc, WM_IME_COMPOSITION, 0, GCS_RESULTSTR | GCS_RESULTCLAUSE);
-    if (ok && _composing)
+        trace_stage_imm_message(WM_IME_COMPOSITION, GCS_RESULTSTR | GCS_RESULTCLAUSE, ok,
+                                input_id, composition_id);
+    }
+    if (ok && _composing) {
         ok = append_message(himc, WM_IME_ENDCOMPOSITION, 0, 0);
+        trace_stage_imm_message(WM_IME_ENDCOMPOSITION, 0, ok, input_id, composition_id);
+    }
 
     ImmReleaseContext(hwnd, himc);
     _composing = false;
@@ -225,7 +260,7 @@ bool ImmBridge::commit_text(const std::wstring& text) {
     return ok;
 }
 
-void ImmBridge::clear() {
+void ImmBridge::clear(uint64_t input_id, uint64_t composition_id) {
     set_error(nullptr);
 
     HWND hwnd = nullptr;
@@ -234,13 +269,19 @@ void ImmBridge::clear() {
         hwnd = _hwnd;
         himc = acquire_himc_for_window(hwnd);
     }
+    const char* source = himc ? "remembered_window" : nullptr;
     if (!himc)
-        himc = acquire_foreground_himc(&hwnd);
+        himc = acquire_foreground_himc(&hwnd, &source);
+    trace_stage_imm_target("clear", hwnd, himc, source, input_id, composition_id);
 
     if (himc) {
-        write_composition(himc, {}, {});
-        if (_composing)
-            append_message(himc, WM_IME_ENDCOMPOSITION, 0, 0);
+        const bool write_ok = write_composition(himc, {}, {});
+        trace_stage_imm_write("clear", himc, {}, {}, write_ok, input_id, composition_id);
+        if (_composing) {
+            const bool message_ok = append_message(himc, WM_IME_ENDCOMPOSITION, 0, 0);
+            trace_stage_imm_message(
+                WM_IME_ENDCOMPOSITION, 0, message_ok, input_id, composition_id);
+        }
         ImmReleaseContext(hwnd, himc);
     }
 

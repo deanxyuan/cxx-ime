@@ -30,6 +30,7 @@ add_cxxime_test(status_window_test)
 add_cxxime_test(benchmark_test)
 add_cxxime_test(short_cache_test)
 add_cxxime_test(trace_test)
+add_cxxime_test(stage_trace_test)
 add_cxxime_test(mpscq_test)
 add_cxxime_test(config_monitor_test)
 add_cxxime_test(dictionary_monitor_test)
@@ -72,4 +73,12 @@ add_test(NAME session_manager_integration_test COMMAND session_manager_integrati
 find_package(Python3 QUIET)
 if(Python3_FOUND)
     add_test(NAME build_short_cache_test COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/build_short_cache_test.py)
+    find_program(POWERSHELL_EXECUTABLE powershell)
+    if(POWERSHELL_EXECUTABLE)
+        add_test(
+            NAME stage_trace_tools_test
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/stage_trace_tools_test.py
+            --powershell ${POWERSHELL_EXECUTABLE}
+        )
+    endif()
 endif()

@@ -23,6 +23,7 @@ public:
     void select(bool selected);
     void set_active(bool active);
     bool process_key(UINT key_code, LPARAM key_data, const BYTE* key_state);
+    uint32_t last_engine_calls() const { return last_engine_calls_; }
 
     void close_candidate_list();
     void cancel_composition();
@@ -60,6 +61,9 @@ private:
     uint32_t last_highlighted_ = 0;
     DWORD candidate_page_start_ = 0;
     DWORD candidate_page_size_ = 10;
+    uint64_t stage_input_id_ = 0;
+    uint64_t stage_composition_id_ = 0;
+    uint32_t last_engine_calls_ = 0;
 };
 
 std::shared_ptr<LegacyImeSession> find_session(HIMC himc, bool create);

@@ -5,12 +5,14 @@
 #include "edit_session.h"
 #include "candidate_ui_element.h"
 #include "reading_ui_element.h"
+#include "tsf_stage_diagnostics.h"
 #include "display_attribute.h"
 #include "imm_bridge.h"
 #include <cxxime/logging.h>
 #include <cxxime/data_path.h>
 #include <cxxime/diagnostics_config.h>
 #include <cxxime/render_context.h>
+#include <cxxime/stage_trace.h>
 #include "preedit_mode.h"
 #include "language_bar.h"
 #include "about_dialog.h"
@@ -1286,6 +1288,7 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
     _threadMgr->AddRef();
     _clientId = tid;
     _activateFlags = dwFlags;
+    cxxime_tsf::trace_stage_runtime_activate(dwFlags, tid);
     _seenKeyAfterActivate = false;
     _register_display_attribute_atom();
 
@@ -1665,7 +1668,7 @@ STDMETHODIMP TextService::OnTestKeyUp(ITfContext* pic, WPARAM wParam, LPARAM lPa
     *pfEaten = (wParam == VK_CAPITAL) ? TRUE : FALSE;
     CXXIME_LOG(L"OnTestKeyUp: vk=%u, sessionId=%u", (unsigned int)wParam, _sessionId);
     if (wParam != VK_CAPITAL)
-        _ProcessKeyUp(wParam);
+        _ProcessKeyUp(wParam, lParam);
     return S_OK;
 }
 
@@ -1693,19 +1696,23 @@ STDMETHODIMP TextService::OnKeyUp(ITfContext* pic, WPARAM wParam, LPARAM lParam,
         return S_OK;
     }
     // Some apps call OnKeyUp without OnTestKeyUp
-    _ProcessKeyUp(wParam);
+    _ProcessKeyUp(wParam, lParam);
     *pfEaten = FALSE;
     return S_OK;
 }
 
 bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam, BOOL* pfEaten) {
     *pfEaten = FALSE;
+    _stageInputId = cxxime::stage_trace_input_id(static_cast<uint32_t>(wParam), lParam);
 
     bool status_key = is_status_key(wParam);
     const char* block_reason = _input_context_block_reason(pic);
     bool input_allowed = block_reason == nullptr;
     _trace_input_decision(block_reason);
     if (!input_allowed && !status_key) {
+        cxxime_tsf::trace_stage_key_route(
+        _stageInputId, _stageCompositionId, static_cast<uint32_t>(wParam), 0, "blocked",
+        block_reason ? block_reason : "input_context");
         _inputFocused = false;
         _start_state_poll_timer();
         _hide_status_window("hide:key_context_rejected");
@@ -1762,14 +1769,18 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
     CXXIME_LOG(L"_ProcessKeyEvent: vk=%u, mods=%u, composing=%d", (unsigned int)wParam, modifiers, _composing);
 
     cxxime::IPCResponse response = {};
+    uint32_t engine_calls = 0;
+    auto process_key = [&]() {
+        ++engine_calls;
+        return _client.process_key(_sessionId, static_cast<uint32_t>(wParam), modifiers, response);
+    };
     auto ipc_start = std::chrono::steady_clock::now();
-    bool ok = _ensure_ipc_session() &&
-              _client.process_key(_sessionId, (uint32_t)wParam, modifiers, response);
+    bool ok = _ensure_ipc_session() && process_key();
     if (ok && response.status == cxxime::IPCStatus::ERR_INVALID_SESSION) {
         ok = false;
         if (_recreate_ipc_session_preserving_status()) {
             response = {};
-            ok = _client.process_key(_sessionId, (uint32_t)wParam, modifiers, response);
+            ok = process_key();
         }
     }
     auto ipc_end = std::chrono::steady_clock::now();
@@ -1784,12 +1795,15 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
             CXXIME_LOG(L"Reconnected, new sessionId=%u", _sessionId);
             ipc_start = std::chrono::steady_clock::now();
             response = {};
-            ok = _client.process_key(_sessionId, (uint32_t)wParam, modifiers, response);
+            ok = process_key();
             ipc_end = std::chrono::steady_clock::now();
             _last_ipc_us = std::chrono::duration_cast<std::chrono::microseconds>(ipc_end - ipc_start).count();
         }
     }
     _ipcHealthy = ok;
+    cxxime_tsf::trace_stage_key_route(
+        _stageInputId, _stageCompositionId, static_cast<uint32_t>(wParam), engine_calls,
+        ok ? "processed" : "ipc_failed");
 
     // Build trace (populated at all exit paths)
     TsfTrace trace;
@@ -1827,13 +1841,14 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
         _end_reading_ui_element("hide:commit_reading");
         _candidateWindow.set_preedit("");
         std::wstring commit_text = utf8_to_wstring(response.commit_text);
-        if (!commit_text.empty()) {
-        bool bridge_committed = ui_element_only && _immBridge.commit_text(commit_text);
-        if (ui_element_only && !bridge_committed) {
-            _enqueue_event_trace("imm_bridge",
-                                 _immBridge.last_error() ? _immBridge.last_error() : "commit:failed",
-                                 true);
-        }
+            if (!commit_text.empty()) {
+            bool bridge_committed = ui_element_only && _immBridge.commit_text(
+                commit_text, _stageInputId, _stageCompositionId);
+            if (ui_element_only && !bridge_committed) {
+                _enqueue_event_trace("imm_bridge",
+                                    _immBridge.last_error() ? _immBridge.last_error() : "commit:failed",
+                                    true);
+            }
         if (!ui_element_only || !bridge_committed)
             _commit_text(pic, commit_text, true);
             _composing = false;
@@ -1843,6 +1858,7 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
         trace.result = TsfResult::COMMITTED;
         trace.candidate_count = response.candidate_count;
     } else if (response.preedit[0] != '\0') {
+        ensure_stage_composition_id();
         // Decode preedit
         std::wstring preedit;
         int len = MultiByteToWideChar(CP_UTF8, 0, response.preedit, -1, nullptr, 0);
@@ -1872,6 +1888,9 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
         const bool ui_element_only =
             (_activateFlags & TF_TMF_UIELEMENTENABLEDONLY) != 0;
 
+            cxxime_tsf::trace_stage_context(
+        _stageInputId, _stageCompositionId, pic, _threadMgr, ui_element_only);
+
         _caretRect = {};
         _lastInlineCompositionText = ui_element_only
             ? preedit
@@ -1881,7 +1900,7 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
             if (_composing && _composition)
                 _end_composition(pic);
             _composing = true;
-            if (!_immBridge.update_preedit(preedit)) {
+            if (!_immBridge.update_preedit(preedit, _stageInputId, _stageCompositionId)) {
                 _enqueue_event_trace("imm_bridge",
                                      _immBridge.last_error() ? _immBridge.last_error() : "preedit:failed",
                                      true);
@@ -2034,7 +2053,7 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
         _candidateWindow.set_preedit("");
         if (_composing && _composition) update_composition(pic, L"");
         if ((_activateFlags & TF_TMF_UIELEMENTENABLEDONLY) != 0)
-            _immBridge.clear();
+            _immBridge.clear(_stageInputId, _stageCompositionId);
         _end_composition(pic);
         _composing = false;
         // Only eat the key if there was an active composition to clean up.
@@ -2058,12 +2077,24 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
     }
     _enqueue_trace(trace);
 
+    cxxime_tsf::trace_stage_key_result(
+        _stageInputId, _stageCompositionId, static_cast<uint32_t>(wParam), *pfEaten != FALSE,
+        response.preedit[0] ? strlen(response.preedit) : 0, response.candidate_count,
+        response.commit_text[0] ? strlen(response.commit_text) : 0, tsf_result_str(trace.result));
+
+    if (trace.result == TsfResult::COMMITTED || trace.result == TsfResult::CLEARED) {
+        _reset_stage_composition(trace.result == TsfResult::COMMITTED ? "commit" : "clear");
+    }
+
     return *pfEaten != FALSE;
 }
 
-void TextService::_ProcessKeyUp(WPARAM wParam) {
-    if (wParam == VK_CAPITAL)
+void TextService::_ProcessKeyUp(WPARAM wParam, LPARAM lParam) {
+    if (wParam == VK_CAPITAL) {
         return;
+    }
+
+    _stageInputId = cxxime::stage_trace_input_id(static_cast<uint32_t>(wParam), lParam);
 
     // Config is reloaded by watcher thread (not keypress-driven).
     _config = get_config();
@@ -2073,13 +2104,18 @@ void TextService::_ProcessKeyUp(WPARAM wParam) {
                _sessionId);
 
     cxxime::IPCResponse response = {};
-    bool ok = _ensure_ipc_session() &&
-              _client.process_key(_sessionId, (uint32_t)wParam, modifiers, response, true);
+    uint32_t engine_calls = 0;
+    auto process_key_up = [&]() {
+        ++engine_calls;
+        return _client.process_key(
+            _sessionId, static_cast<uint32_t>(wParam), modifiers, response, true);
+    };
+    bool ok = _ensure_ipc_session() && process_key_up();
     if (ok && response.status == cxxime::IPCStatus::ERR_INVALID_SESSION) {
         ok = false;
         if (_recreate_ipc_session_preserving_status()) {
             response = {};
-            ok = _client.process_key(_sessionId, (uint32_t)wParam, modifiers, response, true);
+            ok = process_key_up();
         }
     }
 
@@ -2092,14 +2128,18 @@ void TextService::_ProcessKeyUp(WPARAM wParam) {
         if (_recreate_ipc_session_preserving_status()) {
             CXXIME_LOG(L"_ProcessKeyUp: Reconnected, new sessionId=%u", _sessionId);
             response = {};
-            ok = _client.process_key(_sessionId, (uint32_t)wParam, modifiers, response, true);
+            ok = process_key_up();
         }
     }
     _ipcHealthy = ok;
+    cxxime_tsf::trace_stage_key_route(
+        _stageInputId, _stageCompositionId, static_cast<uint32_t>(wParam), engine_calls,
+        ok ? "processed_key_up" : "ipc_failed_key_up");
 
     CXXIME_LOG(L"_ProcessKeyUp: ok=%d, ascii_mode=%d, commit='%S', composing=%d",
                ok, response.ascii_mode, response.commit_text, response.composing);
 
+    bool committed = false;
     if (ok) {
         if (response.status == cxxime::IPCStatus::OK ||
             response.status == cxxime::IPCStatus::ERR_ENGINE_PROCESS_FAILED) {
@@ -2113,7 +2153,8 @@ void TextService::_ProcessKeyUp(WPARAM wParam) {
             if (!commit_text.empty()) {
                 const bool ui_element_only =
                     (_activateFlags & TF_TMF_UIELEMENTENABLEDONLY) != 0;
-                bool bridge_committed = ui_element_only && _immBridge.commit_text(commit_text);
+                bool bridge_committed = ui_element_only && _immBridge.commit_text(
+                    commit_text, _stageInputId, _stageCompositionId);
                 if (ui_element_only && !bridge_committed) {
                     _enqueue_event_trace("imm_bridge",
                                          _immBridge.last_error() ? _immBridge.last_error() : "commit:failed",
@@ -2133,8 +2174,18 @@ void TextService::_ProcessKeyUp(WPARAM wParam) {
                 _hide_candidate_window("hide:key_up_commit");
                 _end_reading_ui_element("hide:key_up_commit_reading");
                 _candidateWindow.set_preedit("");
+                committed = true;
             }
         }
+    }
+
+    cxxime_tsf::trace_stage_key_result(
+        _stageInputId, _stageCompositionId, static_cast<uint32_t>(wParam), false,
+        response.preedit[0] ? strlen(response.preedit) : 0, response.candidate_count,
+        response.commit_text[0] ? strlen(response.commit_text) : 0,
+        committed ? "key_up_commit" : (ok ? "key_up" : "key_up_failed"));
+    if (committed) {
+        _reset_stage_composition("key_up_commit");
     }
 }
 
@@ -2192,7 +2243,7 @@ void TextService::_AbortComposition() {
     _hide_candidate_window("hide:abort_composition");
     _end_reading_ui_element("hide:abort_composition_reading");
     if ((_activateFlags & TF_TMF_UIELEMENTENABLEDONLY) != 0)
-        _immBridge.clear();
+        _immBridge.clear(_stageInputId, _stageCompositionId);
     _candidateWindow.set_preedit("");
     _lastInlineCompositionText.clear();
     if (_composing) {
@@ -2203,6 +2254,12 @@ void TextService::_AbortComposition() {
         }
         _composing = false;
     }
+    _reset_stage_composition("abort");
+}
+
+void TextService::_reset_stage_composition(const char* reason) {
+    cxxime_tsf::trace_stage_composition_end(_stageInputId, _stageCompositionId, reason);
+    _stageCompositionId = 0;
 }
 
 // ITfThreadMgrEventSink
@@ -2228,7 +2285,8 @@ STDMETHODIMP TextService::OnSetFocus(ITfDocumentMgr* pDocMgrFocus, ITfDocumentMg
         _hide_candidate_window("hide:document_focus_unfocused");
         _end_reading_ui_element("hide:document_focus_unfocused_reading");
         if ((_activateFlags & TF_TMF_UIELEMENTENABLEDONLY) != 0)
-            _immBridge.clear();
+            _immBridge.clear(_stageInputId, _stageCompositionId);
+            _reset_stage_composition("document_unfocused");
         return S_OK;
     }
 
@@ -2247,7 +2305,7 @@ STDMETHODIMP TextService::OnSetFocus(ITfDocumentMgr* pDocMgrFocus, ITfDocumentMg
         _hide_candidate_window("hide:document_focus_switch");
         _end_reading_ui_element("hide:document_focus_switch_reading");
         if ((_activateFlags & TF_TMF_UIELEMENTENABLEDONLY) != 0)
-            _immBridge.clear();
+            _immBridge.clear(_stageInputId, _stageCompositionId);
         _candidateWindow.set_preedit("");
         if (_sessionId && _client.is_connected())
             _client.focus_out(_sessionId);
@@ -2264,6 +2322,7 @@ STDMETHODIMP TextService::OnSetFocus(ITfDocumentMgr* pDocMgrFocus, ITfDocumentMg
             pContext->Release();
         }
         _composing = false;
+        _reset_stage_composition("document_switch");
     }
     return S_OK;
 }
@@ -2464,12 +2523,19 @@ void TextService::trace_ui_element_method(const char* element, const char* metho
     _enqueue_event_trace("ui_element_call", detail, important);
 }
 
+uint64_t TextService::ensure_stage_composition_id() {
+    if (_stageCompositionId == 0) {
+        _stageCompositionId = cxxime::stage_trace_next_id();
+    }
+    return _stageCompositionId;
+}
+
 void TextService::trace_caret_event(const char* action,
-                                     const char* source,
-                                     bool resolved,
-                                     const RECT* rect,
-                                     HRESULT hr,
-                                     bool important) {
+                                    const char* source,
+                                    bool resolved,
+                                    const RECT* rect,
+                                    HRESULT hr,
+                                    bool important) {
     char detail[192] = {};
     if (rect) {
         snprintf(detail, sizeof(detail),

@@ -1,0 +1,31 @@
+project(cxxime-ime-host-probe CXX)
+
+add_executable(cxxime-ime-host-probe WIN32
+    main.cc
+    probe_app.cc
+    probe_ui_elements.cc
+    probe_window.cc
+    ui_element_sink.cc
+)
+
+target_link_libraries(cxxime-ime-host-probe PRIVATE
+    cxxime-shared
+    ole32
+    oleaut32
+    uuid
+    imm32
+    user32
+    gdi32
+)
+
+if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+    set(CXXIME_PROBE_OUTPUT_NAME "cxxime-ime-host-probe-x64")
+elseif(CMAKE_SIZEOF_VOID_P EQUAL 4)
+    set(CXXIME_PROBE_OUTPUT_NAME "cxxime-ime-host-probe-x86")
+else()
+    message(FATAL_ERROR "Unsupported Probe target pointer size: ${CMAKE_SIZEOF_VOID_P}")
+endif()
+
+set_target_properties(cxxime-ime-host-probe PROPERTIES
+    OUTPUT_NAME "${CXXIME_PROBE_OUTPUT_NAME}"
+)

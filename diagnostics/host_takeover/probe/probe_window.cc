@@ -1,0 +1,211 @@
+// Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
+
+#include "probe_app.h"
+
+#include <cxxime/stage_trace.h>
+
+#include <utility>
+
+namespace cxxime_probe {
+
+void ProbeApp::read_composition(LPARAM flags) {
+    if (!himc_) {
+        return;
+    }
+
+    LONG comp_bytes = IMM_ERROR_NODATA;
+    LONG result_bytes = IMM_ERROR_NODATA;
+    std::string result_digest;
+    if ((flags & GCS_COMPSTR) != 0) {
+        comp_bytes = ImmGetCompositionStringW(himc_, GCS_COMPSTR, nullptr, 0);
+        if (comp_bytes >= 0) {
+            std::wstring text(static_cast<size_t>(comp_bytes) / sizeof(wchar_t), L'\0');
+            if (comp_bytes > 0) {
+                ImmGetCompositionStringW(himc_, GCS_COMPSTR, &text[0], comp_bytes);
+            }
+            composition_ = std::move(text);
+        }
+    }
+    if ((flags & GCS_RESULTSTR) != 0) {
+        result_bytes = ImmGetCompositionStringW(himc_, GCS_RESULTSTR, nullptr, 0);
+        if (result_bytes > 0) {
+            std::wstring text(static_cast<size_t>(result_bytes) / sizeof(wchar_t), L'\0');
+            ImmGetCompositionStringW(himc_, GCS_RESULTSTR, &text[0], result_bytes);
+            result_digest = cxxime::stage_trace_digest_utf16(text);
+            committed_ += text;
+        }
+    }
+    cxxime::write_stage_trace("probe", "probe.imm_read", {
+        {"composition_id", ensure_composition_id()},
+        {"flags", static_cast<uint64_t>(flags)},
+        {"comp_bytes", comp_bytes},
+        {"result_bytes", result_bytes},
+        {"comp_len", composition_.size()},
+        {"comp_digest", cxxime::stage_trace_digest_utf16(composition_)},
+        {"result_digest", result_digest},
+        {"committed_len", committed_.size()},
+        {"result", "read"},
+    });
+    InvalidateRect(hwnd_, nullptr, TRUE);
+}
+
+void ProbeApp::trace_ime_message(UINT message, LPARAM flags, const char* action) {
+    cxxime::write_stage_trace("probe", "probe.ime_message", {
+        {"composition_id", composition_id_},
+        {"message", message},
+        {"flags", static_cast<uint64_t>(flags)},
+        {"action", action ? action : ""},
+        {"result", "received"},
+    });
+}
+
+bool ProbeApp::candidate_should_draw() const {
+    if (!gate_on_signal_) {
+        return true;
+    }
+    return composition_active_ || !composition_.empty() || !reading_.empty();
+}
+
+uint64_t ProbeApp::ensure_composition_id() {
+    if (composition_id_ == 0) {
+        composition_id_ = cxxime::stage_trace_next_id();
+    }
+    return composition_id_;
+}
+
+void ProbeApp::paint(HDC dc) {
+    RECT client = {};
+    GetClientRect(hwnd_, &client);
+    FillRect(dc, &client, reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1));
+    SetBkMode(dc, TRANSPARENT);
+    SetTextColor(dc, RGB(30, 34, 40));
+
+    HFONT font = CreateFontW(22, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+                             OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                             DEFAULT_PITCH, L"Segoe UI");
+    HFONT old_font = static_cast<HFONT>(SelectObject(dc, font));
+
+    int y = 68;
+    const std::wstring signal = L"Composition: " + composition_ + L"    Reading: " + reading_;
+    TextOutW(dc, 24, y, signal.c_str(), static_cast<int>(signal.size()));
+    y += 38;
+    const std::wstring committed = L"Committed length: " + std::to_wstring(committed_.size());
+    TextOutW(dc, 24, y, committed.c_str(), static_cast<int>(committed.size()));
+    y += 46;
+
+    RECT separator = {24, y, client.right - 24, y + 1};
+    FillRect(dc, &separator, static_cast<HBRUSH>(GetStockObject(GRAY_BRUSH)));
+    y += 22;
+
+    const bool draw_candidates = candidate_should_draw();
+    std::wstring status = L"Host candidate UI: ";
+    status += candidates_.empty() ? L"no candidate snapshot" :
+              (draw_candidates ? L"visible" : L"hidden by signal gate");
+    TextOutW(dc, 24, y, status.c_str(), static_cast<int>(status.size()));
+    y += 38;
+
+    if (draw_candidates) {
+        for (size_t index = 0; index < candidates_.size() && index < 10; ++index) {
+            RECT row = {24, y, client.right - 24, y + 34};
+            if (index == selection_) {
+                HBRUSH selected = CreateSolidBrush(RGB(218, 235, 255));
+                FillRect(dc, &row, selected);
+                DeleteObject(selected);
+            }
+            const std::wstring line = std::to_wstring(index + 1) + L". " + candidates_[index];
+            TextOutW(dc, 34, y + 5, line.c_str(), static_cast<int>(line.size()));
+            y += 36;
+        }
+    }
+
+    SelectObject(dc, old_font);
+    DeleteObject(font);
+}
+
+LRESULT CALLBACK ProbeApp::window_proc(HWND hwnd,
+                                       UINT message,
+                                       WPARAM wparam,
+                                       LPARAM lparam) {
+    ProbeApp* app = reinterpret_cast<ProbeApp*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    if (message == WM_NCCREATE) {
+        auto* create = reinterpret_cast<CREATESTRUCTW*>(lparam);
+        app = static_cast<ProbeApp*>(create->lpCreateParams);
+        SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(app));
+    }
+    return app ? app->handle_message(message, wparam, lparam)
+               : DefWindowProcW(hwnd, message, wparam, lparam);
+}
+
+LRESULT ProbeApp::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
+    switch (message) {
+    case WM_COMMAND:
+        if (LOWORD(wparam) == kGateCheckboxId) {
+            gate_on_signal_ = SendMessageW(gate_checkbox_, BM_GETCHECK, 0, 0) == BST_CHECKED;
+            cxxime::write_stage_trace("probe", "probe.signal_gate", {
+                {"composition_id", composition_id_},
+                {"enabled", gate_on_signal_},
+                {"result", "changed"},
+            });
+            SetFocus(hwnd_);
+            InvalidateRect(hwnd_, nullptr, TRUE);
+            return 0;
+        }
+        break;
+    case WM_SETFOCUS:
+        CreateCaret(hwnd_, nullptr, 2, 24);
+        SetCaretPos(24, 52);
+        ShowCaret(hwnd_);
+        return 0;
+    case WM_KILLFOCUS:
+        DestroyCaret();
+        return 0;
+    case WM_IME_SETCONTEXT:
+        trace_ime_message(message, lparam, "set_context_suppress_default_ui");
+        return DefWindowProcW(hwnd_, message, wparam, 0);
+    case WM_IME_STARTCOMPOSITION:
+        ensure_composition_id();
+        composition_active_ = true;
+        trace_ime_message(message, lparam, "start");
+        InvalidateRect(hwnd_, nullptr, TRUE);
+        return 0;
+    case WM_IME_COMPOSITION:
+        trace_ime_message(message, lparam, "update");
+        read_composition(lparam);
+        return 0;
+    case WM_IME_ENDCOMPOSITION:
+        trace_ime_message(message, lparam, "end");
+        composition_active_ = false;
+        composition_.clear();
+        InvalidateRect(hwnd_, nullptr, TRUE);
+        if (candidate_element_id_ == TF_INVALID_UIELEMENTID &&
+            reading_element_id_ == TF_INVALID_UIELEMENTID) {
+            composition_id_ = 0;
+        }
+        return 0;
+    case WM_INPUTLANGCHANGE:
+        cxxime::write_stage_trace("probe", "probe.input_language", {
+            {"hkl", reinterpret_cast<uintptr_t>(reinterpret_cast<HKL>(lparam))},
+            {"result", "changed"},
+        });
+        break;
+    case WM_PAINT: {
+        PAINTSTRUCT paint_struct = {};
+        HDC dc = BeginPaint(hwnd_, &paint_struct);
+        paint(dc);
+        EndPaint(hwnd_, &paint_struct);
+        return 0;
+    }
+    case WM_DESTROY:
+        if (himc_) {
+            ImmReleaseContext(hwnd_, himc_);
+            himc_ = nullptr;
+        }
+        PostQuitMessage(0);
+        return 0;
+    default:
+        break;
+    }
+    return DefWindowProcW(hwnd_, message, wparam, lparam);
+}
+
+} // namespace cxxime_probe

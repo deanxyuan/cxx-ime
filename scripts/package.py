@@ -24,6 +24,7 @@ import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCRIPTS = os.path.join(ROOT, "scripts")
+HOST_TAKEOVER_DIAGNOSTICS = os.path.join(ROOT, "diagnostics", "host_takeover")
 DATA = os.path.join(ROOT, "data")
 DEFAULT_BUILD_DIR = os.path.join(ROOT, "build-package")
 DEFAULT_X86_BUILD_DIR = os.path.join(ROOT, "build-package-x86")
@@ -273,9 +274,21 @@ def copy_binaries(build_dir: str, x86_build_dir: str, config: str, include_x86_m
     """Copy built binaries to dist."""
     copy_binary(build_dir, config, "tsf", "cxxime_tsf_x64.dll")
     copy_binary(build_dir, config, "legacy_ime", "cxxime_ime_x64.ime")
+    copy_binary(
+        build_dir,
+        config,
+        "diagnostics/host_takeover/probe",
+        "cxxime-ime-host-probe-x64.exe",
+    )
     if include_x86_modules:
         copy_binary(x86_build_dir, config, "tsf", "cxxime_tsf_x86.dll")
         copy_binary(x86_build_dir, config, "legacy_ime", "cxxime_ime_x86.ime")
+        copy_binary(
+            x86_build_dir,
+            config,
+            "diagnostics/host_takeover/probe",
+            "cxxime-ime-host-probe-x86.exe",
+        )
     copy_binary(build_dir, config, "resource", "cxxime-resources.dll")
     copy_binary(build_dir, config, "server", "cxxime-server.exe")
     copy_binary(build_dir, config, "settings", "cxxime-settings.exe")
@@ -359,6 +372,8 @@ def check_debug_crt(config: str) -> None:
         "cxxime_tsf_x86.dll",
         "cxxime_ime_x64.ime",
         "cxxime_ime_x86.ime",
+        "cxxime-ime-host-probe-x64.exe",
+        "cxxime-ime-host-probe-x86.exe",
         "cxxime-resources.dll",
         "cxxime-server.exe",
         "cxxime-settings.exe",
@@ -493,6 +508,12 @@ def copy_installer_scripts(config: str) -> None:
             shutil.copy2(src, DIST_DIR)
             print(f"  {fn}")
 
+    stage_exporter = os.path.join(
+        HOST_TAKEOVER_DIAGNOSTICS, "scripts", "export_stage_trace.ps1"
+    )
+    shutil.copy2(stage_exporter, DIST_DIR)
+    print("  export_stage_trace.ps1")
+
     # NSIS template
     shutil.copy2(os.path.join(SCRIPTS, "cxxime-setup.nsi"), DIST_DIR)
 
@@ -561,9 +582,11 @@ def print_summary(config: str, include_x86_modules: bool) -> None:
     print("Contents:")
     print("  cxxime_tsf_x64.dll       64-bit TSF text service DLL")
     print("  cxxime_ime_x64.ime       64-bit legacy IMM IME module")
+    print("  cxxime-ime-host-probe-x64.exe 64-bit host takeover Probe")
     if include_x86_modules:
         print("  cxxime_tsf_x86.dll       32-bit TSF text service DLL")
         print("  cxxime_ime_x86.ime       32-bit legacy IMM IME module")
+        print("  cxxime-ime-host-probe-x86.exe 32-bit host takeover Probe")
     print("  cxxime-resources.dll     Stable input profile resources")
     print("  cxxime-server.exe        Background server process")
     print("  cxxime-settings.exe      Configuration editor")

@@ -9,10 +9,12 @@ add_library(cxxime-shared STATIC
     src/diagnostics_config.cc
     src/mpscq.cc
     src/query_trace_log.cc
+    ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/stage_trace.cc
 )
 
 target_include_directories(cxxime-shared PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/include
 )
 
 target_link_libraries(cxxime-shared PUBLIC shell32 bcrypt)

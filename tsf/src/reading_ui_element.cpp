@@ -3,6 +3,7 @@
 #include "reading_ui_element.h"
 #include "globals.h"
 #include "text_service.h"
+#include "tsf_stage_diagnostics.h"
 #include <algorithm>
 
 ReadingUIElement::ReadingUIElement(TextService* service) : _service(service) {}
@@ -22,6 +23,8 @@ STDMETHODIMP ReadingUIElement::QueryInterface(REFIID riid, void** ppvObj) {
         *ppvObj = static_cast<ITfReadingInformationUIElement*>(this);
     }
 
+    const HRESULT result = *ppvObj ? S_OK : E_NOINTERFACE;
+    cxxime_tsf::trace_stage_ui_query(_service, "reading", riid, result);
     if (*ppvObj) {
         AddRef();
         return S_OK;
@@ -56,6 +59,7 @@ STDMETHODIMP ReadingUIElement::GetGUID(GUID* pguid) {
 
 STDMETHODIMP ReadingUIElement::Show(BOOL show) {
     _shown = show;
+    cxxime_tsf::trace_stage_ui_show(_service, "reading", _ui_element_id, show != FALSE);
     return S_OK;
 }
 
@@ -73,6 +77,8 @@ STDMETHODIMP ReadingUIElement::GetUpdatedFlags(DWORD* flags) {
         return E_INVALIDARG;
     *flags = TF_RIUIE_CONTEXT | TF_RIUIE_STRING | TF_RIUIE_MAXREADINGSTRINGLENGTH |
              TF_RIUIE_ERRORINDEX | TF_RIUIE_VERTICALORDER;
+    cxxime_tsf::trace_stage_ui_get_number(
+        _service, "reading", _ui_element_id, "GetUpdatedFlags", "updated_flags", *flags);
     return S_OK;
 }
 
@@ -82,10 +88,16 @@ STDMETHODIMP ReadingUIElement::GetContext(ITfContext** context) {
     if (!context)
         return E_INVALIDARG;
     *context = nullptr;
-    if (!_context)
+    if (!_context) {
+        cxxime_tsf::trace_stage_ui_get_presence(
+            _service, "reading", _ui_element_id, "GetContext", "context_present", false,
+            E_FAIL);
         return E_FAIL;
+    }
     _context->AddRef();
     *context = _context;
+    cxxime_tsf::trace_stage_ui_get_presence(
+        _service, "reading", _ui_element_id, "GetContext", "context_present", true, S_OK);
     return S_OK;
 }
 
@@ -95,7 +107,10 @@ STDMETHODIMP ReadingUIElement::GetString(BSTR* text) {
     if (!text)
         return E_INVALIDARG;
     *text = SysAllocStringLen(_reading.c_str(), static_cast<UINT>(_reading.size()));
-    return *text ? S_OK : E_OUTOFMEMORY;
+    const HRESULT result = *text ? S_OK : E_OUTOFMEMORY;
+    cxxime_tsf::trace_stage_ui_get_number(
+        _service, "reading", _ui_element_id, "GetString", "text_len", _reading.size(), result);
+    return result;
 }
 
 STDMETHODIMP ReadingUIElement::GetMaxReadingStringLength(UINT* max_length) {
@@ -104,6 +119,9 @@ STDMETHODIMP ReadingUIElement::GetMaxReadingStringLength(UINT* max_length) {
     if (!max_length)
         return E_INVALIDARG;
     *max_length = std::max<UINT>(_max_reading_length, static_cast<UINT>(_reading.size()));
+    cxxime_tsf::trace_stage_ui_get_number(_service, "reading", _ui_element_id,
+                                          "GetMaxReadingStringLength", "max_length",
+                                          *max_length);
     return S_OK;
 }
 
@@ -113,6 +131,8 @@ STDMETHODIMP ReadingUIElement::GetErrorIndex(UINT* error_index) {
     if (!error_index)
         return E_INVALIDARG;
     *error_index = static_cast<UINT>(-1);
+    cxxime_tsf::trace_stage_ui_get_number(
+        _service, "reading", _ui_element_id, "GetErrorIndex", "error_index", *error_index);
     return S_OK;
 }
 
@@ -122,6 +142,8 @@ STDMETHODIMP ReadingUIElement::IsVerticalOrderPreferred(BOOL* vertical) {
     if (!vertical)
         return E_INVALIDARG;
     *vertical = FALSE;
+    cxxime_tsf::trace_stage_ui_get_bool(
+        _service, "reading", _ui_element_id, "IsVerticalOrderPreferred", "vertical", false);
     return S_OK;
 }
 
@@ -134,6 +156,8 @@ void ReadingUIElement::set_reading(ITfContext* context, const std::wstring& read
     }
     _reading = reading;
     _max_reading_length = std::max<UINT>(_max_reading_length, static_cast<UINT>(_reading.size()));
+    cxxime_tsf::trace_stage_reading_snapshot(
+        _service, _reading, _max_reading_length, _context != nullptr);
 }
 
 bool ReadingUIElement::begin(ITfThreadMgr* thread_mgr) {
@@ -143,6 +167,10 @@ bool ReadingUIElement::begin(ITfThreadMgr* thread_mgr) {
     ITfUIElementMgr* ui_mgr = nullptr;
     if (FAILED(query_ui_element_mgr(thread_mgr, &ui_mgr)) || !ui_mgr) {
         _show_external = TRUE;
+        const bool show_external = true;
+        cxxime_tsf::trace_stage_reading_lifecycle(
+            _service, "begin", TF_INVALID_UIELEMENTID, E_NOINTERFACE,
+            "ui_element_mgr_unavailable", &show_external);
         return true;
     }
 
@@ -154,12 +182,18 @@ bool ReadingUIElement::begin(ITfThreadMgr* thread_mgr) {
 
     if (FAILED(hr)) {
         _show_external = TRUE;
+        const bool show_external = true;
+        cxxime_tsf::trace_stage_reading_lifecycle(
+            _service, "begin", element_id, hr, "failed", &show_external);
         return true;
     }
 
     _active = true;
     _ui_element_id = element_id;
     _shown = _show_external;
+    const bool show_external = _show_external != FALSE;
+    cxxime_tsf::trace_stage_reading_lifecycle(
+        _service, "begin", _ui_element_id, hr, "success", &show_external);
     return wants_external_window();
 }
 
@@ -169,8 +203,13 @@ void ReadingUIElement::notify_update(ITfThreadMgr* thread_mgr) {
 
     ITfUIElementMgr* ui_mgr = nullptr;
     if (SUCCEEDED(query_ui_element_mgr(thread_mgr, &ui_mgr)) && ui_mgr) {
-        ui_mgr->UpdateUIElement(_ui_element_id);
+        const HRESULT hr = ui_mgr->UpdateUIElement(_ui_element_id);
+        cxxime_tsf::trace_stage_reading_lifecycle(
+            _service, "update", _ui_element_id, hr, SUCCEEDED(hr) ? "success" : "failed");
         ui_mgr->Release();
+    } else {
+        cxxime_tsf::trace_stage_reading_lifecycle(
+            _service, "update", _ui_element_id, E_NOINTERFACE, "ui_element_mgr_unavailable");
     }
 }
 
@@ -182,10 +221,14 @@ void ReadingUIElement::end(ITfThreadMgr* thread_mgr) {
     }
 
     ITfUIElementMgr* ui_mgr = nullptr;
+    HRESULT end_hr = E_NOINTERFACE;
     if (SUCCEEDED(query_ui_element_mgr(thread_mgr, &ui_mgr)) && ui_mgr) {
-        ui_mgr->EndUIElement(_ui_element_id);
+        end_hr = ui_mgr->EndUIElement(_ui_element_id);
         ui_mgr->Release();
     }
+
+    cxxime_tsf::trace_stage_reading_lifecycle(
+        _service, "end", _ui_element_id, end_hr, SUCCEEDED(end_hr) ? "success" : "failed");
 
     _active = false;
     _show_external = TRUE;
