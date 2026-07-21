@@ -155,7 +155,10 @@ Section "Install"
     File "cxxime-resources.dll"
     File "cxxime-server.exe"
     File "cxxime-settings.exe"
+    File "cxxime-ime-host-probe-x64.exe"
+    File "cxxime-ime-host-probe-x86.exe"
     File "collect_diagnostics.ps1"
+    File "export_stage_trace.ps1"
 
     !ifdef FAST
         SetCompress off
@@ -245,7 +248,10 @@ Section "Install"
     SetShellVarContext all
     CreateDirectory "$SMPROGRAMS\CxxIME"
     CreateShortCut "$SMPROGRAMS\CxxIME\CxxIME Settings.lnk" "$INSTDIR\cxxime-settings.exe"
+    CreateShortCut "$SMPROGRAMS\CxxIME\Host Candidate Probe x64.lnk" "$INSTDIR\cxxime-ime-host-probe-x64.exe"
+    CreateShortCut "$SMPROGRAMS\CxxIME\Host Candidate Probe x86.lnk" "$INSTDIR\cxxime-ime-host-probe-x86.exe"
     CreateShortCut "$SMPROGRAMS\CxxIME\Collect Diagnostics.lnk" "$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" '-NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\collect_diagnostics.ps1"'
+    CreateShortCut "$SMPROGRAMS\CxxIME\Export Stage 1 Trace.lnk" "$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" '-NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\export_stage_trace.ps1"'
     CreateShortCut "$SMPROGRAMS\CxxIME\Uninstall CxxIME.lnk" "$INSTDIR\uninstall.exe"
 SectionEnd
 
@@ -339,6 +345,9 @@ Section "Uninstall"
         Delete /REBOOTOK "$INSTDIR\cxxime-resources.dll"
     resources_dll_deleted:
     Delete "$INSTDIR\collect_diagnostics.ps1"
+    Delete "$INSTDIR\export_stage_trace.ps1"
+    Delete "$INSTDIR\cxxime-ime-host-probe-x64.exe"
+    Delete "$INSTDIR\cxxime-ime-host-probe-x86.exe"
     Delete "$INSTDIR\cxxime-server.exe"
     Delete "$INSTDIR\cxxime-settings.exe"
     Delete "$INSTDIR\data\default.json"

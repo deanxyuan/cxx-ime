@@ -11,9 +11,13 @@ namespace cxxime_tsf {
 
 class ImmBridge {
 public:
-    bool update_preedit(const std::wstring& preedit);
-    bool commit_text(const std::wstring& text);
-    void clear();
+    bool update_preedit(const std::wstring& preedit,
+                        uint64_t input_id = 0,
+                        uint64_t composition_id = 0);
+    bool commit_text(const std::wstring& text,
+                     uint64_t input_id = 0,
+                     uint64_t composition_id = 0);
+    void clear(uint64_t input_id = 0, uint64_t composition_id = 0);
 
     const char* last_error() const { return _lastError; }
 

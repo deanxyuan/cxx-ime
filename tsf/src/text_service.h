@@ -79,6 +79,9 @@ public:
     void abort_candidate_ui_from_tsf();
     HRESULT finalize_exact_candidate_ui_from_tsf();
     void trace_ui_element_method(const char* element, const char* method, bool important = false);
+    uint64_t stage_input_id() const { return _stageInputId; }
+    uint64_t stage_composition_id() const { return _stageCompositionId; }
+    uint64_t ensure_stage_composition_id();
     void trace_caret_event(const char* action,
                            const char* source,
                            bool resolved,
@@ -137,8 +140,9 @@ private:
     HRESULT _end_composition(ITfContext* pic);
     HRESULT _commit_text(ITfContext* pic, const std::wstring& text, bool sync = false);
     bool _ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam, BOOL* pfEaten);
-    void _ProcessKeyUp(WPARAM wParam);
+    void _ProcessKeyUp(WPARAM wParam, LPARAM lParam);
     void _AbortComposition();
+    void _reset_stage_composition(const char* reason);
     ITfContext* _current_edit_context_for_composition() const;
     uint32_t _get_modifiers() const;
     bool _is_caps_lock_on(bool allow_recent_hint = false) const;
@@ -203,7 +207,7 @@ private:
     bool _candidateShowPending = false;
     bool _candidatePendingHasStaleRect = false;
     RECT _candidatePendingStaleRect = {};
-std::chrono::steady_clock::time_point _candidateShowPendingSince = {};
+    std::chrono::steady_clock::time_point _candidateShowPendingSince = {};
     UINT_PTR _statePollTimer = 0;
     std::chrono::steady_clock::time_point _lastIpcHeartbeat = {};
     bool _ipcHealthy = true;
@@ -226,6 +230,8 @@ std::chrono::steady_clock::time_point _candidateShowPendingSince = {};
     std::chrono::steady_clock::time_point _key_event_start;
     int64_t _last_ipc_us = 0;
     int64_t _last_window_update_us = 0;
+    uint64_t _stageInputId = 0;
+    uint64_t _stageCompositionId = 0;
 
     // Async trace writer (bounded queue, writer thread, batch flush)
     void _enqueue_trace(const TsfTrace& trace);

@@ -14,6 +14,10 @@ endif()
 
 option(CXXIME_BUILD_TESTS "Build tests" ON)
 option(CXXIME_BUILD_TOOLS "Build development tools" ON)
+option(CXXIME_BUILD_HOST_PROBE "Build the staged IME host diagnostic probe" ON)
+set(CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR
+    "${CMAKE_SOURCE_DIR}/diagnostics/host_takeover"
+)
 
 # Data directory resolution:
 #   Production (default): CXXIME_PRODUCTION_BUILD=ON  → <exe_dir>/data/
@@ -35,9 +39,16 @@ add_subdirectory(tsf)
 add_subdirectory(server)
 add_subdirectory(ui)
 
+if(CXXIME_BUILD_HOST_PROBE)
+    add_subdirectory(diagnostics/host_takeover/probe)
+endif()
+
 add_custom_target(cxxime-platform-modules
     DEPENDS cxxime-ime cxxime-tsf
 )
+if(CXXIME_BUILD_HOST_PROBE)
+    add_dependencies(cxxime-platform-modules cxxime-ime-host-probe)
+endif()
 
 if(CXXIME_BUILD_TESTS)
     enable_testing()

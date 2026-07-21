@@ -20,6 +20,14 @@ insert_final_newline = true
 [*.bat]
 end_of_line = crlf
 
+[*.nsi]
+charset = utf-8
+indent_size = 4
+indent_style = space
+end_of_line = crlf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
 [CMakeLists.txt]
 indent_size = 4
 indent_style = space

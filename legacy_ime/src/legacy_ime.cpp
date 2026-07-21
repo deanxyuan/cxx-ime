@@ -3,6 +3,9 @@
 #include "legacy_common.h"
 #include "legacy_session.h"
 #include "legacy_ui.h"
+#include "legacy_stage_diagnostics.h"
+
+#include <cxxime/stage_trace.h>
 
 #include <cstring>
 #include <memory>
@@ -29,6 +32,8 @@ extern "C" BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID) {
 }
 
 extern "C" BOOL WINAPI ImeInquire(LPIMEINFO ime_info, LPTSTR ui_class, DWORD system_info_flags) {
+    cxxime_legacy::trace_stage_legacy_inquire(
+        system_info_flags, ime_info != nullptr && ui_class != nullptr);
     if (!ime_info || !ui_class) {
         return FALSE;
     }
@@ -49,6 +54,7 @@ extern "C" BOOL WINAPI ImeInquire(LPIMEINFO ime_info, LPTSTR ui_class, DWORD sys
 }
 
 extern "C" BOOL WINAPI ImeSelect(HIMC himc, BOOL select) {
+    cxxime_legacy::trace_stage_legacy_select(himc, select != FALSE);
     if (g_winlogon) {
         return TRUE;
     }
@@ -72,6 +78,7 @@ extern "C" BOOL WINAPI ImeSelect(HIMC himc, BOOL select) {
 }
 
 extern "C" BOOL WINAPI ImeSetActiveContext(HIMC himc, BOOL active) {
+    cxxime_legacy::trace_stage_legacy_active_context(himc, active != FALSE);
     if (g_winlogon) {
         return TRUE;
     }
@@ -86,23 +93,40 @@ extern "C" BOOL WINAPI ImeSetActiveContext(HIMC himc, BOOL active) {
 
 extern "C" BOOL WINAPI ImeProcessKey(HIMC himc, UINT virtual_key, LPARAM key_data,
                                      CONST LPBYTE key_state) {
+    const uint64_t input_id = cxxime::stage_trace_input_id(virtual_key, key_data);
     if (g_winlogon) {
+        cxxime_legacy::trace_stage_legacy_process_key(
+            himc, input_id, virtual_key, key_data, 0, false, "winlogon_rejected", false);
         return FALSE;
     }
 
     std::shared_ptr<cxxime_legacy::LegacyImeSession> session =
         cxxime_legacy::find_session(himc, true);
     if (!session) {
+        cxxime_legacy::trace_stage_legacy_process_key(
+            himc, input_id, virtual_key, key_data, 0, false, "no_session", false);
         return FALSE;
     }
-    return session->process_key(virtual_key, key_data, key_state) ? TRUE : FALSE;
+    const BOOL eaten = session->process_key(virtual_key, key_data, key_state) ? TRUE : FALSE;
+    cxxime_legacy::trace_stage_legacy_process_key(
+        himc, input_id, virtual_key, key_data, session->last_engine_calls(), eaten != FALSE,
+        eaten ? "processed_eaten" : "processed_passed", true);
+    return eaten;
 }
 
-extern "C" UINT WINAPI ImeToAsciiEx(UINT, UINT, CONST LPBYTE, LPTRANSMSGLIST, UINT, HIMC) {
+extern "C" UINT WINAPI ImeToAsciiEx(UINT virtual_key,
+                                    UINT scan_code,
+                                    CONST LPBYTE,
+                                    LPTRANSMSGLIST,
+                                    UINT state,
+                                    HIMC himc) {
+    cxxime_legacy::trace_stage_legacy_to_ascii(
+        himc, cxxime::stage_trace_input_id(virtual_key, scan_code), virtual_key, scan_code, state);
     return 0;
 }
 
 extern "C" BOOL WINAPI NotifyIME(HIMC himc, DWORD action, DWORD index, DWORD value) {
+    cxxime_legacy::trace_stage_legacy_notify(himc, action, index, value);
     if (g_winlogon) {
         return TRUE;
     }
@@ -195,6 +219,7 @@ extern "C" BOOL WINAPI ImeSetCompositionString(HIMC, DWORD, LPVOID, DWORD, LPVOI
 }
 
 extern "C" BOOL WINAPI ImeDestroy(UINT) {
+    cxxime_legacy::trace_stage_legacy_destroy();
     cxxime_legacy::clear_sessions(true);
     return TRUE;
 }

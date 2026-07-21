@@ -1,6 +1,9 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
 #include "legacy_session.h"
+#include "legacy_stage_diagnostics.h"
+
+#include <cxxime/stage_trace.h>
 
 #include <algorithm>
 #include <cstring>
@@ -87,6 +90,8 @@ void LegacyImeSession::set_active(bool active) {
 }
 
 bool LegacyImeSession::process_key(UINT key_code, LPARAM key_data, const BYTE* key_state) {
+    stage_input_id_ = cxxime::stage_trace_input_id(key_code, key_data);
+    last_engine_calls_ = 0;
     if (!ImmGetOpenStatus(himc_)) {
         return false;
     }
@@ -107,6 +112,7 @@ bool LegacyImeSession::process_key(UINT key_code, LPARAM key_data, const BYTE* k
     }
 
     cxxime::IPCResponse response = {};
+    ++last_engine_calls_;
     if (!client_.process_key(session_id_, key_code, modifiers, response, is_key_up) ||
         response.status == cxxime::IPCStatus::ERR_INVALID_SESSION) {
         end_server_session();
@@ -114,13 +120,27 @@ bool LegacyImeSession::process_key(UINT key_code, LPARAM key_data, const BYTE* k
             return false;
         }
         response = {};
+        ++last_engine_calls_;
         if (!client_.process_key(session_id_, key_code, modifiers, response, is_key_up)) {
             return false;
         }
     }
 
+    const bool has_visible_state = response.composing || response.preedit[0] ||
+                                   response.commit_text[0] || response.candidate_count > 0;
+    if (has_visible_state && stage_composition_id_ == 0) {
+        stage_composition_id_ = cxxime::stage_trace_next_id();
+    }
+    trace_stage_legacy_response(
+        stage_input_id_, stage_composition_id_, session_id_, key_code,
+        static_cast<int>(response.status), response.composing, strlen(response.preedit),
+        strlen(response.commit_text), response.candidate_count, response.highlighted);
     apply_response(response);
-    return should_eat_response(response, key_code, was_composing);
+    const bool eaten = should_eat_response(response, key_code, was_composing);
+    if (!composing_ && !candidate_open_) {
+        stage_composition_id_ = 0;
+    }
+    return eaten;
 }
 
 void LegacyImeSession::close_candidate_list() {
@@ -321,6 +341,9 @@ void LegacyImeSession::update_composition(const std::wstring& preedit,
     write_composition(truncate_text(preedit), {});
     write_candidates(candidates, highlighted);
 
+    trace_stage_legacy_candidate_signal(stage_input_id_, stage_composition_id_, preedit.size(),
+                                        candidates.size(), highlighted, candidate_open_);
+
     if (!composing_) {
         add_ime_message(WM_IME_STARTCOMPOSITION, 0, 0);
         composing_ = true;
@@ -391,6 +414,9 @@ void LegacyImeSession::write_composition(std::wstring preedit, std::wstring resu
 
     ImmUnlockIMCC(input_context->hCompStr);
     ImmUnlockIMC(himc_);
+
+    trace_stage_legacy_imm_write(
+        himc_, stage_input_id_, stage_composition_id_, preedit, result);
 }
 
 void LegacyImeSession::write_candidates(const std::vector<std::wstring>& raw_candidates,
@@ -413,6 +439,10 @@ void LegacyImeSession::write_candidates(const std::vector<std::wstring>& raw_can
         }
     }
     rewrite_last_candidates(false);
+
+    trace_stage_legacy_candidate_snapshot(
+        himc_, stage_input_id_, stage_composition_id_, last_candidates_, last_highlighted_,
+        candidate_page_start_, candidate_page_size_);
 }
 
 void LegacyImeSession::rewrite_last_candidates(bool notify_change) {
@@ -518,7 +548,9 @@ void LegacyImeSession::add_ime_message(UINT message, WPARAM wparam, LPARAM lpara
 
     ImmUnlockIMCC(input_context->hMsgBuf);
     ImmUnlockIMC(himc_);
-    ImmGenerateMessage(himc_);
+    const BOOL generated = ImmGenerateMessage(himc_);
+    trace_stage_legacy_imm_message(himc_, stage_input_id_, stage_composition_id_, message,
+                                   wparam, lparam, generated != FALSE);
 }
 
 std::shared_ptr<LegacyImeSession> find_session(HIMC himc, bool create) {

@@ -15,12 +15,14 @@ add_library(cxxime-tsf SHARED
     src/resource_loader.cc
     src/language_bar.cpp
     src/status_controller.cc
+    ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_stage_diagnostics.cc
     cxxime_tsf.def
 )
 
 target_include_directories(cxxime-tsf PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/resource
+    ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src
 )
 
 target_link_libraries(cxxime-tsf PRIVATE
