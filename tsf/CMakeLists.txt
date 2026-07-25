@@ -10,7 +10,6 @@ add_library(cxxime-tsf SHARED
     src/text_service_activation.cpp
     src/key_event_sink.cpp
     src/edit_session.cpp
-    src/imm_bridge.cpp
     src/candidate_ui_element.cpp
     src/reading_ui_element.cpp
     src/display_attribute.cpp
@@ -23,7 +22,6 @@ add_library(cxxime-tsf SHARED
     src/host_compatibility/host_ime_private_api.cc
     ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_composition.cc
     ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_activation.cc
-    ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_imm_form.cc
     ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_imm_mode.cc
     ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_stage.cc
     ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_host_window.cc

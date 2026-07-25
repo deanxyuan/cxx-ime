@@ -28,7 +28,6 @@ void TextService::_stop_host_takeover_runtime() {
         return;
     }
 
-    _hostImmCandidateBridgeEnabled = false;
     const cxxime_tsf::HostClassificationCompatibilitySnapshot snapshot =
         cxxime_tsf::deactivate_host_classification_compatibility();
     cxxime_tsf::trace_stage_host_classification_compatibility(snapshot);

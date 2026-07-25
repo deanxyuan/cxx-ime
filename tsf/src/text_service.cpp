@@ -1149,7 +1149,6 @@ void TextService::_hide_candidate_window(const char* reason) {
     if (_candidateUiElement) {
         _candidateUiElement->end(_threadMgr);
     }
-    _set_host_candidate_notifications_open(false);
 }
 
 void TextService::_update_reading_ui_element(ITfContext* context, const std::wstring& reading) {

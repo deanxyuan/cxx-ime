@@ -5,8 +5,6 @@
 
 #include "pch.h"
 
-#include <imm.h>
-
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -138,41 +136,6 @@ void trace_stage_reading_lifecycle(TextService* service,
                                    HRESULT result,
                                    const char* result_name,
                                    const bool* show_external = nullptr);
-
-void trace_stage_imm_target(const char* action,
-                            HWND hwnd,
-                            HIMC himc,
-                            const char* source,
-                            uint64_t input_id,
-                            uint64_t composition_id);
-void trace_stage_imm_write(const char* action,
-                           HIMC himc,
-                           const std::wstring& composition,
-                           const std::wstring& result,
-                           bool write_ok,
-                           uint64_t input_id,
-                           uint64_t composition_id);
-void trace_stage_imm_candidate(const char* action,
-                               HIMC himc,
-                               const std::vector<std::wstring>& candidates,
-                               uint32_t selection,
-                               WPARAM command,
-                               bool write_ok,
-                               bool message_ok,
-                               uint64_t input_id,
-                               uint64_t composition_id);
-void trace_stage_imm_candidate_lifecycle(const char* action,
-                                         HIMC himc,
-                                         WPARAM command,
-                                         bool message_ok,
-                                         const char* transport,
-                                         uint64_t input_id,
-                                         uint64_t composition_id);
-void trace_stage_imm_message(UINT message,
-                             LPARAM flags,
-                             bool ok,
-                             uint64_t input_id,
-                             uint64_t composition_id);
 
 } // namespace cxxime_tsf
 
