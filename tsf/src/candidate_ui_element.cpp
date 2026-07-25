@@ -75,15 +75,30 @@ STDMETHODIMP CandidateUIElement::GetGUID(GUID* pguid) {
 }
 
 STDMETHODIMP CandidateUIElement::Show(BOOL show) {
-    _shown = show;
-    cxxime_tsf::trace_stage_ui_show(_service, "candidate", _ui_element_id, show != FALSE);
-    return S_OK;
+    const bool requested_show = show != FALSE;
+    if (!_active || !_service) {
+        cxxime_tsf::trace_stage_ui_show(
+            _service, "candidate", _ui_element_id, requested_show, false, E_FAIL);
+        return E_FAIL;
+    }
+
+    _show_external = show;
+    const bool actual_show = _service->set_candidate_ui_element_shown(requested_show);
+    _shown = actual_show ? TRUE : FALSE;
+    const HRESULT result = !requested_show || actual_show ? S_OK : E_FAIL;
+    cxxime_tsf::trace_stage_ui_show(
+        _service, "candidate", _ui_element_id, requested_show, actual_show, result);
+    return result;
 }
 
 STDMETHODIMP CandidateUIElement::IsShown(BOOL* show) {
-    if (!show)
+    if (!show) {
         return E_INVALIDARG;
+    }
+    _shown = _active && _service && _service->is_candidate_ui_element_shown() ? TRUE : FALSE;
     *show = _shown;
+    cxxime_tsf::trace_stage_ui_get_bool(
+        _service, "candidate", _ui_element_id, "IsShown", "shown", _shown != FALSE);
     return S_OK;
 }
 
@@ -280,7 +295,7 @@ bool CandidateUIElement::begin(ITfThreadMgr* thread_mgr) {
 
     _active = true;
     _ui_element_id = element_id;
-    _shown = _show_external;
+    _shown = FALSE;
     const bool show_external = _show_external != FALSE;
     cxxime_tsf::trace_stage_candidate_lifecycle(
         _service, "begin", _ui_element_id, hr, "success", &show_external);

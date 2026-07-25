@@ -51,7 +51,9 @@ void trace_stage_ui_query(TextService* service,
 void trace_stage_ui_show(TextService* service,
                          const char* element_type,
                          DWORD element_id,
-                         bool show);
+                         bool requested_show,
+                         bool actual_show,
+                         HRESULT result);
 void trace_stage_ui_get_number(TextService* service,
                                const char* element_type,
                                DWORD element_id,

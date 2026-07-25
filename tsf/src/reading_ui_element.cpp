@@ -59,7 +59,8 @@ STDMETHODIMP ReadingUIElement::GetGUID(GUID* pguid) {
 
 STDMETHODIMP ReadingUIElement::Show(BOOL show) {
     _shown = show;
-    cxxime_tsf::trace_stage_ui_show(_service, "reading", _ui_element_id, show != FALSE);
+    cxxime_tsf::trace_stage_ui_show(
+        _service, "reading", _ui_element_id, show != FALSE, _shown != FALSE, S_OK);
     return S_OK;
 }
 

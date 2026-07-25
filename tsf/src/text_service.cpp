@@ -519,7 +519,10 @@ void TextService::update_candidate_position(const RECT& rc,
     }
 
     _caretRect = final_rect;
-    if ((_activateFlags & TF_TMF_UIELEMENTENABLEDONLY) != 0) {
+    const bool ui_element_only = (_activateFlags & TF_TMF_UIELEMENTENABLEDONLY) != 0;
+    const bool original_ui_allowed =
+        _candidateUiElement && _candidateUiElement->wants_external_window();
+    if (ui_element_only && !original_ui_allowed) {
         trace_caret_event("move", "ui_element_only", false, &final_rect);
         return;
     }
@@ -723,7 +726,10 @@ void TextService::_request_candidate_position_update(ITfContext* pic,
                                                      bool from_layout_change) {
     if (!pic || !_composing || (!_candidateWindow.is_visible() && !_candidateShowPending))
         return;
-    if ((_activateFlags & TF_TMF_UIELEMENTENABLEDONLY) != 0) {
+    const bool ui_element_only = (_activateFlags & TF_TMF_UIELEMENTENABLEDONLY) != 0;
+    const bool original_ui_allowed =
+        _candidateUiElement && _candidateUiElement->wants_external_window();
+    if (ui_element_only && !original_ui_allowed) {
         trace_caret_event("request_update", "ui_element_only", false, nullptr);
         return;
     }
@@ -1139,11 +1145,11 @@ void TextService::_hide_external_candidate_window(const char* reason) {
 }
 
 void TextService::_hide_candidate_window(const char* reason) {
+    _hide_external_candidate_window(reason);
     if (_candidateUiElement) {
         _candidateUiElement->end(_threadMgr);
     }
     _set_host_candidate_notifications_open(false);
-    _hide_external_candidate_window(reason);
 }
 
 void TextService::_update_reading_ui_element(ITfContext* context, const std::wstring& reading) {
@@ -1842,9 +1848,8 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
                 external_candidate_window = _publish_candidate_ui_element(
                     page, response.candidate_count, response.page_current, response.page_total);
             }
-            if (external_candidate_window &&
-                (_activateFlags & TF_TMF_UIELEMENTENABLEDONLY) == 0) {
-                    bool candidate_was_visible = _candidateWindow.is_visible();
+            if (external_candidate_window) {
+                bool candidate_was_visible = _candidateWindow.is_visible();
                 _candidateWindow.set_page_info((int)response.page_current, (int)response.page_total);
                 _candidateWindow.update(page);
 
@@ -1910,8 +1915,6 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
                     _show_candidate_window("show:preedit");
                     _request_candidate_position_update(pic, "show:preedit_layout_follow");
                 }
-                } else if (external_candidate_window) {
-                    _hide_external_candidate_window("hide:ui_element_only");
             } else {
                 _hide_external_candidate_window("hide:tsf_ui_integrated");
             }

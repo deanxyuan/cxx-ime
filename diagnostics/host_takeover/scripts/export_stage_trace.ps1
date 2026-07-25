@@ -4,7 +4,7 @@
 
 param(
     [int]$Stage = 1,
-    [string]$BuildId = "cxxime-host-takeover-20260725-a",
+    [string]$BuildId = "cxxime-host-takeover-20260725-b",
     [string]$LogsDir = "",
     [string]$OutputDir = ""
 )
