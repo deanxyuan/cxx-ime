@@ -1,7 +1,7 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
-#ifndef CXXIME_DIAGNOSTICS_HOST_TAKEOVER_UI_ELEMENT_SINK_H_
-#define CXXIME_DIAGNOSTICS_HOST_TAKEOVER_UI_ELEMENT_SINK_H_
+#ifndef CXXIME_HOST_TAKEOVER_UI_ELEMENT_SINK_H_
+#define CXXIME_HOST_TAKEOVER_UI_ELEMENT_SINK_H_
 
 #include <msctf.h>
 
@@ -31,4 +31,4 @@ private:
 
 } // namespace cxxime_probe
 
-#endif // CXXIME_DIAGNOSTICS_HOST_TAKEOVER_UI_ELEMENT_SINK_H_
+#endif // CXXIME_HOST_TAKEOVER_UI_ELEMENT_SINK_H_

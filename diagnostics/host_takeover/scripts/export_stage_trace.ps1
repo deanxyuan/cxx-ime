@@ -4,7 +4,7 @@
 
 param(
     [int]$Stage = 1,
-    [string]$BuildId = "dota2-stage1-20260720-a",
+    [string]$BuildId = "cxxime-host-takeover-20260725-a",
     [string]$LogsDir = "",
     [string]$OutputDir = ""
 )

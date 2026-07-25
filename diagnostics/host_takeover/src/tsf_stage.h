@@ -1,7 +1,7 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
-#ifndef CXXIME_DIAGNOSTICS_HOST_TAKEOVER_TSF_STAGE_DIAGNOSTICS_H_
-#define CXXIME_DIAGNOSTICS_HOST_TAKEOVER_TSF_STAGE_DIAGNOSTICS_H_
+#ifndef CXXIME_HOST_TAKEOVER_TSF_STAGE_H_
+#define CXXIME_HOST_TAKEOVER_TSF_STAGE_H_
 
 #include "pch.h"
 
@@ -29,7 +29,7 @@ void trace_stage_context(uint64_t input_id,
                          uint64_t composition_id,
                          ITfContext* input_context,
                          ITfThreadMgr* thread_mgr,
-                         bool ui_element_only);
+                         const char* composition_transport);
 
 void trace_stage_key_result(uint64_t input_id,
                             uint64_t composition_id,
@@ -150,6 +150,22 @@ void trace_stage_imm_write(const char* action,
                            bool write_ok,
                            uint64_t input_id,
                            uint64_t composition_id);
+void trace_stage_imm_candidate(const char* action,
+                               HIMC himc,
+                               const std::vector<std::wstring>& candidates,
+                               uint32_t selection,
+                               WPARAM command,
+                               bool write_ok,
+                               bool message_ok,
+                               uint64_t input_id,
+                               uint64_t composition_id);
+void trace_stage_imm_candidate_lifecycle(const char* action,
+                                         HIMC himc,
+                                         WPARAM command,
+                                         bool message_ok,
+                                         const char* transport,
+                                         uint64_t input_id,
+                                         uint64_t composition_id);
 void trace_stage_imm_message(UINT message,
                              LPARAM flags,
                              bool ok,
@@ -158,4 +174,4 @@ void trace_stage_imm_message(UINT message,
 
 } // namespace cxxime_tsf
 
-#endif // CXXIME_DIAGNOSTICS_HOST_TAKEOVER_TSF_STAGE_DIAGNOSTICS_H_
+#endif // CXXIME_HOST_TAKEOVER_TSF_STAGE_H_

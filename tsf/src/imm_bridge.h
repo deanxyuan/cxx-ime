@@ -17,8 +17,18 @@ public:
     bool commit_text(const std::wstring& text,
                      uint64_t input_id = 0,
                      uint64_t composition_id = 0);
+    bool prepare_candidate_open_status(uint64_t input_id = 0,
+                                        uint64_t composition_id = 0);
+    bool set_candidate_notifications_open(bool open,
+                                          uint64_t input_id = 0,
+                                          uint64_t composition_id = 0);
+    bool notify_candidate_changed(uint64_t input_id = 0,
+                                  uint64_t composition_id = 0);
+    bool align_candidate_forms(uint64_t input_id = 0,
+                               uint64_t composition_id = 0);
     void clear(uint64_t input_id = 0, uint64_t composition_id = 0);
 
+    HWND candidate_window() const { return _candidateHwnd; }
     const char* last_error() const { return _lastError; }
 
 private:
@@ -26,6 +36,8 @@ private:
 
     bool _composing = false;
     HWND _hwnd = nullptr;
+    bool _candidateNotificationsOpen = false;
+    HWND _candidateHwnd = nullptr;
     const char* _lastError = nullptr;
 };
 

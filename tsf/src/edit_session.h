@@ -33,7 +33,17 @@ public:
     void set_position_update_from_layout_change(bool from_layout_change) {
         _positionUpdateFromLayoutChange = from_layout_change;
     }
-    bool get_caret_rect(RECT& out) const { if (_resultValid) { out = _resultRect; return true; } return false; }
+    bool get_caret_rect(RECT& out) const {
+        if (_resultValid) {
+            out = _resultRect;
+            return true;
+        }
+        return false;
+    }
+    HRESULT action_result() const { return _actionResult; }
+    bool composition_start_attempted() const { return _compositionStartAttempted; }
+    HRESULT composition_start_result() const { return _compositionStartResult; }
+    bool composition_returned() const { return _compositionReturned; }
 
 private:
     LONG _cRef = 1;
@@ -44,6 +54,10 @@ private:
     RECT _resultRect = {};
     bool _resultValid = false;
     bool _positionUpdateFromLayoutChange = false;
+    HRESULT _actionResult = E_PENDING;
+    bool _compositionStartAttempted = false;
+    HRESULT _compositionStartResult = E_PENDING;
+    bool _compositionReturned = false;
 };
 
 #endif // CXXIME_TSF_EDIT_SESSION_H_

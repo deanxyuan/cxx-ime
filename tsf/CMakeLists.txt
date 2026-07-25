@@ -5,6 +5,9 @@ add_library(cxxime-tsf SHARED
     src/globals.cpp
     src/class_factory.cpp
     src/text_service.cpp
+    src/text_service_candidate.cpp
+    src/text_service_composition.cpp
+    src/text_service_activation.cpp
     src/key_event_sink.cpp
     src/edit_session.cpp
     src/imm_bridge.cpp
@@ -15,7 +18,26 @@ add_library(cxxime-tsf SHARED
     src/resource_loader.cc
     src/language_bar.cpp
     src/status_controller.cc
-    ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_stage_diagnostics.cc
+    src/host_compatibility/host_classification_compatibility.cc
+    src/host_compatibility/host_classification_runtime.cc
+    src/host_compatibility/host_ime_private_api.cc
+    ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_composition.cc
+    ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_activation.cc
+    ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_imm_form.cc
+    ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_imm_mode.cc
+    ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_stage.cc
+    ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_host_window.cc
+    ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_imm_candidate_snapshot.cc
+    ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_host_imm_state.cc
+    ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_host_message.cc
+    ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_host_callsite.cc
+    ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_host_classification.cc
+    ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_sdl_message_hook.cc
+    ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_sdl_runtime.cc
+    ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_host_classification_message.cc
+    ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_host_ime_private_api.cc
+    ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_ui_element_identity.cc
+    ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_ui_element_observer.cc
     cxxime_tsf.def
 )
 

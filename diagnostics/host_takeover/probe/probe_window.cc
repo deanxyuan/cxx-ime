@@ -46,13 +46,18 @@ void ProbeApp::read_composition(LPARAM flags) {
         {"committed_len", committed_.size()},
         {"result", "read"},
     });
+    trace_imm_candidate_snapshot("composition", candidate_element_id_, "update");
     InvalidateRect(hwnd_, nullptr, TRUE);
 }
 
-void ProbeApp::trace_ime_message(UINT message, LPARAM flags, const char* action) {
+void ProbeApp::trace_ime_message(UINT message,
+                                    WPARAM command,
+                                    LPARAM flags,
+                                    const char* action) {
     cxxime::write_stage_trace("probe", "probe.ime_message", {
         {"composition_id", composition_id_},
         {"message", message},
+        {"command", static_cast<uint64_t>(command)},
         {"flags", static_cast<uint64_t>(flags)},
         {"action", action ? action : ""},
         {"result", "received"},
@@ -130,6 +135,7 @@ LRESULT CALLBACK ProbeApp::window_proc(HWND hwnd,
     if (message == WM_NCCREATE) {
         auto* create = reinterpret_cast<CREATESTRUCTW*>(lparam);
         app = static_cast<ProbeApp*>(create->lpCreateParams);
+        app->hwnd_ = hwnd;
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(app));
     }
     return app ? app->handle_message(message, wparam, lparam)
@@ -160,20 +166,20 @@ LRESULT ProbeApp::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
         DestroyCaret();
         return 0;
     case WM_IME_SETCONTEXT:
-        trace_ime_message(message, lparam, "set_context_suppress_default_ui");
+        trace_ime_message(message, wparam, lparam, "set_context_suppress_default_ui");
         return DefWindowProcW(hwnd_, message, wparam, 0);
     case WM_IME_STARTCOMPOSITION:
         ensure_composition_id();
         composition_active_ = true;
-        trace_ime_message(message, lparam, "start");
+        trace_ime_message(message, wparam, lparam, "start");
         InvalidateRect(hwnd_, nullptr, TRUE);
         return 0;
     case WM_IME_COMPOSITION:
-        trace_ime_message(message, lparam, "update");
+        trace_ime_message(message, wparam, lparam, "update");
         read_composition(lparam);
         return 0;
     case WM_IME_ENDCOMPOSITION:
-        trace_ime_message(message, lparam, "end");
+        trace_ime_message(message, wparam, lparam, "end");
         composition_active_ = false;
         composition_.clear();
         InvalidateRect(hwnd_, nullptr, TRUE);
@@ -182,6 +188,20 @@ LRESULT ProbeApp::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
             composition_id_ = 0;
         }
         return 0;
+    case WM_IME_NOTIFY: {
+        trace_ime_message(message, wparam, lparam, "notify");
+        const bool candidate_notify =
+            wparam == IMN_OPENCANDIDATE || wparam == IMN_CHANGECANDIDATE ||
+            wparam == IMN_CLOSECANDIDATE;
+        if (candidate_notify) {
+            trace_imm_candidate_snapshot("ime_notify", candidate_element_id_, "before");
+        }
+        const LRESULT result = DefWindowProcW(hwnd_, message, wparam, lparam);
+        if (candidate_notify) {
+            trace_imm_candidate_snapshot("ime_notify", candidate_element_id_, "after");
+        }
+        return result;
+    }
     case WM_INPUTLANGCHANGE:
         cxxime::write_stage_trace("probe", "probe.input_language", {
             {"hkl", reinterpret_cast<uintptr_t>(reinterpret_cast<HKL>(lparam))},

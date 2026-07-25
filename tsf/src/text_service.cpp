@@ -5,9 +5,8 @@
 #include "edit_session.h"
 #include "candidate_ui_element.h"
 #include "reading_ui_element.h"
-#include "tsf_stage_diagnostics.h"
+#include "tsf_stage.h"
 #include "display_attribute.h"
-#include "imm_bridge.h"
 #include <cxxime/logging.h>
 #include <cxxime/data_path.h>
 #include <cxxime/diagnostics_config.h>
@@ -442,6 +441,7 @@ TextService::TextService() {}
 TextService::~TextService() {
     _stop_state_poll_timer();
     set_composition_context(nullptr);
+    _stop_host_takeover_runtime();
 }
 
 // Called from DllMain(DLL_PROCESS_DETACH) via globals.cpp
@@ -493,18 +493,6 @@ STDMETHODIMP_(ULONG) TextService::Release() {
     if (cr == 0)
         delete this;
     return cr;
-}
-
-void TextService::set_composition_context(ITfContext* context) {
-    if (_compositionContext == context)
-        return;
-
-    if (_compositionContext)
-        _compositionContext->Release();
-
-    _compositionContext = context;
-    if (_compositionContext)
-        _compositionContext->AddRef();
 }
 
 void TextService::update_candidate_position(const RECT& rc,
@@ -564,25 +552,6 @@ void TextService::update_candidate_position(const RECT& rc,
     _candidateWindow.move_to_caret(final_rect);
 }
 
-ITfContext* TextService::_current_edit_context_for_composition() const {
-    if (_compositionContext) {
-        _compositionContext->AddRef();
-        return _compositionContext;
-    }
-
-    if (!_threadMgr)
-        return nullptr;
-
-    ITfDocumentMgr* doc_mgr = nullptr;
-    if (FAILED(_threadMgr->GetFocus(&doc_mgr)) || !doc_mgr)
-        return nullptr;
-
-    ITfContext* context = nullptr;
-    doc_mgr->GetTop(&context);
-    doc_mgr->Release();
-    return context;
-}
-
 void TextService::_sync_ime_status(const cxxime::ImeStatus& status) {
     bool local_changed = _chinese_mode != status.chinese_mode ||
                          _caps_lock != status.caps_lock;
@@ -604,54 +573,6 @@ void TextService::_sync_ime_status(const cxxime::ImeStatus& status) {
     if (_modeButton) _modeButton->update_from_status(status);
     if (_statusController.is_initialized()) _statusController.sync_status(status);
     _sync_conversion_mode_compartment(status);
-}
-
-void TextService::_sync_conversion_mode_compartment(const cxxime::ImeStatus& status) {
-    if (!_threadMgr || _clientId == TF_CLIENTID_NULL) return;
-
-    ITfCompartmentMgr* compartment_mgr = nullptr;
-    HRESULT hr = _threadMgr->QueryInterface(IID_ITfCompartmentMgr,
-                                            reinterpret_cast<void**>(&compartment_mgr));
-
-    if (FAILED(hr) || !compartment_mgr) return;
-
-    ITfCompartment* compartment = nullptr;
-    hr = compartment_mgr->GetCompartment(GUID_COMPARTMENT_KEYBOARD_INPUTMODE_CONVERSION,
-                                         &compartment);
-    compartment_mgr->Release();
-
-    if (FAILED(hr) || !compartment) return;
-
-    DWORD conversion_mode = 0;
-    VARIANT current = {};
-    VariantInit(&current);
-    if (SUCCEEDED(compartment->GetValue(&current))) {
-        if (current.vt == VT_I4 || current.vt == VT_INT) {
-            conversion_mode = static_cast<DWORD>(current.lVal);
-        } else if (current.vt == VT_UI4 || current.vt == VT_UINT) {
-            conversion_mode = current.ulVal;
-        }
-    }
-    VariantClear(&current);
-
-    DWORD new_mode = conversion_mode;
-    if (status.chinese_mode) {
-        new_mode |= TF_CONVERSIONMODE_NATIVE;
-    } else {
-        new_mode &= ~TF_CONVERSIONMODE_NATIVE;
-    }
-
-    if (new_mode != conversion_mode) {
-        VARIANT next = {};
-        VariantInit(&next);
-        next.vt = VT_I4;
-        next.lVal = static_cast<LONG>(new_mode);
-        hr = compartment->SetValue(_clientId, &next);
-        CXXIME_LOG(L"sync_conversion_mode: chinese=%d, mode=0x%08x->0x%08x, hr=0x%08x",
-                   status.chinese_mode ? 1 : 0, conversion_mode, new_mode, hr);
-        VariantClear(&next);
-    }
-    compartment->Release();
 }
 
 bool TextService::_is_caps_lock_on(bool allow_recent_hint) const {
@@ -1218,8 +1139,10 @@ void TextService::_hide_external_candidate_window(const char* reason) {
 }
 
 void TextService::_hide_candidate_window(const char* reason) {
-    if (_candidateUiElement)
+    if (_candidateUiElement) {
         _candidateUiElement->end(_threadMgr);
+    }
+    _set_host_candidate_notifications_open(false);
     _hide_external_candidate_window(reason);
 }
 
@@ -1289,23 +1212,16 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
     _clientId = tid;
     _activateFlags = dwFlags;
     cxxime_tsf::trace_stage_runtime_activate(dwFlags, tid);
+    if ((_activateFlags & TF_TMF_UIELEMENTENABLEDONLY) != 0) {
+        _start_host_takeover_runtime();
+    }
     _seenKeyAfterActivate = false;
     _register_display_attribute_atom();
 
     _register_key_event_sink();
     _register_preserved_key();
 
-    // Register thread focus sink to detect window/app switches
-    {
-        ITfSource* pSource = nullptr;
-        if (SUCCEEDED(_threadMgr->QueryInterface(IID_ITfSource, (void**)&pSource))) {
-            pSource->AdviseSink(IID_ITfThreadFocusSink,
-                                static_cast<ITfThreadFocusSink*>(this), &_dwThreadFocusCookie);
-            pSource->AdviseSink(IID_ITfThreadMgrEventSink,
-                                static_cast<ITfThreadMgrEventSink*>(this), &_dwThreadMgrEventCookie);
-            pSource->Release();
-        }
-    }
+    _register_thread_sinks();
 
     // Create candidate window (use HWND_MESSAGE parent since TSF runs in-app)
     _candidateWindow.create(nullptr, _config);
@@ -1582,19 +1498,7 @@ STDMETHODIMP TextService::Deactivate() {
         CXXIME_LOG(L"Mode language bar button unregistered");
     }
 
-    // Unregister thread focus sink and event sink
-    if (_threadMgr) {
-        ITfSource* pSource = nullptr;
-        if (SUCCEEDED(_threadMgr->QueryInterface(IID_ITfSource, (void**)&pSource))) {
-            if (_dwThreadFocusCookie != TF_INVALID_COOKIE)
-                pSource->UnadviseSink(_dwThreadFocusCookie);
-            if (_dwThreadMgrEventCookie != TF_INVALID_COOKIE)
-                pSource->UnadviseSink(_dwThreadMgrEventCookie);
-            pSource->Release();
-        }
-        _dwThreadFocusCookie = TF_INVALID_COOKIE;
-        _dwThreadMgrEventCookie = TF_INVALID_COOKIE;
-    }
+    _unregister_thread_sinks();
 
     _unregister_key_event_sink();
     _unregister_preserved_key();
@@ -1604,6 +1508,9 @@ STDMETHODIMP TextService::Deactivate() {
         _threadMgr = nullptr;
     }
     _clientId = TF_CLIENTID_NULL;
+    if ((_activateFlags & TF_TMF_UIELEMENTENABLEDONLY) != 0) {
+        _stop_host_takeover_runtime();
+    }
 
     return S_OK;
 }
@@ -1835,26 +1742,16 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
 
     // Handle committed text (e.g. Shift toggle with commit_text, or normal candidate selection)
     if (response.commit_text[0] != '\0') {
-        const bool ui_element_only =
-            (_activateFlags & TF_TMF_UIELEMENTENABLEDONLY) != 0;
         _hide_candidate_window("hide:commit");
         _end_reading_ui_element("hide:commit_reading");
         _candidateWindow.set_preedit("");
         std::wstring commit_text = utf8_to_wstring(response.commit_text);
             if (!commit_text.empty()) {
-            bool bridge_committed = ui_element_only && _immBridge.commit_text(
-                commit_text, _stageInputId, _stageCompositionId);
-            if (ui_element_only && !bridge_committed) {
-                _enqueue_event_trace("imm_bridge",
-                                    _immBridge.last_error() ? _immBridge.last_error() : "commit:failed",
-                                    true);
+                _commit_text(pic, commit_text, true);
+                _composing = false;
+                _lastInlineCompositionText.clear();
+                *pfEaten = TRUE;
             }
-        if (!ui_element_only || !bridge_committed)
-            _commit_text(pic, commit_text, true);
-            _composing = false;
-            _lastInlineCompositionText.clear();
-            *pfEaten = TRUE;
-        }
         trace.result = TsfResult::COMMITTED;
         trace.candidate_count = response.candidate_count;
     } else if (response.preedit[0] != '\0') {
@@ -1881,6 +1778,17 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
         auto decision = cxxime_tsf::decide_preedit(
             _config.inline_preedit, _config.preedit_type, preedit, candidate_texts);
 
+        const bool has_candidates = response.candidate_count > 0;
+        cxxime::CandidatePage page;
+        if (has_candidates) {
+            page.highlighted = static_cast<int>(response.highlighted);
+            for (uint32_t i = 0; i < response.candidate_count && i < 10; ++i) {
+                cxxime::Candidate candidate;
+                candidate.text = response.candidates[i];
+                page.candidates.push_back(std::move(candidate));
+            }
+        }
+
         CXXIME_LOG(L"_ProcessKeyEvent: start_comp=%d, _composing=%d, _composition=%d, inline='%s'",
                    decision.start_composition, _composing, _composition != nullptr,
                    decision.inline_text.c_str());
@@ -1889,29 +1797,29 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
             (_activateFlags & TF_TMF_UIELEMENTENABLEDONLY) != 0;
 
             cxxime_tsf::trace_stage_context(
-        _stageInputId, _stageCompositionId, pic, _threadMgr, ui_element_only);
+                _stageInputId, _stageCompositionId, pic, _threadMgr,
+                ui_element_only ? "candidate_first_standard_tsf_compat" : "standard_tsf");
 
         _caretRect = {};
         _lastInlineCompositionText = ui_element_only
             ? preedit
             : (decision.start_composition ? decision.inline_text : L"");
+        bool external_candidate_window = true;
+        bool candidate_ui_published = false;
         if (ui_element_only) {
-            _end_reading_ui_element("hide:uiless_imm_bridge_reading");
-            if (_composing && _composition)
-                _end_composition(pic);
-            _composing = true;
-            if (!_immBridge.update_preedit(preedit, _stageInputId, _stageCompositionId)) {
-                _enqueue_event_trace("imm_bridge",
-                                     _immBridge.last_error() ? _immBridge.last_error() : "preedit:failed",
-                                     true);
-                _update_reading_ui_element(pic, preedit);
-            }
+            _end_reading_ui_element("hide:candidate_mirror_no_reading");
+            external_candidate_window = _publish_candidate_ui_element(
+                page, response.candidate_count, response.page_current, response.page_total);
+            candidate_ui_published = true;
+            update_composition(pic, preedit, true, true);
         } else if (decision.start_composition) {
             _update_reading_ui_element(pic, preedit);
             update_composition(pic, decision.inline_text, true, true);
         } else {
             _update_reading_ui_element(pic, preedit);
-            if (_composing && _composition) _end_composition(pic);
+            if (_composing && _composition) {
+                _end_composition(pic);
+            }
             _composing = true;
             update_composition(pic, L"", true, true);
         }
@@ -1922,8 +1830,7 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
             (decision.show_preedit_in_popup ? response.preedit : "");
         _candidateWindow.set_preedit(popup_preedit);
 
-        bool has_candidates = response.candidate_count > 0;
-        bool has_preedit = !popup_preedit.empty();
+        const bool has_preedit = !popup_preedit.empty();
 
         CXXIME_LOG(L"_ProcessKeyEvent: has_cand=%d, has_preedit=%d, cand_count=%u",
                    has_candidates, has_preedit, response.candidate_count);
@@ -1931,34 +1838,10 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
         auto window_start = std::chrono::steady_clock::now();
 
         if (has_candidates || has_preedit) {
-            cxxime::CandidatePage page;
-            if (has_candidates) {
-                page.highlighted = (int)response.highlighted;
-                for (uint32_t i = 0; i < response.candidate_count && i < 10; ++i) {
-                    cxxime::Candidate c;
-                    c.text = response.candidates[i];
-                    page.candidates.push_back(std::move(c));
-                }
+            if (!candidate_ui_published) {
+                external_candidate_window = _publish_candidate_ui_element(
+                    page, response.candidate_count, response.page_current, response.page_total);
             }
-
-            bool external_candidate_window = true;
-            if (has_candidates && _candidateUiElement) {
-                _candidateUiElement->set_page(
-                    page, static_cast<int>(response.page_current), static_cast<int>(response.page_total));
-                bool was_candidate_active = _candidateUiElement->is_active();
-                external_candidate_window = _candidateUiElement->begin(_threadMgr);
-                _candidateUiElement->notify_update(_threadMgr);
-                if (!was_candidate_active) {
-                    char detail[80] = {};
-                    snprintf(detail, sizeof(detail), "candidate external=%s count=%u",
-                             external_candidate_window ? "true" : "false",
-                             static_cast<unsigned int>(response.candidate_count));
-                    _enqueue_event_trace("ui_element", detail);
-                }
-            } else if (_candidateUiElement) {
-                _candidateUiElement->end(_threadMgr);
-            }
-
             if (external_candidate_window &&
                 (_activateFlags & TF_TMF_UIELEMENTENABLEDONLY) == 0) {
                     bool candidate_was_visible = _candidateWindow.is_visible();
@@ -2051,9 +1934,9 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
         _hide_candidate_window("hide:clear");
         _end_reading_ui_element("hide:clear_reading");
         _candidateWindow.set_preedit("");
-        if (_composing && _composition) update_composition(pic, L"");
-        if ((_activateFlags & TF_TMF_UIELEMENTENABLEDONLY) != 0)
-            _immBridge.clear(_stageInputId, _stageCompositionId);
+        if (_composing && _composition) {
+            update_composition(pic, L"");
+        }
         _end_composition(pic);
         _composing = false;
         // Only eat the key if there was an active composition to clean up.
@@ -2151,23 +2034,12 @@ void TextService::_ProcessKeyUp(WPARAM wParam, LPARAM lParam) {
         if (response.commit_text[0] != '\0') {
             std::wstring commit_text = utf8_to_wstring(response.commit_text);
             if (!commit_text.empty()) {
-                const bool ui_element_only =
-                    (_activateFlags & TF_TMF_UIELEMENTENABLEDONLY) != 0;
-                bool bridge_committed = ui_element_only && _immBridge.commit_text(
-                    commit_text, _stageInputId, _stageCompositionId);
-                if (ui_element_only && !bridge_committed) {
-                    _enqueue_event_trace("imm_bridge",
-                                         _immBridge.last_error() ? _immBridge.last_error() : "commit:failed",
-                                         true);
-                }
-                if (!ui_element_only || !bridge_committed) {
-                    ITfContext* pContext = _current_edit_context_for_composition();
-                    if (pContext) {
-                        _commit_text(pContext, commit_text, true);
-                        pContext->Release();
-                    } else {
-                        insert_text(commit_text, true);
-                    }
+                ITfContext* pContext = _current_edit_context_for_composition();
+                if (pContext) {
+                    _commit_text(pContext, commit_text, true);
+                    pContext->Release();
+                } else {
+                    insert_text(commit_text, true);
                 }
                 _composing = false;
                 _lastInlineCompositionText.clear();
@@ -2205,23 +2077,6 @@ STDMETHODIMP TextService::OnPreservedKey(ITfContext* pic, REFGUID rguid, BOOL* p
     return S_OK;
 }
 
-// ITfCompositionSink
-STDMETHODIMP TextService::OnCompositionTerminated(TfEditCookie ecWrite, ITfComposition* pComposition) {
-    UNREFERENCED_PARAMETER(ecWrite);
-    if (_composition && pComposition && _composition != pComposition)
-        return S_OK;
-
-    _composing = false;
-    _lastInlineCompositionText.clear();
-    _end_reading_ui_element("hide:composition_terminated_reading");
-    if (_composition) {
-        _composition->Release();
-        _composition = nullptr;
-    }
-    set_composition_context(nullptr);
-    return S_OK;
-}
-
 // ITfThreadFocusSink
 STDMETHODIMP TextService::OnSetThreadFocus() {
     _update_input_focus_from_thread_mgr();
@@ -2242,8 +2097,6 @@ STDMETHODIMP TextService::OnKillThreadFocus() {
 void TextService::_AbortComposition() {
     _hide_candidate_window("hide:abort_composition");
     _end_reading_ui_element("hide:abort_composition_reading");
-    if ((_activateFlags & TF_TMF_UIELEMENTENABLEDONLY) != 0)
-        _immBridge.clear(_stageInputId, _stageCompositionId);
     _candidateWindow.set_preedit("");
     _lastInlineCompositionText.clear();
     if (_composing) {
@@ -2284,9 +2137,7 @@ STDMETHODIMP TextService::OnSetFocus(ITfDocumentMgr* pDocMgrFocus, ITfDocumentMg
         _hide_status_window("hide:document_focus_unfocused");
         _hide_candidate_window("hide:document_focus_unfocused");
         _end_reading_ui_element("hide:document_focus_unfocused_reading");
-        if ((_activateFlags & TF_TMF_UIELEMENTENABLEDONLY) != 0)
-            _immBridge.clear(_stageInputId, _stageCompositionId);
-            _reset_stage_composition("document_unfocused");
+        _reset_stage_composition("document_unfocused");
         return S_OK;
     }
 
@@ -2304,8 +2155,6 @@ STDMETHODIMP TextService::OnSetFocus(ITfDocumentMgr* pDocMgrFocus, ITfDocumentMg
     if (_composing) {
         _hide_candidate_window("hide:document_focus_switch");
         _end_reading_ui_element("hide:document_focus_switch_reading");
-        if ((_activateFlags & TF_TMF_UIELEMENTENABLEDONLY) != 0)
-            _immBridge.clear(_stageInputId, _stageCompositionId);
         _candidateWindow.set_preedit("");
         if (_sessionId && _client.is_connected())
             _client.focus_out(_sessionId);
@@ -2374,83 +2223,6 @@ STDMETHODIMP TextService::GetDisplayAttributeInfo(REFGUID rguid, ITfDisplayAttri
         return pInfo ? S_OK : E_OUTOFMEMORY;
     }
     return E_INVALIDARG;
-}
-
-// Helpers
-HRESULT TextService::insert_text(const std::wstring& text, bool sync) {
-    if (!_threadMgr || text.empty())
-        return E_FAIL;
-
-    ITfDocumentMgr* pDocMgr = nullptr;
-    if (FAILED(_threadMgr->GetFocus(&pDocMgr)) || !pDocMgr)
-        return E_FAIL;
-
-    ITfContext* pContext = nullptr;
-    if (FAILED(pDocMgr->GetTop(&pContext)) || !pContext) {
-        pDocMgr->Release();
-        return E_FAIL;
-    }
-
-    EditSession* pEditSession = new (std::nothrow) EditSession(this, pContext);
-    if (!pEditSession) {
-        pContext->Release();
-        pDocMgr->Release();
-        return E_OUTOFMEMORY;
-    }
-
-    pEditSession->set_action(EditSession::Action::INSERT_TEXT, text);
-
-    HRESULT hr = E_FAIL;
-    DWORD flags = TF_ES_READWRITE | (sync ? TF_ES_SYNC : TF_ES_ASYNC);
-    HRESULT request_hr = pContext->RequestEditSession(_clientId, pEditSession, flags, &hr);
-    if (sync) {
-        char detail[128] = {};
-        snprintf(detail, sizeof(detail),
-                 "insert sync=1 request=0x%08lx edit=0x%08lx len=%u",
-                 static_cast<unsigned long>(request_hr), static_cast<unsigned long>(hr),
-                 static_cast<unsigned int>(text.length()));
-        _enqueue_event_trace("composition_commit", detail,
-                             FAILED(request_hr) || FAILED(hr));
-    }
-
-    pEditSession->Release();
-    pContext->Release();
-    pDocMgr->Release();
-    return hr;
-}
-
-HRESULT TextService::_commit_text(ITfContext* pic, const std::wstring& text, bool sync) {
-    if (!pic)
-        return insert_text(text, sync);
-
-    EditSession* pSession = new (std::nothrow) EditSession(this, pic);
-    if (!pSession)
-        return E_OUTOFMEMORY;
-
-    pSession->set_action(EditSession::Action::COMMIT_COMPOSITION, text);
-
-    HRESULT hr = E_FAIL;
-    DWORD flags = TF_ES_READWRITE | (sync ? TF_ES_SYNC : TF_ES_ASYNCDONTCARE);
-    HRESULT request_hr = pic->RequestEditSession(_clientId, pSession, flags, &hr);
-    if (sync && (FAILED(request_hr) || FAILED(hr))) {
-        char detail[128] = {};
-        snprintf(detail, sizeof(detail),
-                 "commit sync_fallback request=0x%08lx edit=0x%08lx len=%u",
-                 static_cast<unsigned long>(request_hr), static_cast<unsigned long>(hr),
-                 static_cast<unsigned int>(text.length()));
-        _enqueue_event_trace("composition_commit", detail, true);
-        hr = E_FAIL;
-        pic->RequestEditSession(_clientId, pSession, TF_ES_READWRITE | TF_ES_ASYNCDONTCARE, &hr);
-    } else if (sync) {
-        char detail[128] = {};
-        snprintf(detail, sizeof(detail),
-                 "commit sync=1 request=0x%08lx edit=0x%08lx len=%u",
-                 static_cast<unsigned long>(request_hr), static_cast<unsigned long>(hr),
-                 static_cast<unsigned int>(text.length()));
-        _enqueue_event_trace("composition_commit", detail, false);
-    }
-    pSession->Release();
-    return hr;
 }
 
 bool TextService::select_candidate_from_ui(UINT index) {
@@ -2554,33 +2326,6 @@ void TextService::trace_caret_event(const char* action,
     _enqueue_event_trace("caret_position", detail, important);
 }
 
-void TextService::update_composition(ITfContext* pic,
-                                     const std::wstring& preedit,
-                                     bool ensure,
-                                     bool sync) {
-    if (!pic)
-        return;
-
-    EditSession* pSession = new (std::nothrow) EditSession(this, pic);
-    if (!pSession)
-        return;
-
-    pSession->set_action(ensure ? EditSession::Action::ENSURE_COMPOSITION_TEXT
-                                : EditSession::Action::UPDATE_COMPOSITION,
-                         preedit);
-
-    HRESULT edit_hr = E_FAIL;
-    DWORD flags = TF_ES_READWRITE | (sync ? TF_ES_SYNC : TF_ES_ASYNCDONTCARE);
-    HRESULT request_hr = pic->RequestEditSession(_clientId, pSession, flags, &edit_hr);
-    if (sync && (FAILED(request_hr) || FAILED(edit_hr))) {
-        edit_hr = E_FAIL;
-        pic->RequestEditSession(_clientId, pSession, TF_ES_READWRITE | TF_ES_ASYNCDONTCARE,
-                                &edit_hr);
-    }
-
-    pSession->Release();
-}
-
 HRESULT TextService::_register_key_event_sink() {
     if (!_threadMgr)
         return E_FAIL;
@@ -2659,51 +2404,6 @@ bool TextService::_register_display_attribute_atom() {
     }
 
     return true;
-}
-
-bool TextService::apply_composition_display_attribute(ITfContext* pic,
-                                                      ITfRange* range,
-                                                      TfEditCookie ec) {
-    if (!pic || !range || !_displayAttributeAtom)
-        return false;
-
-    ITfProperty* property = nullptr;
-    HRESULT hr = pic->GetProperty(GUID_PROP_ATTRIBUTE, &property);
-    if (FAILED(hr) || !property)
-        return false;
-
-    VARIANT value = {};
-    VariantInit(&value);
-    value.vt = VT_I4;
-    value.lVal = _displayAttributeAtom;
-    hr = property->SetValue(ec, range, &value);
-    VariantClear(&value);
-    property->Release();
-
-    if (FAILED(hr)) {
-        CXXIME_LOG(L"Set composition display attribute failed: hr=0x%08x", hr);
-        return false;
-    }
-    return true;
-}
-
-HRESULT TextService::_end_composition(ITfContext* pic) {
-    if (!_composing || !_composition)
-        return S_OK;
-    if (!pic)
-        return E_FAIL;
-
-    EditSession* pSession = new (std::nothrow) EditSession(this, pic);
-    if (!pSession)
-        return E_OUTOFMEMORY;
-
-    pSession->set_action(EditSession::Action::END_COMPOSITION);
-
-    HRESULT hr = E_FAIL;
-    pic->RequestEditSession(_clientId, pSession, TF_ES_READWRITE | TF_ES_ASYNC, &hr);
-
-    pSession->Release();
-    return hr;
 }
 
 uint32_t TextService::_get_modifiers() const {

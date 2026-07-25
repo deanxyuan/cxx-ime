@@ -1,7 +1,7 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
 #include "legacy_session.h"
-#include "legacy_stage_diagnostics.h"
+#include "legacy_stage.h"
 
 #include <cxxime/stage_trace.h>
 

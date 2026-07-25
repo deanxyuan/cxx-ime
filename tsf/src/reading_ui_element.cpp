@@ -3,7 +3,7 @@
 #include "reading_ui_element.h"
 #include "globals.h"
 #include "text_service.h"
-#include "tsf_stage_diagnostics.h"
+#include "tsf_stage.h"
 #include <algorithm>
 
 ReadingUIElement::ReadingUIElement(TextService* service) : _service(service) {}

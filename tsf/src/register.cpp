@@ -384,8 +384,8 @@ HRESULT register_profiles() {
         return hr;
     }
 
-    // Bind the TSF profile to the legacy IMM HKL so games and legacy hosts can
-    // render composition/candidates through their native IME path.
+    // Keep the legacy layout installed for this compatibility baseline, but register
+    // the input processor as a pure TSF profile without an HKL substitute.
     hr = pProfileMgr->RegisterProfile(
         c_clsidTextService,
         TEXTSERVICE_LANGID_HANS,
@@ -395,7 +395,7 @@ HRESULT register_profiles() {
         achIconFile,
         cchIconFile,
         TEXTSERVICE_ICON_INDEX,
-        legacy_hkl,
+        nullptr,
         0,        // flags
         TRUE,     // enable
         0);
@@ -431,7 +431,6 @@ static const GUID kSupportCategories[] = {
     GUID_TFCAT_TIPCAP_UIELEMENTENABLED,
     GUID_TFCAT_TIPCAP_INPUTMODECOMPARTMENT,
     GUID_TFCAT_TIPCAP_COMLESS,
-    GUID_TFCAT_TIPCAP_WOW16,
     GUID_TFCAT_TIPCAP_IMMERSIVESUPPORT,
     GUID_TFCAT_TIPCAP_SYSTRAYSUPPORT,
     GUID_TFCAT_PROP_AUDIODATA,
@@ -447,12 +446,19 @@ HRESULT register_categories() {
     ITfCategoryMgr* pCategoryMgr = nullptr;
     HRESULT hr = CoCreateInstance(CLSID_TF_CategoryMgr, nullptr, CLSCTX_INPROC_SERVER,
                                   IID_ITfCategoryMgr, (void**)&pCategoryMgr);
-    if (FAILED(hr))
+    if (FAILED(hr)) {
         return hr;
+    }
+
+    // Older builds incorrectly advertised activation support for 16-bit tasks.
+    pCategoryMgr->UnregisterCategory(
+        c_clsidTextService, GUID_TFCAT_TIPCAP_WOW16, c_clsidTextService);
 
     for (const auto& guid : kSupportCategories) {
         hr = pCategoryMgr->RegisterCategory(c_clsidTextService, guid, c_clsidTextService);
-        if (FAILED(hr)) break;
+        if (FAILED(hr)) {
+            break;
+        }
     }
 
     pCategoryMgr->Release();
@@ -463,12 +469,15 @@ HRESULT unregister_categories() {
     ITfCategoryMgr* pCategoryMgr = nullptr;
     HRESULT hr = CoCreateInstance(CLSID_TF_CategoryMgr, nullptr, CLSCTX_INPROC_SERVER,
                                   IID_ITfCategoryMgr, (void**)&pCategoryMgr);
-    if (FAILED(hr))
+    if (FAILED(hr)) {
         return hr;
+    }
 
     for (const auto& guid : kSupportCategories) {
         pCategoryMgr->UnregisterCategory(c_clsidTextService, guid, c_clsidTextService);
     }
+    pCategoryMgr->UnregisterCategory(
+        c_clsidTextService, GUID_TFCAT_TIPCAP_WOW16, c_clsidTextService);
 
     pCategoryMgr->Release();
     return S_OK;

@@ -3,9 +3,11 @@ project(cxxime-ime-host-probe CXX)
 add_executable(cxxime-ime-host-probe WIN32
     main.cc
     probe_app.cc
+    probe_imm_candidates.cc
     probe_ui_elements.cc
     probe_window.cc
     ui_element_sink.cc
+    window_owner_probe.cc
 )
 
 target_link_libraries(cxxime-ime-host-probe PRIVATE
@@ -16,6 +18,7 @@ target_link_libraries(cxxime-ime-host-probe PRIVATE
     imm32
     user32
     gdi32
+    dwmapi
 )
 
 if(CMAKE_SIZEOF_VOID_P EQUAL 8)

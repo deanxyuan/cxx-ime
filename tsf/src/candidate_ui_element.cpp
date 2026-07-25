@@ -3,7 +3,7 @@
 #include "candidate_ui_element.h"
 #include "globals.h"
 #include "text_service.h"
-#include "tsf_stage_diagnostics.h"
+#include "tsf_stage.h"
 #include <algorithm>
 
 namespace {
@@ -27,16 +27,15 @@ CandidateUIElement::~CandidateUIElement() {
 }
 
 STDMETHODIMP CandidateUIElement::QueryInterface(REFIID riid, void** ppvObj) {
-    if (!ppvObj)
+    if (!ppvObj) {
         return E_INVALIDARG;
+    }
     *ppvObj = nullptr;
 
     if (IsEqualIID(riid, IID_IUnknown) ||
-        IsEqualIID(riid, __uuidof(ITfIntegratableCandidateListUIElement))) {
-        *ppvObj = static_cast<ITfIntegratableCandidateListUIElement*>(this);
-    } else if (IsEqualIID(riid, IID_ITfUIElement) ||
-               IsEqualIID(riid, IID_ITfCandidateListUIElement) ||
-               IsEqualIID(riid, IID_ITfCandidateListUIElementBehavior)) {
+        IsEqualIID(riid, IID_ITfUIElement) ||
+        IsEqualIID(riid, IID_ITfCandidateListUIElement) ||
+        IsEqualIID(riid, IID_ITfCandidateListUIElementBehavior)) {
         *ppvObj = static_cast<ITfCandidateListUIElementBehavior*>(this);
     }
 
@@ -68,8 +67,9 @@ STDMETHODIMP CandidateUIElement::GetDescription(BSTR* pbstrDescription) {
 }
 
 STDMETHODIMP CandidateUIElement::GetGUID(GUID* pguid) {
-    if (!pguid)
+    if (!pguid) {
         return E_INVALIDARG;
+    }
     *pguid = c_guidCandidateUIElement;
     return S_OK;
 }
@@ -88,22 +88,25 @@ STDMETHODIMP CandidateUIElement::IsShown(BOOL* show) {
 }
 
 STDMETHODIMP CandidateUIElement::GetUpdatedFlags(DWORD* flags) {
-    if (_service)
+    if (_service) {
         _service->trace_ui_element_method("candidate", "GetUpdatedFlags");
-    if (!flags)
+    }
+    if (!flags) {
         return E_INVALIDARG;
-    *flags = TF_CLUIE_DOCUMENTMGR | TF_CLUIE_COUNT | TF_CLUIE_SELECTION |
-             TF_CLUIE_STRING | TF_CLUIE_CURRENTPAGE;
+    }
+    *flags = kPublishedUpdatedFlags;
     cxxime_tsf::trace_stage_ui_get_number(
         _service, "candidate", _ui_element_id, "GetUpdatedFlags", "updated_flags", *flags);
     return S_OK;
 }
 
 STDMETHODIMP CandidateUIElement::GetDocumentMgr(ITfDocumentMgr** doc_mgr) {
-    if (_service)
+    if (_service) {
         _service->trace_ui_element_method("candidate", "GetDocumentMgr");
-    if (!doc_mgr)
+    }
+    if (!doc_mgr) {
         return E_INVALIDARG;
+    }
     *doc_mgr = nullptr;
     if (!_document_mgr) {
         cxxime_tsf::trace_stage_ui_get_presence(
@@ -219,45 +222,6 @@ STDMETHODIMP CandidateUIElement::Abort() {
     return S_OK;
 }
 
-STDMETHODIMP CandidateUIElement::SetIntegrationStyle(GUID integration_style) {
-    cxxime_tsf::trace_stage_candidate_integration_style(
-        _service, _ui_element_id, integration_style, S_OK);
-    return S_OK;
-}
-
-STDMETHODIMP CandidateUIElement::GetSelectionStyle(
-    TfIntegratableCandidateListSelectionStyle* selection_style) {
-    if (!selection_style)
-        return E_INVALIDARG;
-    *selection_style = _selection_style;
-    cxxime_tsf::trace_stage_candidate_behavior_number(
-        _service, _ui_element_id, "GetSelectionStyle", "selection_style",
-        static_cast<uint64_t>(*selection_style));
-    return S_OK;
-}
-
-STDMETHODIMP CandidateUIElement::OnKeyDown(WPARAM w_param, LPARAM l_param, BOOL* eaten) {
-    if (!eaten)
-        return E_INVALIDARG;
-    *eaten = TRUE;
-    cxxime_tsf::trace_stage_candidate_key(
-        _service, _ui_element_id, w_param, l_param, true, S_OK);
-    return S_OK;
-}
-
-STDMETHODIMP CandidateUIElement::ShowCandidateNumbers(BOOL* show) {
-    if (!show)
-        return E_INVALIDARG;
-    *show = TRUE;
-    cxxime_tsf::trace_stage_candidate_behavior_bool(
-        _service, _ui_element_id, "ShowCandidateNumbers", "show", true);
-    return S_OK;
-}
-
-STDMETHODIMP CandidateUIElement::FinalizeExactCompositionString() {
-    return _service ? _service->finalize_exact_candidate_ui_from_tsf() : E_FAIL;
-}
-
 void CandidateUIElement::set_page(const cxxime::CandidatePage& page,
                                   int page_current,
                                   int page_total) {
@@ -281,8 +245,9 @@ void CandidateUIElement::set_page(const cxxime::CandidatePage& page,
 }
 
 bool CandidateUIElement::begin(ITfThreadMgr* thread_mgr) {
-    if (_active)
+    if (_active) {
         return wants_external_window();
+    }
 
     ITfUIElementMgr* ui_mgr = nullptr;
     if (FAILED(query_ui_element_mgr(thread_mgr, &ui_mgr)) || !ui_mgr) {
@@ -295,6 +260,9 @@ bool CandidateUIElement::begin(ITfThreadMgr* thread_mgr) {
     }
 
     capture_document_mgr(thread_mgr);
+    if (_service) {
+        _service->trace_candidate_activation_state(_document_mgr);
+    }
     _show_external = TRUE;
     DWORD element_id = TF_INVALID_UIELEMENTID;
     HRESULT hr = ui_mgr->BeginUIElement(

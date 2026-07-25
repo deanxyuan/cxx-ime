@@ -1,7 +1,9 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
 #include "imm_bridge.h"
-#include "tsf_stage_diagnostics.h"
+#include "tsf_imm_form.h"
+#include "tsf_imm_mode.h"
+#include "tsf_stage.h"
 
 #include <imm.h>
 #include <immdev.h>
@@ -181,6 +183,55 @@ HIMC acquire_himc_for_window(HWND hwnd) {
     return ImmGetContext(hwnd);
 }
 
+bool align_candidate_form(HWND hwnd,
+                         HIMC himc,
+                         uint64_t input_id,
+                         uint64_t composition_id) {
+    CANDIDATEFORM before = {};
+    before.dwIndex = 0;
+    const bool before_ok = ImmGetCandidateWindow(himc, 0, &before) != FALSE;
+
+    CANDIDATEFORM requested = {};
+    requested.dwIndex = 0;
+    requested.dwStyle = CFS_CANDIDATEPOS;
+    requested.ptCurrentPos = { -1000, -1000 };
+    const bool set_succeeded = ImmSetCandidateWindow(himc, &requested) != FALSE;
+
+    CANDIDATEFORM after = {};
+    after.dwIndex = 0;
+    const bool after_ok = ImmGetCandidateWindow(himc, 0, &after) != FALSE;
+    trace_stage_imm_candidate_form(
+        hwnd, himc, before_ok, before, set_succeeded, after_ok, after,
+        input_id, composition_id);
+    return set_succeeded && after_ok &&
+        after.dwStyle == CFS_CANDIDATEPOS &&
+        after.ptCurrentPos.x == -1000 &&
+        after.ptCurrentPos.y == -1000;
+}
+
+bool align_composition_form(HWND hwnd,
+                            HIMC himc,
+                            uint64_t input_id,
+                            uint64_t composition_id) {
+    COMPOSITIONFORM before = {};
+    const bool before_ok = ImmGetCompositionWindow(himc, &before) != FALSE;
+
+    COMPOSITIONFORM requested = {};
+    requested.dwStyle = CFS_FORCE_POSITION;
+    requested.ptCurrentPos = { -1000, -1000 };
+    const bool set_succeeded = ImmSetCompositionWindow(himc, &requested) != FALSE;
+
+    COMPOSITIONFORM after = {};
+    const bool after_ok = ImmGetCompositionWindow(himc, &after) != FALSE;
+    trace_stage_imm_composition_form(
+        hwnd, himc, before_ok, before, set_succeeded, after_ok, after,
+        input_id, composition_id);
+    return set_succeeded && after_ok &&
+        after.dwStyle == CFS_FORCE_POSITION &&
+        after.ptCurrentPos.x == -1000 &&
+        after.ptCurrentPos.y == -1000;
+}
+
 } // namespace
 
 bool ImmBridge::update_preedit(const std::wstring& preedit,
@@ -227,8 +278,9 @@ bool ImmBridge::commit_text(const std::wstring& text,
                             uint64_t input_id,
                             uint64_t composition_id) {
     set_error(nullptr);
-    if (text.empty())
+    if (text.empty()) {
         return true;
+    }
 
     HWND hwnd = nullptr;
     const char* source = nullptr;
@@ -258,6 +310,158 @@ bool ImmBridge::commit_text(const std::wstring& text,
     if (!ok)
         set_error("commit:failed");
     return ok;
+}
+
+bool ImmBridge::prepare_candidate_open_status(uint64_t input_id,
+                                              uint64_t composition_id) {
+    set_error(nullptr);
+
+    HWND hwnd = nullptr;
+    const char* source = nullptr;
+    HIMC himc = acquire_foreground_himc(&hwnd, &source);
+    trace_stage_imm_target(
+        "candidate_open_status", hwnd, himc, source, input_id, composition_id);
+    if (!himc) {
+        set_error("candidate_open_status:no_himc");
+        return false;
+    }
+
+    const bool open_before = ImmGetOpenStatus(himc) != FALSE;
+    const bool set_attempted = !open_before;
+    const bool set_succeeded = !set_attempted || ImmSetOpenStatus(himc, TRUE) != FALSE;
+    const bool open_after = ImmGetOpenStatus(himc) != FALSE;
+    trace_stage_imm_open_status(
+        hwnd, himc, open_before, set_attempted, set_succeeded, open_after,
+        input_id, composition_id);
+    ImmReleaseContext(hwnd, himc);
+
+    if (!open_after) {
+        set_error("candidate_open_status:failed");
+    }
+    return open_after;
+}
+
+bool ImmBridge::set_candidate_notifications_open(bool open,
+                                                  uint64_t input_id,
+                                                  uint64_t composition_id) {
+    set_error(nullptr);
+    if (open == _candidateNotificationsOpen) {
+        return true;
+    }
+
+    HWND hwnd = nullptr;
+    HIMC himc = nullptr;
+    const char* source = nullptr;
+    if (!open && _candidateHwnd && IsWindow(_candidateHwnd)) {
+        hwnd = _candidateHwnd;
+        himc = acquire_himc_for_window(hwnd);
+        if (himc) {
+            source = "remembered_candidate_window";
+        }
+    }
+    if (!himc) {
+        himc = acquire_foreground_himc(&hwnd, &source);
+    }
+
+    const char* action = open ? "open" : "close";
+    trace_stage_imm_target(
+        open ? "candidate_notification_open" : "candidate_notification_close",
+        hwnd, himc, source, input_id, composition_id);
+    if (!himc) {
+        trace_stage_imm_candidate_lifecycle(
+            action, nullptr, open ? IMN_OPENCANDIDATE : IMN_CLOSECANDIDATE,
+            false, "message_queue", input_id, composition_id);
+        set_error(open ? "candidate_notification_open:no_himc"
+                       : "candidate_notification_close:no_himc");
+        return false;
+    }
+
+    const WPARAM command = open ? IMN_OPENCANDIDATE : IMN_CLOSECANDIDATE;
+    const bool message_ok = PostMessageW(hwnd, WM_IME_NOTIFY, command, 1) != FALSE;
+    trace_stage_imm_candidate_lifecycle(
+        action, himc, command, message_ok, "message_queue", input_id, composition_id);
+    ImmReleaseContext(hwnd, himc);
+
+    if (message_ok) {
+        _candidateNotificationsOpen = open;
+        _candidateHwnd = open ? hwnd : nullptr;
+    }
+    if (!message_ok) {
+        set_error(open ? "candidate_notification_open:failed"
+                       : "candidate_notification_close:failed");
+    }
+    return message_ok;
+}
+
+bool ImmBridge::notify_candidate_changed(uint64_t input_id,
+                                         uint64_t composition_id) {
+    set_error(nullptr);
+    if (!_candidateNotificationsOpen || !_candidateHwnd ||
+        !IsWindow(_candidateHwnd)) {
+        set_error("candidate_notification_change:not_open");
+        return false;
+    }
+
+    HIMC himc = acquire_himc_for_window(_candidateHwnd);
+    trace_stage_imm_target(
+        "candidate_notification_change", _candidateHwnd, himc,
+        "remembered_candidate_window", input_id, composition_id);
+    if (!himc) {
+        trace_stage_imm_candidate_lifecycle(
+            "change", nullptr, IMN_CHANGECANDIDATE, false, "message_queue",
+            input_id, composition_id);
+        set_error("candidate_notification_change:no_himc");
+        return false;
+    }
+
+    const bool message_ok = PostMessageW(
+        _candidateHwnd, WM_IME_NOTIFY, IMN_CHANGECANDIDATE, 1) != FALSE;
+    trace_stage_imm_candidate_lifecycle(
+        "change", himc, IMN_CHANGECANDIDATE, message_ok, "message_queue",
+        input_id, composition_id);
+    ImmReleaseContext(_candidateHwnd, himc);
+    if (!message_ok) {
+        set_error("candidate_notification_change:failed");
+    }
+    return message_ok;
+}
+
+bool ImmBridge::align_candidate_forms(uint64_t input_id,
+                                      uint64_t composition_id) {
+    set_error(nullptr);
+
+    HWND hwnd = nullptr;
+    HIMC himc = nullptr;
+    const char* source = nullptr;
+    if (_candidateHwnd && IsWindow(_candidateHwnd)) {
+        hwnd = _candidateHwnd;
+        himc = acquire_himc_for_window(hwnd);
+        if (himc) {
+            source = "remembered_candidate_window";
+        }
+    }
+    if (!himc) {
+        himc = acquire_foreground_himc(&hwnd, &source);
+    }
+    trace_stage_imm_target(
+        "candidate_forms", hwnd, himc, source, input_id, composition_id);
+    if (!himc) {
+        set_error("candidate_forms:no_himc");
+        return false;
+    }
+
+    const bool composition_form_ok = align_composition_form(
+        hwnd, himc, input_id, composition_id);
+    const bool candidate_form_ok = align_candidate_form(
+        hwnd, himc, input_id, composition_id);
+    ImmReleaseContext(hwnd, himc);
+
+    if (!composition_form_ok) {
+        set_error("composition_form:failed");
+    } else if (!candidate_form_ok) {
+        set_error("candidate_form:failed");
+    }
+    return composition_form_ok && candidate_form_ok;
 }
 
 void ImmBridge::clear(uint64_t input_id, uint64_t composition_id) {

@@ -11,7 +11,7 @@ import sys
 from typing import Any
 
 
-DEFAULT_BUILD_ID = "dota2-stage1-20260720-a"
+DEFAULT_BUILD_ID = "cxxime-host-takeover-20260725-a"
 COMMON_FIELDS = {
     "schema_version",
     "build_id",
