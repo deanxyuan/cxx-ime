@@ -13,7 +13,6 @@ class ReadingUIElement;
 #include <cxxime/ipc_protocol.h>
 #include <cxxime/candidate_window.h>
 #include <cxxime/config.h>
-#include "imm_bridge.h"
 #include "status_controller.h"
 #include <chrono>
 #include <cstdint>
@@ -186,10 +185,6 @@ private:
     void _start_host_takeover_runtime();
     void _stop_host_takeover_runtime();
     void _prepare_host_candidate_compatibility();
-    void _prepare_host_candidate_open_status();
-    void _set_host_candidate_notifications_open(bool open);
-    void _notify_host_candidate_changed();
-    void _align_host_candidate_forms();
     void _update_reading_ui_element(ITfContext* context, const std::wstring& reading);
     void _end_reading_ui_element(const char* reason);
     void _trace_input_decision(const char* block_reason);
@@ -223,7 +218,6 @@ private:
     bool _candidateShowPending = false;
     bool _candidatePendingHasStaleRect = false;
     bool _hostTakeoverRuntimeActive = false;
-    bool _hostImmCandidateBridgeEnabled = false;
     RECT _candidatePendingStaleRect = {};
     std::chrono::steady_clock::time_point _candidateShowPendingSince = {};
     UINT_PTR _statePollTimer = 0;
@@ -237,7 +231,6 @@ private:
     cxxime::CandidateWindow _candidateWindow;
     CandidateUIElement* _candidateUiElement = nullptr;
     ReadingUIElement* _readingUiElement = nullptr;
-    cxxime_tsf::ImmBridge _immBridge;
     cxxime::Config _config;
 
     // Language bar buttons

@@ -45,8 +45,6 @@ void trace_stage_host_classification_compatibility(
         {"readback_profile_code", snapshot.readback_profile_code},
         {"win32_error", snapshot.win32_error},
         {"classification_ready", snapshot.classification_ready},
-        {"imm_candidate_bridge_enabled",
-         snapshot.imm_candidate_bridge_enabled},
         {"restore_attempted", snapshot.restore_attempted},
         {"restore_succeeded", snapshot.restore_succeeded},
         {"restore_readback_succeeded",

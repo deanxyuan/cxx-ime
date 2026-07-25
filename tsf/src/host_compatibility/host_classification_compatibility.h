@@ -46,9 +46,6 @@ struct HostClassificationCompatibilitySnapshot {
     DWORD win32_error = ERROR_SUCCESS;
     bool classification_ready = false;
 
-    // Retained as an optional host policy. P44-B1 deliberately leaves it off.
-    bool imm_candidate_bridge_enabled = false;
-
     bool restore_attempted = false;
     bool restore_succeeded = false;
     bool restore_readback_succeeded = false;
