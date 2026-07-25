@@ -15,6 +15,16 @@ namespace cxxime_probe {
 
 inline constexpr wchar_t kWindowClass[] = L"CxxImeHostProbeWindow";
 inline constexpr int kGateCheckboxId = 1001;
+inline constexpr int kOriginalUiCheckboxId = 1002;
+inline constexpr UINT_PTR kCandidateUiVisibilityTimerId = 1;
+
+enum class CandidateUiVisibilityCycle {
+disabled,
+armed,
+waiting_to_show,
+waiting_to_hide,
+completed,
+};
 
 class UiElementSink;
 
@@ -35,6 +45,11 @@ private:
     void update_ui_element(DWORD element_id, const char* action);
     void update_candidate(ITfUIElement* element, DWORD element_id, const char* action);
     void update_reading(ITfUIElement* element, DWORD element_id, const char* action);
+    bool apply_candidate_ui_visibility(const char* trigger);
+    void set_candidate_ui_visibility_cycle(bool enabled, const char* trigger);
+    void schedule_candidate_ui_visibility_cycle(const char* trigger);
+    void advance_candidate_ui_visibility_cycle();
+    void reset_candidate_ui_visibility_cycle(const char* trigger);
     void read_composition(LPARAM flags);
     void trace_imm_candidate_snapshot(const char* trigger,
                                       DWORD element_id,
@@ -51,6 +66,7 @@ private:
     HINSTANCE instance_ = nullptr;
     HWND hwnd_ = nullptr;
     HWND gate_checkbox_ = nullptr;
+    HWND original_ui_checkbox_ = nullptr;
     HIMC himc_ = nullptr;
     ITfThreadMgrEx* thread_mgr_ = nullptr;
     ITfUIElementMgr* ui_element_mgr_ = nullptr;
@@ -62,6 +78,12 @@ private:
     bool thread_mgr_active_ = false;
     bool composition_active_ = false;
     bool gate_on_signal_ = false;
+    bool original_candidate_ui_requested_ = false;
+    bool original_candidate_ui_shown_ = false;
+    bool candidate_ui_visibility_pending_ = false;
+    bool candidate_ui_visibility_cycle_enabled_ = false;
+    CandidateUiVisibilityCycle candidate_ui_visibility_cycle_ =
+        CandidateUiVisibilityCycle::disabled;
     uint64_t composition_id_ = 0;
     DWORD candidate_element_id_ = TF_INVALID_UIELEMENTID;
     DWORD reading_element_id_ = TF_INVALID_UIELEMENTID;

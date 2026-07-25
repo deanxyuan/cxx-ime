@@ -78,6 +78,8 @@ public:
     bool select_candidate_from_ui(UINT index);
     void abort_candidate_ui_from_tsf();
     HRESULT finalize_exact_candidate_ui_from_tsf();
+    bool set_candidate_ui_element_shown(bool show);
+    bool is_candidate_ui_element_shown() const;
     void trace_ui_element_method(const char* element, const char* method, bool important = false);
     void trace_candidate_activation_state(ITfDocumentMgr* candidate_document_mgr) const;
     uint64_t stage_input_id() const { return _stageInputId; }
@@ -229,6 +231,9 @@ private:
     bool _ipcHealthy = true;
     std::string _lastInputBlockReason;
     std::wstring _lastInlineCompositionText;
+    cxxime::CandidatePage _publishedCandidatePage;
+    int _publishedCandidatePageCurrent = 0;
+    int _publishedCandidatePageTotal = 0;
     cxxime::CandidateWindow _candidateWindow;
     CandidateUIElement* _candidateUiElement = nullptr;
     ReadingUIElement* _readingUiElement = nullptr;

@@ -67,6 +67,11 @@ bool ProbeApp::initialize(HINSTANCE instance) {
         0, L"BUTTON", L"Require composition/reading signal to show candidates",
         WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 24, 20, 470, 26, hwnd_,
         reinterpret_cast<HMENU>(static_cast<INT_PTR>(kGateCheckboxId)), instance_, nullptr);
+    original_ui_checkbox_ = CreateWindowExW(
+        0, L"BUTTON", L"Automatically test original TIP UI handoff",
+        WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, 24, 50, 390, 26, hwnd_,
+        reinterpret_cast<HMENU>(static_cast<INT_PTR>(kOriginalUiCheckboxId)),
+        instance_, nullptr);
     himc_ = ImmGetContext(hwnd_);
     const HRESULT create_result = CoCreateInstance(
         CLSID_TF_ThreadMgr, nullptr, CLSCTX_INPROC_SERVER, IID_ITfThreadMgrEx,
@@ -128,6 +133,9 @@ int ProbeApp::run() {
 }
 
 void ProbeApp::shutdown() {
+    if (hwnd_) {
+        KillTimer(hwnd_, kCandidateUiVisibilityTimerId);
+    }
     if (source_ && sink_cookie_ != TF_INVALID_COOKIE) {
         source_->UnadviseSink(sink_cookie_);
         sink_cookie_ = TF_INVALID_COOKIE;

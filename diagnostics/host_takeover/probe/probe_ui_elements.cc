@@ -83,6 +83,10 @@ HRESULT ProbeApp::on_end_ui_element(DWORD element_id) {
     if (element_id == candidate_element_id_) {
         element_type = "candidate";
         candidate_element_id_ = TF_INVALID_UIELEMENTID;
+        original_candidate_ui_shown_ = false;
+        candidate_ui_visibility_pending_ = false;
+        reset_candidate_ui_visibility_cycle("candidate_end");
+        EnableWindow(original_ui_checkbox_, TRUE);
         candidates_.clear();
         selection_ = 0;
         current_page_ = 0;
@@ -216,6 +220,7 @@ void ProbeApp::update_candidate(ITfUIElement* element, DWORD element_id, const c
     selection_ = selection;
     current_page_ = current_page;
     candidate_element_id_ = element_id;
+    EnableWindow(original_ui_checkbox_, FALSE);
     cxxime::write_stage_trace("probe", "probe.candidate_snapshot", {
         {"composition_id", composition_id_},
         {"element_id", element_id},
@@ -238,6 +243,10 @@ void ProbeApp::update_candidate(ITfUIElement* element, DWORD element_id, const c
         {"integratable_hr", static_cast<int64_t>(integratable_hr)},
         {"result", SUCCEEDED(count_hr) && SUCCEEDED(strings_hr) ? "read" : "failed"},
     });
+    if (candidate_ui_visibility_pending_) {
+        apply_candidate_ui_visibility(action ? action : "candidate_update");
+    }
+    schedule_candidate_ui_visibility_cycle(action ? action : "candidate_update");
     trace_imm_candidate_snapshot("ui_element", element_id, action);
     candidate->Release();
     InvalidateRect(hwnd_, nullptr, TRUE);

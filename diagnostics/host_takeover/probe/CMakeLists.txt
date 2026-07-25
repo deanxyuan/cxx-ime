@@ -5,6 +5,7 @@ add_executable(cxxime-ime-host-probe WIN32
     probe_app.cc
     probe_imm_candidates.cc
     probe_ui_elements.cc
+    probe_visibility.cc
     probe_window.cc
     ui_element_sink.cc
     window_owner_probe.cc

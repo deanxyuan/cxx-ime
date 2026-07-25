@@ -11,7 +11,7 @@ import sys
 from typing import Any
 
 
-DEFAULT_BUILD_ID = "cxxime-host-takeover-20260725-a"
+DEFAULT_BUILD_ID = "cxxime-host-takeover-20260725-b"
 COMMON_FIELDS = {
     "schema_version",
     "build_id",
@@ -101,14 +101,18 @@ def validate_records(
     return errors, gaps
 
 
-def evidence_gaps(records: list[dict[str, Any]], kind: str) -> list[str]:
+def evidence_gaps(
+    records: list[dict[str, Any]], kind: str, require_summary: bool
+) -> list[str]:
     events = {str(record.get("event", "")) for record in records}
     if kind == "probe":
-        required = {"probe.runtime", "probe.ui_element", "probe.candidate_snapshot", "stage.summary"}
+        required = {"probe.runtime", "probe.ui_element", "probe.candidate_snapshot"}
     else:
-        required = {"runtime.component_status", "key.route", "candidate.snapshot", "stage.summary"}
+        required = {"runtime.component_status", "key.route", "candidate.snapshot"}
         if not ({"runtime.activate", "legacy.callback"} & events):
             required.add("runtime.activate or legacy.callback")
+    if require_summary:
+        required.add("stage.summary")
     gaps = []
     for event in sorted(required):
         if event == "runtime.activate or legacy.callback":
@@ -117,6 +121,36 @@ def evidence_gaps(records: list[dict[str, Any]], kind: str) -> list[str]:
         elif event not in events:
             gaps.append(f"missing evidence event: {event}")
     return gaps
+
+
+def candidate_visibility_gaps(
+    records: list[dict[str, Any]], kind: str
+) -> list[str]:
+    event_name = "probe.ui_element_visibility" if kind == "probe" else "ui_element.show"
+    matching = [record for record in records if record.get("event") == event_name]
+    applied: list[bool] = []
+    for record in matching:
+        requested = record.get("requested_show")
+        actual = record.get("actual_show")
+        if not isinstance(requested, bool) or requested != actual:
+            continue
+        if kind == "probe":
+            succeeded = (
+                record.get("show_hr") == 0
+                and record.get("is_shown_hr") == 0
+                and record.get("result") == "applied"
+            )
+        else:
+            succeeded = record.get("hr") == 0 and record.get("result") == "success"
+        if succeeded:
+            applied.append(requested)
+
+    try:
+        show_index = applied.index(True)
+        applied.index(False, show_index + 1)
+    except ValueError:
+        return [f"missing successful {event_name} TRUE -> FALSE transition"]
+    return []
 
 
 def report(records: list[dict[str, Any]], kind: str) -> None:
@@ -140,12 +174,16 @@ def main() -> int:
     parser.add_argument("--stage", type=int, default=1)
     parser.add_argument("--build-id", default=DEFAULT_BUILD_ID)
     parser.add_argument("--kind", choices=("runtime", "probe"), required=True)
+    parser.add_argument("--require-summary", action="store_true")
+    parser.add_argument("--require-candidate-visibility-toggle", action="store_true")
     args = parser.parse_args()
 
     records, errors = load_records(args.paths)
     validation_errors, gaps = validate_records(records, args.stage, args.build_id)
     errors.extend(validation_errors)
-    gaps.extend(evidence_gaps(records, args.kind))
+    gaps.extend(evidence_gaps(records, args.kind, args.require_summary))
+    if args.require_candidate_visibility_toggle:
+        gaps.extend(candidate_visibility_gaps(records, args.kind))
     report(records, args.kind)
     for error in errors:
         print(f"ERROR: {error}", file=sys.stderr)

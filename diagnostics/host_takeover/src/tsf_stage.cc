@@ -293,10 +293,14 @@ void trace_stage_ui_query(TextService* service,
 void trace_stage_ui_show(TextService* service,
                          const char* element_type,
                          DWORD element_id,
-                         bool show) {
+                         bool requested_show,
+                         bool actual_show,
+                         HRESULT result) {
     trace_ui(service, "ui_element.show", element_type, element_id, {
-        {"show", show},
-        {"result", "success"},
+        {"requested_show", requested_show},
+        {"actual_show", actual_show},
+        {"hr", static_cast<int64_t>(result)},
+        {"result", SUCCEEDED(result) ? "success" : "failed"},
     });
 }
 

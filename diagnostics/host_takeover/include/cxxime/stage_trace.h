@@ -14,7 +14,7 @@ namespace cxxime {
 
 inline constexpr int kStageTraceSchemaVersion = 1;
 inline constexpr int kStageTraceStage = 1;
-inline constexpr char kStageTraceBuildId[] = "cxxime-host-takeover-20260725-a";
+inline constexpr char kStageTraceBuildId[] = "cxxime-host-takeover-20260725-b";
 
 const char* stage_trace_build_id();
 const char* stage_trace_arch();

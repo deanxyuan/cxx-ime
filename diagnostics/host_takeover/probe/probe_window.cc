@@ -65,6 +65,9 @@ void ProbeApp::trace_ime_message(UINT message,
 }
 
 bool ProbeApp::candidate_should_draw() const {
+    if (original_candidate_ui_shown_) {
+        return false;
+    }
     if (!gate_on_signal_) {
         return true;
     }
@@ -90,7 +93,7 @@ void ProbeApp::paint(HDC dc) {
                              DEFAULT_PITCH, L"Segoe UI");
     HFONT old_font = static_cast<HFONT>(SelectObject(dc, font));
 
-    int y = 68;
+    int y = 96;
     const std::wstring signal = L"Composition: " + composition_ + L"    Reading: " + reading_;
     TextOutW(dc, 24, y, signal.c_str(), static_cast<int>(signal.size()));
     y += 38;
@@ -104,8 +107,13 @@ void ProbeApp::paint(HDC dc) {
 
     const bool draw_candidates = candidate_should_draw();
     std::wstring status = L"Host candidate UI: ";
-    status += candidates_.empty() ? L"no candidate snapshot" :
-              (draw_candidates ? L"visible" : L"hidden by signal gate");
+    if (candidates_.empty()) {
+        status += L"no candidate snapshot";
+    } else if (original_candidate_ui_shown_) {
+        status += L"hidden while original TIP UI is visible";
+    } else {
+        status += draw_candidates ? L"visible" : L"hidden by signal gate";
+    }
     TextOutW(dc, 24, y, status.c_str(), static_cast<int>(status.size()));
     y += 38;
 
@@ -154,6 +162,19 @@ LRESULT ProbeApp::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
             });
             SetFocus(hwnd_);
             InvalidateRect(hwnd_, nullptr, TRUE);
+            return 0;
+        }
+        if (LOWORD(wparam) == kOriginalUiCheckboxId) {
+            const bool enabled =
+                SendMessageW(original_ui_checkbox_, BM_GETCHECK, 0, 0) == BST_CHECKED;
+            set_candidate_ui_visibility_cycle(enabled, "checkbox");
+            SetFocus(hwnd_);
+            return 0;
+        }
+        break;
+    case WM_TIMER:
+        if (wparam == kCandidateUiVisibilityTimerId) {
+            advance_candidate_ui_visibility_cycle();
             return 0;
         }
         break;
@@ -216,6 +237,7 @@ LRESULT ProbeApp::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
         return 0;
     }
     case WM_DESTROY:
+        KillTimer(hwnd_, kCandidateUiVisibilityTimerId);
         if (himc_) {
             ImmReleaseContext(hwnd_, himc_);
             himc_ = nullptr;
