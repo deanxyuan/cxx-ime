@@ -1,11 +1,19 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
-#include "tsf_stage_diagnostics.h"
+#include "tsf_stage.h"
 
+#include "tsf_host_callsite.h"
+#include "tsf_sdl_runtime.h"
+
+#include "candidate_ui_element.h"
+#include "globals.h"
 #include "text_service.h"
 
 #include <cxxime/stage_trace.h>
 
+#include <immdev.h>
+
+#include <cstring>
 #include <utility>
 
 namespace cxxime_tsf {
@@ -65,6 +73,61 @@ ImmTextReadback read_imm_text(HIMC himc, DWORD index) {
     return result;
 }
 
+struct ImmCandidateReadback {
+    DWORD bytes = 0;
+    DWORD count = 0;
+    DWORD selection = 0;
+    DWORD page_start = 0;
+    DWORD page_size = 0;
+    bool valid = false;
+    nlohmann::json digests = nlohmann::json::array();
+};
+
+ImmCandidateReadback read_imm_candidates(HIMC himc) {
+    ImmCandidateReadback result;
+    if (!himc) {
+        return result;
+    }
+    result.bytes = ImmGetCandidateListW(himc, 0, nullptr, 0);
+    if (result.bytes < offsetof(CANDIDATELIST, dwOffset)) {
+        return result;
+    }
+
+    std::vector<BYTE> storage(result.bytes);
+    const DWORD copied = ImmGetCandidateListW(
+        himc, 0, reinterpret_cast<LPCANDIDATELIST>(storage.data()), result.bytes);
+    if (copied < offsetof(CANDIDATELIST, dwOffset)) {
+        return result;
+    }
+
+    const auto* list = reinterpret_cast<const CANDIDATELIST*>(storage.data());
+    const size_t offset_bytes = offsetof(CANDIDATELIST, dwOffset) +
+                                static_cast<size_t>(list->dwCount) * sizeof(DWORD);
+    if (offset_bytes > copied) {
+        return result;
+    }
+
+    result.count = list->dwCount;
+    result.selection = list->dwSelection;
+    result.page_start = list->dwPageStart;
+    result.page_size = list->dwPageSize;
+    for (DWORD index = 0; index < list->dwCount; ++index) {
+        const DWORD offset = list->dwOffset[index];
+        if (offset >= copied || (offset % sizeof(wchar_t)) != 0) {
+            return result;
+        }
+        const wchar_t* text = reinterpret_cast<const wchar_t*>(storage.data() + offset);
+        const size_t max_length = (copied - offset) / sizeof(wchar_t);
+        const size_t length = wcsnlen_s(text, max_length);
+        if (length == max_length) {
+            return result;
+        }
+        result.digests.push_back(cxxime::stage_trace_digest_utf16(text, length));
+    }
+    result.valid = true;
+    return result;
+}
+
 nlohmann::json text_digests(const std::vector<std::wstring>& values) {
     nlohmann::json digests = nlohmann::json::array();
     for (const auto& value : values) {
@@ -76,6 +139,21 @@ nlohmann::json text_digests(const std::vector<std::wstring>& values) {
 } // namespace
 
 void trace_stage_runtime_activate(DWORD activate_flags, TfClientId client_id) {
+    TF_INPUTPROCESSORPROFILE profile = {};
+    HRESULT profile_manager_hr = E_UNEXPECTED;
+    HRESULT profile_hr = E_UNEXPECTED;
+    ITfInputProcessorProfileMgr* profile_manager = nullptr;
+    profile_manager_hr = CoCreateInstance(
+        CLSID_TF_InputProcessorProfiles, nullptr, CLSCTX_INPROC_SERVER,
+        IID_ITfInputProcessorProfileMgr, reinterpret_cast<void**>(&profile_manager));
+    if (SUCCEEDED(profile_manager_hr) && profile_manager) {
+        profile_hr = profile_manager->GetProfile(
+            TF_PROFILETYPE_INPUTPROCESSOR, TEXTSERVICE_LANGID_HANS,
+            c_clsidTextService, c_guidProfile, nullptr, &profile);
+        profile_manager->Release();
+    }
+    const HKL keyboard_layout = GetKeyboardLayout(0);
+
     cxxime::write_stage_trace("tsf", "runtime.component_status", {
         {"name", "cxxime-tsf"},
         {"result", "loaded"},
@@ -83,10 +161,21 @@ void trace_stage_runtime_activate(DWORD activate_flags, TfClientId client_id) {
     cxxime::write_stage_trace("tsf", "runtime.activate", {
         {"activate_flags", activate_flags},
         {"client_id", client_id},
-        {"hkl", reinterpret_cast<uintptr_t>(GetKeyboardLayout(0))},
+        {"hkl", reinterpret_cast<uintptr_t>(keyboard_layout)},
+        {"hkl_is_ime", ImmIsIME(keyboard_layout) != FALSE},
+        {"profile_query_hr", static_cast<int64_t>(profile_hr)},
+        {"profile_manager_hr", static_cast<int64_t>(profile_manager_hr)},
+        {"profile_type", profile.dwProfileType},
+        {"profile_hkl", reinterpret_cast<uintptr_t>(profile.hkl)},
+        {"profile_hkl_substitute", reinterpret_cast<uintptr_t>(profile.hklSubstitute)},
+        {"profile_caps", profile.dwCaps},
+        {"profile_flags", profile.dwFlags},
         {"ui_element_only", (activate_flags & TF_TMF_UIELEMENTENABLEDONLY) != 0},
         {"result", "success"},
     });
+    if ((activate_flags & TF_TMF_UIELEMENTENABLEDONLY) != 0) {
+        trace_stage_sdl_runtime();
+    }
 }
 
 void trace_stage_key_route(uint64_t input_id,
@@ -113,11 +202,21 @@ void trace_stage_context(uint64_t input_id,
                          uint64_t composition_id,
                          ITfContext* input_context,
                          ITfThreadMgr* thread_mgr,
-                         bool ui_element_only) {
+                         const char* composition_transport) {
     ITfDocumentMgr* document_mgr = nullptr;
     ITfContext* top_context = nullptr;
+    ITfInsertAtSelection* insert_at_selection = nullptr;
+    ITfContextComposition* context_composition = nullptr;
     const HRESULT focus_hr = thread_mgr ? thread_mgr->GetFocus(&document_mgr) : E_POINTER;
     const HRESULT top_hr = document_mgr ? document_mgr->GetTop(&top_context) : E_POINTER;
+    const HRESULT insert_hr = input_context
+        ? input_context->QueryInterface(
+            IID_ITfInsertAtSelection, reinterpret_cast<void**>(&insert_at_selection))
+        : E_POINTER;
+    const HRESULT composition_hr = input_context
+        ? input_context->QueryInterface(
+            IID_ITfContextComposition, reinterpret_cast<void**>(&context_composition))
+        : E_POINTER;
     cxxime::write_stage_trace("tsf", "tsf.context", {
         {"input_id", input_id},
         {"composition_id", composition_id},
@@ -127,14 +226,21 @@ void trace_stage_context(uint64_t input_id,
         {"input_is_top_context", input_context && input_context == top_context},
         {"focus_hr", static_cast<int64_t>(focus_hr)},
         {"top_hr", static_cast<int64_t>(top_hr)},
-        {"start_composition_attempted", !ui_element_only},
-        {"reason", ui_element_only ? "ui_element_only_uses_imm_bridge" : "standard_tsf"},
+        {"insert_at_selection_hr", static_cast<int64_t>(insert_hr)},
+        {"context_composition_hr", static_cast<int64_t>(composition_hr)},
+        {"composition_transport", composition_transport ? composition_transport : ""},
     });
     if (top_context) {
         top_context->Release();
     }
     if (document_mgr) {
         document_mgr->Release();
+    }
+    if (insert_at_selection) {
+        insert_at_selection->Release();
+    }
+    if (context_composition) {
+        context_composition->Release();
     }
 }
 
@@ -201,6 +307,11 @@ void trace_stage_ui_get_number(TextService* service,
                                const char* field,
                                uint64_t value,
                                HRESULT result) {
+    if (method && std::strcmp(method, "GetUpdatedFlags") == 0) {
+        trace_stage_host_ui_callsite(
+            "ITfCandidateListUIElement::GetUpdatedFlags",
+            element_id != TF_INVALID_UIELEMENTID);
+    }
     nlohmann::json fields = {
         {"method", method ? method : ""},
         {"hr", static_cast<int64_t>(result)},
@@ -356,8 +467,7 @@ void trace_stage_candidate_snapshot(TextService* service,
         {"current_page", 0},
         {"engine_page_current", page_current},
         {"engine_page_total", page_total},
-        {"updated_flags", TF_CLUIE_DOCUMENTMGR | TF_CLUIE_COUNT | TF_CLUIE_SELECTION |
-                          TF_CLUIE_STRING | TF_CLUIE_CURRENTPAGE},
+        {"updated_flags", CandidateUIElement::kPublishedUpdatedFlags},
         {"text_lengths", std::move(lengths)},
         {"text_digests", text_digests(candidates)},
         {"result", "updated"},
@@ -430,6 +540,15 @@ void trace_stage_imm_target(const char* action,
                             uint64_t composition_id) {
     DWORD process_id = 0;
     const DWORD thread_id = hwnd ? GetWindowThreadProcessId(hwnd, &process_id) : 0;
+    HWND imc_hwnd = nullptr;
+    if (himc) {
+        LPINPUTCONTEXT input_context = ImmLockIMC(himc);
+        if (input_context) {
+            imc_hwnd = input_context->hWnd;
+            ImmUnlockIMC(himc);
+        }
+    }
+    const HWND default_ime_hwnd = hwnd ? ImmGetDefaultIMEWnd(hwnd) : nullptr;
     cxxime::write_stage_trace("tsf", "imm.target", {
         {"input_id", input_id},
         {"composition_id", composition_id},
@@ -440,6 +559,11 @@ void trace_stage_imm_target(const char* action,
         {"window_pid", process_id},
         {"window_tid", thread_id},
         {"window_class", window_class_utf8(hwnd)},
+        {"imc_hwnd", reinterpret_cast<uintptr_t>(imc_hwnd)},
+        {"imc_window_class", window_class_utf8(imc_hwnd)},
+        {"default_ime_hwnd", reinterpret_cast<uintptr_t>(default_ime_hwnd)},
+        {"default_ime_window_class", window_class_utf8(default_ime_hwnd)},
+        {"default_ime_visible", default_ime_hwnd && IsWindowVisible(default_ime_hwnd) != FALSE},
         {"hkl", reinterpret_cast<uintptr_t>(thread_id ? GetKeyboardLayout(thread_id) : nullptr)},
         {"open", himc ? ImmGetOpenStatus(himc) != FALSE : false},
         {"result", himc ? "acquired" : "not_found"},
@@ -469,6 +593,81 @@ void trace_stage_imm_write(const char* action,
         {"readback_result_bytes", result_readback.bytes},
         {"readback_result_digest", cxxime::stage_trace_digest_utf16(result_readback.text)},
         {"result", write_ok ? "written" : "failed"},
+    });
+}
+
+void trace_stage_imm_candidate(const char* action,
+                               HIMC himc,
+                               const std::vector<std::wstring>& candidates,
+                               uint32_t selection,
+                               WPARAM command,
+                               bool write_ok,
+                               bool message_ok,
+                               uint64_t input_id,
+                               uint64_t composition_id) {
+    nlohmann::json lengths = nlohmann::json::array();
+    for (const auto& candidate : candidates) {
+        lengths.push_back(candidate.size());
+    }
+    const nlohmann::json expected_digests = text_digests(candidates);
+    const ImmCandidateReadback readback = read_imm_candidates(himc);
+    const bool readback_matches = candidates.empty()
+        ? readback.count == 0
+        : readback.valid && readback.count == candidates.size() &&
+          readback.selection == selection && readback.digests == expected_digests;
+    cxxime::write_stage_trace("tsf", "imm.candidate", {
+        {"input_id", input_id},
+        {"composition_id", composition_id},
+        {"action", action ? action : ""},
+        {"himc", reinterpret_cast<uintptr_t>(himc)},
+        {"count", candidates.size()},
+        {"selection", selection},
+        {"page_start", 0},
+        {"page_size", candidates.size()},
+        {"text_lengths", std::move(lengths)},
+        {"text_digests", expected_digests},
+        {"write_ok", write_ok},
+        {"message", WM_IME_NOTIFY},
+        {"command", static_cast<uint64_t>(command)},
+        {"candidate_list_mask", 1},
+        {"message_ok", message_ok},
+        {"readback_bytes", readback.bytes},
+        {"readback_count", readback.count},
+        {"readback_selection", readback.selection},
+        {"readback_page_start", readback.page_start},
+        {"readback_page_size", readback.page_size},
+        {"readback_digests", readback.digests},
+        {"readback_valid", readback.valid},
+        {"readback_matches", readback_matches},
+        {"result", write_ok && message_ok && readback_matches ? "mirrored" : "failed"},
+    });
+}
+
+void trace_stage_imm_candidate_lifecycle(const char* action,
+                                        HIMC himc,
+                                        WPARAM command,
+                                        bool message_ok,
+                                        const char* transport,
+                                        uint64_t input_id,
+                                        uint64_t composition_id) {
+    const ImmCandidateReadback readback = read_imm_candidates(himc);
+    cxxime::write_stage_trace("tsf", "imm.candidate_lifecycle", {
+        {"input_id", input_id},
+        {"composition_id", composition_id},
+        {"action", action ? action : ""},
+        {"himc", reinterpret_cast<uintptr_t>(himc)},
+        {"message", WM_IME_NOTIFY},
+        {"command", static_cast<uint64_t>(command)},
+        {"candidate_list_mask", 1},
+        {"message_ok", message_ok},
+        {"transport", transport ? transport : ""},
+        {"candidate_list_bytes", readback.bytes},
+        {"candidate_list_valid", readback.valid},
+        {"candidate_count", readback.count},
+        {"candidate_selection", readback.selection},
+        {"candidate_page_start", readback.page_start},
+        {"candidate_page_size", readback.page_size},
+        {"result", message_ok ? "generated" : "failed"},
     });
 }
 

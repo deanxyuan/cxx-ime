@@ -287,22 +287,32 @@ void set_composition_language(ITfContext* context, TfEditCookie ec, ITfRange* ra
 HRESULT create_composition(TextService* service,
                            ITfContext* context,
                            TfEditCookie ec,
-                           ITfRange** range_out) {
-    if (!service || !context || !range_out)
+                           ITfRange** range_out,
+                           bool* start_attempted,
+                           HRESULT* start_result,
+                           bool* composition_returned) {
+    if (!service || !context || !range_out || !start_attempted || !start_result ||
+        !composition_returned) {
         return E_INVALIDARG;
+    }
     *range_out = nullptr;
+    *start_attempted = false;
+    *start_result = E_PENDING;
+    *composition_returned = false;
 
     ITfInsertAtSelection* insert_at_selection = nullptr;
     HRESULT hr = context->QueryInterface(IID_ITfInsertAtSelection,
                                          reinterpret_cast<void**>(&insert_at_selection));
-    if (FAILED(hr) || !insert_at_selection)
+    if (FAILED(hr) || !insert_at_selection) {
         return FAILED(hr) ? hr : E_NOINTERFACE;
+    }
 
     ITfRange* range = nullptr;
     hr = insert_at_selection->InsertTextAtSelection(ec, TF_IAS_QUERYONLY, nullptr, 0, &range);
     insert_at_selection->Release();
-    if (FAILED(hr) || !range)
+    if (FAILED(hr) || !range) {
         return FAILED(hr) ? hr : E_FAIL;
+    }
 
     ITfContextComposition* context_composition = nullptr;
     hr = context->QueryInterface(IID_ITfContextComposition,
@@ -313,7 +323,10 @@ HRESULT create_composition(TextService* service,
     }
 
     ITfComposition* composition = nullptr;
+    *start_attempted = true;
     hr = context_composition->StartComposition(ec, range, service, &composition);
+    *start_result = hr;
+    *composition_returned = composition != nullptr;
     context_composition->Release();
     if (FAILED(hr) || !composition) {
         range->Release();
@@ -330,17 +343,30 @@ HRESULT create_composition(TextService* service,
 HRESULT get_or_create_composition_range(TextService* service,
                                         ITfContext* context,
                                         TfEditCookie ec,
-                                        ITfRange** range_out) {
-    if (!service || !range_out)
+                                        ITfRange** range_out,
+                                        bool* start_attempted,
+                                        HRESULT* start_result,
+                                        bool* composition_returned) {
+    if (!service || !range_out || !start_attempted || !start_result ||
+        !composition_returned) {
         return E_INVALIDARG;
+    }
     *range_out = nullptr;
+    *start_attempted = false;
+    *start_result = E_PENDING;
+    *composition_returned = false;
 
     ITfComposition* composition = service->get_composition();
-    if (composition && service->is_composing() &&
-        SUCCEEDED(composition->GetRange(range_out)) && *range_out)
-        return S_OK;
+    if (composition && service->is_composing()) {
+        const HRESULT range_result = composition->GetRange(range_out);
+        if (FAILED(range_result) || !*range_out) {
+            return FAILED(range_result) ? range_result : E_FAIL;
+        }
+        return range_result;
+    }
 
-    return create_composition(service, context, ec, range_out);
+    return create_composition(service, context, ec, range_out, start_attempted,
+                              start_result, composition_returned);
 }
 
 void clear_and_end_composition(TextService* service,
@@ -426,6 +452,10 @@ STDMETHODIMP_(ULONG) EditSession::Release() {
 void EditSession::set_action(Action action, const std::wstring& text) {
     _action = action;
     _text = text;
+    _actionResult = E_PENDING;
+    _compositionStartAttempted = false;
+    _compositionStartResult = E_PENDING;
+    _compositionReturned = false;
 }
 
 STDMETHODIMP EditSession::DoEditSession(TfEditCookie ec) {
@@ -436,16 +466,22 @@ STDMETHODIMP EditSession::DoEditSession(TfEditCookie ec) {
     } else if (_action == Action::UPDATE_COMPOSITION) {
         ITfComposition* pComp = _service->get_composition();
         ITfRange* pRange = nullptr;
-        if (pComp && SUCCEEDED(pComp->GetRange(&pRange))) {
-            pRange->SetText(ec, 0, _text.c_str(), static_cast<LONG>(_text.length()));
-            set_composition_language(_context, ec, pRange);
-            _service->apply_composition_display_attribute(_context, pRange, ec);
-            set_selection_to_range(_context, ec, pRange);
+        _actionResult = pComp ? pComp->GetRange(&pRange) : E_UNEXPECTED;
+        if (SUCCEEDED(_actionResult) && pRange) {
+            _actionResult = pRange->SetText(
+                ec, 0, _text.c_str(), static_cast<LONG>(_text.length()));
+            if (SUCCEEDED(_actionResult)) {
+                set_composition_language(_context, ec, pRange);
+                _service->apply_composition_display_attribute(_context, pRange, ec);
+                set_selection_to_range(_context, ec, pRange);
+            }
         } else {
             TF_SELECTION sel = {};
             ULONG fetched = 0;
-            if (SUCCEEDED(_context->GetSelection(ec, TF_DEFAULT_SELECTION, 1, &sel, &fetched)) && fetched > 0)
+            if (SUCCEEDED(_context->GetSelection(
+                    ec, TF_DEFAULT_SELECTION, 1, &sel, &fetched)) && fetched > 0) {
                 pRange = sel.range;
+            }
         }
         if (pRange) {
             update_caret_rect(_service, _context, ec, pRange);
@@ -453,12 +489,18 @@ STDMETHODIMP EditSession::DoEditSession(TfEditCookie ec) {
         }
     } else if (_action == Action::ENSURE_COMPOSITION_TEXT) {
         ITfRange* range = nullptr;
-        if (SUCCEEDED(get_or_create_composition_range(_service, _context, ec, &range)) && range) {
-            range->SetText(ec, 0, _text.c_str(), static_cast<LONG>(_text.length()));
-            set_composition_language(_context, ec, range);
-            _service->apply_composition_display_attribute(_context, range, ec);
-            set_selection_to_range(_context, ec, range);
-            update_caret_rect(_service, _context, ec, range);
+        _actionResult = get_or_create_composition_range(
+            _service, _context, ec, &range, &_compositionStartAttempted,
+            &_compositionStartResult, &_compositionReturned);
+        if (SUCCEEDED(_actionResult) && range) {
+            _actionResult = range->SetText(
+                ec, 0, _text.c_str(), static_cast<LONG>(_text.length()));
+            if (SUCCEEDED(_actionResult)) {
+                set_composition_language(_context, ec, range);
+                _service->apply_composition_display_attribute(_context, range, ec);
+                set_selection_to_range(_context, ec, range);
+                update_caret_rect(_service, _context, ec, range);
+            }
             range->Release();
         }
     } else if (_action == Action::COMMIT_COMPOSITION) {
@@ -473,8 +515,9 @@ STDMETHODIMP EditSession::DoEditSession(TfEditCookie ec) {
         if (update_current_caret_rect(_service, _context, ec, &rc, &source)) {
             _resultRect = rc;
             _resultValid = true;
-            if (_service)
+            if (_service) {
                 _service->trace_caret_event("query", source, true, &rc);
+            }
         } else if (_service) {
             _service->trace_caret_event("query", source, false, nullptr, E_FAIL, true);
         }

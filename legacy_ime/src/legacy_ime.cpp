@@ -3,7 +3,7 @@
 #include "legacy_common.h"
 #include "legacy_session.h"
 #include "legacy_ui.h"
-#include "legacy_stage_diagnostics.h"
+#include "legacy_stage.h"
 
 #include <cxxime/stage_trace.h>
 

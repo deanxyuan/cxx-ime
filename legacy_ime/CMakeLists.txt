@@ -5,7 +5,7 @@ add_library(cxxime-ime SHARED
     src/legacy_ime.cpp
     src/legacy_session.cpp
     src/legacy_ui.cpp
-    ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/legacy_stage_diagnostics.cc
+    ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/legacy_stage.cc
     cxxime_ime.def
 )
 

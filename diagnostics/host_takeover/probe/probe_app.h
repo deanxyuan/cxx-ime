@@ -1,7 +1,7 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
-#ifndef CXXIME_DIAGNOSTICS_HOST_TAKEOVER_PROBE_APP_H_
-#define CXXIME_DIAGNOSTICS_HOST_TAKEOVER_PROBE_APP_H_
+#ifndef CXXIME_HOST_TAKEOVER_PROBE_APP_H_
+#define CXXIME_HOST_TAKEOVER_PROBE_APP_H_
 
 #include <windows.h>
 #include <imm.h>
@@ -23,6 +23,7 @@ public:
     bool initialize(HINSTANCE instance);
     int run();
     void shutdown();
+    const std::wstring& initialization_error() const;
 
     HRESULT on_begin_ui_element(DWORD element_id, BOOL* show);
     HRESULT on_update_ui_element(DWORD element_id);
@@ -35,10 +36,17 @@ private:
     void update_candidate(ITfUIElement* element, DWORD element_id, const char* action);
     void update_reading(ITfUIElement* element, DWORD element_id, const char* action);
     void read_composition(LPARAM flags);
-    void trace_ime_message(UINT message, LPARAM flags, const char* action);
+    void trace_imm_candidate_snapshot(const char* trigger,
+                                      DWORD element_id,
+                                      const char* action);
+    void trace_ime_message(UINT message,
+                           WPARAM command,
+                           LPARAM flags,
+                           const char* action);
     void paint(HDC dc);
     bool candidate_should_draw() const;
     uint64_t ensure_composition_id();
+    bool fail_initialization(const char* stage, HRESULT result);
 
     HINSTANCE instance_ = nullptr;
     HWND hwnd_ = nullptr;
@@ -62,9 +70,10 @@ private:
     std::wstring composition_;
     std::wstring reading_;
     std::wstring committed_;
+    std::wstring initialization_error_;
     std::vector<std::wstring> candidates_;
 };
 
 } // namespace cxxime_probe
 
-#endif // CXXIME_DIAGNOSTICS_HOST_TAKEOVER_PROBE_APP_H_
+#endif // CXXIME_HOST_TAKEOVER_PROBE_APP_H_

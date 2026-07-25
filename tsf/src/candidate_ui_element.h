@@ -10,10 +10,13 @@
 
 class TextService;
 
-class CandidateUIElement : public ITfIntegratableCandidateListUIElement,
-                           public ITfCandidateListUIElementBehavior {
+class CandidateUIElement : public ITfCandidateListUIElementBehavior {
 public:
     explicit CandidateUIElement(TextService* service);
+
+static constexpr DWORD kPublishedUpdatedFlags =
+    TF_CLUIE_COUNT | TF_CLUIE_SELECTION | TF_CLUIE_STRING |
+    TF_CLUIE_PAGEINDEX | TF_CLUIE_CURRENTPAGE;
 
     // IUnknown
     STDMETHODIMP QueryInterface(REFIID riid, void** ppvObj) override;
@@ -41,13 +44,6 @@ public:
     STDMETHODIMP Finalize() override;
     STDMETHODIMP Abort() override;
 
-    // ITfIntegratableCandidateListUIElement
-    STDMETHODIMP SetIntegrationStyle(GUID integration_style) override;
-    STDMETHODIMP GetSelectionStyle(TfIntegratableCandidateListSelectionStyle* selection_style) override;
-    STDMETHODIMP OnKeyDown(WPARAM w_param, LPARAM l_param, BOOL* eaten) override;
-    STDMETHODIMP ShowCandidateNumbers(BOOL* show) override;
-    STDMETHODIMP FinalizeExactCompositionString() override;
-
     void set_page(const cxxime::CandidatePage& page, int page_current, int page_total);
     bool begin(ITfThreadMgr* thread_mgr);
     void notify_update(ITfThreadMgr* thread_mgr);
@@ -71,7 +67,6 @@ private:
     ITfDocumentMgr* _document_mgr = nullptr;
     std::vector<std::wstring> _candidates;
     UINT _selection = 0;
-    TfIntegratableCandidateListSelectionStyle _selection_style = STYLE_ACTIVE_SELECTION;
 };
 
 #endif // CXXIME_TSF_CANDIDATE_UI_ELEMENT_H_

@@ -9,7 +9,7 @@ import tempfile
 import unittest
 
 
-BUILD_ID = "dota2-stage1-20260720-a"
+BUILD_ID = "cxxime-host-takeover-20260725-a"
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DIAGNOSTICS = os.path.join(ROOT, "diagnostics", "host_takeover")
 

@@ -79,6 +79,7 @@ public:
     void abort_candidate_ui_from_tsf();
     HRESULT finalize_exact_candidate_ui_from_tsf();
     void trace_ui_element_method(const char* element, const char* method, bool important = false);
+    void trace_candidate_activation_state(ITfDocumentMgr* candidate_document_mgr) const;
     uint64_t stage_input_id() const { return _stageInputId; }
     uint64_t stage_composition_id() const { return _stageCompositionId; }
     uint64_t ensure_stage_composition_id();
@@ -88,10 +89,10 @@ public:
                            const RECT* rect,
                            HRESULT hr = S_OK,
                            bool important = false);
-    void update_composition(ITfContext* pic,
-                            const std::wstring& preedit,
-                            bool ensure = false,
-                            bool sync = false);
+    HRESULT update_composition(ITfContext* pic,
+                               const std::wstring& preedit,
+                               bool ensure = false,
+                               bool sync = false);
     bool apply_composition_display_attribute(ITfContext* pic, ITfRange* range, TfEditCookie ec);
     ITfComposition* get_composition() const { return _composition; }
     void set_composition(ITfComposition* comp) { _composition = comp; }
@@ -101,8 +102,8 @@ public:
     void set_composing(bool val) { _composing = val; }
     void set_caret_rect(const RECT& rc) { _caretRect = rc; }
     void update_candidate_position(const RECT& rc,
-    ITfContext* context = nullptr,
-    bool from_layout_change = false);
+                                   ITfContext* context = nullptr,
+                                   bool from_layout_change = false);
     RECT _resolve_caret_rect(ITfContext* pic);
 
     // TSF layer trace (lightweight, no cross-module QueryTrace dependency)
@@ -134,6 +135,8 @@ public:
 private:
     HRESULT _register_key_event_sink();
     HRESULT _unregister_key_event_sink();
+    void _register_thread_sinks();
+    void _unregister_thread_sinks();
     HRESULT _register_preserved_key();
     HRESULT _unregister_preserved_key();
     bool _register_display_attribute_atom();
@@ -153,8 +156,8 @@ private:
     bool _advise_text_layout_sink(ITfDocumentMgr* doc_mgr);
     void _unadvise_text_layout_sink();
     void _request_candidate_position_update(ITfContext* pic,
-    const char* reason,
-    bool from_layout_change = false);
+                                           const char* reason,
+                                           bool from_layout_change = false);
     bool _resolve_native_caret_rect(RECT* out) const;
     bool _resolve_context_native_caret_rect(ITfContext* context, RECT* out) const;
     bool _read_context_compartment_bool(ITfContext* context, REFGUID guid, bool* value) const;
@@ -174,6 +177,17 @@ private:
     void _show_candidate_window(const char* reason);
     void _hide_candidate_window(const char* reason);
     void _hide_external_candidate_window(const char* reason);
+    bool _publish_candidate_ui_element(const cxxime::CandidatePage& page,
+                                       uint32_t candidate_count,
+                                       uint32_t page_current,
+                                       uint32_t page_total);
+    void _start_host_takeover_runtime();
+    void _stop_host_takeover_runtime();
+    void _prepare_host_candidate_compatibility();
+    void _prepare_host_candidate_open_status();
+    void _set_host_candidate_notifications_open(bool open);
+    void _notify_host_candidate_changed();
+    void _align_host_candidate_forms();
     void _update_reading_ui_element(ITfContext* context, const std::wstring& reading);
     void _end_reading_ui_element(const char* reason);
     void _trace_input_decision(const char* block_reason);
@@ -206,6 +220,8 @@ private:
     bool _fTestKeyUpPending = false;
     bool _candidateShowPending = false;
     bool _candidatePendingHasStaleRect = false;
+    bool _hostTakeoverRuntimeActive = false;
+    bool _hostImmCandidateBridgeEnabled = false;
     RECT _candidatePendingStaleRect = {};
     std::chrono::steady_clock::time_point _candidateShowPendingSince = {};
     UINT_PTR _statePollTimer = 0;
