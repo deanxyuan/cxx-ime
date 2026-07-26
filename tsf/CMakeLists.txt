@@ -51,6 +51,7 @@ add_library(cxxime-tsf SHARED
 )
 
 target_include_directories(cxxime-tsf PRIVATE
+    ${CXXIME_GENERATED_INCLUDE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/resource
     ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src
@@ -79,4 +80,11 @@ endif()
 set_target_properties(cxxime-tsf PROPERTIES
     OUTPUT_NAME "${CXXIME_TSF_OUTPUT_NAME}"
     SUFFIX ".dll"
+)
+
+cxxime_add_version_resource(
+    cxxime-tsf
+    "CxxIME TSF Text Service"
+    "${CXXIME_TSF_OUTPUT_NAME}.dll"
+    VFT_DLL
 )

@@ -1,0 +1,38 @@
+// Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
+
+#include <winver.h>
+
+#ifdef _DEBUG
+#define CXXIME_FILE_FLAGS (VS_FF_DEBUG | @CXXIME_PRERELEASE_FLAG@)
+#else
+#define CXXIME_FILE_FLAGS @CXXIME_PRERELEASE_FLAG@
+#endif
+
+VS_VERSION_INFO VERSIONINFO
+    FILEVERSION @CXXIME_VERSION_NUMERIC@
+    PRODUCTVERSION @CXXIME_VERSION_NUMERIC@
+    FILEFLAGSMASK VS_FFI_FILEFLAGSMASK
+    FILEFLAGS CXXIME_FILE_FLAGS
+    FILEOS VOS_NT_WINDOWS32
+    FILETYPE @CXXIME_FILE_TYPE@
+    FILESUBTYPE VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "080404B0"
+        BEGIN
+            VALUE "CompanyName", "CxxIME Contributors\0"
+            VALUE "FileDescription", "@CXXIME_FILE_DESCRIPTION@\0"
+            VALUE "FileVersion", "@CXXIME_VERSION_NUMERIC_DOTTED@\0"
+            VALUE "InternalName", "@target@\0"
+            VALUE "LegalCopyright", "Copyright (c) 2026 CxxIME Contributors\0"
+            VALUE "OriginalFilename", "@CXXIME_ORIGINAL_FILENAME@\0"
+            VALUE "ProductName", "CxxIME\0"
+            VALUE "ProductVersion", "@CXXIME_VERSION@\0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0804, 1200
+    END
+END

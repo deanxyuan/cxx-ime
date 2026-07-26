@@ -31,7 +31,12 @@ DEFAULT_BUILD_DIR = os.path.join(ROOT, "build-package")
 DEFAULT_X86_BUILD_DIR = os.path.join(ROOT, "build-package-x86")
 DIST_DIR = os.path.join(ROOT, "dist")
 OUTPUT_DIR = os.path.join(ROOT, "..", "output")
-VERSION = "0.1.0"
+with open(os.path.join(ROOT, "VERSION"), encoding="ascii") as version_file:
+    VERSION = version_file.read().strip()
+_VERSION_MATCH = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?", VERSION)
+if _VERSION_MATCH is None:
+    raise RuntimeError("VERSION must contain a valid semantic version")
+VERSION_NUMERIC = ".".join(_VERSION_MATCH.groups()) + ".0"
 SINGLE_CONFIG_GENERATORS = (
     "NMake Makefiles",
     "NMake Makefiles JOM",
@@ -569,7 +574,18 @@ def copy_installer_scripts(config: str, host_diagnostics: bool) -> None:
     for fn in files:
         src = os.path.join(SCRIPTS, fn)
         if os.path.isfile(src):
-            shutil.copy2(src, DIST_DIR)
+            dest = os.path.join(DIST_DIR, fn)
+            if fn == "collect_diagnostics.ps1":
+                with open(src, encoding="utf-8") as f:
+                    content = f.read()
+                marker = 'package_version = "development"'
+                replacement = f'package_version = "{VERSION}"'
+                if content.count(marker) != 1:
+                    raise RuntimeError("collect_diagnostics.ps1 package version marker is missing")
+                with open(dest, "w", encoding="utf-8", newline="") as f:
+                    f.write(content.replace(marker, replacement))
+            else:
+                shutil.copy2(src, dest)
             print(f"  {fn}")
 
     if host_diagnostics:
@@ -619,7 +635,7 @@ def build_nsis(config: str, fast: bool = False, host_diagnostics: bool = False) 
 
     print(f"  Using NSIS: {makensis}")
     nsi_file = os.path.join(DIST_DIR, "cxxime-setup.nsi")
-    cmd = [makensis]
+    cmd = [makensis, f"/DVERSION={VERSION}", f"/DVERSION_NUMERIC={VERSION_NUMERIC}"]
     if fast:
         cmd.append("/DFAST")
     if host_diagnostics:

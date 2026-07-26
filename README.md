@@ -4,20 +4,9 @@
 
 A lightweight Windows TSF (Text Services Framework) input method (Pinyin + Wubi + Mixed).
 
-> 项目已进入日常试用阶段：核心输入功能、安装部署与配置体系均已完成。
-
 ## 项目简介
 
 CxxIME 是一个基于 Windows TSF (Text Services Framework) 的输入法，支持拼音、五笔和拼音五笔混输三种模式，采用客户端/服务端架构设计。TSF DLL 负责捕获按键并通过 IPC 与后台服务端通信，服务端执行拼音解析、词典查询和候选生成。
-
-## 功能特性
-
-- **三种输入模式**：拼音（全拼/简拼/模糊音）、五笔 86（四码唯一自动上屏，可配置开启/关闭）、混输（按候选强度智能排序拼音与五笔结果）
-- **用户词典与候选学习**：选词自动学习词频与音节键，学过的词可被简拼命中；支持 TSV 导入导出、设置界面增删改查；可通过 `candidate_learning` 控制学习开关
-- **性能**：二进制堆加载词典 + Patricia trie 拼写索引 + 短码候选缓存 + 长拼音查询页缓存，IPC 单次往返 < 1ms
-- **跨窗口状态一致**：中英文/大小写/全半角/标点/输入模式为全局状态，切换窗口不丢失
-- **界面**：候选窗口 + 状态窗口，Direct2D / GDI 双渲染后端，14 套配色主题，DPI 缩放，横排/竖排布局
-- **可观测性**：查询链路 trace（JSONL 采样落盘）、TSF 事件级追踪、一键诊断包导出
 
 ## 架构
 
@@ -40,6 +29,14 @@ cxx-ime/
 ```
 
 **输入流程：** 按键 → TSF DLL → IPC → 服务端 → 引擎 → IPC → TSF DLL → 文字上屏
+
+主要能力：
+
+- 拼音、五笔 86 和混合输入模式，支持简拼、模糊及五笔简码
+- 短输入候选按匹配质量分层排序，避免高频长词压过精确音节和接近完成的短词
+- 候选学习默认关闭，开启后将选词结果持久化到用户词典，可在设置中删除词条恢复系统排序
+- 五笔四码唯一候选自动上屏，可在设置中关闭
+- 支持应用宿主通过 TSF UIElement 接管 inline preedit 和候选窗口绘制，DOTA2 场景已验证
 
 ## 环境要求
 
@@ -107,8 +104,6 @@ python tools/dict_convert.py input.yaml output.db
 | `wubi86.dict.idx` | `build_binary.py` 生成 | 否 | 五笔编码索引（运行时） |
 | `dictionary_manifest.json` | `prepare_dict.py` 生成 | 否 | 运行时词典 bundle 清单与校验哈希 |
 
-> 五笔词典为**必选**：打包流程缺失 wubi86 源数据会直接报错。
-
 ### 词典维护
 
 数据来源链路：**zip → db → algebra → bin/idx/spellings/topn → manifest**
@@ -132,12 +127,6 @@ zf.write('pinyin.dict.db'); zf.close()
 "
 ```
 
-一键完成上述全部步骤（含五笔与短码缓存）：
-
-```cmd
-python scripts/prepare_dict.py --data-dir data/ --output-dir dist/data/
-```
-
 > **注意：** `.db`、`.bin`、`.idx`、`.spellings.bin` 均在 `.gitignore` 中。仅 `.db.zip` 提交到仓库。其他开发者拉取后从步骤 0 开始。
 
 ## 打包
@@ -145,12 +134,18 @@ python scripts/prepare_dict.py --data-dir data/ --output-dir dist/data/
 构建 + 词典转换 + NSIS 安装程序编译：
 
 ```cmd
-scripts\package.py                     # Release 打包 → ..\output\cxxime-v0.2.0-beta-setup.exe
+scripts\package.py                     # Release 打包 → ..\output\cxxime-v0.1.0-beta.2-setup.exe
 scripts\package.py --debug             # Debug 打包
 scripts\package.py --skip-dict         # 复用已有 dist/data 词典
-scripts\package.py --fast --skip-dict  # 快速调试包（NSIS 跳过大文件压缩）
-scripts\package.py --host-diag         # 包含宿主诊断探针（cxxime-ime-host-probe）
+scripts\package.py --fast              # NSIS 跳过大文件压缩
+scripts\package.py --host-diag         # 宿主诊断包 → ..\output\cxxime-v0.1.0-beta.2-host-diag-setup.exe
 ```
+
+修改词典源数据或短码排序算法后，正式打包不得使用 `skip-dict`，必须重新生成
+`pinyin.topn.bin` 和词典清单。
+
+普通安装包不包含 IME Host Probe 和阶段日志导出工具，但包含通用的
+`collect_diagnostics.ps1`。仅在复现宿主接管问题时使用 `--host-diag`。
 
 需要预先安装 [NSIS 3.x](https://nsis.sourceforge.io/) 并确保 `makensis.exe` 在 PATH 中。如果未安装 NSIS，`package.py` 会跳过安装程序生成，`dist/` 目录中保留原始分发文件。
 
@@ -160,7 +155,7 @@ scripts\package.py --host-diag         # 包含宿主诊断探针（cxxime-ime-h
 
 ## 安装
 
-运行 `cxxime-v0.2.0-beta-setup.exe`，按向导提示操作：
+运行 `cxxime-v0.1.0-beta.2-setup.exe`，按向导提示操作：
 
 1. 选择程序安装目录，默认安装到 `C:\Program Files\CxxIME`
 2. 程序文件和出厂数据安装到安装目录，用户配置初始化到 `%USERPROFILE%\cxxime\`
@@ -170,22 +165,9 @@ scripts\package.py --host-diag         # 包含宿主诊断探针（cxxime-ime-h
 ## 卸载
 
 - 开始菜单 → CxxIME → 卸载 CxxIME
-- 或 Windows 设置 → 应用 → CxxIME
+- 或控制面板 → 添加/删除程序 → CxxIME
 
-卸载默认只清理程序文件、开始菜单快捷方式、TSF 注册项、自启动项和卸载项，**默认保留** `%USERPROFILE%\cxxime\` 下的用户配置和用户词典；卸载向导中可勾选「删除用户配置和词典数据」一并清除。
-
-## 快速上手
-
-| 按键 | 功能 |
-|------|------|
-| 字母键 | 输入拼音/五笔编码，空格或数字键选词 |
-| `PageUp` / `PageDown` | 候选翻页 |
-| `Shift` | 切换中英文（左右 Shift 行为可分别配置，出厂：左 Shift 提交编码并切换，右 Shift 切到英文） |
-| `CapsLock` | 切换模式（可配置 clear/code/candidate/append，关灯恢复原模式） |
-| `Shift+Space` | 全角/半角切换 |
-| `Ctrl+.` | 中文/英文标点切换 |
-
-中英文、全半角等状态跨窗口保持一致；详细按键配置见 [设置指南](docs/settings-guide.md)。
+卸载默认只清理程序文件、开始菜单快捷方式、TSF 注册项、自启动项和卸载项，**默认保留** `%USERPROFILE%\cxxime\` 下的用户配置和用户词典。
 
 ## 配置
 
@@ -208,7 +190,8 @@ scripts\package.py --host-diag         # 包含宿主诊断探针（cxxime-ime-h
 }
 ```
 
-开启 `candidate_learning` 后选词会自动学习到用户词库，提升个性化排序。需要恢复默认行为时，在设置的用户词库中删除对应词条即可。
+开启 `candidate_learning` 后，选词学习记录会跨重启保留; 关闭该选项只停止后续学习，
+不会删除已有记录。需要恢复某个编码的系统排序时，可在设置的用户词库中删除对应词条。
 
 ## 开发工具
 
@@ -228,11 +211,11 @@ scripts\package.py --host-diag         # 包含宿主诊断探针（cxxime-ime-h
 
 ## 测试
 
-`build.bat` / `build.bat debug` 默认为开发构建（`CXXIME_PRODUCTION_BUILD=OFF`，数据目录指向项目 `data/`，启用 tests 和 tools）。
+`build.bat debug` 默认为开发构建（启用 tests 和 tools，数据目录指向项目 `data/`）。
 
 ```cmd
 cd build
-ctest -C Debug
+ctest -C Debug --output-on-failure
 ```
 
 或单独运行某个测试：`build\test\Debug\ipc_test.exe`

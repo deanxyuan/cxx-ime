@@ -3,6 +3,7 @@
 #ifndef CXXIME_TSF_ABOUT_DIALOG_H_
 #define CXXIME_TSF_ABOUT_DIALOG_H_
 
+#include <cxxime/version.h>
 #include <windows.h>
 
 static LRESULT CALLBACK AboutWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
@@ -66,8 +67,8 @@ inline void show_about_dialog(HWND parent = nullptr) {
     };
 
     label(L"CxxIME 输入法", 16, 24, hBold);
-    label(L"版本 0.1.0 — Apache License 2.0", 44, 20, hFont);
-    label(L"轻量级 Windows TSF 输入法（拼音 / 五笔）", 68, 20, hFont);
+    label(L"版本 " CXXIME_VERSION_WSTRING L" — Apache License 2.0", 44, 20, hFont);
+    label(L"轻量级 Windows TSF 输入法（拼音 / 五笔 / 混输）", 68, 20, hFont);
     label(L"https://gitee.com/shadowyuan/cxx-ime", 96, 20, hFont);
     label(L"https://github.com/deanxyuan/cxx-ime", 120, 20, hFont);
 

@@ -17,3 +17,10 @@ target_link_libraries(cxxime-server PRIVATE
     shell32
     advapi32
 )
+
+cxxime_add_version_resource(
+    cxxime-server
+    "CxxIME Server"
+    "cxxime-server.exe"
+    VFT_APP
+)
