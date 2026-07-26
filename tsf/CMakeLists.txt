@@ -1,5 +1,30 @@
 project(cxxime-tsf CXX)
 
+if(CXXIME_ENABLE_HOST_DIAGNOSTICS)
+    set(CXXIME_TSF_DIAGNOSTIC_SOURCES
+        ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_composition.cc
+        ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_activation.cc
+        ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_imm_mode.cc
+        ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_stage.cc
+        ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_host_window.cc
+        ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_imm_candidate_snapshot.cc
+        ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_host_imm_state.cc
+        ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_host_message.cc
+        ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_host_callsite.cc
+        ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_host_classification.cc
+        ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_sdl_message_hook.cc
+        ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_sdl_runtime.cc
+        ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_host_classification_message.cc
+        ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_host_ime_private_api.cc
+        ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_ui_element_identity.cc
+        ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_ui_element_observer.cc
+    )
+else()
+    set(CXXIME_TSF_DIAGNOSTIC_SOURCES
+        ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/stubs/tsf.cc
+    )
+endif()
+
 add_library(cxxime-tsf SHARED
     src/dllmain.cpp
     src/globals.cpp
@@ -8,6 +33,7 @@ add_library(cxxime-tsf SHARED
     src/text_service_candidate.cpp
     src/text_service_composition.cpp
     src/text_service_activation.cpp
+    src/text_service_trace.cpp
     src/key_event_sink.cpp
     src/edit_session.cpp
     src/candidate_ui_element.cpp
@@ -20,22 +46,7 @@ add_library(cxxime-tsf SHARED
     src/host_compatibility/host_classification_compatibility.cc
     src/host_compatibility/host_classification_runtime.cc
     src/host_compatibility/host_ime_private_api.cc
-    ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_composition.cc
-    ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_activation.cc
-    ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_imm_mode.cc
-    ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_stage.cc
-    ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_host_window.cc
-    ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_imm_candidate_snapshot.cc
-    ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_host_imm_state.cc
-    ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_host_message.cc
-    ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_host_callsite.cc
-    ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_host_classification.cc
-    ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_sdl_message_hook.cc
-    ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_sdl_runtime.cc
-    ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_host_classification_message.cc
-    ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_host_ime_private_api.cc
-    ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_ui_element_identity.cc
-    ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_ui_element_observer.cc
+    ${CXXIME_TSF_DIAGNOSTIC_SOURCES}
     cxxime_tsf.def
 )
 

@@ -1,5 +1,15 @@
 project(cxxime-shared CXX)
 
+if(CXXIME_ENABLE_HOST_DIAGNOSTICS)
+    set(CXXIME_SHARED_DIAGNOSTIC_SOURCES
+        ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/stage_trace.cc
+    )
+else()
+    set(CXXIME_SHARED_DIAGNOSTIC_SOURCES
+        ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/stubs/stage_trace.cc
+    )
+endif()
+
 add_library(cxxime-shared STATIC
     src/key_event.cc
     src/data_path.cc
@@ -9,7 +19,7 @@ add_library(cxxime-shared STATIC
     src/diagnostics_config.cc
     src/mpscq.cc
     src/query_trace_log.cc
-    ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/stage_trace.cc
+    ${CXXIME_SHARED_DIAGNOSTIC_SOURCES}
 )
 
 target_include_directories(cxxime-shared PUBLIC

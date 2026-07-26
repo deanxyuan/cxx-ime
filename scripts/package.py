@@ -8,6 +8,7 @@
 #   python scripts/package.py --debug        # Debug build + package
 #   python scripts/package.py --skip-build   # Skip cmake build (already built)
 #   python scripts/package.py --skip-dict    # Skip dictionary generation
+#   python scripts/package.py --host-diag    # Include host diagnostics and Probe
 #   python scripts/package.py --generator "Visual Studio 17 2022" --platform x64
 
 from __future__ import annotations
@@ -144,6 +145,50 @@ def recreate_build_dir(build_dir: str) -> None:
         print(f"Creating build directory: {build_dir}")
 
 
+def read_cmake_cache_bool(build_dir: str, name: str) -> bool | None:
+    """Read a BOOL entry from an existing CMake cache."""
+    cache_path = os.path.join(build_dir, "CMakeCache.txt")
+    try:
+        with open(cache_path, encoding="utf-8", errors="replace") as cache:
+            prefix = f"{name}:BOOL="
+            for line in cache:
+                if line.startswith(prefix):
+                    value = line[len(prefix):].strip().upper()
+                    if value in {"1", "ON", "TRUE", "YES", "Y"}:
+                        return True
+                    if value in {"0", "OFF", "FALSE", "NO", "N", "IGNORE", "NOTFOUND"}:
+                        return False
+                    return None
+    except OSError:
+        return None
+    return None
+
+
+def verify_prebuilt_host_mode(build_dir: str, host_diagnostics: bool) -> None:
+    """Reject --skip-build directories configured for the other package mode."""
+    expected = {
+        "CXXIME_ENABLE_HOST_DIAGNOSTICS": host_diagnostics,
+        "CXXIME_BUILD_HOST_PROBE": host_diagnostics,
+    }
+    for name, expected_value in expected.items():
+        actual_value = read_cmake_cache_bool(build_dir, name)
+        if actual_value is None:
+            print(
+                f"  ERROR: cannot verify {name} in {build_dir}; rebuild without --skip-build.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if actual_value != expected_value:
+            requested = "ON" if expected_value else "OFF"
+            actual = "ON" if actual_value else "OFF"
+            print(
+                f"  ERROR: {build_dir} has {name}={actual}, "
+                f"requested package requires {requested}.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+
 def build(
     build_dir: str,
     config: str,
@@ -153,6 +198,7 @@ def build(
     platform: str | None = None,
     target: str | None = None,
     jobs: int = 1,
+    host_diagnostics: bool = False,
 ) -> None:
     """Configure and build the project."""
     print(f"Building {config} with PRODUCTION=ON...")
@@ -182,6 +228,12 @@ def build(
         cmake_args.extend(["-A", platform])
     cmake_args.append(f"-DCXXIME_BUILD_TESTS={'OFF' if skip_tests else 'ON'}")
     cmake_args.append(f"-DCXXIME_BUILD_TOOLS={'OFF' if skip_tools else 'ON'}")
+    cmake_args.append(
+        f"-DCXXIME_ENABLE_HOST_DIAGNOSTICS={'ON' if host_diagnostics else 'OFF'}"
+    )
+    cmake_args.append(
+        f"-DCXXIME_BUILD_HOST_PROBE={'ON' if host_diagnostics else 'OFF'}"
+    )
     if single_config:
         cmake_args.append(f"-DCMAKE_BUILD_TYPE={config}")
         build_cmd = ["cmake", "--build", build_dir]
@@ -201,6 +253,7 @@ def build_x86_platform_modules(
     config: str,
     generator: str | None = None,
     jobs: int = 1,
+    host_diagnostics: bool = False,
 ) -> None:
     """Build the 32-bit in-process IME modules with a platform-aware generator."""
     generator, _ = choose_cmake_generator(generator, None)
@@ -232,6 +285,7 @@ def build_x86_platform_modules(
         platform="Win32",
         target="cxxime-platform-modules",
         jobs=jobs,
+        host_diagnostics=host_diagnostics,
     )
 
 
@@ -270,25 +324,33 @@ def copy_binary(build_dir: str, config: str, subdir: str, name: str) -> None:
     print(f"  {name}")
 
 
-def copy_binaries(build_dir: str, x86_build_dir: str, config: str, include_x86_modules: bool) -> None:
+def copy_binaries(
+    build_dir: str,
+    x86_build_dir: str,
+    config: str,
+    include_x86_modules: bool,
+    host_diagnostics: bool,
+) -> None:
     """Copy built binaries to dist."""
     copy_binary(build_dir, config, "tsf", "cxxime_tsf_x64.dll")
     copy_binary(build_dir, config, "legacy_ime", "cxxime_ime_x64.ime")
-    copy_binary(
-        build_dir,
-        config,
-        "diagnostics/host_takeover/probe",
-        "cxxime-ime-host-probe-x64.exe",
-    )
+    if host_diagnostics:
+        copy_binary(
+            build_dir,
+            config,
+            "diagnostics/host_takeover/probe",
+            "cxxime-ime-host-probe-x64.exe",
+        )
     if include_x86_modules:
         copy_binary(x86_build_dir, config, "tsf", "cxxime_tsf_x86.dll")
         copy_binary(x86_build_dir, config, "legacy_ime", "cxxime_ime_x86.ime")
-        copy_binary(
-            x86_build_dir,
-            config,
-            "diagnostics/host_takeover/probe",
-            "cxxime-ime-host-probe-x86.exe",
-        )
+        if host_diagnostics:
+            copy_binary(
+                x86_build_dir,
+                config,
+                "diagnostics/host_takeover/probe",
+                "cxxime-ime-host-probe-x86.exe",
+            )
     copy_binary(build_dir, config, "resource", "cxxime-resources.dll")
     copy_binary(build_dir, config, "server", "cxxime-server.exe")
     copy_binary(build_dir, config, "settings", "cxxime-settings.exe")
@@ -486,16 +548,18 @@ def check_log_rotation() -> None:
     print("  WARNING: default.json does not contain diagnostics log rotation config.")
 
 
-def verify_package_layout(include_x86_modules: bool) -> None:
+def verify_package_layout(include_x86_modules: bool, host_diagnostics: bool) -> None:
     """Run static dist package preflight checks."""
     script = os.path.join(SCRIPTS, "verify_package.py")
     cmd = [sys.executable, script, "--dist-dir", DIST_DIR]
     if not include_x86_modules:
         cmd.append("--allow-missing-x86")
+    if host_diagnostics:
+        cmd.append("--host-diag")
     run(cmd)
 
 
-def copy_installer_scripts(config: str) -> None:
+def copy_installer_scripts(config: str, host_diagnostics: bool) -> None:
     """Copy install/uninstall scripts and NSIS template."""
     files = [
         "install.bat", "uninstall.bat",
@@ -508,11 +572,12 @@ def copy_installer_scripts(config: str) -> None:
             shutil.copy2(src, DIST_DIR)
             print(f"  {fn}")
 
-    stage_exporter = os.path.join(
-        HOST_TAKEOVER_DIAGNOSTICS, "scripts", "export_stage_trace.ps1"
-    )
-    shutil.copy2(stage_exporter, DIST_DIR)
-    print("  export_stage_trace.ps1")
+    if host_diagnostics:
+        stage_exporter = os.path.join(
+            HOST_TAKEOVER_DIAGNOSTICS, "scripts", "export_stage_trace.ps1"
+        )
+        shutil.copy2(stage_exporter, DIST_DIR)
+        print("  export_stage_trace.ps1")
 
     # NSIS template
     shutil.copy2(os.path.join(SCRIPTS, "cxxime-setup.nsi"), DIST_DIR)
@@ -526,7 +591,7 @@ def copy_installer_scripts(config: str) -> None:
         print("  WARNING: LICENSE not found, NSIS may fail")
 
 
-def build_nsis(config: str, fast: bool = False) -> None:
+def build_nsis(config: str, fast: bool = False, host_diagnostics: bool = False) -> None:
     """Run makensis to create the installer."""
     # Find makensis
     makensis = shutil.which("makensis")
@@ -557,13 +622,16 @@ def build_nsis(config: str, fast: bool = False) -> None:
     cmd = [makensis]
     if fast:
         cmd.append("/DFAST")
+    if host_diagnostics:
+        cmd.append("/DHOST_DIAGNOSTICS")
     cmd.append(nsi_file)
     run(cmd, cwd=DIST_DIR)
 
     # Move installer to output
     os.makedirs(OUTPUT_DIR, exist_ok=True)
-    installer = os.path.join(DIST_DIR, f"cxxime-v{VERSION}-setup.exe")
-    dest = os.path.join(OUTPUT_DIR, f"cxxime-v{VERSION}-setup.exe")
+    suffix = "-host-diag" if host_diagnostics else ""
+    installer = os.path.join(DIST_DIR, f"cxxime-v{VERSION}{suffix}-setup.exe")
+    dest = os.path.join(OUTPUT_DIR, f"cxxime-v{VERSION}{suffix}-setup.exe")
     if os.path.isfile(installer):
         shutil.move(installer, dest)
         print(f"  Installer created: {dest}")
@@ -571,7 +639,7 @@ def build_nsis(config: str, fast: bool = False) -> None:
         print("  ERROR: NSIS completed but installer not found.", file=sys.stderr)
 
 
-def print_summary(config: str, include_x86_modules: bool) -> None:
+def print_summary(config: str, include_x86_modules: bool, host_diagnostics: bool) -> None:
     """Print final distribution summary."""
     print(f"\n{'=' * 60}")
     print("=== Packaging complete ===")
@@ -582,11 +650,13 @@ def print_summary(config: str, include_x86_modules: bool) -> None:
     print("Contents:")
     print("  cxxime_tsf_x64.dll       64-bit TSF text service DLL")
     print("  cxxime_ime_x64.ime       64-bit legacy IMM IME module")
-    print("  cxxime-ime-host-probe-x64.exe 64-bit host takeover Probe")
+    if host_diagnostics:
+        print("  cxxime-ime-host-probe-x64.exe 64-bit host takeover Probe")
     if include_x86_modules:
         print("  cxxime_tsf_x86.dll       32-bit TSF text service DLL")
         print("  cxxime_ime_x86.ime       32-bit legacy IMM IME module")
-        print("  cxxime-ime-host-probe-x86.exe 32-bit host takeover Probe")
+        if host_diagnostics:
+            print("  cxxime-ime-host-probe-x86.exe 32-bit host takeover Probe")
     print("  cxxime-resources.dll     Stable input profile resources")
     print("  cxxime-server.exe        Background server process")
     print("  cxxime-settings.exe      Configuration editor")
@@ -612,6 +682,8 @@ def print_summary(config: str, include_x86_modules: bool) -> None:
         if os.path.isfile(os.path.join(DIST_DIR, filename)):
             print(f"  {filename:<24} {description}")
     print("  collect_diagnostics.ps1  Diagnostics collector")
+    if host_diagnostics:
+        print("  export_stage_trace.ps1   Host trace exporter")
     print("  cxxime-setup.nsi         NSIS script")
     print("  license.txt              License")
 
@@ -669,6 +741,10 @@ def main():
         help="Build development tools",
     )
     parser.add_argument(
+        "--host-diag", action="store_true",
+        help="Build and package host diagnostics and the IME host Probe",
+    )
+    parser.add_argument(
         "--generator",
         help="CMake generator (default: let CMake choose, or use CMAKE_GENERATOR)",
     )
@@ -698,6 +774,10 @@ def main():
     x86_build_dir = os.path.abspath(args.x86_build_dir)
     if not args.skip_x86_tsf and os.path.normcase(build_dir) == os.path.normcase(x86_build_dir):
         parser.error("--x86-build-dir must be different from --build-dir")
+    if args.skip_build:
+        verify_prebuilt_host_mode(build_dir, args.host_diag)
+        if not args.skip_x86_tsf:
+            verify_prebuilt_host_mode(x86_build_dir, args.host_diag)
 
     print(f"=== CxxIME Packager v{VERSION} ({config}) ===")
     total_start = time.perf_counter()
@@ -740,6 +820,7 @@ def main():
                     generator=args.generator,
                     platform=args.platform,
                     jobs=x64_jobs,
+                    host_diagnostics=args.host_diag,
                 ),
             ))
             if not args.skip_x86_tsf:
@@ -752,6 +833,7 @@ def main():
                         config,
                         generator=args.generator,
                         jobs=x86_jobs,
+                        host_diagnostics=args.host_diag,
                     ),
                 ))
 
@@ -772,7 +854,13 @@ def main():
         step("[5/9] Preparing package files...")
         stage_start = time.perf_counter()
         print("  Copying binaries...")
-        copy_binaries(build_dir, x86_build_dir, config, include_x86_modules=not args.skip_x86_tsf)
+        copy_binaries(
+            build_dir,
+            x86_build_dir,
+            config,
+            include_x86_modules=not args.skip_x86_tsf,
+            host_diagnostics=args.host_diag,
+        )
 
         print("  Copying config and themes...")
         copy_config()
@@ -798,13 +886,16 @@ def main():
     # 5. Installer scripts
     step("[7/9] Copying installer scripts...")
     stage_start = time.perf_counter()
-    copy_installer_scripts(config)
+    copy_installer_scripts(config, host_diagnostics=args.host_diag)
     timings.append(("copy installer scripts", time.perf_counter() - stage_start))
 
     # 6. Package layout
     step("[8/9] Verifying package layout...")
     stage_start = time.perf_counter()
-    verify_package_layout(include_x86_modules=not args.skip_x86_tsf)
+    verify_package_layout(
+        include_x86_modules=not args.skip_x86_tsf,
+        host_diagnostics=args.host_diag,
+    )
     timings.append(("verify package layout", time.perf_counter() - stage_start))
 
     # 7. NSIS
@@ -813,10 +904,14 @@ def main():
     else:
         step("[9/9] Building NSIS installer...")
         stage_start = time.perf_counter()
-        build_nsis(config, fast=args.fast)
+        build_nsis(config, fast=args.fast, host_diagnostics=args.host_diag)
         timings.append(("build nsis installer", time.perf_counter() - stage_start))
 
-    print_summary(config, include_x86_modules=not args.skip_x86_tsf)
+    print_summary(
+        config,
+        include_x86_modules=not args.skip_x86_tsf,
+        host_diagnostics=args.host_diag,
+    )
     print_timing_summary(timings, time.perf_counter() - total_start)
 
 

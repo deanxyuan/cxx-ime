@@ -14,7 +14,8 @@ endif()
 
 option(CXXIME_BUILD_TESTS "Build tests" ON)
 option(CXXIME_BUILD_TOOLS "Build development tools" ON)
-option(CXXIME_BUILD_HOST_PROBE "Build the staged IME host diagnostic probe" ON)
+option(CXXIME_BUILD_HOST_PROBE "Build the staged IME host diagnostic probe" OFF)
+option(CXXIME_ENABLE_HOST_DIAGNOSTICS "Compile staged host diagnostic instrumentation" OFF)
 set(CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR
     "${CMAKE_SOURCE_DIR}/diagnostics/host_takeover"
 )

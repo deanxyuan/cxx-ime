@@ -384,8 +384,7 @@ HRESULT register_profiles() {
         return hr;
     }
 
-    // Keep the legacy layout installed for this compatibility baseline, but register
-    // the input processor as a pure TSF profile without an HKL substitute.
+    // Bind TSF and IMM as one input identity; remove with legacy installation for TSF-only.
     hr = pProfileMgr->RegisterProfile(
         c_clsidTextService,
         TEXTSERVICE_LANGID_HANS,
@@ -395,7 +394,7 @@ HRESULT register_profiles() {
         achIconFile,
         cchIconFile,
         TEXTSERVICE_ICON_INDEX,
-        nullptr,
+        legacy_hkl,
         0,        // flags
         TRUE,     // enable
         0);

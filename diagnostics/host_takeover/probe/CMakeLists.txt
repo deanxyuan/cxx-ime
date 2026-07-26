@@ -3,6 +3,7 @@ project(cxxime-ime-host-probe CXX)
 add_executable(cxxime-ime-host-probe WIN32
     main.cc
     probe_app.cc
+    probe_candidate_click.cc
     probe_imm_candidates.cc
     probe_ui_elements.cc
     probe_visibility.cc
@@ -10,6 +11,12 @@ add_executable(cxxime-ime-host-probe WIN32
     ui_element_sink.cc
     window_owner_probe.cc
 )
+
+if(NOT CXXIME_ENABLE_HOST_DIAGNOSTICS)
+    target_sources(cxxime-ime-host-probe PRIVATE
+        ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/stage_trace.cc
+    )
+endif()
 
 target_link_libraries(cxxime-ime-host-probe PRIVATE
     cxxime-shared

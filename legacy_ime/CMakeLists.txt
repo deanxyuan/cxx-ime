@@ -1,11 +1,21 @@
 project(cxxime-ime CXX)
 
+if(CXXIME_ENABLE_HOST_DIAGNOSTICS)
+    set(CXXIME_LEGACY_DIAGNOSTIC_SOURCES
+        ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/legacy_stage.cc
+    )
+else()
+    set(CXXIME_LEGACY_DIAGNOSTIC_SOURCES
+        ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/stubs/legacy.cc
+    )
+endif()
+
 add_library(cxxime-ime SHARED
     src/legacy_common.cpp
     src/legacy_ime.cpp
     src/legacy_session.cpp
     src/legacy_ui.cpp
-    ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/legacy_stage.cc
+    ${CXXIME_LEGACY_DIAGNOSTIC_SOURCES}
     cxxime_ime.def
 )
 

@@ -9,7 +9,11 @@ Unicode true
 !define CLSID "{B7E1E5A2-8F3D-4A9C-B6E7-2C4D8F1A3B5E}"
 
 Name "${PRODUCT} ${VERSION}"
-OutFile "cxxime-v${VERSION}-setup.exe"
+!ifdef HOST_DIAGNOSTICS
+    OutFile "cxxime-v${VERSION}-host-diag-setup.exe"
+!else
+    OutFile "cxxime-v${VERSION}-setup.exe"
+!endif
 InstallDir "$PROGRAMFILES\CxxIME"
 RequestExecutionLevel admin
 SetCompressor lzma
@@ -155,10 +159,16 @@ Section "Install"
     File "cxxime-resources.dll"
     File "cxxime-server.exe"
     File "cxxime-settings.exe"
+    File "collect_diagnostics.ps1"
+!ifdef HOST_DIAGNOSTICS
     File "cxxime-ime-host-probe-x64.exe"
     File "cxxime-ime-host-probe-x86.exe"
-    File "collect_diagnostics.ps1"
     File "export_stage_trace.ps1"
+!else
+    Delete "$INSTDIR\cxxime-ime-host-probe-x64.exe"
+    Delete "$INSTDIR\cxxime-ime-host-probe-x86.exe"
+    Delete "$INSTDIR\export_stage_trace.ps1"
+!endif
 
     !ifdef FAST
         SetCompress off
@@ -248,10 +258,15 @@ Section "Install"
     SetShellVarContext all
     CreateDirectory "$SMPROGRAMS\CxxIME"
     CreateShortCut "$SMPROGRAMS\CxxIME\CxxIME Settings.lnk" "$INSTDIR\cxxime-settings.exe"
+    Delete "$SMPROGRAMS\CxxIME\Host Candidate Probe x64.lnk"
+    Delete "$SMPROGRAMS\CxxIME\Host Candidate Probe x86.lnk"
+    Delete "$SMPROGRAMS\CxxIME\Export Stage 1 Trace.lnk"
+!ifdef HOST_DIAGNOSTICS
     CreateShortCut "$SMPROGRAMS\CxxIME\Host Candidate Probe x64.lnk" "$INSTDIR\cxxime-ime-host-probe-x64.exe"
     CreateShortCut "$SMPROGRAMS\CxxIME\Host Candidate Probe x86.lnk" "$INSTDIR\cxxime-ime-host-probe-x86.exe"
-    CreateShortCut "$SMPROGRAMS\CxxIME\Collect Diagnostics.lnk" "$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" '-NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\collect_diagnostics.ps1"'
     CreateShortCut "$SMPROGRAMS\CxxIME\Export Stage 1 Trace.lnk" "$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" '-NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\export_stage_trace.ps1"'
+!endif
+    CreateShortCut "$SMPROGRAMS\CxxIME\Collect Diagnostics.lnk" "$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" '-NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\collect_diagnostics.ps1"'
     CreateShortCut "$SMPROGRAMS\CxxIME\Uninstall CxxIME.lnk" "$INSTDIR\uninstall.exe"
 SectionEnd
 

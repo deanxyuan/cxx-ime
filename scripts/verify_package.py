@@ -157,6 +157,7 @@ def check_installer_script(
     dist_dir: str,
     require_x86: bool,
     manifest_files: list[str],
+    host_diagnostics: bool,
 ) -> None:
     nsi_path = os.path.join(dist_dir, "cxxime-setup.nsi")
     if not require_file(errors, nsi_path, dist_dir):
@@ -168,8 +169,12 @@ def check_installer_script(
     require_text(errors, text, 'File "cxxime_tsf_x64.dll"', label)
     require_text(errors, text, 'File "cxxime_ime_x64.ime"', label)
     require_text(errors, text, 'File "cxxime-resources.dll"', label)
-    require_text(errors, text, 'File "cxxime-ime-host-probe-x64.exe"', label)
-    require_text(errors, text, 'File "export_stage_trace.ps1"', label)
+    require_text(errors, text, "!ifdef HOST_DIAGNOSTICS", label)
+    require_text(errors, text, 'Delete "$INSTDIR\\cxxime-ime-host-probe-x64.exe"', label)
+    require_text(errors, text, 'Delete "$INSTDIR\\export_stage_trace.ps1"', label)
+    if host_diagnostics:
+        require_text(errors, text, 'File "cxxime-ime-host-probe-x64.exe"', label)
+        require_text(errors, text, 'File "export_stage_trace.ps1"', label)
     installer_data_files = [
         "default.json",
         "settings_presets.json",
@@ -239,7 +244,8 @@ def check_installer_script(
     if require_x86:
         require_text(errors, text, 'File "cxxime_tsf_x86.dll"', label)
         require_text(errors, text, 'File "cxxime_ime_x86.ime"', label)
-        require_text(errors, text, 'File "cxxime-ime-host-probe-x86.exe"', label)
+        if host_diagnostics:
+            require_text(errors, text, 'File "cxxime-ime-host-probe-x86.exe"', label)
         require_text(
             errors,
             text,
@@ -295,7 +301,7 @@ def check_diagnostics_script(
         require_text(errors, text, "registry-tip-32.txt", label)
 
 
-def run_checks(dist_dir: str, require_x86: bool) -> list[str]:
+def run_checks(dist_dir: str, require_x86: bool, host_diagnostics: bool) -> list[str]:
     errors: list[str] = []
 
     required_files = [
@@ -305,8 +311,6 @@ def run_checks(dist_dir: str, require_x86: bool) -> list[str]:
         "cxxime-server.exe",
         "cxxime-settings.exe",
         "collect_diagnostics.ps1",
-        "export_stage_trace.ps1",
-        "cxxime-ime-host-probe-x64.exe",
         "cxxime-setup.nsi",
         "license.txt",
         os.path.join("data", "default.json"),
@@ -314,10 +318,21 @@ def run_checks(dist_dir: str, require_x86: bool) -> list[str]:
         os.path.join("data", "themes.json"),
         os.path.join("data", "punctuation.json"),
     ]
+    diagnostic_files = [
+        "export_stage_trace.ps1",
+        "cxxime-ime-host-probe-x64.exe",
+    ]
+    if host_diagnostics:
+        required_files.extend(diagnostic_files)
+    else:
+        for name in diagnostic_files + ["cxxime-ime-host-probe-x86.exe"]:
+            if os.path.exists(os.path.join(dist_dir, name)):
+                add_error(errors, f"host diagnostic file must not be packaged: {name}")
     if require_x86:
         required_files.append("cxxime_tsf_x86.dll")
         required_files.append("cxxime_ime_x86.ime")
-        required_files.append("cxxime-ime-host-probe-x86.exe")
+        if host_diagnostics:
+            required_files.append("cxxime-ime-host-probe-x86.exe")
 
     for name in required_files:
         require_file(errors, os.path.join(dist_dir, name), dist_dir)
@@ -333,24 +348,28 @@ def run_checks(dist_dir: str, require_x86: bool) -> list[str]:
     require_machine(errors, os.path.join(dist_dir, "cxxime-resources.dll"), dist_dir, MACHINE_X64)
     require_machine(errors, os.path.join(dist_dir, "cxxime-server.exe"), dist_dir, MACHINE_X64)
     require_machine(errors, os.path.join(dist_dir, "cxxime-settings.exe"), dist_dir, MACHINE_X64)
-    require_machine(
-        errors,
-        os.path.join(dist_dir, "cxxime-ime-host-probe-x64.exe"),
-        dist_dir,
-        MACHINE_X64,
-    )
+    if host_diagnostics:
+        require_machine(
+            errors,
+            os.path.join(dist_dir, "cxxime-ime-host-probe-x64.exe"),
+            dist_dir,
+            MACHINE_X64,
+        )
     if require_x86:
         require_machine(errors, os.path.join(dist_dir, "cxxime_tsf_x86.dll"), dist_dir, MACHINE_X86)
         require_machine(errors, os.path.join(dist_dir, "cxxime_ime_x86.ime"), dist_dir, MACHINE_X86)
-        require_machine(
-            errors,
-            os.path.join(dist_dir, "cxxime-ime-host-probe-x86.exe"),
-            dist_dir,
-            MACHINE_X86,
-        )
+        if host_diagnostics:
+            require_machine(
+                errors,
+                os.path.join(dist_dir, "cxxime-ime-host-probe-x86.exe"),
+                dist_dir,
+                MACHINE_X86,
+            )
 
     manifest_files = check_dictionary_manifest(errors, dist_dir)
-    check_installer_script(errors, dist_dir, require_x86, manifest_files)
+    check_installer_script(
+        errors, dist_dir, require_x86, manifest_files, host_diagnostics
+    )
     check_diagnostics_script(errors, dist_dir, require_x86, manifest_files)
 
     return errors
@@ -364,10 +383,19 @@ def main() -> int:
         action="store_true",
         help="Allow dist-only checks without 32-bit TSF/legacy IME modules.",
     )
+    parser.add_argument(
+        "--host-diag",
+        action="store_true",
+        help="Require the host diagnostics package layout.",
+    )
     args = parser.parse_args()
 
     dist_dir = os.path.abspath(args.dist_dir)
-    errors = run_checks(dist_dir, require_x86=not args.allow_missing_x86)
+    errors = run_checks(
+        dist_dir,
+        require_x86=not args.allow_missing_x86,
+        host_diagnostics=args.host_diag,
+    )
     if errors:
         print("Package preflight FAILED:", file=sys.stderr)
         for error in errors:

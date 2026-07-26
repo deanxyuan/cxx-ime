@@ -4,8 +4,12 @@
 #define CXXIME_HOST_TAKEOVER_TSF_ACTIVATION_H_
 
 #include "pch.h"
+#include "host_compatibility/host_classification_compatibility.h"
 
 namespace cxxime_tsf {
+
+void start_stage_runtime(const HostClassificationCompatibilitySnapshot& snapshot);
+void stop_stage_runtime(const HostClassificationCompatibilitySnapshot& snapshot);
 
 void trace_stage_thread_sinks(const char* action,
                               HRESULT source_result,
