@@ -160,9 +160,17 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
             return ProcessResult::TOGGLE_SHAPE;
         }
         // Ctrl+. toggles Chinese/English punctuation.
-        if (event.keycode == 0xBE && event.is_ctrl() && !event.is_alt()) {
+        if (event.keycode == 0xBE && event.is_ctrl() &&
+            !event.is_shift() && !event.is_alt()) {
             return ProcessResult::TOGGLE_PUNCT;
         }
+    }
+
+    // Application and system shortcuts own modified key combinations unless
+    // CxxIME matched an explicit shortcut above.
+    if (event.is_ctrl() || event.is_alt()) {
+        record_total_us(trace_, total_start, trace_enabled_);
+        return ProcessResult::REJECTED;
     }
 
     // Check if AsciiComposer committed text (e.g. Shift toggle with code style)

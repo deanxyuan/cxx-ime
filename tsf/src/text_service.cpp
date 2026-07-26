@@ -566,18 +566,13 @@ void TextService::_sync_ime_status(const cxxime::ImeStatus& status) {
     _sync_conversion_mode_compartment(status);
 }
 
-bool TextService::_is_caps_lock_on(bool allow_recent_hint) const {
+bool TextService::_is_caps_lock_on() const {
     BYTE kb[256] = {};
-	if (GetKeyboardState(kb) && (kb[VK_CAPITAL] & 0x01))
-        return true;
+	if (GetKeyboardState(kb)) {
+        return (kb[VK_CAPITAL] & 0x01) != 0;
+    }
 
-    if (GetKeyState(VK_CAPITAL) & 0x0001)
-        return true;
-
-    // Activation can run before the target thread has consumed any keyboard
-    // message. Use the recent physical press bit only as an initial hint; the
-    // first real key event will correct the state through its modifier flags.
-    return allow_recent_hint && (GetAsyncKeyState(VK_CAPITAL) & 0x0001) != 0;
+    return (GetKeyState(VK_CAPITAL) & 0x0001) != 0;
 }
 
 bool TextService::_foreground_allows_input() const {
@@ -908,7 +903,8 @@ bool TextService::_recreate_ipc_session_preserving_status() {
             desired_status = g_last_status;
     }
     bool desired_chinese_mode = has_desired_status ? desired_status.chinese_mode : _chinese_mode;
-    bool physical_caps_lock = _is_caps_lock_on(false);
+    bool input_allows_input = _query_input_focus_from_thread_mgr();
+    bool physical_caps_lock = false;
 
     _sessionId = 0;
     _ipcHealthy = false;
@@ -916,10 +912,22 @@ bool TextService::_recreate_ipc_session_preserving_status() {
         return false;
 
     cxxime::ImeStatus synced_status = {};
-    if (!_sync_caps_lock_state(physical_caps_lock, &synced_status))
-        return false;
+    if (input_allows_input) {
+        physical_caps_lock = _is_caps_lock_on();
+        if (!_sync_caps_lock_state(physical_caps_lock, "session_recreate", &synced_status)) {
+            return false;
+        }
+    } else {
+        cxxime::IPCResponse status_resp = {};
+        if (!_client.get_status(_sessionId, status_resp) ||
+            status_resp.status != cxxime::IPCStatus::OK) {
+            return false;
+        }
+        synced_status = status_resp.ime_status;
+        _sync_ime_status(synced_status);
+    }
 
-    if (!physical_caps_lock && synced_status.chinese_mode != desired_chinese_mode) {
+    if (!synced_status.caps_lock && synced_status.chinese_mode != desired_chinese_mode) {
         cxxime::IPCResponse toggle_resp = {};
         if (_client.toggle_chinese(_sessionId, toggle_resp) &&
             toggle_resp.status == cxxime::IPCStatus::OK) {
@@ -982,7 +990,9 @@ bool TextService::_heartbeat_ipc() {
     return false;
 }
 
-bool TextService::_sync_caps_lock_state(bool caps_lock, cxxime::ImeStatus* synced_status) {
+bool TextService::_sync_caps_lock_state(bool caps_lock,
+                                        const char* source,
+                                        cxxime::ImeStatus* synced_status) {
     if (!_ensure_ipc_session())
         return false;
 
@@ -992,17 +1002,13 @@ bool TextService::_sync_caps_lock_state(bool caps_lock, cxxime::ImeStatus* synce
         if (synced_status)
             *synced_status = resp.ime_status;
         _sync_ime_status(resp.ime_status);
+        char detail[96] = {};
+        snprintf(detail, sizeof(detail), "source=%s value=%d",
+                 source ? source : "unknown", caps_lock ? 1 : 0);
+        _enqueue_event_trace("caps_lock_sync", detail, true);
         return true;
     }
     return false;
-}
-
-bool TextService::_sync_physical_caps_lock(cxxime::ImeStatus* synced_status) {
-    bool caps_lock = _is_caps_lock_on();
-    if (!_seenKeyAfterActivate && _caps_lock && !caps_lock)
-        return false;
-
-    return _sync_caps_lock_state(caps_lock, synced_status);
 }
 
 void TextService::_start_state_poll_timer() {
@@ -1081,12 +1087,8 @@ void TextService::_poll_unfocused_state_keys() {
     _hide_candidate_window("hide:poll_unfocused");
     _end_reading_ui_element("hide:poll_unfocused_reading");
 
-    bool physical_caps_lock = _is_caps_lock_on(false);
-    if (physical_caps_lock != _caps_lock) {
-        _sync_caps_lock_state(physical_caps_lock);
-    } else if ((GetAsyncKeyState(VK_CAPITAL) & 0x0001) != 0) {
-        _sync_caps_lock_state(_is_caps_lock_on(false));
-    }
+    // Keyboard state belongs to the calling thread's input queue. An unfocused
+    // TSF instance must not publish that potentially stale state globally.
 }
 
 void TextService::_show_status_window_if_allowed(const char* reason) {
@@ -1193,7 +1195,6 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
     if ((_activateFlags & TF_TMF_UIELEMENTENABLEDONLY) != 0) {
         _start_host_compatibility_runtime();
     }
-    _seenKeyAfterActivate = false;
     _register_display_attribute_atom();
 
     _register_key_event_sink();
@@ -1223,11 +1224,11 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
         if (has_last_status)
             initial_status = g_last_status;
     }
-    bool initial_caps_lock = initial_input_allows_input && _is_caps_lock_on(!has_last_status);
+    bool initial_caps_lock = initial_input_allows_input && _is_caps_lock_on();
     _sessionId = 0;
     if (_ensure_ipc_session()) {
         if (initial_input_allows_input) {
-            _sync_caps_lock_state(initial_caps_lock, &initial_status);
+            _sync_caps_lock_state(initial_caps_lock, "activate_focused", &initial_status);
         }
         cxxime::IPCResponse status_resp = {};
         if (_ensure_ipc_session() &&
@@ -1396,8 +1397,6 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
     // }
     _activated = true;
     _start_state_poll_timer();
-    if (!initial_input_allows_input)
-        _sync_caps_lock_state(_is_caps_lock_on(false));
     if (_config.status_window.enable && _config.status_window.show_on_startup) {
         _update_input_focus_from_thread_mgr();
         if (_inputFocused) {
@@ -1413,7 +1412,6 @@ STDMETHODIMP TextService::Deactivate() {
     CXXIME_LOG(L"Deactivate: sessionId=%u", _sessionId);
     _activated = false;
     _inputFocused = false;
-    _seenKeyAfterActivate = false;
     _stop_state_poll_timer();
 
     // Hide status window immediately, then destroy it to avoid clicks during IPC teardown.
@@ -1520,7 +1518,12 @@ STDMETHODIMP TextService::OnSetFocus(BOOL fForeground) {
 }
 
 STDMETHODIMP TextService::OnTestKeyDown(ITfContext* pic, WPARAM wParam, LPARAM lParam, BOOL* pfEaten) {
-    _fTestKeyDownPending = true;
+    _fTestKeyUpPending = false;
+    if (_fTestKeyDownPending) {
+        *pfEaten = TRUE;
+        return S_OK;
+    }
+
     bool status_key = is_status_key(wParam);
     const char* test_block_reason = _input_context_block_reason(pic);
     _trace_input_decision(test_block_reason);
@@ -1535,13 +1538,10 @@ STDMETHODIMP TextService::OnTestKeyDown(ITfContext* pic, WPARAM wParam, LPARAM l
     }
 
     *pfEaten = _ProcessKeyEvent(pic, wParam, lParam, pfEaten);
-
-    // Status keys are already sent during OnTestKeyDown. Reporting them as
-    // eaten keeps TSF on the paired OnKeyDown/OnKeyUp path, where the pending
-    // flags prevent duplicate delivery.
-    if (is_status_key(wParam)) {
+    if (wParam == VK_CAPITAL) {
         *pfEaten = TRUE;
     }
+    _fTestKeyDownPending = *pfEaten != FALSE;
 
     OutputDebugStringA("[CxxIME] OnTestKeyDown\n");
     CXXIME_LOG(L"OnTestKeyDown: vk=%u, eaten=%d, sessionId=%u", (unsigned int)wParam, *pfEaten, _sessionId);
@@ -1549,31 +1549,39 @@ STDMETHODIMP TextService::OnTestKeyDown(ITfContext* pic, WPARAM wParam, LPARAM l
 }
 
 STDMETHODIMP TextService::OnTestKeyUp(ITfContext* pic, WPARAM wParam, LPARAM lParam, BOOL* pfEaten) {
-    _fTestKeyUpPending = true;
+    _fTestKeyDownPending = false;
+    if (_fTestKeyUpPending) {
+        *pfEaten = TRUE;
+        return S_OK;
+    }
+
     *pfEaten = (wParam == VK_CAPITAL) ? TRUE : FALSE;
     CXXIME_LOG(L"OnTestKeyUp: vk=%u, sessionId=%u", (unsigned int)wParam, _sessionId);
-    if (wParam != VK_CAPITAL)
+    if (wParam != VK_CAPITAL) {
         _ProcessKeyUp(wParam, lParam);
+    }
+    _fTestKeyUpPending = *pfEaten != FALSE;
     return S_OK;
 }
 
 STDMETHODIMP TextService::OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM lParam, BOOL* pfEaten) {
     if (_fTestKeyDownPending) {
         _fTestKeyDownPending = false;
-        // OnTestKeyDown already sent the key to the server.
-        // Re-read *pfEaten; _ProcessKeyEvent set it during OnTestKeyDown.
-        // Don't override it here; the value is already in *pfEaten from the OnTestKeyDown call.
+        *pfEaten = TRUE;
         return S_OK;
     }
     // Some apps call OnKeyDown without OnTestKeyDown (e.g. QQ2012)
     *pfEaten = _ProcessKeyEvent(pic, wParam, lParam, pfEaten);
+        if (wParam == VK_CAPITAL) {
+        *pfEaten = TRUE;
+    }
     return S_OK;
 }
 
 STDMETHODIMP TextService::OnKeyUp(ITfContext* pic, WPARAM wParam, LPARAM lParam, BOOL* pfEaten) {
     if (_fTestKeyUpPending) {
         _fTestKeyUpPending = false;
-        *pfEaten = (wParam == VK_CAPITAL) ? TRUE : FALSE;
+        *pfEaten = TRUE;
         return S_OK;
     }
     if (wParam == VK_CAPITAL) {
@@ -1596,8 +1604,8 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
     _trace_input_decision(block_reason);
     if (!input_allowed && !status_key) {
         cxxime_tsf::trace_stage_key_route(
-        stage_input_id(), stage_composition_id(), static_cast<uint32_t>(wParam), 0, "blocked",
-        block_reason ? block_reason : "input_context");
+        stage_input_id(), stage_composition_id(), static_cast<uint32_t>(wParam), 0, 0,
+        "blocked", block_reason ? block_reason : "input_context");
         _inputFocused = false;
         _start_state_poll_timer();
         _hide_status_window("hide:key_context_rejected");
@@ -1617,13 +1625,12 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
         _end_reading_ui_element("hide:key_context_status_only_reading");
         _AbortComposition();
     }
-    _seenKeyAfterActivate = true;
     uint32_t modifiers = _get_modifiers();
     if (wParam == VK_CAPITAL) {
         // Windows reports VK_CAPITAL after the lock bit has toggled. CxxIME's
         // engine expects the final CapsLock state, so do not infer it from the
         // cached IME state, which may lag when focus moved through non-input UI.
-        bool target_caps_lock = _is_caps_lock_on(false);
+        bool target_caps_lock = _is_caps_lock_on();
         if (target_caps_lock)
             modifiers |= 0x08;
         else
@@ -1631,7 +1638,7 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
     }
     bool physical_caps_lock = (modifiers & 0x08) != 0;
     if (wParam != VK_CAPITAL && physical_caps_lock != _caps_lock)
-        _sync_caps_lock_state(physical_caps_lock);
+        _sync_caps_lock_state(physical_caps_lock, "key_event");
 
     // Config is reloaded by watcher thread (not keypress-driven).
     // Copy to local _config for consistent use during this keypress.
@@ -1687,8 +1694,8 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
     }
     _ipcHealthy = ok;
     cxxime_tsf::trace_stage_key_route(
-        stage_input_id(), stage_composition_id(), static_cast<uint32_t>(wParam), engine_calls,
-        ok ? "processed" : "ipc_failed");
+        stage_input_id(), stage_composition_id(), static_cast<uint32_t>(wParam), modifiers,
+        engine_calls, ok ? "processed" : "ipc_failed");
 
     // Build trace (populated at all exit paths)
     TsfTrace trace;
@@ -1991,8 +1998,8 @@ void TextService::_ProcessKeyUp(WPARAM wParam, LPARAM lParam) {
     }
     _ipcHealthy = ok;
     cxxime_tsf::trace_stage_key_route(
-        stage_input_id(), stage_composition_id(), static_cast<uint32_t>(wParam), engine_calls,
-        ok ? "processed_key_up" : "ipc_failed_key_up");
+        stage_input_id(), stage_composition_id(), static_cast<uint32_t>(wParam), modifiers,
+        engine_calls, ok ? "processed_key_up" : "ipc_failed_key_up");
 
     CXXIME_LOG(L"_ProcessKeyUp: ok=%d, ascii_mode=%d, commit='%S', composing=%d",
                ok, response.ascii_mode, response.commit_text, response.composing);

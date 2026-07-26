@@ -150,7 +150,7 @@ private:
     void _reset_stage_composition(const char* reason);
     ITfContext* _current_edit_context_for_composition() const;
     uint32_t _get_modifiers() const;
-    bool _is_caps_lock_on(bool allow_recent_hint = false) const;
+    bool _is_caps_lock_on() const;
     void _sync_ime_status(const cxxime::ImeStatus& status);
     void _sync_conversion_mode_compartment(const cxxime::ImeStatus& status);
     bool _foreground_allows_input() const;
@@ -158,8 +158,8 @@ private:
     bool _advise_text_layout_sink(ITfDocumentMgr* doc_mgr);
     void _unadvise_text_layout_sink();
     void _request_candidate_position_update(ITfContext* pic,
-                                           const char* reason,
-                                           bool from_layout_change = false);
+                                            const char* reason,
+                                            bool from_layout_change = false);
     bool _resolve_native_caret_rect(RECT* out) const;
     bool _resolve_context_native_caret_rect(ITfContext* context, RECT* out) const;
     bool _read_context_compartment_bool(ITfContext* context, REFGUID guid, bool* value) const;
@@ -169,8 +169,9 @@ private:
     bool _document_allows_input(ITfDocumentMgr* doc_mgr) const;
     bool _query_input_focus_from_thread_mgr() const;
     bool _update_input_focus_from_thread_mgr();
-    bool _sync_caps_lock_state(bool caps_lock, cxxime::ImeStatus* synced_status = nullptr);
-    bool _sync_physical_caps_lock(cxxime::ImeStatus* synced_status = nullptr);
+    bool _sync_caps_lock_state(bool caps_lock,
+                               const char* source,
+                               cxxime::ImeStatus* synced_status = nullptr);
     bool _ensure_ipc_session();
     bool _recreate_ipc_session_preserving_status();
     bool _heartbeat_ipc();
@@ -214,7 +215,6 @@ private:
     bool _caps_lock = false;
     bool _activated = false;
     bool _inputFocused = false;
-    bool _seenKeyAfterActivate = false;
     bool _fTestKeyDownPending = false;
     bool _fTestKeyUpPending = false;
     bool _candidateShowPending = false;
