@@ -1,4 +1,4 @@
-project(cxxime-resources)
+project(cxxime-resources C)
 
 add_library(cxxime-resources SHARED
     cxxime-resources.rc
@@ -13,4 +13,11 @@ set_target_properties(cxxime-resources PROPERTIES
     LINK_FLAGS "/NOENTRY"
     OUTPUT_NAME "cxxime-resources"
     SUFFIX ".dll"
+)
+
+cxxime_add_version_resource(
+    cxxime-resources
+    "CxxIME Resource Library"
+    "cxxime-resources.dll"
+    VFT_DLL
 )

@@ -257,7 +257,7 @@ $systemImeX86 = Join-Path $env:WINDIR "SysWOW64\cxxime.ime"
 
 $report = [ordered]@{
     product = "CxxIME"
-    package_version = "0.1.0"
+    package_version = "development"
     collected_at = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss zzz")
     machine = [ordered]@{
         computer_name = $env:COMPUTERNAME
@@ -397,16 +397,16 @@ CxxIME diagnostics package
 Generated: $((Get-Date).ToString("yyyy-MM-dd HH:mm:ss zzz"))
 
 Included by default:
-  - diagnostics.json with version, OS, install path, data path, user path, file metadata and hashes.
-  - diagnostics.json also records System32/SysWOW64 cxxime.ime file existence and hashes.
-  - trace-summary.txt with log file metadata and recent error/slow-event counters.
-  - registry query output for uninstall, CLSID, TIP, legacy HKL and keyboard preload state.
-  - tasklist output for CxxIME processes, TSF DLLs and cxxime.ime module ownership.
+- diagnostics.json with version, OS, install path, data path, user path, file metadata and hashes.
+- diagnostics.json also records System32/SysWOW64 cxxime.ime file existence and hashes.
+- trace-summary.txt with log file metadata and recent error/slow-event counters.
+- registry query output for uninstall, CLSID, TIP, legacy HKL and keyboard preload state.
+- tasklist output for CxxIME processes, TSF DLLs and cxxime.ime module ownership.
 
 Optional:
-  - Use -IncludeLogs to copy %USERPROFILE%\cxxime\logs. Trace logs may contain raw input codes.
-  - Use -IncludeUserConfig to copy user configuration files.
-  - Use -IncludeUserDict to copy user dictionary files. User dictionaries contain personal phrases.
+- Use -IncludeLogs to copy %USERPROFILE%\cxxime\logs. Trace logs may contain raw input codes.
+- Use -IncludeUserConfig to copy user configuration files.
+- Use -IncludeUserDict to copy user dictionary files. User dictionaries contain personal phrases.
 "@
 $readme | Out-File -Encoding UTF8 -FilePath (Join-Path $root "README.txt")
 

@@ -16,6 +16,7 @@
 #include <cxxime/config_notify.h>
 #include <cxxime/ipc_client.h>
 #include <cxxime/candidate.h>
+#include <cxxime/version.h>
 
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "uxtheme.lib")
@@ -697,8 +698,8 @@ void EditorApp::create_controls(HWND hwnd) {
         return c;
     };
     mk_about(L"CxxIME 输入法", t, S(28), hAboutTitle);
-    mk_about(L"版本 0.1.0 — Apache License 2.0", t + kRowH, kCtrlH, get_font());
-    mk_about(L"轻量级 Windows TSF 输入法（拼音 / 五笔）", t + kRowH * 2, kCtrlH, get_font());
+    mk_about(L"版本 " CXXIME_VERSION_WSTRING L" — Apache License 2.0", t + kRowH, kCtrlH, get_font());
+    mk_about(L"轻量级 Windows TSF 输入法（拼音 / 五笔 / 混输）", t + kRowH * 2, kCtrlH, get_font());
     mk_about(L"https://gitee.com/shadowyuan/cxx-ime", t + kRowH * 3, kCtrlH, get_font());
     mk_about(L"https://github.com/deanxyuan/cxx-ime", t + kRowH * 4, kCtrlH, get_font());
     HWND hDiag = CreateWindowExW(0, L"BUTTON", L"导出诊断包",

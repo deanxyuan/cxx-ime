@@ -45,3 +45,10 @@ set_target_properties(cxxime-ime PROPERTIES
     OUTPUT_NAME "${CXXIME_IME_OUTPUT_NAME}"
     SUFFIX ".ime"
 )
+
+cxxime_add_version_resource(
+    cxxime-ime
+    "CxxIME Legacy IME"
+    "${CXXIME_IME_OUTPUT_NAME}.ime"
+    VFT_DLL
+)

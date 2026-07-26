@@ -40,3 +40,10 @@ endif()
 set_target_properties(cxxime-ime-host-probe PROPERTIES
     OUTPUT_NAME "${CXXIME_PROBE_OUTPUT_NAME}"
 )
+
+cxxime_add_version_resource(
+    cxxime-ime-host-probe
+    "CxxIME Host Candidate Probe"
+    "${CXXIME_PROBE_OUTPUT_NAME}.exe"
+    VFT_APP
+)
