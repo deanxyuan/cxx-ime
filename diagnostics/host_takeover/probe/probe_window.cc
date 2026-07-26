@@ -5,6 +5,7 @@
 #include <cxxime/stage_trace.h>
 
 #include <utility>
+#include <windowsx.h>
 
 namespace cxxime_probe {
 
@@ -46,6 +47,9 @@ void ProbeApp::read_composition(LPARAM flags) {
         {"committed_len", committed_.size()},
         {"result", "read"},
     });
+    if (result_bytes > 0) {
+        finish_candidate_click("committed", result_bytes);
+    }
     trace_imm_candidate_snapshot("composition", candidate_element_id_, "update");
     InvalidateRect(hwnd_, nullptr, TRUE);
 }
@@ -118,16 +122,25 @@ void ProbeApp::paint(HDC dc) {
     y += 38;
 
     if (draw_candidates) {
-        for (size_t index = 0; index < candidates_.size() && index < 10; ++index) {
-            RECT row = {24, y, client.right - 24, y + 34};
+        y = kCandidateTop;
+        for (size_t index = 0;
+             index < candidates_.size() && index < kMaximumCandidateRows;
+             ++index) {
+            RECT row = {
+                kCandidateLeft,
+                y,
+                client.right - kCandidateRightMargin,
+                y + kCandidateRowHeight,
+            };
             if (index == selection_) {
                 HBRUSH selected = CreateSolidBrush(RGB(218, 235, 255));
                 FillRect(dc, &row, selected);
                 DeleteObject(selected);
             }
             const std::wstring line = std::to_wstring(index + 1) + L". " + candidates_[index];
-            TextOutW(dc, 34, y + 5, line.c_str(), static_cast<int>(line.size()));
-            y += 36;
+            TextOutW(dc, kCandidateLeft + 10, y + 5, line.c_str(),
+                     static_cast<int>(line.size()));
+            y += kCandidateRowStride;
         }
     }
 
@@ -186,6 +199,15 @@ LRESULT ProbeApp::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
     case WM_KILLFOCUS:
         DestroyCaret();
         return 0;
+    case WM_LBUTTONDOWN: {
+        const POINT point = {GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+        UINT index = 0;
+        if (candidate_index_at_point(point, &index)) {
+            click_candidate(index);
+            return 0;
+        }
+        break;
+    }
     case WM_IME_SETCONTEXT:
         trace_ime_message(message, wparam, lparam, "set_context_suppress_default_ui");
         return DefWindowProcW(hwnd_, message, wparam, 0);
@@ -201,6 +223,7 @@ LRESULT ProbeApp::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
         return 0;
     case WM_IME_ENDCOMPOSITION:
         trace_ime_message(message, wparam, lparam, "end");
+        finish_candidate_click("ended_without_result", 0);
         composition_active_ = false;
         composition_.clear();
         InvalidateRect(hwnd_, nullptr, TRUE);

@@ -226,9 +226,15 @@ STDMETHODIMP CandidateUIElement::SetSelection(UINT index) {
 }
 
 STDMETHODIMP CandidateUIElement::Finalize() {
-    if (!_service || _candidates.empty())
-        return E_FAIL;
-    return _service->select_candidate_from_ui(_selection) ? S_OK : E_FAIL;
+    const DWORD element_id = _ui_element_id;
+    const UINT selection = _selection;
+    HRESULT result = E_FAIL;
+    if (_service && !_candidates.empty()) {
+        result = _service->select_candidate_from_ui(selection) ? S_OK : E_FAIL;
+    }
+    cxxime_tsf::trace_stage_candidate_behavior_number(
+        _service, element_id, "Finalize", "selection", selection, result);
+    return result;
 }
 
 STDMETHODIMP CandidateUIElement::Abort() {

@@ -15,6 +15,17 @@ bool has_caret_height(const RECT& rect) {
 
 } // namespace
 
+std::wstring TextService::utf8_to_wstring(const char* text) {
+    if (!text || text[0] == '\0')
+        return {};
+    int len = MultiByteToWideChar(CP_UTF8, 0, text, -1, nullptr, 0);
+    if (len <= 0)
+        return {};
+    std::wstring result(len - 1, L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, text, -1, &result[0], len);
+    return result;
+}
+
 bool TextService::_publish_candidate_ui_element(const cxxime::CandidatePage& page,
                                                 uint32_t candidate_count,
                                                 uint32_t page_current,
@@ -105,4 +116,67 @@ void TextService::_prepare_host_candidate_compatibility() {
         cxxime_tsf::preflight_stage_host_classification_compatibility(
             reinterpret_cast<HWND>(snapshot.active_hwnd));
     }
+}
+
+bool TextService::select_candidate_from_ui(UINT index) {
+    cxxime::IPCResponse resp = {};
+    if (!_ensure_ipc_session() || !_client.select_candidate(_sessionId, index, resp))
+        return false;
+
+    if (resp.status == cxxime::IPCStatus::ERR_INVALID_SESSION) {
+        _recreate_ipc_session_preserving_status();
+        _candidateWindow.set_preedit("");
+        _hide_candidate_window("hide:select_invalid_session");
+        _end_reading_ui_element("hide:select_invalid_session_reading");
+        _composing = false;
+        return false;
+    }
+
+    std::wstring commit_text = utf8_to_wstring(resp.commit_text);
+    if (!commit_text.empty()) {
+        ITfContext* pContext = _current_edit_context_for_composition();
+
+        if (pContext) {
+            _commit_text(pContext, commit_text, true);
+            pContext->Release();
+        } else {
+            insert_text(commit_text, true);
+        }
+        _composing = false;
+    }
+
+    _candidateWindow.set_preedit("");
+    _hide_candidate_window("hide:select_commit");
+    _end_reading_ui_element("hide:select_commit_reading");
+    return true;
+}
+
+void TextService::abort_candidate_ui_from_tsf() {
+    if (_sessionId && _client.is_connected())
+        _client.clear_composition(_sessionId);
+    _AbortComposition();
+}
+
+HRESULT TextService::finalize_exact_candidate_ui_from_tsf() {
+    std::wstring commit_text = _lastInlineCompositionText;
+    if (commit_text.empty())
+        return E_NOTIMPL;
+
+    ITfContext* pContext = _current_edit_context_for_composition();
+
+    HRESULT hr = S_OK;
+    if (pContext) {
+        hr = _commit_text(pContext, commit_text, true);
+        pContext->Release();
+    } else {
+        hr = insert_text(commit_text, true);
+    }
+    if (_sessionId && _client.is_connected())
+        _client.clear_composition(_sessionId);
+    _candidateWindow.set_preedit("");
+    _hide_candidate_window("hide:finalize_exact");
+    _end_reading_ui_element("hide:finalize_exact_reading");
+    _composing = false;
+    _lastInlineCompositionText.clear();
+    return hr;
 }

@@ -6,6 +6,7 @@
 #include "legacy_common.h"
 
 #include <cxxime/ipc_client.h>
+#include <cxxime/stage_trace.h>
 
 #include <memory>
 #include <vector>
@@ -61,8 +62,7 @@ private:
     uint32_t last_highlighted_ = 0;
     DWORD candidate_page_start_ = 0;
     DWORD candidate_page_size_ = 10;
-    uint64_t stage_input_id_ = 0;
-    uint64_t stage_composition_id_ = 0;
+    cxxime::StageTraceSession stage_trace_session_;
     uint32_t last_engine_calls_ = 0;
 };
 

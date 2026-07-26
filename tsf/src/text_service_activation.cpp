@@ -2,37 +2,34 @@
 
 #include "text_service.h"
 
+#include "globals.h"
 #include "host_compatibility/host_classification_compatibility.h"
 #include "tsf_activation.h"
-#include "tsf_host_classification.h"
-#include "tsf_host_message.h"
 #include "tsf_imm_mode.h"
 #include "tsf_ui_element_observer.h"
 
 #include <cxxime/logging.h>
 
-void TextService::_start_host_takeover_runtime() {
-    if (_hostTakeoverRuntimeActive) {
+void TextService::_start_host_compatibility_runtime() {
+    if (_hostCompatibilityRuntimeActive) {
         return;
     }
 
     cxxime_tsf::activate_host_classification_compatibility();
-    cxxime_tsf::trace_stage_host_classification_compatibility(
+    cxxime_tsf::start_stage_runtime(
         cxxime_tsf::host_classification_compatibility_snapshot());
-    cxxime_tsf::start_stage_host_message_monitor();
-    _hostTakeoverRuntimeActive = true;
+    _hostCompatibilityRuntimeActive = true;
 }
 
-void TextService::_stop_host_takeover_runtime() {
-    if (!_hostTakeoverRuntimeActive) {
+void TextService::_stop_host_compatibility_runtime() {
+    if (!_hostCompatibilityRuntimeActive) {
         return;
     }
 
     const cxxime_tsf::HostClassificationCompatibilitySnapshot snapshot =
         cxxime_tsf::deactivate_host_classification_compatibility();
-    cxxime_tsf::trace_stage_host_classification_compatibility(snapshot);
-    cxxime_tsf::stop_stage_host_message_monitor();
-    _hostTakeoverRuntimeActive = false;
+    cxxime_tsf::stop_stage_runtime(snapshot);
+    _hostCompatibilityRuntimeActive = false;
 }
 
 void TextService::_sync_conversion_mode_compartment(
@@ -157,4 +154,84 @@ void TextService::_unregister_thread_sinks() {
         thread_mgr_attempted, thread_mgr_hr, thread_mgr_cookie);
     _dwThreadFocusCookie = TF_INVALID_COOKIE;
     _dwThreadMgrEventCookie = TF_INVALID_COOKIE;
+}
+
+HRESULT TextService::_register_key_event_sink() {
+    if (!_threadMgr)
+        return E_FAIL;
+
+    ITfKeystrokeMgr* pKeystrokeMgr = nullptr;
+    if (FAILED(_threadMgr->QueryInterface(IID_ITfKeystrokeMgr, (void**)&pKeystrokeMgr)))
+        return E_FAIL;
+
+    HRESULT hr = pKeystrokeMgr->AdviseKeyEventSink(_clientId, static_cast<ITfKeyEventSink*>(this), TRUE);
+    pKeystrokeMgr->Release();
+    return hr;
+}
+
+HRESULT TextService::_unregister_key_event_sink() {
+    if (!_threadMgr)
+        return E_FAIL;
+
+    ITfKeystrokeMgr* pKeystrokeMgr = nullptr;
+    if (FAILED(_threadMgr->QueryInterface(IID_ITfKeystrokeMgr, (void**)&pKeystrokeMgr)))
+        return E_FAIL;
+
+    HRESULT hr = pKeystrokeMgr->UnadviseKeyEventSink(_clientId);
+    pKeystrokeMgr->Release();
+    return hr;
+}
+
+HRESULT TextService::_register_preserved_key() {
+    if (!_threadMgr)
+        return E_FAIL;
+
+    ITfKeystrokeMgr* pKeystrokeMgr = nullptr;
+    if (FAILED(_threadMgr->QueryInterface(IID_ITfKeystrokeMgr, (void**)&pKeystrokeMgr)))
+        return E_FAIL;
+
+    // Register Ctrl+Space as preserved key for mode toggle
+    TF_PRESERVEDKEY prekey = {};
+    prekey.uVKey = VK_SPACE;
+    prekey.uModifiers = TF_MOD_CONTROL;
+    HRESULT hr = pKeystrokeMgr->PreserveKey(
+        _clientId,
+        c_guidPreservedKey_Toggle,
+        &prekey,
+        L"Toggle Chinese/English",
+        (ULONG)wcslen(L"Toggle Chinese/English"));
+
+    pKeystrokeMgr->Release();
+    return hr;
+}
+
+HRESULT TextService::_unregister_preserved_key() {
+    if (!_threadMgr)
+        return E_FAIL;
+
+    ITfKeystrokeMgr* pKeystrokeMgr = nullptr;
+    if (FAILED(_threadMgr->QueryInterface(IID_ITfKeystrokeMgr, (void**)&pKeystrokeMgr)))
+        return E_FAIL;
+
+    HRESULT hr = pKeystrokeMgr->UnpreserveKey(c_guidPreservedKey_Toggle, nullptr);
+    pKeystrokeMgr->Release();
+    return hr;
+}
+
+bool TextService::_register_display_attribute_atom() {
+    ITfCategoryMgr* category_mgr = nullptr;
+    HRESULT hr = CoCreateInstance(CLSID_TF_CategoryMgr, nullptr, CLSCTX_INPROC_SERVER,
+                                  IID_ITfCategoryMgr, reinterpret_cast<void**>(&category_mgr));
+    if (FAILED(hr) || !category_mgr)
+        return false;
+
+    hr = category_mgr->RegisterGUID(c_guidDisplayAttribute, &_displayAttributeAtom);
+    category_mgr->Release();
+    if (FAILED(hr)) {
+        _displayAttributeAtom = 0;
+        CXXIME_LOG(L"Register display attribute atom failed: hr=0x%08x", hr);
+        return false;
+    }
+
+    return true;
 }

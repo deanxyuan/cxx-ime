@@ -11,7 +11,6 @@
 #include <cxxime/data_path.h>
 #include <cxxime/diagnostics_config.h>
 #include <cxxime/render_context.h>
-#include <cxxime/stage_trace.h>
 #include "preedit_mode.h"
 #include "language_bar.h"
 #include "about_dialog.h"
@@ -225,17 +224,6 @@ static const char* bool_json(bool value) {
     return value ? "true" : "false";
 }
 
-static std::wstring utf8_to_wstring(const char* text) {
-    if (!text || text[0] == '\0')
-        return {};
-    int len = MultiByteToWideChar(CP_UTF8, 0, text, -1, nullptr, 0);
-    if (len <= 0)
-        return {};
-    std::wstring result(len - 1, L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, text, -1, &result[0], len);
-    return result;
-}
-
 static bool tsf_should_log_event(bool important) {
     cxxime::DiagnosticsConfig config = cxxime::diagnostics_config();
     if (config.trace_mode == cxxime::DiagnosticTraceMode::kOff)
@@ -441,7 +429,7 @@ TextService::TextService() {}
 TextService::~TextService() {
     _stop_state_poll_timer();
     set_composition_context(nullptr);
-    _stop_host_takeover_runtime();
+    _stop_host_compatibility_runtime();
 }
 
 // Called from DllMain(DLL_PROCESS_DETACH) via globals.cpp
@@ -1179,21 +1167,6 @@ void TextService::_end_reading_ui_element(const char* reason) {
         _enqueue_event_trace("ui_element", reason ? reason : "hide:reading");
 }
 
-void TextService::_trace_input_decision(const char* block_reason) {
-    if (!block_reason) {
-        if (!_lastInputBlockReason.empty()) {
-            _lastInputBlockReason.clear();
-            _enqueue_event_trace("input_context", "allowed");
-        }
-        return;
-    }
-
-    if (_lastInputBlockReason == block_reason)
-        return;
-    _lastInputBlockReason = block_reason;
-    _enqueue_event_trace("input_context", block_reason);
-}
-
 // ITfTextInputProcessorEx
 STDMETHODIMP TextService::Activate(ITfThreadMgr* ptim, TfClientId tid) {
     return ActivateEx(ptim, tid, 0);
@@ -1218,7 +1191,7 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
     _activateFlags = dwFlags;
     cxxime_tsf::trace_stage_runtime_activate(dwFlags, tid);
     if ((_activateFlags & TF_TMF_UIELEMENTENABLEDONLY) != 0) {
-        _start_host_takeover_runtime();
+        _start_host_compatibility_runtime();
     }
     _seenKeyAfterActivate = false;
     _register_display_attribute_atom();
@@ -1514,7 +1487,7 @@ STDMETHODIMP TextService::Deactivate() {
     }
     _clientId = TF_CLIENTID_NULL;
     if ((_activateFlags & TF_TMF_UIELEMENTENABLEDONLY) != 0) {
-        _stop_host_takeover_runtime();
+        _stop_host_compatibility_runtime();
     }
 
     return S_OK;
@@ -1615,7 +1588,7 @@ STDMETHODIMP TextService::OnKeyUp(ITfContext* pic, WPARAM wParam, LPARAM lParam,
 
 bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam, BOOL* pfEaten) {
     *pfEaten = FALSE;
-    _stageInputId = cxxime::stage_trace_input_id(static_cast<uint32_t>(wParam), lParam);
+    _stageTraceSession.begin_input(static_cast<uint32_t>(wParam), lParam);
 
     bool status_key = is_status_key(wParam);
     const char* block_reason = _input_context_block_reason(pic);
@@ -1623,7 +1596,7 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
     _trace_input_decision(block_reason);
     if (!input_allowed && !status_key) {
         cxxime_tsf::trace_stage_key_route(
-        _stageInputId, _stageCompositionId, static_cast<uint32_t>(wParam), 0, "blocked",
+        stage_input_id(), stage_composition_id(), static_cast<uint32_t>(wParam), 0, "blocked",
         block_reason ? block_reason : "input_context");
         _inputFocused = false;
         _start_state_poll_timer();
@@ -1714,7 +1687,7 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
     }
     _ipcHealthy = ok;
     cxxime_tsf::trace_stage_key_route(
-        _stageInputId, _stageCompositionId, static_cast<uint32_t>(wParam), engine_calls,
+        stage_input_id(), stage_composition_id(), static_cast<uint32_t>(wParam), engine_calls,
         ok ? "processed" : "ipc_failed");
 
     // Build trace (populated at all exit paths)
@@ -1802,7 +1775,7 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
             (_activateFlags & TF_TMF_UIELEMENTENABLEDONLY) != 0;
 
             cxxime_tsf::trace_stage_context(
-                _stageInputId, _stageCompositionId, pic, _threadMgr,
+                stage_input_id(), stage_composition_id(), pic, _threadMgr,
                 ui_element_only ? "candidate_first_standard_tsf_compat" : "standard_tsf");
 
         _caretRect = {};
@@ -1963,7 +1936,7 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
     _enqueue_trace(trace);
 
     cxxime_tsf::trace_stage_key_result(
-        _stageInputId, _stageCompositionId, static_cast<uint32_t>(wParam), *pfEaten != FALSE,
+        stage_input_id(), stage_composition_id(), static_cast<uint32_t>(wParam), *pfEaten != FALSE,
         response.preedit[0] ? strlen(response.preedit) : 0, response.candidate_count,
         response.commit_text[0] ? strlen(response.commit_text) : 0, tsf_result_str(trace.result));
 
@@ -1979,7 +1952,7 @@ void TextService::_ProcessKeyUp(WPARAM wParam, LPARAM lParam) {
         return;
     }
 
-    _stageInputId = cxxime::stage_trace_input_id(static_cast<uint32_t>(wParam), lParam);
+    _stageTraceSession.begin_input(static_cast<uint32_t>(wParam), lParam);
 
     // Config is reloaded by watcher thread (not keypress-driven).
     _config = get_config();
@@ -2018,7 +1991,7 @@ void TextService::_ProcessKeyUp(WPARAM wParam, LPARAM lParam) {
     }
     _ipcHealthy = ok;
     cxxime_tsf::trace_stage_key_route(
-        _stageInputId, _stageCompositionId, static_cast<uint32_t>(wParam), engine_calls,
+        stage_input_id(), stage_composition_id(), static_cast<uint32_t>(wParam), engine_calls,
         ok ? "processed_key_up" : "ipc_failed_key_up");
 
     CXXIME_LOG(L"_ProcessKeyUp: ok=%d, ascii_mode=%d, commit='%S', composing=%d",
@@ -2054,7 +2027,7 @@ void TextService::_ProcessKeyUp(WPARAM wParam, LPARAM lParam) {
     }
 
     cxxime_tsf::trace_stage_key_result(
-        _stageInputId, _stageCompositionId, static_cast<uint32_t>(wParam), false,
+        stage_input_id(), stage_composition_id(), static_cast<uint32_t>(wParam), false,
         response.preedit[0] ? strlen(response.preedit) : 0, response.candidate_count,
         response.commit_text[0] ? strlen(response.commit_text) : 0,
         committed ? "key_up_commit" : (ok ? "key_up" : "key_up_failed"));
@@ -2110,11 +2083,6 @@ void TextService::_AbortComposition() {
         _composing = false;
     }
     _reset_stage_composition("abort");
-}
-
-void TextService::_reset_stage_composition(const char* reason) {
-    cxxime_tsf::trace_stage_composition_end(_stageInputId, _stageCompositionId, reason);
-    _stageCompositionId = 0;
 }
 
 // ITfThreadMgrEventSink
@@ -2225,187 +2193,6 @@ STDMETHODIMP TextService::GetDisplayAttributeInfo(REFGUID rguid, ITfDisplayAttri
         return pInfo ? S_OK : E_OUTOFMEMORY;
     }
     return E_INVALIDARG;
-}
-
-bool TextService::select_candidate_from_ui(UINT index) {
-    cxxime::IPCResponse resp = {};
-    if (!_ensure_ipc_session() || !_client.select_candidate(_sessionId, index, resp))
-        return false;
-
-    if (resp.status == cxxime::IPCStatus::ERR_INVALID_SESSION) {
-        _recreate_ipc_session_preserving_status();
-        _candidateWindow.set_preedit("");
-        _hide_candidate_window("hide:select_invalid_session");
-        _end_reading_ui_element("hide:select_invalid_session_reading");
-        _composing = false;
-        return false;
-    }
-
-    std::wstring commit_text = utf8_to_wstring(resp.commit_text);
-    if (!commit_text.empty()) {
-        ITfContext* pContext = _current_edit_context_for_composition();
-
-        if (pContext) {
-            _commit_text(pContext, commit_text, true);
-            pContext->Release();
-        } else {
-            insert_text(commit_text, true);
-        }
-        _composing = false;
-    }
-
-    _candidateWindow.set_preedit("");
-    _hide_candidate_window("hide:select_commit");
-    _end_reading_ui_element("hide:select_commit_reading");
-    return true;
-}
-
-void TextService::abort_candidate_ui_from_tsf() {
-    if (_sessionId && _client.is_connected())
-        _client.clear_composition(_sessionId);
-    _AbortComposition();
-}
-
-HRESULT TextService::finalize_exact_candidate_ui_from_tsf() {
-    std::wstring commit_text = _lastInlineCompositionText;
-    if (commit_text.empty())
-        return E_NOTIMPL;
-
-    ITfContext* pContext = _current_edit_context_for_composition();
-
-    HRESULT hr = S_OK;
-    if (pContext) {
-        hr = _commit_text(pContext, commit_text, true);
-        pContext->Release();
-    } else if (!commit_text.empty()) {
-        hr = insert_text(commit_text, true);
-    }
-    if (_sessionId && _client.is_connected())
-        _client.clear_composition(_sessionId);
-    _candidateWindow.set_preedit("");
-    _hide_candidate_window("hide:finalize_exact");
-    _end_reading_ui_element("hide:finalize_exact_reading");
-    _composing = false;
-    _lastInlineCompositionText.clear();
-    return hr;
-}
-
-void TextService::trace_ui_element_method(const char* element, const char* method, bool important) {
-    char detail[96] = {};
-    snprintf(detail, sizeof(detail), "%s.%s",
-             element ? element : "unknown", method ? method : "unknown");
-    _enqueue_event_trace("ui_element_call", detail, important);
-}
-
-uint64_t TextService::ensure_stage_composition_id() {
-    if (_stageCompositionId == 0) {
-        _stageCompositionId = cxxime::stage_trace_next_id();
-    }
-    return _stageCompositionId;
-}
-
-void TextService::trace_caret_event(const char* action,
-                                    const char* source,
-                                    bool resolved,
-                                    const RECT* rect,
-                                    HRESULT hr,
-                                    bool important) {
-    char detail[192] = {};
-    if (rect) {
-        snprintf(detail, sizeof(detail),
-                 "action=%s source=%s resolved=%d rc=%ld,%ld,%ld,%ld hr=0x%08lx composing=%d visible=%d",
-                 action ? action : "unknown", source ? source : "unknown",
-                 resolved ? 1 : 0, rect->left, rect->top, rect->right, rect->bottom,
-                 static_cast<unsigned long>(hr), _composing ? 1 : 0,
-                 _candidateWindow.is_visible() ? 1 : 0);
-    } else {
-        snprintf(detail, sizeof(detail),
-                 "action=%s source=%s resolved=%d hr=0x%08lx composing=%d visible=%d",
-                 action ? action : "unknown", source ? source : "unknown",
-                 resolved ? 1 : 0, static_cast<unsigned long>(hr),
-                 _composing ? 1 : 0, _candidateWindow.is_visible() ? 1 : 0);
-    }
-    _enqueue_event_trace("caret_position", detail, important);
-}
-
-HRESULT TextService::_register_key_event_sink() {
-    if (!_threadMgr)
-        return E_FAIL;
-
-    ITfKeystrokeMgr* pKeystrokeMgr = nullptr;
-    if (FAILED(_threadMgr->QueryInterface(IID_ITfKeystrokeMgr, (void**)&pKeystrokeMgr)))
-        return E_FAIL;
-
-    HRESULT hr = pKeystrokeMgr->AdviseKeyEventSink(_clientId, static_cast<ITfKeyEventSink*>(this), TRUE);
-    pKeystrokeMgr->Release();
-    return hr;
-}
-
-HRESULT TextService::_unregister_key_event_sink() {
-    if (!_threadMgr)
-        return E_FAIL;
-
-    ITfKeystrokeMgr* pKeystrokeMgr = nullptr;
-    if (FAILED(_threadMgr->QueryInterface(IID_ITfKeystrokeMgr, (void**)&pKeystrokeMgr)))
-        return E_FAIL;
-
-    HRESULT hr = pKeystrokeMgr->UnadviseKeyEventSink(_clientId);
-    pKeystrokeMgr->Release();
-    return hr;
-}
-
-HRESULT TextService::_register_preserved_key() {
-    if (!_threadMgr)
-        return E_FAIL;
-
-    ITfKeystrokeMgr* pKeystrokeMgr = nullptr;
-    if (FAILED(_threadMgr->QueryInterface(IID_ITfKeystrokeMgr, (void**)&pKeystrokeMgr)))
-        return E_FAIL;
-
-    // Register Ctrl+Space as preserved key for mode toggle
-    TF_PRESERVEDKEY prekey = {};
-    prekey.uVKey = VK_SPACE;
-    prekey.uModifiers = TF_MOD_CONTROL;
-    HRESULT hr = pKeystrokeMgr->PreserveKey(
-        _clientId,
-        c_guidPreservedKey_Toggle,
-        &prekey,
-        L"Toggle Chinese/English",
-        (ULONG)wcslen(L"Toggle Chinese/English"));
-
-    pKeystrokeMgr->Release();
-    return hr;
-}
-
-HRESULT TextService::_unregister_preserved_key() {
-    if (!_threadMgr)
-        return E_FAIL;
-
-    ITfKeystrokeMgr* pKeystrokeMgr = nullptr;
-    if (FAILED(_threadMgr->QueryInterface(IID_ITfKeystrokeMgr, (void**)&pKeystrokeMgr)))
-        return E_FAIL;
-
-    HRESULT hr = pKeystrokeMgr->UnpreserveKey(c_guidPreservedKey_Toggle, nullptr);
-    pKeystrokeMgr->Release();
-    return hr;
-}
-
-bool TextService::_register_display_attribute_atom() {
-    ITfCategoryMgr* category_mgr = nullptr;
-    HRESULT hr = CoCreateInstance(CLSID_TF_CategoryMgr, nullptr, CLSCTX_INPROC_SERVER,
-                                  IID_ITfCategoryMgr, reinterpret_cast<void**>(&category_mgr));
-    if (FAILED(hr) || !category_mgr)
-        return false;
-    
-    hr = category_mgr->RegisterGUID(c_guidDisplayAttribute, &_displayAttributeAtom);
-    category_mgr->Release();
-    if (FAILED(hr)) {
-        _displayAttributeAtom = 0;
-        CXXIME_LOG(L"Register display attribute atom failed: hr=0x%08x", hr);
-        return false;
-    }
-
-    return true;
 }
 
 uint32_t TextService::_get_modifiers() const {

@@ -3,10 +3,22 @@
 #include "tsf_activation.h"
 
 #include "text_service.h"
+#include "tsf_host_classification.h"
+#include "tsf_host_message.h"
 
 #include <cxxime/stage_trace.h>
 
 namespace cxxime_tsf {
+
+void start_stage_runtime(const HostClassificationCompatibilitySnapshot& snapshot) {
+    trace_stage_host_classification_compatibility(snapshot);
+    start_stage_host_message_monitor();
+}
+
+void stop_stage_runtime(const HostClassificationCompatibilitySnapshot& snapshot) {
+    trace_stage_host_classification_compatibility(snapshot);
+    stop_stage_host_message_monitor();
+}
 
 void trace_stage_thread_sinks(const char* action,
                               HRESULT source_result,
@@ -93,8 +105,8 @@ void TextService::trace_candidate_activation_state(
 
     cxxime::write_stage_trace("tsf", "runtime.activation_snapshot", {
         {"trigger", "candidate_begin"},
-        {"input_id", _stageInputId},
-        {"composition_id", _stageCompositionId},
+        {"input_id", stage_input_id()},
+        {"composition_id", stage_composition_id()},
         {"service_activated", _activated},
         {"client_id", _clientId},
         {"activate_flags", _activateFlags},

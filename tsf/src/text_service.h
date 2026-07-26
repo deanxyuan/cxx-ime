@@ -11,6 +11,7 @@ class ReadingUIElement;
 #include "pch.h"
 #include <cxxime/ipc_client.h>
 #include <cxxime/ipc_protocol.h>
+#include <cxxime/stage_trace.h>
 #include <cxxime/candidate_window.h>
 #include <cxxime/config.h>
 #include "status_controller.h"
@@ -81,8 +82,8 @@ public:
     bool is_candidate_ui_element_shown() const;
     void trace_ui_element_method(const char* element, const char* method, bool important = false);
     void trace_candidate_activation_state(ITfDocumentMgr* candidate_document_mgr) const;
-    uint64_t stage_input_id() const { return _stageInputId; }
-    uint64_t stage_composition_id() const { return _stageCompositionId; }
+    uint64_t stage_input_id() const { return _stageTraceSession.input_id(); }
+    uint64_t stage_composition_id() const { return _stageTraceSession.composition_id(); }
     uint64_t ensure_stage_composition_id();
     void trace_caret_event(const char* action,
                            const char* source,
@@ -182,8 +183,9 @@ private:
                                        uint32_t candidate_count,
                                        uint32_t page_current,
                                        uint32_t page_total);
-    void _start_host_takeover_runtime();
-    void _stop_host_takeover_runtime();
+    static std::wstring utf8_to_wstring(const char* text);
+    void _start_host_compatibility_runtime();
+    void _stop_host_compatibility_runtime();
     void _prepare_host_candidate_compatibility();
     void _update_reading_ui_element(ITfContext* context, const std::wstring& reading);
     void _end_reading_ui_element(const char* reason);
@@ -217,7 +219,7 @@ private:
     bool _fTestKeyUpPending = false;
     bool _candidateShowPending = false;
     bool _candidatePendingHasStaleRect = false;
-    bool _hostTakeoverRuntimeActive = false;
+    bool _hostCompatibilityRuntimeActive = false;
     RECT _candidatePendingStaleRect = {};
     std::chrono::steady_clock::time_point _candidateShowPendingSince = {};
     UINT_PTR _statePollTimer = 0;
@@ -244,8 +246,7 @@ private:
     std::chrono::steady_clock::time_point _key_event_start;
     int64_t _last_ipc_us = 0;
     int64_t _last_window_update_us = 0;
-    uint64_t _stageInputId = 0;
-    uint64_t _stageCompositionId = 0;
+    cxxime::StageTraceSession _stageTraceSession;
 
     // Async trace writer (bounded queue, writer thread, batch flush)
     void _enqueue_trace(const TsfTrace& trace);

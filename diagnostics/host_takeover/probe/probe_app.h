@@ -40,6 +40,13 @@ public:
     HRESULT on_end_ui_element(DWORD element_id);
 
 private:
+    static constexpr int kCandidateLeft = 24;
+    static constexpr int kCandidateTop = 240;
+    static constexpr int kCandidateRightMargin = 24;
+    static constexpr int kCandidateRowHeight = 34;
+    static constexpr int kCandidateRowStride = 36;
+    static constexpr size_t kMaximumCandidateRows = 10;
+
     static LRESULT CALLBACK window_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam);
     LRESULT handle_message(UINT message, WPARAM wparam, LPARAM lparam);
     void update_ui_element(DWORD element_id, const char* action);
@@ -58,6 +65,9 @@ private:
                            WPARAM command,
                            LPARAM flags,
                            const char* action);
+    bool candidate_index_at_point(POINT point, UINT* index) const;
+    void click_candidate(UINT index);
+    void finish_candidate_click(const char* result, LONG result_bytes);
     void paint(HDC dc);
     bool candidate_should_draw() const;
     uint64_t ensure_composition_id();
@@ -89,6 +99,11 @@ private:
     DWORD reading_element_id_ = TF_INVALID_UIELEMENTID;
     UINT selection_ = 0;
     UINT current_page_ = 0;
+    bool candidate_click_pending_ = false;
+    UINT candidate_click_index_ = 0;
+    DWORD candidate_click_element_id_ = TF_INVALID_UIELEMENTID;
+    uint64_t candidate_click_composition_id_ = 0;
+    size_t candidate_click_committed_length_ = 0;
     std::wstring composition_;
     std::wstring reading_;
     std::wstring committed_;
