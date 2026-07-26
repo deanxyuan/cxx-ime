@@ -468,6 +468,10 @@ TEST(OutputComposer, ctrl_period_toggles_punct) {
     auto r = engine.process_key(e, opts);
     ASSERT_EQ(r, cxxime::ProcessResult::TOGGLE_PUNCT);  // Ctrl+. toggles punctuation
 
+e.set_shift();
+r = engine.process_key(e, opts);
+ASSERT_EQ(r, cxxime::ProcessResult::REJECTED);
+
     engine.finalize();
     DeleteFileA(dp.c_str());
 }
@@ -593,9 +597,37 @@ TEST(OutputComposer, full_shape_ctrl_not_intercepted) {
     e.is_key_up = false;
     e.set_ctrl();
 
-    // Ctrl+letter: neither handle_punctuation nor handle_full_shape intercepts
+    // Ctrl+letter belongs to the host even when full-shape output is enabled.
     auto r = engine.process_key(e, opts);
-    ASSERT_NE(r, cxxime::ProcessResult::COMMITTED);
+    ASSERT_EQ(r, cxxime::ProcessResult::REJECTED);
+    ASSERT_TRUE(engine.context().pinyin_buffer.empty());
+    ASSERT_TRUE(engine.context().committed_text.empty());
+
+    engine.finalize();
+    DeleteFileA(dp.c_str());
+}
+
+TEST(OutputComposer, ascii_mode_modified_letters_pass_through) {
+    std::string dp = punct_tmp("shortcut_ascii.bin");
+    cxxime::Dict::create_test_dict(dp, {{"de", "test", 1}});
+    cxxime::Engine engine;
+    ASSERT_TRUE(engine.initialize(dp));
+    engine.set_trace_enabled(false);
+    engine.ascii_composer().set_ascii_mode(true);
+
+    cxxime::KeyEvent event;
+    event.keycode = 'C';
+    event.set_ctrl();
+
+    auto result = engine.process_key(event);
+    ASSERT_EQ(result, cxxime::ProcessResult::REJECTED);
+    ASSERT_TRUE(engine.context().committed_text.empty());
+
+    event.modifiers = 0;
+    event.set_alt();
+    result = engine.process_key(event);
+    ASSERT_EQ(result, cxxime::ProcessResult::REJECTED);
+    ASSERT_TRUE(engine.context().committed_text.empty());
 
     engine.finalize();
     DeleteFileA(dp.c_str());

@@ -83,6 +83,7 @@ void trace_stage_runtime_activate(DWORD activate_flags, TfClientId client_id) {
 void trace_stage_key_route(uint64_t input_id,
                            uint64_t composition_id,
                            uint32_t virtual_key,
+                           uint32_t modifiers,
                            uint32_t engine_calls,
                            const char* result,
                            const char* reason) {
@@ -91,6 +92,7 @@ void trace_stage_key_route(uint64_t input_id,
         {"composition_id", composition_id},
         {"owner", "tsf"},
         {"vk", virtual_key},
+        {"modifiers", modifiers},
         {"engine_calls", engine_calls},
         {"result", result ? result : ""},
     };

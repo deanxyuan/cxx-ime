@@ -40,7 +40,13 @@ void start_stage_ui_element_observer(ITfThreadMgr*) {}
 
 void trace_stage_runtime_activate(DWORD, TfClientId) {}
 
-void trace_stage_key_route(uint64_t, uint64_t, uint32_t, uint32_t, const char*, const char*) {}
+void trace_stage_key_route(uint64_t,
+                           uint64_t,
+                           uint32_t,
+                           uint32_t,
+                           uint32_t,
+                           const char*,
+                           const char*) {}
 
 void trace_stage_context(uint64_t, uint64_t, ITfContext*, ITfThreadMgr*, const char*) {}
 
