@@ -107,6 +107,9 @@ void Engine::finalize() {
 void Engine::reload_config(const Config& config) {
     config_ = &config;
     ascii_composer_.load_config(config);
+    if (!config.candidate_learning && translator_) {
+        translator_->clear_recent();
+    }
 }
 
 void Engine::rebind_shared_resources(Dict& dict, SpellingsIndex& spellings,
@@ -312,10 +315,23 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
 
     // Phase 4.5: Punctuation / full-shape handling (only when processor rejected)
     if (result == ProcessResult::REJECTED) {
-        if (handle_punctuation(event, context_, opts))
+        const bool has_pending_candidate = context_.is_composing() &&
+            context_.candidates.highlighted >= 0 &&
+            context_.candidates.highlighted <
+                static_cast<int>(context_.candidates.candidates.size());
+        if (has_pending_candidate) {
+            committed_code_override = context_.pinyin_buffer;
+            committed_candidate_override =
+                context_.candidates.candidates[context_.candidates.highlighted];
+        }
+
+        if (handle_punctuation(event, context_, opts)) {
             result = ProcessResult::COMMITTED;
-        else if (handle_full_shape(event, context_, opts))
+            has_committed_candidate_override = has_pending_candidate;
+        } else if (handle_full_shape(event, context_, opts)) {
             result = ProcessResult::COMMITTED;
+            has_committed_candidate_override = has_pending_candidate;
+        }
     }
 
     // Phase 5: After processing, update candidates if still composing
@@ -347,7 +363,7 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
         }
 
         // Auto-commit a unique 4-code candidate in Wubi or mixed mode.
-        if (!append_raw && config_->wubi_auto_commit_4code &&
+        if (!append_raw && config_->wubi_auto_commit &&
             (mode_ == InputMode::WUBI || mode_ == InputMode::MIXED) &&
             result == ProcessResult::ACCEPTED) {
             if (context_.pinyin_buffer.size() == 4 &&
@@ -372,7 +388,8 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
                (int)result, context_.pinyin_buffer.c_str());
 
     // Phase 6: If a candidate was committed, update user frequency and recent cache.
-    if (result == ProcessResult::COMMITTED && !context_.committed_text.empty() &&
+    if (config_->candidate_learning &&
+        result == ProcessResult::COMMITTED && !context_.committed_text.empty() &&
         context_.commit_source() == CommitSource::kCandidate) {
         std::string typed_code = has_committed_candidate_override
             ? committed_code_override
@@ -391,14 +408,18 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
         }
 
         Dict* active_dict = is_wubi ? wubi_dict_ : pinyin_dict_;
-        update_learning_entry(active_dict, context_.committed_text, typed_code,
+        const std::string& learned_text = committed_candidate
+            ? committed_candidate->text
+            : context_.committed_text;
+        update_learning_entry(active_dict, learned_text, typed_code,
                               committed_candidate, !is_wubi);
 
         if (!typed_code.empty()) {
             Candidate recent;
-            if (committed_candidate)
+            if (committed_candidate) {
                 recent = *committed_candidate;
-            recent.text = context_.committed_text;
+            }
+            recent.text = learned_text;
             translator_->update_recent(typed_code, recent);
         }
     }
@@ -559,17 +580,19 @@ bool Engine::select_candidate(int index) {
     context_.committed_text = context_.candidates.candidates[index].text;
     context_.set_commit_source(CommitSource::kCandidate);
 
-    auto& cand = context_.candidates.candidates[index];
-    std::string code = context_.pinyin_buffer;
-    bool is_wubi = mode_ == InputMode::WUBI ||
-        (mode_ == InputMode::MIXED && cand.source == CandidateSource::kWubi);
-    Dict* active_dict = is_wubi ? wubi_dict_ : pinyin_dict_;
-    update_learning_entry(active_dict, context_.committed_text, code, &cand, !is_wubi);
+    if (config_->candidate_learning) {
+        auto& cand = context_.candidates.candidates[index];
+        std::string code = context_.pinyin_buffer;
+        bool is_wubi = mode_ == InputMode::WUBI ||
+            (mode_ == InputMode::MIXED && cand.source == CandidateSource::kWubi);
+        Dict* active_dict = is_wubi ? wubi_dict_ : pinyin_dict_;
+        update_learning_entry(active_dict, context_.committed_text, code, &cand, !is_wubi);
 
-    // Phase 4: update session recent cache for short input fast path
-    if (!context_.pinyin_buffer.empty()) {
-        translator_->update_recent(context_.pinyin_buffer,
-                                  context_.candidates.candidates[index]);
+        // Update the session recent cache only when adaptive ordering is enabled.
+        if (!context_.pinyin_buffer.empty()) {
+            translator_->update_recent(context_.pinyin_buffer,
+                                    context_.candidates.candidates[index]);
+        }
     }
 
     return true;

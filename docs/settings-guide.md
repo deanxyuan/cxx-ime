@@ -83,9 +83,15 @@
 
 ### 五笔四码上屏
 
-**配置项**：`engine.wubi_auto_commit_4code`（布尔值）
+**配置项**：`engine.wubi_auto_commit`（布尔值）
 
 仅在五笔/混输模式下生效。启用后，输入四码且唯一候选时自动上屏，无需按空格。
+
+### 候选学习
+
+**配置项**：`engine.candidate_learning`（布尔值）
+
+控制选词后是否自动学习词频与音节键。启用后选中的候选会被记录到用户词典，后续可通过简拼、混合码等方式命中。
 
 ---
 
@@ -312,7 +318,8 @@ CapsLock 键在输入法中的行为模式。可选值：
         "page_size": 7,
         "max_pinyin_length": 64,
         "fuzzy_pinyin": true,
-        "wubi_auto_commit_4code": true
+        "wubi_auto_commit": true,
+        "candidate_learning": true
     },
     "style": {
         "font_face": "Microsoft YaHei UI",

@@ -7,7 +7,7 @@
 | 指标 | 数值 | 说明 |
 |------|------|------|
 | 安装包 | ~72 MB | 单文件 NSIS 安装器，含全部词典数据 |
-| Server 常驻内存 | ~500 MB 量级 | 词典数据全量堆载（~490 MB）为主：dict.bin 72.8 + dict.idx 48.4 + topn.bin 363 + wubi ~4.7 |
+| Server 常驻内存 | ~500 MB 量级 | 词典数据全量堆载（~490 MB）为主：dict.bin 72.8 + dict.idx 48.4 + topn.bin ~360 + wubi ~4.7 |
 | IPC 往返延迟 | < 1 ms | 实测 preedit avg ~50us（见 [IPC 架构设计](ipc-architecture.md)） |
 | 启动 | 词典一次性读入 | 无 mmap 换页延迟，代价是启动时的顺序读盘 |
 
@@ -194,10 +194,14 @@ cxx-ime/
 │
 ├── tsf/                    # TSF 输入法 DLL（x64/x86 双架构）
 │   ├── src/                dllmain.cpp, class_factory.cpp, text_service.cpp,
+│   │                       text_service_candidate.cpp, text_service_composition.cpp,
+│   │                       text_service_activation.cpp, text_service_trace.cpp,
 │   │                       key_event_sink.cpp, edit_session.cpp,
+│   │                       candidate_ui_element.cpp, reading_ui_element.cpp,
 │   │                       display_attribute.cpp, language_bar.cpp, register.cpp,
 │   │                       status_controller.h, status_controller.cc,
 │   │                       resource_loader.h, resource_loader.cc,
+│   │                       host_compatibility/ (宿主兼容性运行时检测),
 │   │                       preedit_mode.h, pch.h, resource.h
 │   └── CMakeLists.txt      按指针大小输出 cxxime_tsf_x64.dll / cxxime_tsf_x86.dll
 │
@@ -227,14 +231,14 @@ cxx-ime/
 │   ├── schemas/            # pinyin.schema.yaml（拼写代数规则）
 │   └── tools/              # Python 词典工具（fetch/convert/build/algebra）
 │
-├── test/                   # 22 个 C++ + 1 个 Python 测试（23 ctest 条目, 380+ TEST）
+├── test/                   # 22 个 C++ + 2 个 Python 测试（24 ctest 条目, 390+ TEST）
 │   ├── util/testutil.h     # 自研轻量测试框架
 │   └── {engine, segmentor, dict, config, layout, preedit_mode, ipc, wubi,
 │         wubi_engine, candidate_window, candidate_quality, status_window,
 │         benchmark, short_cache, trace, mpscq, config_monitor,
 │         dictionary_monitor, output_composer, engine_source,
 │         session_manager_status, session_manager_integration,
-│         build_short_cache (Python)}_test.{cc|py}
+│         build_short_cache, stage_trace_tools (Python)}_test.{cc|py}
 │
 ├── third_party/            # 第三方库
 │   ├── sqlite3/            # SQLite amalgamation（FTS5 + JSON1）

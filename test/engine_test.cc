@@ -1,6 +1,7 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
 #include "util/testutil.h"
+#include <cctype>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -19,6 +20,15 @@ static char temp_path[MAX_PATH] = {};
 
 static std::string make_temp_path(const char* name) {
     return std::string(temp_path) + "\\" + name;
+}
+
+static void type_code(cxxime::Engine& engine, const std::string& code) {
+    for (char ch : code) {
+        cxxime::KeyEvent event;
+        event.keycode = static_cast<uint32_t>(std::toupper(static_cast<unsigned char>(ch)));
+        event.is_key_up = false;
+        ASSERT_EQ(engine.process_key(event), cxxime::ProcessResult::ACCEPTED);
+    }
 }
 
 TEST(Engine, init) {
@@ -127,6 +137,7 @@ TEST(Engine, selected_pinyin_candidate_learns_syllable_keys) {
 
     cxxime::SpellingsIndex spellings;
     cxxime::Config config;
+    config.candidate_learning = true;
     cxxime::Engine engine;
     ASSERT_TRUE(engine.initialize(dict, spellings, nullptr, config));
 
@@ -152,6 +163,121 @@ TEST(Engine, selected_pinyin_candidate_learns_syllable_keys) {
             found = true;
     }
     ASSERT_TRUE(found);
+
+    engine.finalize();
+    dict.close();
+    DeleteFileA(dict_path.c_str());
+    DeleteFileA(user_path.c_str());
+}
+
+TEST(Engine, candidate_order_stays_stable_when_candidate_learning_is_disabled) {
+    std::string dict_path = make_temp_path("test_engine_stable_order.bin");
+    std::string user_path = make_temp_path("test_engine_stable_order.tsv");
+    DeleteFileA(user_path.c_str());
+
+    cxxime::Dict::create_test_dict(dict_path, {
+        {"ni:hao", "默认候选", 300},
+        {"ni:hao", "第二候选", 200},
+    });
+
+    cxxime::Dict dict;
+    ASSERT_TRUE(dict.open(dict_path, user_path));
+    cxxime::SpellingsIndex spellings;
+    cxxime::Config config;
+    cxxime::Engine engine;
+    ASSERT_TRUE(engine.initialize(dict, spellings, nullptr, config));
+
+    type_code(engine, "nihao");
+    ASSERT_GE(engine.context().candidates.candidates.size(), 2u);
+    ASSERT_EQ(engine.context().candidates.candidates[0].text, "默认候选");
+    ASSERT_EQ(engine.context().candidates.candidates[1].text, "第二候选");
+    ASSERT_TRUE(engine.select_candidate(1));
+    ASSERT_EQ(engine.get_commit_text(), "第二候选");
+    ASSERT_TRUE(!dict.has_user_entry("第二候选"));
+
+    type_code(engine, "nihao");
+    ASSERT_GE(engine.context().candidates.candidates.size(), 2u);
+    ASSERT_EQ(engine.context().candidates.candidates[0].text, "默认候选");
+    ASSERT_EQ(engine.context().candidates.candidates[1].text, "第二候选");
+    cxxime::KeyEvent space;
+    space.keycode = VK_SPACE;
+    space.is_key_up = false;
+    ASSERT_EQ(engine.process_key(space), cxxime::ProcessResult::COMMITTED);
+    ASSERT_EQ(engine.get_commit_text(), "默认候选");
+    ASSERT_TRUE(!dict.has_user_entry("默认候选"));
+
+    engine.finalize();
+    dict.close();
+    DeleteFileA(dict_path.c_str());
+    DeleteFileA(user_path.c_str());
+}
+
+TEST(Engine, candidate_learning_promotes_selected_candidate_when_enabled) {
+    std::string dict_path = make_temp_path("test_engine_adaptive_order.bin");
+    std::string user_path = make_temp_path("test_engine_adaptive_order.tsv");
+    DeleteFileA(user_path.c_str());
+
+    cxxime::Dict::create_test_dict(dict_path, {
+        {"ni:hao", "默认候选", 300},
+        {"ni:hao", "第二候选", 200},
+    });
+
+    cxxime::Dict dict;
+    ASSERT_TRUE(dict.open(dict_path, user_path));
+    cxxime::SpellingsIndex spellings;
+    cxxime::Config config;
+    config.candidate_learning = true;
+    cxxime::Engine engine;
+    ASSERT_TRUE(engine.initialize(dict, spellings, nullptr, config));
+
+    type_code(engine, "nihao");
+    ASSERT_GE(engine.context().candidates.candidates.size(), 2u);
+    ASSERT_EQ(engine.context().candidates.candidates[0].text, "默认候选");
+    ASSERT_EQ(engine.context().candidates.candidates[1].text, "第二候选");
+    ASSERT_TRUE(engine.select_candidate(1));
+    ASSERT_EQ(engine.get_commit_text(), "第二候选");
+
+    type_code(engine, "nihao");
+    ASSERT_GE(engine.context().candidates.candidates.size(), 1u);
+    ASSERT_EQ(engine.context().candidates.candidates[0].text, "第二候选");
+
+    engine.finalize();
+    dict.close();
+    DeleteFileA(dict_path.c_str());
+    DeleteFileA(user_path.c_str());
+}
+
+TEST(Engine, candidate_learning_uses_candidate_text_for_punctuation_commit) {
+    std::string dict_path = make_temp_path("test_engine_punctuation_learning.bin");
+    std::string user_path = make_temp_path("test_engine_punctuation_learning.tsv");
+    DeleteFileA(user_path.c_str());
+
+    cxxime::Dict::create_test_dict(dict_path, {
+        {"ni:hao", "你好", 300},
+    });
+
+    cxxime::Dict dict;
+    ASSERT_TRUE(dict.open(dict_path, user_path));
+    cxxime::SpellingsIndex spellings;
+    cxxime::Config config;
+    config.candidate_learning = true;
+    cxxime::Engine engine;
+    ASSERT_TRUE(engine.initialize(dict, spellings, nullptr, config));
+
+    type_code(engine, "nihao");
+    ASSERT_GE(engine.context().candidates.candidates.size(), 1u);
+
+    cxxime::PunctMapping punct_mapping;
+    punct_mapping.half_shape["."] = {
+        cxxime::PunctType::COMMIT, "。", {}, {}};
+    cxxime::OutputOptions options;
+    options.punct_mapping = &punct_mapping;
+    cxxime::KeyEvent period;
+    period.keycode = VK_OEM_PERIOD;
+    ASSERT_EQ(engine.process_key(period, options), cxxime::ProcessResult::COMMITTED);
+    ASSERT_EQ(engine.get_commit_text(), "你好。");
+    ASSERT_TRUE(dict.has_user_entry("你好"));
+    ASSERT_TRUE(!dict.has_user_entry("你好。"));
 
     engine.finalize();
     dict.close();

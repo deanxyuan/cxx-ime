@@ -26,11 +26,18 @@ MAX_CODE_LEN = 16  # mixed codes can be longer than short keys
 MAX_MIXED_KEYS_PER_ENTRY = 8
 MAX_CANDIDATES_PER_KEY = 64
 
-# Score bonuses
-EXACT_COMPLETE_BONUS = 100000
-EXACT_PREFIX_BONUS = 50000
-MIXED_BONUS = 10000
-ABBR_BONUS = 5000
+# Ranking tiers. User dictionary matches start at 120,000,000, so cache scores
+# stay below that range while preserving match quality ahead of raw frequency.
+EXACT_COMPLETE_BASE = 100_000_000
+EXACT_PREFIX_BASE = 80_000_000
+ABBR_COMPLETE_BASE = 60_000_000
+MIXED_COMPLETE_BASE = 50_000_000
+ABBR_PREFIX_BASE = 30_000_000
+MIXED_PREFIX_BASE = 20_000_000
+MAX_FREQUENCY = 99_999_900
+FREQUENCY_SCALE = 100
+MAX_PREFIX_PROXIMITY = 5
+PREFIX_PROXIMITY_STEP = 1_000_000
 
 # Key flags
 SHORT_KEY_EXACT = 0x01
@@ -71,41 +78,62 @@ def generate_keys(syllable_ids, text, frequency):
     if not syllables:
         return []
 
-    results = []
+    results = {}
     n = len(syllables)
+
+    frequency_score = min(max(frequency, 0), MAX_FREQUENCY) // FREQUENCY_SCALE
+
+    def offer(key, base, flags, proximity=0):
+        score = base + proximity + frequency_score
+        existing = results.get(key)
+        if existing is None:
+            results[key] = (score, flags)
+        elif score > existing[0]:
+            results[key] = (score, flags | existing[1])
+        else:
+            results[key] = (existing[0], flags | existing[1])
+
+    def prefix_base(flags):
+        if flags & SHORT_KEY_EXACT:
+            return EXACT_PREFIX_BASE
+        if flags & SHORT_KEY_ABBR:
+            return ABBR_PREFIX_BASE
+        return MIXED_PREFIX_BASE
+
+    def proximity_bonus(key, prefix):
+        remaining = len(key) - len(prefix)
+        closeness = max(0, MAX_PREFIX_PROXIMITY + 1 - remaining)
+        return min(closeness, MAX_PREFIX_PROXIMITY) * PREFIX_PROXIMITY_STEP
 
     # exact_code: full concatenation, e.g. "shurufa"
     exact = "".join(syllables)
-    exact_score = frequency + EXACT_COMPLETE_BONUS
-    results.append((exact, exact_score, SHORT_KEY_EXACT))
+    complete_keys = [(exact, EXACT_COMPLETE_BASE, SHORT_KEY_EXACT)]
 
     # abbr_code: first letters, e.g. "srf"
     abbr = "".join(s[0] for s in syllables if s)
     if abbr != exact:
-        abbr_score = frequency + ABBR_BONUS
-        results.append((abbr, abbr_score, SHORT_KEY_ABBR))
+        complete_keys.append((abbr, ABBR_COMPLETE_BASE, SHORT_KEY_ABBR))
 
     # mixed_code: combinations of full/abbr per syllable (limit to MAX_MIXED_KEYS_PER_ENTRY)
     if n > 1:
         mixed_list = _generate_mixed(syllables)
         for m in mixed_list[:MAX_MIXED_KEYS_PER_ENTRY]:
             if m != exact:
-                mixed_score = frequency + MIXED_BONUS
-                results.append((m, mixed_score, SHORT_KEY_MIXED))
+                complete_keys.append((m, MIXED_COMPLETE_BASE, SHORT_KEY_MIXED))
 
-    # prefix_code: all prefixes of all keys above, length 1..MAX_SHORT_KEY_LEN
-    prefix_set = set()
-    for key, _, flags in list(results):
+    for key, base, flags in complete_keys:
+        offer(key, base, flags)
+
+    # Prefixes retain their source match type. The strongest path wins when the
+    # same key can be generated as both an exact prefix and a mixed complete key.
+    for key, _, flags in complete_keys:
         for plen in range(1, min(len(key), MAX_SHORT_KEY_LEN) + 1):
             prefix = key[:plen]
-            if prefix != key:  # don't duplicate the full key
-                prefix_set.add(prefix)
+            if prefix != key:
+                offer(prefix, prefix_base(flags), flags | SHORT_KEY_PREFIX,
+                      proximity_bonus(key, prefix))
 
-    for prefix in prefix_set:
-        prefix_score = frequency + EXACT_PREFIX_BONUS
-        results.append((prefix, prefix_score, SHORT_KEY_PREFIX))
-
-    return results
+    return [(key, score, flags) for key, (score, flags) in results.items()]
 
 
 def _generate_mixed(syllables):

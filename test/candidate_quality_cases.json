@@ -19,6 +19,32 @@
       "require_cache_hit": true
     },
     {
+      "id": "pinyin-short-ni-prefers-exact-syllable",
+      "mode": "pinyin",
+      "input": "ni",
+      "contains": [
+        { "text": "你", "max_rank": 1 }
+      ],
+      "forbid_visible": [
+        "年",
+        "牛奶",
+        "你啊"
+      ],
+      "require_cache_hit": true
+    },
+    {
+      "id": "pinyin-short-nih-suppresses-distant-long-phrase",
+      "mode": "pinyin",
+      "input": "nih",
+      "contains": [
+        { "text": "你好", "max_rank": 9 }
+      ],
+      "forbid_visible": [
+        "您还没有"
+      ],
+      "require_cache_hit": true
+    },
+    {
       "id": "pinyin-full-shijie",
       "mode": "pinyin",
       "input": "shijie",

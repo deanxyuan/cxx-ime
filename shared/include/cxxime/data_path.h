@@ -26,6 +26,10 @@ std::string data_dir();
 // data_dir() + filename
 std::string data_path(const char* filename);
 
+// Runtime override for the per-user writable directory. Intended for tools
+// and tests that must not read or modify the active Windows user's data.
+void set_user_data_dir(const std::string& dir);
+
 // Per-user writable directory (%USERPROFILE%\cxxime\).
 // Created automatically on first call.
 std::string user_data_dir();

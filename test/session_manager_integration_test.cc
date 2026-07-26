@@ -17,6 +17,7 @@
 #include <tuple>
 #include <vector>
 #include <windows.h>
+#include <cxxime/data_path.h>
 #include <cxxime/dictionary_manifest.h>
 #include <cxxime/dictionary_monitor.h>
 #include <cxxime/ipc_protocol.h>
@@ -26,6 +27,7 @@
 #include "../server/src/session_manager.h"
 
 static char temp_path[MAX_PATH] = {};
+static std::string test_user_data_dir;
 
 using TestDictEntry = std::tuple<std::string, std::string, int>;
 
@@ -810,10 +812,23 @@ TEST(SessionIntegration, punctuation_commit_via_ipc) {
     ASSERT_EQ(r3.result, cxxime::ProcessResult::REJECTED);
 }
 
-// Initialize temp_path before tests run
-static bool _integration_init = []() {
+int main() {
     GetTempPathA(MAX_PATH, temp_path);
-    return true;
-}();
+    const std::string directory_name =
+        "cxxime-session-integration-" + std::to_string(GetCurrentProcessId());
+    test_user_data_dir = make_temp_path(directory_name.c_str());
+    CreateDirectoryA(test_user_data_dir.c_str(), nullptr);
+    DeleteFileA((test_user_data_dir + "\\default.json").c_str());
+    DeleteFileA((test_user_data_dir + "\\user_pinyin.tsv").c_str());
+    DeleteFileA((test_user_data_dir + "\\user_wubi.tsv").c_str());
 
-RUN_ALL_TESTS()
+    cxxime::set_data_dir(CXXIME_DATA_DIR);
+    cxxime::set_user_data_dir(test_user_data_dir);
+    const int result = test::RunAllTests();
+
+    DeleteFileA((test_user_data_dir + "\\default.json").c_str());
+    DeleteFileA((test_user_data_dir + "\\user_pinyin.tsv").c_str());
+    DeleteFileA((test_user_data_dir + "\\user_wubi.tsv").c_str());
+    RemoveDirectoryA(test_user_data_dir.c_str());
+    return result;
+}

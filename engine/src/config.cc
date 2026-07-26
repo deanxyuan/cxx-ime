@@ -36,7 +36,8 @@ bool Config::load(const std::string& path) {
             if (input_mode < 0) input_mode = 0;
             if (input_mode > 2) input_mode = 2;
             load_bool(e, "fuzzy_pinyin", fuzzy_pinyin);
-            load_bool(e, "wubi_auto_commit_4code", wubi_auto_commit_4code);
+            load_bool(e, "wubi_auto_commit", wubi_auto_commit);
+            load_bool(e, "candidate_learning", candidate_learning);
         }
 
         if (j.contains("style") && j["style"].is_object()) {
@@ -150,12 +151,13 @@ bool Config::save(const std::string& path) const {
     nlohmann::json j;
     j["schema"]["name"] = "CxxIME";
     j["schema"]["version"] = "1.0";
-    j["schema"]["description"] = "CxxIME default pinyin schema";
+    j["schema"]["description"] = "CxxIME default configuration";
 
     j["engine"]["page_size"] = page_size;
     j["engine"]["input_mode"] = input_mode;
     j["engine"]["fuzzy_pinyin"] = fuzzy_pinyin;
-    j["engine"]["wubi_auto_commit_4code"] = wubi_auto_commit_4code;
+    j["engine"]["wubi_auto_commit"] = wubi_auto_commit;
+    j["engine"]["candidate_learning"] = candidate_learning;
     j["engine"]["max_pinyin_length"] = 64;
 
     j["style"]["font_face"] = font_name;

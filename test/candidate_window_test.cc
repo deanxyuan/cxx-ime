@@ -7,15 +7,17 @@
 #include <windows.h>
 #include <string>
 
+static std::string test_data_path(const char* filename) {
+    cxxime::set_data_dir(CXXIME_DATA_DIR);
+    return cxxime::data_path(filename);
+}
+
 // --- Theme value verification ---
 
 TEST(Theme, aqua) {
-    // build_theme_from_config works correctly (verified in Debug)
-    // get_theme() has a pre-existing Release-only issue with inline data_path()
-    // Test via build_theme_from_config directly
     cxxime::Config cfg;
     cfg.theme = "aqua";
-    cfg.load_themes(cxxime::data_path("themes.json"));
+    cfg.load_themes(test_data_path("themes.json"));
     auto t = cxxime::build_theme_from_config(cfg);
     ASSERT_EQ((int)t.background.r, 238);
     ASSERT_EQ((int)t.hilited_text.r, 255);
@@ -24,7 +26,7 @@ TEST(Theme, aqua) {
 TEST(Theme, azure) {
     cxxime::Config cfg;
     cfg.theme = "azure";
-    cfg.load_themes(cxxime::data_path("themes.json"));
+    cfg.load_themes(test_data_path("themes.json"));
     auto t = cxxime::build_theme_from_config(cfg);
     ASSERT_EQ((int)t.background.r, 1);
 }
@@ -32,26 +34,26 @@ TEST(Theme, azure) {
 TEST(Theme, fallback_unknown) {
     cxxime::Config cfg;
     cfg.theme = "no_such_theme";
-    cfg.load_themes(cxxime::data_path("themes.json"));
+    cfg.load_themes(test_data_path("themes.json"));
     auto t = cxxime::build_theme_from_config(cfg);
     ASSERT_EQ((int)t.background.r, 238);
 }
 
 // --- data_path() verification ---
 TEST(DataPath, not_empty) {
-    std::string p = cxxime::data_path("test");
+    std::string p = test_data_path("test");
     ASSERT_TRUE(!p.empty());
 }
 
 TEST(DataPath, file_exists) {
-    DWORD attr = GetFileAttributesA(cxxime::data_path("themes.json").c_str());
+    DWORD attr = GetFileAttributesA(test_data_path("themes.json").c_str());
     ASSERT_NE(attr, (DWORD)INVALID_FILE_ATTRIBUTES);
 }
 
 // --- Config::load_themes() verification ---
 TEST(Theme, config_load_themes) {
     cxxime::Config cfg;
-    ASSERT_TRUE(cfg.load_themes(cxxime::data_path("themes.json")));
+    ASSERT_TRUE(cfg.load_themes(test_data_path("themes.json")));
     auto it = cfg.preset_color_schemes.find("azure");
     ASSERT_TRUE(it != cfg.preset_color_schemes.end());
     ASSERT_EQ(it->second.back_color & 0xFF, 1);

@@ -2,13 +2,14 @@
     "schema": {
         "name": "CxxIME",
         "version": "1.0",
-        "description": "CxxIME default pinyin schema"
+        "description": "CxxIME default configuration"
     },
     "engine": {
         "page_size": 7,
         "max_pinyin_length": 64,
         "fuzzy_pinyin": true,
-        "wubi_auto_commit_4code": true
+        "wubi_auto_commit": true,
+        "candidate_learning": false
     },
     "style": {
         "font_face": "Microsoft YaHei UI",

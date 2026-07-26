@@ -463,8 +463,13 @@ void EditorApp::create_controls(HWND hwnd) {
     cx = make_label(L"候选数量:", kPanelPadLeft, t + kRowH * 4, p0);
     hPageSize_ = make_edit(1021, panelX + cx, panelY + t + kRowH * 4, S(50), hwnd);
 
-    cx = make_label(L"五笔四码上屏:", kPanelPadLeft, t + kRowH * 5, p0);
-    hWubiAutoCommit_ = make_check(1022, L"启用", panelX + cx, panelY + t + kRowH * 5, S(80), hwnd);
+    cx = make_label(L"五笔四码唯一:", kPanelPadLeft, t + kRowH * 5, p0);
+    hWubiAutoCommit_ = make_check(
+        1022, L"自动上屏", panelX + cx, panelY + t + kRowH * 5, S(90), hwnd);
+
+    cx = make_label(L"候选学习:", kPanelPadLeft, t + kRowH * 6, p0);
+    hCandidateLearning_ = make_check(
+        1023, L"根据选词调整", panelX + cx, panelY + t + kRowH * 6, S(130), hwnd);
 
     // ── Panel 1: Candidate Window ───────────────────────────────────
     HWND p1 = hPanels_[1]; t = kPanelPadTop;
@@ -737,6 +742,7 @@ void EditorApp::show_panel(int idx) {
     if (hPreeditTypePreview_)       ShowWindow(hPreeditTypePreview_, sw0);
     if (hFuzzyPinyin_)              ShowWindow(hFuzzyPinyin_, sw0);
     if (hWubiAutoCommit_)           ShowWindow(hWubiAutoCommit_, sw0);
+    if (hCandidateLearning_)        ShowWindow(hCandidateLearning_, sw0);
     if (hPageSize_)                 ShowWindow(hPageSize_, sw0);
 
     if (idx == 1 || idx == 2)
@@ -1011,7 +1017,8 @@ void EditorApp::load_config() {
         SendMessageW(hPreeditTypeComposition_, BM_SETCHECK, BST_CHECKED, 0);
     }
     set_check(hFuzzyPinyin_, config_.fuzzy_pinyin);
-    set_check(hWubiAutoCommit_, config_.wubi_auto_commit_4code);
+    set_check(hWubiAutoCommit_, config_.wubi_auto_commit);
+    set_check(hCandidateLearning_, config_.candidate_learning);
     update_preedit_type_enabled();
     set_check(hStatusWindow_, config_.status_window.enable);
 
@@ -1035,7 +1042,8 @@ void EditorApp::readback(HWND) {
     auto& c = config_;
     c.inline_preedit = get_check(hInlinePreedit_);
     c.fuzzy_pinyin = get_check(hFuzzyPinyin_);
-    c.wubi_auto_commit_4code = get_check(hWubiAutoCommit_);
+    c.wubi_auto_commit = get_check(hWubiAutoCommit_);
+    c.candidate_learning = get_check(hCandidateLearning_);
     c.page_size = get_edit_int(hPageSize_);
     {
         int idx = (int)SendMessageW(hInputMode_, CB_GETCURSEL, 0, 0);
@@ -1070,7 +1078,8 @@ void EditorApp::save_config() {
                           ? "preview" : "composition";
     config_.inline_preedit = get_check(hInlinePreedit_);
     config_.fuzzy_pinyin = get_check(hFuzzyPinyin_);
-    config_.wubi_auto_commit_4code = get_check(hWubiAutoCommit_);
+    config_.wubi_auto_commit = get_check(hWubiAutoCommit_);
+    config_.candidate_learning = get_check(hCandidateLearning_);
     const char* ks[] = {"Shift_L","Shift_R","Control_L","Control_R","Caps_Lock"};
     for (int i = 0; i < 5; ++i) {
         wchar_t b[64];

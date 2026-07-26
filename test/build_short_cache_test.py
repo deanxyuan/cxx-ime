@@ -24,6 +24,10 @@ def create_test_db(db_path):
         ("输入法", "shurufa", 5000, "shu:ru:fa"),       # srf, shrf, shurf
         ("中国", "zhongguo", 8000, "zhong:guo"),         # zg, zhg, zhongg
         ("你好", "nihao", 9000, "ni:hao"),               # nihao
+        ("exact-ni", "ni", 100, "ni"),
+        ("high-frequency-ni-prefix", "nian", 90000000, "nian"),
+        ("near-nih", "nihao", 100, "ni:hao"),
+        ("far-nih", "ninhaimeiyou", 90000000, "nin:hai:mei:you"),
         ("北京", "beijing", 7000, "bei:jing"),           # bj
         ("的", "de", 99999, "de"),                        # d
         ("中华人民共和国", "zhonghuarenmingongheguo", 9500,
@@ -66,6 +70,38 @@ def read_keys(output_path):
         found_keys.add(key)
 
     return found_keys
+
+
+def read_candidates(output_path, wanted_key):
+    """Read candidates for one key as (text, frequency, score) tuples."""
+    with open(output_path, "rb") as f:
+        data = f.read()
+
+    header = struct.unpack_from("<8sIIIIIII", data)
+    _, _, key_count, _, _, keys_offset, candidates_offset, strings_offset = header
+    key_size = struct.calcsize("<IIIHH")
+    candidate_size = struct.calcsize("<IIIIii")
+
+    for i in range(key_count):
+        key_pos = keys_offset + i * key_size
+        candidate_index, candidate_count, key_offset, key_len, _ = \
+            struct.unpack_from("<IIIHH", data, key_pos)
+        key = data[strings_offset + key_offset:
+                   strings_offset + key_offset + key_len].decode("ascii")
+        if key != wanted_key:
+            continue
+
+        candidates = []
+        for j in range(candidate_count):
+            candidate_pos = candidates_offset + (candidate_index + j) * candidate_size
+            text_offset, text_len, _, _, frequency, score = \
+                struct.unpack_from("<IIIIii", data, candidate_pos)
+            text = data[strings_offset + text_offset:
+                        strings_offset + text_offset + text_len].decode("utf-8")
+            candidates.append((text, frequency, score))
+        return candidates
+
+    return []
 
 
 def main():
@@ -124,6 +160,27 @@ def main():
                 missing.append("zhrmghg")
             if missing:
                 print(f"FAIL (missing: {missing})")
+                ok = False
+            else:
+                print("OK")
+
+        # Test 5: Match quality tiers override misleading raw frequency.
+        if ok:
+            print("Test 5: exact and near-prefix matches outrank distant prefixes ...", end=" ")
+            ni = read_candidates(out_db, "ni")
+            nih = read_candidates(out_db, "nih")
+            ni_texts = [candidate[0] for candidate in ni]
+            nih_texts = [candidate[0] for candidate in nih]
+            required_ni = {"exact-ni", "high-frequency-ni-prefix"}
+            required_nih = {"near-nih", "far-nih"}
+            valid = required_ni.issubset(ni_texts) and required_nih.issubset(nih_texts)
+            if valid:
+                valid = (
+                    ni_texts.index("exact-ni") < ni_texts.index("high-frequency-ni-prefix") and
+                    nih_texts.index("near-nih") < nih_texts.index("far-nih")
+                )
+            if not valid:
+                print(f"FAIL (ni={ni_texts}, nih={nih_texts})")
                 ok = False
             else:
                 print("OK")

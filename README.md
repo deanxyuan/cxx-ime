@@ -12,8 +12,8 @@ CxxIME 是一个基于 Windows TSF (Text Services Framework) 的输入法，支�
 
 ## 功能特性
 
-- **三种输入模式**：拼音（全拼/简拼/模糊音）、五笔 86（四码唯一自动上屏可配置）、混输（按候选强度智能排序拼音与五笔结果）
-- **用户词典与学习**：选词自动学习词频与音节键，学过的词可被简拼命中；支持 TSV 导入导出、设置界面增删改查
+- **三种输入模式**：拼音（全拼/简拼/模糊音）、五笔 86（四码唯一自动上屏，可配置开启/关闭）、混输（按候选强度智能排序拼音与五笔结果）
+- **用户词典与候选学习**：选词自动学习词频与音节键，学过的词可被简拼命中；支持 TSV 导入导出、设置界面增删改查；可通过 `candidate_learning` 控制学习开关
 - **性能**：二进制堆加载词典 + Patricia trie 拼写索引 + 短码候选缓存 + 长拼音查询页缓存，IPC 单次往返 < 1ms
 - **跨窗口状态一致**：中英文/大小写/全半角/标点/输入模式为全局状态，切换窗口不丢失
 - **界面**：候选窗口 + 状态窗口，Direct2D / GDI 双渲染后端，14 套配色主题，DPI 缩放，横排/竖排布局
@@ -35,7 +35,7 @@ cxx-ime/
 ├── resource/        图标与资源 DLL 素材
 ├── scripts/         打包、词典准备、校验脚本
 ├── tools/           开发调试工具（9 个）
-├── test/            测试套件（22 个 C++ 测试 + 1 个 Python 测试）
+├── test/            测试套件（22 个 C++ 测试 + 2 个 Python 测试）
 └── third_party/     sqlite3, nlohmann/json
 ```
 
@@ -145,10 +145,11 @@ python scripts/prepare_dict.py --data-dir data/ --output-dir dist/data/
 构建 + 词典转换 + NSIS 安装程序编译：
 
 ```cmd
-scripts\package.py                     # Release 打包 → ..\output\cxxime-v0.1.0-setup.exe
+scripts\package.py                     # Release 打包 → ..\output\cxxime-v0.2.0-beta-setup.exe
 scripts\package.py --debug             # Debug 打包
 scripts\package.py --skip-dict         # 复用已有 dist/data 词典
 scripts\package.py --fast --skip-dict  # 快速调试包（NSIS 跳过大文件压缩）
+scripts\package.py --host-diag         # 包含宿主诊断探针（cxxime-ime-host-probe）
 ```
 
 需要预先安装 [NSIS 3.x](https://nsis.sourceforge.io/) 并确保 `makensis.exe` 在 PATH 中。如果未安装 NSIS，`package.py` 会跳过安装程序生成，`dist/` 目录中保留原始分发文件。
@@ -159,7 +160,7 @@ scripts\package.py --fast --skip-dict  # 快速调试包（NSIS 跳过大文件�
 
 ## 安装
 
-运行 `cxxime-v0.1.0-setup.exe`，按向导提示操作：
+运行 `cxxime-v0.2.0-beta-setup.exe`，按向导提示操作：
 
 1. 选择程序安装目录，默认安装到 `C:\Program Files\CxxIME`
 2. 程序文件和出厂数据安装到安装目录，用户配置初始化到 `%USERPROFILE%\cxxime\`
@@ -180,7 +181,7 @@ scripts\package.py --fast --skip-dict  # 快速调试包（NSIS 跳过大文件�
 | 字母键 | 输入拼音/五笔编码，空格或数字键选词 |
 | `PageUp` / `PageDown` | 候选翻页 |
 | `Shift` | 切换中英文（左右 Shift 行为可分别配置，出厂：左 Shift 提交编码并切换，右 Shift 切到英文） |
-| `CapsLock` | 切换到英文大写输入（关灯恢复原模式，行为可配置） |
+| `CapsLock` | 切换模式（可配置 clear/code/candidate/append，关灯恢复原模式） |
 | `Shift+Space` | 全角/半角切换 |
 | `Ctrl+.` | 中文/英文标点切换 |
 
@@ -193,7 +194,9 @@ scripts\package.py --fast --skip-dict  # 快速调试包（NSIS 跳过大文件�
 ```json
 {
     "engine": {
-        "page_size": 7
+        "page_size": 7,
+        "wubi_auto_commit": true,
+        "candidate_learning": false
     },
     "style": {
         "font_face": "Microsoft YaHei UI",
@@ -205,7 +208,7 @@ scripts\package.py --fast --skip-dict  # 快速调试包（NSIS 跳过大文件�
 }
 ```
 
-配置与词典支持**热重载**：修改配置或更换词典后服务端自动生效，无需重启。
+开启 `candidate_learning` 后选词会自动学习到用户词库，提升个性化排序。需要恢复默认行为时，在设置的用户词库中删除对应词条即可。
 
 ## 开发工具
 
@@ -234,7 +237,7 @@ ctest -C Debug
 
 或单独运行某个测试：`build\test\Debug\ipc_test.exe`
 
-当前共 23 个 ctest 条目（22 个 C++ 测试 exe + 1 个 Python 测试），380+ 用例。
+当前共 24 个 ctest 条目（22 个 C++ 测试 exe + 2 个 Python 测试），390+ 用例。
 
 ## 文档
 
@@ -243,23 +246,6 @@ ctest -C Debug
 - [架构总览](docs/architecture.md) — 总体架构、模块划分、技术选型与专题文档索引
 - [安装与卸载](docs/installation.md) — 安装细节、手动注册与故障排查
 - [设置指南](docs/settings-guide.md) — 设置窗口与配置文件参考
-
-## 模块状态
-
-| 模块 | 状态 | 说明 |
-|------|------|------|
-| 词典 | ✅ 就绪 | 二进制堆加载词典、Patricia trie 拼写索引、音节 ID 索引、manifest 校验与热重载 |
-| Engine | ✅ 就绪 | Syllabifier + Segmentor + Translator（拼音/五笔/混输），缩写/模糊音/五笔简码，长拼音查询页缓存 |
-| IPC | ✅ 就绪 | IOCP 高性能命名管道，< 1ms 延迟，多客户端并发 |
-| 会话管理 | ✅ 就绪 | 共享资源预加载，session 瞬时创建，可见状态全局一致 |
-| 用户词典 | ✅ 就绪 | 内存多路索引 + TSV 持久化，选词学习（词频 + 音节键），设置界面管理与导入导出 |
-| TSF DLL | ✅ 就绪 | 按键捕获、编辑会话、候选上屏、候选窗口定位（GetTextExt 四层降级链）、DisplayAttributeProvider、事件级追踪 |
-| 候选窗口 | ✅ 就绪 | D2D 渲染（默认），可切换 GDI，14 套配色，DPI 缩放，屏幕边缘 clamp，圆角窗口 |
-| 状态窗口 | ✅ 就绪 | 中英文/大小写状态显示，语言栏图标联动 |
-| 安装部署 | ✅ 就绪 | NSIS 安装程序，x64 + x86 双 TSF DLL，卸载可选清除用户数据 |
-| 配置编辑器 | ✅ 就绪 | Win32 原生 GUI，左侧导航 + 右侧面板，用户词典管理，诊断包导出 |
-| 配置系统 | ✅ 就绪 | JSON 配置 + 主题预设，配置/词典热重载 |
-| 可观测性 | ✅ 就绪 | 查询 trace JSONL 采样落盘、TSF 事件追踪、诊断收集脚本 |
 
 ## 许可证
 

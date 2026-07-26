@@ -27,6 +27,7 @@ struct Candidate {
     std::string code;
     std::string syllables;
     CandidateOrigin origin = CandidateOrigin::kSystem;
+    int source_frequency = 0;  // Raw dictionary frequency when ranking uses a derived score.
 };
 
 struct CandidatePage {

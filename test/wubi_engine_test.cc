@@ -236,7 +236,7 @@ TEST(WubiEngine, engine_wubi_input_flow) {
     DeleteFileA(wubi_path.c_str());
 }
 
-TEST(WubiEngine, engine_wubi_auto_commit_4code) {
+TEST(WubiEngine, engine_wubi_auto_commit) {
     std::string pinyin_path = make_temp_path("test_wubi_auto_pinyin.bin");
     std::string wubi_path = make_temp_path("test_wubi_auto_wubi.bin");
 
@@ -395,7 +395,7 @@ TEST(WubiEngine, engine_mixed_returns_candidates) {
     DeleteFileA(wubi_path.c_str());
 }
 
-TEST(WubiEngine, engine_mixed_auto_commit_4code) {
+TEST(WubiEngine, engine_mixed_wubi_auto_commit) {
     std::string pinyin_path = make_temp_path("test_mixed_auto_pinyin.bin");
     std::string wubi_path = make_temp_path("test_mixed_auto_wubi.bin");
 
@@ -585,7 +585,7 @@ TEST(WubiEngine, engine_wubi_auto_commit_disabled) {
 
     // 关闭四码自动上屏
     cxxime::Config cfg;
-    cfg.wubi_auto_commit_4code = false;
+    cfg.wubi_auto_commit = false;
     engine.reload_config(cfg);
 
     // 输入 abcd（四码），不应自动上屏
