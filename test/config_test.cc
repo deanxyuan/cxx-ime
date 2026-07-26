@@ -4,7 +4,6 @@
 #include <cstdio>
 #include <fstream>
 #include <cxxime/config.h>
-#include <cxxime/data_path.h>
 #include <json.hpp>
 
 TEST(Config, defaults) {
@@ -14,13 +13,23 @@ TEST(Config, defaults) {
     ASSERT_TRUE(cfg.font_name == "Microsoft YaHei UI");
     ASSERT_TRUE(cfg.layout == "horizontal");
     ASSERT_TRUE(cfg.theme == "azure");
+    ASSERT_TRUE(cfg.wubi_auto_commit);
+    ASSERT_TRUE(!cfg.candidate_learning);
 }
 
 TEST(Config, load_valid_json) {
     const char* path = "test_config.json";
     {
         std::ofstream f(path);
-        f << R"({"engine":{"page_size":5},"style":{"font_face":"Arial","font_point":18},"theme":"dark"})";
+        f << R"({
+        "engine": {
+        "page_size": 5,
+        "wubi_auto_commit": false,
+        "candidate_learning": true
+        },
+        "style": {"font_face": "Arial", "font_point": 18},
+        "theme": "dark"
+        })";
     }
 
     cxxime::Config cfg;
@@ -29,6 +38,23 @@ TEST(Config, load_valid_json) {
     ASSERT_EQ(cfg.font_size, 18);
     ASSERT_TRUE(cfg.font_name == "Arial");
     ASSERT_TRUE(cfg.theme == "dark");
+    ASSERT_TRUE(!cfg.wubi_auto_commit);
+    ASSERT_TRUE(cfg.candidate_learning);
+
+    std::remove(path);
+}
+
+TEST(Config, save_preserves_wubi_auto_commit_and_candidate_learning) {
+    const char* path = "test_engine_options.json";
+    cxxime::Config saved;
+    saved.wubi_auto_commit = false;
+    saved.candidate_learning = true;
+    ASSERT_TRUE(saved.save(path));
+
+    cxxime::Config loaded;
+    ASSERT_TRUE(loaded.load(path));
+    ASSERT_TRUE(!loaded.wubi_auto_commit);
+    ASSERT_TRUE(loaded.candidate_learning);
 
     std::remove(path);
 }
@@ -165,7 +191,7 @@ TEST(Config, preedit_type_preview_all_fallback) {
 }
 
 TEST(Config, settings_presets_layouts) {
-    std::ifstream f(cxxime::data_path("settings_presets.json"));
+    std::ifstream f(std::string(CXXIME_PROJECT_DIR) + "data/settings_presets.json");
     ASSERT_TRUE(f.is_open());
 
     nlohmann::json j = nlohmann::json::parse(f);

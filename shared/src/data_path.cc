@@ -12,6 +12,7 @@ namespace cxxime {
 // from any thread (TSF DLL loaded in multiple processes).
 static std::mutex g_override_mutex;
 static std::string g_data_dir_override;
+static std::string g_user_data_dir_override;
 static HMODULE g_module_handle = nullptr;
 
 void set_module_handle(HMODULE hModule) {
@@ -22,7 +23,17 @@ void set_module_handle(HMODULE hModule) {
 void set_data_dir(const std::string& dir) {
     std::lock_guard<std::mutex> lock(g_override_mutex);
     g_data_dir_override = dir;
-    if (!dir.empty() && dir.back() != '\\') g_data_dir_override += '\\';
+    if (!dir.empty() && dir.back() != '\\') {
+        g_data_dir_override += '\\';
+    }
+}
+
+void set_user_data_dir(const std::string& dir) {
+    std::lock_guard<std::mutex> lock(g_override_mutex);
+    g_user_data_dir_override = dir;
+    if (!dir.empty() && dir.back() != '\\') {
+        g_user_data_dir_override += '\\';
+    }
 }
 
 std::string data_dir() {
@@ -63,6 +74,13 @@ std::string data_dir() {
 std::string data_path(const char* filename) { return data_dir() + filename; }
 
 std::string user_data_dir() {
+    {
+        std::lock_guard<std::mutex> lock(g_override_mutex);
+        if (!g_user_data_dir_override.empty()) {
+            return g_user_data_dir_override;
+        }
+    }
+
     // magic static — thread-safe init, no lock needed
     static std::string dir;
     if (dir.empty()) {

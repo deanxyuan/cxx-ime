@@ -2,6 +2,8 @@
 // Unit tests for Phase 4: Short input fast path (ShortCodeCache + translator integration).
 
 #include "util/testutil.h"
+#include "../engine/src/short_code_cache_format.h"
+#include <cstddef>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -105,6 +107,35 @@ TEST(ShortCache, lookup_respects_limit) {
 
     auto results2 = cache.lookup("test", 100);
     ASSERT_EQ((int)results2.size(), 20);
+
+    cache.unload();
+    DeleteFileA(path.c_str());
+}
+
+TEST(ShortCache, lookup_uses_precomputed_score) {
+    std::string path = make_temp_path("test_topn_score.bin");
+    std::vector<cxxime::Candidate> cands = {{"scored", "", 100}};
+    ASSERT_TRUE(cxxime::ShortCodeCache::create_test_cache(path, {{"ni", cands}}));
+
+    HANDLE file = CreateFileA(path.c_str(), GENERIC_WRITE, 0, nullptr,
+                              OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    ASSERT_TRUE(file != INVALID_HANDLE_VALUE);
+    LARGE_INTEGER offset = {};
+    offset.QuadPart = sizeof(cxxime::ShortCacheHeader) +
+                      sizeof(cxxime::ShortKeyEntry) + offsetof(cxxime::ShortCandidateEntry, score);
+    ASSERT_TRUE(SetFilePointerEx(file, offset, nullptr, FILE_BEGIN));
+    int32_t score = 123456;
+    DWORD written = 0;
+    ASSERT_TRUE(WriteFile(file, &score, sizeof(score), &written, nullptr));
+    ASSERT_EQ(written, sizeof(score));
+    CloseHandle(file);
+
+    cxxime::ShortCodeCache cache;
+    ASSERT_TRUE(cache.load(path));
+    auto results = cache.lookup("ni", 1);
+    ASSERT_EQ(results.size(), 1u);
+    ASSERT_EQ(results[0].frequency, score);
+    ASSERT_EQ(results[0].source_frequency, 100);
 
     cache.unload();
     DeleteFileA(path.c_str());

@@ -29,13 +29,18 @@ bool is_alpha_key(const std::string& input) {
 
 bool pinyin_top_is_stronger(const std::vector<Candidate>& pinyin_candidates,
                             const std::vector<Candidate>& wubi_candidates) {
-    if (pinyin_candidates.empty() || wubi_candidates.empty())
+    if (pinyin_candidates.empty() || wubi_candidates.empty()) {
         return false;
+    }
     CandidateOrigin origin = pinyin_candidates.front().origin;
-    if (origin != CandidateOrigin::kSystem && origin != CandidateOrigin::kCache)
+    if (origin != CandidateOrigin::kSystem && origin != CandidateOrigin::kCache) {
         return false;
-    return pinyin_candidates.front().frequency >= 500000 &&
-           pinyin_candidates.front().frequency >= wubi_candidates.front().frequency * 2;
+    }
+    int pinyin_frequency = origin == CandidateOrigin::kCache
+        ? pinyin_candidates.front().source_frequency
+        : pinyin_candidates.front().frequency;
+    return pinyin_frequency >= 500000 &&
+        pinyin_frequency >= wubi_candidates.front().frequency * 2;
 }
 
 MixedOrder choose_order(const std::string& input,

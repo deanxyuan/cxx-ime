@@ -35,7 +35,8 @@ struct Config {
     int page_size = 9;
     int input_mode = 0;  // 0=pinyin, 1=wubi, 2=mixed
     bool fuzzy_pinyin = true;  // 模糊拼音开关
-    bool wubi_auto_commit_4code = true;  // 四码唯一候选自动上屏
+    bool wubi_auto_commit = true;  // 四码唯一候选自动上屏
+    bool candidate_learning = false;
 
     // style
     std::string font_name = "Microsoft YaHei UI";
