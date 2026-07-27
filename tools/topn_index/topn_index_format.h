@@ -1,0 +1,86 @@
+// Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
+
+#ifndef CXXIME_TOOLS_TOPN_INDEX_FORMAT_H_
+#define CXXIME_TOOLS_TOPN_INDEX_FORMAT_H_
+
+#include <cstdint>
+
+namespace cxxime {
+
+constexpr char kTopnIndexMagic[8] = {'C', 'X', 'T', 'O', 'P', 'N', '\x02', '\0'};
+constexpr uint32_t kTopnIndexVersion = 2;
+
+enum class TopnIndexLayout : uint32_t {
+    kFlat16 = 1,
+    kDat16 = 2,
+    kDat8 = 3,
+};
+
+#pragma pack(push, 1)
+
+struct TopnIndexHeader {
+    char magic[8];
+    uint32_t version;
+    uint32_t header_size;
+    uint32_t layout;
+    uint32_t file_size;
+    uint32_t key_count;
+    uint32_t code_index_count;
+    uint32_t posting_list_count;
+    uint32_t posting_count;
+    uint32_t candidate_count;
+    uint32_t key_string_size;
+    uint32_t candidate_string_size;
+    uint32_t code_index_offset;
+    uint32_t posting_lists_offset;
+    uint32_t postings_offset;
+    uint32_t candidates_offset;
+    uint32_t key_strings_offset;
+    uint32_t candidate_strings_offset;
+    uint32_t reserved;
+};
+
+struct TopnFlatKeyEntry {
+    uint32_t posting_offset;
+    uint32_t key_offset;
+    uint16_t posting_count;
+    uint16_t key_length;
+    uint32_t reserved;
+};
+
+struct TopnPostingList {
+    uint32_t posting_offset;
+    uint16_t posting_count;
+    uint16_t reserved;
+};
+
+struct TopnInlinePosting {
+    uint32_t text_offset;
+    uint32_t text_length;
+    int32_t frequency;
+    int32_t score;
+};
+
+struct TopnPooledPosting {
+    uint32_t candidate_index;
+    int32_t score;
+};
+
+struct TopnCandidateRecord {
+    uint32_t text_offset;
+    uint32_t text_length;
+    int32_t frequency;
+};
+
+#pragma pack(pop)
+
+static_assert(sizeof(TopnIndexHeader) == 80, "TopnIndexHeader must be 80 bytes");
+static_assert(sizeof(TopnFlatKeyEntry) == 16, "TopnFlatKeyEntry must be 16 bytes");
+static_assert(sizeof(TopnPostingList) == 8, "TopnPostingList must be 8 bytes");
+static_assert(sizeof(TopnInlinePosting) == 16, "TopnInlinePosting must be 16 bytes");
+static_assert(sizeof(TopnPooledPosting) == 8, "TopnPooledPosting must be 8 bytes");
+static_assert(sizeof(TopnCandidateRecord) == 12, "TopnCandidateRecord must be 12 bytes");
+
+} // namespace cxxime
+
+#endif // CXXIME_TOOLS_TOPN_INDEX_FORMAT_H_

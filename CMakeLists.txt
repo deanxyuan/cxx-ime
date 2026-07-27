@@ -93,6 +93,7 @@ if(CXXIME_BUILD_TOOLS)
     add_subdirectory(tools/query_bench)
     add_subdirectory(tools/tray_icon_tool)
     add_subdirectory(tools/punct_test)
+    add_subdirectory(tools/topn_index)
 endif()
 
 add_subdirectory(settings)
