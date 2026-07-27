@@ -11,6 +11,10 @@
         "wubi_auto_commit": true,
         "candidate_learning": false
     },
+    "initial_state": {
+        "full_shape": false,
+        "chinese_punct": true
+    },
     "style": {
         "font_face": "Microsoft YaHei UI",
         "font_point": 14,

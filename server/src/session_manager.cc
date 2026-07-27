@@ -1,13 +1,17 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
 #include "session_manager.h"
+
+#include <fstream>
+
 #include <windows.h>
-#include <cxxime/logging.h>
+
+#include <json.hpp>
+
 #include <cxxime/data_path.h>
 #include <cxxime/diagnostics_config.h>
 #include <cxxime/dictionary_manifest.h>
-#include <json.hpp>
-#include <fstream>
+#include <cxxime/logging.h>
 
 namespace {
 
@@ -287,9 +291,9 @@ bool SessionManager::initialize(const std::string& dict_path, const std::string&
 
 void SessionManager::reset_global_state(const SharedResourceSnapshot& resources) {
     GlobalVisibleState state;
-    if (resources.config)
-        state.status.input_mode = static_cast<cxxime::InputMode>(resources.config->input_mode);
-    state.status.chinese_mode = state.base_chinese_mode;
+    if (resources.config) {
+        state.input_mode = static_cast<cxxime::InputMode>(resources.config->input_mode);
+    }
     std::lock_guard<std::mutex> lock(state_mutex_);
     global_state_ = state;
 }
@@ -299,33 +303,32 @@ SessionManager::GlobalVisibleState SessionManager::snapshot_global_state() {
     return global_state_;
 }
 
-cxxime::ImeStatus SessionManager::commit_global_state(GlobalVisibleState next) {
-    next.status.chinese_mode = next.status.caps_lock ? false : next.base_chinese_mode;
-
+void SessionManager::commit_global_state(GlobalVisibleState next) {
     std::lock_guard<std::mutex> lock(state_mutex_);
-    bool changed = !same_visible_status(global_state_.status, next.status) ||
-                   global_state_.base_chinese_mode != next.base_chinese_mode;
-    next.status.revision = changed
-        ? global_state_.status.revision + 1
-        : global_state_.status.revision;
     global_state_ = next;
-    return global_state_.status;
 }
 
 void SessionManager::align_session_to_global(SessionEntry& entry) {
     GlobalVisibleState state = snapshot_global_state();
+    const cxxime::ImeStatus previous = entry.ime_status;
 
-    if (entry.ime_status.input_mode != state.status.input_mode) {
-        entry.engine->switch_mode(state.status.input_mode);
+    if (entry.ime_status.input_mode != state.input_mode) {
+        entry.engine->switch_mode(state.input_mode);
     }
-    entry.engine->ascii_composer().set_ascii_mode(!state.base_chinese_mode);
-    entry.engine->ascii_composer().sync_caps_lock(state.status.caps_lock,
+    entry.engine->ascii_composer().set_ascii_mode(!entry.base_chinese_mode);
+    entry.engine->ascii_composer().sync_caps_lock(state.caps_lock,
                                                   entry.engine->context());
-    entry.ime_status = state.status;
+    entry.ime_status.chinese_mode = state.caps_lock ? false : entry.base_chinese_mode;
+    entry.ime_status.caps_lock = state.caps_lock;
+    entry.ime_status.full_shape = entry.full_shape;
+    entry.ime_status.chinese_punct = entry.chinese_punct;
     entry.ime_status.input_mode = entry.engine->mode();
-    if (entry.ime_status.input_mode != state.status.input_mode) {
-        state.status.input_mode = entry.ime_status.input_mode;
-        entry.ime_status = commit_global_state(state);
+    entry.ime_status.revision = same_visible_status(previous, entry.ime_status)
+        ? previous.revision
+        : previous.revision + 1;
+    if (entry.ime_status.input_mode != state.input_mode) {
+        state.input_mode = entry.ime_status.input_mode;
+        commit_global_state(state);
     }
 }
 
@@ -348,6 +351,10 @@ uint32_t SessionManager::create_session() {
     entry->engine = std::move(engine);
     entry->last_activity = std::chrono::steady_clock::now();
     entry->resources = std::move(resources);
+    entry->full_shape = entry->resources.config->initial_full_shape;
+    entry->chinese_punct = entry->resources.config->initial_chinese_punct;
+    entry->ime_status.full_shape = entry->full_shape;
+    entry->ime_status.chinese_punct = entry->chinese_punct;
     entry->engine->set_fuzzy_enabled(entry->resources.config->fuzzy_pinyin);
     align_session_to_global(*entry);
     sessions_[id] = entry;
@@ -548,7 +555,7 @@ void SessionManager::reload_config() {
         auto target = static_cast<cxxime::InputMode>(resources.config->input_mode);
         bool fuzzy = resources.config->fuzzy_pinyin;
         GlobalVisibleState state = snapshot_global_state();
-        state.status.input_mode = target;
+        state.input_mode = target;
         commit_global_state(state);
         for (auto& entry : entries) {
             std::lock_guard<std::mutex> lock(entry->mutex);
@@ -612,9 +619,7 @@ std::pair<cxxime::IPCStatus, cxxime::ImeStatus> SessionManager::toggle_chinese(u
     auto entry = lookup_session(id);
     if (!entry) return {cxxime::IPCStatus::ERR_INVALID_SESSION, {}};
     std::lock_guard<std::mutex> lock(entry->mutex);
-    GlobalVisibleState state = snapshot_global_state();
-    state.base_chinese_mode = !state.base_chinese_mode;
-    commit_global_state(state);
+    entry->base_chinese_mode = !entry->base_chinese_mode;
     align_session_to_global(*entry);
     return {cxxime::IPCStatus::OK, entry->ime_status};
 }
@@ -623,9 +628,7 @@ std::pair<cxxime::IPCStatus, cxxime::ImeStatus> SessionManager::toggle_shape(uin
     auto entry = lookup_session(id);
     if (!entry) return {cxxime::IPCStatus::ERR_INVALID_SESSION, {}};
     std::lock_guard<std::mutex> lock(entry->mutex);
-    GlobalVisibleState state = snapshot_global_state();
-    state.status.full_shape = !state.status.full_shape;
-    commit_global_state(state);
+    entry->full_shape = !entry->full_shape;
     align_session_to_global(*entry);
     return {cxxime::IPCStatus::OK, entry->ime_status};
 }
@@ -634,9 +637,7 @@ std::pair<cxxime::IPCStatus, cxxime::ImeStatus> SessionManager::toggle_punct(uin
     auto entry = lookup_session(id);
     if (!entry) return {cxxime::IPCStatus::ERR_INVALID_SESSION, {}};
     std::lock_guard<std::mutex> lock(entry->mutex);
-    GlobalVisibleState state = snapshot_global_state();
-    state.status.chinese_punct = !state.status.chinese_punct;
-    commit_global_state(state);
+    entry->chinese_punct = !entry->chinese_punct;
     align_session_to_global(*entry);
     return {cxxime::IPCStatus::OK, entry->ime_status};
 }
@@ -650,7 +651,7 @@ std::pair<cxxime::IPCStatus, cxxime::ImeStatus> SessionManager::switch_input_mod
         ? cxxime::InputMode::WUBI : cxxime::InputMode::PINYIN;
     entry->engine->switch_mode(target);
     GlobalVisibleState state = snapshot_global_state();
-    state.status.input_mode = entry->engine->mode();
+    state.input_mode = entry->engine->mode();
     commit_global_state(state);
     align_session_to_global(*entry);
     persist_input_mode(entry->ime_status.input_mode);
@@ -664,7 +665,7 @@ std::pair<cxxime::IPCStatus, cxxime::ImeStatus> SessionManager::switch_input_mod
     align_session_to_global(*entry);
     entry->engine->switch_mode(mode);
     GlobalVisibleState state = snapshot_global_state();
-    state.status.input_mode = entry->engine->mode();
+    state.input_mode = entry->engine->mode();
     commit_global_state(state);
     align_session_to_global(*entry);
     persist_input_mode(entry->ime_status.input_mode);
@@ -675,9 +676,7 @@ cxxime::IPCStatus SessionManager::sync_ascii_mode(uint32_t id, bool ascii_mode) 
     auto entry = lookup_session(id);
     if (!entry) return cxxime::IPCStatus::ERR_INVALID_SESSION;
     std::lock_guard<std::mutex> lock(entry->mutex);
-    GlobalVisibleState state = snapshot_global_state();
-    state.base_chinese_mode = !ascii_mode;
-    commit_global_state(state);
+    entry->base_chinese_mode = !ascii_mode;
     align_session_to_global(*entry);
     return cxxime::IPCStatus::OK;
 }
@@ -687,7 +686,7 @@ std::pair<cxxime::IPCStatus, cxxime::ImeStatus> SessionManager::sync_caps_lock(u
     if (!entry) return {cxxime::IPCStatus::ERR_INVALID_SESSION, {}};
     std::lock_guard<std::mutex> lock(entry->mutex);
     GlobalVisibleState state = snapshot_global_state();
-    state.status.caps_lock = caps_lock;
+    state.caps_lock = caps_lock;
     commit_global_state(state);
     align_session_to_global(*entry);
     return {cxxime::IPCStatus::OK, entry->ime_status};
@@ -732,7 +731,7 @@ ProcessKeyResult SessionManager::process_key(uint32_t id, const cxxime::KeyEvent
     bool is_caps_lock_key = event.keycode == VK_CAPITAL;
     if (!is_caps_lock_key && s.ime_status.caps_lock != event.is_caps_lock()) {
         GlobalVisibleState state = snapshot_global_state();
-        state.status.caps_lock = event.is_caps_lock();
+        state.caps_lock = event.is_caps_lock();
         commit_global_state(state);
         align_session_to_global(s);
     }
@@ -747,13 +746,17 @@ ProcessKeyResult SessionManager::process_key(uint32_t id, const cxxime::KeyEvent
     // 4. call Engine
     auto result = engine.process_key(event, opts);
 
-    // 5. Publish visible mode changes to global state.
+    // 5. Publish shared mode changes and retain this session's base language mode.
     bool new_ascii = engine.ascii_composer().is_ascii_mode();
     GlobalVisibleState state = snapshot_global_state();
-    if (is_caps_lock_key && !event.is_key_up)
-        state.status.caps_lock = event.is_caps_lock();
-    if (!state.status.caps_lock)
-        state.base_chinese_mode = !new_ascii;
+    bool shared_state_changed = false;
+    if (is_caps_lock_key && !event.is_key_up) {
+        state.caps_lock = event.is_caps_lock();
+        shared_state_changed = true;
+    }
+    if (!state.caps_lock) {
+        s.base_chinese_mode = !new_ascii;
+    }
 
     // 6. populate return value
     //    Key: process COMMITTED first (take + clear context), THEN read composing.
@@ -765,17 +768,20 @@ ProcessKeyResult SessionManager::process_key(uint32_t id, const cxxime::KeyEvent
 
     // Handle toggle results and return updated ImeStatus.
     if (result == cxxime::ProcessResult::TOGGLE_SHAPE) {
-        state.status.full_shape = !state.status.full_shape;
+        s.full_shape = !s.full_shape;
     } else if (result == cxxime::ProcessResult::TOGGLE_PUNCT) {
         // In English mode, Ctrl+. also switches to Chinese mode
-        if (!state.status.caps_lock && !state.base_chinese_mode) {
-            state.base_chinese_mode = true;
+        if (!state.caps_lock && !s.base_chinese_mode) {
+            s.base_chinese_mode = true;
             engine.ascii_composer().set_ascii_mode(false);
         }
-        state.status.chinese_punct = !state.status.chinese_punct;
+        s.chinese_punct = !s.chinese_punct;
     }
 
-    s.ime_status = commit_global_state(state);
+    if (shared_state_changed) {
+        commit_global_state(state);
+    }
+    align_session_to_global(s);
     ret.ime_status = s.ime_status;
 
     if (result == cxxime::ProcessResult::COMMITTED) {

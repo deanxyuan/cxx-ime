@@ -5,6 +5,7 @@
 
 #include <string>
 #include <unordered_map>
+
 #include <cxxime/diagnostics_config.h>
 
 namespace cxxime {
@@ -35,8 +36,12 @@ struct Config {
     int page_size = 9;
     int input_mode = 0;  // 0=pinyin, 1=wubi, 2=mixed
     bool fuzzy_pinyin = true;  // 模糊拼音开关
-    bool wubi_auto_commit = true;  // 四码唯一候选自动上屏
+    bool wubi_auto_commit = true;  // Auto-commit the only candidate at four codes.
     bool candidate_learning = false;
+
+    // Initial state for each newly created input session.
+    bool initial_full_shape = false;
+    bool initial_chinese_punct = true;
 
     // style
     std::string font_name = "Microsoft YaHei UI";

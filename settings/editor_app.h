@@ -4,15 +4,17 @@
 #ifndef CXXIME_SETTINGS_EDITOR_APP_H_
 #define CXXIME_SETTINGS_EDITOR_APP_H_
 
-#include <windows.h>
-#include <commctrl.h>
 #include <string>
 #include <vector>
-#include <cxxime/config.h>
-#include <cxxime/render_context.h>
-#include <cxxime/layout.h>
+
+#include <windows.h>
+#include <commctrl.h>
+
 #include <cxxime/candidate_window.h>
+#include <cxxime/config.h>
 #include <cxxime/ipc_protocol.h>
+#include <cxxime/layout.h>
+#include <cxxime/render_context.h>
 
 namespace cxxime {
 namespace settings {
@@ -71,6 +73,8 @@ private:
     HWND hFuzzyPinyin_ = nullptr;
     HWND hWubiAutoCommit_ = nullptr;
     HWND hCandidateLearning_ = nullptr;
+    HWND hInitialChinesePunct_ = nullptr;
+    HWND hInitialFullShape_ = nullptr;
     HWND hPageSize_ = nullptr;
     void update_preedit_type_enabled();
 

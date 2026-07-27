@@ -1,10 +1,13 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
-#include "util/testutil.h"
 #include <cstdio>
 #include <fstream>
-#include <cxxime/config.h>
+
 #include <json.hpp>
+
+#include <cxxime/config.h>
+
+#include "util/testutil.h"
 
 TEST(Config, defaults) {
     cxxime::Config cfg;
@@ -15,6 +18,8 @@ TEST(Config, defaults) {
     ASSERT_TRUE(cfg.theme == "azure");
     ASSERT_TRUE(cfg.wubi_auto_commit);
     ASSERT_TRUE(!cfg.candidate_learning);
+    ASSERT_TRUE(!cfg.initial_full_shape);
+    ASSERT_TRUE(cfg.initial_chinese_punct);
 }
 
 TEST(Config, load_valid_json) {
@@ -40,6 +45,8 @@ TEST(Config, load_valid_json) {
     ASSERT_TRUE(cfg.theme == "dark");
     ASSERT_TRUE(!cfg.wubi_auto_commit);
     ASSERT_TRUE(cfg.candidate_learning);
+    ASSERT_TRUE(!cfg.initial_full_shape);
+    ASSERT_TRUE(cfg.initial_chinese_punct);
 
     std::remove(path);
 }
@@ -55,6 +62,21 @@ TEST(Config, save_preserves_wubi_auto_commit_and_candidate_learning) {
     ASSERT_TRUE(loaded.load(path));
     ASSERT_TRUE(!loaded.wubi_auto_commit);
     ASSERT_TRUE(loaded.candidate_learning);
+
+    std::remove(path);
+}
+
+TEST(Config, initial_state_round_trip) {
+    const char* path = "test_initial_state.json";
+    cxxime::Config saved;
+    saved.initial_full_shape = true;
+    saved.initial_chinese_punct = false;
+    ASSERT_TRUE(saved.save(path));
+
+    cxxime::Config loaded;
+    ASSERT_TRUE(loaded.load(path));
+    ASSERT_TRUE(loaded.initial_full_shape);
+    ASSERT_TRUE(!loaded.initial_chinese_punct);
 
     std::remove(path);
 }

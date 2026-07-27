@@ -30,6 +30,10 @@ add_library(cxxime-tsf SHARED
     src/globals.cpp
     src/class_factory.cpp
     src/text_service.cpp
+    src/text_service_key.cpp
+    src/text_service_session.cpp
+    src/text_service_context.cpp
+    src/text_service_layout.cpp
     src/text_service_candidate.cpp
     src/text_service_composition.cpp
     src/text_service_activation.cpp

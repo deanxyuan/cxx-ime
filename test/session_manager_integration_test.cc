@@ -4,7 +4,6 @@
 // commit_composition, clear_composition, focus_out, and GET_STATUS with
 // the OutputComposer pipeline.
 
-#include "util/testutil.h"
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -16,7 +15,9 @@
 #include <thread>
 #include <tuple>
 #include <vector>
+
 #include <windows.h>
+
 #include <cxxime/data_path.h>
 #include <cxxime/dictionary_manifest.h>
 #include <cxxime/dictionary_monitor.h>
@@ -24,7 +25,9 @@
 #include <cxxime/key_event.h>
 #include <cxxime/short_code_cache.h>
 #include <cxxime/spellings_index.h>
+
 #include "../server/src/session_manager.h"
+#include "util/testutil.h"
 
 static char temp_path[MAX_PATH] = {};
 static std::string test_user_data_dir;
@@ -501,7 +504,7 @@ TEST(SessionIntegration, focus_out_ok) {
     auto st = mgr.focus_out(id);
     ASSERT_EQ(st, cxxime::IPCStatus::OK);
 
-    // focus_out only clears composition; visible state revision is global.
+    // focus_out only clears composition; it does not change this session's visible state.
     auto [st1, s1] = mgr.get_ime_status(id);
     ASSERT_EQ(s1.revision, rev_before);
 }
@@ -584,25 +587,80 @@ TEST(SessionIntegration, chinese_mode_digit_not_intercepted) {
 // Multiple sessions visible state
 // ============================================================
 
-TEST(SessionIntegration, global_visible_state_drives_output_composer) {
+TEST(SessionIntegration, reloaded_initial_state_applies_only_to_new_sessions) {
+    std::string config_path = make_temp_path("test_initial_state_config.json");
+    {
+        std::ofstream config(config_path);
+        config << R"({"initial_state":{"full_shape":false,"chinese_punct":true}})";
+    }
+
+    SessionManager mgr;
+    ASSERT_TRUE(mgr.initialize(setup_test_dict(), config_path));
+    uint32_t existing = mgr.create_session();
+    ASSERT_GT(existing, (uint32_t)0);
+
+    {
+        std::ofstream config(config_path);
+        config << R"({"initial_state":{"full_shape":true,"chinese_punct":false}})";
+    }
+    mgr.reload_config();
+
+    auto [existing_status_result, existing_status] = mgr.get_ime_status(existing);
+    ASSERT_EQ(existing_status_result, cxxime::IPCStatus::OK);
+    ASSERT_EQ(existing_status.full_shape, false);
+    ASSERT_EQ(existing_status.chinese_punct, true);
+
+    uint32_t created_after_reload = mgr.create_session();
+    ASSERT_GT(created_after_reload, (uint32_t)0);
+    auto [new_status_result, new_status] = mgr.get_ime_status(created_after_reload);
+    ASSERT_EQ(new_status_result, cxxime::IPCStatus::OK);
+    ASSERT_EQ(new_status.full_shape, true);
+    ASSERT_EQ(new_status.chinese_punct, false);
+
+    DeleteFileA(config_path.c_str());
+}
+
+TEST(SessionIntegration, session_shape_change_does_not_affect_other_session) {
     SessionManager mgr;
     mgr.initialize(setup_test_dict());
     uint32_t id1 = mgr.create_session();
     uint32_t id2 = mgr.create_session();
 
-    // Session 1: English + full_shape. Session 2 must see the same visible state.
+    // Session 1 changes its own language and full-shape modes.
     mgr.toggle_chinese(id1);
     mgr.toggle_shape(id1);
 
     auto [st, status] = mgr.get_ime_status(id2);
     ASSERT_EQ(st, cxxime::IPCStatus::OK);
-    ASSERT_EQ(status.chinese_mode, false);
-    ASSERT_EQ(status.full_shape, true);
+    ASSERT_EQ(status.chinese_mode, true);
+    ASSERT_EQ(status.full_shape, false);
 
-    // Session 2: press digit after global full_shape, intercepted.
-    auto r = mgr.process_key(id2, make_key('5'));
-    ASSERT_EQ(r.result, cxxime::ProcessResult::COMMITTED);
-    ASSERT_EQ(r.commit_text, cxxime::OutputComposer::to_full_width('5'));
+    auto full_width = mgr.process_key(id1, make_key('5'));
+    ASSERT_EQ(full_width.result, cxxime::ProcessResult::COMMITTED);
+    ASSERT_EQ(full_width.commit_text, cxxime::OutputComposer::to_full_width('5'));
+
+    auto half_width = mgr.process_key(id2, make_key('5'));
+    ASSERT_EQ(half_width.result, cxxime::ProcessResult::REJECTED);
+    ASSERT_TRUE(half_width.commit_text.empty());
+    ASSERT_EQ(half_width.ime_status.chinese_mode, true);
+    ASSERT_EQ(half_width.ime_status.full_shape, false);
+}
+
+TEST(SessionIntegration, session_punctuation_change_does_not_affect_other_session) {
+    SessionManager mgr;
+    mgr.initialize(setup_test_dict());
+    uint32_t id1 = mgr.create_session();
+    uint32_t id2 = mgr.create_session();
+
+    mgr.toggle_punct(id1);
+
+    auto english_punct = mgr.process_key(id1, make_key(VK_OEM_PERIOD));
+    ASSERT_EQ(english_punct.result, cxxime::ProcessResult::REJECTED);
+    ASSERT_TRUE(english_punct.commit_text.empty());
+
+    auto chinese_punct = mgr.process_key(id2, make_key(VK_OEM_PERIOD));
+    ASSERT_EQ(chinese_punct.result, cxxime::ProcessResult::COMMITTED);
+    ASSERT_EQ(chinese_punct.commit_text, "。");
 }
 
 // ============================================================
