@@ -3,20 +3,21 @@
 #ifndef CXXIME_SESSION_MANAGER_H_
 #define CXXIME_SESSION_MANAGER_H_
 
+#include <chrono>
 #include <cstdint>
 #include <memory>
 #include <mutex>
-#include <utility>
 #include <unordered_map>
-#include <chrono>
+#include <utility>
 #include <vector>
-#include <cxxime/ipc_protocol.h>
-#include <cxxime/engine.h>
-#include <cxxime/spellings_index.h>
-#include <cxxime/syllabifier.h>
+
 #include <cxxime/config.h>
+#include <cxxime/engine.h>
+#include <cxxime/ipc_protocol.h>
 #include <cxxime/output_composer.h>
 #include <cxxime/punct_types.h>
+#include <cxxime/spellings_index.h>
+#include <cxxime/syllabifier.h>
 
 struct SharedResourceSnapshot {
     std::shared_ptr<cxxime::Dict> dict;
@@ -68,6 +69,9 @@ struct SessionEntry {
     std::unique_ptr<cxxime::Engine> engine;
     std::chrono::steady_clock::time_point last_activity;
     cxxime::ImeStatus ime_status;
+    bool base_chinese_mode = true;
+    bool full_shape = false;
+    bool chinese_punct = true;
     SharedResourceSnapshot resources;
     std::mutex mutex;  // per-session concurrency protection
 };
@@ -124,8 +128,8 @@ public:
 
 private:
     struct GlobalVisibleState {
-        cxxime::ImeStatus status;
-        bool base_chinese_mode = true;
+        bool caps_lock = false;
+        cxxime::InputMode input_mode = cxxime::InputMode::PINYIN;
     };
 
     cxxime::Engine* get_engine(uint32_t id);
@@ -135,7 +139,7 @@ private:
 
     void reset_global_state(const SharedResourceSnapshot& resources);
     GlobalVisibleState snapshot_global_state();
-    cxxime::ImeStatus commit_global_state(GlobalVisibleState next);
+    void commit_global_state(GlobalVisibleState next);
     void align_session_to_global(SessionEntry& entry);
 
     // Persist input_mode to config file so settings window stays in sync.

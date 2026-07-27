@@ -2,8 +2,11 @@
 
 #include "text_service.h"
 
+#include <cstdio>
+
 #include "candidate_ui_element.h"
 #include "host_compatibility/host_classification_compatibility.h"
+#include "reading_ui_element.h"
 #include "tsf_host_classification.h"
 #include "tsf_host_classification_message.h"
 
@@ -14,6 +17,61 @@ bool has_caret_height(const RECT& rect) {
 }
 
 } // namespace
+
+void TextService::_show_candidate_window(const char* reason) {
+    if (cxxime_tsf::foreground_is_fullscreen()) {
+        _hide_external_candidate_window("hide:fullscreen_foreground");
+        return;
+    }
+    if (!_candidateWindow.is_visible())
+        _enqueue_event_trace("candidate_window", reason);
+    _candidateWindow.show();
+}
+
+void TextService::_hide_external_candidate_window(const char* reason) {
+    _candidateShowPending = false;
+    _candidatePendingHasStaleRect = false;
+    _candidatePendingStaleRect = {};
+    _candidateShowPendingSince = {};
+    if (_candidateWindow.is_visible())
+        _enqueue_event_trace("candidate_window", reason);
+    _candidateWindow.hide();
+}
+
+void TextService::_hide_candidate_window(const char* reason) {
+    _hide_external_candidate_window(reason);
+    if (_candidateUiElement) {
+        _candidateUiElement->end(_threadMgr);
+    }
+}
+
+void TextService::_update_reading_ui_element(ITfContext* context, const std::wstring& reading) {
+    if (!_readingUiElement || !context || reading.empty()) {
+        _end_reading_ui_element("hide:reading_empty");
+        return;
+    }
+
+    bool was_active = _readingUiElement->is_active();
+    _readingUiElement->set_reading(context, reading);
+    bool external = _readingUiElement->begin(_threadMgr);
+    _readingUiElement->notify_update(_threadMgr);
+
+    if (!was_active) {
+        char detail[64] = {};
+        snprintf(detail, sizeof(detail), "reading external=%s len=%u",
+                 external ? "true" : "false", static_cast<unsigned int>(reading.size()));
+        _enqueue_event_trace("ui_element", detail);
+    }
+}
+
+void TextService::_end_reading_ui_element(const char* reason) {
+    if (!_readingUiElement)
+        return;
+    bool was_active = _readingUiElement->is_active();
+    _readingUiElement->end(_threadMgr);
+    if (was_active)
+        _enqueue_event_trace("ui_element", reason ? reason : "hide:reading");
+}
 
 std::wstring TextService::utf8_to_wstring(const char* text) {
     if (!text || text[0] == '\0')

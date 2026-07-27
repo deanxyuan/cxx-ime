@@ -2,10 +2,12 @@
 
 #include "text_service.h"
 
-#include "edit_session.h"
-#include "tsf_composition.h"
+#include <new>
 
 #include <cxxime/logging.h>
+
+#include "edit_session.h"
+#include "tsf_composition.h"
 
 void TextService::set_composition_context(ITfContext* context) {
     if (_compositionContext == context) {
@@ -250,4 +252,20 @@ HRESULT TextService::_end_composition(ITfContext* context) {
 
     edit_session->Release();
     return edit_hr;
+}
+
+void TextService::_AbortComposition() {
+    _hide_candidate_window("hide:abort_composition");
+    _end_reading_ui_element("hide:abort_composition_reading");
+    _candidateWindow.set_preedit("");
+    _lastInlineCompositionText.clear();
+    if (_composing) {
+        ITfContext* pContext = _current_edit_context_for_composition();
+        if (pContext) {
+            _end_composition(pContext);
+            pContext->Release();
+        }
+        _composing = false;
+    }
+    _reset_stage_composition("abort");
 }

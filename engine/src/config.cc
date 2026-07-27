@@ -1,8 +1,10 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
 #include <cxxime/config.h>
-#include <json.hpp>
+
 #include <fstream>
+
+#include <json.hpp>
 
 namespace cxxime {
 
@@ -38,6 +40,12 @@ bool Config::load(const std::string& path) {
             load_bool(e, "fuzzy_pinyin", fuzzy_pinyin);
             load_bool(e, "wubi_auto_commit", wubi_auto_commit);
             load_bool(e, "candidate_learning", candidate_learning);
+        }
+
+        if (j.contains("initial_state") && j["initial_state"].is_object()) {
+            auto& initial = j["initial_state"];
+            load_bool(initial, "full_shape", initial_full_shape);
+            load_bool(initial, "chinese_punct", initial_chinese_punct);
         }
 
         if (j.contains("style") && j["style"].is_object()) {
@@ -159,6 +167,9 @@ bool Config::save(const std::string& path) const {
     j["engine"]["wubi_auto_commit"] = wubi_auto_commit;
     j["engine"]["candidate_learning"] = candidate_learning;
     j["engine"]["max_pinyin_length"] = 64;
+
+    j["initial_state"]["full_shape"] = initial_full_shape;
+    j["initial_state"]["chinese_punct"] = initial_chinese_punct;
 
     j["style"]["font_face"] = font_name;
     j["style"]["font_point"] = font_size;

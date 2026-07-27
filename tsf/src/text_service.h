@@ -9,17 +9,27 @@ class CandidateUIElement;
 class ReadingUIElement;
 
 #include "pch.h"
-#include <cxxime/ipc_client.h>
-#include <cxxime/ipc_protocol.h>
-#include <cxxime/stage_trace.h>
-#include <cxxime/candidate_window.h>
-#include <cxxime/config.h>
-#include "status_controller.h"
+
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <mutex>
 #include <string>
+
+#include <cxxime/candidate_window.h>
+#include <cxxime/config.h>
+#include <cxxime/ipc_client.h>
+#include <cxxime/ipc_protocol.h>
+#include <cxxime/stage_trace.h>
+
+#include "status_controller.h"
+
+namespace cxxime_tsf {
+
+bool foreground_is_fullscreen();
+bool is_valid_caret_rect(const RECT& rect);
+
+}  // namespace cxxime_tsf
 
 class TextService : public ITfTextInputProcessorEx,
                     public ITfKeyEventSink,
@@ -128,6 +138,7 @@ public:
         int64_t window_us = 0;
         bool slow = false;
 
+        const char* result_string() const;
         int to_json(char* buf, int size) const;
         bool should_log() const;
     };
@@ -213,6 +224,9 @@ private:
     bool _composing = false;
     bool _chinese_mode = true;
     bool _caps_lock = false;
+    std::mutex _lastImeStatusMutex;
+    cxxime::ImeStatus _lastImeStatus;
+    bool _hasLastImeStatus = false;
     bool _activated = false;
     bool _inputFocused = false;
     bool _fTestKeyDownPending = false;

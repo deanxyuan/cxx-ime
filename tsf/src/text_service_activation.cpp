@@ -2,13 +2,16 @@
 
 #include "text_service.h"
 
+#include <new>
+
+#include <cxxime/logging.h>
+
+#include "display_attribute.h"
 #include "globals.h"
 #include "host_compatibility/host_classification_compatibility.h"
 #include "tsf_activation.h"
 #include "tsf_imm_mode.h"
 #include "tsf_ui_element_observer.h"
-
-#include <cxxime/logging.h>
 
 void TextService::_start_host_compatibility_runtime() {
     if (_hostCompatibilityRuntimeActive) {
@@ -234,4 +237,26 @@ bool TextService::_register_display_attribute_atom() {
     }
 
     return true;
+}
+
+STDMETHODIMP TextService::EnumDisplayAttributeInfo(IEnumTfDisplayAttributeInfo** ppEnum) {
+    if (!ppEnum)
+        return E_INVALIDARG;
+    auto* pEnum = new (std::nothrow) ::EnumDisplayAttributeInfo();
+    *ppEnum = pEnum;
+    return pEnum ? S_OK : E_OUTOFMEMORY;
+}
+
+STDMETHODIMP TextService::GetDisplayAttributeInfo(REFGUID rguid,
+                                                  ITfDisplayAttributeInfo** ppInfo) {
+    if (!ppInfo)
+        return E_INVALIDARG;
+    *ppInfo = nullptr;
+
+    if (IsEqualGUID(rguid, c_guidDisplayAttribute)) {
+        auto* pInfo = new (std::nothrow) ::DisplayAttributeInfo();
+        *ppInfo = pInfo;
+        return pInfo ? S_OK : E_OUTOFMEMORY;
+    }
+    return E_INVALIDARG;
 }
