@@ -313,6 +313,7 @@ def run_checks(dist_dir: str, require_x86: bool, host_diagnostics: bool) -> list
         "collect_diagnostics.ps1",
         "cxxime-setup.nsi",
         "license.txt",
+        "THIRD_PARTY_NOTICES.txt",
         os.path.join("data", "default.json"),
         os.path.join("data", "settings_presets.json"),
         os.path.join("data", "themes.json"),

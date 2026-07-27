@@ -57,6 +57,7 @@ endif()
 
 add_subdirectory(third_party/sqlite3)
 add_subdirectory(third_party/nlohmann)
+add_subdirectory(third_party/darts-clone)
 add_subdirectory(shared)
 add_subdirectory(engine)
 add_subdirectory(ipc)

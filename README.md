@@ -25,7 +25,7 @@ cxx-ime/
 ├── scripts/         打包、词典准备、校验脚本
 ├── tools/           开发调试工具（9 个）
 ├── test/            测试套件（22 个 C++ 测试 + 2 个 Python 测试）
-└── third_party/     sqlite3, nlohmann/json
+└── third_party/     sqlite3, nlohmann/json, darts-clone
 ```
 
 **输入流程：** 按键 → TSF DLL → IPC → 服务端 → 引擎 → IPC → TSF DLL → 文字上屏
