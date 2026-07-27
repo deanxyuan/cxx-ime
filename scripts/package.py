@@ -606,6 +606,10 @@ def copy_installer_scripts(config: str, host_diagnostics: bool) -> None:
     else:
         print("  WARNING: LICENSE not found, NSIS may fail")
 
+    notices_src = os.path.join(ROOT, "THIRD_PARTY_NOTICES.txt")
+    shutil.copy2(notices_src, os.path.join(DIST_DIR, "THIRD_PARTY_NOTICES.txt"))
+    print("  THIRD_PARTY_NOTICES.txt")
+
 
 def build_nsis(config: str, fast: bool = False, host_diagnostics: bool = False) -> None:
     """Run makensis to create the installer."""
@@ -702,6 +706,7 @@ def print_summary(config: str, include_x86_modules: bool, host_diagnostics: bool
         print("  export_stage_trace.ps1   Host trace exporter")
     print("  cxxime-setup.nsi         NSIS script")
     print("  license.txt              License")
+    print("  THIRD_PARTY_NOTICES.txt  Third-party notices")
 
 
 def main():
