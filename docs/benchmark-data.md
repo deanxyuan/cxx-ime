@@ -165,11 +165,23 @@ build\tools\query_bench\Release\query_bench.exe --data data --input s,sd,sdf,sdd
 
 > 短输入快速路径覆盖了 1–6 字母的全拼和简拼场景，查询延迟从微秒级降至个位数微秒。长输入（>6 字母）不走快速路径，DFS 路径上限 256 后查询延迟从 ~25ms 降至 ~170μs。Mixed code 优化后 `shrf` 等增强简拼 key 全部命中 cache，短输入 P50 稳定在 0μs。
 
+## DAT-16 格式升级
+
+> Top-N 索引文件从 CXTOPN v1（平坦排序数组 + 二分查找）升级为 DAT-16（CXTOPN v2，Darts-clone 双数组 Trie + 内联 16 字节候选）。查询行为与结果完全一致，无时延变化。
+
+| 指标 | v1 (CXTOPN\x01) | DAT-16 (CXTOPN\x02) | 变化 |
+|------|------------------|----------------------|------|
+| 文件大小 | ~363 MB | ~212 MB | **-42%** |
+| 键查找 | 二分查找 O(log N) | Darts trie O(k) | 复杂度降为线性 |
+| 候选条目 | 24 bytes/条 | 16 bytes/条 | **-33%** |
+| 键存储 | 显式字符串表 | Trie 隐式编码 | 消除字符串冗余 |
+
 ## 重跑基准
 
 ```cmd
-# 重建 topn.bin（mixed code 变更后必须重建）
-python scripts\build_short_cache.py --input data\pinyin.dict.db --output data\pinyin.topn.bin
+# 重建 topn.bin（build_short_cache.py 生成中间文件，topn_builder 转 DAT-16）
+python scripts\build_short_cache.py --input data\pinyin.dict.db --output data\pinyin.topn.intermediate.bin
+build\tools\topn_index\Release\topn_builder.exe --input data\pinyin.topn.intermediate.bin --output data\pinyin.topn.bin --format dat16
 
 # 离线查询 benchmark（无需 server）
 build\tools\query_bench\Release\query_bench.exe --data data --input s,sd,sdf,sddf,bj,srf,shrf,zguo,nihao,nihaoshijie --repeat 500 --warmup 100 --page-size 7 --deadline-ms 30
