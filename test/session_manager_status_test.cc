@@ -250,6 +250,36 @@ TEST(SessionStatus, toggle_chinese) {
     ASSERT_EQ(s2.revision, (uint64_t)2);
 }
 
+TEST(SessionStatus, set_chinese_mode_is_idempotent) {
+    SessionManager mgr;
+    mgr.initialize(setup_test_dict());
+    uint32_t id = mgr.create_session();
+
+    mgr.toggle_shape(id);
+    mgr.toggle_punct(id);
+    mgr.switch_input_mode(id, cxxime::InputMode::WUBI);
+    auto [before_status, before] = mgr.get_ime_status(id);
+    ASSERT_EQ(before_status, cxxime::IPCStatus::OK);
+
+    auto first = mgr.set_chinese_mode(id, false);
+    ASSERT_EQ(first.status, cxxime::IPCStatus::OK);
+    ASSERT_EQ(first.ime_status.chinese_mode, false);
+    ASSERT_EQ(first.ime_status.full_shape, true);
+    ASSERT_EQ(first.ime_status.chinese_punct, false);
+    ASSERT_EQ(first.ime_status.input_mode, cxxime::InputMode::WUBI);
+    ASSERT_EQ(first.ime_status.revision, before.revision + 1);
+
+    auto second = mgr.set_chinese_mode(id, false);
+    ASSERT_EQ(second.status, cxxime::IPCStatus::OK);
+    ASSERT_EQ(second.ime_status.chinese_mode, false);
+    ASSERT_EQ(second.ime_status.revision, first.ime_status.revision);
+
+    auto third = mgr.set_chinese_mode(id, true);
+    ASSERT_EQ(third.status, cxxime::IPCStatus::OK);
+    ASSERT_EQ(third.ime_status.chinese_mode, true);
+    ASSERT_EQ(third.ime_status.revision, first.ime_status.revision + 1);
+}
+
 TEST(SessionStatus, toggle_shape) {
     SessionManager mgr;
     mgr.initialize(setup_test_dict());

@@ -191,6 +191,12 @@ LRESULT ProbeApp::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
             return 0;
         }
         break;
+    case WM_HOTKEY:
+        if (wparam == kConversionHotKeyId) {
+            toggle_conversion_compartment();
+            return 0;
+        }
+        break;
     case WM_SETFOCUS:
         CreateCaret(hwnd_, nullptr, 2, 24);
         SetCaretPos(24, 52);

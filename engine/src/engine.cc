@@ -630,6 +630,12 @@ std::pair<std::string, CommitSource> Engine::commit_composition_with_source() {
     return context_.commit_with_source();
 }
 
+std::string Engine::commit_raw_composition() {
+    std::string raw = std::move(context_.pinyin_buffer);
+    context_.reset();
+    return raw;
+}
+
 void Engine::clear() {
     context_.reset();
     translator_->clear_recent();

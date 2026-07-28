@@ -5,49 +5,10 @@
 #include <cxxime/stage_trace.h>
 
 #include <ctffunc.h>
-#include <imm.h>
 
 #include <utility>
 
 namespace cxxime_probe {
-namespace {
-
-void trace_active_keyboard_profile(const char* trigger) {
-    ITfInputProcessorProfileMgr* profile_manager = nullptr;
-    const HRESULT manager_result = CoCreateInstance(
-        CLSID_TF_InputProcessorProfiles, nullptr, CLSCTX_INPROC_SERVER,
-        IID_ITfInputProcessorProfileMgr,
-        reinterpret_cast<void**>(&profile_manager));
-
-    TF_INPUTPROCESSORPROFILE profile = {};
-    HRESULT profile_result = E_UNEXPECTED;
-    if (SUCCEEDED(manager_result) && profile_manager) {
-        profile_result = profile_manager->GetActiveProfile(
-            GUID_TFCAT_TIP_KEYBOARD, &profile);
-        profile_manager->Release();
-    }
-
-    const HKL keyboard_layout = GetKeyboardLayout(0);
-    cxxime::write_stage_trace("probe", "probe.active_profile", {
-        {"trigger", trigger ? trigger : ""},
-        {"manager_hr", static_cast<int64_t>(manager_result)},
-        {"profile_hr", static_cast<int64_t>(profile_result)},
-        {"profile_type", profile.dwProfileType},
-        {"langid", profile.langid},
-        {"clsid", cxxime::stage_trace_guid(profile.clsid)},
-        {"profile_guid", cxxime::stage_trace_guid(profile.guidProfile)},
-        {"category", cxxime::stage_trace_guid(profile.catid)},
-        {"profile_hkl", reinterpret_cast<uintptr_t>(profile.hkl)},
-        {"profile_hkl_substitute", reinterpret_cast<uintptr_t>(profile.hklSubstitute)},
-        {"profile_caps", profile.dwCaps},
-        {"profile_flags", profile.dwFlags},
-        {"thread_hkl", reinterpret_cast<uintptr_t>(keyboard_layout)},
-        {"thread_hkl_is_ime", ImmIsIME(keyboard_layout) != FALSE},
-        {"result", profile_result == S_OK ? "queried" : "failed"},
-    });
-}
-
-} // namespace
 
 HRESULT ProbeApp::on_begin_ui_element(DWORD element_id, BOOL* show) {
     if (!show) {
@@ -243,6 +204,7 @@ void ProbeApp::update_candidate(ITfUIElement* element, DWORD element_id, const c
         {"integratable_hr", static_cast<int64_t>(integratable_hr)},
         {"result", SUCCEEDED(count_hr) && SUCCEEDED(strings_hr) ? "read" : "failed"},
     });
+    trace_composition_display_attribute(candidate, element_id, action);
     if (candidate_ui_visibility_pending_) {
         apply_candidate_ui_visibility(action ? action : "candidate_update");
     }

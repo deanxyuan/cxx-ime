@@ -260,6 +260,26 @@ TEST(IPC, commit_composition) {
     ASSERT_EQ(resp.status, cxxime::IPCStatus::OK);
 }
 
+TEST(IPC, set_chinese_mode_uses_explicit_target) {
+    TestServer ts;
+    ASSERT_TRUE(ts.start([](const cxxime::IPCRequest& req) -> cxxime::IPCResponse {
+        cxxime::IPCResponse resp = {};
+        ASSERT_EQ(req.command, cxxime::IPCCommand::SET_CHINESE_MODE);
+        ASSERT_EQ(req.session_id, static_cast<uint32_t>(7));
+        ASSERT_EQ(req.candidate_index, static_cast<uint32_t>(0));
+        resp.status = cxxime::IPCStatus::OK;
+        resp.ime_status.chinese_mode = false;
+        return resp;
+    }));
+
+    cxxime::IpcClient client;
+    ASSERT_TRUE(client.connect(cxxime::IPC_PIPE_BASE_NAME, 2000));
+    cxxime::IPCResponse resp = {};
+    ASSERT_TRUE(client.set_chinese_mode(7, false, resp));
+    ASSERT_EQ(resp.status, cxxime::IPCStatus::OK);
+    ASSERT_EQ(resp.ime_status.chinese_mode, false);
+}
+
 TEST(IPC, user_dict_commands) {
     TestServer ts;
     ASSERT_TRUE(ts.start([](const cxxime::IPCRequest& req) -> cxxime::IPCResponse {

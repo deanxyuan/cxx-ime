@@ -62,6 +62,10 @@ bool ProbeApp::initialize(HINSTANCE instance) {
         const DWORD error = GetLastError();
         return fail_initialization("CreateWindowExW(main)", HRESULT_FROM_WIN32(error));
     }
+    if (!RegisterHotKey(hwnd_, kConversionHotKeyId, MOD_NOREPEAT, VK_F8)) {
+        const DWORD error = GetLastError();
+        return fail_initialization("RegisterHotKey(F8)", HRESULT_FROM_WIN32(error));
+    }
 
     gate_checkbox_ = CreateWindowExW(
         0, L"BUTTON", L"Require composition/reading signal to show candidates",
@@ -86,6 +90,7 @@ bool ProbeApp::initialize(HINSTANCE instance) {
         return fail_initialization("ITfThreadMgrEx::ActivateEx", activate_result);
     }
     thread_mgr_active_ = true;
+    initialize_conversion_compartment_probe();
 
     const HRESULT manager_result = thread_mgr_->QueryInterface(
         IID_ITfUIElementMgr, reinterpret_cast<void**>(&ui_element_mgr_));
@@ -135,6 +140,7 @@ int ProbeApp::run() {
 void ProbeApp::shutdown() {
     if (hwnd_) {
         KillTimer(hwnd_, kCandidateUiVisibilityTimerId);
+        UnregisterHotKey(hwnd_, kConversionHotKeyId);
     }
     if (source_ && sink_cookie_ != TF_INVALID_COOKIE) {
         source_->UnadviseSink(sink_cookie_);
@@ -152,6 +158,7 @@ void ProbeApp::shutdown() {
         ui_element_mgr_->Release();
         ui_element_mgr_ = nullptr;
     }
+    shutdown_conversion_compartment_probe();
     if (thread_mgr_) {
         if (thread_mgr_active_) {
             thread_mgr_->Deactivate();

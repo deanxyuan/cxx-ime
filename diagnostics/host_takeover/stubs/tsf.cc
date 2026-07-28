@@ -36,6 +36,11 @@ void stop_stage_runtime(const HostClassificationCompatibilitySnapshot&) {}
 
 void trace_stage_conversion_compartment(bool, HRESULT, DWORD, DWORD, bool, HRESULT) {}
 
+void trace_stage_conversion_sink_lifecycle(
+    const char*, HRESULT, HRESULT, HRESULT, HRESULT, DWORD) {}
+
+void trace_stage_conversion_sink_change(const StageConversionSinkChange&) {}
+
 void start_stage_ui_element_observer(ITfThreadMgr*, DWORD) {}
 
 void trace_stage_runtime_activate(DWORD, TfClientId) {}

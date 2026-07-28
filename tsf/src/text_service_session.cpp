@@ -51,7 +51,9 @@ void TextService::_sync_ime_status(const cxxime::ImeStatus& status) {
     // second refresh and visible flicker.
     if (_modeButton) _modeButton->update_from_status(status);
     if (_statusController.is_initialized()) _statusController.sync_status(status);
-    _sync_conversion_mode_compartment(status);
+    if (!_handlingConversionCompartmentChange) {
+        _sync_conversion_mode_compartment(status);
+    }
 }
 
 bool TextService::_is_caps_lock_on() const {
@@ -132,11 +134,11 @@ bool TextService::_recreate_ipc_session_preserving_status() {
     }
 
     if (!synced_status.caps_lock && synced_status.chinese_mode != desired_chinese_mode) {
-        cxxime::IPCResponse toggle_resp = {};
-        if (_client.toggle_chinese(_sessionId, toggle_resp) &&
-            toggle_resp.status == cxxime::IPCStatus::OK) {
-            synced_status = toggle_resp.ime_status;
-            _sync_ime_status(toggle_resp.ime_status);
+        cxxime::IPCResponse mode_resp = {};
+        if (_client.set_chinese_mode(_sessionId, desired_chinese_mode, mode_resp) &&
+            mode_resp.status == cxxime::IPCStatus::OK) {
+            synced_status = mode_resp.ime_status;
+            _sync_ime_status(mode_resp.ime_status);
         } else {
             return false;
         }

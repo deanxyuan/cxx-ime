@@ -36,6 +36,7 @@ class TextService : public ITfTextInputProcessorEx,
                     public ITfCompositionSink,
                     public ITfThreadFocusSink,
                     public ITfThreadMgrEventSink,
+                    public ITfCompartmentEventSink,
                     public ITfTextLayoutSink,
                     public ITfDisplayAttributeProvider {
 public:
@@ -73,6 +74,9 @@ public:
     STDMETHODIMP OnSetFocus(ITfDocumentMgr* pDocMgrFocus, ITfDocumentMgr* pDocMgrPrevFocus) override;
     STDMETHODIMP OnPushContext(ITfContext* pic) override;
     STDMETHODIMP OnPopContext(ITfContext* pic) override;
+
+    // ITfCompartmentEventSink
+    STDMETHODIMP OnChange(REFGUID rguid) override;
 
     // ITfTextLayoutSink
     STDMETHODIMP OnLayoutChange(ITfContext* pic,
@@ -150,6 +154,8 @@ private:
     HRESULT _unregister_key_event_sink();
     void _register_thread_sinks();
     void _unregister_thread_sinks();
+    void _register_conversion_compartment_sink();
+    void _unregister_conversion_compartment_sink();
     HRESULT _register_preserved_key();
     HRESULT _unregister_preserved_key();
     bool _register_display_attribute_atom();
@@ -165,6 +171,8 @@ private:
     void _sync_ime_status(const cxxime::ImeStatus& status);
     void _handle_ime_menu_command(cxxime::ImeMenuCommand command);
     void _sync_conversion_mode_compartment(const cxxime::ImeStatus& status);
+    HRESULT _read_conversion_mode_compartment(DWORD* conversion_mode,
+                                              VARTYPE* value_type) const;
     bool _foreground_allows_input() const;
     bool _context_belongs_to_foreground(ITfContext* context) const;
     bool _advise_text_layout_sink(ITfDocumentMgr* doc_mgr);
@@ -216,9 +224,12 @@ private:
     DWORD _activateFlags = 0;
     DWORD _dwThreadFocusCookie = TF_INVALID_COOKIE;
     DWORD _dwThreadMgrEventCookie = TF_INVALID_COOKIE;
+    DWORD _dwConversionCompartmentCookie = TF_INVALID_COOKIE;
     DWORD _dwTextLayoutSinkCookie = TF_INVALID_COOKIE;
     TfGuidAtom _displayAttributeAtom = 0;
     ITfContext* _textLayoutSinkContext = nullptr;
+    ITfCompartment* _conversionCompartment = nullptr;
+    ITfSource* _conversionCompartmentSource = nullptr;
 
     cxxime::IpcClient _client;
     uint32_t _sessionId = 0;
@@ -235,6 +246,8 @@ private:
     bool _candidateShowPending = false;
     bool _candidatePendingHasStaleRect = false;
     bool _hostCompatibilityRuntimeActive = false;
+    bool _writingConversionCompartment = false;
+    bool _handlingConversionCompartmentChange = false;
     RECT _candidatePendingStaleRect = {};
     std::chrono::steady_clock::time_point _candidateShowPendingSince = {};
     UINT_PTR _statePollTimer = 0;
