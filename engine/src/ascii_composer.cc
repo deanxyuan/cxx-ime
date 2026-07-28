@@ -1,10 +1,14 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
 #include <cxxime/ascii_composer.h>
+
+#include <windows.h>
+
 #include <cxxime/config.h>
 #include <cxxime/context.h>
-#include <windows.h>
+#include <cxxime/key_event.h>
 #include <cxxime/logging.h>
+#include <cxxime/punct_types.h>
 
 namespace cxxime {
 
@@ -26,6 +30,24 @@ static bool is_win_key(uint32_t vk) {
 
 static bool is_modifier_key(uint32_t vk) {
     return is_shift_key(vk) || is_ctrl_key(vk) || is_alt_key(vk) || is_win_key(vk);
+}
+
+static char temporary_ascii_char(const KeyEvent& event) {
+    if (is_letter_key(event.keycode)) {
+        char ch = static_cast<char>(event.keycode);
+        bool upper = event.is_shift() != event.is_caps_lock();
+        return upper ? ch : static_cast<char>(ch - 'A' + 'a');
+    }
+    return vk_to_char(event.keycode, event.is_shift());
+}
+
+static void commit_temporary_ascii(Context& ctx) {
+    ctx.committed_text = ctx.pinyin_buffer;
+    ctx.pinyin_buffer.clear();
+    ctx.candidates = {};
+    ctx.page_index = 0;
+    ctx.temporary_ascii_composition = false;
+    ctx.set_commit_source(CommitSource::kRawCodePreserveCase);
 }
 
 static AsciiModeSwitchStyle parse_style(const std::string& s) {
@@ -153,6 +175,55 @@ bool AsciiComposer::process_key(uint32_t key_code, bool is_key_up, Context& ctx,
     return false;
 }
 
+bool AsciiComposer::process_temporary_ascii_composition(const KeyEvent& event, Context& ctx,
+                                                         bool chinese_mode) {
+    if (event.is_key_up || event.is_ctrl() || event.is_alt()) {
+        return false;
+    }
+
+    if (ctx.temporary_ascii_composition) {
+        if (event.keycode == VK_ESCAPE) {
+            ctx.reset();
+            return true;
+        }
+        if (event.keycode == VK_BACK) {
+            if (!ctx.pinyin_buffer.empty()) {
+                ctx.pinyin_buffer.pop_back();
+            }
+            if (ctx.pinyin_buffer.empty()) {
+                ctx.reset();
+            }
+            return true;
+        }
+        if (event.keycode == VK_SPACE || event.keycode == VK_RETURN) {
+            commit_temporary_ascii(ctx);
+            return true;
+        }
+
+        char ch = temporary_ascii_char(event);
+        if (ch != '\0') {
+            ctx.pinyin_buffer.push_back(ch);
+            ctx.candidates = {};
+            ctx.page_index = 0;
+            ctx.set_commit_source(CommitSource::kRawCodePreserveCase);
+            return true;
+        }
+        return false;
+    }
+
+    if (!chinese_mode || ascii_mode_ || ctx.is_composing() || event.is_caps_lock() ||
+        !event.is_shift() || !is_letter_key(event.keycode)) {
+        return false;
+    }
+
+    ctx.pinyin_buffer.assign(1, static_cast<char>(event.keycode));
+    ctx.candidates = {};
+    ctx.page_index = 0;
+    ctx.temporary_ascii_composition = true;
+    ctx.set_commit_source(CommitSource::kRawCodePreserveCase);
+    return true;
+}
+
 AsciiModeSwitchStyle AsciiComposer::get_binding(uint32_t key_code) const {
     auto it = bindings_.find(key_code);
     if (it != bindings_.end())
@@ -172,6 +243,11 @@ AsciiModeSwitchStyle AsciiComposer::get_binding(uint32_t key_code) const {
 
 void AsciiComposer::toggle_mode(uint32_t key_code, Context& ctx) {
     auto style = get_binding(key_code);
+    if (is_shift_key(key_code) && ctx.temporary_ascii_composition &&
+        style != AsciiModeSwitchStyle::NOOP && style != AsciiModeSwitchStyle::APPEND) {
+        commit_temporary_ascii(ctx);
+    }
+
     bool composing = ctx.is_composing();
 
     CXXIME_LOG(L"AsciiComposer::toggle_mode: vk=%u, style=%d, composing=%d, pinyin_buffer='%S'",
@@ -202,6 +278,7 @@ void AsciiComposer::toggle_mode(uint32_t key_code, Context& ctx) {
             ctx.pinyin_buffer.clear();
             ctx.candidates = {};
             ctx.page_index = 0;
+            ctx.temporary_ascii_composition = false;
         } else {
             CXXIME_LOG(L"AsciiComposer::toggle_mode: CODE, not composing");
         }
@@ -223,6 +300,7 @@ void AsciiComposer::toggle_mode(uint32_t key_code, Context& ctx) {
             ctx.pinyin_buffer.clear();
             ctx.candidates = {};
             ctx.page_index = 0;
+            ctx.temporary_ascii_composition = false;
         }
         set_ascii_mode_from_switch(!ascii_mode_);
         return;
@@ -264,6 +342,7 @@ void AsciiComposer::apply_caps_lock_overlay(bool caps_lock, Context& ctx) {
                     ctx.pinyin_buffer.clear();
                     ctx.candidates = {};
                     ctx.page_index = 0;
+                    ctx.temporary_ascii_composition = false;
                 }
                 break;
             case AsciiModeSwitchStyle::CLEAR:
@@ -279,6 +358,7 @@ void AsciiComposer::apply_caps_lock_overlay(bool caps_lock, Context& ctx) {
                     ctx.pinyin_buffer.clear();
                     ctx.candidates = {};
                     ctx.page_index = 0;
+                    ctx.temporary_ascii_composition = false;
                 }
                 break;
             default:

@@ -13,6 +13,7 @@ void Context::reset() {
     committed_text.clear();
     candidates = {};
     page_index = 0;
+    temporary_ascii_composition = false;
     commit_source_ = CommitSource::kRawCode;
 }
 
@@ -30,6 +31,7 @@ std::string Context::commit() {
     committed_text.clear();
     candidates = {};
     page_index = 0;
+    temporary_ascii_composition = false;
     commit_source_ = CommitSource::kRawCode;
     return text;
 }
@@ -46,12 +48,15 @@ std::pair<std::string, CommitSource> Context::commit_with_source() {
         source = CommitSource::kCandidate;
     } else if (!pinyin_buffer.empty()) {
         text = pinyin_buffer;
-        source = CommitSource::kRawCode;
+        source = temporary_ascii_composition
+            ? CommitSource::kRawCodePreserveCase
+            : CommitSource::kRawCode;
     }
     pinyin_buffer.clear();
     committed_text.clear();
     candidates = {};
     page_index = 0;
+    temporary_ascii_composition = false;
     commit_source_ = CommitSource::kRawCode;
     return {std::move(text), source};
 }
