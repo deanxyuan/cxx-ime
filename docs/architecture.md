@@ -7,7 +7,7 @@
 | 指标 | 数值 | 说明 |
 |------|------|------|
 | 安装包 | ~72 MB | 单文件 NSIS 安装器，含全部词典数据 |
-| Server 常驻内存 | ~500 MB 量级 | 词典数据全量堆载（~490 MB）为主：dict.bin 72.8 + dict.idx 48.4 + topn.bin ~360 + wubi ~4.7 |
+| Server 常驻内存 | ~480 MB 量级 | 词典数据全量堆载（~415 MB）为主：dict.bin 72.8 + dict.idx 48.4 + topn.bin ~212 + wubi ~4.7 + spellings ~2.9 + darts trie + 用户词索引 |
 | IPC 往返延迟 | < 1 ms | 实测 preedit avg ~50us（见 [IPC 架构设计](ipc-architecture.md)） |
 | 启动 | 词典一次性读入 | 无 mmap 换页延迟，代价是启动时的顺序读盘 |
 
@@ -71,7 +71,7 @@
 | **SpellingsIndex** | Patricia trie 拼写索引（缩写扩展，Prism 层） | `SpellingsIndex` |
 | **AsciiComposer** | 可配置中英文切换，CapsLock overlay | `AsciiComposer` |
 | **OutputComposer** | 输出合成（全角/CapsLock/按键拦截） | `OutputComposer` |
-| **ShortCodeCache** | 短码候选缓存（topn.bin，短输入快速路径） | `ShortCodeCache` |
+| **ShortCodeCache** | 短码候选缓存（DAT-16 Top-N 索引，Darts trie 查找，短输入快速路径） | `ShortCodeCache` |
 | **Dict** | 词典加载与查询 | 二进制加载主词典 + 内存用户词典（多路索引） |
 | **Config** | 配置加载 | JSON（nlohmann/json） |
 
@@ -141,7 +141,7 @@ JSON 配置（`default.json` + `themes.json`），Settings 编辑器（Win32 原
 | 输入处理器 | 仅 TSF | Windows 10+ 行为稳定，无需 IMM32 兜底 |
 | 序列化 | 固定结构体 + memcpy | 简单高效 |
 | IPC | Named Pipe + IOCP | 零外部依赖，< 1ms 往返 |
-| 词典 | 二进制堆加载 + 内存用户词典 | 一次性读入，运行时无 SQLite |
+| 词典 | 二进制堆加载 + DAT-16 Top-N 索引 | 一次性读入，Darts trie O(k) 查找，运行时无 SQLite |
 | 配置 | nlohmann/json | header-only，轻量 |
 | UI 渲染 | Direct2D/DirectWrite（默认）+ GDI（可选） | 高质量渲染，双后端可配置 |
 | 日志 | CXXIME_LOG（自研 OutputDebugString 宏） | 零依赖 |
@@ -154,6 +154,7 @@ JSON 配置（`default.json` + `themes.json`），Settings 编辑器（Win32 原
 |------|------|----------|
 | Windows SDK | TSF/COM/Direct2D/GDI | 系统自带 |
 | SQLite3 | 构建工具、sqlite_query 工具 | 源码编译（amalgamation，FTS5 + JSON1） |
+| Darts-clone | Top-N 索引键查找（Double Array Trie） | 源码编译（bundled in third_party/） |
 | nlohmann/json | 配置解析 | 头文件 only |
 | Python 3.6+ | 词典数据工具 | 可选（仅构建词典时需要） |
 
@@ -223,7 +224,7 @@ cxx-ime/
 │   ├── themes.json         # 主题预设
 │   ├── pinyin.dict.bin     # 拼音主词典（~73 MB）
 │   ├── pinyin.dict.idx     # 拼音整数 ID 索引（~48 MB）
-│   ├── pinyin.topn.bin     # 拼音短码候选缓存（~363 MB）
+│   ├── pinyin.topn.bin     # 拼音 Top-N 候选索引（DAT-16，~212 MB）
 │   ├── pinyin.spellings.bin# Patricia trie 拼写索引（~2.9 MB）
 │   ├── pinyin.dict.db.zip  # SQLite 源词典（压缩，git 提交）
 │   ├── wubi86.dict.bin     # 五笔主词典（~2.6 MB）
@@ -242,7 +243,8 @@ cxx-ime/
 │
 ├── third_party/            # 第三方库
 │   ├── sqlite3/            # SQLite amalgamation（FTS5 + JSON1）
-│   └── nlohmann/           # nlohmann/json（header-only）
+│   ├── nlohmann/           # nlohmann/json（header-only）
+│   └── darts-clone/        # Darts-clone (Double Array Trie，Top-N 索引)
 │
 ├── resource/               # 图标 + 资源 DLL 素材
 └── scripts/                # package.py, prepare_dict.py, cxxime-setup.nsi,
@@ -272,7 +274,7 @@ cxx-ime/
 |------|------|------|
 | `pinyin.dict.bin` | ~73 MB | 拼音主词典（按 syllable_ids 排序） |
 | `pinyin.dict.idx` | ~48 MB | 拼音整数 ID 索引（音节→词条映射） |
-| `pinyin.topn.bin` | ~363 MB | 拼音短码候选缓存（1-6 字符快速路径） |
+| `pinyin.topn.bin` | ~212 MB | 拼音 Top-N 候选索引（DAT-16 格式，Darts trie 查找） |
 | `pinyin.spellings.bin` | ~2.9 MB | Patricia trie 拼写索引 |
 | `wubi86.dict.bin` | ~2.6 MB | 五笔主词典 |
 | `wubi86.dict.idx` | ~2.1 MB | 五笔整数 ID 索引 |
@@ -312,9 +314,13 @@ MIXED 模式下 `MixedTranslator` 同时向拼音和五笔引擎发起查询，�
 
 TSF DLL 按架构输出 `cxxime_tsf_x64.dll` / `cxxime_tsf_x86.dll`，安装包同时部署，系统按进程位数加载。输入法 profile 图标由独立的 `cxxime-resources.dll` 提供（`resource_loader.cc` 加载）。
 
-### 7.7 短码候选缓存（pinyin.topn.bin）
+### 7.7 Top-N 候选索引（pinyin.topn.bin，DAT-16 格式）
 
-为 1-6 字符短输入预计算候选页（magic `CXTOPN`），词典加载时一并读入。`lookup_short_fast()` 直接命中预计算候选，绕过完整查询管线，短输入延迟从毫秒级降至微秒级。详见 [短输入快速路径](short-input-fast-path.md)。
+为 1-6 字符短输入预计算 Top-N 候选，采用 **DAT-16 格式**（magic `CXTOPN\x02`）：双数组 Trie（Darts-clone）做 key 查找，内联 16 字节候选条目（文本/频率/评分）。词典加载时一次性读入堆内存（~212 MB）。
+
+`lookup_indexed_fast()` 在 Trie 命中的 key 上直接返回预计算候选页，完全跳过 Syllabifier 路径枚举与 Dict 扫描，短输入延迟从毫秒级降至个位数微秒。
+
+构建流程：`build_short_cache.py`（SQLite → 中间文件）→ `topn_builder --format dat16`（中间文件 → DAT-16）。详见 [短输入快速路径](short-input-fast-path.md)。
 
 ### 7.8 五笔词典必选打包
 

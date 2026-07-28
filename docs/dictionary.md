@@ -303,7 +303,7 @@ Python 格式: `"<IIIIi"`
 | dict v1 | `43 58 44 49 43 01 00 00` / `CXDIC\x01\x00\x00` | 平坦排序数组 |
 | dict v2 | `43 58 44 49 43 02 00 00` / `CXDIC\x02\x00\x00` | 平坦排序数组（布局相同，版本号升级） |
 | dict.idx v2/v3 | `43 58 49 44 58 00 00 00 00` / `CXIDX\0\0\0\0` | 整数 ID 索引（音节→词条，v2 变长解析，v3 zero-copy） |
-| topn.bin v1 | `43 58 54 4F 50 4E 01 00` / `CXTOPN\x01\0` | 短码候选缓存（短输入快速路径） |
+| topn.bin v2 | `43 58 54 4F 50 4E 02 00` / `CXTOPN\x02\0` | DAT-16 格式：Darts-clone 双数组 Trie 键索引 + 内联 16 字节候选条目 |
 
 ## 4. 数据存储方案
 
@@ -321,7 +321,7 @@ Python 格式: `"<IIIIi"`
 |------|-------------|----------------------|-------------|
 | pinyin 主词典 | 146 MB | 72.8 MB (dict.bin) | 57 MB |
 | pinyin 整数 ID 索引 | — | 48.4 MB (dict.idx) | — |
-| pinyin 短码候选缓存 | — | 363 MB (topn.bin) | — |
+| pinyin Top-N 候选索引 | — | 212 MB (topn.bin, DAT-16) | — |
 | pinyin 拼写索引 | — | 2.9 MB (spellings.bin) | — |
 | wubi86 主词典 | 3.2 MB | 2.6 MB (dict.bin) | 1.7 MB |
 | wubi86 整数 ID 索引 | — | 2.1 MB (dict.idx) | — |
@@ -399,6 +399,15 @@ fetch_dict.py / fetch_wubi.py    从网络获取词典数据
         ▼
    pinyin.spellings.bin           运行时内存加载
    pinyin.dict.bin                 运行时内存加载
+   pinyin.dict.idx                 整数 ID 索引
+
+  build_short_cache.py            SQLite → Top-N 候选键与评分
+        │
+        ▼
+  topn_builder --format dat16     中间文件 → DAT-16 索引
+        │
+        ▼
+   pinyin.topn.bin                运行时内存加载（Darts trie + 内联候选）
 ```
 
 ### 5.4 Patricia Trie 构建过程
@@ -484,7 +493,7 @@ src/wubi_processor.cc     ← 五笔按键处理
 src/mixed_translator.cc   ← 混合模式翻译（拼音+五笔交叉排序）
 src/output_composer.cc    ← 输出合成（全角/CapsLock/按键拦截）
 src/ascii_composer.cc     ← 中英文切换
-src/short_code_cache.cc   ← 短码候选缓存（topn.bin）
+src/short_code_cache.cc   ← Top-N 候选缓存（pinyin.topn.bin，DAT-16 格式，Darts trie 查找）
 src/engine.cc             ← 引擎入口
 src/context.cc            ← 输入状态上下文
 src/config.cc             ← JSON 配置加载
