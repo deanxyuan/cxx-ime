@@ -142,7 +142,9 @@ void TextService::_sync_conversion_mode_compartment(
         VariantInit(&next);
         next.vt = VT_I4;
         next.lVal = static_cast<LONG>(requested_mode);
+        _writingConversionCompartment = true;
         set_value_hr = compartment->SetValue(_clientId, &next);
+        _writingConversionCompartment = false;
         CXXIME_LOG(L"sync_conversion_mode: chinese=%d, mode=0x%08x->0x%08x, hr=0x%08x",
                    status.chinese_mode ? 1 : 0, conversion_mode,
                    requested_mode, set_value_hr);

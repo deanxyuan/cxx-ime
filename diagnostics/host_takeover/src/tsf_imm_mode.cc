@@ -94,6 +94,51 @@ void trace_stage_conversion_compartment(bool chinese_mode,
     });
 }
 
+void trace_stage_conversion_sink_lifecycle(const char* action,
+                                          HRESULT manager_hr,
+                                          HRESULT compartment_hr,
+                                          HRESULT source_hr,
+                                          HRESULT operation_hr,
+                                          DWORD cookie) {
+    cxxime::write_stage_trace("tsf", "runtime.conversion_sink", {
+        {"action", action ? action : ""},
+        {"manager_hr", static_cast<int64_t>(manager_hr)},
+        {"compartment_hr", static_cast<int64_t>(compartment_hr)},
+        {"source_hr", static_cast<int64_t>(source_hr)},
+        {"operation_hr", static_cast<int64_t>(operation_hr)},
+        {"cookie", cookie},
+        {"result", SUCCEEDED(operation_hr) ? "success" : "failed"},
+    });
+}
+
+void trace_stage_conversion_sink_change(const StageConversionSinkChange& change) {
+    cxxime::write_stage_trace("tsf", "runtime.conversion_change", {
+        {"value_hr", static_cast<int64_t>(change.value_hr)},
+        {"value_type", change.value_type},
+        {"conversion_mode", change.conversion_mode},
+        {"native", (change.conversion_mode & TF_CONVERSIONMODE_NATIVE) != 0},
+        {"symbol", (change.conversion_mode & TF_CONVERSIONMODE_SYMBOL) != 0},
+        {"self_write", change.self_write},
+        {"composing", change.composing},
+        {"before_chinese", change.before_chinese},
+        {"requested_chinese", change.requested_chinese},
+        {"set_attempted", change.set_attempted},
+        {"set_succeeded", change.set_succeeded},
+        {"commit_requested", change.commit_requested},
+        {"commit_text_length", change.commit_text_length},
+        {"ipc_us", change.ipc_us},
+        {"after_chinese", change.after_chinese},
+        {"status_details", change.status_details},
+        {"before_full_shape", change.before_full_shape},
+        {"after_full_shape", change.after_full_shape},
+        {"before_chinese_punct", change.before_chinese_punct},
+        {"after_chinese_punct", change.after_chinese_punct},
+        {"before_input_mode", change.before_input_mode},
+        {"after_input_mode", change.after_input_mode},
+        {"result", change.result ? change.result : ""},
+    });
+}
+
 void trace_stage_imm_conversion_status(HWND hwnd,
                                        HIMC himc,
                                        bool query_ok,

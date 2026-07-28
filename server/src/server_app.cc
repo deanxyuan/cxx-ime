@@ -242,6 +242,23 @@ cxxime::IPCResponse ServerApp::handle_request(const cxxime::IPCRequest& request)
         break;
     }
 
+    case cxxime::IPCCommand::SET_CHINESE_MODE: {
+        const bool chinese_mode = request.candidate_index != 0;
+        auto result = session_mgr_.set_chinese_mode(request.session_id, chinese_mode);
+        if (result.status != cxxime::IPCStatus::OK) {
+            response.status = result.status;
+            break;
+        }
+        response.ime_status = result.ime_status;
+        response.ascii_mode = !result.ime_status.chinese_mode;
+        response.composing = result.composing;
+        if (!result.commit_text.empty()) {
+            response_copy_field(response.commit_text, sizeof(response.commit_text),
+                                result.commit_text);
+        }
+        break;
+    }
+
     case cxxime::IPCCommand::TOGGLE_SHAPE: {
         auto [status, ime_status] = session_mgr_.toggle_shape(request.session_id);
         if (status != cxxime::IPCStatus::OK) {

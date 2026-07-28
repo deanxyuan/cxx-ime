@@ -465,6 +465,41 @@ TEST(SessionIntegration, commit_composition_invalid) {
     ASSERT_EQ(r.status, cxxime::IPCStatus::ERR_INVALID_SESSION);
 }
 
+TEST(SessionIntegration, set_chinese_mode_commits_raw_composition_once) {
+    SessionManager mgr;
+    mgr.initialize(setup_test_dict());
+    uint32_t id = mgr.create_session();
+
+    mgr.process_key(id, make_key('N'));
+    mgr.process_key(id, make_key('I'));
+
+    auto unchanged = mgr.set_chinese_mode(id, true);
+    ASSERT_EQ(unchanged.status, cxxime::IPCStatus::OK);
+    ASSERT_TRUE(unchanged.commit_text.empty());
+    ASSERT_EQ(unchanged.composing, true);
+    ASSERT_EQ(unchanged.ime_status.chinese_mode, true);
+
+    auto first = mgr.set_chinese_mode(id, false);
+    ASSERT_EQ(first.status, cxxime::IPCStatus::OK);
+    ASSERT_EQ(first.commit_text, "ni");
+    ASSERT_EQ(first.composing, false);
+    ASSERT_EQ(first.ime_status.chinese_mode, false);
+
+    auto second = mgr.set_chinese_mode(id, false);
+    ASSERT_EQ(second.status, cxxime::IPCStatus::OK);
+    ASSERT_TRUE(second.commit_text.empty());
+    ASSERT_EQ(second.composing, false);
+    ASSERT_EQ(second.ime_status.revision, first.ime_status.revision);
+}
+
+TEST(SessionIntegration, set_chinese_mode_invalid_session) {
+    SessionManager mgr;
+    mgr.initialize(setup_test_dict());
+
+    auto result = mgr.set_chinese_mode(999, false);
+    ASSERT_EQ(result.status, cxxime::IPCStatus::ERR_INVALID_SESSION);
+}
+
 // ============================================================
 // clear_composition tests
 // ============================================================

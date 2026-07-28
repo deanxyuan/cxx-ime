@@ -2,8 +2,11 @@ project(cxxime-ime-host-probe CXX)
 
 add_executable(cxxime-ime-host-probe WIN32
     main.cc
+    compartment_probe.cc
+    display_attribute_probe.cc
     probe_app.cc
     probe_candidate_click.cc
+    profile_probe.cc
     probe_imm_candidates.cc
     probe_ui_elements.cc
     probe_visibility.cc

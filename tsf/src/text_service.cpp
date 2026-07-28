@@ -20,6 +20,7 @@ TextService::TextService() {}
 
 TextService::~TextService() {
     _stop_state_poll_timer();
+    _unregister_conversion_compartment_sink();
     set_composition_context(nullptr);
     _stop_host_compatibility_runtime();
 }
@@ -41,6 +42,8 @@ STDMETHODIMP TextService::QueryInterface(REFIID riid, void** ppvObj) {
         *ppvObj = static_cast<ITfThreadFocusSink*>(this);
     else if (IsEqualIID(riid, IID_ITfThreadMgrEventSink))
         *ppvObj = static_cast<ITfThreadMgrEventSink*>(this);
+    else if (IsEqualIID(riid, IID_ITfCompartmentEventSink))
+        *ppvObj = static_cast<ITfCompartmentEventSink*>(this);
     else if (IsEqualIID(riid, IID_ITfTextLayoutSink))
         *ppvObj = static_cast<ITfTextLayoutSink*>(this);
     else if (IsEqualIID(riid, IID_ITfDisplayAttributeProvider))
@@ -95,6 +98,7 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
     _register_preserved_key();
 
     _register_thread_sinks();
+    _register_conversion_compartment_sink();
 
     // Create candidate window (use HWND_MESSAGE parent since TSF runs in-app)
     _candidateWindow.create(nullptr, _config);
@@ -225,6 +229,7 @@ STDMETHODIMP TextService::Deactivate() {
     _activated = false;
     _inputFocused = false;
     _stop_state_poll_timer();
+    _unregister_conversion_compartment_sink();
 
     // Hide status window immediately, then destroy it to avoid clicks during IPC teardown.
     _hide_status_window("hide:deactivate");

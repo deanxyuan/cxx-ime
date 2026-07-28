@@ -624,6 +624,32 @@ std::pair<cxxime::IPCStatus, cxxime::ImeStatus> SessionManager::toggle_chinese(u
     return {cxxime::IPCStatus::OK, entry->ime_status};
 }
 
+ProcessKeyResult SessionManager::set_chinese_mode(uint32_t id, bool chinese_mode) {
+    auto entry = lookup_session(id);
+    if (!entry) {
+        ProcessKeyResult error;
+        error.status = cxxime::IPCStatus::ERR_INVALID_SESSION;
+        return error;
+    }
+
+    std::lock_guard<std::mutex> lock(entry->mutex);
+    ProcessKeyResult result;
+    result.status = cxxime::IPCStatus::OK;
+    result.result = cxxime::ProcessResult::ACCEPTED;
+
+    const bool mode_changed = entry->base_chinese_mode != chinese_mode;
+    if (mode_changed && entry->engine->context().is_composing()) {
+        result.commit_text = entry->engine->commit_raw_composition();
+        result.result = cxxime::ProcessResult::COMMITTED;
+    }
+
+    entry->base_chinese_mode = chinese_mode;
+    align_session_to_global(*entry);
+    result.composing = entry->engine->context().is_composing();
+    result.ime_status = entry->ime_status;
+    return result;
+}
+
 std::pair<cxxime::IPCStatus, cxxime::ImeStatus> SessionManager::toggle_shape(uint32_t id) {
     auto entry = lookup_session(id);
     if (!entry) return {cxxime::IPCStatus::ERR_INVALID_SESSION, {}};

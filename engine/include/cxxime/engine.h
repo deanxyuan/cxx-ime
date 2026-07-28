@@ -51,6 +51,7 @@ public:
     std::string get_commit_text();
     std::pair<std::string, CommitSource> take_commit_text_with_source();
     std::pair<std::string, CommitSource> commit_composition_with_source();
+    std::string commit_raw_composition();
     void clear();
     void clear_composition();  // clear composing state only, preserve session recent cache
 

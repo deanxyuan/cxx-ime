@@ -16,17 +16,19 @@ namespace cxxime_probe {
 inline constexpr wchar_t kWindowClass[] = L"CxxImeHostProbeWindow";
 inline constexpr int kGateCheckboxId = 1001;
 inline constexpr int kOriginalUiCheckboxId = 1002;
+inline constexpr int kConversionHotKeyId = 1003;
 inline constexpr UINT_PTR kCandidateUiVisibilityTimerId = 1;
 
 enum class CandidateUiVisibilityCycle {
-disabled,
-armed,
-waiting_to_show,
-waiting_to_hide,
-completed,
+    disabled,
+    armed,
+    waiting_to_show,
+    waiting_to_hide,
+    completed,
 };
 
 class UiElementSink;
+class ConversionCompartmentProbe;
 
 class ProbeApp {
 public:
@@ -52,6 +54,13 @@ private:
     void update_ui_element(DWORD element_id, const char* action);
     void update_candidate(ITfUIElement* element, DWORD element_id, const char* action);
     void update_reading(ITfUIElement* element, DWORD element_id, const char* action);
+    void trace_active_keyboard_profile(const char* trigger);
+    void trace_composition_display_attribute(ITfCandidateListUIElement* candidate,
+                                              DWORD element_id,
+                                              const char* action);
+    void initialize_conversion_compartment_probe();
+    void shutdown_conversion_compartment_probe();
+    void toggle_conversion_compartment();
     bool apply_candidate_ui_visibility(const char* trigger);
     void set_candidate_ui_visibility_cycle(bool enabled, const char* trigger);
     void schedule_candidate_ui_visibility_cycle(const char* trigger);
@@ -82,6 +91,7 @@ private:
     ITfUIElementMgr* ui_element_mgr_ = nullptr;
     ITfSource* source_ = nullptr;
     UiElementSink* sink_ = nullptr;
+    ConversionCompartmentProbe* conversion_compartment_probe_ = nullptr;
     TfClientId client_id_ = TF_CLIENTID_NULL;
     DWORD sink_cookie_ = TF_INVALID_COOKIE;
     bool com_initialized_ = false;

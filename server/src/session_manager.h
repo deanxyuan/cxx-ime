@@ -100,6 +100,7 @@ public:
 
     std::pair<cxxime::IPCStatus, cxxime::ImeStatus> get_ime_status(uint32_t id);
     std::pair<cxxime::IPCStatus, cxxime::ImeStatus> toggle_chinese(uint32_t id);
+    ProcessKeyResult set_chinese_mode(uint32_t id, bool chinese_mode);
     std::pair<cxxime::IPCStatus, cxxime::ImeStatus> toggle_shape(uint32_t id);
     std::pair<cxxime::IPCStatus, cxxime::ImeStatus> toggle_punct(uint32_t id);
     std::pair<cxxime::IPCStatus, cxxime::ImeStatus> switch_input_mode(uint32_t id);

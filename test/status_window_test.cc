@@ -235,14 +235,11 @@ TEST(StatusWindow, PositionCallback) {
     window.destroy();
 }
 
-TEST(StatusWindow, ConfigActionCallback) {
+TEST(StatusWindow, MenuCommandCallback) {
     cxxime::StatusWindow window;
     ASSERT_TRUE(create_test_window(window));
 
-    std::string last_action;
-    window.set_config_action_callback([&](const std::string& action) {
-        last_action = action;
-    });
+    window.set_menu_command_callback([](cxxime::ImeMenuCommand) {});
 
     window.destroy();
 }

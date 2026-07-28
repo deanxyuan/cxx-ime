@@ -54,6 +54,7 @@ enum class IPCCommand : uint32_t {
     SAVE_USER_DICT = 21,
     PING = 22,
     RELOAD_DICTIONARIES = 23,
+    SET_CHINESE_MODE = 24,
 };
 
 enum class IPCStatus : uint32_t {
@@ -70,7 +71,7 @@ struct IPCRequest {
     uint32_t session_id = 0;
     uint32_t key_code = 0;
     uint32_t modifiers = 0;  // key modifiers; user dict commands carry UserDictKind here
-    uint32_t candidate_index = 0;
+    uint32_t candidate_index = 0;  // candidate selection; explicit mode commands carry target value
     bool is_key_up = false;
     char text[64] = {};       // user dict: text or query
     char code[32] = {};       // user dict: code

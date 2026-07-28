@@ -36,6 +36,7 @@ add_library(cxxime-tsf SHARED
     src/text_service_layout.cpp
     src/text_service_candidate.cpp
     src/text_service_composition.cpp
+    src/text_service_compartment.cpp
     src/text_service_activation.cpp
     src/text_service_trace.cpp
     src/key_event_sink.cpp

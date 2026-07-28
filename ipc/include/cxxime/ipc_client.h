@@ -3,8 +3,9 @@
 #ifndef CXXIME_IPC_CLIENT_H_
 #define CXXIME_IPC_CLIENT_H_
 
-#include <string>
 #include <cstdint>
+#include <string>
+
 #include <cxxime/ipc_protocol.h>
 
 namespace cxxime {
@@ -33,6 +34,7 @@ public:
     bool focus_out(uint32_t session_id);
 
     bool toggle_chinese(uint32_t session_id, IPCResponse& response);
+    bool set_chinese_mode(uint32_t session_id, bool chinese_mode, IPCResponse& response);
     bool toggle_shape(uint32_t session_id, IPCResponse& response);
     bool toggle_punct(uint32_t session_id, IPCResponse& response);
     bool switch_input_mode(uint32_t session_id, IPCResponse& response);

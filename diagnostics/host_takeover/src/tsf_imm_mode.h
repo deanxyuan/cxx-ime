@@ -40,11 +40,44 @@ void trace_stage_imm_open_status(HWND hwnd,
                                  uint64_t composition_id);
 
 void trace_stage_conversion_compartment(bool chinese_mode,
-                                         HRESULT get_value_hr,
-                                         DWORD before_mode,
-                                         DWORD requested_mode,
-                                         bool set_attempted,
-                                         HRESULT set_value_hr);
+                                        HRESULT get_value_hr,
+                                        DWORD before_mode,
+                                        DWORD requested_mode,
+                                        bool set_attempted,
+                                        HRESULT set_value_hr);
+
+void trace_stage_conversion_sink_lifecycle(const char* action,
+                                           HRESULT manager_hr,
+                                           HRESULT compartment_hr,
+                                           HRESULT source_hr,
+                                           HRESULT operation_hr,
+                                           DWORD cookie);
+
+struct StageConversionSinkChange {
+    HRESULT value_hr = E_UNEXPECTED;
+    uint16_t value_type = 0;
+    DWORD conversion_mode = 0;
+    bool self_write = false;
+    bool composing = false;
+    bool before_chinese = false;
+    bool requested_chinese = false;
+    bool set_attempted = false;
+    bool set_succeeded = false;
+    bool commit_requested = false;
+    uint32_t commit_text_length = 0;
+    int64_t ipc_us = 0;
+    bool after_chinese = false;
+    bool status_details = false;
+    bool before_full_shape = false;
+    bool after_full_shape = false;
+    bool before_chinese_punct = false;
+    bool after_chinese_punct = false;
+    uint32_t before_input_mode = 0;
+    uint32_t after_input_mode = 0;
+    const char* result = "";
+};
+
+void trace_stage_conversion_sink_change(const StageConversionSinkChange& change);
 
 void trace_stage_imm_conversion_status(HWND hwnd,
                                        HIMC himc,

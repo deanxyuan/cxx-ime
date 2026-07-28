@@ -260,6 +260,15 @@ bool IpcClient::toggle_chinese(uint32_t session_id, IPCResponse& response) {
     return send_request(req, response);
 }
 
+bool IpcClient::set_chinese_mode(uint32_t session_id, bool chinese_mode,
+                                  IPCResponse& response) {
+    IPCRequest req = {};
+    req.command = IPCCommand::SET_CHINESE_MODE;
+    req.session_id = session_id;
+    req.candidate_index = chinese_mode ? 1u : 0u;
+    return send_request(req, response);
+}
+
 bool IpcClient::toggle_shape(uint32_t session_id, IPCResponse& response) {
     IPCRequest req = {};
     req.command = IPCCommand::TOGGLE_SHAPE;
