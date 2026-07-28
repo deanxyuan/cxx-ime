@@ -318,7 +318,17 @@ private:
 
 } // namespace
 
-void start_stage_ui_element_observer(ITfThreadMgr* thread_mgr) {
+void start_stage_ui_element_observer(ITfThreadMgr* thread_mgr, DWORD activate_flags) {
+    if ((activate_flags & TF_TMF_UIELEMENTENABLEDONLY) == 0) {
+        cxxime::write_stage_trace("tsf", "host.ui_element_observer", {
+            {"action", "start"},
+            {"activate_flags", activate_flags},
+            {"thread_id", GetCurrentThreadId()},
+            {"result", "skipped_standard_host"},
+        });
+        return;
+    }
+
     if (g_ui_element_cookie != TF_INVALID_COOKIE) {
         cxxime::write_stage_trace("tsf", "host.ui_element_observer", {
             {"action", "start"},

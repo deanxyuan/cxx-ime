@@ -121,7 +121,7 @@ void TextService::_register_thread_sinks() {
         "advise", source_hr,
         thread_focus_attempted, thread_focus_hr, _dwThreadFocusCookie,
         thread_mgr_attempted, thread_mgr_hr, _dwThreadMgrEventCookie);
-    cxxime_tsf::start_stage_ui_element_observer(_threadMgr);
+    cxxime_tsf::start_stage_ui_element_observer(_threadMgr, _activateFlags);
 }
 
 void TextService::_unregister_thread_sinks() {
