@@ -1,9 +1,13 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
 #include "language_bar.h"
+
+#include <cwchar>
+
+#include <cxxime/logging.h>
+
 #include "globals.h"
 #include "resource_loader.h"
-#include <cxxime/logging.h>
 
 #ifndef CONNECT_E_CANNOTCONNECT
 #define CONNECT_E_CANNOTCONNECT 0x80040200
@@ -21,7 +25,7 @@ UINT mode_icon_id(bool chinese_mode, bool caps_lock) {
     return caps_lock ? IDI_ICON_C : (chinese_mode ? IDI_ICON_ZH : IDI_ICON_EN);
 }
 
-} // namespace
+}  // namespace
 
 CLangBarItemButton::CLangBarItemButton(TfClientId tid, REFGUID guid)
     : _clientId(tid), _guid(guid), _chinese_mode(true), _pSink(nullptr) {
@@ -134,26 +138,27 @@ STDMETHODIMP CLangBarItemButton::GetTooltipString(BSTR* pbstrToolTip) {
 
 // ITfLangBarItemButton
 STDMETHODIMP CLangBarItemButton::OnClick(TfLBIClick click, POINT pt, const RECT* prcArea) {
-    CXXIME_LOG(L"OnClick: click=%d, has_callback=%d", (int)click, _menu_callback ? 1 : 0);
+    CXXIME_LOG(L"OnClick: click=%d, has_callback=%d", static_cast<int>(click),
+               _toggle_chinese_cb ? 1 : 0);
     if (click == TF_LBI_CLK_LEFT) {
-        if (_menu_callback) _menu_callback(0);  // 0 = toggle chinese
+        if (_toggle_chinese_cb) {
+            _toggle_chinese_cb();
+        }
     } else if (click == TF_LBI_CLK_RIGHT) {
         HMENU hMenu = CreatePopupMenu();
         if (!hMenu) return E_FAIL;
 
-        UINT wubi_flags = MF_STRING | ((_input_mode == cxxime::InputMode::WUBI) ? MF_CHECKED : 0);
-        UINT pinyin_flags = MF_STRING | ((_input_mode == cxxime::InputMode::PINYIN) ? MF_CHECKED : 0);
-        UINT mixed_flags = MF_STRING | ((_input_mode == cxxime::InputMode::MIXED) ? MF_CHECKED : 0);
-
-        AppendMenuW(hMenu, wubi_flags, 1, L"纯五笔模式");
-        AppendMenuW(hMenu, pinyin_flags, 2, L"纯拼音模式");
-        AppendMenuW(hMenu, mixed_flags, 3, L"五笔拼音混输");
-        AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
-        AppendMenuW(hMenu, MF_STRING, 4, L"快捷造词");
-        AppendMenuW(hMenu, MF_STRING, 5, _status_visible ? L"隐藏状态栏" : L"显示状态栏");
-        AppendMenuW(hMenu, MF_STRING, 6, L"设置");
-        AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
-        AppendMenuW(hMenu, MF_STRING, 7, L"关于");
+        for (const cxxime::ImeMenuItem& item : cxxime::kImeMenuItems) {
+            if (item.starts_group) {
+                AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
+            }
+            UINT flags = MF_STRING;
+            if (cxxime::ime_menu_command_checked(item.command, _input_mode)) {
+                flags |= MF_CHECKED;
+            }
+            AppendMenuW(hMenu, flags, static_cast<UINT>(item.command),
+                        cxxime::ime_menu_item_label(item, _status_visible));
+        }
 
         // Get foreground window for TrackPopupMenuEx
         HWND hwnd = GetForegroundWindow();
@@ -172,60 +177,26 @@ STDMETHODIMP CLangBarItemButton::OnClick(TfLBIClick click, POINT pt, const RECT*
 STDMETHODIMP CLangBarItemButton::InitMenu(ITfMenu* pMenu) {
     if (!pMenu) return E_INVALIDARG;
 
-    // 纯五笔模式
-    pMenu->AddMenuItem(1, 0, nullptr, nullptr, L"纯五笔模式", 1, nullptr);
-
-    // 纯拼音模式
-    pMenu->AddMenuItem(2, 0, nullptr, nullptr, L"纯拼音模式", 2, nullptr);
-
-    // 五笔拼音混输
-    pMenu->AddMenuItem(3, 0, nullptr, nullptr, L"五笔拼音混输", 3, nullptr);
-
-    // 分隔线
-    pMenu->AddMenuItem(0, TF_LBMENUF_SEPARATOR, nullptr, nullptr, nullptr, 0, nullptr);
-
-    // 快捷造词
-    pMenu->AddMenuItem(4, 0, nullptr, nullptr, L"快捷造词", 4, nullptr);
-
-    // 隐藏状态栏/显示状态栏（动态文本）
-    const wchar_t* status_text = _status_visible ? L"隐藏状态栏" : L"显示状态栏";
-    pMenu->AddMenuItem(5, 0, nullptr, nullptr, status_text, 5, nullptr);
-
-    // 设置
-    pMenu->AddMenuItem(6, 0, nullptr, nullptr, L"设置", 6, nullptr);
-
-    // 分隔线
-    pMenu->AddMenuItem(0, TF_LBMENUF_SEPARATOR, nullptr, nullptr, nullptr, 0, nullptr);
-
-    // 关于
-    pMenu->AddMenuItem(7, 0, nullptr, nullptr, L"关于", 7, nullptr);
+    for (const cxxime::ImeMenuItem& item : cxxime::kImeMenuItems) {
+        if (item.starts_group) {
+            pMenu->AddMenuItem(0, TF_LBMENUF_SEPARATOR, nullptr, nullptr,
+                               nullptr, 0, nullptr);
+        }
+        DWORD flags = cxxime::ime_menu_command_checked(item.command, _input_mode)
+                          ? TF_LBMENUF_CHECKED
+                          : 0;
+        const wchar_t* label = cxxime::ime_menu_item_label(item, _status_visible);
+        pMenu->AddMenuItem(static_cast<UINT>(item.command), flags, nullptr, nullptr,
+                           label, static_cast<ULONG>(std::wcslen(label)), nullptr);
+    }
 
     return S_OK;
 }
 
 STDMETHODIMP CLangBarItemButton::OnMenuSelect(UINT wID) {
-    switch (wID) {
-    case 1:  // 纯五笔模式
-        if (_switch_input_mode_cb) _switch_input_mode_cb(1);
-        break;
-    case 2:  // 纯拼音模式
-        if (_switch_input_mode_cb) _switch_input_mode_cb(0);
-        break;
-    case 3:  // 五笔拼音混输
-        if (_switch_input_mode_cb) _switch_input_mode_cb(2);
-        break;
-    case 4:  // 快捷造词
-        if (_quick_phrase_cb) _quick_phrase_cb();
-        break;
-    case 5:  // 隐藏状态栏/显示状态栏
-        if (_show_status_cb) _show_status_cb();
-        break;
-    case 6:  // 设置
-        if (_open_settings_cb) _open_settings_cb();
-        break;
-    case 7:  // 关于
-        if (_about_cb) _about_cb();
-        break;
+    const cxxime::ImeMenuItem* selected = cxxime::find_ime_menu_item(wID);
+    if (selected && _menu_command_cb) {
+        _menu_command_cb(selected->command);
     }
     return S_OK;
 }
@@ -312,36 +283,12 @@ void CLangBarItemButton::update_from_status(const cxxime::ImeStatus& status) {
     }
 }
 
-void CLangBarItemButton::set_show_status_callback(ShowStatusBarCallback cb) {
-    _show_status_cb = std::move(cb);
+void CLangBarItemButton::set_toggle_chinese_callback(ToggleChineseCallback cb) {
+    _toggle_chinese_cb = std::move(cb);
 }
 
-void CLangBarItemButton::set_menu_callback(MenuCallback cb) {
-    _menu_callback = std::move(cb);
-}
-
-void CLangBarItemButton::set_toggle_input_mode_callback(ToggleInputModeCallback cb) {
-    _toggle_input_mode_cb = std::move(cb);
-}
-
-void CLangBarItemButton::set_open_settings_callback(OpenSettingsCallback cb) {
-    _open_settings_cb = std::move(cb);
-}
-
-void CLangBarItemButton::set_reload_config_callback(ReloadConfigCallback cb) {
-    _reload_config_cb = std::move(cb);
-}
-
-void CLangBarItemButton::set_about_callback(AboutCallback cb) {
-    _about_cb = std::move(cb);
-}
-
-void CLangBarItemButton::set_switch_input_mode_callback(SwitchInputModeCallback cb) {
-    _switch_input_mode_cb = std::move(cb);
-}
-
-void CLangBarItemButton::set_quick_phrase_callback(QuickPhraseCallback cb) {
-    _quick_phrase_cb = std::move(cb);
+void CLangBarItemButton::set_menu_command_callback(MenuCommandCallback cb) {
+    _menu_command_cb = std::move(cb);
 }
 
 void CLangBarItemButton::set_status_visible(bool visible) {

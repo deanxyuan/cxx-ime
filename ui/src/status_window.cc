@@ -231,8 +231,8 @@ void StatusWindow::set_position_callback(StatusPositionChangeCallback callback) 
     position_callback_ = std::move(callback);
 }
 
-void StatusWindow::set_config_action_callback(StatusConfigActionCallback callback) {
-    config_action_callback_ = std::move(callback);
+void StatusWindow::set_menu_command_callback(StatusMenuCommandCallback callback) {
+    menu_command_callback_ = std::move(callback);
 }
 
 void StatusWindow::set_logo_icon(HICON icon) {
@@ -985,33 +985,29 @@ void StatusWindow::InitTooltip() {
 // ============================================================
 void StatusWindow::ShowContextMenu(int x, int y) {
     HMENU hMenu = CreatePopupMenu();
-    AppendMenuW(hMenu, MF_STRING, 1, L"设置");
-    AppendMenuW(hMenu, MF_STRING, 2, L"重载配置");
-    AppendMenuW(hMenu, MF_STRING, 3, L"隐藏状态栏");
+    if (!hMenu) {
+        return;
+    }
 
-    // Input mode — directly in main menu
-    UINT pinyin_flags = MF_STRING | ((state_.input_mode == InputMode::PINYIN) ? MF_CHECKED : 0);
-    UINT wubi_flags = MF_STRING | ((state_.input_mode == InputMode::WUBI) ? MF_CHECKED : 0);
-    UINT mixed_flags = MF_STRING | ((state_.input_mode == InputMode::MIXED) ? MF_CHECKED : 0);
-    AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(hMenu, pinyin_flags, 10, L"纯拼音");
-    AppendMenuW(hMenu, wubi_flags, 11, L"纯五笔");
-    AppendMenuW(hMenu, mixed_flags, 12, L"五笔拼音混输");
-    AppendMenuW(hMenu, MF_STRING, 4, L"关于");
+    for (const ImeMenuItem& item : kImeMenuItems) {
+        if (item.starts_group) {
+            AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
+        }
+
+        UINT flags = MF_STRING;
+        if (ime_menu_command_checked(item.command, state_.input_mode)) {
+            flags |= MF_CHECKED;
+        }
+        AppendMenuW(hMenu, flags, static_cast<UINT>(item.command),
+                    ime_menu_item_label(item, true));
+    }
 
     UINT cmd = TrackPopupMenu(hMenu, TPM_RIGHTBUTTON | TPM_RETURNCMD, x, y, 0, hwnd_, nullptr);
     DestroyMenu(hMenu);
 
-    if (config_action_callback_) {
-        switch (cmd) {
-        case 1: config_action_callback_("open_settings"); break;
-        case 2: config_action_callback_("reload_config"); break;
-        case 3: config_action_callback_("hide"); break;
-        case 4: config_action_callback_("about"); break;
-        case 10: config_action_callback_("switch_to_pinyin"); break;
-        case 11: config_action_callback_("switch_to_wubi"); break;
-        case 12: config_action_callback_("switch_to_mixed"); break;
-        }
+    const ImeMenuItem* selected = find_ime_menu_item(cmd);
+    if (selected && menu_command_callback_) {
+        menu_command_callback_(selected->command);
     }
 }
 

@@ -37,13 +37,18 @@ namespace {
 EditorApp* g_app = nullptr;
 
 const wchar_t* kPanelNames[] = {
-    L"输入", L"候选窗口", L"布局参数", L"快捷键", L"词库", L"关于"
+    L"输入", L"候选窗口", L"布局参数", L"快捷键", L"词库管理", L"关于"
 };
 const int kPanelCount = 6;
 
 const int kFontPt = 14;
 const int kNavFontPt = kFontPt + 1;
 constexpr UINT WM_CXXIME_DIAGNOSTICS_COMPLETE = WM_APP + 101;
+
+UINT settings_navigate_message() {
+    static const UINT message = RegisterWindowMessageW(cxxime::kSettingsNavigateMessage);
+    return message;
+}
 
 int kListW, kPadX, kPadY, kCtrlH, kRowH, kPanelPadTop, kPanelPadLeft;
 int kLblW, kCtlX;
@@ -344,11 +349,13 @@ static LRESULT CALLBACK PanelForwardProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
 
 // ─── Run ───────────────────────────────────────────────────────────────
 
-int EditorApp::run(HINSTANCE hInst, float dpiScale, bool quickPhrase) {
+int EditorApp::run(HINSTANCE hInst,
+                   float dpiScale,
+                   cxxime::SettingsPanel initialPanel) {
     g_dpi = dpiScale;
     EditorApp app;
     g_app = &app;
-    app.quick_phrase_ = quickPhrase;
+    app.initial_panel_ = initialPanel;
 
     INITCOMMONCONTROLSEX icc = {sizeof(icc), ICC_STANDARD_CLASSES | ICC_LISTVIEW_CLASSES};
     InitCommonControlsEx(&icc);
@@ -362,7 +369,7 @@ int EditorApp::run(HINSTANCE hInst, float dpiScale, bool quickPhrase) {
     wc.lpszClassName = L"CxxIMESettingsClass5";
     RegisterClassExW(&wc);
 
-    app.hwnd_ = CreateWindowExW(0, L"CxxIMESettingsClass5", L"CxxIME 设置",
+    app.hwnd_ = CreateWindowExW(0, L"CxxIMESettingsClass5", cxxime::kSettingsWindowTitle,
         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
         CW_USEDEFAULT, CW_USEDEFAULT, S(700), S(450),
         nullptr, nullptr, hInst, &app);
@@ -744,6 +751,12 @@ void EditorApp::create_controls(HWND hwnd) {
 // ─── Panel switching ───────────────────────────────────────────────────
 
 void EditorApp::show_panel(int idx) {
+    if (idx < 0 || idx >= kPanelCount) {
+        return;
+    }
+    if (hList_ && SendMessageW(hList_, LB_GETCURSEL, 0, 0) != idx) {
+        SendMessageW(hList_, LB_SETCURSEL, idx, 0);
+    }
     for (int i = 0; i < kPanelCount; ++i)
         ShowWindow(hPanels_[i], (i == idx) ? SW_SHOW : SW_HIDE);
     panel_ = idx;
@@ -1050,7 +1063,7 @@ void EditorApp::load_config() {
     // Set input mode combo based on config
     combo_sel(hInputMode_, (config_.input_mode == 2) ? L"混输" : (config_.input_mode == 1) ? L"五笔" : L"拼音");
 
-    show_panel(quick_phrase_ ? 4 : 0);
+    show_panel(static_cast<int>(initial_panel_));
 }
 
 // ─── Readback ──────────────────────────────────────────────────────────
@@ -1567,6 +1580,12 @@ void EditorApp::update_cand_preview() {
 LRESULT CALLBACK EditorApp::wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     EditorApp* a = g_app;
     if (!a) return DefWindowProcW(hwnd, msg, wp, lp);
+
+    const UINT navigate_message = settings_navigate_message();
+    if (navigate_message != 0 && msg == navigate_message) {
+        a->show_panel(static_cast<int>(wp));
+        return 0;
+    }
 
     switch (msg) {
     case WM_CREATE:

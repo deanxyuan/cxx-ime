@@ -15,13 +15,16 @@
 #include <cxxime/ipc_protocol.h>
 #include <cxxime/layout.h>
 #include <cxxime/render_context.h>
+#include <cxxime/settings_route.h>
 
 namespace cxxime {
 namespace settings {
 
 class EditorApp {
 public:
-    static int run(HINSTANCE hInst, float dpiScale = 1.0f, bool quickPhrase = false);
+    static int run(HINSTANCE hInst,
+                   float dpiScale = 1.0f,
+                   cxxime::SettingsPanel initialPanel = cxxime::SettingsPanel::kInput);
 
     // Preview
     void update_preview();
@@ -60,7 +63,7 @@ private:
     HWND hwnd_ = nullptr;
     HWND hList_ = nullptr;
     int panel_ = 0;
-    bool quick_phrase_ = false;
+    cxxime::SettingsPanel initial_panel_ = cxxime::SettingsPanel::kInput;
 
     // Panel container windows
     HWND hPanels_[6] = {};

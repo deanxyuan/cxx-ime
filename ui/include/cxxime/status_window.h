@@ -4,10 +4,10 @@
 #define CXXIME_STATUS_WINDOW_H_
 
 #include <windows.h>
-#include <string>
 #include <functional>
 #include <vector>
 #include <cstdint>
+#include <cxxime/ime_menu.h>
 #include <cxxime/render_context.h>
 #include <cxxime/ipc_protocol.h>
 
@@ -35,7 +35,7 @@ struct ButtonState {
 
 using StatusButtonClickCallback = std::function<void(StatusButton)>;
 using StatusPositionChangeCallback = std::function<void(int x, int y)>;
-using StatusConfigActionCallback = std::function<void(const std::string& action)>;
+using StatusMenuCommandCallback = std::function<void(ImeMenuCommand)>;
 
 struct ButtonDrawInfo;
 
@@ -65,7 +65,7 @@ public:
     void get_position(int& x, int& y) const;
     void set_click_callback(StatusButtonClickCallback callback);
     void set_position_callback(StatusPositionChangeCallback callback);
-    void set_config_action_callback(StatusConfigActionCallback callback);
+    void set_menu_command_callback(StatusMenuCommandCallback callback);
 
     // Logo icon (loaded from DLL resources by StatusController)
     void set_logo_icon(HICON icon);
@@ -172,7 +172,7 @@ private:
 
     StatusButtonClickCallback click_callback_;
     StatusPositionChangeCallback position_callback_;
-    StatusConfigActionCallback config_action_callback_;
+    StatusMenuCommandCallback menu_command_callback_;
 };
 
 } // namespace cxxime

@@ -8,10 +8,8 @@
 #include <new>
 #include <string>
 
-#include <cxxime/data_path.h>
 #include <cxxime/logging.h>
 
-#include "about_dialog.h"
 #include "candidate_ui_element.h"
 #include "globals.h"
 #include "language_bar.h"
@@ -176,112 +174,29 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
         _statusController.sync_status(initial_status);
     }
 
-    // Set language bar callback for showing or hiding the status window.
-    if (_modeButton) {
-        _modeButton->set_show_status_callback([this]() {
-            _config.status_window.enable = !_config.status_window.enable;
-            _statusController.update_config(_config);
-            _config.save(cxxime::user_data_path("default.json"));
-            if (_config.status_window.enable) {
-                _show_status_window_if_allowed("show:language_bar_toggle");
-            } else {
-                _hide_status_window("hide:language_bar_toggle");
-            }
-            _modeButton->set_status_visible(_config.status_window.enable);
-        });
-    }
+    _statusController.set_menu_command_callback([this](cxxime::ImeMenuCommand command) {
+        _handle_ime_menu_command(command);
+    });
 
-    // Set menu callback for left-click IPC toggle
     if (_modeButton) {
-        _modeButton->set_menu_callback([this](int menu_id) {
-            CXXIME_LOG(L"menu_callback: menu_id=%d, sessionId=%u", menu_id, _sessionId);
+        // Left-click toggles Chinese/English mode.
+        _modeButton->set_toggle_chinese_callback([this]() {
+            CXXIME_LOG(L"toggle_chinese: sessionId=%u", _sessionId);
             cxxime::IPCResponse resp = {};
-            if (_ensure_ipc_session())
+            if (_ensure_ipc_session()) {
                 _client.toggle_chinese(_sessionId, resp);
-            CXXIME_LOG(L"menu_callback: toggle_chinese result status=%d, chinese=%d",
-                        (int)resp.status, resp.ime_status.chinese_mode);
+            }
+            CXXIME_LOG(L"toggle_chinese: result status=%d, chinese=%d",
+                       static_cast<int>(resp.status), resp.ime_status.chinese_mode);
             if (resp.status == cxxime::IPCStatus::OK) {
                 _sync_ime_status(resp.ime_status);
             }
         });
 
-        // Set toggle input mode callback.
-        _modeButton->set_toggle_input_mode_callback([this]() {
-            CXXIME_LOG(L"toggle_input_mode_callback: sessionId=%u", _sessionId);
-            cxxime::IPCResponse resp = {};
-            if (_ensure_ipc_session())
-                _client.switch_input_mode(_sessionId, resp);
-            if (resp.status == cxxime::IPCStatus::OK) {
-                _sync_ime_status(resp.ime_status);
-            }
+        _modeButton->set_menu_command_callback([this](cxxime::ImeMenuCommand command) {
+            _handle_ime_menu_command(command);
         });
 
-        // Set open settings callback
-        _modeButton->set_open_settings_callback([]() {
-            HWND existing = FindWindowW(nullptr, L"CxxIME 设置");
-            if (existing) {
-                SetForegroundWindow(existing);
-                return;
-            }
-            wchar_t dll_path[MAX_PATH] = {};
-            GetModuleFileNameW(g_hInst, dll_path, MAX_PATH);
-            wchar_t* last_slash = wcsrchr(dll_path, L'\\');
-            if (last_slash) *(last_slash + 1) = L'\0';
-            std::wstring settings_path = std::wstring(dll_path) + L"cxxime-settings.exe";
-            STARTUPINFOW si = {};
-            si.cb = sizeof(si);
-            PROCESS_INFORMATION pi = {};
-            CreateProcessW(settings_path.c_str(), nullptr, nullptr, nullptr,
-                            FALSE, 0, nullptr, nullptr, &si, &pi);
-            if (pi.hProcess) {
-                CloseHandle(pi.hProcess);
-                CloseHandle(pi.hThread);
-            }
-        });
-
-        // Set about callback
-        _modeButton->set_about_callback([]() {
-            show_about_dialog();
-        });
-
-        // Set explicit input mode callback.
-        _modeButton->set_switch_input_mode_callback([this](int mode) {
-            CXXIME_LOG(L"switch_input_mode_callback: mode=%d, sessionId=%u", mode, _sessionId);
-            cxxime::IPCResponse resp = {};
-            if (_ensure_ipc_session())
-                _client.switch_input_mode(_sessionId, static_cast<cxxime::InputMode>(mode), resp);
-            if (resp.status == cxxime::IPCStatus::OK) {
-                _sync_ime_status(resp.ime_status);
-            }
-        });
-
-        // Set quick phrase callback.
-        _modeButton->set_quick_phrase_callback([this]() {
-            CXXIME_LOG(L"quick_phrase_callback: sessionId=%u", _sessionId);
-            HWND existing = FindWindowW(nullptr, L"CxxIME 设置");
-            if (existing) {
-                // TODO: send message to switch to dictionary panel
-                SetForegroundWindow(existing);
-                return;
-            }
-            wchar_t dll_path[MAX_PATH] = {};
-            GetModuleFileNameW(g_hInst, dll_path, MAX_PATH);
-            wchar_t* last_slash = wcsrchr(dll_path, L'\\');
-            if (last_slash) *(last_slash + 1) = L'\0';
-            std::wstring settings_path = std::wstring(dll_path) + L"cxxime-settings.exe";
-            std::wstring cmd_line = L"\"" + settings_path + L"\" --quick-phrase";
-            STARTUPINFOW si = {};
-            si.cb = sizeof(si);
-            PROCESS_INFORMATION pi = {};
-            CreateProcessW(nullptr, &cmd_line[0], nullptr, nullptr,
-                            FALSE, 0, nullptr, nullptr, &si, &pi);
-            if (pi.hProcess) {
-                CloseHandle(pi.hProcess);
-                CloseHandle(pi.hThread);
-            }
-        });
-
-        // Set status visible state
         _modeButton->set_status_visible(_config.status_window.enable);
     }
 
