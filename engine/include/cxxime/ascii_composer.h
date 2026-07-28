@@ -10,6 +10,7 @@
 namespace cxxime {
 
 class Context;
+struct KeyEvent;
 struct Config;
 
 enum class AsciiModeSwitchStyle {
@@ -31,6 +32,8 @@ public:
     // Does NOT consume the event — always returns false.
     // caps_lock is accepted for existing call sites; mode switching is based on key events.
     bool process_key(uint32_t key_code, bool is_key_up, Context& ctx, bool caps_lock = false);
+    bool process_temporary_ascii_composition(const KeyEvent& event, Context& ctx,
+                                             bool chinese_mode);
 
     bool is_ascii_mode() const { return ascii_mode_; }
     void set_ascii_mode(bool mode) {

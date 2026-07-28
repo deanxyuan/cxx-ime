@@ -6,6 +6,7 @@
 #include <string>
 #include <unordered_map>
 #include <utility>
+
 #include <cxxime/ascii_composer.h>
 #include <cxxime/candidate.h>
 #include <cxxime/output_options.h>
@@ -18,6 +19,8 @@ public:
     CandidatePage candidates;
     std::string committed_text;
     int page_index = 0;
+    // Shift+letter temporary English composition inside Chinese mode.
+    bool temporary_ascii_composition = false;
 
     // CapsLock mode (set by Engine before calling processor)
     AsciiModeSwitchStyle caps_lock_style{};

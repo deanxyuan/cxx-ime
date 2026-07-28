@@ -48,6 +48,7 @@ add_cxxime_test(output_composer_test)
 add_cxxime_test(engine_source_test)
 add_cxxime_test(wubi_engine_test)
 add_cxxime_test(processor_pagination_test)
+add_cxxime_test(temporary_ascii_test)
 
 add_executable(session_manager_status_test
     session_manager_status_test.cc

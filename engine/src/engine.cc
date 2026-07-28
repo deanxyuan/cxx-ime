@@ -153,6 +153,14 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
 
     CXXIME_LOG(L"Engine::process_key: after ascii_composer, committed_text='%S'", context_.committed_text.c_str());
 
+    if (ascii_composer_.process_temporary_ascii_composition(
+            event, context_, opts.chinese_mode)) {
+        record_total_us(trace_, total_start, trace_enabled_);
+        return context_.committed_text.empty()
+            ? ProcessResult::ACCEPTED
+            : ProcessResult::COMMITTED;
+    }
+
     // Phase 2.3: keyboard shortcuts for toggles
     if (!event.is_key_up) {
         // Shift+Space toggles full/half shape.
@@ -608,11 +616,7 @@ bool Engine::select_candidate(int index) {
 
 std::string Engine::get_commit_text() {
     std::string text = context_.committed_text;
-    context_.pinyin_buffer.clear();
-    context_.committed_text.clear();
-    context_.candidates = {};
-    context_.page_index = 0;
-    context_.set_commit_source(CommitSource::kRawCode);
+    context_.reset();
     return text;
 }
 
