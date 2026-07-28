@@ -28,6 +28,7 @@
 
 #include "../server/src/session_manager.h"
 #include "util/testutil.h"
+#include "util/topn_test_data.h"
 
 static char temp_path[MAX_PATH] = {};
 static std::string test_user_data_dir;
@@ -191,7 +192,7 @@ static void create_test_dictionary_bundle(const std::string& dict_path,
         topn.push_back({key, {candidate}});
     }
     ASSERT_TRUE(cxxime::SpellingsIndex::create_test_trie(spellings_path, spellings));
-    ASSERT_TRUE(cxxime::ShortCodeCache::create_test_cache(topn_path, topn));
+    ASSERT_TRUE(cxxime::test::create_test_topn(topn_path, topn));
 
     write_manifest_for_files(dict_path, {
         {"pinyin_dict", dict_path},

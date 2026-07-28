@@ -1,14 +1,17 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
-#include "util/testutil.h"
 #include <cstdio>
 #include <cstring>
 #include <string>
 #include <vector>
+
 #include <windows.h>
+
 #include <cxxime/dict.h>
 #include <cxxime/query_budget.h>
 #include <cxxime/query_trace.h>
+
+#include "util/testutil.h"
 
 static char temp_path[MAX_PATH] = {};
 
@@ -683,7 +686,7 @@ TEST(Dict, user_dict_mixed_index) {
     cxxime::QueryBudget budget;
     cxxime::QueryTrace trace = {};
     cxxime::UserLookupStats stats;
-    auto r1 = dict.lookup_user_short("srf", 10, budget, &trace, &stats);
+    auto r1 = dict.lookup_user_indexed("srf", 10, budget, &trace, &stats);
     bool found_abbr = false;
     for (auto& c : r1) {
         if (c.text == "输入法") found_abbr = true;
@@ -692,7 +695,7 @@ TEST(Dict, user_dict_mixed_index) {
 
     // Query via mixed key "shurf" (first syllable expanded)
     cxxime::UserLookupStats stats2;
-    auto r2 = dict.lookup_user_short("shurf", 10, budget, &trace, &stats2);
+    auto r2 = dict.lookup_user_indexed("shurf", 10, budget, &trace, &stats2);
     bool found_mixed = false;
     for (auto& c : r2) {
         if (c.text == "输入法") found_mixed = true;
@@ -701,12 +704,21 @@ TEST(Dict, user_dict_mixed_index) {
 
     // Query via enhanced initial "shrf" (声母增强简拼)
     cxxime::UserLookupStats stats3;
-    auto r3 = dict.lookup_user_short("shrf", 10, budget, &trace, &stats3);
+    auto r3 = dict.lookup_user_indexed("shrf", 10, budget, &trace, &stats3);
     bool found_enhanced = false;
     for (auto& c : r3) {
         if (c.text == "输入法") found_enhanced = true;
     }
     ASSERT_TRUE(found_enhanced);
+
+    dict.update_frequency("输入法测试", "shurufaceshi", "shu:ru:fa:ce:shi");
+    cxxime::UserLookupStats stats4;
+    auto r4 = dict.lookup_user_indexed("shurufac", 10, budget, &trace, &stats4);
+    bool found_long_prefix = false;
+    for (auto& c : r4) {
+        if (c.text == "输入法测试") found_long_prefix = true;
+    }
+    ASSERT_TRUE(found_long_prefix);
 
     dict.close();
     DeleteFileA(path.c_str());
@@ -738,7 +750,7 @@ TEST(Dict, user_dict_high_freq_in_scan_budget) {
     budget.max_user_scan = 10;
     cxxime::QueryTrace trace = {};
     cxxime::UserLookupStats stats;
-    auto results = dict.lookup_user_short("abc", 10, budget, &trace, &stats);
+    auto results = dict.lookup_user_indexed("abc", 10, budget, &trace, &stats);
 
     bool found_popular = false;
     for (auto& c : results) {

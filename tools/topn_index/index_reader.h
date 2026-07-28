@@ -17,6 +17,7 @@ namespace cxxime::topn {
 struct IndexMatch {
     uint32_t posting_offset = 0;
     uint16_t posting_count = 0;
+    uint16_t flags = 0;
 };
 
 class IndexReader {

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Test build_short_cache.py zip input handling."""
+"""Test Top-N rule generation and DAT-16 finalization."""
 
+import argparse
 import os
 import sys
 import sqlite3
@@ -10,6 +11,10 @@ import struct
 
 SCRIPTS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts")
 sys.path.insert(0, SCRIPTS_DIR)
+
+LONG_SYLLABLES = "a:bo:ci:du:e:fa:gu:hu:i:ji:ku:lu:mu:nu:o:pu:qu"
+LONG_EXACT = LONG_SYLLABLES.replace(":", "")
+LONG_ABBR = "".join(syllable[0] for syllable in LONG_SYLLABLES.split(":"))
 
 
 def create_test_db(db_path):
@@ -32,6 +37,7 @@ def create_test_db(db_path):
         ("的", "de", 99999, "de"),                        # d
         ("中华人民共和国", "zhonghuarenmingongheguo", 9500,
          "zhong:hua:ren:min:gong:he:guo"),               # zhrmghg
+        ("long-complete", LONG_EXACT, 500, LONG_SYLLABLES),
     ]
     conn.executemany("INSERT INTO dict VALUES (?, ?, ?, ?)", entries)
     conn.commit()
@@ -72,6 +78,24 @@ def read_keys(output_path):
     return found_keys
 
 
+def read_key_flags(output_path):
+    """Read the v1 key flags by key."""
+    with open(output_path, "rb") as f:
+        data = f.read()
+
+    header = struct.unpack_from("<8sIIIIIII", data)
+    _, _, key_count, _, _, keys_offset, _, strings_offset = header
+    key_size = struct.calcsize("<IIIHH")
+    flags_by_key = {}
+    for i in range(key_count):
+        key_pos = keys_offset + i * key_size
+        _, _, key_offset, key_len, flags = struct.unpack_from("<IIIHH", data, key_pos)
+        key = data[strings_offset + key_offset:
+                   strings_offset + key_offset + key_len].decode("ascii")
+        flags_by_key[key] = flags
+    return flags_by_key
+
+
 def read_candidates(output_path, wanted_key):
     """Read candidates for one key as (text, frequency, score) tuples."""
     with open(output_path, "rb") as f:
@@ -105,6 +129,9 @@ def read_candidates(output_path, wanted_key):
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--topn-builder", required=True)
+    args = parser.parse_args()
     ok = True
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -150,7 +177,7 @@ def main():
 
         # Test 4: Mixed code keys present
         if ok:
-            print("Test 4: mixed code keys (shrf, zhg, zhrmghg) present ...", end=" ")
+            print("Test 4: mixed and long complete keys are present ...", end=" ")
             missing = []
             if "shrf" not in found_db:
                 missing.append("shrf")
@@ -158,6 +185,10 @@ def main():
                 missing.append("zhg")
             if "zhrmghg" not in found_db:
                 missing.append("zhrmghg")
+            if LONG_EXACT not in found_db:
+                missing.append(LONG_EXACT)
+            if LONG_ABBR not in found_db:
+                missing.append(LONG_ABBR)
             if missing:
                 print(f"FAIL (missing: {missing})")
                 ok = False
@@ -181,6 +212,52 @@ def main():
                 )
             if not valid:
                 print(f"FAIL (ni={ni_texts}, nih={nih_texts})")
+                ok = False
+            else:
+                print("OK")
+
+        if ok:
+            print("Test 6: long prefixes beyond the materialized range are absent ...", end=" ")
+            long_prefix = LONG_EXACT[:7]
+            if long_prefix in found_db:
+                print(f"FAIL (unexpected prefix: {long_prefix})")
+                ok = False
+            else:
+                print("OK")
+
+        if ok:
+            print("Test 7: prefix-complete metadata matches materialization ...", end=" ")
+            flags_by_key = read_key_flags(out_db)
+            prefix_complete = 0x10
+            valid = (
+                (flags_by_key["ni"] & prefix_complete) != 0 and
+                (flags_by_key[LONG_EXACT] & prefix_complete) == 0
+            )
+            if not valid:
+                print(
+                    f"FAIL (ni={flags_by_key['ni']:#x}, "
+                    f"long={flags_by_key[LONG_EXACT]:#x})"
+                )
+                ok = False
+            else:
+                print("OK")
+
+        if ok:
+            print("Test 8: v1 intermediate converts to runtime DAT-16 ...", end=" ")
+            runtime_topn = os.path.join(tmpdir, "pinyin.topn.bin")
+            with open(out_db, "rb") as source, open(runtime_topn, "wb") as destination:
+                destination.write(source.read())
+            from prepare_dict import finalize_topn_index
+            finalize_topn_index(tmpdir, os.path.abspath(args.topn_builder))
+            with open(runtime_topn, "rb") as f:
+                header = f.read(20)
+            magic = header[:8]
+            version, header_size, layout = struct.unpack_from("<III", header, 8)
+            if magic != b"CXTOPN\x02\x00" or (version, header_size, layout) != (2, 80, 2):
+                print(
+                    "FAIL "
+                    f"(magic={magic!r}, version={version}, header={header_size}, layout={layout})"
+                )
                 ok = False
             else:
                 print("OK")

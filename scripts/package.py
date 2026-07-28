@@ -317,6 +317,13 @@ def clean_dist(keep_data: bool = False) -> None:
 
 def copy_binary(build_dir: str, config: str, subdir: str, name: str) -> None:
     """Copy one built binary to dist."""
+    src = built_binary_path(build_dir, config, subdir, name)
+    shutil.copy2(src, os.path.join(DIST_DIR, name))
+    print(f"  {name}")
+
+
+def built_binary_path(build_dir: str, config: str, subdir: str, name: str) -> str:
+    """Resolve a binary from a single- or multi-config CMake build."""
     target_dir = os.path.join(build_dir, subdir)
     src_dir = os.path.join(target_dir, config)
     if not os.path.isdir(src_dir):
@@ -325,8 +332,7 @@ def copy_binary(build_dir: str, config: str, subdir: str, name: str) -> None:
     if not os.path.isfile(src):
         print(f"  ERROR: binary not found: {src}", file=sys.stderr)
         sys.exit(1)
-    shutil.copy2(src, os.path.join(DIST_DIR, name))
-    print(f"  {name}")
+    return src
 
 
 def copy_binaries(
@@ -396,7 +402,12 @@ def prepare_dictionaries(workers: int) -> None:
     data_dir = DATA
     output_dir = os.path.join(DIST_DIR, "data")
 
-    generated = do_prepare(data_dir, output_dir, workers=workers)
+    generated = do_prepare(
+        data_dir,
+        output_dir,
+        workers=workers,
+        defer_topn_conversion=True,
+    )
     if not generated:
         print("  ERROR: No dictionary files generated.", file=sys.stderr)
         print("  Need .dict.db or .dict.db.zip in data/.", file=sys.stderr)
@@ -410,6 +421,20 @@ def write_dictionary_manifest_for_existing_data() -> None:
     data_dir = os.path.join(DIST_DIR, "data")
     manifest = write_dictionary_manifest(data_dir)
     print(f"  {os.path.basename(manifest)}")
+
+
+def finalize_topn_data(build_dir: str, config: str) -> None:
+    """Produce the only runtime Top-N format and refresh its manifest entry."""
+    from prepare_dict import finalize_topn_index
+
+    builder = built_binary_path(
+        build_dir,
+        config,
+        "tools/topn_index",
+        "topn_builder.exe",
+    )
+    finalize_topn_index(os.path.join(DIST_DIR, "data"), builder)
+    write_dictionary_manifest_for_existing_data()
 
 
 def verify_data_files() -> None:
@@ -517,7 +542,7 @@ def check_hot_path_logs() -> None:
                 "Dict::lookup_by_ids(",
                 "Dict::lookup_user_exact(",
                 "Dict::lookup_user_prefix(",
-                "Dict::lookup_user_short(",
+                "Dict::lookup_user_indexed(",
                 "Dict::has_prefix(",
             ],
         ),
@@ -889,11 +914,14 @@ def main():
 
         if dict_future is not None:
             print("  Waiting for dictionaries...")
-            timings.append(("dictionary preparation", wait_task("dictionary preparation", dict_future)))
-        else:
-            stage_start = time.perf_counter()
-            write_dictionary_manifest_for_existing_data()
-            timings.append(("dictionary manifest", time.perf_counter() - stage_start))
+            timings.append((
+                "dictionary preparation",
+                wait_task("dictionary preparation", dict_future),
+            ))
+
+        stage_start = time.perf_counter()
+        finalize_topn_data(build_dir, config)
+        timings.append(("Top-N finalization", time.perf_counter() - stage_start))
 
     # 4. Verification
     step("[6/9] Verifying data files...")

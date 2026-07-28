@@ -19,6 +19,7 @@ public:
 
     size_t key_count() const override;
     std::string_view key(size_t key_index) const override;
+    uint16_t key_flags(size_t key_index) const override;
     size_t candidate_count(size_t key_index) const override;
     SourceCandidate candidate(size_t key_index, size_t candidate_index) const override;
 

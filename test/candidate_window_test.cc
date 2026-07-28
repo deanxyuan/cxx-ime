@@ -1,6 +1,7 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
 #include "util/testutil.h"
+#include <cxxime/candidate_window.h>
 #include <cxxime/render_context.h>
 #include <cxxime/config.h>
 #include <cxxime/data_path.h>
@@ -94,6 +95,38 @@ TEST(HitTest, next_button) {
     std::vector<cxxime::CandidateRect> rects;
     RECT next = {150,50,170,72};
     ASSERT_EQ(hit_test({160,60}, rects, {}, next), -3);
+}
+
+TEST(CandidateWindow, recreate_resets_native_window_size_cache) {
+    cxxime::Config config;
+    config.render_backend = "gdi";
+
+    cxxime::CandidatePage page;
+    cxxime::Candidate candidate;
+    candidate.text = "candidate";
+    page.candidates.push_back(candidate);
+
+    cxxime::CandidateWindow window;
+    ASSERT_TRUE(window.create(nullptr, config));
+    window.update(page);
+
+    HWND first_hwnd = FindWindowW(L"CxxIMECandidateWindow", nullptr);
+    ASSERT_TRUE(first_hwnd != nullptr);
+    RECT first_rect = {};
+    ASSERT_TRUE(GetWindowRect(first_hwnd, &first_rect) != FALSE);
+    window.destroy();
+
+    ASSERT_TRUE(window.create(nullptr, config));
+    window.update(page);
+
+    HWND second_hwnd = FindWindowW(L"CxxIMECandidateWindow", nullptr);
+    ASSERT_TRUE(second_hwnd != nullptr);
+    RECT second_rect = {};
+    ASSERT_TRUE(GetWindowRect(second_hwnd, &second_rect) != FALSE);
+
+    ASSERT_EQ(second_rect.right - second_rect.left, first_rect.right - first_rect.left);
+    ASSERT_EQ(second_rect.bottom - second_rect.top, first_rect.bottom - first_rect.top);
+    window.destroy();
 }
 
 RUN_ALL_TESTS()

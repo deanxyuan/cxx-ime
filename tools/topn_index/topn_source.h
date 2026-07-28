@@ -9,6 +9,8 @@
 
 namespace cxxime::topn {
 
+constexpr uint16_t kSourcePrefixComplete = 0x0001;
+
 struct SourceCandidate {
     std::string_view text;
     int32_t frequency = 0;
@@ -22,6 +24,7 @@ public:
     // Returned string views remain valid for the lifetime of the Source.
     virtual size_t key_count() const = 0;
     virtual std::string_view key(size_t key_index) const = 0;
+    virtual uint16_t key_flags(size_t key_index) const = 0;
     virtual size_t candidate_count(size_t key_index) const = 0;
     virtual SourceCandidate candidate(size_t key_index, size_t candidate_index) const = 0;
 };

@@ -11,7 +11,8 @@ namespace cxxime {
 Syllabifier::Syllabifier(const SpellingsIndex& spellings)
     : spellings_(spellings) {}
 
-SyllableGraph Syllabifier::build_graph(const std::string& input) const {
+SyllableGraph Syllabifier::build_graph(const std::string& input,
+                                       bool enable_terminal_completion) const {
     SyllableGraph graph;
     if (input.empty() || !spellings_.has_spellings())
         return graph;
@@ -70,6 +71,36 @@ SyllableGraph Syllabifier::build_graph(const std::string& input) const {
             int worst_type = std::max(vertex_type, m.type);
             if (end_pos < visited.size() && !visited[end_pos]) {
                 queue.push({end_pos, worst_type});
+            }
+        }
+    }
+
+    if (enable_terminal_completion) {
+        static constexpr float kCompletionPenalty = -0.69314718f;
+        const size_t end_position = input.size();
+        for (size_t position = 0; position < end_position; ++position) {
+            if (!visited[position]) {
+                continue;
+            }
+            const std::string_view remaining(input.data() + position,
+                                             end_position - position);
+            auto completions = spellings_.completion_search(remaining);
+            auto& edges = graph[position][end_position];
+            for (const auto& completion : completions) {
+                if (completion.type >= kAbbreviation) {
+                    continue;
+                }
+                const bool duplicate = std::any_of(
+                    edges.begin(), edges.end(), [&completion](const SyllableEdge& edge) {
+                        return edge.syllable == completion.syllable;
+                    });
+                if (!duplicate) {
+                    edges.push_back({completion.syllable, kCompletionSpelling,
+                                     completion.credibility + kCompletionPenalty});
+                }
+            }
+            if (edges.empty()) {
+                graph[position].erase(end_position);
             }
         }
     }
@@ -152,12 +183,13 @@ bool Syllabifier::enumerate_paths(
     return false;
 }
 
-SegmentResult Syllabifier::segment(const std::string& input, const QueryDeadline* deadline) const {
+SegmentResult Syllabifier::segment(const std::string& input, const QueryDeadline* deadline,
+                                   bool enable_terminal_completion) const {
     SegmentResult result;
     if (input.empty())
         return result;
 
-    auto graph = build_graph(input);
+    auto graph = build_graph(input, enable_terminal_completion);
     if (graph.empty())
         return result;
 

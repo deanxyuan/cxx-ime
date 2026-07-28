@@ -16,15 +16,18 @@
 
 namespace {
 
+constexpr size_t kMaterializedTestPrefixLength = 6;
+
 class TestSource final : public cxxime::topn::Source {
 public:
     TestSource()
-        : keys_{"1", "a", "ni", "nihao", "zzzzzzzz"},
+        : keys_{"1", "a", "ni", "nihao", "zzzzzzzz", "zzzzzzzzmore"},
           candidates_{{{{"one", 10, 100}}},
                       {{{"alpha", 20, 90}}},
                       {{{"shared", 30, 80}, {"second", 25, 70}}},
                       {{{"shared", 30, 60}, {"hello", 40, 50}}},
-                      {{{"long", 50, 40}}}} {}
+                      {{{"long-prefix", 50, 40}}},
+                      {{{"long-leaf", 60, 30}}}} {}
 
     size_t key_count() const override {
         return keys_.size();
@@ -32,6 +35,12 @@ public:
 
     std::string_view key(size_t key_index) const override {
         return keys_[key_index];
+    }
+
+    uint16_t key_flags(size_t key_index) const override {
+        return keys_[key_index].size() <= kMaterializedTestPrefixLength
+            ? cxxime::topn::kSourcePrefixComplete
+            : 0;
     }
 
     size_t candidate_count(size_t key_index) const override {
@@ -84,8 +93,18 @@ bool verify_layout(const TestSource& source, cxxime::TopnIndexLayout layout,
     }
     for (size_t key_index = 0; key_index < source.key_count(); ++key_index) {
         cxxime::topn::IndexMatch match;
+        const std::string_view key = source.key(key_index);
+        const bool has_descendant = key_index + 1 < source.key_count() &&
+            source.key(key_index + 1).size() > key.size() &&
+            source.key(key_index + 1).substr(0, key.size()) == key;
+        const bool expected_complete =
+            (source.key_flags(key_index) & cxxime::topn::kSourcePrefixComplete) != 0 ||
+            !has_descendant;
         if (!reader.find(source.key(key_index), &match) ||
-            match.posting_count != source.candidate_count(key_index)) {
+            match.posting_count != source.candidate_count(key_index) ||
+            (layout != cxxime::TopnIndexLayout::kFlat16 &&
+             ((match.flags & cxxime::kShortPostingPrefixComplete) != 0) !=
+                 expected_complete)) {
             std::cerr << "lookup failed for key " << source.key(key_index) << "\n";
             return false;
         }
@@ -169,10 +188,14 @@ bool reject_corruptions(const std::array<std::string, 3>& paths) {
 
     const std::streamoff posting_offset = dat16_header.posting_lists_offset +
         offsetof(cxxime::TopnPostingList, posting_offset);
+    const std::streamoff flags_offset = dat16_header.posting_lists_offset +
+        offsetof(cxxime::TopnPostingList, flags);
     const std::streamoff candidate_offset = dat8_header.postings_offset +
         offsetof(cxxime::TopnPooledPosting, candidate_index);
     return reject_mutation(paths[1], cxxime::TopnIndexLayout::kDat16, posting_offset,
                            dat16_header.posting_count + 1, "posting range") &&
+           reject_mutation(paths[1], cxxime::TopnIndexLayout::kDat16, flags_offset,
+                           uint16_t{0x8000}, "posting flags") &&
            reject_mutation(paths[2], cxxime::TopnIndexLayout::kDat8, candidate_offset,
                            dat8_header.candidate_count, "candidate reference");
 }

@@ -3,13 +3,14 @@
 #ifndef CXXIME_DICT_H_
 #define CXXIME_DICT_H_
 
+#include <atomic>
 #include <cstdint>
+#include <shared_mutex>
 #include <string>
-#include <vector>
 #include <tuple>
 #include <unordered_map>
-#include <shared_mutex>
-#include <atomic>
+#include <vector>
+
 #include <cxxime/candidate.h>
 #include <cxxime/short_code_cache.h>
 
@@ -98,7 +99,7 @@ public:
         const QueryBudget& budget, QueryTrace* trace, UserLookupStats* stats) const;
     std::vector<Candidate> lookup_user_prefix(const std::string& prefix, int limit,
         const QueryBudget& budget, QueryTrace* trace, UserLookupStats* stats) const;
-    std::vector<Candidate> lookup_user_short(const std::string& key, int limit,
+    std::vector<Candidate> lookup_user_indexed(const std::string& key, int limit,
         const QueryBudget& budget, QueryTrace* trace, UserLookupStats* stats) const;
 
     // Syllable ID mapping (for pinyin integer-ID lookup path)

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 # Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
-# Build pinyin.topn.bin — short input fast path cache for Phase 4.
+# Build the CXTOPN v1 intermediate consumed by topn_builder.
 #
-# Usage: python build_short_cache.py --input data/pinyin.dict.db --output data/pinyin.topn.bin
+# This script owns key generation and ranking. Runtime packages must convert its
+# output to DAT-16 with topn_builder before writing dictionary_manifest.json.
 
 import argparse
 import os
@@ -14,15 +15,15 @@ from collections import defaultdict
 
 # Binary format constants (must match short_code_cache_format.h)
 TOPN_MAGIC = b"CXTOPN\x01\x00"
-HEADER_FMT = "<8sIIIIIII"  # 32 bytes
+HEADER_FMT = "<8sIIIIIII"  # 36 bytes
 HEADER_SIZE = struct.calcsize(HEADER_FMT)
 KEY_FMT = "<IIIHH"         # 16 bytes (candidate_offset, candidate_count, key_offset, key_len, flags)
 KEY_SIZE = struct.calcsize(KEY_FMT)
 CAND_FMT = "<IIIIii"       # 24 bytes (text_off, text_len, comment_off, comment_len, freq, score)
 CAND_SIZE = struct.calcsize(CAND_FMT)
 
-MAX_SHORT_KEY_LEN = 6
-MAX_CODE_LEN = 16  # mixed codes can be longer than short keys
+MAX_MATERIALIZED_PREFIX_LENGTH = 6
+MAX_MIXED_KEY_LENGTH = 16
 MAX_MIXED_KEYS_PER_ENTRY = 8
 MAX_CANDIDATES_PER_KEY = 64
 
@@ -44,6 +45,7 @@ SHORT_KEY_EXACT = 0x01
 SHORT_KEY_ABBR = 0x02
 SHORT_KEY_MIXED = 0x04
 SHORT_KEY_PREFIX = 0x08
+SHORT_KEY_PREFIX_COMPLETE = 0x10
 
 
 def resolve_input(path):
@@ -118,7 +120,7 @@ def generate_keys(syllable_ids, text, frequency):
     if n > 1:
         mixed_list = _generate_mixed(syllables)
         for m in mixed_list[:MAX_MIXED_KEYS_PER_ENTRY]:
-            if m != exact:
+            if m != exact and len(m) <= MAX_MIXED_KEY_LENGTH:
                 complete_keys.append((m, MIXED_COMPLETE_BASE, SHORT_KEY_MIXED))
 
     for key, base, flags in complete_keys:
@@ -127,7 +129,8 @@ def generate_keys(syllable_ids, text, frequency):
     # Prefixes retain their source match type. The strongest path wins when the
     # same key can be generated as both an exact prefix and a mixed complete key.
     for key, _, flags in complete_keys:
-        for plen in range(1, min(len(key), MAX_SHORT_KEY_LEN) + 1):
+        max_prefix_length = min(len(key), MAX_MATERIALIZED_PREFIX_LENGTH)
+        for plen in range(1, max_prefix_length + 1):
             prefix = key[:plen]
             if prefix != key:
                 offer(prefix, prefix_base(flags), flags | SHORT_KEY_PREFIX,
@@ -210,10 +213,6 @@ def build_cache(db_path):
 
         keys = generate_keys(syllable_ids, text, frequency)
         for key, score, flags in keys:
-            # Mixed codes allow longer keys; others use short key limit
-            max_len = MAX_CODE_LEN if (flags & SHORT_KEY_MIXED) else MAX_SHORT_KEY_LEN
-            if len(key) > max_len:
-                continue
             if len(key) == 0:
                 continue
             # Dedup by text within each key
@@ -238,6 +237,18 @@ def build_cache(db_path):
     print(f"  Unique keys: {len(key_candidates)}", file=sys.stderr)
     total_cands = sum(len(v) for v in key_candidates.values())
     print(f"  Total candidates: {total_cands}", file=sys.stderr)
+    long_keys = sum(1 for key in key_candidates if len(key) > MAX_MATERIALIZED_PREFIX_LENGTH)
+    long_candidates = sum(
+        len(candidates)
+        for key, candidates in key_candidates.items()
+        if len(key) > MAX_MATERIALIZED_PREFIX_LENGTH
+    )
+    max_key_length = max((len(key) for key in key_candidates), default=0)
+    print(
+        f"  Keys beyond materialized prefixes: {long_keys}, "
+        f"candidates: {long_candidates}, max length: {max_key_length}",
+        file=sys.stderr,
+    )
 
     return key_candidates
 
@@ -259,10 +270,15 @@ def serialize(key_candidates, output_path):
 
     for key in sorted_keys:
         cands = key_candidates[key]
+        if len(key.encode("utf-8")) > 0xFFFF:
+            raise ValueError(f"Top-N key exceeds uint16 length: {key[:64]!r}")
         key_off, key_len = intern_str(key)
 
-        # Determine flags: use the flags from the first candidate
-        flags = cands[0][4] if cands else SHORT_KEY_EXACT
+        flags = 0
+        for candidate in cands:
+            flags |= candidate[4]
+        if len(key) <= MAX_MATERIALIZED_PREFIX_LENGTH:
+            flags |= SHORT_KEY_PREFIX_COMPLETE
 
         cand_start = len(cand_entries)
         for text, comment, freq, score, _ in cands:
@@ -307,7 +323,7 @@ def serialize(key_candidates, output_path):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Build pinyin.topn.bin short code cache")
+    parser = argparse.ArgumentParser(description="Build the pinyin Top-N index intermediate")
     parser.add_argument("--input", required=True, help="Input .dict.db or .dict.db.zip path")
     parser.add_argument("--output", required=True, help="Output .topn.bin path")
     parser.add_argument("--no-verify", action="store_true", help="Skip required keys verification")
@@ -318,7 +334,7 @@ def main():
         print(f"ERROR: Input file not found: {db_path}", file=sys.stderr)
         sys.exit(1)
 
-    print(f"Building short code cache from {db_path}...", file=sys.stderr)
+    print(f"Building Top-N index intermediate from {db_path}...", file=sys.stderr)
     key_candidates = build_cache(db_path)
 
     if not key_candidates:

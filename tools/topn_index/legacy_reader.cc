@@ -13,6 +13,8 @@ namespace cxxime::topn {
 namespace {
 
 constexpr char kLegacyMagic[8] = {'C', 'X', 'T', 'O', 'P', 'N', '\x01', '\0'};
+constexpr uint16_t kLegacyPrefixComplete = 0x0010;
+constexpr uint16_t kLegacyKnownFlags = 0x001F;
 
 bool range_inside(uint32_t offset, uint64_t length, size_t total) {
     return offset <= total && length <= total - offset;
@@ -138,7 +140,8 @@ bool LegacyReader::load(const std::string& path, std::string* error) {
         if (!range_inside(entry.key_offset, entry.key_length, header->string_data_size) ||
             entry.candidate_offset > header->candidate_count ||
             entry.candidate_count > header->candidate_count - entry.candidate_offset ||
-            entry.candidate_count > std::numeric_limits<uint16_t>::max()) {
+            entry.candidate_count > std::numeric_limits<uint16_t>::max() ||
+            (entry.flags & ~kLegacyKnownFlags) != 0) {
             set_error(error, "invalid legacy key entry");
             data_.clear();
             return false;
@@ -189,6 +192,12 @@ size_t LegacyReader::key_count() const {
 std::string_view LegacyReader::key(size_t key_index) const {
     const auto& entry = keys_[key_index];
     return std::string_view(strings_ + entry.key_offset, entry.key_length);
+}
+
+uint16_t LegacyReader::key_flags(size_t key_index) const {
+    return (keys_[key_index].flags & kLegacyPrefixComplete) != 0
+        ? kSourcePrefixComplete
+        : 0;
 }
 
 size_t LegacyReader::candidate_count(size_t key_index) const {

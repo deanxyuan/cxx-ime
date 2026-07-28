@@ -17,6 +17,7 @@ enum SpellingType {
     kNormalSpelling = 0,
     kFuzzySpelling = 1,
     kAbbreviation = 2,
+    kCompletionSpelling = 3,
 };
 
 struct SpellingMatch {
@@ -85,6 +86,9 @@ public:
 
     // O(k) trie walk: returns all spellings where the stored key is a prefix of `prefix`.
     std::vector<SpellingMatch> prefix_search(std::string_view prefix) const;
+
+    // Returns spellings whose stored input key is strictly longer than and starts with `prefix`.
+    std::vector<SpellingMatch> completion_search(std::string_view prefix) const;
 
     void set_fuzzy_enabled(bool enabled) { fuzzy_enabled_ = enabled; }
     bool fuzzy_enabled() const { return fuzzy_enabled_; }

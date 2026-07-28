@@ -5,10 +5,12 @@
 
 #include <cstdint>
 
+#include "short_code_cache_format.h"
+
 namespace cxxime {
 
-constexpr char kTopnIndexMagic[8] = {'C', 'X', 'T', 'O', 'P', 'N', '\x02', '\0'};
-constexpr uint32_t kTopnIndexVersion = 2;
+constexpr const char (&kTopnIndexMagic)[8] = kShortCacheMagic;
+constexpr uint32_t kTopnIndexVersion = kShortCacheVersion;
 
 enum class TopnIndexLayout : uint32_t {
     kFlat16 = 1,
@@ -18,27 +20,7 @@ enum class TopnIndexLayout : uint32_t {
 
 #pragma pack(push, 1)
 
-struct TopnIndexHeader {
-    char magic[8];
-    uint32_t version;
-    uint32_t header_size;
-    uint32_t layout;
-    uint32_t file_size;
-    uint32_t key_count;
-    uint32_t code_index_count;
-    uint32_t posting_list_count;
-    uint32_t posting_count;
-    uint32_t candidate_count;
-    uint32_t key_string_size;
-    uint32_t candidate_string_size;
-    uint32_t code_index_offset;
-    uint32_t posting_lists_offset;
-    uint32_t postings_offset;
-    uint32_t candidates_offset;
-    uint32_t key_strings_offset;
-    uint32_t candidate_strings_offset;
-    uint32_t reserved;
-};
+using TopnIndexHeader = ShortCacheHeader;
 
 struct TopnFlatKeyEntry {
     uint32_t posting_offset;
@@ -48,18 +30,8 @@ struct TopnFlatKeyEntry {
     uint32_t reserved;
 };
 
-struct TopnPostingList {
-    uint32_t posting_offset;
-    uint16_t posting_count;
-    uint16_t reserved;
-};
-
-struct TopnInlinePosting {
-    uint32_t text_offset;
-    uint32_t text_length;
-    int32_t frequency;
-    int32_t score;
-};
+using TopnPostingList = ShortPostingList;
+using TopnInlinePosting = ShortCandidateEntry;
 
 struct TopnPooledPosting {
     uint32_t candidate_index;
