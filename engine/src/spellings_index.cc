@@ -210,6 +210,143 @@ static std::vector<SpellingMatch> flat_prefix_search(
     return results;
 }
 
+static void append_trie_completions(
+    const char* nodes, const char* strings, const uint32_t* node_offsets,
+    uint32_t node_count, uint32_t start_node, uint32_t start_key_length,
+    uint32_t prefix_length, std::vector<SpellingMatch>* results) {
+    struct PendingNode {
+        uint32_t index;
+        uint32_t key_length;
+    };
+
+    std::vector<PendingNode> pending = {{start_node, start_key_length}};
+    while (!pending.empty()) {
+        const PendingNode current = pending.back();
+        pending.pop_back();
+        if (current.index >= node_count) {
+            continue;
+        }
+
+        const char* node = nodes + node_offsets[current.index];
+        const uint8_t spelling_count = *(const uint8_t*)(node + 8);
+        const uint8_t child_count = *(const uint8_t*)(node + 9);
+        const char* spelling = node + NODE_HEADER_SIZE;
+        if (current.key_length > prefix_length) {
+            for (uint8_t i = 0; i < spelling_count; ++i) {
+                SpellingMatch match;
+                match.syllable.assign(strings + *(const uint32_t*)(spelling),
+                                      *(const uint32_t*)(spelling + 4));
+                match.type = *(const uint8_t*)(spelling + 8);
+                match.credibility = *(const float*)(spelling + 10);
+                match.input_key_len = current.key_length;
+                results->push_back(std::move(match));
+                spelling += SPELLING_SIZE;
+            }
+        } else {
+            spelling += spelling_count * SPELLING_SIZE;
+        }
+
+        const char* child = spelling;
+        for (uint8_t i = 0; i < child_count; ++i) {
+            const uint32_t child_index = *(const uint32_t*)(child + 4);
+            if (child_index < node_count) {
+                const char* child_node = nodes + node_offsets[child_index];
+                const uint32_t child_key_length = *(const uint32_t*)(child_node + 4);
+                pending.push_back({child_index, current.key_length + child_key_length});
+            }
+            child += CHILD_SIZE;
+        }
+    }
+}
+
+static std::vector<SpellingMatch> trie_completion_search(
+    const char* nodes, const char* strings, const uint32_t* node_offsets,
+    uint32_t node_count, std::string_view prefix) {
+    std::vector<SpellingMatch> results;
+    const uint32_t prefix_length = (uint32_t)prefix.size();
+    uint32_t prefix_position = 0;
+    uint32_t current_node = 0;
+
+    while (current_node < node_count) {
+        const char* node = nodes + node_offsets[current_node];
+        const uint32_t key_length = *(const uint32_t*)(node + 4);
+        const uint8_t spelling_count = *(const uint8_t*)(node + 8);
+        const uint8_t child_count = *(const uint8_t*)(node + 9);
+        const uint32_t remaining = prefix_length - prefix_position;
+        const uint32_t compare_length = std::min(key_length, remaining);
+        const char* key = strings + *(const uint32_t*)(node);
+        if (compare_length > 0 &&
+            std::memcmp(key, prefix.data() + prefix_position, compare_length) != 0) {
+            return results;
+        }
+
+        const uint32_t full_key_length = prefix_position + key_length;
+        if (remaining <= key_length) {
+            append_trie_completions(nodes, strings, node_offsets, node_count,
+                current_node, full_key_length, prefix_length, &results);
+            return results;
+        }
+        prefix_position = full_key_length;
+
+        const char* child = node + NODE_HEADER_SIZE + spelling_count * SPELLING_SIZE;
+        const uint8_t next_character = (uint8_t)prefix[prefix_position];
+        bool found = false;
+        for (uint8_t i = 0; i < child_count; ++i) {
+            if (*(const uint8_t*)child == next_character) {
+                current_node = *(const uint32_t*)(child + 4);
+                found = true;
+                break;
+            }
+            child += CHILD_SIZE;
+        }
+        if (!found) {
+            return results;
+        }
+    }
+    return results;
+}
+
+static std::vector<SpellingMatch> flat_completion_search(
+    const SpellingEntryV1* entries, uint32_t entry_count,
+    const char* strings, std::string_view prefix) {
+    const uint32_t prefix_length = (uint32_t)prefix.size();
+    uint32_t low = 0;
+    uint32_t high = entry_count;
+    while (low < high) {
+        const uint32_t middle = low + (high - low) / 2;
+        const auto& entry = entries[middle];
+        const char* key = strings + entry.key_offset;
+        const uint32_t compare_length = std::min(entry.key_len, prefix_length);
+        const int comparison = std::memcmp(key, prefix.data(), compare_length);
+        if (comparison < 0 || (comparison == 0 && entry.key_len < prefix_length)) {
+            low = middle + 1;
+        } else {
+            high = middle;
+        }
+    }
+
+    std::vector<SpellingMatch> results;
+    for (uint32_t i = low; i < entry_count; ++i) {
+        const auto& entry = entries[i];
+        const char* key = strings + entry.key_offset;
+        if (entry.key_len < prefix_length ||
+            std::memcmp(key, prefix.data(), prefix_length) != 0) {
+            break;
+        }
+        if (entry.key_len == prefix_length) {
+            continue;
+        }
+
+        SpellingMatch match;
+        match.syllable.assign(strings + entry.syllable_offset, entry.syllable_len);
+        match.type = entry.type;
+        match.credibility = entry.credibility;
+        match.input_key_len = entry.key_len;
+        results.push_back(std::move(match));
+    }
+    return results;
+}
+
 std::vector<SpellingMatch> SpellingsIndex::prefix_search(std::string_view prefix) const {
     if (!data_ || prefix.empty())
         return {};
@@ -227,6 +364,25 @@ std::vector<SpellingMatch> SpellingsIndex::prefix_search(std::string_view prefix
             results.end());
     }
 
+    return results;
+}
+
+std::vector<SpellingMatch> SpellingsIndex::completion_search(std::string_view prefix) const {
+    if (!data_ || prefix.empty())
+        return {};
+
+    std::vector<SpellingMatch> results;
+    if (is_trie_)
+        results = trie_completion_search(nodes_, strings_, node_offsets_.get(), node_count_, prefix);
+    else
+        results = flat_completion_search(flat_entries_, flat_entry_count_, strings_, prefix);
+
+    if (!fuzzy_enabled_) {
+        results.erase(
+            std::remove_if(results.begin(), results.end(),
+                [](const SpellingMatch& m) { return m.type == kFuzzySpelling; }),
+            results.end());
+    }
     return results;
 }
 

@@ -80,6 +80,13 @@ endif()
 
 if(CXXIME_BUILD_TESTS)
     enable_testing()
+endif()
+
+# The release dictionary pipeline always needs topn_builder. Benchmark tools
+# remain conditional inside this subdirectory.
+add_subdirectory(tools/topn_index)
+
+if(CXXIME_BUILD_TESTS)
     add_subdirectory(test)
 endif()
 
@@ -93,7 +100,6 @@ if(CXXIME_BUILD_TOOLS)
     add_subdirectory(tools/query_bench)
     add_subdirectory(tools/tray_icon_tool)
     add_subdirectory(tools/punct_test)
-    add_subdirectory(tools/topn_index)
 endif()
 
 add_subdirectory(settings)

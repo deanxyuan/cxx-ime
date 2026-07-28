@@ -260,6 +260,14 @@ bool write_index(const Source& source, TopnIndexLayout layout, const std::string
             TopnPostingList list = {};
             list.posting_offset = posting_offset;
             list.posting_count = static_cast<uint16_t>(count);
+            const std::string_view key = source.key(key_index);
+            const bool has_descendant = key_index + 1 < key_count &&
+                source.key(key_index + 1).size() > key.size() &&
+                source.key(key_index + 1).substr(0, key.size()) == key;
+            if ((source.key_flags(key_index) & kSourcePrefixComplete) != 0 ||
+                !has_descendant) {
+                list.flags |= kShortPostingPrefixComplete;
+            }
             posting_lists.push_back(list);
         }
 

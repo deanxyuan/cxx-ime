@@ -1,20 +1,23 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
-#include "util/testutil.h"
+#include <algorithm>
 #include <cctype>
 #include <cstdio>
 #include <cstring>
 #include <string>
-#include <vector>
 #include <tuple>
-#include <algorithm>
+#include <vector>
+
 #include <windows.h>
+
 #include <cxxime/engine.h>
-#include <cxxime/translator.h>
-#include <cxxime/spellings_index.h>
-#include <cxxime/syllabifier.h>
 #include <cxxime/query_budget.h>
 #include <cxxime/query_trace.h>
+#include <cxxime/spellings_index.h>
+#include <cxxime/syllabifier.h>
+#include <cxxime/translator.h>
+
+#include "util/testutil.h"
 
 static char temp_path[MAX_PATH] = {};
 
@@ -156,7 +159,7 @@ TEST(Engine, selected_pinyin_candidate_learns_syllable_keys) {
     cxxime::QueryBudget budget;
     cxxime::QueryTrace trace = {};
     cxxime::UserLookupStats stats;
-    auto learned = dict.lookup_user_short("srf", 10, budget, &trace, &stats);
+    auto learned = dict.lookup_user_indexed("srf", 10, budget, &trace, &stats);
     bool found = false;
     for (const auto& c : learned) {
         if (c.text == "测试系统词")

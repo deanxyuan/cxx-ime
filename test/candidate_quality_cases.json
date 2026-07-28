@@ -66,7 +66,7 @@
       "expect_sources": {
         "中国": "pinyin"
       },
-      "require_cache_hit": false
+      "require_cache_hit": true
     },
     {
       "id": "pinyin-short-srf-cache",
@@ -137,7 +137,7 @@
       "expect_origins": {
         "输入法专题": "user"
       },
-      "require_cache_hit": false
+      "require_cache_hit": true
     },
     {
       "id": "pinyin-near-prefix-user-word-visible",

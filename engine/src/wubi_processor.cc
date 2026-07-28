@@ -91,15 +91,19 @@ ProcessResult WubiProcessor::process_key(const KeyEvent& event, Context& context
         return ProcessResult::REJECTED;
     }
 
-    // Page Up / Page Down: pagination
-    if (vk == VK_PRIOR || vk == VK_NEXT) {
+    // Page Up / Page Down and unmodified - / =: pagination
+    bool shortcut_page_up = vk == VK_OEM_MINUS && !event.is_shift() &&
+                                  !event.is_ctrl() && !event.is_alt();
+    bool shortcut_page_down = vk == VK_OEM_PLUS && !event.is_shift() &&
+                                    !event.is_ctrl() && !event.is_alt();
+    if (vk == VK_PRIOR || vk == VK_NEXT || shortcut_page_up || shortcut_page_down) {
         if (context.is_composing() && !context.candidates.candidates.empty()) {
             int total = context.candidates.total_count;
             int page_size = context.candidates.page_size;
             int max_page = (total > 0 && page_size > 0) ? (total + page_size - 1) / page_size - 1 : 0;
             if (max_page < 0) max_page = 0;
 
-            if (vk == VK_NEXT) {  // Page Down
+            if (vk == VK_NEXT || shortcut_page_down) {  // Page Down
                 if (context.page_index < max_page)
                     context.page_index++;
             } else {  // Page Up

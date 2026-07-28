@@ -5,6 +5,7 @@
 
 #include <string>
 #include <vector>
+
 #include <cxxime/candidate.h>
 #include <cxxime/dict.h>
 #include <cxxime/segmentor.h>
@@ -17,7 +18,7 @@ struct QueryTrace;
 struct QueryBudget;
 struct QueryScratch;
 
-// Phase 4: session recent cache entry for short input fast path
+// Per-session selected candidate for the indexed fast path.
 struct RecentCandidate {
     std::string key;
     Candidate candidate;
@@ -42,7 +43,7 @@ public:
     void set_syllabifier(Syllabifier* syllabifier);
     void set_short_cache(const ShortCodeCache* cache) { short_cache_ = cache; }
 
-    // Phase 4: session recent cache management
+    // Per-session recent candidate cache management.
     void update_recent(const std::string& key, const Candidate& candidate) override;
     void clear_recent() override { recent_cache_.clear(); }
 
@@ -51,10 +52,10 @@ public:
                             QueryScratch* scratch = nullptr) override;
 
 private:
-    // Phase 4: short input fast path
-    static bool is_short_key(const std::string& pinyin);
-    struct ShortFastResult {
+    static bool is_indexable_key(const std::string& pinyin);
+    struct IndexedFastResult {
         bool hit = false;
+        bool complete_index_hit = false;
         std::vector<Candidate> candidates;
     };
     struct QueryCacheEntry {
@@ -65,7 +66,8 @@ private:
         uint64_t sequence = 0;
         CandidatePage page;
     };
-    ShortFastResult lookup_short_fast(const std::string& key, int limit, QueryTrace* trace) const;
+    IndexedFastResult lookup_indexed_fast(const std::string& key, int limit,
+                                          QueryTrace* trace) const;
     bool lookup_query_cache(const std::string& input, int page_index, int page_size,
                             CandidatePage& page, QueryTrace* trace);
     void store_query_cache(const std::string& input, int page_index, int page_size,

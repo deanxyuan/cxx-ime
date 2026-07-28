@@ -1,14 +1,16 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
 #include <cxxime/translator.h>
-#include <cxxime/short_code_cache.h>
-#include <cxxime/syllabifier.h>
-#include <cxxime/query_trace.h>
-#include <cxxime/query_budget.h>
-#include <cxxime/topk_collector.h>
-#include <cxxime/query_scratch.h>
+
 #include <algorithm>
 #include <chrono>
+
+#include <cxxime/query_budget.h>
+#include <cxxime/query_scratch.h>
+#include <cxxime/query_trace.h>
+#include <cxxime/short_code_cache.h>
+#include <cxxime/syllabifier.h>
+#include <cxxime/topk_collector.h>
 
 namespace cxxime {
 
@@ -58,10 +60,8 @@ void PinyinTranslator::set_syllabifier(Syllabifier* syllabifier) {
     syllabifier_ = syllabifier;
 }
 
-// Phase 4: short input fast path helpers
-
-bool PinyinTranslator::is_short_key(const std::string& pinyin) {
-    if (pinyin.empty() || pinyin.size() > 6)
+bool PinyinTranslator::is_indexable_key(const std::string& pinyin) {
+    if (pinyin.empty())
         return false;
     for (char c : pinyin) {
         if (c < 'a' || c > 'z')
@@ -71,8 +71,13 @@ bool PinyinTranslator::is_short_key(const std::string& pinyin) {
 }
 
 void PinyinTranslator::update_recent(const std::string& key, const Candidate& candidate) {
-    if (!is_short_key(key))
+    if (!is_indexable_key(key))
         return;
+
+    query_cache_.erase(
+        std::remove_if(query_cache_.begin(), query_cache_.end(),
+            [&key](const QueryCacheEntry& entry) { return entry.input == key; }),
+        query_cache_.end());
 
     // Check if already exists — update sequence if so
     for (auto& rc : recent_cache_) {
@@ -120,9 +125,9 @@ void PinyinTranslator::update_recent(const std::string& key, const Candidate& ca
     recent_cache_.push_back(std::move(rc));
 }
 
-PinyinTranslator::ShortFastResult PinyinTranslator::lookup_short_fast(
+PinyinTranslator::IndexedFastResult PinyinTranslator::lookup_indexed_fast(
     const std::string& key, int limit, QueryTrace* trace) const {
-    ShortFastResult result;
+    IndexedFastResult result;
     if (limit <= 0)
         return result;
 
@@ -147,20 +152,22 @@ PinyinTranslator::ShortFastResult PinyinTranslator::lookup_short_fast(
     if (version_changed)
         cached_user_dict_version_ = current_version;
 
-    // 2. Phase 5: User dictionary short index
+    // 2. User dictionary indexes
     if (dict_) {
         QueryBudget ub;
         ub.max_user_scan = 64;  // tight budget for fast path
         UserLookupStats ustats;
-        auto user_results = dict_->lookup_user_short(key, limit, ub, trace, &ustats);
+        auto user_results = dict_->lookup_user_indexed(key, limit, ub, trace, &ustats);
         for (auto& c : user_results) {
             merge_candidate_by_score(result.candidates, std::move(c));
         }
     }
 
-    // 3. Pre-built short code cache
+    // 3. Pre-built Top-N index
     if (short_cache_ && short_cache_->is_loaded()) {
-        auto cached = short_cache_->lookup(key, limit, trace);
+        bool prefix_complete = false;
+        auto cached = short_cache_->lookup(key, limit, trace, &prefix_complete);
+        result.complete_index_hit = prefix_complete && !cached.empty();
         for (auto& c : cached) {
             merge_candidate_by_score(result.candidates, std::move(c));
         }
@@ -175,7 +182,7 @@ PinyinTranslator::ShortFastResult PinyinTranslator::lookup_short_fast(
 
 bool PinyinTranslator::lookup_query_cache(const std::string& input, int page_index, int page_size,
                                           CandidatePage& page, QueryTrace* trace) {
-    if (input.size() <= 6 || !dict_)
+    if (!dict_)
         return false;
 
     uint64_t user_version = dict_->user_dict_version();
@@ -203,7 +210,7 @@ bool PinyinTranslator::lookup_query_cache(const std::string& input, int page_ind
 
 void PinyinTranslator::store_query_cache(const std::string& input, int page_index, int page_size,
                                          const CandidatePage& page) {
-    if (input.size() <= 6 || !dict_)
+    if (!dict_)
         return;
 
     uint64_t user_version = dict_->user_dict_version();
@@ -254,12 +261,12 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
     if (lookup_query_cache(pinyin, page_index, page_size, page, trace))
         return page;
 
-    // Phase 4: short input fast path (before syllabifier)
-    // Try cache for all page indices; fall back to bounded lookup if insufficient.
-    ShortFastResult fast;
-    if (is_short_key(pinyin)) {
-        fast = lookup_short_fast(pinyin, need, trace);
-        if (fast.hit && (int)fast.candidates.size() > offset) {
+    // Try the indexed path before syllabification for every valid pinyin key.
+    // Only a static Top-N hit is authoritative; recent/user-only results seed fallback.
+    IndexedFastResult fast;
+    if (is_indexable_key(pinyin)) {
+        fast = lookup_indexed_fast(pinyin, need, trace);
+        if (fast.complete_index_hit && (int)fast.candidates.size() > offset) {
             // Enough candidates from cache for this page
             auto& sorted = fast.candidates;
             page.total_count = (int)sorted.size();
@@ -287,18 +294,6 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
         }
         // Cache miss or not enough: seed merged collector with fast results,
         // then fall through to bounded lookup for remaining candidates.
-    }
-
-    // Long pinyin input bypasses the short fast path. Query user entries by raw
-    // code here so learned full codes and near-complete prefixes participate in
-    // the same TopK merge as system dictionary candidates.
-    std::vector<Candidate> user_seed;
-    if (!is_short_key(pinyin)) {
-        QueryBudget ub;
-        if (budget)
-            ub.deadline = budget->deadline;
-        UserLookupStats ustats;
-        user_seed = dict_->lookup_user_prefix(pinyin, need, ub, trace, &ustats);
     }
 
     // Collect syllable ID sequences to try (use scratch if available)
@@ -359,26 +354,51 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
         return page;
     }
 
-    // Record syllable path count
-    if (trace)
-        trace->syllable_path_count = (int)id_sequences.size();
-
     // Filter: only keep paths that actually have dict entries
     auto& live_ids = scr.live_ids;
     live_ids.reserve(id_sequences.size());
-    for (auto& ids : id_sequences) {
-        // Check deadline before each has_prefix (syllabifier may have consumed most of the budget)
-        if (budget && budget->deadline.expired()) {
+    auto collect_live_paths = [&](size_t first_path) {
+        for (size_t i = first_path; i < id_sequences.size(); ++i) {
+            // Check deadline before each has_prefix (syllabifier may have consumed most of the budget)
+            if (budget && budget->deadline.expired()) {
+                deadline_hit = true;
+                if (trace) {
+                    trace->deadline_exceeded = true;
+                    trace->truncated = true;
+                }
+                break;
+            }
+            if (dict_->has_prefix(id_sequences[i], trace))
+                live_ids.push_back(std::move(id_sequences[i]));
+        }
+    };
+    collect_live_paths(0);
+
+    // If valid full-syllable paths have no dictionary continuation, retry with
+    // terminal syllable completion (for example, "ji" -> "jie").
+    if (live_ids.empty() && syllabifier_ && !deadline_hit) {
+        auto completion_result = syllabifier_->segment(
+            pinyin, budget ? &budget->deadline : nullptr, true);
+        if (completion_result.deadline_exceeded) {
             deadline_hit = true;
             if (trace) {
                 trace->deadline_exceeded = true;
                 trace->truncated = true;
             }
-            break;
+        } else {
+            const size_t first_completion = id_sequences.size();
+            id_sequences.reserve(first_completion +
+                std::min(completion_result.paths.size(), kMaxPaths));
+            for (size_t i = 0;
+                 i < completion_result.paths.size() && i < kMaxPaths; ++i)
+                add_path(completion_result.paths[i]);
+            collect_live_paths(first_completion);
         }
-        if (dict_->has_prefix(ids, trace))
-            live_ids.push_back(std::move(ids));
     }
+
+    // Record path counts after the optional completion fallback.
+    if (trace)
+        trace->syllable_path_count = (int)id_sequences.size();
 
     // Record live path count
     if (trace)
@@ -390,12 +410,7 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
     size_t topk_cap = (size_t)(offset + fetch_limit + 1);
     TopKCollector merged(topk_cap);
 
-    // Phase 4: seed collector with fast-path candidates (dedup by text)
-    for (auto& c : user_seed) {
-        if (!contains_text(merged.items(), c.text))
-            merged.offer(std::move(c));
-    }
-
+    // Seed the collector with recent and indexed candidates before fallback.
     if (fast.hit) {
         for (auto& c : fast.candidates) {
             if (!contains_text(merged.items(), c.text)) {

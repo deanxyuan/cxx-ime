@@ -1,18 +1,22 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
 #include <cxxime/dict.h>
-#include <cxxime/query_trace.h>
-#include <cxxime/query_budget.h>
-#include <cxxime/topk_collector.h>
-#include "binary_format.h"
+
 #include <cstring>
 #include <cstdio>
 #include <algorithm>
 #include <functional>
 #include <set>
+
 #include <windows.h>
 #include <shlobj.h>
+
 #include <cxxime/logging.h>
+#include <cxxime/query_budget.h>
+#include <cxxime/query_trace.h>
+#include <cxxime/topk_collector.h>
+
+#include "binary_format.h"
 
 static const char DICT_MAGIC_V1[] = "CXDIC\x01\x00\x00";
 static const char DICT_MAGIC_V2[] = "CXDIC\x02\x00\x00";
@@ -67,6 +71,8 @@ enum class UserMatchKind {
     kAbbreviation,
     kMixed,
 };
+
+static constexpr size_t kMaxMaterializedUserPrefixLength = 6;
 
 static int bounded_user_frequency(int frequency) {
     if (frequency < 1)
@@ -231,7 +237,7 @@ bool Dict::open_dict_with_aux(const std::string& bin_path,
         build_id_index();
     }
 
-    // Phase 4: try to load short code cache (pinyin.topn.bin)
+    // Try to load the pre-built Top-N index (pinyin.topn.bin).
     if (derive_aux_paths) {
         // Derive path from dict_bin_path: pinyin.dict.bin -> pinyin.topn.bin
         std::string topn_path = bin_path;
@@ -241,7 +247,7 @@ bool Dict::open_dict_with_aux(const std::string& bin_path,
         else
             topn_path += ".topn.bin";
         if (!short_cache_.load(topn_path)) {
-            CXXIME_LOG(L"Dict::open_dict short cache not loaded (standalone mode)");
+            CXXIME_LOG(L"Dict::open_dict Top-N index not loaded (standalone mode)");
             // Not fatal for standalone tools/tests. Server runtime uses open_bundle()
             // with manifest-declared topn_path and treats load failure as fatal.
         }
@@ -496,7 +502,7 @@ void Dict::re_sort_user_buckets_(UserEntryId id) {
     }
 
     // Re-sort prefix buckets
-    size_t max_prefix = std::min<size_t>(e.code.size(), 6);
+    size_t max_prefix = std::min(e.code.size(), kMaxMaterializedUserPrefixLength);
     for (size_t len = 1; len <= max_prefix; ++len) {
         auto it = user_prefix_index_.find(e.code.substr(0, len));
         if (it != user_prefix_index_.end()) sort_bucket_(it->second);
@@ -549,8 +555,8 @@ void Dict::insert_user_into_indexes(UserEntryId id) {
     // exact index (sorted insert by frequency/sequence)
     bucket_insert_sorted_(user_exact_index_[e.code], id);
 
-    // prefix index (length 1..6)
-    size_t max_prefix = std::min<size_t>(e.code.size(), 6);
+    // Materialize only the hot prefix range; longer prefixes use code_sorted_.
+    size_t max_prefix = std::min(e.code.size(), kMaxMaterializedUserPrefixLength);
     for (size_t len = 1; len <= max_prefix; ++len) {
         bucket_insert_sorted_(user_prefix_index_[e.code.substr(0, len)], id);
     }
@@ -591,7 +597,7 @@ void Dict::remove_user_from_indexes(UserEntryId id) {
     }
 
     // Remove from prefix index
-    size_t max_prefix = std::min<size_t>(e.code.size(), 6);
+    size_t max_prefix = std::min(e.code.size(), kMaxMaterializedUserPrefixLength);
     for (size_t len = 1; len <= max_prefix; ++len) {
         std::string key = e.code.substr(0, len);
         auto pit = user_prefix_index_.find(key);
@@ -847,7 +853,7 @@ int Dict::count(const std::string& code_prefix, QueryTrace* trace) {
     // Phase 5: count user dict via index
     {
         std::shared_lock<std::shared_mutex> lock(user_mutex_);
-        if (code_prefix.size() <= 6) {
+        if (code_prefix.size() <= kMaxMaterializedUserPrefixLength) {
             auto it = user_prefix_index_.find(code_prefix);
             if (it != user_prefix_index_.end()) {
                 for (auto id : it->second.ids) {
@@ -1150,7 +1156,7 @@ std::vector<Candidate> Dict::lookup_user_prefix(
     std::vector<Candidate> results;
     std::shared_lock<std::shared_mutex> lock(user_mutex_);
 
-    if (prefix.size() <= 6) {
+    if (prefix.size() <= kMaxMaterializedUserPrefixLength) {
         // Use prefix index
         auto it = user_prefix_index_.find(prefix);
         if (it == user_prefix_index_.end())
@@ -1252,11 +1258,22 @@ std::vector<Candidate> Dict::lookup_user_prefix(
     return results;
 }
 
-std::vector<Candidate> Dict::lookup_user_short(
+std::vector<Candidate> Dict::lookup_user_indexed(
     const std::string& key, int limit,
     const QueryBudget& budget, QueryTrace* trace, UserLookupStats* stats) const {
     std::vector<Candidate> results;
     std::shared_lock<std::shared_mutex> lock(user_mutex_);
+
+    auto add_candidate = [&](UserEntryId id, int score) {
+        auto& e = user_entries_[id];
+        Candidate c;
+        c.text = e.text;
+        c.code = e.code;
+        c.syllables = e.syllables;
+        c.frequency = score;
+        c.origin = CandidateOrigin::kUser;
+        merge_candidate_by_score(results, std::move(c));
+    };
 
     auto try_add = [&](UserEntryId id, UserMatchKind kind,
                        const std::string& match_key) -> bool {
@@ -1273,16 +1290,74 @@ std::vector<Candidate> Dict::lookup_user_short(
         auto& e = user_entries_[id];
         if (e.deleted) return true;
         ++stats->scan_count;
-        Candidate c;
-        c.text = e.text;
-        c.code = e.code;
-        c.syllables = e.syllables;
-        c.frequency = score_user_match(user_scoring_profile_, kind,
-                                       match_key.size(), e.code.size(),
-                                       e.frequency, user_sequence_, e.sequence);
-        c.origin = CandidateOrigin::kUser;
-        merge_candidate_by_score(results, std::move(c));
+        add_candidate(id, score_user_match(user_scoring_profile_, kind,
+                                           match_key.size(), e.code.size(),
+                                           e.frequency, user_sequence_, e.sequence));
         return (int)results.size() < limit;
+    };
+
+    auto try_prefix = [&](const std::string& prefix) {
+        if ((int)results.size() >= limit) {
+            return;
+        }
+        if (prefix.size() <= kMaxMaterializedUserPrefixLength) {
+            auto pit = user_prefix_index_.find(prefix);
+            if (pit != user_prefix_index_.end()) {
+                for (auto id : pit->second.ids) {
+                    if (!try_add(id, UserMatchKind::kPrefix, prefix)) {
+                        break;
+                    }
+                }
+            }
+            return;
+        }
+
+        struct ScoredId {
+            UserEntryId id;
+            int score;
+        };
+        std::vector<ScoredId> scored;
+        auto lower = std::lower_bound(
+            user_code_sorted_.begin(), user_code_sorted_.end(), prefix,
+            [this](UserEntryId id, const std::string& value) {
+                return user_entries_[id].code < value;
+            });
+        for (auto it = lower; it != user_code_sorted_.end(); ++it) {
+            auto& entry = user_entries_[*it];
+            if (entry.code.compare(0, prefix.size(), prefix) != 0) {
+                break;
+            }
+            if (stats->scan_count >= budget.max_user_scan) {
+                stats->truncated = true;
+                stats->scan_budget_truncated = true;
+                break;
+            }
+            if (budget.deadline.enabled && budget.deadline.expired()) {
+                stats->deadline_exceeded = true;
+                stats->truncated = true;
+                break;
+            }
+            if (entry.deleted) {
+                continue;
+            }
+            ++stats->scan_count;
+            scored.push_back({
+                *it,
+                score_user_match(user_scoring_profile_, UserMatchKind::kPrefix,
+                                 prefix.size(), entry.code.size(), entry.frequency,
+                                 user_sequence_, entry.sequence),
+            });
+        }
+        std::sort(scored.begin(), scored.end(),
+                  [](const ScoredId& lhs, const ScoredId& rhs) {
+                      return lhs.score > rhs.score;
+                  });
+        for (const auto& item : scored) {
+            add_candidate(item.id, item.score);
+            if ((int)results.size() >= limit) {
+                break;
+            }
+        }
     };
 
     // 1. Exact match
@@ -1292,14 +1367,8 @@ std::vector<Candidate> Dict::lookup_user_short(
             if (!try_add(id, UserMatchKind::kExact, key)) break;
     }
 
-    // 2. Prefix match (key length ≤ 6)
-    if ((int)results.size() < limit && key.size() <= 6) {
-        auto pit = user_prefix_index_.find(key);
-        if (pit != user_prefix_index_.end()) {
-            for (auto id : pit->second.ids)
-                if (!try_add(id, UserMatchKind::kPrefix, key)) break;
-        }
-    }
+    // 2. Prefix match
+    try_prefix(key);
 
     // 3. Abbreviation match
     if ((int)results.size() < limit) {
@@ -1336,12 +1405,7 @@ std::vector<Candidate> Dict::lookup_user_short(
             if (eit2 != user_exact_index_.end())
                 for (auto id : eit2->second.ids)
                     if (!try_add(id, UserMatchKind::kExact, rewritten)) break;
-            if ((int)results.size() < limit && rewritten.size() <= 6) {
-                auto pit2 = user_prefix_index_.find(rewritten);
-                if (pit2 != user_prefix_index_.end())
-                    for (auto id : pit2->second.ids)
-                        if (!try_add(id, UserMatchKind::kPrefix, rewritten)) break;
-            }
+            try_prefix(rewritten);
             if ((int)results.size() < limit) {
                 auto ait2 = user_abbr_index_.find(rewritten);
                 if (ait2 != user_abbr_index_.end())

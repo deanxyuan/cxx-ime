@@ -41,12 +41,14 @@ public:
 
     // Build syllable graph from input.
     // Corresponds to librime BuildSyllableGraph.
-    SyllableGraph build_graph(const std::string& input) const;
+    SyllableGraph build_graph(const std::string& input,
+                              bool enable_terminal_completion = false) const;
 
     // Segment input into syllable paths, sorted by quality.
     // Best (all-normal) paths first, then fuzzy, then abbreviation.
     // Phase 3: optional deadline for internal checking during DFS.
-    SegmentResult segment(const std::string& input, const QueryDeadline* deadline = nullptr) const;
+    SegmentResult segment(const std::string& input, const QueryDeadline* deadline = nullptr,
+                          bool enable_terminal_completion = false) const;
 
 private:
     const SpellingsIndex& spellings_;

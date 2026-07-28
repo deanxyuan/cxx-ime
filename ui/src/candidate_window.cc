@@ -95,6 +95,11 @@ void CandidateWindow::destroy() {
     if (gdi_renderer_) { gdi_renderer_->finalize(); delete gdi_renderer_; gdi_renderer_ = nullptr; }
     if (d2d_renderer_) { d2d_renderer_->finalize(); delete d2d_renderer_; d2d_renderer_ = nullptr; }
     if (hwnd_) { DestroyWindow(hwnd_); hwnd_ = nullptr; }
+    window_width_ = 0;
+    window_height_ = 0;
+    window_corner_ = -1;
+    has_last_caret_rect_ = false;
+    last_caret_rect_ = {};
 }
 void CandidateWindow::show() {
     if (!hwnd_)

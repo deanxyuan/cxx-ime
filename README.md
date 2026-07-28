@@ -33,7 +33,7 @@ cxx-ime/
 主要能力：
 
 - 拼音、五笔 86 和混合输入模式，支持简拼、模糊及五笔简码
-- 短输入候选按匹配质量分层排序，避免高频长词压过精确音节和接近完成的短词
+- Top-N 候选按匹配质量分层排序，避免高频长词压过精确音节和接近完成的词
 - 候选学习默认关闭，开启后将选词结果持久化到用户词典，可在设置中删除词条恢复系统排序
 - 五笔四码唯一候选自动上屏，可在设置中关闭
 - 支持应用宿主通过 TSF UIElement 接管 inline preedit 和候选窗口绘制，DOTA2 场景已验证
@@ -99,14 +99,14 @@ python tools/dict_convert.py input.yaml output.db
 | `pinyin.dict.bin` | `build_binary.py` 生成 | 否 | 拼音二进制词典（运行时） |
 | `pinyin.spellings.bin` | `build_binary.py` 生成 | 否 | Patricia trie 拼写索引（运行时） |
 | `pinyin.dict.idx` | `build_binary.py` 生成 | 否 | 音节 ID 索引（运行时） |
-| `pinyin.topn.bin` | `build_short_cache.py` 生成 | 否 | 短码候选缓存（运行时） |
+| `pinyin.topn.bin` | `build_short_cache.py` + `topn_builder` 生成 | 否 | DAT-16 Top-N 索引（运行时） |
 | `wubi86.dict.bin` | `build_binary.py` 生成 | 否 | 五笔二进制词典（运行时） |
 | `wubi86.dict.idx` | `build_binary.py` 生成 | 否 | 五笔编码索引（运行时） |
 | `dictionary_manifest.json` | `prepare_dict.py` 生成 | 否 | 运行时词典 bundle 清单与校验哈希 |
 
 ### 词典维护
 
-数据来源链路：**zip → db → algebra → bin/idx/spellings/topn → manifest**
+数据来源链路：**zip → db → algebra → bin/idx/spellings + Top-N 中间文件 → DAT-16 → manifest**
 
 ```cmd
 # 0. 拉取后先解压（仅首次）

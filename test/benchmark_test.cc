@@ -3,21 +3,23 @@
 // Performance overhead verification for QueryTrace instrumentation.
 // Phase 7: regression threshold and field semantic tests.
 
-#include "util/testutil.h"
-#include <cxxime/engine.h>
-#include <cxxime/query_trace.h>
-#include <chrono>
-#include <vector>
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <memory>
+#include <set>
 #include <sstream>
 #include <string>
-#include <set>
+#include <vector>
+
+#include <cxxime/engine.h>
+#include <cxxime/query_trace.h>
+
+#include "util/testutil.h"
 
 // Build a path relative to the project root.
 static std::string project_path(const char* rel) {
@@ -38,9 +40,13 @@ public:
         std::remove(user_dict_path_.c_str());
     }
 
-    bool initialize() {
+    bool initialize(bool load_topn = true) {
         std::string dict_path = project_path("data/pinyin.dict.bin");
-        if (!dict_.open(dict_path, user_dict_path_))
+        std::string topn_path = load_topn
+            ? project_path("data/pinyin.topn.bin")
+            : std::string();
+        if (!dict_.open_bundle(dict_path, user_dict_path_,
+                               project_path("data/pinyin.dict.idx"), topn_path))
             return false;
 
         config_.load(project_path("data/default.json"));
@@ -76,7 +82,7 @@ TEST(Benchmark, TraceFieldsPopulated) {
     BenchmarkEngineFixture fixture("trace_fields");
     auto& engine = fixture.engine;
 
-    if (!fixture.initialize()) {
+    if (!fixture.initialize(false)) {
         return;
     }
 
@@ -86,8 +92,8 @@ TEST(Benchmark, TraceFieldsPopulated) {
 
     engine.set_trace_enabled(true);
 
-    // Type "nihaoshijie" (12 chars) — must be >6 to bypass Phase 4 short key fast path
-    // and exercise the full syllabifier + dict lookup pipeline.
+    // Top-N is disabled for this fixture so the input exercises the full
+    // syllabifier and dictionary lookup pipeline.
     const char* input = "nihaoshijie";
     for (const char* p = input; *p; ++p) {
         cxxime::KeyEvent event;
@@ -231,18 +237,18 @@ TEST(Benchmark, TraceOverhead) {
     engine.finalize();
 }
 
-TEST(Benchmark, LongPinyinQueryCacheHitOnRepeat) {
-    BenchmarkEngineFixture fixture("long_query_cache");
+TEST(Benchmark, FallbackQueryCacheHitOnRepeat) {
+    BenchmarkEngineFixture fixture("fallback_query_cache");
     auto& engine = fixture.engine;
 
-    if (!fixture.initialize()) {
+    if (!fixture.initialize(false)) {
         return;
     }
 
     engine.set_query_deadline_ms(0);
     engine.set_trace_enabled(true);
 
-    const char* input = "zhongguo";
+    const char* input = "nihao";
     for (const char* p = input; *p; ++p) {
         cxxime::KeyEvent event;
         event.keycode = *p - 'a' + 'A';
@@ -250,7 +256,7 @@ TEST(Benchmark, LongPinyinQueryCacheHitOnRepeat) {
         engine.process_key(event);
     }
     auto first = engine.last_trace();
-    ASSERT_TRUE(!first.cache_hit) << "First long query should exercise the full pipeline";
+    ASSERT_TRUE(!first.cache_hit) << "First query should exercise the full pipeline";
     ASSERT_GT(first.exact_scan_count + first.prefix_scan_count + first.user_scan_count, 0u);
 
     engine.clear();
@@ -261,7 +267,7 @@ TEST(Benchmark, LongPinyinQueryCacheHitOnRepeat) {
         engine.process_key(event);
     }
     const auto& second = engine.last_trace();
-    ASSERT_TRUE(second.cache_hit) << "Repeated long query should hit query page cache";
+    ASSERT_TRUE(second.cache_hit) << "Repeated fallback query should hit query page cache";
     ASSERT_EQ(second.exact_scan_count, 0u);
     ASSERT_EQ(second.prefix_scan_count, 0u);
     ASSERT_EQ(second.user_scan_count, 0u);
@@ -642,10 +648,10 @@ TEST(Benchmark, CacheHitScanZero) {
 }
 
 TEST(Benchmark, CacheMissScanPositive) {
-    // Long input "nihaoshijie" should miss cache, scan counts > 0
+    // With Top-N disabled, the query should miss cache and scan the dictionary.
     BenchmarkEngineFixture fixture("cache_miss");
     auto& engine = fixture.engine;
-    if (!fixture.initialize()) return;
+    if (!fixture.initialize(false)) return;
 
     engine.set_query_deadline_ms(0);
     engine.set_trace_enabled(true);
@@ -664,7 +670,7 @@ TEST(Benchmark, CacheMissScanPositive) {
            trace.cache_hit ? 1 : 0, trace.exact_scan_count,
            trace.prefix_scan_count, trace.user_scan_count);
 
-    ASSERT_TRUE(!trace.cache_hit) << "Long input 'nihaoshijie' should miss cache";
+    ASSERT_TRUE(!trace.cache_hit) << "Top-N-disabled query should miss cache";
     uint32_t total_scans = trace.exact_scan_count + trace.prefix_scan_count + trace.user_scan_count;
     ASSERT_GT(total_scans, 0u) << "Cache miss should have scan counts > 0";
 

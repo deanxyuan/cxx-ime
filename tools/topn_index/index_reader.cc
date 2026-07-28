@@ -189,7 +189,8 @@ bool IndexReader::validate(std::string* error) {
     } else {
         for (uint32_t i = 0; i < header_->posting_list_count; ++i) {
             const auto& list = posting_lists_[i];
-            if (list.reserved != 0 || list.posting_offset > header_->posting_count ||
+            if ((list.flags & ~kShortPostingKnownFlags) != 0 ||
+                list.posting_offset > header_->posting_count ||
                 list.posting_count > header_->posting_count - list.posting_offset) {
                 set_error(error, "invalid posting list");
                 return false;
@@ -257,6 +258,7 @@ bool IndexReader::find_flat(std::string_view wanted, IndexMatch* match) const {
     if (match != nullptr) {
         match->posting_offset = entry.posting_offset;
         match->posting_count = entry.posting_count;
+        match->flags = 0;
     }
     return true;
 }
@@ -289,6 +291,7 @@ bool IndexReader::find_dat(std::string_view key, IndexMatch* match) const {
     if (match != nullptr) {
         match->posting_offset = posting_lists_[value].posting_offset;
         match->posting_count = posting_lists_[value].posting_count;
+        match->flags = posting_lists_[value].flags;
     }
     return true;
 }

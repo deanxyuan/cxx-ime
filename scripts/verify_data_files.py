@@ -6,7 +6,7 @@
 # Checks:
 #   1. Required files exist and size > 0
 #   2. Magic bytes correct for each binary file
-#   3. pinyin.topn.bin contains required short input keys
+#   3. pinyin.topn.bin contains required Top-N keys
 #   4. pinyin.dict.idx and pinyin.dict.bin version consistency
 #   5. dictionary_manifest.json describes the complete pinyin and wubi bundle
 #
@@ -52,7 +52,12 @@ DICT_MAGIC_V1 = b"CXDIC\x01\x00\x00"
 DICT_MAGIC_V2 = b"CXDIC\x02\x00\x00"
 IDX_MAGIC = b"CXIDX\x00\x00\x00"
 SPELLINGS_MAGIC_V2 = b"CXSPL\x02\x00\x00"
-TOPN_MAGIC = b"CXTOPN\x01\x00"
+TOPN_MAGIC = b"CXTOPN\x02\x00"
+TOPN_HEADER_FORMAT = "<8s18I"
+TOPN_HEADER_SIZE = struct.calcsize(TOPN_HEADER_FORMAT)
+TOPN_LAYOUT_DAT16 = 2
+TOPN_POSTING_PREFIX_COMPLETE = 0x0001
+TOPN_POSTING_KNOWN_FLAGS = TOPN_POSTING_PREFIX_COMPLETE
 
 
 def sha256_file(path):
@@ -131,38 +136,121 @@ def check_spellings_bin(data_dir, errors):
     return True
 
 
+def darts_offset(unit):
+    """Decode a darts-clone unit offset."""
+    return (unit >> 10) << ((unit & (1 << 9)) >> 6)
+
+
+def find_topn_key(units, unit_count, key):
+    """Return the posting-list index for an exact DAT key, or None."""
+    node = 0
+    unit = struct.unpack_from("<I", units, 0)[0]
+    for label in key.encode("ascii"):
+        node ^= darts_offset(unit) ^ label
+        if node >= unit_count:
+            return None
+        unit = struct.unpack_from("<I", units, node * 4)[0]
+        if (unit & ((1 << 31) | 0xFF)) != label:
+            return None
+    if ((unit >> 8) & 1) == 0:
+        return None
+    leaf = node ^ darts_offset(unit)
+    if leaf >= unit_count:
+        return None
+    leaf_unit = struct.unpack_from("<I", units, leaf * 4)[0]
+    if (leaf_unit & (1 << 31)) == 0:
+        return None
+    return leaf_unit & ((1 << 31) - 1)
+
+
 def check_topn_bin(data_dir, errors):
-    """Validate pinyin.topn.bin magic and required keys."""
+    """Validate the runtime DAT-16 index and required keys."""
     path = os.path.join(data_dir, "pinyin.topn.bin")
     with open(path, "rb") as f:
-        header = f.read(36)  # ShortCacheHeader = 36 bytes
-    if len(header) < 36:
+        header_data = f.read(TOPN_HEADER_SIZE)
+    if len(header_data) < TOPN_HEADER_SIZE:
         errors.append("pinyin.topn.bin: file too small for header")
         return False
 
-    magic = header[0:8]
+    header = struct.unpack(TOPN_HEADER_FORMAT, header_data)
+    (magic, version, header_size, layout, file_size, key_count, code_index_count,
+     posting_list_count, posting_count, candidate_count, key_string_size,
+     candidate_string_size, code_index_offset, posting_lists_offset, postings_offset,
+     candidates_offset, key_strings_offset, candidate_strings_offset, reserved) = header
+    actual_size = os.path.getsize(path)
     if magic != TOPN_MAGIC:
         errors.append(f"pinyin.topn.bin: bad magic {magic!r}")
         return False
+    if version != 2 or header_size != TOPN_HEADER_SIZE:
+        errors.append(
+            "pinyin.topn.bin: unsupported header "
+            f"(version={version}, size={header_size})"
+        )
+        return False
+    if layout != TOPN_LAYOUT_DAT16:
+        errors.append(f"pinyin.topn.bin: unsupported layout {layout}")
+        return False
+    if file_size != actual_size or reserved != 0:
+        errors.append("pinyin.topn.bin: file size or reserved field is invalid")
+        return False
+    if (key_count == 0 or code_index_count == 0 or posting_list_count != key_count or
+            candidate_count != 0 or key_string_size != 0):
+        errors.append("pinyin.topn.bin: invalid DAT-16 section counts")
+        return False
 
-    # Parse header: magic(8) version(4) key_count(4) cand_count(4) str_size(4) keys_off(4) cands_off(4) strs_off(4)
-    _, key_count, _, _, keys_offset, _, strings_offset = struct.unpack_from("<IIIIIII", header, 8)
+    cursor = TOPN_HEADER_SIZE
+    sections = [
+        (code_index_offset, code_index_count * 4),
+        (posting_lists_offset, posting_list_count * 8),
+        (postings_offset, posting_count * 16),
+        (candidates_offset, 0),
+        (key_strings_offset, 0),
+        (candidate_strings_offset, candidate_string_size),
+    ]
+    for offset, size in sections:
+        if cursor > actual_size or offset != cursor or size > actual_size - cursor:
+            errors.append("pinyin.topn.bin: sections are not canonical")
+            return False
+        cursor += size
+    if cursor != actual_size:
+        errors.append("pinyin.topn.bin: sections do not cover the file")
+        return False
 
-    # Read key entries and build set of keys
-    found_keys = set()
     with open(path, "rb") as f:
-        for i in range(key_count):
-            f.seek(keys_offset + i * 16)  # ShortKeyEntry = 16 bytes
-            entry = f.read(16)
-            if len(entry) < 16:
-                break
-            # cand_offset(4), cand_count(4), key_offset(4), key_len(2), flags(2)
-            _, _, key_offset, key_len, _ = struct.unpack_from("<IIIHH", entry, 0)
-            f.seek(strings_offset + key_offset)
-            key_str = f.read(key_len).decode("utf-8", errors="replace")
-            found_keys.add(key_str)
+        f.seek(code_index_offset)
+        units = f.read(code_index_count * 4)
+        if len(units) != code_index_count * 4:
+            errors.append("pinyin.topn.bin: truncated Double-Array units")
+            return False
 
-    missing = [k for k in REQUIRED_TOPN_KEYS if k not in found_keys]
+        f.seek(posting_lists_offset)
+        posting_lists = f.read(posting_list_count * 8)
+        if len(posting_lists) != posting_list_count * 8:
+            errors.append("pinyin.topn.bin: truncated posting lists")
+            return False
+        for index in range(posting_list_count):
+            posting_offset, candidate_count_for_key, list_flags = struct.unpack_from(
+                "<IHH", posting_lists, index * 8
+            )
+            if (list_flags & ~TOPN_POSTING_KNOWN_FLAGS or
+                    posting_offset > posting_count or
+                    candidate_count_for_key > posting_count - posting_offset):
+                errors.append(f"pinyin.topn.bin: invalid posting list at index {index}")
+                return False
+
+        missing = []
+        for key in REQUIRED_TOPN_KEYS:
+            posting_list_index = find_topn_key(units, code_index_count, key)
+            if posting_list_index is None or posting_list_index >= posting_list_count:
+                missing.append(key)
+                continue
+            posting_offset, candidate_count_for_key, list_flags = struct.unpack_from(
+                "<IHH", posting_lists, posting_list_index * 8
+            )
+            if (list_flags & TOPN_POSTING_PREFIX_COMPLETE) == 0:
+                errors.append(f"pinyin.topn.bin: required key is not prefix-complete: {key}")
+                return False
+
     if missing:
         errors.append(f"pinyin.topn.bin: missing required keys: {', '.join(missing)}")
         return False

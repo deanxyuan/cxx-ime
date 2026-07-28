@@ -7,7 +7,8 @@
 # Supports both pinyin and wubi86 dictionaries.
 #
 # Usage:
-#   python scripts/prepare_dict.py --data-dir data/ --output-dir dist/data/
+#   python scripts/prepare_dict.py --data-dir data/ --output-dir dist/data/ \
+#       --topn-builder build/tools/topn_index/Release/topn_builder.exe
 
 from __future__ import annotations
 
@@ -18,6 +19,7 @@ import hashlib
 import json
 import os
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
@@ -112,15 +114,49 @@ def run_build_binary(
 
 
 def run_build_short_cache(db_path: str, output_path: str) -> None:
-    """Build short code cache (topn) for fast path."""
+    """Build the v1 intermediate Top-N index."""
     script = os.path.join(SCRIPTS, "build_short_cache.py")
-    print("  Building short code cache...")
+    print("  Building Top-N index intermediate...")
     subprocess.run(
         [sys.executable, script, "--input", db_path, "--output", output_path],
         check=True,
         capture_output=False,
     )
 
+
+def finalize_topn_index(output_dir: str, topn_builder: str) -> str:
+    """Convert a v1 Top-N intermediate to the runtime DAT-16 format in place."""
+    topn_path = os.path.join(output_dir, "pinyin.topn.bin")
+    if not os.path.isfile(topn_path):
+        raise RuntimeError(f"Top-N intermediate not found: {topn_path}")
+    if not os.path.isfile(topn_builder):
+        raise RuntimeError(f"topn_builder not found: {topn_builder}")
+
+    with open(topn_path, "rb") as f:
+        header = f.read(20)
+    if len(header) < 20:
+        raise RuntimeError("pinyin.topn.bin is too small")
+    magic = header[:8]
+    if magic == b"CXTOPN\x01\x00":
+        print("  Converting Top-N index to DAT-16...")
+        subprocess.run(
+            [topn_builder, "--input", topn_path, "--output", topn_path, "--format", "dat16"],
+            check=True,
+            capture_output=False,
+        )
+        with open(topn_path, "rb") as f:
+            header = f.read(20)
+        magic = header[:8]
+
+    if magic != b"CXTOPN\x02\x00" or len(header) < 20:
+        raise RuntimeError("pinyin.topn.bin is not a CXTOPN v2 file")
+    version, header_size, layout = struct.unpack_from("<III", header, 8)
+    if version != 2 or header_size != 80 or layout != 2:
+        raise RuntimeError(
+            "pinyin.topn.bin is not the required DAT-16 layout "
+            f"(version={version}, header={header_size}, layout={layout})"
+        )
+    return topn_path
 
 def sha256_file(path: str) -> str:
     h = hashlib.sha256()
@@ -215,7 +251,13 @@ def prepare_wubi_dictionary(data_dir: str, output_dir: str) -> list[str]:
     return generated
 
 
-def prepare_dict(data_dir: str, output_dir: str, workers: int = 2) -> list[str]:
+def prepare_dict(
+    data_dir: str,
+    output_dir: str,
+    workers: int = 2,
+    topn_builder: str | None = None,
+    defer_topn_conversion: bool = False,
+) -> list[str]:
     """Run dictionary preparation, using separate workers for pinyin and wubi86."""
     os.makedirs(output_dir, exist_ok=True)
     workers = max(1, min(workers, 2))
@@ -240,6 +282,12 @@ def prepare_dict(data_dir: str, output_dir: str, workers: int = 2) -> list[str]:
                 except Exception as e:
                     raise RuntimeError(f"{name} dictionary preparation failed: {e}") from e
 
+    if defer_topn_conversion:
+        return generated
+    if not topn_builder:
+        raise RuntimeError("topn_builder is required to produce the DAT-16 runtime index")
+    finalize_topn_index(output_dir, os.path.abspath(topn_builder))
+
     manifest_path = write_dictionary_manifest(output_dir)
     generated.append(manifest_path)
     return generated
@@ -261,6 +309,10 @@ def main():
         "--workers", type=int, default=min(2, os.cpu_count() or 1),
         help="Dictionary worker count (default: 2, capped by available dictionaries)",
     )
+    parser.add_argument(
+        "--topn-builder", required=True,
+        help="Path to the x64 topn_builder executable",
+    )
     args = parser.parse_args()
 
     data_dir = os.path.abspath(args.data_dir)
@@ -278,7 +330,12 @@ def main():
     print()
 
     try:
-        generated = prepare_dict(data_dir, output_dir, workers=args.workers)
+        generated = prepare_dict(
+            data_dir,
+            output_dir,
+            workers=args.workers,
+            topn_builder=args.topn_builder,
+        )
     except subprocess.CalledProcessError as e:
         print(f"ERROR: subprocess failed: {e}", file=sys.stderr)
         return 1
