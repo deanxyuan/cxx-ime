@@ -163,6 +163,7 @@ private:
     uint32_t _get_modifiers() const;
     bool _is_caps_lock_on() const;
     void _sync_ime_status(const cxxime::ImeStatus& status);
+    void _handle_ime_menu_command(cxxime::ImeMenuCommand command);
     void _sync_conversion_mode_compartment(const cxxime::ImeStatus& status);
     bool _foreground_allows_input() const;
     bool _context_belongs_to_foreground(ITfContext* context) const;

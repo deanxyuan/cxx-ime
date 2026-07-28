@@ -3,10 +3,10 @@
 #ifndef CXXIME_TSF_STATUS_CONTROLLER_H_
 #define CXXIME_TSF_STATUS_CONTROLLER_H_
 
-#include <cxxime/status_window.h>
-#include <cxxime/ipc_protocol.h>
 #include <cstdint>
-#include <string>
+
+#include <cxxime/ipc_protocol.h>
+#include <cxxime/status_window.h>
 
 namespace cxxime {
 
@@ -32,17 +32,15 @@ public:
     bool is_visible() const;
 
     void update_config(const Config& config);
+    void set_menu_command_callback(StatusMenuCommandCallback callback);
 
 private:
     void on_button_click(StatusButton button);
     void on_position_change(int x, int y);
-    void on_config_action(const std::string& action);
 
     void toggle_chinese_mode();
     void toggle_full_shape();
     void toggle_chinese_punct();
-    void switch_input_mode(cxxime::InputMode target = cxxime::InputMode::PINYIN);
-    void open_settings();
     bool status_changed(const ImeStatus& new_status) const;
 
     StatusWindow window_;
@@ -51,6 +49,7 @@ private:
     uint32_t session_id_ = 0;
     ImeStatus current_status_;
     HICON logo_icon_ = nullptr;
+    StatusMenuCommandCallback menu_command_callback_;
     bool initialized_ = false;
     bool ipc_healthy_ = true;
 };

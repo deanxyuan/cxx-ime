@@ -4,6 +4,7 @@
 #include <shellscalingapi.h>
 #include <shellapi.h>
 #include <cxxime/data_path.h>
+#include <cxxime/settings_route.h>
 
 #pragma comment(lib, "shcore.lib")
 
@@ -18,13 +19,16 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int) {
     SetProcessDpiAwareness(PROCESS_PER_MONITOR_DPI_AWARE);
     float dpiScale = get_dpi_scale();
 
-    bool quickPhrase = false;
+    cxxime::SettingsPanel initialPanel = cxxime::SettingsPanel::kInput;
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
     if (argv) {
         for (int i = 1; i < argc; ++i) {
-            if (wcscmp(argv[i], L"--quick-phrase") == 0) {
-                quickPhrase = true;
+            if (wcscmp(argv[i], cxxime::kSettingsPanelArgument) == 0 && i + 1 < argc) {
+                if (wcscmp(argv[i + 1], cxxime::kSettingsDictionaryArgument) == 0) {
+                    initialPanel = cxxime::SettingsPanel::kDictionary;
+                }
+                ++i;
             } else if (wcscmp(argv[i], L"--data") == 0 && i + 1 < argc) {
                 std::string dir;
                 int len = WideCharToMultiByte(CP_UTF8, 0, argv[i + 1], -1,
@@ -41,5 +45,5 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int) {
         LocalFree(argv);
     }
 
-    return cxxime::settings::EditorApp::run(hInst, dpiScale, quickPhrase);
+    return cxxime::settings::EditorApp::run(hInst, dpiScale, initialPanel);
 }

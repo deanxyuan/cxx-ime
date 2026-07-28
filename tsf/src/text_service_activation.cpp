@@ -4,14 +4,71 @@
 
 #include <new>
 
+#include <cxxime/data_path.h>
 #include <cxxime/logging.h>
 
+#include "about_dialog.h"
 #include "display_attribute.h"
 #include "globals.h"
 #include "host_compatibility/host_classification_compatibility.h"
+#include "language_bar.h"
+#include "settings_launcher.h"
 #include "tsf_activation.h"
 #include "tsf_imm_mode.h"
 #include "tsf_ui_element_observer.h"
+
+void TextService::_handle_ime_menu_command(cxxime::ImeMenuCommand command) {
+    if (command == cxxime::ImeMenuCommand::kPinyin ||
+        command == cxxime::ImeMenuCommand::kWubi ||
+        command == cxxime::ImeMenuCommand::kMixed) {
+        cxxime::InputMode mode = cxxime::InputMode::PINYIN;
+        if (command == cxxime::ImeMenuCommand::kWubi) {
+            mode = cxxime::InputMode::WUBI;
+        } else if (command == cxxime::ImeMenuCommand::kMixed) {
+            mode = cxxime::InputMode::MIXED;
+        }
+
+        CXXIME_LOG(L"menu_command: input_mode=%d, sessionId=%u",
+                   static_cast<int>(mode), _sessionId);
+        cxxime::IPCResponse response = {};
+        if (_ensure_ipc_session()) {
+            _client.switch_input_mode(_sessionId, mode, response);
+        }
+        if (response.status == cxxime::IPCStatus::OK) {
+            _sync_ime_status(response.ime_status);
+        }
+        return;
+    }
+
+    switch (command) {
+    case cxxime::ImeMenuCommand::kDictionary:
+        cxxime_tsf::open_settings(cxxime::SettingsPanel::kDictionary);
+        break;
+    case cxxime::ImeMenuCommand::kToggleStatusWindow:
+        _config.status_window.enable = !_config.status_window.enable;
+        _statusController.update_config(_config);
+        _config.save(cxxime::user_data_path("default.json"));
+        if (_config.status_window.enable) {
+            _show_status_window_if_allowed("show:menu_toggle");
+        } else {
+            _hide_status_window("hide:menu_toggle");
+        }
+        if (_modeButton) {
+            _modeButton->set_status_visible(_config.status_window.enable);
+        }
+        break;
+    case cxxime::ImeMenuCommand::kSettings:
+        cxxime_tsf::open_settings();
+        break;
+    case cxxime::ImeMenuCommand::kAbout:
+        show_about_dialog();
+        break;
+    case cxxime::ImeMenuCommand::kPinyin:
+    case cxxime::ImeMenuCommand::kWubi:
+    case cxxime::ImeMenuCommand::kMixed:
+        break;
+    }
+}
 
 void TextService::_start_host_compatibility_runtime() {
     if (_hostCompatibilityRuntimeActive) {

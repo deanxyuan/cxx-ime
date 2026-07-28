@@ -1,16 +1,18 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
 #include "status_controller.h"
-#include "globals.h"
-#include "resource_loader.h"
-#include "about_dialog.h"
+
+#include <utility>
+
+#include <windows.h>
+
 #include <cxxime/ipc_client.h>
 #include <cxxime/config.h>
 #include <cxxime/render_context.h>
 #include <cxxime/logging.h>
 #include <cxxime/data_path.h>
-#include <windows.h>
-#include <shellapi.h>
+
+#include "resource_loader.h"
 
 namespace cxxime {
 
@@ -34,7 +36,11 @@ bool StatusController::initialize(HWND parent, IpcClient* client, uint32_t sessi
 
     window_.set_click_callback([this](StatusButton btn) { on_button_click(btn); });
     window_.set_position_callback([this](int x, int y) { on_position_change(x, y); });
-    window_.set_config_action_callback([this](const std::string& action) { on_config_action(action); });
+    window_.set_menu_command_callback([this](ImeMenuCommand command) {
+        if (menu_command_callback_) {
+            menu_command_callback_(command);
+        }
+    });
 
     initialized_ = true;
     return true;
@@ -102,14 +108,24 @@ void StatusController::update_config(const Config& config) {
     }
 }
 
+void StatusController::set_menu_command_callback(StatusMenuCommandCallback callback) {
+    menu_command_callback_ = std::move(callback);
+}
+
 void StatusController::on_button_click(StatusButton button) {
+    if (button == StatusButton::SETTINGS) {
+        if (menu_command_callback_) {
+            menu_command_callback_(ImeMenuCommand::kSettings);
+        }
+        return;
+    }
     if (!client_ || !session_id_ || !ipc_healthy_) return;
 
     switch (button) {
     case StatusButton::CHINESE_MODE:  toggle_chinese_mode(); break;
     case StatusButton::FULL_SHAPE:    toggle_full_shape(); break;
     case StatusButton::CHINESE_PUNCT: toggle_chinese_punct(); break;
-    case StatusButton::SETTINGS:      open_settings(); break;
+    case StatusButton::SETTINGS:      break;
     }
 }
 
@@ -118,31 +134,6 @@ void StatusController::on_position_change(int x, int y) {
     config_->status_window.x = x;
     config_->status_window.y = y;
     config_->save(user_data_path("default.json"));
-}
-
-void StatusController::on_config_action(const std::string& action) {
-    if (action == "open_settings") {
-        open_settings();
-    } else if (action == "reload_config") {
-        if (client_) {
-            IPCResponse resp = {};
-            client_->reload_config(session_id_, resp);
-        }
-    } else if (action == "hide") {
-        window_.hide();
-        if (config_) {
-            config_->status_window.enable = false;
-            config_->save(user_data_path("default.json"));
-        }
-    } else if (action == "about") {
-        show_about_dialog();
-    } else if (action == "switch_to_pinyin") {
-        switch_input_mode(cxxime::InputMode::PINYIN);
-    } else if (action == "switch_to_wubi") {
-        switch_input_mode(cxxime::InputMode::WUBI);
-    } else if (action == "switch_to_mixed") {
-        switch_input_mode(cxxime::InputMode::MIXED);
-    }
 }
 
 void StatusController::toggle_chinese_mode() {
@@ -175,46 +166,6 @@ void StatusController::toggle_chinese_punct() {
         ipc_healthy_ = false;
         window_.set_enabled(false);
         CXXIME_LOG(L"StatusController: IPC toggle_punct failed, status=%d", (int)resp.status);
-    }
-}
-
-void StatusController::switch_input_mode(cxxime::InputMode target) {
-    IPCResponse resp = {};
-    if (client_->switch_input_mode(session_id_, target, resp) && resp.status == cxxime::IPCStatus::OK) {
-        sync_status(resp.ime_status);
-    } else {
-        ipc_healthy_ = false;
-        window_.set_enabled(false);
-        CXXIME_LOG(L"StatusController: IPC switch_input_mode failed, status=%d", (int)resp.status);
-    }
-}
-
-void StatusController::open_settings() {
-    // Try to find existing settings window
-    HWND existing = FindWindowW(nullptr, L"CxxIME 设置");
-    if (existing) {
-        SetForegroundWindow(existing);
-        return;
-    }
-
-    // Get DLL directory and launch cxxime-settings.exe
-    wchar_t dll_path[MAX_PATH] = {};
-    GetModuleFileNameW(g_hInst, dll_path, MAX_PATH);
-    // Remove filename to get directory
-    wchar_t* last_slash = wcsrchr(dll_path, L'\\');
-    if (last_slash) {
-        *(last_slash + 1) = L'\0';
-    }
-    std::wstring settings_path = std::wstring(dll_path) + L"cxxime-settings.exe";
-
-    STARTUPINFOW si = {};
-    si.cb = sizeof(si);
-    PROCESS_INFORMATION pi = {};
-    CreateProcessW(settings_path.c_str(), nullptr, nullptr, nullptr,
-                   FALSE, 0, nullptr, nullptr, &si, &pi);
-    if (pi.hProcess) {
-        CloseHandle(pi.hProcess);
-        CloseHandle(pi.hThread);
     }
 }
 

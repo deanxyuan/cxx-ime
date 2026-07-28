@@ -45,6 +45,7 @@ add_library(cxxime-tsf SHARED
     src/display_attribute.cpp
     src/register.cpp
     src/resource_loader.cc
+    src/settings_launcher.cc
     src/language_bar.cpp
     src/status_controller.cc
     src/host_compatibility/host_classification_compatibility.cc
