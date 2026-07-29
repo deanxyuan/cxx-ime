@@ -134,11 +134,11 @@ zf.write('pinyin.dict.db'); zf.close()
 构建 + 词典转换 + NSIS 安装程序编译：
 
 ```cmd
-scripts\package.py                     # Release 打包 → ..\output\cxxime-v0.1.0-beta.2-setup.exe
+scripts\package.py                     # Release 打包 → ..\output\cxxime-v0.1.0-beta.3-setup.exe
 scripts\package.py --debug             # Debug 打包
 scripts\package.py --skip-dict         # 复用已有 dist/data 词典
 scripts\package.py --fast              # NSIS 跳过大文件压缩
-scripts\package.py --host-diag         # 宿主诊断包 → ..\output\cxxime-v0.1.0-beta.2-host-diag-setup.exe
+scripts\package.py --host-diag         # 宿主诊断包 → ..\output\cxxime-v0.1.0-beta.3-host-diag-setup.exe
 ```
 
 修改词典源数据或短码排序算法后，正式打包不得使用 `skip-dict`，必须重新生成
@@ -155,7 +155,7 @@ scripts\package.py --host-diag         # 宿主诊断包 → ..\output\cxxime-v0
 
 ## 安装
 
-运行 `cxxime-v0.1.0-beta.2-setup.exe`，按向导提示操作：
+运行 `cxxime-v0.1.0-beta.3-setup.exe`，按向导提示操作：
 
 1. 选择程序安装目录，默认安装到 `C:\Program Files\CxxIME`
 2. 程序文件和出厂数据安装到安装目录，用户配置初始化到 `%USERPROFILE%\cxxime\`
