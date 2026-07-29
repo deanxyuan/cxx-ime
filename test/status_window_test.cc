@@ -157,6 +157,39 @@ TEST(StatusWindow, PositionWithoutCreate) {
     ASSERT_EQ(y, 0);
 }
 
+TEST(StatusWindow, PositionStaysInsideMonitorWorkArea) {
+    cxxime::StatusWindow window;
+    ASSERT_TRUE(create_test_window(window));
+
+    window.set_position(1000000, 1000000);
+
+    RECT window_rect = {};
+    ASSERT_TRUE(GetWindowRect(window.hwnd_for_test(), &window_rect));
+    HMONITOR monitor = MonitorFromRect(&window_rect, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO monitor_info = {};
+    monitor_info.cbSize = sizeof(monitor_info);
+    ASSERT_TRUE(GetMonitorInfoW(monitor, &monitor_info));
+    ASSERT_TRUE(window_rect.left >= monitor_info.rcWork.left);
+    ASSERT_TRUE(window_rect.top >= monitor_info.rcWork.top);
+    ASSERT_TRUE(window_rect.right <= monitor_info.rcWork.right);
+    ASSERT_TRUE(window_rect.bottom <= monitor_info.rcWork.bottom);
+
+    SetWindowPos(window.hwnd_for_test(), nullptr, 1000000, 1000000, 0, 0,
+                 SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    SendMessageW(window.hwnd_for_test(), WM_DISPLAYCHANGE, 0, 0);
+    ASSERT_TRUE(GetWindowRect(window.hwnd_for_test(), &window_rect));
+    monitor = MonitorFromRect(&window_rect, MONITOR_DEFAULTTONEAREST);
+    monitor_info = {};
+    monitor_info.cbSize = sizeof(monitor_info);
+    ASSERT_TRUE(GetMonitorInfoW(monitor, &monitor_info));
+    ASSERT_TRUE(window_rect.left >= monitor_info.rcWork.left);
+    ASSERT_TRUE(window_rect.top >= monitor_info.rcWork.top);
+    ASSERT_TRUE(window_rect.right <= monitor_info.rcWork.right);
+    ASSERT_TRUE(window_rect.bottom <= monitor_info.rcWork.bottom);
+
+    window.destroy();
+}
+
 // ============================================================
 // Callbacks
 // ============================================================

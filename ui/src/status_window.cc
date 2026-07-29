@@ -7,6 +7,7 @@
 #include <uxtheme.h>
 #include <algorithm>
 #include <cstring>
+#include <limits>
 #include <mutex>
 #include <vector>
 
@@ -84,6 +85,39 @@ static const wchar_t* kTooltipText[] = {
 
 static bool effective_chinese_punct(const ButtonState& state) {
     return state.chinese_mode && !state.caps_lock && state.chinese_punct;
+}
+
+static POINT clamp_to_monitor_work_area(int x, int y, int width, int height) {
+    const long long target_right =
+        std::min(static_cast<long long>(std::numeric_limits<LONG>::max()),
+                 static_cast<long long>(x) + std::max(width, 0));
+    const long long target_bottom =
+        std::min(static_cast<long long>(std::numeric_limits<LONG>::max()),
+                 static_cast<long long>(y) + std::max(height, 0));
+    RECT target = {
+        static_cast<LONG>(x),
+        static_cast<LONG>(y),
+        static_cast<LONG>(target_right),
+        static_cast<LONG>(target_bottom),
+    };
+    HMONITOR monitor = MonitorFromRect(&target, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO monitor_info = {};
+    monitor_info.cbSize = sizeof(monitor_info);
+    if (!monitor || !GetMonitorInfoW(monitor, &monitor_info)) {
+        return {x, y};
+    }
+
+    const RECT& work_area = monitor_info.rcWork;
+    const int work_left = static_cast<int>(work_area.left);
+    const int work_top = static_cast<int>(work_area.top);
+    const int work_right = static_cast<int>(work_area.right);
+    const int work_bottom = static_cast<int>(work_area.bottom);
+    const int max_x = std::max(work_left, work_right - width);
+    const int max_y = std::max(work_top, work_bottom - height);
+    return {
+        std::max(work_left, std::min(x, max_x)),
+        std::max(work_top, std::min(y, max_y)),
+    };
 }
 
 // ============================================================
@@ -207,7 +241,9 @@ void StatusWindow::update_state(const ButtonState& state) {
 
 void StatusWindow::set_position(int x, int y) {
     if (hwnd_) {
-        SetWindowPos(hwnd_, nullptr, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        POINT position = clamp_to_monitor_work_area(x, y, win_w_, win_h_);
+        SetWindowPos(hwnd_, nullptr, position.x, position.y, 0, 0,
+                     SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
         if (layered_ready_) RedrawLayered();
     }
 }
@@ -293,14 +329,29 @@ LRESULT StatusWindow::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         win_h_ = WindowHeight();
         // Use system-suggested rect
         RECT* rc = reinterpret_cast<RECT*>(lp);
-        SetWindowPos(hwnd_, nullptr, rc->left, rc->top,
-                     rc->right - rc->left, rc->bottom - rc->top,
+        int width = rc->right - rc->left;
+        int height = rc->bottom - rc->top;
+        POINT position = clamp_to_monitor_work_area(rc->left, rc->top, width, height);
+        SetWindowPos(hwnd_, nullptr, position.x, position.y, width, height,
                      SWP_NOZORDER | SWP_NOACTIVATE);
         // Rebuild offscreen surface
         CleanupLayeredSurface();
         InitLayeredSurface();
         if (use_d2d_) { CleanupD2D(); InitD2D(); }
         RedrawLayered();
+        return 0;
+    }
+
+    case WM_DISPLAYCHANGE:
+    case WM_SETTINGCHANGE: {
+        if (msg == WM_SETTINGCHANGE && wp != SPI_SETWORKAREA) {
+            break;
+        }
+
+        RECT window_rect = {};
+        if (GetWindowRect(hwnd_, &window_rect)) {
+            set_position(window_rect.left, window_rect.top);
+        }
         return 0;
     }
 
@@ -915,9 +966,7 @@ void StatusWindow::ContinueTracking(int x, int y) {
     if (is_dragging_) {
         int new_x = window_start_.x + (screen_pt.x - track_start_.x);
         int new_y = window_start_.y + (screen_pt.y - track_start_.y);
-        SetWindowPos(hwnd_, nullptr, new_x, new_y, 0, 0,
-                     SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
-        if (layered_ready_) RedrawLayered();
+        set_position(new_x, new_y);
     } else {
         // Before drag threshold: update pressed button highlight
         int new_hover = HitTest(x, y);

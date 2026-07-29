@@ -103,7 +103,8 @@ void StatusController::update_config(const Config& config) {
         return;
     }
 
-    if (config.status_window.x >= 0 && config.status_window.y >= 0) {
+    // Only (-1, -1) means unset; valid coordinates can be negative on secondary monitors.
+    if (config.status_window.x != -1 || config.status_window.y != -1) {
         window_.set_position(config.status_window.x, config.status_window.y);
     }
 }
