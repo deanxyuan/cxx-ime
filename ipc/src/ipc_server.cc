@@ -71,18 +71,6 @@ bool connect_pipe_instance(HANDLE pipe, const std::atomic<bool>& running) {
 }  // namespace
 
 // ============================================================
-// Per-user pipe name
-// ============================================================
-static std::wstring make_pipe_name(const std::wstring& base_name) {
-    wchar_t username[256] = {};
-    DWORD len = 256;
-    if (GetUserNameW(username, &len)) {
-        return L"\\\\.\\pipe\\" + std::wstring(username) + L"\\CxxIME";
-    }
-    return base_name;
-}
-
-// ============================================================
 // Lifecycle
 // ============================================================
 IpcServer::~IpcServer() {
@@ -90,7 +78,7 @@ IpcServer::~IpcServer() {
 }
 
 bool IpcServer::start(const std::wstring& pipe_name) {
-    pipe_name_ = make_pipe_name(pipe_name);
+    pipe_name_ = make_user_pipe_name(pipe_name);
 
     iocp_ = CreateIoCompletionPort(INVALID_HANDLE_VALUE, nullptr, 0, 0);
     if (!iocp_)

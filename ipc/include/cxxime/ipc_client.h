@@ -7,6 +7,7 @@
 #include <string>
 
 #include <cxxime/ipc_protocol.h>
+#include <cxxime/pipe_names.h>
 
 namespace cxxime {
 
@@ -41,7 +42,6 @@ public:
     bool switch_input_mode(uint32_t session_id, InputMode mode, IPCResponse& response);
     bool get_status(uint32_t session_id, IPCResponse& response);
     bool sync_caps_lock(uint32_t session_id, bool caps_lock, IPCResponse& response);
-    bool reload_config(uint32_t session_id, IPCResponse& response);
     bool add_user_entry(uint32_t session_id, const char* text, const char* code, IPCResponse& response,
                         UserDictKind kind = UserDictKind::PINYIN);
     bool query_user_entries(const char* query, IPCResponse& response,
@@ -60,7 +60,6 @@ public:
 
 private:
     bool try_reconnect();
-    static std::wstring make_pipe_name(const std::wstring& base_name);
 
     void* pipe_handle_ = nullptr;
     std::wstring pipe_name_;

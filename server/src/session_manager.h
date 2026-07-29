@@ -5,8 +5,10 @@
 
 #include <chrono>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -36,18 +38,18 @@ struct SharedResources {
     std::shared_ptr<cxxime::Syllabifier> syllabifier;
     std::shared_ptr<const cxxime::Config> config;
     std::shared_ptr<const cxxime::PunctMapping> punct_mapping;
-    std::string config_path;  // Stored for reload
     std::string punct_path;   // Stored for reload
     std::string dict_path;    // Stored for dictionary reload
     std::string wubi_dict_path;
     std::string manifest_path;
     mutable std::mutex mutex;
 
-    bool load(const std::string& dict_path, const std::string& config_path);
+    bool load(const std::string& dict_path,
+        const std::shared_ptr<const cxxime::Config>& config);
     SharedResourceSnapshot snapshot() const;
     std::shared_ptr<cxxime::Dict> dict_for_kind(cxxime::UserDictKind kind) const;
     bool load_punctuation(const std::string& path);
-    void reload_config();
+    void replace_config(const std::shared_ptr<const cxxime::Config>& next_config);
     bool reload_dictionaries();
     cxxime::IPCStatus add_user_entry(cxxime::UserDictKind kind,
         const std::string& text, const std::string& code);
@@ -88,13 +90,18 @@ struct ProcessKeyResult {
 
 class SessionManager {
 public:
-    bool initialize(const std::string& dict_path, const std::string& config_path = "");
+    using ConfigPatchHandler = std::function<void(const std::string& merge_patch_json)>;
+
+    bool initialize(const std::string& dict_path,
+                    const std::shared_ptr<const cxxime::Config>& config =
+                    std::make_shared<const cxxime::Config>());
     uint32_t create_session();
     void destroy_session(uint32_t id);
     void touch_session(uint32_t id);
 
     size_t cleanup_idle_sessions(uint32_t timeout_ms);
-    void reload_config();
+    void apply_config(const std::shared_ptr<const cxxime::Config>& config);
+    void set_config_patch_handler(ConfigPatchHandler handler);
     cxxime::IPCStatus reload_dictionaries();
     bool reload_punctuation(const std::string& path);
 
@@ -143,7 +150,6 @@ private:
     void commit_global_state(GlobalVisibleState next);
     void align_session_to_global(SessionEntry& entry);
 
-    // Persist input_mode to config file so settings window stays in sync.
     void persist_input_mode(cxxime::InputMode mode);
 
     SharedResources shared_;
@@ -153,6 +159,7 @@ private:
     std::mutex mutex_;
     std::mutex state_mutex_;
     std::mutex reload_mutex_;
+    ConfigPatchHandler config_patch_handler_;
 };
 
 #endif // CXXIME_SESSION_MANAGER_H_

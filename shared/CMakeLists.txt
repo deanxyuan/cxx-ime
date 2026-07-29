@@ -13,7 +13,6 @@ endif()
 add_library(cxxime-shared STATIC
     src/key_event.cc
     src/data_path.cc
-    src/config_monitor.cc
     src/dictionary_manifest.cc
     src/dictionary_monitor.cc
     src/diagnostics_config.cc

@@ -5,12 +5,15 @@
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <memory>
+#include <mutex>
 #include <string>
 #include <tuple>
 #include <vector>
 
 #include <windows.h>
 
+#include <cxxime/data_path.h>
 #include <cxxime/dictionary_manifest.h>
 #include <cxxime/ipc_protocol.h>
 #include <cxxime/short_code_cache.h>
@@ -31,6 +34,17 @@ static bool _status_init = []() {
 
 static std::string make_temp_path(const char* name) {
     return std::string(temp_path) + "\\" + name;
+}
+
+static void setup_test_paths() {
+    static std::once_flag once;
+    std::call_once(once, []() {
+        cxxime::set_data_dir(CXXIME_DATA_DIR);
+        std::string user_data = std::string(temp_path) + "cxxime-session-status-" +
+                                std::to_string(GetCurrentProcessId());
+        CreateDirectoryA(user_data.c_str(), nullptr);
+        cxxime::set_user_data_dir(user_data);
+    });
 }
 
 struct ManifestEntry {
@@ -193,6 +207,7 @@ static void create_pinyin_bundle_files(const std::string& dict_path,
 }
 
 static std::string setup_test_dict() {
+    setup_test_paths();
     std::string dict_path = make_temp_path("test_status_dict.bin");
     std::string wubi_path = make_temp_path("test_status_wubi.bin");
     create_pinyin_bundle_files(dict_path, {
@@ -212,17 +227,10 @@ static std::string setup_test_dict() {
     return dict_path;
 }
 
-static std::string setup_capslock_config() {
-    std::string config_path = make_temp_path("test_capslock_config.json");
-    std::ofstream out(config_path);
-    out << R"({
-        "ascii_composer": {
-            "switch_key": {
-                "Caps_Lock": "clear"
-            }
-        }
-    })";
-    return config_path;
+static std::shared_ptr<const cxxime::Config> setup_capslock_config() {
+    auto config = std::make_shared<cxxime::Config>();
+    config->ascii_switch_key["Caps_Lock"] = "clear";
+    return config;
 }
 
 // ============================================================
@@ -335,6 +343,34 @@ TEST(SessionStatus, switch_input_mode) {
     auto [st2, s2] = mgr.switch_input_mode(id);
     ASSERT_EQ(s2.input_mode, cxxime::InputMode::PINYIN);
     ASSERT_EQ(s2.revision, (uint64_t)2);
+}
+
+TEST(SessionStatus, unrelated_config_update_preserves_pending_input_mode) {
+    auto initial_config = std::make_shared<cxxime::Config>();
+    SessionManager mgr;
+    ASSERT_TRUE(mgr.initialize(setup_test_dict(), initial_config));
+    uint32_t id = mgr.create_session();
+    ASSERT_GT(id, (uint32_t)0);
+
+    auto [switch_status, switched] = mgr.switch_input_mode(id, cxxime::InputMode::WUBI);
+    ASSERT_EQ(switch_status, cxxime::IPCStatus::OK);
+    ASSERT_EQ(switched.input_mode, cxxime::InputMode::WUBI);
+
+    auto unrelated_config = std::make_shared<cxxime::Config>(*initial_config);
+    unrelated_config->status_window.x = 123;
+    mgr.apply_config(unrelated_config);
+
+    auto [unrelated_status, after_unrelated] = mgr.get_ime_status(id);
+    ASSERT_EQ(unrelated_status, cxxime::IPCStatus::OK);
+    ASSERT_EQ(after_unrelated.input_mode, cxxime::InputMode::WUBI);
+
+    auto changed_config = std::make_shared<cxxime::Config>(*unrelated_config);
+    changed_config->input_mode = static_cast<int>(cxxime::InputMode::MIXED);
+    mgr.apply_config(changed_config);
+
+    auto [changed_status, after_changed] = mgr.get_ime_status(id);
+    ASSERT_EQ(changed_status, cxxime::IPCStatus::OK);
+    ASSERT_EQ(after_changed.input_mode, cxxime::InputMode::MIXED);
 }
 
 TEST(SessionStatus, sync_caps_lock_sets_current_state) {

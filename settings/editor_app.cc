@@ -17,7 +17,7 @@
 #include <json.hpp>
 
 #include <cxxime/candidate.h>
-#include <cxxime/config_notify.h>
+#include <cxxime/control_client.h>
 #include <cxxime/data_path.h>
 #include <cxxime/ipc_client.h>
 #include <cxxime/version.h>
@@ -1122,28 +1122,11 @@ void EditorApp::save_config() {
         }
     }
 
-    config_.save(cxxime::user_data_path("default.json"));
-
-    // Notify server to switch input mode if changed
-    {
-        cxxime::InputMode target_mode;
-        if (config_.input_mode == 2)
-            target_mode = cxxime::InputMode::MIXED;
-        else if (config_.input_mode == 1)
-            target_mode = cxxime::InputMode::WUBI;
-        else
-            target_mode = cxxime::InputMode::PINYIN;
-
-        cxxime::IpcClient client;
-        cxxime::IPCResponse resp;
-        if (client.connect()) {
-            client.switch_input_mode(0, target_mode, resp);
-            client.disconnect();
-        }
+    unsigned long error_code = ERROR_SUCCESS;
+    if (!cxxime::replace_user_config(config_.to_json(), nullptr, &error_code)) {
+        MessageBoxW(hwnd_, L"后台服务未能保存并应用配置。",
+                    L"CxxIME 设置", MB_OK | MB_ICONERROR);
     }
-
-    // Notify TSF/Server that config has changed
-    cxxime::notify_config_changed();
 }
 
 void EditorApp::update_user_dict_status() {

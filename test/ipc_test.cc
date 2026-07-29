@@ -1,16 +1,21 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
-#include "util/testutil.h"
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <string>
-#include <vector>
 #include <thread>
-#include <chrono>
+#include <utility>
+#include <vector>
+
 #include <windows.h>
-#include <cxxime/ipc_server.h>
+
 #include <cxxime/ipc_client.h>
 #include <cxxime/ipc_protocol.h>
+#include <cxxime/ipc_server.h>
+#include <cxxime/pipe_names.h>
+
+#include "util/testutil.h"
 
 // ============================================================
 // Helper
@@ -38,6 +43,18 @@ static cxxime::IPCResponse make_response(cxxime::IPCStatus status) {
 
 TEST(Protocol, pipe_name) {
     ASSERT_TRUE(wcscmp(cxxime::IPC_PIPE_BASE_NAME, L"\\\\.\\pipe\\CxxIME") == 0);
+    ASSERT_TRUE(wcscmp(cxxime::CONTROL_PIPE_BASE_NAME, L"\\\\.\\pipe\\CxxIME-Control") == 0);
+}
+
+TEST(Protocol, user_pipe_name_preserves_endpoint_and_is_idempotent) {
+    const std::wstring input = cxxime::make_user_pipe_name(cxxime::IPC_PIPE_BASE_NAME);
+    const std::wstring control = cxxime::make_user_pipe_name(cxxime::CONTROL_PIPE_BASE_NAME);
+
+    ASSERT_TRUE(input.size() >= 6 && input.substr(input.size() - 6) == L"CxxIME");
+    ASSERT_TRUE(control.size() >= 14 && control.substr(control.size() - 14) == L"CxxIME-Control");
+    ASSERT_TRUE(input != control);
+    ASSERT_TRUE(cxxime::make_user_pipe_name(input) == input);
+    ASSERT_TRUE(cxxime::make_user_pipe_name(L"relative-name") == L"relative-name");
 }
 
 TEST(Protocol, request_struct_size) {

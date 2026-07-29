@@ -6,6 +6,7 @@
 #include <json.hpp>
 
 #include <cxxime/config.h>
+#include <cxxime/control_protocol.h>
 
 #include "util/testutil.h"
 
@@ -51,34 +52,66 @@ TEST(Config, load_valid_json) {
     std::remove(path);
 }
 
-TEST(Config, save_preserves_wubi_auto_commit_and_candidate_learning) {
-    const char* path = "test_engine_options.json";
+TEST(Config, json_round_trip_preserves_wubi_auto_commit_and_candidate_learning) {
     cxxime::Config saved;
     saved.wubi_auto_commit = false;
     saved.candidate_learning = true;
-    ASSERT_TRUE(saved.save(path));
 
     cxxime::Config loaded;
-    ASSERT_TRUE(loaded.load(path));
+    ASSERT_TRUE(loaded.load_json(saved.to_json()));
     ASSERT_TRUE(!loaded.wubi_auto_commit);
     ASSERT_TRUE(loaded.candidate_learning);
-
-    std::remove(path);
 }
 
 TEST(Config, initial_state_round_trip) {
-    const char* path = "test_initial_state.json";
     cxxime::Config saved;
     saved.initial_full_shape = true;
     saved.initial_chinese_punct = false;
-    ASSERT_TRUE(saved.save(path));
 
     cxxime::Config loaded;
-    ASSERT_TRUE(loaded.load(path));
+    ASSERT_TRUE(loaded.load_json(saved.to_json()));
     ASSERT_TRUE(loaded.initial_full_shape);
     ASSERT_TRUE(!loaded.initial_chinese_punct);
+}
 
-    std::remove(path);
+TEST(Config, runtime_snapshot_round_trip) {
+    cxxime::Config saved;
+    saved.page_size = 7;
+    saved.font_name = "Arial";
+    saved.font_size = 18;
+    saved.theme = "dark";
+    saved.inline_preedit = true;
+    saved.status_window.enable = false;
+    saved.ascii_switch_key["Shift_L"] = "commit_code";
+    saved.diagnostics.trace_mode = cxxime::DiagnosticTraceMode::kError;
+    saved.diagnostics.slow_ipc_us = 2345;
+    saved.preset_color_schemes["dark"].text_color = 0x11223344;
+
+    const std::string snapshot = saved.to_runtime_json();
+    ASSERT_TRUE(snapshot.size() <= cxxime::CONTROL_MAX_PAYLOAD);
+
+    cxxime::Config loaded;
+    ASSERT_TRUE(loaded.load_runtime_json(snapshot));
+    ASSERT_EQ(loaded.page_size, 7);
+    ASSERT_TRUE(loaded.font_name == "Arial");
+    ASSERT_EQ(loaded.font_size, 18);
+    ASSERT_TRUE(loaded.theme == "dark");
+    ASSERT_TRUE(loaded.inline_preedit);
+    ASSERT_TRUE(!loaded.status_window.enable);
+    ASSERT_TRUE(loaded.ascii_switch_key["Shift_L"] == "commit_code");
+    ASSERT_EQ(loaded.diagnostics.trace_mode, cxxime::DiagnosticTraceMode::kError);
+    ASSERT_EQ(loaded.diagnostics.slow_ipc_us, 2345);
+    ASSERT_EQ(loaded.preset_color_schemes["dark"].text_color, 0x11223344);
+}
+
+TEST(Config, production_runtime_snapshot_fits_control_payload) {
+    cxxime::Config config;
+    ASSERT_TRUE(config.load(std::string(CXXIME_DATA_DIR) + "default.json"));
+    ASSERT_TRUE(config.load_themes(std::string(CXXIME_DATA_DIR) + "themes.json"));
+
+    const std::string snapshot = config.to_runtime_json();
+    ASSERT_TRUE(!snapshot.empty());
+    ASSERT_TRUE(snapshot.size() <= cxxime::CONTROL_MAX_PAYLOAD);
 }
 
 TEST(Config, load_missing_file) {

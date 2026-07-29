@@ -1,8 +1,12 @@
 project(cxxime-ipc CXX)
 
 add_library(cxxime-ipc STATIC
+    src/control_client.cc
+    src/control_protocol.cc
+    src/control_server.cc
     src/ipc_server.cc
     src/ipc_client.cc
+    src/pipe_names.cc
 )
 
 target_include_directories(cxxime-ipc PUBLIC

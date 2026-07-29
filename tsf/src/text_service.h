@@ -18,6 +18,7 @@ class ReadingUIElement;
 
 #include <cxxime/candidate_window.h>
 #include <cxxime/config.h>
+#include <cxxime/control_protocol.h>
 #include <cxxime/ipc_client.h>
 #include <cxxime/ipc_protocol.h>
 #include <cxxime/stage_trace.h>
@@ -215,6 +216,10 @@ private:
     void _stop_state_poll_timer();
     void _poll_unfocused_state_keys();
     static VOID CALLBACK _state_poll_timer_proc(HWND hwnd, UINT msg, UINT_PTR id_event, DWORD time);
+    bool _start_config_updates();
+    void _stop_config_updates();
+    void _apply_config_snapshot();
+    static LRESULT CALLBACK _config_window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
 
     LONG _cRef = 1;
     ITfThreadMgr* _threadMgr = nullptr;
@@ -262,6 +267,9 @@ private:
     CandidateUIElement* _candidateUiElement = nullptr;
     ReadingUIElement* _readingUiElement = nullptr;
     cxxime::Config _config;
+    cxxime::ConfigGeneration _configGeneration;
+    HWND _configWindow = nullptr;
+    std::uint32_t _configSubscriptionId = 0;
 
     // Language bar buttons
     CLangBarItemButton* _modeButton = nullptr;  // 中/EN 按钮

@@ -42,7 +42,26 @@ if(CXXIME_ENABLE_HOST_DIAGNOSTICS)
     add_cxxime_test(stage_trace_test)
 endif()
 add_cxxime_test(mpscq_test)
-add_cxxime_test(config_monitor_test)
+add_cxxime_test(control_channel_test)
+add_cxxime_test(control_lifecycle_test)
+
+add_executable(config_write_coordinator_test
+	config_write_coordinator_test.cc
+	${TEST_COMMON_SOURCES}
+	${CMAKE_SOURCE_DIR}/server/src/config_store.cc
+	${CMAKE_SOURCE_DIR}/server/src/config_write_coordinator.cc
+)
+target_include_directories(config_write_coordinator_test PRIVATE
+	${TEST_INCLUDE_DIRS}
+	${CMAKE_SOURCE_DIR}/server/src
+)
+target_compile_definitions(config_write_coordinator_test PRIVATE
+	CXXIME_PROJECT_DIR="${CMAKE_SOURCE_DIR}/"
+	CXXIME_DATA_DIR="${CMAKE_SOURCE_DIR}/data/"
+)
+target_link_libraries(config_write_coordinator_test PRIVATE ${TEST_COMMON_DEPS})
+add_test(NAME config_write_coordinator_test COMMAND config_write_coordinator_test)
+
 add_cxxime_test(dictionary_monitor_test)
 add_cxxime_test(output_composer_test)
 add_cxxime_test(engine_source_test)

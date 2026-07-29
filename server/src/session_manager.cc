@@ -173,21 +173,14 @@ std::shared_ptr<const cxxime::PunctMapping> load_punctuation_mapping(const std::
 
 }  // anonymous namespace
 
-bool SharedResources::load(const std::string& dict_path, const std::string& cfg_path) {
+bool SharedResources::load(const std::string& dict_path,
+                           const std::shared_ptr<const cxxime::Config>& loaded_config) {
     std::string manifest_path = cxxime::dictionary_manifest_path_for_dict(dict_path);
     DictionaryResources dictionaries;
     if (!load_dictionary_resources(manifest_path, dictionaries))
         return false;
-
-    auto loaded_config = std::make_shared<cxxime::Config>();
-    std::string loaded_config_path;
-    if (!cfg_path.empty()) {
-        loaded_config_path = cfg_path;
-        loaded_config->load(loaded_config_path);
-        // Overlay user config from %USERPROFILE%\cxxime
-        loaded_config->load(cxxime::user_data_path("default.json"));
-        loaded_config->load_themes(cxxime::data_path("themes.json"));
-        cxxime::set_diagnostics_config(loaded_config->diagnostics);
+    if (!loaded_config) {
+        return false;
     }
 
     // Load punctuation mapping (non-fatal)
@@ -199,12 +192,11 @@ bool SharedResources::load(const std::string& dict_path, const std::string& cfg_
         this->dict_path = std::move(dictionaries.dict_path);
         wubi_dict_path = std::move(dictionaries.wubi_dict_path);
         this->manifest_path = std::move(dictionaries.manifest_path);
-        config_path = std::move(loaded_config_path);
         dict = std::move(dictionaries.dict);
         wubi_dict = std::move(dictionaries.wubi_dict);
         spellings = std::move(dictionaries.spellings);
         syllabifier = std::move(dictionaries.syllabifier);
-        config = std::move(loaded_config);
+        config = loaded_config;
         punct_mapping = std::move(loaded_punct_mapping);
         punct_path = punct_mapping ? std::move(loaded_punct_path) : std::string{};
     }
@@ -282,9 +274,12 @@ bool SharedResources::reload_dictionaries() {
     return true;
 }
 
-bool SessionManager::initialize(const std::string& dict_path, const std::string& config_path) {
-    if (!shared_.load(dict_path, config_path))
+bool SessionManager::initialize(const std::string& dict_path,
+                                const std::shared_ptr<const cxxime::Config>& config) {
+    if (!shared_.load(dict_path, config)) {
         return false;
+    }
+    cxxime::set_diagnostics_config(config->diagnostics);
     reset_global_state(shared_.snapshot());
     return true;
 }
@@ -406,35 +401,9 @@ size_t SessionManager::cleanup_idle_sessions(uint32_t timeout_ms) {
     return count;
 }
 
-void SharedResources::reload_config() {
-    std::string current_config_path;
-    std::string current_punct_path;
-    {
-        std::lock_guard<std::mutex> lock(mutex);
-        current_config_path = config_path;
-        current_punct_path = punct_path;
-    }
-
-    if (current_config_path.empty())
-        return;
-    CXXIME_LOG(L"SharedResources: reloading config from %S", current_config_path.c_str());
-    auto cfg = std::make_shared<cxxime::Config>();
-    cfg->load(current_config_path);
-    cfg->load(cxxime::user_data_path("default.json"));
-    cfg->load_themes(cxxime::data_path("themes.json"));
-    cxxime::set_diagnostics_config(cfg->diagnostics);
-    auto mapping = current_punct_path.empty()
-        ? std::shared_ptr<const cxxime::PunctMapping>{}
-        : load_punctuation_mapping(current_punct_path);
-
-    {
-        std::lock_guard<std::mutex> lock(mutex);
-        config = std::move(cfg);
-        if (mapping) {
-            punct_mapping = std::move(mapping);
-        }
-    }
-    CXXIME_LOG(L"SharedResources: config reloaded");
+void SharedResources::replace_config(const std::shared_ptr<const cxxime::Config>& next_config) {
+    std::lock_guard<std::mutex> lock(mutex);
+    config = next_config;
 }
 
 static void apply_resource_snapshot(SessionEntry& entry, const SharedResourceSnapshot& resources) {
@@ -535,10 +504,16 @@ cxxime::IPCStatus SharedResources::save_user_dict(cxxime::UserDictKind kind) {
     return cxxime::IPCStatus::OK;
 }
 
-void SessionManager::reload_config() {
+void SessionManager::apply_config(const std::shared_ptr<const cxxime::Config>& config) {
+    if (!config) {
+        return;
+    }
     std::lock_guard<std::mutex> reload_lock(reload_mutex_);
-
-    shared_.reload_config();
+    auto previous_resources = shared_.snapshot();
+    bool input_mode_changed = !previous_resources.config ||
+        previous_resources.config->input_mode != config->input_mode;
+    shared_.replace_config(config);
+    cxxime::set_diagnostics_config(config->diagnostics);
     auto resources = shared_.snapshot();
 
     std::vector<std::shared_ptr<SessionEntry>> entries;
@@ -552,11 +527,12 @@ void SessionManager::reload_config() {
 
     // Sync input_mode from config to all active sessions
     if (resources.config) {
-        auto target = static_cast<cxxime::InputMode>(resources.config->input_mode);
         bool fuzzy = resources.config->fuzzy_pinyin;
-        GlobalVisibleState state = snapshot_global_state();
-        state.input_mode = target;
-        commit_global_state(state);
+        if (input_mode_changed) {
+            GlobalVisibleState state = snapshot_global_state();
+            state.input_mode = static_cast<cxxime::InputMode>(resources.config->input_mode);
+            commit_global_state(state);
+        }
         for (auto& entry : entries) {
             std::lock_guard<std::mutex> lock(entry->mutex);
             apply_resource_snapshot(*entry, resources);
@@ -568,7 +544,11 @@ void SessionManager::reload_config() {
             align_session_to_global(*entry);
         }
     }
-    CXXIME_LOG(L"SessionManager: config reloaded, %zu active sessions", entries.size());
+    CXXIME_LOG(L"SessionManager: config applied, %zu active sessions", entries.size());
+}
+
+void SessionManager::set_config_patch_handler(ConfigPatchHandler handler) {
+    config_patch_handler_ = std::move(handler);
 }
 
 cxxime::IPCStatus SessionManager::reload_dictionaries() {
@@ -949,28 +929,9 @@ cxxime::IPCStatus SessionManager::save_user_dict(cxxime::UserDictKind kind) {
 }
 
 void SessionManager::persist_input_mode(cxxime::InputMode mode) {
-    // Only write to user config directory (program dir may be read-only).
-    const std::string path = cxxime::user_data_path("default.json");
-    if (path.empty()) return;
-
-    try {
-        // Read existing JSON (may not exist yet)
-        nlohmann::json j;
-        std::ifstream in(path);
-        if (in.is_open()) {
-            in >> j;
-            in.close();
-        }
-
-        j["engine"]["input_mode"] = static_cast<int>(mode);
-
-        std::ofstream out(path);
-        if (!out.is_open()) {
-            CXXIME_LOG(L"persist_input_mode: cannot write %S", path.c_str());
-            return;
-        }
-        out << j.dump(4) << "\n";
-    } catch (const std::exception& e) {
-        CXXIME_LOG(L"persist_input_mode: exception: %S", e.what());
+    if (config_patch_handler_) {
+        nlohmann::json patch;
+        patch["engine"]["input_mode"] = static_cast<int>(mode);
+        config_patch_handler_(patch.dump());
     }
 }

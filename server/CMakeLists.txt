@@ -1,6 +1,8 @@
 project(cxxime-server CXX)
 
 add_executable(cxxime-server WIN32
+    src/config_store.cc
+    src/config_write_coordinator.cc
     src/main.cc
     src/server_app.cc
     src/session_manager.cc

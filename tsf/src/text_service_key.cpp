@@ -190,21 +190,6 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
     if (wParam != VK_CAPITAL && physical_caps_lock != _caps_lock)
         _sync_caps_lock_state(physical_caps_lock, "key_event");
 
-    // Config is reloaded by watcher thread (not keypress-driven).
-    // Copy to local _config for consistent use during this keypress.
-    {
-        auto new_config = get_config();
-        if (new_config.theme != _config.theme) {
-            _candidateWindow.set_theme(cxxime::build_theme_from_config(new_config));
-        }
-        if (new_config.layout != _config.layout)
-            _candidateWindow.set_layout(new_config.layout);
-        if (new_config.font_size != _config.font_size ||
-            new_config.theme != _config.theme)
-            _statusController.update_config(new_config);
-        _config = std::move(new_config);
-    }
-
     // Record key event start time
     _key_event_start = std::chrono::steady_clock::now();
 
@@ -511,9 +496,6 @@ void TextService::_ProcessKeyUp(WPARAM wParam, LPARAM lParam) {
     }
 
     _stageTraceSession.begin_input(static_cast<uint32_t>(wParam), lParam);
-
-    // Config is reloaded by watcher thread (not keypress-driven).
-    _config = get_config();
 
     uint32_t modifiers = _get_modifiers();
     CXXIME_LOG(L"_ProcessKeyUp: vk=%u, mods=%u, sessionId=%u", (unsigned int)wParam, modifiers,

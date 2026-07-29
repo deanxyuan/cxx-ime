@@ -19,6 +19,7 @@
 TextService::TextService() {}
 
 TextService::~TextService() {
+    _stop_config_updates();
     _stop_state_poll_timer();
     _unregister_conversion_compartment_sink();
     set_composition_context(nullptr);
@@ -80,9 +81,7 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
         _enqueue_event_trace("activate", detail, true);
     }
 
-    _config = get_config();
-    init_config_monitor();
-    add_config_monitor_ref();
+    _start_config_updates();
 
     _threadMgr = ptim;
     _threadMgr->AddRef();
@@ -262,7 +261,7 @@ STDMETHODIMP TextService::Deactivate() {
     // Keep the pipe connection for reuse. The next ActivateEx will create a
     // fresh server session and reconnect if the pipe has been closed.
 
-    release_config_monitor_ref();
+    _stop_config_updates();
 
     _hide_candidate_window("hide:deactivate_candidates");
     _end_reading_ui_element("hide:deactivate_reading");

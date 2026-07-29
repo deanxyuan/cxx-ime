@@ -7,7 +7,6 @@
 
 namespace cxxime {
 
-constexpr wchar_t IPC_PIPE_BASE_NAME[] = L"\\\\.\\pipe\\CxxIME";
 constexpr uint32_t IPC_SWITCH_INPUT_MODE_EXPLICIT = 0x01;
 
 enum class InputMode : uint32_t {
@@ -44,7 +43,6 @@ enum class IPCCommand : uint32_t {
     TOGGLE_PUNCT = 11,
     SWITCH_INPUT_MODE = 12,
     GET_STATUS = 13,
-    RELOAD_CONFIG = 14,
     ADD_USER_ENTRY = 15,
     SYNC_CAPS_LOCK = 16,
     QUERY_USER_ENTRIES = 17,

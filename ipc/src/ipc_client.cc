@@ -57,18 +57,6 @@ bool overlapped_io(HANDLE pipe, bool write, void* buffer, DWORD size,
 } // namespace
 
 // ============================================================
-// Per-user pipe name
-// ============================================================
-std::wstring IpcClient::make_pipe_name(const std::wstring& base_name) {
-    wchar_t username[256] = {};
-    DWORD len = 256;
-    if (GetUserNameW(username, &len)) {
-        return L"\\\\.\\pipe\\" + std::wstring(username) + L"\\CxxIME";
-    }
-    return base_name;
-}
-
-// ============================================================
 // Lifecycle
 // ============================================================
 IpcClient::~IpcClient() {
@@ -77,7 +65,7 @@ IpcClient::~IpcClient() {
 
 bool IpcClient::connect(const std::wstring& pipe_name, int timeout_ms) {
     disconnect();
-    pipe_name_ = make_pipe_name(pipe_name);
+    pipe_name_ = make_user_pipe_name(pipe_name);
     timeout_ms_ = timeout_ms;
 
     // Retry loop: WaitNamedPipeW returns TRUE for ALL waiting threads when
@@ -312,13 +300,6 @@ bool IpcClient::sync_caps_lock(uint32_t session_id, bool caps_lock, IPCResponse&
     req.session_id = session_id;
     if (caps_lock)
         req.modifiers |= 0x08;
-    return send_request(req, response);
-}
-
-bool IpcClient::reload_config(uint32_t session_id, IPCResponse& response) {
-    IPCRequest req = {};
-    req.command = IPCCommand::RELOAD_CONFIG;
-    req.session_id = session_id;
     return send_request(req, response);
 }
 

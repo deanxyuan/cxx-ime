@@ -34,7 +34,7 @@ void set_diagnostics_config(const DiagnosticsConfig& config);
 void reset_diagnostics_config();
 
 bool load_diagnostics_config(const std::string& path, DiagnosticsConfig* config);
-DiagnosticsConfig load_runtime_diagnostics_config();
+bool load_diagnostics_config_json(const std::string& json_text, DiagnosticsConfig* config);
 
 const char* diagnostic_trace_mode_name(DiagnosticTraceMode mode);
 DiagnosticTraceMode parse_diagnostic_trace_mode(const std::string& mode);

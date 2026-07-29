@@ -3,11 +3,17 @@
 #ifndef CXXIME_SERVER_APP_H_
 #define CXXIME_SERVER_APP_H_
 
+#include <string>
+
 #include <windows.h>
-#include <cxxime/ipc_server.h>
-#include <cxxime/ipc_protocol.h>
-#include <cxxime/config_monitor.h>
+
+#include <cxxime/control_server.h>
 #include <cxxime/dictionary_monitor.h>
+#include <cxxime/ipc_protocol.h>
+#include <cxxime/ipc_server.h>
+
+#include "config_store.h"
+#include "config_write_coordinator.h"
 #include "session_manager.h"
 
 class ServerApp {
@@ -21,8 +27,10 @@ private:
     static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
 
     SessionManager session_mgr_;
+    ConfigStore config_store_;
+    ConfigWriteCoordinator config_writer_;
     cxxime::IpcServer ipc_server_;
-    cxxime::ConfigMonitor config_monitor_;
+    cxxime::ControlServer control_server_;
     cxxime::DictionaryMonitor dictionary_monitor_;
     HWND hwnd_ = nullptr;
     std::string config_path_;
