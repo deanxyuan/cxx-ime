@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <memory>
 #include <string>
 #include <thread>
 #include <tuple>
@@ -355,8 +356,10 @@ TEST(SessionIntegration, append_enter_preserves_case_through_output_composer) {
         f << R"({"ascii_composer":{"switch_key":{"Caps_Lock":"append"}}})";
     }
 
+    auto config = std::make_shared<cxxime::Config>();
+    ASSERT_TRUE(config->load(cfg_path));
     SessionManager mgr;
-    mgr.initialize(setup_test_dict(), cfg_path);
+    mgr.initialize(setup_test_dict(), config);
     uint32_t id = mgr.create_session();
 
     mgr.process_key(id, make_key('N'));
@@ -623,15 +626,17 @@ TEST(SessionIntegration, chinese_mode_digit_not_intercepted) {
 // Multiple sessions visible state
 // ============================================================
 
-TEST(SessionIntegration, reloaded_initial_state_applies_only_to_new_sessions) {
+TEST(SessionIntegration, applied_initial_state_applies_only_to_new_sessions) {
     std::string config_path = make_temp_path("test_initial_state_config.json");
     {
         std::ofstream config(config_path);
         config << R"({"initial_state":{"full_shape":false,"chinese_punct":true}})";
     }
 
+    auto initial_config = std::make_shared<cxxime::Config>();
+    ASSERT_TRUE(initial_config->load(config_path));
     SessionManager mgr;
-    ASSERT_TRUE(mgr.initialize(setup_test_dict(), config_path));
+    ASSERT_TRUE(mgr.initialize(setup_test_dict(), initial_config));
     uint32_t existing = mgr.create_session();
     ASSERT_GT(existing, (uint32_t)0);
 
@@ -639,7 +644,9 @@ TEST(SessionIntegration, reloaded_initial_state_applies_only_to_new_sessions) {
         std::ofstream config(config_path);
         config << R"({"initial_state":{"full_shape":true,"chinese_punct":false}})";
     }
-    mgr.reload_config();
+    auto updated_config = std::make_shared<cxxime::Config>();
+    ASSERT_TRUE(updated_config->load(config_path));
+    mgr.apply_config(updated_config);
 
     auto [existing_status_result, existing_status] = mgr.get_ime_status(existing);
     ASSERT_EQ(existing_status_result, cxxime::IPCStatus::OK);

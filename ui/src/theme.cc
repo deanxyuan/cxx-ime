@@ -1,9 +1,11 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
 #include <cxxime/render_context.h>
+
+#include <string>
+
 #include <cxxime/config.h>
 #include <cxxime/data_path.h>
-#include <string>
 
 namespace cxxime {
 
@@ -27,12 +29,6 @@ static const Config::SchemeColors* find_scheme(const Config& cfg, const std::str
 Theme build_theme_from_config(const Config& cfg) {
     const Config::SchemeColors* s = find_scheme(cfg, cfg.theme);
     if (!s) s = find_scheme(cfg, "aqua");
-
-    Config fallback;
-    if (!s && fallback.load_themes(data_path("themes.json"))) {
-        s = find_scheme(fallback, cfg.theme);
-        if (!s) s = find_scheme(fallback, "aqua");
-    }
 
     if (!s) {
         // Hardcoded azure fallback

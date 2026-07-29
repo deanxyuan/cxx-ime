@@ -9,8 +9,11 @@
 #include <vector>
 #include <mutex>
 #include <atomic>
+
 #include <windows.h>
+
 #include <cxxime/ipc_protocol.h>
+#include <cxxime/pipe_names.h>
 
 namespace cxxime {
 

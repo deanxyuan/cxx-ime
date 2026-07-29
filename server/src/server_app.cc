@@ -1,12 +1,15 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
 #include "server_app.h"
-#include <cxxime/logging.h>
+
+#include <algorithm>
+#include <cstring>
+#include <memory>
+
 #include <cxxime/data_path.h>
 #include <cxxime/dictionary_manifest.h>
 #include <cxxime/ipc_protocol.h>
-#include <cstring>
-#include <algorithm>
+#include <cxxime/logging.h>
 
 namespace {
 
@@ -36,7 +39,13 @@ bool ServerApp::initialize(const std::string& dict_path, const std::string& conf
     CXXIME_LOG(L"Dictionary path: %S", resolved_dict.c_str());
     CXXIME_LOG(L"Config path: %S", config_path_.c_str());
 
-    if (!session_mgr_.initialize(resolved_dict, config_path_)) {
+    std::shared_ptr<const cxxime::Config> initial_config;
+    unsigned long config_error = ERROR_SUCCESS;
+    if (!config_store_.initialize(config_path_, cxxime::user_data_path("default.json"),
+                                  cxxime::data_path("themes.json"), &initial_config,
+                                  &config_error) ||
+        !session_mgr_.initialize(resolved_dict, initial_config)) {
+        CXXIME_LOG(L"ServerApp: configuration initialization failed error=%lu", config_error);
         std::wstring msg = L"Failed to initialize session manager.\n\n";
         msg += L"Dict: ";
         msg += std::wstring(resolved_dict.begin(), resolved_dict.end());
@@ -66,18 +75,44 @@ bool ServerApp::initialize(const std::string& dict_path, const std::string& conf
 
     SetWindowLongPtrW(hwnd_, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(this));
 
-    ipc_server_.set_handler([this](const cxxime::IPCRequest& req) { return handle_request(req); });
-
-    if (!ipc_server_.start(cxxime::IPC_PIPE_BASE_NAME)) {
-        MessageBoxW(nullptr, L"Failed to start IPC server.", L"CxxIME Server", MB_OK | MB_ICONERROR);
+    if (!config_writer_.start(
+            &config_store_, [this](const std::shared_ptr<const cxxime::Config>& config) {
+                session_mgr_.apply_config(config);
+                control_server_.publish_snapshot(config->to_runtime_json());
+            })) {
+        MessageBoxW(nullptr, L"Failed to start config writer.", L"CxxIME Server",
+                    MB_OK | MB_ICONERROR);
         return false;
     }
 
-    // Start config change watcher; reload config directly on change.
-    config_monitor_.initialize();
-    config_monitor_.start([this]() {
-        session_mgr_.reload_config();
+    std::string initial_config_json = initial_config->to_runtime_json();
+    if (initial_config_json.empty() ||
+        !control_server_.start(
+            initial_config_json,
+            [this](cxxime::UserConfigMutationKind kind, const std::string& payload,
+                   std::string* config_json, unsigned long* error_code) {
+                return config_writer_.submit(kind, payload, config_json, error_code);
+            })) {
+        config_writer_.stop();
+        MessageBoxW(nullptr, L"Failed to start config control server.",
+                    L"CxxIME Server", MB_OK | MB_ICONERROR);
+        return false;
+    }
+
+    session_mgr_.set_config_patch_handler([this](const std::string& merge_patch_json) {
+        if (!config_writer_.enqueue_patch(merge_patch_json)) {
+            CXXIME_LOG(L"%s", L"config_write event=enqueue_internal result=0");
+        }
     });
+
+    ipc_server_.set_handler([this](const cxxime::IPCRequest& req) { return handle_request(req); });
+    if (!ipc_server_.start(cxxime::IPC_PIPE_BASE_NAME)) {
+        session_mgr_.set_config_patch_handler({});
+        config_writer_.stop();
+        control_server_.stop();
+        MessageBoxW(nullptr, L"Failed to start IPC server.", L"CxxIME Server", MB_OK | MB_ICONERROR);
+        return false;
+    }
 
     std::string manifest_path = cxxime::dictionary_manifest_path_for_dict(resolved_dict);
     if (!dictionary_monitor_.start({manifest_path}, [this]() {
@@ -99,8 +134,10 @@ void ServerApp::run() {
 
 void ServerApp::finalize() {
     dictionary_monitor_.stop();
-    config_monitor_.stop();
     ipc_server_.stop();
+    session_mgr_.set_config_patch_handler({});
+    config_writer_.stop();
+    control_server_.stop();
 
     if (hwnd_) {
         DestroyWindow(hwnd_);
@@ -322,10 +359,6 @@ cxxime::IPCResponse ServerApp::handle_request(const cxxime::IPCRequest& request)
         response.ime_status = ime_status;
         break;
     }
-
-    case cxxime::IPCCommand::RELOAD_CONFIG:
-        session_mgr_.reload_config();
-        break;
 
     case cxxime::IPCCommand::RELOAD_DICTIONARIES:
         response.status = session_mgr_.reload_dictionaries();

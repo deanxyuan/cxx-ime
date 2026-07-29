@@ -1,13 +1,13 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
 #include <cxxime/diagnostics_config.h>
-#include <cxxime/data_path.h>
-#include <json.hpp>
 
 #include <algorithm>
 #include <cctype>
 #include <fstream>
 #include <mutex>
+
+#include <json.hpp>
 
 namespace cxxime {
 namespace {
@@ -57,9 +57,8 @@ void clamp(DiagnosticsConfig& config) {
 }
 
 void load_int(const nlohmann::json& obj, const char* key, int& value) {
-    if (obj.contains(key) && obj[key].is_number_integer()) {
+    if (obj.contains(key) && obj[key].is_number_integer())
         value = obj[key].get<int>();
-    }
 }
 
 void load_size(const nlohmann::json& obj, const char* key, std::size_t& value) {
@@ -70,6 +69,32 @@ void load_size(const nlohmann::json& obj, const char* key, std::size_t& value) {
         if (raw > 0)
             value = static_cast<std::size_t>(raw);
     }
+}
+
+bool apply_json(const nlohmann::json& j, DiagnosticsConfig* config) {
+    if (!config) {
+        return false;
+    }
+    if (!j.contains("diagnostics") || !j["diagnostics"].is_object()) {
+        return true;
+    }
+
+    const auto& d = j["diagnostics"];
+    if (d.contains("trace_mode") && d["trace_mode"].is_string()) {
+        config->trace_mode = parse_diagnostic_trace_mode(d["trace_mode"].get<std::string>());
+    }
+
+    load_size(d, "log_max_size", config->log_max_size);
+    load_int(d, "log_max_files", config->log_max_files);
+    load_int(d, "normal_sample_rate", config->normal_sample_rate);
+    load_int(d, "truncated_sample_rate", config->truncated_sample_rate);
+    load_int(d, "slow_query_us", config->slow_query_us);
+    load_int(d, "cache_miss_slow_us", config->cache_miss_slow_us);
+    load_int(d, "slow_ipc_us", config->slow_ipc_us);
+    load_int(d, "slow_window_us", config->slow_window_us);
+    load_int(d, "slow_total_us", config->slow_total_us);
+    clamp(*config);
+    return true;
 }
 
 } // namespace
@@ -126,36 +151,23 @@ bool load_diagnostics_config(const std::string& path, DiagnosticsConfig* config)
 
     try {
         nlohmann::json j = nlohmann::json::parse(file);
-        if (!j.contains("diagnostics") || !j["diagnostics"].is_object())
-            return true;
-
-        const auto& d = j["diagnostics"];
-        if (d.contains("trace_mode") && d["trace_mode"].is_string()) {
-            config->trace_mode = parse_diagnostic_trace_mode(
-                d["trace_mode"].get<std::string>());
-        }
-        load_size(d, "log_max_size", config->log_max_size);
-        load_int(d, "log_max_files", config->log_max_files);
-        load_int(d, "normal_sample_rate", config->normal_sample_rate);
-        load_int(d, "truncated_sample_rate", config->truncated_sample_rate);
-        load_int(d, "slow_query_us", config->slow_query_us);
-        load_int(d, "cache_miss_slow_us", config->cache_miss_slow_us);
-        load_int(d, "slow_ipc_us", config->slow_ipc_us);
-        load_int(d, "slow_window_us", config->slow_window_us);
-        load_int(d, "slow_total_us", config->slow_total_us);
-        clamp(*config);
-        return true;
+        return apply_json(j, config);
     } catch (const nlohmann::json::exception&) {
         return false;
     }
 }
 
-DiagnosticsConfig load_runtime_diagnostics_config() {
-    DiagnosticsConfig config;
-    load_diagnostics_config(data_path("default.json"), &config);
-    load_diagnostics_config(user_data_path("default.json"), &config);
-    clamp(config);
-    return config;
+bool load_diagnostics_config_json(const std::string& json_text, DiagnosticsConfig* config) {
+    if (json_text.empty() || !config) {
+        return false;
+    }
+
+    try {
+        nlohmann::json j = nlohmann::json::parse(json_text);
+        return apply_json(j, config);
+    } catch (const nlohmann::json::exception&) {
+        return false;
+    }
 }
 
 } // namespace cxxime

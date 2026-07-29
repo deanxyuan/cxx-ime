@@ -1,0 +1,243 @@
+// Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
+
+#include "config_store.h"
+
+#include <cstdint>
+#include <string>
+#include <utility>
+
+#include <windows.h>
+
+#include <json.hpp>
+
+namespace {
+
+std::wstring utf8_to_wide(const std::string& text) {
+    if (text.empty()) {
+        return {};
+    }
+    int size = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(),
+                                    static_cast<int>(text.size()), nullptr, 0);
+    if (size <= 0) {
+        return {};
+    }
+    std::wstring result(static_cast<std::size_t>(size), L'\0');
+    if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(),
+                            static_cast<int>(text.size()), &result[0], size) != size) {
+        return {};
+    }
+    return result;
+}
+
+bool read_file(const std::wstring& path, std::string* contents, unsigned long* error_code) {
+    HANDLE file = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                              nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) {
+        if (error_code) {
+            *error_code = GetLastError();
+        }
+        return false;
+    }
+
+    LARGE_INTEGER size = {};
+    bool succeeded = GetFileSizeEx(file, &size) != FALSE;
+    unsigned long result = succeeded ? ERROR_SUCCESS : GetLastError();
+    if (succeeded &&
+        (size.QuadPart < 0 || size.QuadPart > static_cast<LONGLONG>(cxxime::CONTROL_MAX_PAYLOAD))) {
+        succeeded = false;
+        result = ERROR_FILE_TOO_LARGE;
+    }
+    if (succeeded) {
+        contents->resize(static_cast<std::size_t>(size.QuadPart));
+        DWORD read = 0;
+        succeeded =
+            contents->empty() || (ReadFile(file, &(*contents)[0],
+                                           static_cast<DWORD>(contents->size()), &read, nullptr) &&
+                                  read == static_cast<DWORD>(contents->size()));
+        result = succeeded ? ERROR_SUCCESS : GetLastError();
+    }
+    CloseHandle(file);
+    if (error_code) {
+        *error_code = result;
+    }
+    return succeeded;
+}
+
+bool atomic_write_file(const std::wstring& path, const std::string& contents,
+                       unsigned long* error_code) {
+    const std::wstring temporary_path = path + L".tmp";
+    HANDLE file = CreateFileW(temporary_path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
+                              FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) {
+        if (error_code) {
+            *error_code = GetLastError();
+        }
+        return false;
+    }
+
+    DWORD written = 0;
+    bool succeeded =
+        contents.empty() ||
+        (WriteFile(file, contents.data(), static_cast<DWORD>(contents.size()), &written, nullptr) &&
+         written == static_cast<DWORD>(contents.size()));
+    if (succeeded) {
+        succeeded = FlushFileBuffers(file) != FALSE;
+    }
+    unsigned long result = succeeded ? ERROR_SUCCESS : GetLastError();
+    CloseHandle(file);
+
+    if (succeeded) {
+        succeeded = MoveFileExW(temporary_path.c_str(), path.c_str(),
+                                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != FALSE;
+        result = succeeded ? ERROR_SUCCESS : GetLastError();
+    }
+    if (!succeeded) {
+        DeleteFileW(temporary_path.c_str());
+    }
+    if (error_code) {
+        *error_code = result;
+    }
+    return succeeded;
+}
+
+} // namespace
+
+bool ConfigStore::initialize(const std::string& base_config_path,
+                             const std::string& user_config_path, const std::string& themes_path,
+                             std::shared_ptr<const cxxime::Config>* config,
+                             unsigned long* error_code) {
+    if (!config || base_config_path.empty() || user_config_path.empty() || themes_path.empty()) {
+        if (error_code) {
+            *error_code = ERROR_INVALID_PARAMETER;
+        }
+        return false;
+    }
+
+    std::wstring user_path = utf8_to_wide(user_config_path);
+    if (user_path.empty()) {
+        if (error_code) {
+            *error_code = ERROR_NO_UNICODE_TRANSLATION;
+        }
+        return false;
+    }
+
+    std::string user_json = "{}";
+    DWORD attributes = GetFileAttributesW(user_path.c_str());
+    if (attributes != INVALID_FILE_ATTRIBUTES) {
+        if ((attributes & FILE_ATTRIBUTE_DIRECTORY) != 0 ||
+            !read_file(user_path, &user_json, error_code)) {
+            return false;
+        }
+    } else {
+        unsigned long attributes_error = GetLastError();
+        if (attributes_error != ERROR_FILE_NOT_FOUND && attributes_error != ERROR_PATH_NOT_FOUND) {
+            if (error_code) {
+                *error_code = attributes_error;
+            }
+            return false;
+        }
+    }
+
+    try {
+        nlohmann::json parsed = nlohmann::json::parse(user_json);
+        if (!parsed.is_object()) {
+            if (error_code) {
+                *error_code = ERROR_INVALID_DATA;
+            }
+            return false;
+        }
+        user_json = parsed.dump(4);
+    } catch (const nlohmann::json::exception&) {
+        if (error_code) {
+            *error_code = ERROR_INVALID_DATA;
+        }
+        return false;
+    }
+
+    base_config_path_ = base_config_path;
+    user_config_path_ = user_config_path;
+    themes_path_ = themes_path;
+    if (!build_effective_config(user_json, config, error_code)) {
+        return false;
+    }
+    user_config_json_ = std::move(user_json);
+    if (error_code) {
+        *error_code = ERROR_SUCCESS;
+    }
+    return true;
+}
+
+bool ConfigStore::apply(const std::vector<ConfigMutation>& mutations,
+                        std::shared_ptr<const cxxime::Config>* config, unsigned long* error_code) {
+    if (!config || mutations.empty()) {
+        if (error_code) {
+            *error_code = ERROR_INVALID_PARAMETER;
+        }
+        return false;
+    }
+
+    nlohmann::json user_config;
+    try {
+        user_config = nlohmann::json::parse(user_config_json_);
+        for (const auto& mutation : mutations) {
+            nlohmann::json payload = nlohmann::json::parse(mutation.payload);
+            if (mutation.kind == cxxime::UserConfigMutationKind::kReplace) {
+                user_config = std::move(payload);
+            } else {
+                user_config.merge_patch(payload);
+            }
+            if (!user_config.is_object()) {
+                if (error_code) {
+                    *error_code = ERROR_INVALID_DATA;
+                }
+                return false;
+            }
+        }
+    } catch (const nlohmann::json::exception&) {
+        if (error_code) {
+            *error_code = ERROR_INVALID_DATA;
+        }
+        return false;
+    }
+
+    std::string serialized = user_config.dump(4);
+    std::shared_ptr<const cxxime::Config> effective_config;
+    if (!build_effective_config(serialized, &effective_config, error_code)) {
+        return false;
+    }
+
+    if (serialized != user_config_json_) {
+        std::wstring user_path = utf8_to_wide(user_config_path_);
+        if (user_path.empty()) {
+            if (error_code) {
+                *error_code = ERROR_NO_UNICODE_TRANSLATION;
+            }
+            return false;
+        }
+        if (!atomic_write_file(user_path, serialized + "\n", error_code)) {
+            return false;
+        }
+        user_config_json_ = std::move(serialized);
+    }
+
+    *config = std::move(effective_config);
+    if (error_code) {
+        *error_code = ERROR_SUCCESS;
+    }
+    return true;
+}
+
+bool ConfigStore::build_effective_config(const std::string& user_config_json,
+                                         std::shared_ptr<const cxxime::Config>* config,
+                                         unsigned long* error_code) const {
+    auto candidate = std::make_shared<cxxime::Config>();
+    if (!candidate->load(base_config_path_) || !candidate->load_json(user_config_json) ||
+        !candidate->load_themes(themes_path_)) {
+        if (error_code) {
+            *error_code = ERROR_INVALID_DATA;
+        }
+        return false;
+    }
+    *config = std::move(candidate);
+    return true;
+}

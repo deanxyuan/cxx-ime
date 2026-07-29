@@ -10,8 +10,8 @@
 #include <cxxime/config.h>
 #include <cxxime/render_context.h>
 #include <cxxime/logging.h>
-#include <cxxime/data_path.h>
 
+#include "config_coordinator.h"
 #include "resource_loader.h"
 
 namespace cxxime {
@@ -131,9 +131,7 @@ void StatusController::on_button_click(StatusButton button) {
 
 void StatusController::on_position_change(int x, int y) {
     if (!config_) return;
-    config_->status_window.x = x;
-    config_->status_window.y = y;
-    config_->save(user_data_path("default.json"));
+    cxxime_tsf::set_status_window_position(x, y);
 }
 
 void StatusController::toggle_chinese_mode() {

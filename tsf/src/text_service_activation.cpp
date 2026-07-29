@@ -4,10 +4,10 @@
 
 #include <new>
 
-#include <cxxime/data_path.h>
 #include <cxxime/logging.h>
 
 #include "about_dialog.h"
+#include "config_coordinator.h"
 #include "display_attribute.h"
 #include "globals.h"
 #include "host_compatibility/host_classification_compatibility.h"
@@ -44,19 +44,11 @@ void TextService::_handle_ime_menu_command(cxxime::ImeMenuCommand command) {
     case cxxime::ImeMenuCommand::kDictionary:
         cxxime_tsf::open_settings(cxxime::SettingsPanel::kDictionary);
         break;
-    case cxxime::ImeMenuCommand::kToggleStatusWindow:
-        _config.status_window.enable = !_config.status_window.enable;
-        _statusController.update_config(_config);
-        _config.save(cxxime::user_data_path("default.json"));
-        if (_config.status_window.enable) {
-            _show_status_window_if_allowed("show:menu_toggle");
-        } else {
-            _hide_status_window("hide:menu_toggle");
-        }
-        if (_modeButton) {
-            _modeButton->set_status_visible(_config.status_window.enable);
-        }
+    case cxxime::ImeMenuCommand::kToggleStatusWindow: {
+        bool enabled = !_config.status_window.enable;
+        cxxime_tsf::set_status_window_enabled(enabled);
         break;
+    }
     case cxxime::ImeMenuCommand::kSettings:
         cxxime_tsf::open_settings();
         break;
