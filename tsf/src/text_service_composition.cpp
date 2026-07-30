@@ -126,11 +126,13 @@ HRESULT TextService::_commit_text(ITfContext* context,
     const DWORD flags = TF_ES_READWRITE | (sync ? TF_ES_SYNC : TF_ES_ASYNCDONTCARE);
     const HRESULT request_hr =
         context->RequestEditSession(_clientId, edit_session, flags, &edit_hr);
+    const HRESULT action_hr = edit_session->action_result();
     if (sync && (FAILED(request_hr) || FAILED(edit_hr))) {
         char detail[128] = {};
         snprintf(detail, sizeof(detail),
-                 "commit sync_fallback request=0x%08lx edit=0x%08lx len=%u",
+                 "commit sync_fallback request=0x%08lx edit=0x%08lx action=0x%08lx len=%u",
                  static_cast<unsigned long>(request_hr), static_cast<unsigned long>(edit_hr),
+                 static_cast<unsigned long>(action_hr),
                  static_cast<unsigned int>(text.length()));
         _enqueue_event_trace("composition_commit", detail, true);
         edit_hr = E_FAIL;
@@ -139,10 +141,11 @@ HRESULT TextService::_commit_text(ITfContext* context,
     } else if (sync) {
         char detail[128] = {};
         snprintf(detail, sizeof(detail),
-                 "commit sync=1 request=0x%08lx edit=0x%08lx len=%u",
+                 "commit sync=1 request=0x%08lx edit=0x%08lx action=0x%08lx len=%u",
                  static_cast<unsigned long>(request_hr), static_cast<unsigned long>(edit_hr),
+                 static_cast<unsigned long>(action_hr),
                  static_cast<unsigned int>(text.length()));
-        _enqueue_event_trace("composition_commit", detail, false);
+        _enqueue_event_trace("composition_commit", detail, FAILED(action_hr));
     }
     edit_session->Release();
     return edit_hr;
