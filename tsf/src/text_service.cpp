@@ -103,7 +103,11 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
     _candidateWindow.create(nullptr, _config);
     _candidateWindow.set_layout(_config.layout);
     _candidateWindow.set_click_callback([this](int index) {
-        select_candidate_from_ui(static_cast<UINT>(index));
+        if (index == -2 || index == -3) {
+            navigate_candidate_page_from_ui(index == -2);
+        } else if (index >= 0) {
+            select_candidate_from_ui(static_cast<UINT>(index));
+        }
     });
     _candidateUiElement = new (std::nothrow) CandidateUIElement(this);
     _readingUiElement = new (std::nothrow) ReadingUIElement(this);

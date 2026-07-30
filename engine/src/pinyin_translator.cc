@@ -180,7 +180,8 @@ PinyinTranslator::IndexedFastResult PinyinTranslator::lookup_indexed_fast(
     return result;
 }
 
-bool PinyinTranslator::lookup_query_cache(const std::string& input, int page_index, int page_size,
+bool PinyinTranslator::lookup_query_cache(const std::string& input, int page_index,
+                                          int candidate_offset, int page_size,
                                           CandidatePage& page, QueryTrace* trace) {
     if (!dict_)
         return false;
@@ -189,6 +190,7 @@ bool PinyinTranslator::lookup_query_cache(const std::string& input, int page_ind
     for (auto& entry : query_cache_) {
         if (entry.input == input &&
             entry.page_index == page_index &&
+            entry.candidate_offset == candidate_offset &&
             entry.page_size == page_size &&
             entry.user_dict_version == user_version) {
             entry.sequence = ++query_cache_sequence_;
@@ -208,7 +210,8 @@ bool PinyinTranslator::lookup_query_cache(const std::string& input, int page_ind
     return false;
 }
 
-void PinyinTranslator::store_query_cache(const std::string& input, int page_index, int page_size,
+void PinyinTranslator::store_query_cache(const std::string& input, int page_index,
+                                         int candidate_offset, int page_size,
                                          const CandidatePage& page) {
     if (!dict_)
         return;
@@ -217,6 +220,7 @@ void PinyinTranslator::store_query_cache(const std::string& input, int page_inde
     for (auto& entry : query_cache_) {
         if (entry.input == input &&
             entry.page_index == page_index &&
+            entry.candidate_offset == candidate_offset &&
             entry.page_size == page_size &&
             entry.user_dict_version == user_version) {
             entry.page = page;
@@ -237,6 +241,7 @@ void PinyinTranslator::store_query_cache(const std::string& input, int page_inde
     QueryCacheEntry entry;
     entry.input = input;
     entry.page_index = page_index;
+    entry.candidate_offset = candidate_offset;
     entry.page_size = page_size;
     entry.user_dict_version = user_version;
     entry.sequence = ++query_cache_sequence_;
@@ -246,7 +251,7 @@ void PinyinTranslator::store_query_cache(const std::string& input, int page_inde
 
 CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_index, int page_size,
                                            QueryTrace* trace, const QueryBudget* budget,
-                                           QueryScratch* scratch) {
+                                           QueryScratch* scratch, int candidate_offset) {
     CandidatePage page;
     page.page_index = page_index;
     page.page_size = page_size;
@@ -254,11 +259,12 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
     if (!dict_ || !dict_->is_open() || pinyin.empty())
         return page;
 
-    int offset = page_index * page_size;
+    int offset = candidate_offset >= 0 ? candidate_offset : page_index * page_size;
+    page.page_offset = offset;
     int fetch_limit = page_size;
     const int need = offset + fetch_limit + 1;
 
-    if (lookup_query_cache(pinyin, page_index, page_size, page, trace))
+    if (lookup_query_cache(pinyin, page_index, offset, page_size, page, trace))
         return page;
 
     // Try the indexed path before syllabification for every valid pinyin key.
@@ -439,7 +445,7 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
             }
             break;
         }
-        auto candidates = dict_->lookup_by_ids(ids, offset + fetch_limit, trace, budget);
+        auto candidates = dict_->lookup_by_ids(ids, offset + fetch_limit + 1, trace, budget);
         for (auto& c : candidates) {
             if (!contains_text(merged.items(), c.text))
                 merged.offer(std::move(c));
@@ -461,8 +467,11 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
     page.total_count = (int)sorted.size();
 
     // Apply pagination
-    if (offset > 0 && offset < (int)sorted.size())
+    if (offset >= (int)sorted.size()) {
+        sorted.clear();
+    } else if (offset > 0) {
         sorted.erase(sorted.begin(), sorted.begin() + offset);
+    }
     if ((int)sorted.size() > fetch_limit)
         sorted.resize(fetch_limit);
 
@@ -478,7 +487,7 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
     }
 
     if (!deadline_hit && !(trace && trace->deadline_exceeded))
-        store_query_cache(pinyin, page_index, page_size, page);
+        store_query_cache(pinyin, page_index, offset, page_size, page);
 
     return page;
 }

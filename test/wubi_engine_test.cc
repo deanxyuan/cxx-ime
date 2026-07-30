@@ -1,13 +1,18 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
-#include "util/testutil.h"
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <tuple>
+#include <vector>
+
 #include <windows.h>
+
 #include <cxxime/engine.h>
 #include <cxxime/wubi_processor.h>
 #include <cxxime/wubi_translator.h>
+
+#include "util/testutil.h"
 
 static char temp_path[MAX_PATH] = {};
 
@@ -147,6 +152,37 @@ TEST(WubiEngine, translator_basic_lookup) {
     DeleteFileA(dict_path.c_str());
 }
 
+TEST(WubiEngine, translator_uses_explicit_candidate_offset) {
+    std::string dict_path = make_temp_path("test_wubi_offset.bin");
+    const std::vector<std::tuple<std::string, std::string, int>> entries = {
+        {"a", "一", 500},  {"aa", "二", 400}, {"ab", "三", 300},
+        {"ac", "四", 200}, {"ad", "五", 100},
+    };
+    cxxime::Dict::create_test_dict(dict_path, entries);
+
+    cxxime::Dict dict;
+    ASSERT_TRUE(dict.open(dict_path));
+
+    cxxime::WubiTranslator translator;
+    translator.set_dict(&dict);
+    auto first = translator.translate("a", 0, 2);
+    auto second = translator.translate("a", 1, 2, nullptr, nullptr, nullptr, 2);
+
+    ASSERT_EQ(first.page_offset, 0);
+    ASSERT_EQ(second.page_index, 1);
+    ASSERT_EQ(second.page_offset, 2);
+    ASSERT_EQ(first.candidates.size(), 2u);
+    ASSERT_EQ(second.candidates.size(), 2u);
+    for (const auto& first_candidate : first.candidates) {
+        for (const auto& second_candidate : second.candidates) {
+            ASSERT_TRUE(first_candidate.text != second_candidate.text);
+        }
+    }
+
+    dict.close();
+    DeleteFileA(dict_path.c_str());
+}
+
 TEST(WubiEngine, translator_empty_code) {
     std::string dict_path = make_temp_path("test_wubi_empty.bin");
     cxxime::Dict::create_test_dict(dict_path, {
@@ -229,6 +265,41 @@ TEST(WubiEngine, engine_wubi_input_flow) {
     // 应有候选（"工" 或 "式"）
     auto& ctx = engine.context();
     ASSERT_GE(ctx.candidates.candidates.size(), 1u);
+
+    engine.finalize();
+    wubi_dict.close();
+    DeleteFileA(pinyin_path.c_str());
+    DeleteFileA(wubi_path.c_str());
+}
+
+TEST(WubiEngine, engine_paginates_from_visible_candidate_count_without_skipping) {
+    std::string pinyin_path = make_temp_path("test_wubi_page_pinyin.bin");
+    std::string wubi_path = make_temp_path("test_wubi_page_wubi.bin");
+    cxxime::Dict::create_test_dict(pinyin_path, {{"a", "啊", 100}});
+    const std::vector<std::tuple<std::string, std::string, int>> entries = {
+        {"a", "一", 1200}, {"aa", "二", 1100}, {"ab", "三", 1000},
+        {"ac", "四", 900}, {"ad", "五", 800},  {"ae", "六", 700},
+        {"af", "七", 600}, {"ag", "八", 500},  {"ah", "九", 400},
+    };
+    cxxime::Dict::create_test_dict(wubi_path, entries);
+
+    cxxime::Engine engine;
+    ASSERT_TRUE(engine.initialize(pinyin_path));
+    engine.set_config_page_size(7);
+    cxxime::Dict wubi_dict;
+    ASSERT_TRUE(wubi_dict.open(wubi_path));
+    engine.set_wubi_dict(&wubi_dict);
+    engine.switch_mode(cxxime::InputMode::WUBI);
+
+    ASSERT_EQ(engine.process_key(make_key('A')), cxxime::ProcessResult::ACCEPTED);
+    ASSERT_EQ(engine.context().candidates.candidates.size(), 7u);
+    std::string expected_second_page_first = engine.context().candidates.candidates[2].text;
+
+    cxxime::OutputOptions options;
+    ASSERT_EQ(engine.process_key(make_key(VK_NEXT), options, 2), cxxime::ProcessResult::ACCEPTED);
+    ASSERT_EQ(engine.context().page_index, 1);
+    ASSERT_EQ(engine.context().page_offset, 2);
+    ASSERT_EQ(engine.context().candidates.candidates[0].text, expected_second_page_first);
 
     engine.finalize();
     wubi_dict.close();

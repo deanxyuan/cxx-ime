@@ -199,7 +199,9 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
     uint32_t engine_calls = 0;
     auto process_key = [&]() {
         ++engine_calls;
-        return _client.process_key(_sessionId, static_cast<uint32_t>(wParam), modifiers, response);
+        return _client.process_key(
+            _sessionId, static_cast<uint32_t>(wParam), modifiers, response, false,
+            _candidate_page_step());
     };
     auto ipc_start = std::chrono::steady_clock::now();
     bool ok = _ensure_ipc_session() && process_key();
@@ -299,16 +301,7 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
             _config.inline_preedit, _config.preedit_type, preedit, candidate_texts);
 
         const bool has_candidates = response.candidate_count > 0;
-        cxxime::CandidatePage page;
-        if (has_candidates) {
-            page.highlighted = static_cast<int>(response.highlighted);
-            for (uint32_t i = 0; i < response.candidate_count && i < 10; ++i) {
-                cxxime::Candidate candidate;
-                candidate.text = response.candidates[i];
-                candidate.comment = response.candidate_hints[i];
-                page.candidates.push_back(std::move(candidate));
-            }
-        }
+        cxxime::CandidatePage page = _candidate_page_from_response(response);
 
         CXXIME_LOG(L"_ProcessKeyEvent: start_comp=%d, _composing=%d, _composition=%d, inline='%s'",
                    decision.start_composition, _composing, _composition != nullptr,

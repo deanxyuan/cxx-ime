@@ -1,13 +1,15 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
 #include <cxxime/mixed_translator.h>
-#include <cxxime/syllabifier.h>
-#include <cxxime/short_code_cache.h>
-#include <cxxime/query_trace.h>
-#include <cxxime/query_budget.h>
-#include <cxxime/query_scratch.h>
+
 #include <algorithm>
 #include <unordered_set>
+
+#include <cxxime/query_budget.h>
+#include <cxxime/query_scratch.h>
+#include <cxxime/query_trace.h>
+#include <cxxime/short_code_cache.h>
+#include <cxxime/syllabifier.h>
 
 namespace cxxime {
 
@@ -118,12 +120,14 @@ void MixedTranslator::set_short_cache(const ShortCodeCache* cache) {
 
 CandidatePage MixedTranslator::translate(const std::string& input, int page_index, int page_size,
                                          QueryTrace* trace, const QueryBudget* budget,
-                                         QueryScratch* scratch) {
+                                         QueryScratch* scratch, int candidate_offset) {
     if (input.empty()) return {};
+
+    int offset = candidate_offset >= 0 ? candidate_offset : page_index * page_size;
 
     // Fetch enough candidates from both sources to fill the requested page.
     // Over-fetch slightly to account for dedup losses.
-    int need = (page_index + 1) * page_size + page_size;
+    int need = offset + page_size + page_size;
 
     // Pinyin: fetch all candidates up to need (page_index=0, large page)
     auto pinyin_page = pinyin_translator_.translate(input, 0, need, trace, budget, scratch);
@@ -155,10 +159,11 @@ CandidatePage MixedTranslator::translate(const std::string& input, int page_inde
     // Paginate
     CandidatePage result;
     result.page_index = page_index;
+    result.page_offset = offset;
     result.page_size = page_size;
     result.total_count = (int)merged.size();
 
-    int start = page_index * page_size;
+    int start = offset;
     if (start >= (int)merged.size()) return result;
 
     int end = std::min(start + page_size, (int)merged.size());

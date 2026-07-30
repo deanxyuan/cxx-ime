@@ -1,15 +1,18 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
 #include <cxxime/engine.h>
-#include <cxxime/output_composer.h>
-#include <cxxime/wubi_processor.h>
-#include <cxxime/wubi_translator.h>
-#include <cxxime/mixed_translator.h>
-#include <windows.h>
+
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+
+#include <windows.h>
+
 #include <cxxime/logging.h>
+#include <cxxime/mixed_translator.h>
+#include <cxxime/output_composer.h>
+#include <cxxime/wubi_processor.h>
+#include <cxxime/wubi_translator.h>
 
 namespace cxxime {
 
@@ -145,9 +148,13 @@ ProcessResult Engine::process_key(const KeyEvent& event) {
     return process_key(event, OutputOptions{});
 }
 
-ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& opts) {
+ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& opts,
+                                  int visible_candidate_count) {
     CXXIME_LOG(L"Engine::process_key: vk=%u, is_key_up=%d, composing=%d",
                event.keycode, event.is_key_up, context_.is_composing());
+
+    const size_t input_length_before = context_.pinyin_buffer.size();
+    context_.visible_candidate_count = (std::max)(0, visible_candidate_count);
 
     // Phase 0: Initialize trace for this query (only if tracing enabled)
     // Preserve session_id/revision set by caller (server) before this call.
@@ -315,6 +322,9 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
         t0 = std::chrono::steady_clock::now();
     }
     auto result = processor_->process_key(event, context_);
+    if (context_.pinyin_buffer.size() != input_length_before) {
+        context_.reset_pagination();
+    }
     if (trace_enabled_) {
         t1 = std::chrono::steady_clock::now();
         trace_.processor_us = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
@@ -385,13 +395,14 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
             }
         } else if (append_raw) {
             context_.candidates = {};
-            context_.page_index = 0;
+            context_.reset_pagination();
         } else {
             // Create a budget tuned for this input length, with per-query deadline
             QueryBudget effective_budget = make_budget((int)context_.pinyin_buffer.size(), config_->page_size);
             effective_budget.deadline = per_query_deadline;
             auto page = translator_->translate(context_.pinyin_buffer, context_.page_index, config_->page_size,
-                                              trace_enabled_ ? &trace_ : nullptr, &effective_budget, &scratch_);
+                                              trace_enabled_ ? &trace_ : nullptr, &effective_budget, &scratch_,
+                                              context_.page_offset);
             if (config_->wubi_code_hint) {
                 add_wubi_code_hints(context_.pinyin_buffer, page);
             }
@@ -483,7 +494,7 @@ void Engine::commit_with_punctuation(Context& context, const std::string& output
     }
     context.pinyin_buffer.clear();
     context.candidates = {};
-    context.page_index = 0;
+    context.reset_pagination();
     context.set_commit_source(CommitSource::kCandidate);
     context.last_committed_char = output.back();
 }

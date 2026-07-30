@@ -1,6 +1,7 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
 #include <cxxime/processor.h>
+
 #include <windows.h>
 
 namespace cxxime {
@@ -35,7 +36,7 @@ ProcessResult PinyinProcessor::process_key(const KeyEvent& event, Context& conte
             context.commit_source() == CommitSource::kRawCodePreserveCase) {
             context.committed_text = context.pinyin_buffer;
             context.candidates = {};
-            context.page_index = 0;
+            context.reset_pagination();
             context.pinyin_buffer.clear();
             return ProcessResult::COMMITTED;
         }
@@ -51,7 +52,7 @@ ProcessResult PinyinProcessor::process_key(const KeyEvent& event, Context& conte
                 context.committed_text = context.pinyin_buffer;
                 context.set_commit_source(CommitSource::kRawCodePreserveCase);
                 context.candidates = {};
-                context.page_index = 0;
+                context.reset_pagination();
                 context.pinyin_buffer.clear();
                 return ProcessResult::COMMITTED;
             }
@@ -64,7 +65,7 @@ ProcessResult PinyinProcessor::process_key(const KeyEvent& event, Context& conte
     // Up/Down arrows: navigate candidates
     if (vk == VK_UP || vk == VK_DOWN) {
         if (context.is_composing() && !context.candidates.candidates.empty()) {
-            int count = (int)context.candidates.candidates.size();
+            int count = context.selectable_candidate_count();
             if (vk == VK_DOWN) {
                 context.candidates.highlighted++;
                 if (context.candidates.highlighted >= count)
@@ -97,11 +98,12 @@ ProcessResult PinyinProcessor::process_key(const KeyEvent& event, Context& conte
     if (is_digit_key(vk) && vk >= '1' && vk <= '9') {
         if (context.is_composing() && !context.candidates.candidates.empty()) {
             int index = vk - '1';
-            if (index < (int)context.candidates.candidates.size()) {
+            if (index < context.selectable_candidate_count()) {
                 context.candidates.highlighted = index;
                 context.committed_text = context.candidates.candidates[index].text;
                 return ProcessResult::COMMITTED;
             }
+            return ProcessResult::ACCEPTED;
         }
         // If not composing, let the number pass through
         return ProcessResult::REJECTED;
@@ -114,17 +116,10 @@ ProcessResult PinyinProcessor::process_key(const KeyEvent& event, Context& conte
                                     !event.is_ctrl() && !event.is_alt();
     if (vk == VK_PRIOR || vk == VK_NEXT || shortcut_page_up || shortcut_page_down) {
         if (context.is_composing() && !context.candidates.candidates.empty()) {
-            int total = context.candidates.total_count;
-            int page_size = context.candidates.page_size;
-            int max_page = (total > 0 && page_size > 0) ? (total + page_size - 1) / page_size - 1 : 0;
-            if (max_page < 0) max_page = 0;
-
             if (vk == VK_NEXT || shortcut_page_down) {  // Page Down
-                if (context.page_index < max_page)
-                    context.page_index++;
+                context.move_to_next_page();
             } else {  // Page Up
-                if (context.page_index > 0)
-                    context.page_index--;
+                context.move_to_previous_page();
             }
             return ProcessResult::ACCEPTED;
         }
@@ -141,7 +136,7 @@ ProcessResult PinyinProcessor::process_key(const KeyEvent& event, Context& conte
                 ch = static_cast<char>(vk - 'A' + 'a');  // Shift+CapsLock → lowercase
             context.set_commit_source(CommitSource::kRawCodePreserveCase);
             context.candidates = {};
-            context.page_index = 0;
+            context.reset_pagination();
         } else {
             ch = static_cast<char>(vk - 'A' + 'a');  // force lowercase
         }

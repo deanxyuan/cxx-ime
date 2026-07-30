@@ -2,6 +2,8 @@
 
 #include <cxxime/context.h>
 
+#include <algorithm>
+
 namespace cxxime {
 
 bool Context::is_composing() const {
@@ -12,7 +14,7 @@ void Context::reset() {
     pinyin_buffer.clear();
     committed_text.clear();
     candidates = {};
-    page_index = 0;
+    reset_pagination();
     temporary_ascii_composition = false;
     commit_source_ = CommitSource::kRawCode;
 }
@@ -30,7 +32,7 @@ std::string Context::commit() {
     pinyin_buffer.clear();
     committed_text.clear();
     candidates = {};
-    page_index = 0;
+    reset_pagination();
     temporary_ascii_composition = false;
     commit_source_ = CommitSource::kRawCode;
     return text;
@@ -55,7 +57,7 @@ std::pair<std::string, CommitSource> Context::commit_with_source() {
     pinyin_buffer.clear();
     committed_text.clear();
     candidates = {};
-    page_index = 0;
+    reset_pagination();
     temporary_ascii_composition = false;
     commit_source_ = CommitSource::kRawCode;
     return {std::move(text), source};
@@ -63,9 +65,45 @@ std::pair<std::string, CommitSource> Context::commit_with_source() {
 
 void Context::update_candidates(CandidatePage&& page) {
     candidates = std::move(page);
+    page_index = candidates.page_index;
+    page_offset = candidates.page_offset;
     if (!candidates.candidates.empty() && candidates.highlighted < 0) {
         candidates.highlighted = 0;
     }
+}
+
+void Context::reset_pagination() {
+    page_index = 0;
+    page_offset = 0;
+    visible_candidate_count = 0;
+    previous_page_offsets_.clear();
+}
+
+int Context::selectable_candidate_count() const {
+    int count = static_cast<int>(candidates.candidates.size());
+    if (visible_candidate_count > 0) {
+        count = (std::min)(count, visible_candidate_count);
+    }
+    return count;
+}
+
+void Context::move_to_next_page() {
+    int step = selectable_candidate_count();
+    if (step <= 0 || page_offset + step >= candidates.total_count) {
+        return;
+    }
+    previous_page_offsets_.push_back(page_offset);
+    page_offset += step;
+    ++page_index;
+}
+
+void Context::move_to_previous_page() {
+    if (previous_page_offsets_.empty()) {
+        return;
+    }
+    page_offset = previous_page_offsets_.back();
+    previous_page_offsets_.pop_back();
+    --page_index;
 }
 
 } // namespace cxxime

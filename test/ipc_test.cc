@@ -172,12 +172,16 @@ TEST(IPC, ping) {
 
 TEST(IPC, process_key_preedit) {
     TestServer ts;
-    ASSERT_TRUE(ts.start([](const cxxime::IPCRequest& req) -> cxxime::IPCResponse {
+    uint32_t visible_candidate_count = 0;
+    ASSERT_TRUE(ts.start([&](const cxxime::IPCRequest& req) -> cxxime::IPCResponse {
         cxxime::IPCResponse resp = {};
         if (req.command == cxxime::IPCCommand::PROCESS_KEY) {
+            visible_candidate_count = req.visible_candidate_count;
             resp.status = cxxime::IPCStatus::OK;
             strncpy_s(resp.preedit, "ni", sizeof(resp.preedit) - 1);
             resp.candidate_count = 2;
+            resp.candidate_offset = 4;
+            resp.candidate_total = 12;
             strncpy_s(resp.candidates[0], "你", sizeof(resp.candidates[0]) - 1);
             strncpy_s(resp.candidates[1], "尼", sizeof(resp.candidates[1]) - 1);
             strncpy_s(resp.candidate_hints[1], "a", sizeof(resp.candidate_hints[1]) - 1);
@@ -188,10 +192,13 @@ TEST(IPC, process_key_preedit) {
     cxxime::IpcClient client;
     ASSERT_TRUE(client.connect(cxxime::IPC_PIPE_BASE_NAME, 2000));
     cxxime::IPCResponse resp = {};
-    ASSERT_TRUE(client.process_key(1, 'N', 0, resp));
+    ASSERT_TRUE(client.process_key(1, 'N', 0, resp, false, 2));
     ASSERT_EQ(resp.status, cxxime::IPCStatus::OK);
+    ASSERT_EQ(visible_candidate_count, 2u);
     ASSERT_EQ(strcmp(resp.preedit, "ni"), 0);
     ASSERT_EQ(resp.candidate_count, (uint32_t)2);
+    ASSERT_EQ(resp.candidate_offset, 4u);
+    ASSERT_EQ(resp.candidate_total, 12u);
     ASSERT_EQ(strcmp(resp.candidate_hints[0], ""), 0);
     ASSERT_EQ(strcmp(resp.candidate_hints[1], "a"), 0);
 }

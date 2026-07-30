@@ -31,7 +31,8 @@ public:
     virtual ~ITranslator() = default;
     virtual CandidatePage translate(const std::string& input, int page_index = 0, int page_size = 9,
                                     QueryTrace* trace = nullptr, const QueryBudget* budget = nullptr,
-                                    QueryScratch* scratch = nullptr) = 0;
+                                    QueryScratch* scratch = nullptr,
+                                    int candidate_offset = -1) = 0;
     virtual void update_recent(const std::string& key, const Candidate& candidate) {}
     virtual void clear_recent() {}
 };
@@ -49,7 +50,8 @@ public:
 
     CandidatePage translate(const std::string& pinyin, int page_index = 0, int page_size = 9,
                             QueryTrace* trace = nullptr, const QueryBudget* budget = nullptr,
-                            QueryScratch* scratch = nullptr) override;
+                            QueryScratch* scratch = nullptr,
+                            int candidate_offset = -1) override;
 
 private:
     static bool is_indexable_key(const std::string& pinyin);
@@ -61,6 +63,7 @@ private:
     struct QueryCacheEntry {
         std::string input;
         int page_index = 0;
+        int candidate_offset = 0;
         int page_size = 0;
         uint64_t user_dict_version = 0;
         uint64_t sequence = 0;
@@ -68,9 +71,11 @@ private:
     };
     IndexedFastResult lookup_indexed_fast(const std::string& key, int limit,
                                           QueryTrace* trace) const;
-    bool lookup_query_cache(const std::string& input, int page_index, int page_size,
+    bool lookup_query_cache(const std::string& input, int page_index, int candidate_offset,
+                            int page_size,
                             CandidatePage& page, QueryTrace* trace);
-    void store_query_cache(const std::string& input, int page_index, int page_size,
+    void store_query_cache(const std::string& input, int page_index, int candidate_offset,
+                           int page_size,
                            const CandidatePage& page);
 
     Dict* dict_ = nullptr;

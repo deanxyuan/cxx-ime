@@ -13,7 +13,8 @@ public:
 
     CandidatePage translate(const std::string& code, int page_index = 0, int page_size = 9,
                             QueryTrace* trace = nullptr, const QueryBudget* budget = nullptr,
-                            QueryScratch* scratch = nullptr) override;
+                            QueryScratch* scratch = nullptr,
+                            int candidate_offset = -1) override;
 
     void update_recent(const std::string& key, const Candidate& candidate) override;
     void clear_recent() override { recent_cache_.clear(); }

@@ -1,12 +1,15 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
 #include <cxxime/candidate_window.h>
-#include <cxxime/config.h>
+
 #include <algorithm>
 #include <cmath>
 #include <string>
-#include "gdi_renderer.h"
+
+#include <cxxime/config.h>
 #include <cxxime/renderer.h>
+
+#include "gdi_renderer.h"
 
 namespace cxxime {
 
@@ -98,6 +101,7 @@ void CandidateWindow::destroy() {
     window_width_ = 0;
     window_height_ = 0;
     window_corner_ = -1;
+    visible_candidate_count_ = 0;
     has_last_caret_rect_ = false;
     last_caret_rect_ = {};
 }
@@ -120,15 +124,20 @@ void CandidateWindow::show() {
 
     if (!IsWindowVisible(hwnd_))
         ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
+    visible_candidate_count_ = static_cast<int>(candidate_rects_.size());
     RedrawWindow(hwnd_, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE);
 }
 void CandidateWindow::hide() {
     stop_animation();
     if (hwnd_ && IsWindowVisible(hwnd_))
         ShowWindow(hwnd_, SW_HIDE);
+    visible_candidate_count_ = 0;
 }
 bool CandidateWindow::is_visible() const {
     return hwnd_ && IsWindowVisible(hwnd_) != FALSE;
+}
+int CandidateWindow::visible_candidate_count() const {
+    return visible_candidate_count_;
 }
 void CandidateWindow::set_config(const Config& config) {
     config_ = &config;
@@ -189,6 +198,22 @@ bool CandidateWindow::calculate_target_position(const RECT& caret_rect, int widt
 
     target = {x, y};
     return true;
+}
+
+int CandidateWindow::monitor_work_width() const {
+    HMONITOR monitor = nullptr;
+    if (has_last_caret_rect_) {
+        monitor = MonitorFromRect(&last_caret_rect_, MONITOR_DEFAULTTONEAREST);
+    } else {
+        HWND foreground = GetForegroundWindow();
+        monitor = MonitorFromWindow(foreground ? foreground : hwnd_, MONITOR_DEFAULTTONEAREST);
+    }
+
+    MONITORINFO info = {sizeof(info)};
+    if (!monitor || !GetMonitorInfoW(monitor, &info)) {
+        return 0;
+    }
+    return info.rcWork.right - info.rcWork.left;
 }
 
 void CandidateWindow::stop_animation() {
@@ -339,15 +364,40 @@ void CandidateWindow::update(const CandidatePage& page) {
     scaled_cfg_.round_corner = (int)(scaled_cfg_.round_corner * s);
     scaled_cfg_.round_corner_ex = (int)(scaled_cfg_.round_corner_ex * s);
     scaled_cfg_.border_width = (int)(scaled_cfg_.border_width * s);
+    scaled_cfg_.min_width = (int)(scaled_cfg_.min_width * s);
     scaled_cfg_.max_width = (int)(scaled_cfg_.max_width * s);
     scaled_cfg_.max_height = (int)(scaled_cfg_.max_height * s);
+    int work_width = monitor_work_width();
+    if (work_width > 0) {
+        int layout_width = (std::max)(1, work_width - scaled_cfg_.border_width * 2);
+        if (scaled_cfg_.max_width <= 0 || scaled_cfg_.max_width > layout_width) {
+            scaled_cfg_.max_width = layout_width;
+        }
+        if (scaled_cfg_.min_width > layout_width) {
+            scaled_cfg_.min_width = layout_width;
+        }
+    }
     auto& cfg = scaled_cfg_;
     HDC hdc = GetDC(hwnd_);
-    LayoutResult lr;
-    if (layout_orientation_ == "horizontal")
-        lr = calculate_horizontal_layout(hdc, page.candidates, config_->font_name, config_->font_size, cfg, page_total_);
-    else
-        lr = calculate_vertical_layout(hdc, page.candidates, config_->font_name, config_->font_size, cfg);
+    auto calculate_layout = [&]() {
+        if (layout_orientation_ == "horizontal") {
+            return calculate_horizontal_layout(
+                hdc, page.candidates, config_->font_name, config_->font_size, cfg, page_total_);
+        }
+        return calculate_vertical_layout(
+            hdc, page.candidates, config_->font_name, config_->font_size, cfg);
+    };
+    LayoutResult lr = calculate_layout();
+    if (page.total_count > 0) {
+        int visible_count = static_cast<int>(lr.rects.size());
+        bool has_next = page.page_offset + visible_count < page.total_count;
+        int adjusted_page_total = page_current_ + (has_next ? 1 : 0);
+        bool nav_visibility_changed = (page_total_ > 1) != (adjusted_page_total > 1);
+        page_total_ = adjusted_page_total;
+        if (nav_visibility_changed) {
+            lr = calculate_layout();
+        }
+    }
 
     // Preedit: measure actual text height, same as Weasel's GetPreeditSize
     if (!preedit_text_.empty()) {
@@ -393,6 +443,7 @@ void CandidateWindow::update(const CandidatePage& page) {
     ReleaseDC(hwnd_, hdc);
 
     candidate_rects_ = std::move(lr.rects);
+    visible_candidate_count_ = static_cast<int>(candidate_rects_.size());
     rebuild_render_context(cfg, lr.width);
     // Extend width for page nav buttons if present
     if (page_total_ > 1 && render_ctx_.next_button_rect.right > lr.width)

@@ -3,14 +3,16 @@
 #ifndef CXXIME_CANDIDATE_WINDOW_H_
 #define CXXIME_CANDIDATE_WINDOW_H_
 
-#include <windows.h>
+#include <functional>
 #include <string>
 #include <vector>
-#include <functional>
+
+#include <windows.h>
+
 #include <cxxime/candidate.h>
+#include <cxxime/config.h>
 #include <cxxime/layout.h>
 #include <cxxime/render_context.h>
-#include <cxxime/config.h>
 
 namespace cxxime {
 
@@ -36,6 +38,7 @@ public:
     void set_theme(const Theme& theme);
     void set_render_backend(RenderBackend backend);
     void set_page_info(int current, int total);
+    int visible_candidate_count() const;
 
 private:
     void rebuild_render_context(const LayoutConfig& cfg, int window_width);
@@ -49,6 +52,7 @@ private:
     void tick_animation();
     void stop_animation();
     void update_window_region(int width, int height, int corner);
+    int monitor_work_width() const;
 
     HWND hwnd_ = nullptr;
     float dpi_scale_ = 1.0f;
@@ -68,6 +72,7 @@ private:
     class D2DRenderer; D2DRenderer* d2d_renderer_ = nullptr;
 
     int page_current_ = 1, page_total_ = 1;
+    int visible_candidate_count_ = 0;
     int window_width_ = 0, window_height_ = 0, window_corner_ = -1;
     bool has_last_caret_rect_ = false;
     RECT last_caret_rect_{};

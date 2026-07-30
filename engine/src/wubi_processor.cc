@@ -1,6 +1,7 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
 #include <cxxime/wubi_processor.h>
+
 #include <windows.h>
 
 namespace cxxime {
@@ -52,7 +53,7 @@ ProcessResult WubiProcessor::process_key(const KeyEvent& event, Context& context
     // Up/Down arrows: navigate candidates
     if (vk == VK_UP || vk == VK_DOWN) {
         if (context.is_composing() && !context.candidates.candidates.empty()) {
-            int count = (int)context.candidates.candidates.size();
+            int count = context.selectable_candidate_count();
             if (vk == VK_DOWN) {
                 context.candidates.highlighted++;
                 if (context.candidates.highlighted >= count)
@@ -82,11 +83,12 @@ ProcessResult WubiProcessor::process_key(const KeyEvent& event, Context& context
     if (vk >= '1' && vk <= '9') {
         if (context.is_composing() && !context.candidates.candidates.empty()) {
             int index = vk - '1';
-            if (index < (int)context.candidates.candidates.size()) {
+            if (index < context.selectable_candidate_count()) {
                 context.candidates.highlighted = index;
                 context.committed_text = context.candidates.candidates[index].text;
                 return ProcessResult::COMMITTED;
             }
+            return ProcessResult::ACCEPTED;
         }
         return ProcessResult::REJECTED;
     }
@@ -98,17 +100,10 @@ ProcessResult WubiProcessor::process_key(const KeyEvent& event, Context& context
                                     !event.is_ctrl() && !event.is_alt();
     if (vk == VK_PRIOR || vk == VK_NEXT || shortcut_page_up || shortcut_page_down) {
         if (context.is_composing() && !context.candidates.candidates.empty()) {
-            int total = context.candidates.total_count;
-            int page_size = context.candidates.page_size;
-            int max_page = (total > 0 && page_size > 0) ? (total + page_size - 1) / page_size - 1 : 0;
-            if (max_page < 0) max_page = 0;
-
             if (vk == VK_NEXT || shortcut_page_down) {  // Page Down
-                if (context.page_index < max_page)
-                    context.page_index++;
+                context.move_to_next_page();
             } else {  // Page Up
-                if (context.page_index > 0)
-                    context.page_index--;
+                context.move_to_previous_page();
             }
             return ProcessResult::ACCEPTED;
         }

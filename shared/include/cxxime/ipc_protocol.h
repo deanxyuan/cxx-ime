@@ -70,6 +70,7 @@ struct IPCRequest {
     uint32_t key_code = 0;
     uint32_t modifiers = 0;  // key modifiers; user dict commands carry UserDictKind here
     uint32_t candidate_index = 0;  // candidate selection; explicit mode commands carry target value
+    uint32_t visible_candidate_count = 0;  // Number actually presented by the current UI page.
     bool is_key_up = false;
     char text[64] = {};       // user dict: text or query
     char code[32] = {};       // user dict: code
@@ -88,6 +89,8 @@ struct IPCResponse {
     char commit_text[256] = {};
     char preedit[256] = {};
     uint32_t candidate_count = 0;
+    uint32_t candidate_offset = 0;
+    uint32_t candidate_total = 0;
     char candidates[10][64] = {};
     char candidate_hints[10][4] = {};  // Remaining Wubi code, up to 3 ASCII letters.
     uint32_t highlighted = 0;

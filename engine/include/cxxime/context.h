@@ -6,6 +6,7 @@
 #include <string>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 #include <cxxime/ascii_composer.h>
 #include <cxxime/candidate.h>
@@ -19,6 +20,8 @@ public:
     CandidatePage candidates;
     std::string committed_text;
     int page_index = 0;
+    int page_offset = 0;
+    int visible_candidate_count = 0;
     // Shift+letter temporary English composition inside Chinese mode.
     bool temporary_ascii_composition = false;
 
@@ -29,6 +32,10 @@ public:
     void reset();
     std::string commit();
     void update_candidates(CandidatePage&& page);
+    void reset_pagination();
+    void move_to_next_page();
+    void move_to_previous_page();
+    int selectable_candidate_count() const;
 
     void set_commit_source(CommitSource s) { commit_source_ = s; }
     CommitSource commit_source() const { return commit_source_; }
@@ -42,6 +49,7 @@ public:
     char last_committed_char = '\0';                    // Digit separator guard
 
 private:
+    std::vector<int> previous_page_offsets_;
     CommitSource commit_source_ = CommitSource::kRawCode;
 };
 

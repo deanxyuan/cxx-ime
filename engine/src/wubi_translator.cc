@@ -1,6 +1,7 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
 #include <cxxime/wubi_translator.h>
+
 #include <algorithm>
 
 namespace cxxime {
@@ -70,13 +71,13 @@ void WubiTranslator::update_recent(const std::string& key, const Candidate& cand
 CandidatePage WubiTranslator::translate(const std::string& code, int page_index,
                                          int page_size, QueryTrace* trace,
                                          const QueryBudget* budget,
-                                         QueryScratch* scratch) {
+                                         QueryScratch* scratch, int candidate_offset) {
     if (!dict_ || code.empty()) {
         return {};
     }
 
-    int fetch_limit = (page_index + 1) * page_size + 1;
-    int offset = page_index * page_size;
+    int offset = candidate_offset >= 0 ? candidate_offset : page_index * page_size;
+    int fetch_limit = offset + page_size + 1;
     std::vector<Candidate> results;
 
     // Short code (1-3 chars): check recent cache first
@@ -118,6 +119,8 @@ CandidatePage WubiTranslator::translate(const std::string& code, int page_index,
 
     // 分页
     CandidatePage page;
+    page.page_index = page_index;
+    page.page_offset = offset;
     page.page_size = page_size;
     page.total_count = (int)results.size();
 

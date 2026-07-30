@@ -45,7 +45,7 @@ static void commit_temporary_ascii(Context& ctx) {
     ctx.committed_text = ctx.pinyin_buffer;
     ctx.pinyin_buffer.clear();
     ctx.candidates = {};
-    ctx.page_index = 0;
+    ctx.reset_pagination();
     ctx.temporary_ascii_composition = false;
     ctx.set_commit_source(CommitSource::kRawCodePreserveCase);
 }
@@ -204,7 +204,7 @@ bool AsciiComposer::process_temporary_ascii_composition(const KeyEvent& event, C
         if (ch != '\0') {
             ctx.pinyin_buffer.push_back(ch);
             ctx.candidates = {};
-            ctx.page_index = 0;
+            ctx.reset_pagination();
             ctx.set_commit_source(CommitSource::kRawCodePreserveCase);
             return true;
         }
@@ -218,7 +218,7 @@ bool AsciiComposer::process_temporary_ascii_composition(const KeyEvent& event, C
 
     ctx.pinyin_buffer.assign(1, static_cast<char>(event.keycode));
     ctx.candidates = {};
-    ctx.page_index = 0;
+    ctx.reset_pagination();
     ctx.temporary_ascii_composition = true;
     ctx.set_commit_source(CommitSource::kRawCodePreserveCase);
     return true;
@@ -277,7 +277,7 @@ void AsciiComposer::toggle_mode(uint32_t key_code, Context& ctx) {
             CXXIME_LOG(L"AsciiComposer::toggle_mode: CODE, committed_text='%S'", ctx.committed_text.c_str());
             ctx.pinyin_buffer.clear();
             ctx.candidates = {};
-            ctx.page_index = 0;
+            ctx.reset_pagination();
             ctx.temporary_ascii_composition = false;
         } else {
             CXXIME_LOG(L"AsciiComposer::toggle_mode: CODE, not composing");
@@ -299,7 +299,7 @@ void AsciiComposer::toggle_mode(uint32_t key_code, Context& ctx) {
             }
             ctx.pinyin_buffer.clear();
             ctx.candidates = {};
-            ctx.page_index = 0;
+            ctx.reset_pagination();
             ctx.temporary_ascii_composition = false;
         }
         set_ascii_mode_from_switch(!ascii_mode_);
@@ -341,7 +341,7 @@ void AsciiComposer::apply_caps_lock_overlay(bool caps_lock, Context& ctx) {
                     ctx.set_commit_source(CommitSource::kRawCodePreserveCase);
                     ctx.pinyin_buffer.clear();
                     ctx.candidates = {};
-                    ctx.page_index = 0;
+                    ctx.reset_pagination();
                     ctx.temporary_ascii_composition = false;
                 }
                 break;
@@ -357,7 +357,7 @@ void AsciiComposer::apply_caps_lock_overlay(bool caps_lock, Context& ctx) {
                     }
                     ctx.pinyin_buffer.clear();
                     ctx.candidates = {};
-                    ctx.page_index = 0;
+                    ctx.reset_pagination();
                     ctx.temporary_ascii_composition = false;
                 }
                 break;
