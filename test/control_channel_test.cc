@@ -323,9 +323,9 @@ TEST(ControlChannel, server_restart_changes_epoch) {
     ASSERT_EQ(latest_generation.revision, 1ULL);
 }
 
-TEST(ControlChannel, input_protocol_size_is_unchanged) {
+TEST(ControlChannel, input_protocol_size_matches_packed_layout) {
     ASSERT_EQ(sizeof(cxxime::IPCRequest), static_cast<std::size_t>(213));
-    ASSERT_EQ(sizeof(cxxime::IPCResponse), static_cast<std::size_t>(4398));
+    ASSERT_EQ(sizeof(cxxime::IPCResponse), static_cast<std::size_t>(4438));
 }
 
 RUN_ALL_TESTS()

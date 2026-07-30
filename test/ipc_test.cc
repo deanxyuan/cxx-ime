@@ -180,6 +180,7 @@ TEST(IPC, process_key_preedit) {
             resp.candidate_count = 2;
             strncpy_s(resp.candidates[0], "你", sizeof(resp.candidates[0]) - 1);
             strncpy_s(resp.candidates[1], "尼", sizeof(resp.candidates[1]) - 1);
+            strncpy_s(resp.candidate_hints[1], "a", sizeof(resp.candidate_hints[1]) - 1);
         }
         return resp;
     }));
@@ -191,6 +192,8 @@ TEST(IPC, process_key_preedit) {
     ASSERT_EQ(resp.status, cxxime::IPCStatus::OK);
     ASSERT_EQ(strcmp(resp.preedit, "ni"), 0);
     ASSERT_EQ(resp.candidate_count, (uint32_t)2);
+    ASSERT_EQ(strcmp(resp.candidate_hints[0], ""), 0);
+    ASSERT_EQ(strcmp(resp.candidate_hints[1], "a"), 0);
 }
 
 TEST(IPC, request_timeout_disconnects_client) {

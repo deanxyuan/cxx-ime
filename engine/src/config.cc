@@ -31,6 +31,7 @@ static void apply_config_json(Config& config, nlohmann::json& j) {
         if (config.input_mode > 2) config.input_mode = 2;
         load_bool(e, "fuzzy_pinyin", config.fuzzy_pinyin);
         load_bool(e, "wubi_auto_commit", config.wubi_auto_commit);
+        load_bool(e, "wubi_code_hint", config.wubi_code_hint);
         load_bool(e, "candidate_learning", config.candidate_learning);
     }
 
@@ -216,6 +217,7 @@ static nlohmann::json build_config_json(const Config& config) {
     j["engine"]["input_mode"] = config.input_mode;
     j["engine"]["fuzzy_pinyin"] = config.fuzzy_pinyin;
     j["engine"]["wubi_auto_commit"] = config.wubi_auto_commit;
+    j["engine"]["wubi_code_hint"] = config.wubi_code_hint;
     j["engine"]["candidate_learning"] = config.candidate_learning;
     j["engine"]["max_pinyin_length"] = 64;
 

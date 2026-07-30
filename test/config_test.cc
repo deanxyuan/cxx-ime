@@ -18,6 +18,7 @@ TEST(Config, defaults) {
     ASSERT_TRUE(cfg.layout == "horizontal");
     ASSERT_TRUE(cfg.theme == "azure");
     ASSERT_TRUE(cfg.wubi_auto_commit);
+    ASSERT_TRUE(!cfg.wubi_code_hint);
     ASSERT_TRUE(!cfg.candidate_learning);
     ASSERT_TRUE(!cfg.initial_full_shape);
     ASSERT_TRUE(cfg.initial_chinese_punct);
@@ -31,6 +32,7 @@ TEST(Config, load_valid_json) {
         "engine": {
         "page_size": 5,
         "wubi_auto_commit": false,
+        "wubi_code_hint": true,
         "candidate_learning": true
         },
         "style": {"font_face": "Arial", "font_point": 18},
@@ -45,6 +47,7 @@ TEST(Config, load_valid_json) {
     ASSERT_TRUE(cfg.font_name == "Arial");
     ASSERT_TRUE(cfg.theme == "dark");
     ASSERT_TRUE(!cfg.wubi_auto_commit);
+    ASSERT_TRUE(cfg.wubi_code_hint);
     ASSERT_TRUE(cfg.candidate_learning);
     ASSERT_TRUE(!cfg.initial_full_shape);
     ASSERT_TRUE(cfg.initial_chinese_punct);
@@ -52,14 +55,16 @@ TEST(Config, load_valid_json) {
     std::remove(path);
 }
 
-TEST(Config, json_round_trip_preserves_wubi_auto_commit_and_candidate_learning) {
+TEST(Config, json_round_trip_preserves_wubi_options_and_candidate_learning) {
     cxxime::Config saved;
     saved.wubi_auto_commit = false;
+    saved.wubi_code_hint = true;
     saved.candidate_learning = true;
 
     cxxime::Config loaded;
     ASSERT_TRUE(loaded.load_json(saved.to_json()));
     ASSERT_TRUE(!loaded.wubi_auto_commit);
+    ASSERT_TRUE(loaded.wubi_code_hint);
     ASSERT_TRUE(loaded.candidate_learning);
 }
 

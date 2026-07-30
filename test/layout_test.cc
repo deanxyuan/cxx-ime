@@ -111,6 +111,41 @@ TEST(Layout, horizontal_text_rect_keeps_dwrite_render_slack) {
     ReleaseDC(nullptr, hdc);
 }
 
+TEST(Layout, horizontal_appends_candidate_comment) {
+    HDC hdc = GetDC(nullptr);
+    cxxime::Candidate candidate = make_cand(u8"低");
+    candidate.comment = "a";
+    auto lr =
+        cxxime::calculate_horizontal_layout(hdc, {candidate}, "Microsoft YaHei UI", 14, make_cfg());
+
+    ASSERT_EQ(lr.rects.size(), 1u);
+    ASSERT_EQ(lr.rects[0].text, u8"低(a)");
+
+    ReleaseDC(nullptr, hdc);
+}
+
+TEST(Layout, horizontal_candidate_comment_expands_layout_width) {
+    HDC hdc = GetDC(nullptr);
+    auto cfg = make_cfg();
+    cfg.min_width = 0;
+    cxxime::Candidate candidate = make_cand(u8"提出");
+    auto plain = cxxime::calculate_horizontal_layout(
+        hdc, {candidate}, "Microsoft YaHei UI", 14, cfg);
+
+    candidate.comment = "abc";
+    auto hinted = cxxime::calculate_horizontal_layout(
+        hdc, {candidate}, "Microsoft YaHei UI", 14, cfg);
+
+    ASSERT_EQ(plain.rects.size(), 1u);
+    ASSERT_EQ(hinted.rects.size(), 1u);
+    ASSERT_EQ(hinted.rects[0].text, u8"提出(abc)");
+    ASSERT_GT(hinted.rects[0].text_rect.right - hinted.rects[0].text_rect.left,
+              plain.rects[0].text_rect.right - plain.rects[0].text_rect.left);
+    ASSERT_GT(hinted.width, plain.width);
+
+    ReleaseDC(nullptr, hdc);
+}
+
 TEST(Layout, vertical_basic) {
     HDC hdc = GetDC(nullptr);
     std::vector<cxxime::Candidate> cands = {make_cand("abc"), make_cand("def"), make_cand("ghi")};
@@ -150,6 +185,19 @@ TEST(Layout, vertical_text_rect_keeps_dwrite_render_slack) {
     int text_width = lr.rects[0].text_rect.right - lr.rects[0].text_rect.left;
     int measured_width = measure_text_width(hdc, L"提出", L"Microsoft YaHei UI", 14);
     ASSERT_GT(text_width, measured_width);
+
+    ReleaseDC(nullptr, hdc);
+}
+
+TEST(Layout, vertical_appends_candidate_comment) {
+    HDC hdc = GetDC(nullptr);
+    cxxime::Candidate candidate = make_cand(u8"低");
+    candidate.comment = "a";
+    auto lr =
+        cxxime::calculate_vertical_layout(hdc, {candidate}, "Microsoft YaHei UI", 14, make_cfg());
+
+    ASSERT_EQ(lr.rects.size(), 1u);
+    ASSERT_EQ(lr.rects[0].text, u8"低(a)");
 
     ReleaseDC(nullptr, hdc);
 }

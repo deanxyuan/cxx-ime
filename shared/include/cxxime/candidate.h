@@ -30,6 +30,20 @@ struct Candidate {
     int source_frequency = 0;  // Raw dictionary frequency when ranking uses a derived score.
 };
 
+inline const std::string& candidate_display_text(const Candidate& candidate,
+                                   std::string& formatted) {
+    if (candidate.comment.empty()) {
+        return candidate.text;
+    }
+    formatted.clear();
+    formatted.reserve(candidate.text.size() + candidate.comment.size() + 2);
+    formatted.append(candidate.text);
+    formatted.push_back('(');
+    formatted.append(candidate.comment);
+    formatted.push_back(')');
+    return formatted;
+}
+
 struct CandidatePage {
     int page_index = 0;
     int page_size = 9;

@@ -38,6 +38,26 @@ static bool alpha_code_is_probably_wubi(const std::string& code) {
         [](char c) { return std::isalpha(static_cast<unsigned char>(c)); });
 }
 
+static void add_wubi_code_hints(const std::string& input, CandidatePage& page) {
+    for (auto& candidate : page.candidates) {
+        if (candidate.source != CandidateSource::kWubi || candidate.code.size() <= input.size() ||
+            candidate.code.compare(0, input.size(), input) != 0) {
+            continue;
+        }
+
+        const size_t suffix_size = candidate.code.size() - input.size();
+        if (suffix_size > 3) {
+            continue;
+        }
+        const auto suffix_begin = candidate.code.begin() + input.size();
+        if (!std::all_of(suffix_begin, candidate.code.end(),
+            [](char ch) { return ch >= 'a' && ch <= 'z'; })) {
+            continue;
+        }
+        candidate.comment.assign(suffix_begin, candidate.code.end());
+    }
+}
+
 static void update_learning_entry(Dict* dict, const std::string& text,
                                   const std::string& fallback_code,
                                   const Candidate* candidate,
@@ -372,6 +392,9 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
             effective_budget.deadline = per_query_deadline;
             auto page = translator_->translate(context_.pinyin_buffer, context_.page_index, config_->page_size,
                                               trace_enabled_ ? &trace_ : nullptr, &effective_budget, &scratch_);
+            if (config_->wubi_code_hint) {
+                add_wubi_code_hints(context_.pinyin_buffer, page);
+            }
             context_.update_candidates(std::move(page));
         }
         if (trace_enabled_) {

@@ -611,6 +611,90 @@ TEST(WubiEngine, engine_wubi_auto_commit_disabled) {
     DeleteFileA(wubi_path.c_str());
 }
 
+TEST(WubiEngine, engine_wubi_code_hint_is_optional_and_does_not_change_commit_text) {
+    std::string pinyin_path = make_temp_path("test_wubi_hint_pinyin.bin");
+    std::string wubi_path = make_temp_path("test_wubi_hint_wubi.bin");
+
+    cxxime::Dict::create_test_dict(pinyin_path, {{"a", "啊", 100}});
+    cxxime::Dict::create_test_dict(wubi_path, {
+        {"wq", "你", 300},
+        {"wqi", "你", 300},
+        {"wqa", "低", 300},
+        {"wqay", "低", 300},
+    });
+
+    cxxime::Engine engine;
+    ASSERT_TRUE(engine.initialize(pinyin_path));
+
+    cxxime::Dict wubi_dict;
+    ASSERT_TRUE(wubi_dict.open(wubi_path));
+    engine.set_wubi_dict(&wubi_dict);
+    engine.switch_mode(cxxime::InputMode::WUBI);
+
+    engine.process_key(make_key('W'));
+    engine.process_key(make_key('Q'));
+    for (const auto& candidate : engine.context().candidates.candidates) {
+        ASSERT_TRUE(candidate.comment.empty());
+    }
+    const cxxime::QueryTrace trace_without_hint = engine.last_trace();
+
+    engine.clear();
+    cxxime::Config cfg;
+    cfg.wubi_code_hint = true;
+    engine.reload_config(cfg);
+    engine.process_key(make_key('W'));
+    engine.process_key(make_key('Q'));
+    const cxxime::QueryTrace trace_with_hint = engine.last_trace();
+
+    ASSERT_EQ(trace_with_hint.exact_scan_count, trace_without_hint.exact_scan_count);
+    ASSERT_EQ(trace_with_hint.prefix_scan_count, trace_without_hint.prefix_scan_count);
+    ASSERT_EQ(trace_with_hint.user_scan_count, trace_without_hint.user_scan_count);
+    ASSERT_EQ(trace_with_hint.mixed_scan_count, trace_without_hint.mixed_scan_count);
+
+    int low_index = -1;
+    for (int i = 0; i < static_cast<int>(engine.context().candidates.candidates.size()); ++i) {
+        const auto& candidate = engine.context().candidates.candidates[i];
+        if (candidate.text == "你") {
+            ASSERT_TRUE(candidate.comment.empty());
+        } else if (candidate.text == "低") {
+            ASSERT_EQ(candidate.comment, "a");
+            low_index = i;
+        }
+    }
+    ASSERT_GE(low_index, 0);
+    ASSERT_TRUE(engine.select_candidate(low_index));
+    ASSERT_EQ(engine.context().committed_text, "低");
+
+    engine.clear();
+    engine.switch_mode(cxxime::InputMode::MIXED);
+    engine.process_key(make_key('W'));
+    engine.process_key(make_key('Q'));
+    bool found_mixed_wubi_hint = false;
+    for (const auto& candidate : engine.context().candidates.candidates) {
+        if (candidate.source == cxxime::CandidateSource::kWubi && candidate.text == "低") {
+            ASSERT_EQ(candidate.comment, "a");
+            found_mixed_wubi_hint = true;
+        } else if (candidate.source != cxxime::CandidateSource::kWubi) {
+            ASSERT_TRUE(candidate.comment.empty());
+        }
+    }
+    ASSERT_TRUE(found_mixed_wubi_hint);
+
+    engine.clear();
+    cfg.wubi_code_hint = false;
+    engine.reload_config(cfg);
+    engine.process_key(make_key('W'));
+    engine.process_key(make_key('Q'));
+    for (const auto& candidate : engine.context().candidates.candidates) {
+        ASSERT_TRUE(candidate.comment.empty());
+    }
+
+    engine.finalize();
+    wubi_dict.close();
+    DeleteFileA(pinyin_path.c_str());
+    DeleteFileA(wubi_path.c_str());
+}
+
 TEST(WubiEngine, engine_mixed_select_candidate_updates_correct_dict) {
     std::string pinyin_path = make_temp_path("test_mixed_upd_pinyin.bin");
     std::string wubi_path = make_temp_path("test_mixed_upd_wubi.bin");
