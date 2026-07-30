@@ -138,7 +138,9 @@ TEST(Layout, horizontal_appends_candidate_comment) {
         cxxime::calculate_horizontal_layout(hdc, {candidate}, "Microsoft YaHei UI", 14, make_cfg());
 
     ASSERT_EQ(lr.rects.size(), 1u);
-    ASSERT_EQ(lr.rects[0].text, u8"低(a)");
+    ASSERT_EQ(lr.rects[0].text, u8"低");
+    ASSERT_EQ(lr.rects[0].comment, " (a)");
+    ASSERT_GT(lr.rects[0].comment_rect.right, lr.rects[0].text_rect.right);
 
     ReleaseDC(nullptr, hdc);
 }
@@ -157,9 +159,9 @@ TEST(Layout, horizontal_candidate_comment_expands_layout_width) {
 
     ASSERT_EQ(plain.rects.size(), 1u);
     ASSERT_EQ(hinted.rects.size(), 1u);
-    ASSERT_EQ(hinted.rects[0].text, u8"提出(abc)");
-    ASSERT_GT(hinted.rects[0].text_rect.right - hinted.rects[0].text_rect.left,
-              plain.rects[0].text_rect.right - plain.rects[0].text_rect.left);
+    ASSERT_EQ(hinted.rects[0].text, u8"提出");
+    ASSERT_EQ(hinted.rects[0].comment, " (abc)");
+    ASSERT_GT(hinted.rects[0].comment_rect.right, hinted.rects[0].text_rect.right);
     ASSERT_GT(hinted.width, plain.width);
 
     ReleaseDC(nullptr, hdc);
@@ -216,7 +218,9 @@ TEST(Layout, vertical_appends_candidate_comment) {
         cxxime::calculate_vertical_layout(hdc, {candidate}, "Microsoft YaHei UI", 14, make_cfg());
 
     ASSERT_EQ(lr.rects.size(), 1u);
-    ASSERT_EQ(lr.rects[0].text, u8"低(a)");
+    ASSERT_EQ(lr.rects[0].text, u8"低");
+    ASSERT_EQ(lr.rects[0].comment, " (a)");
+    ASSERT_GT(lr.rects[0].comment_rect.right, lr.rects[0].text_rect.right);
 
     ReleaseDC(nullptr, hdc);
 }

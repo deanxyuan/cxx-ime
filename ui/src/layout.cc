@@ -4,6 +4,7 @@
 #include <cxxime/layout.h>
 
 #include <algorithm>
+#include <utility>
 
 #include <cxxime/config.h>
 
@@ -48,6 +49,81 @@ static int text_render_slack(int row_height) {
     return std::max(2, row_height / 4);
 }
 
+static std::string to_utf8(const std::wstring& text) {
+    if (text.empty()) {
+        return {};
+    }
+    int length = WideCharToMultiByte(CP_UTF8, 0, text.data(), static_cast<int>(text.size()),
+                                     nullptr, 0, nullptr, nullptr);
+    if (length <= 0) {
+        return {};
+    }
+    std::string utf8(length, '\0');
+    WideCharToMultiByte(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), &utf8[0], length,
+                        nullptr, nullptr);
+    return utf8;
+}
+
+static std::string format_comment(const Candidate& candidate) {
+    if (candidate.comment.empty()) {
+        return {};
+    }
+    return " (" + candidate.comment + ")";
+}
+
+static int candidate_content_right(const CandidateRect& rect) {
+    return rect.comment.empty() ? rect.text_rect.right : rect.comment_rect.right;
+}
+
+static std::string truncate_middle(HDC hdc, const std::string& text, const std::string& font_name,
+                                   int font_size, int available_width) {
+    std::wstring wide_text = to_wstr(text);
+    if (measure_wstr(hdc, wide_text, font_name, font_size).cx <= available_width) {
+        return text;
+    }
+
+    const std::wstring ellipsis = L"…";  // \x2026
+    int ellipsis_width = static_cast<int>(measure_wstr(hdc, ellipsis, font_name, font_size).cx);
+    int target_width = (std::max)(0, available_width - ellipsis_width);
+    int prefix_target = target_width * 7 / 10;
+    int suffix_target = target_width - prefix_target;
+
+    int lo = 0;
+    int hi = static_cast<int>(wide_text.size());
+    int best_prefix = 0;
+    while (lo <= hi) {
+        int middle = (lo + hi) / 2;
+        if (measure_wstr(hdc, wide_text.substr(0, middle), font_name, font_size).cx <=
+            prefix_target) {
+            best_prefix = middle;
+            lo = middle + 1;
+        } else {
+            hi = middle - 1;
+        }
+    }
+
+    int text_length = static_cast<int>(wide_text.size());
+    lo = 0;
+    hi = text_length;
+    int best_suffix = 0;
+    while (lo <= hi) {
+        int middle = (lo + hi) / 2;
+        if (measure_wstr(hdc, wide_text.substr(text_length - middle, middle), font_name, font_size)
+                .cx <= suffix_target) {
+            best_suffix = middle;
+            lo = middle + 1;
+        } else {
+            hi = middle - 1;
+        }
+    }
+
+    if (best_prefix + best_suffix >= text_length) {
+        return text;
+    }
+    return to_utf8(wide_text.substr(0, best_prefix) + ellipsis +
+                   wide_text.substr(text_length - best_suffix));
+}
+
 // ===== Horizontal layout (Weasel-style) =====
 
 LayoutResult calculate_horizontal_layout(HDC hdc,
@@ -84,11 +160,11 @@ LayoutResult calculate_horizontal_layout(HDC hdc,
     for (int i = 0; i < (int)candidates.size(); ++i) {
         std::wstring label = std::to_wstring(i + 1) + L".";
         SIZE lsz = measure_wstr(hdc, label, font_name, font_size);
-        std::string formatted;
-        const std::string& display_text = candidate_display_text(candidates[i], formatted);
-        SIZE tsz = measure_wstr(hdc, to_wstr(display_text), font_name, font_size);
+        std::string comment = format_comment(candidates[i]);
+        SIZE text_size = measure_wstr(hdc, to_wstr(candidates[i].text), font_name, font_size);
+        SIZE comment_size = measure_wstr(hdc, to_wstr(comment), font_name, font_size);
 
-        int label_w = lsz.cx, text_w = tsz.cx + text_slack;
+        int label_w = lsz.cx, text_w = text_size.cx + comment_size.cx + text_slack;
         int total_w = label_w + cfg.hilite_spacing + text_w;
 
         // Non-first candidate doesn't fit → stop (first candidate always added)
@@ -97,12 +173,18 @@ LayoutResult calculate_horizontal_layout(HDC hdc,
 
         CandidateRect cr;
         cr.index = i;
-        cr.text = display_text;
+        cr.text = candidates[i].text;
+        cr.comment = std::move(comment);
         cr.label_rect = {x, y, x + label_w, y + rh};
-        cr.text_rect  = {x + label_w + cfg.hilite_spacing, y,
-                         x + label_w + cfg.hilite_spacing + text_w, y + rh};
+        int text_left = x + label_w + cfg.hilite_spacing;
+        cr.text_rect = {text_left, y, text_left + text_size.cx + text_slack, y + rh};
+        if (!cr.comment.empty()) {
+            cr.comment_rect = {text_left + text_size.cx, y,
+                            text_left + text_size.cx + comment_size.cx + text_slack,
+                            y + rh};
+        }
 
-        RECT bounds = {cr.label_rect.left, y, cr.text_rect.right, y + rh};
+        RECT bounds = {cr.label_rect.left, y, candidate_content_right(cr), y + rh};
         cr.highlight_rect = bounds;
         InflateRect(&cr.highlight_rect, cfg.hilite_padding_x, cfg.hilite_padding_y);
 
@@ -115,56 +197,28 @@ LayoutResult calculate_horizontal_layout(HDC hdc,
         auto& cr = result.rects[0];
         int text_avail = max_w - cfg.margin_x * 2
                          - (cr.text_rect.left - cr.label_rect.left) - cfg.candidate_spacing;
-        std::wstring wtext = to_wstr(cr.text);
-        int text_w = measure_wstr(hdc, wtext, font_name, font_size).cx + text_slack;
-        if (text_w > text_avail) {
-            std::wstring ellipsis = L"…";
-            int ellipsis_w = measure_wstr(hdc, ellipsis, font_name, font_size).cx;
-            int target = text_avail - ellipsis_w;
-            int prefix_target = target * 7 / 10;
-            int suffix_target = target - prefix_target;
-            // Binary search on UTF-16 code units for prefix
-            int lo = 0, hi = (int)wtext.size(), best_prefix = 0;
-            while (lo <= hi) {
-                int mid = (lo + hi) / 2;
-                if (measure_wstr(hdc, wtext.substr(0, mid), font_name, font_size).cx <= prefix_target) {
-                    best_prefix = mid; lo = mid + 1;
-                } else { hi = mid - 1; }
+        int comment_width = cr.comment.empty()
+                                ? 0
+                                : measure_wstr(hdc, to_wstr(cr.comment), font_name, font_size).cx;
+        int main_text_width = (std::max)(0, text_avail - comment_width - text_slack);
+        std::string truncated = truncate_middle(hdc, cr.text, font_name, font_size,
+                                                main_text_width);
+        if (truncated != cr.text) {
+            cr.text = std::move(truncated);
+            int width = measure_wstr(hdc, to_wstr(cr.text), font_name, font_size).cx;
+            cr.text_rect.right = cr.text_rect.left + width + text_slack;
+            if (!cr.comment.empty()) {
+                cr.comment_rect.left = cr.text_rect.left + width;
+                cr.comment_rect.right = cr.comment_rect.left + comment_width + text_slack;
             }
-            // Binary search for suffix
-            int wlen = (int)wtext.size();
-            lo = 0; hi = wlen; int best_suffix = 0;
-            while (lo <= hi) {
-                int mid = (lo + hi) / 2;
-                if (measure_wstr(hdc, wtext.substr(wlen - mid, mid), font_name, font_size).cx <= suffix_target) {
-                    best_suffix = mid; lo = mid + 1;
-                } else { hi = mid - 1; }
-            }
-            if (best_prefix + best_suffix < wlen) {
-                std::wstring truncated = wtext.substr(0, best_prefix) + ellipsis + wtext.substr(wlen - best_suffix);
-                // Convert back to UTF-8
-                int utf8_len = WideCharToMultiByte(CP_UTF8, 0, truncated.data(),
-                                                   static_cast<int>(truncated.size()), nullptr, 0,
-                                                   nullptr, nullptr);
-                if (utf8_len > 0) {
-                    cr.text.resize(utf8_len);
-                    WideCharToMultiByte(CP_UTF8, 0, truncated.data(),
-                                        static_cast<int>(truncated.size()), &cr.text[0], utf8_len,
-                                        nullptr, nullptr);
-                }
-                // Recalculate text_rect width
-                int new_tw = measure_wstr(hdc, truncated, font_name, font_size).cx + text_slack;
-                cr.text_rect.right = cr.text_rect.left + new_tw;
-                cr.highlight_rect.right = cr.text_rect.right;
-                InflateRect(&cr.highlight_rect, cfg.hilite_padding_x, cfg.hilite_padding_y);
-            }
+            cr.highlight_rect.right = candidate_content_right(cr) + cfg.hilite_padding_x;
         }
     }
 
     // Final width: last candidate's right edge + margin, capped to max_w
     int content_w = cfg.margin_x;
     if (!result.rects.empty())
-        content_w = result.rects.back().text_rect.right + cfg.candidate_spacing;
+        content_w = candidate_content_right(result.rects.back()) + cfg.candidate_spacing;
     result.width = content_w + cfg.margin_x;
     if (result.width > max_w) result.width = max_w;
     if (result.width < min_w) result.width = min_w;
@@ -200,9 +254,9 @@ int text_slack = text_render_slack(rh);
     for (int i = 0; i < (int)candidates.size(); ++i) {
         std::wstring label = std::to_wstring(i + 1) + L".";
         int lw = measure_wstr(hdc, label, font_name, font_size).cx;
-        std::string formatted;
-        const std::string& display_text = candidate_display_text(candidates[i], formatted);
-        int tw = measure_wstr(hdc, to_wstr(display_text), font_name, font_size).cx + text_slack;
+        std::string comment = format_comment(candidates[i]);
+        int tw = measure_wstr(hdc, to_wstr(candidates[i].text), font_name, font_size).cx +
+                 measure_wstr(hdc, to_wstr(comment), font_name, font_size).cx + text_slack;
         if (lw > widest_label) widest_label = lw;
         if (tw > widest_text) widest_text = tw;
     }
@@ -222,12 +276,20 @@ int text_slack = text_render_slack(rh);
 
         CandidateRect cr;
         cr.index = i;
-        std::string formatted;
-        cr.text = candidate_display_text(candidates[i], formatted);
+        cr.text = candidates[i].text;
+        cr.comment = format_comment(candidates[i]);
         cr.label_rect = {cfg.margin_x, y, cfg.margin_x + widest_label, y + rh};
-        cr.text_rect  = {text_x, y, text_x + widest_text, y + rh};
+        int text_width = measure_wstr(hdc, to_wstr(cr.text), font_name, font_size).cx;
+        int text_right = cr.comment.empty() ? text_x + widest_text
+                                            : text_x + text_width + text_slack;
+        cr.text_rect = {text_x, y, text_right, y + rh};
+        if (!cr.comment.empty()) {
+            int comment_width = measure_wstr(hdc, to_wstr(cr.comment), font_name, font_size).cx;
+            cr.comment_rect = {text_x + text_width, y,
+                               text_x + text_width + comment_width + text_slack, y + rh};
+        }
 
-        RECT bounds = {cr.label_rect.left, y, cr.text_rect.right, y + rh};
+        RECT bounds = {cr.label_rect.left, y, text_x + widest_text, y + rh};
         cr.highlight_rect = bounds;
         InflateRect(&cr.highlight_rect, cfg.hilite_padding_x, cfg.hilite_padding_y);
 
@@ -238,40 +300,19 @@ int text_slack = text_render_slack(rh);
     // Middle truncation: single candidate that exceeds available width
     if (result.rects.size() == 1) {
         auto& cr = result.rects[0];
-        std::wstring wtext = to_wstr(cr.text);
-        int text_w = measure_wstr(hdc, wtext, font_name, font_size).cx + text_slack;
-        if (text_w > widest_text) {
-            std::wstring ellipsis = L"…";
-            int ellipsis_w = measure_wstr(hdc, ellipsis, font_name, font_size).cx;
-            int target = widest_text - ellipsis_w;
-            int prefix_target = target * 7 / 10;
-            int suffix_target = target - prefix_target;
-            int lo = 0, hi = (int)wtext.size(), best_prefix = 0;
-            while (lo <= hi) {
-                int mid = (lo + hi) / 2;
-                if (measure_wstr(hdc, wtext.substr(0, mid), font_name, font_size).cx <= prefix_target) {
-                    best_prefix = mid; lo = mid + 1;
-                } else { hi = mid - 1; }
-            }
-            int wlen = (int)wtext.size();
-            lo = 0; hi = wlen; int best_suffix = 0;
-            while (lo <= hi) {
-                int mid = (lo + hi) / 2;
-                if (measure_wstr(hdc, wtext.substr(wlen - mid, mid), font_name, font_size).cx <= suffix_target) {
-                    best_suffix = mid; lo = mid + 1;
-                } else { hi = mid - 1; }
-            }
-            if (best_prefix + best_suffix < wlen) {
-                std::wstring truncated = wtext.substr(0, best_prefix) + ellipsis + wtext.substr(wlen - best_suffix);
-                int utf8_len = WideCharToMultiByte(CP_UTF8, 0, truncated.data(),
-                                                   static_cast<int>(truncated.size()), nullptr, 0,
-                                                   nullptr, nullptr);
-                if (utf8_len > 0) {
-                    cr.text.resize(utf8_len);
-                    WideCharToMultiByte(CP_UTF8, 0, truncated.data(),
-                                        static_cast<int>(truncated.size()), &cr.text[0], utf8_len,
-                                        nullptr, nullptr);
-                }
+        int comment_width = cr.comment.empty()
+                                ? 0
+                                : measure_wstr(hdc, to_wstr(cr.comment), font_name, font_size).cx;
+        int main_text_width = (std::max)(0, widest_text - comment_width - text_slack);
+        std::string truncated = truncate_middle(hdc, cr.text, font_name, font_size,
+                                                main_text_width);
+        if (truncated != cr.text) {
+            cr.text = std::move(truncated);
+            int width = measure_wstr(hdc, to_wstr(cr.text), font_name, font_size).cx;
+            cr.text_rect.right = cr.text_rect.left + width + text_slack;
+            if (!cr.comment.empty()) {
+                cr.comment_rect.left = cr.text_rect.left + width;
+                cr.comment_rect.right = cr.comment_rect.left + comment_width + text_slack;
             }
         }
     }

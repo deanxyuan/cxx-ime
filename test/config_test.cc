@@ -7,6 +7,7 @@
 
 #include <cxxime/config.h>
 #include <cxxime/control_protocol.h>
+#include <cxxime/render_context.h>
 
 #include "util/testutil.h"
 
@@ -117,6 +118,34 @@ TEST(Config, production_runtime_snapshot_fits_control_payload) {
     const std::string snapshot = config.to_runtime_json();
     ASSERT_TRUE(!snapshot.empty());
     ASSERT_TRUE(snapshot.size() <= cxxime::CONTROL_MAX_PAYLOAD);
+}
+
+TEST(Config, theme_derives_muted_comment_color_unless_explicitly_configured) {
+    const char* path = "test_comment_color_themes.json";
+    {
+        std::ofstream file(path);
+        file << R"({"preset_color_schemes":{
+            "derived":{"back_color":16777215,"candidate_text_color":0},
+            "explicit":{"back_color":16777215,"candidate_text_color":0,
+            "comment_text_color":1193046}
+            }})";
+    }
+
+    cxxime::Config derived;
+    derived.theme = "derived";
+    ASSERT_TRUE(derived.load_themes(path));
+    ASSERT_EQ(derived.preset_color_schemes["derived"].comment_text_color, 0x666666);
+    auto derived_theme = cxxime::build_theme_from_config(derived);
+    ASSERT_EQ(derived_theme.comment_text.r, 0x66);
+    ASSERT_EQ(derived_theme.comment_text.g, 0x66);
+    ASSERT_EQ(derived_theme.comment_text.b, 0x66);
+
+    cxxime::Config explicit_color;
+    explicit_color.theme = "explicit";
+    ASSERT_TRUE(explicit_color.load_themes(path));
+    ASSERT_EQ(explicit_color.preset_color_schemes["explicit"].comment_text_color, 0x123456);
+
+    std::remove(path);
 }
 
 TEST(Config, load_missing_file) {

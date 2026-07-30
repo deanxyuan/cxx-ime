@@ -20,6 +20,20 @@ static void load_bool(nlohmann::json& obj, const char* key, bool& val) {
     if (obj.contains(key) && obj[key].is_boolean()) val = obj[key].get<bool>();
 }
 
+static int muted_text_color(int foreground, int background) {
+    constexpr int foreground_weight = 3;
+    constexpr int background_weight = 2;
+    constexpr int weight_sum = foreground_weight + background_weight;
+    auto blend_channel = [&](int shift) {
+        int foreground_channel = (foreground >> shift) & 0xff;
+        int background_channel = (background >> shift) & 0xff;
+        return (foreground_channel * foreground_weight + background_channel * background_weight) /
+                weight_sum;
+    };
+    return (foreground & 0xff000000) | blend_channel(0) | (blend_channel(8) << 8) |
+            (blend_channel(16) << 16);
+}
+
 static void apply_config_json(Config& config, nlohmann::json& j) {
     if (j.contains("engine") && j["engine"].is_object()) {
         auto& e = j["engine"];
@@ -123,7 +137,8 @@ static bool apply_color_schemes(Config& config, nlohmann::json& schemes) {
         if (c.hilited_candidate_back_color == -1)
             c.hilited_candidate_back_color = c.hilited_back_color;
         if (c.label_text_color == -1) c.label_text_color = c.text_color;
-        if (c.comment_text_color == -1) c.comment_text_color = c.label_text_color;
+        if (c.comment_text_color == -1)
+            c.comment_text_color = muted_text_color(c.candidate_text_color, c.back_color);
         if (c.prevpage_color == -1) c.prevpage_color = c.text_color;
         if (c.nextpage_color == -1) c.nextpage_color = c.text_color;
         config.preset_color_schemes[name] = c;

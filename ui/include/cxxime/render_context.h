@@ -6,7 +6,9 @@
 #include <cstdint>
 #include <string>
 #include <vector>
+
 #include <windows.h>
+
 #include <cxxime/candidate.h>
 
 namespace cxxime {
@@ -16,6 +18,7 @@ struct Color { uint8_t r, g, b, a; };
 struct Theme {
     Color background{255, 255, 255, 255};
     Color text{0, 0, 0, 255};               // normal candidate text
+    Color comment_text{102, 102, 102, 255}; // normal candidate comment text
     Color label_text{128, 128, 128, 255};   // label "1. " text
     Color preedit_text{128, 128, 128, 255}; // preedit text
     Color hilited_text{255, 255, 255, 255}; // highlighted candidate text
@@ -39,8 +42,10 @@ struct StatusTheme {
 struct CandidateRect {
     int index;
     std::string text;
+    std::string comment;
     RECT label_rect{};
     RECT text_rect{};
+    RECT comment_rect{};
     RECT highlight_rect{};
 };
 
