@@ -305,6 +305,7 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
             for (uint32_t i = 0; i < response.candidate_count && i < 10; ++i) {
                 cxxime::Candidate candidate;
                 candidate.text = response.candidates[i];
+                candidate.comment = response.candidate_hints[i];
                 page.candidates.push_back(std::move(candidate));
             }
         }

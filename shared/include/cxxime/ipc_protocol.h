@@ -89,6 +89,7 @@ struct IPCResponse {
     char preedit[256] = {};
     uint32_t candidate_count = 0;
     char candidates[10][64] = {};
+    char candidate_hints[10][4] = {};  // Remaining Wubi code, up to 3 ASCII letters.
     uint32_t highlighted = 0;
     bool ascii_mode = false;
     bool composing = false;

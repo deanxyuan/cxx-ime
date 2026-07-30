@@ -479,17 +479,21 @@ void EditorApp::create_controls(HWND hwnd) {
     hWubiAutoCommit_ = make_check(
         1022, L"自动上屏", panelX + cx, panelY + t + kRowH * 5, S(90), hwnd);
 
-    cx = make_label(L"候选学习:", kPanelPadLeft, t + kRowH * 6, p0);
+    cx = make_label(L"五笔补码:", kPanelPadLeft, t + kRowH * 6, p0);
+    hWubiCodeHint_ = make_check(
+        1026, L"显示最短补码", panelX + cx, panelY + t + kRowH * 6, S(130), hwnd);
+
+    cx = make_label(L"候选学习:", kPanelPadLeft, t + kRowH * 7, p0);
     hCandidateLearning_ = make_check(
-        1023, L"根据选词调整", panelX + cx, panelY + t + kRowH * 6, S(130), hwnd);
+        1023, L"根据选词调整", panelX + cx, panelY + t + kRowH * 7, S(130), hwnd);
 
-    cx = make_label(L"初始标点:", kPanelPadLeft, t + kRowH * 7, p0);
+    cx = make_label(L"初始标点:", kPanelPadLeft, t + kRowH * 8, p0);
     hInitialChinesePunct_ = make_check(
-        1024, L"中文标点", panelX + cx, panelY + t + kRowH * 7, S(100), hwnd);
+        1024, L"中文标点", panelX + cx, panelY + t + kRowH * 8, S(100), hwnd);
 
-    cx = make_label(L"初始字形:", kPanelPadLeft, t + kRowH * 8, p0);
+    cx = make_label(L"初始字形:", kPanelPadLeft, t + kRowH * 9, p0);
     hInitialFullShape_ = make_check(
-        1025, L"全角", panelX + cx, panelY + t + kRowH * 8, S(80), hwnd);
+        1025, L"全角", panelX + cx, panelY + t + kRowH * 9, S(80), hwnd);
 
     // ── Panel 1: Candidate Window ───────────────────────────────────
     HWND p1 = hPanels_[1]; t = kPanelPadTop;
@@ -768,6 +772,7 @@ void EditorApp::show_panel(int idx) {
     if (hPreeditTypePreview_)       ShowWindow(hPreeditTypePreview_, sw0);
     if (hFuzzyPinyin_)              ShowWindow(hFuzzyPinyin_, sw0);
     if (hWubiAutoCommit_)           ShowWindow(hWubiAutoCommit_, sw0);
+    if (hWubiCodeHint_)             ShowWindow(hWubiCodeHint_, sw0);
     if (hCandidateLearning_)        ShowWindow(hCandidateLearning_, sw0);
     if (hInitialChinesePunct_)      ShowWindow(hInitialChinesePunct_, sw0);
     if (hInitialFullShape_)         ShowWindow(hInitialFullShape_, sw0);
@@ -1046,6 +1051,7 @@ void EditorApp::load_config() {
     }
     set_check(hFuzzyPinyin_, config_.fuzzy_pinyin);
     set_check(hWubiAutoCommit_, config_.wubi_auto_commit);
+    set_check(hWubiCodeHint_, config_.wubi_code_hint);
     set_check(hCandidateLearning_, config_.candidate_learning);
     set_check(hInitialChinesePunct_, config_.initial_chinese_punct);
     set_check(hInitialFullShape_, config_.initial_full_shape);
@@ -1073,6 +1079,7 @@ void EditorApp::readback(HWND) {
     c.inline_preedit = get_check(hInlinePreedit_);
     c.fuzzy_pinyin = get_check(hFuzzyPinyin_);
     c.wubi_auto_commit = get_check(hWubiAutoCommit_);
+    c.wubi_code_hint = get_check(hWubiCodeHint_);
     c.candidate_learning = get_check(hCandidateLearning_);
     c.initial_chinese_punct = get_check(hInitialChinesePunct_);
     c.initial_full_shape = get_check(hInitialFullShape_);
@@ -1111,6 +1118,7 @@ void EditorApp::save_config() {
     config_.inline_preedit = get_check(hInlinePreedit_);
     config_.fuzzy_pinyin = get_check(hFuzzyPinyin_);
     config_.wubi_auto_commit = get_check(hWubiAutoCommit_);
+    config_.wubi_code_hint = get_check(hWubiCodeHint_);
     config_.candidate_learning = get_check(hCandidateLearning_);
     const char* ks[] = {"Shift_L","Shift_R","Control_L","Control_R","Caps_Lock"};
     for (int i = 0; i < 5; ++i) {

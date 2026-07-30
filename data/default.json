@@ -9,6 +9,7 @@
         "max_pinyin_length": 64,
         "fuzzy_pinyin": true,
         "wubi_auto_commit": true,
+        "wubi_code_hint": false,
         "candidate_learning": false
     },
     "initial_state": {

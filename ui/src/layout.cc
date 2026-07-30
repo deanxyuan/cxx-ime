@@ -78,7 +78,9 @@ LayoutResult calculate_horizontal_layout(HDC hdc,
     for (int i = 0; i < (int)candidates.size(); ++i) {
         std::wstring label = std::to_wstring(i + 1) + L".";
         SIZE lsz = measure_wstr(hdc, label, font_name, font_size);
-        SIZE tsz = measure_wstr(hdc, to_wstr(candidates[i].text), font_name, font_size);
+        std::string formatted;
+        const std::string& display_text = candidate_display_text(candidates[i], formatted);
+        SIZE tsz = measure_wstr(hdc, to_wstr(display_text), font_name, font_size);
 
         int label_w = lsz.cx, text_w = tsz.cx + text_slack;
         int total_w = label_w + cfg.hilite_spacing + text_w;
@@ -89,7 +91,7 @@ LayoutResult calculate_horizontal_layout(HDC hdc,
 
         CandidateRect cr;
         cr.index = i;
-        cr.text = candidates[i].text;
+        cr.text = display_text;
         cr.label_rect = {x, y, x + label_w, y + rh};
         cr.text_rect  = {x + label_w + cfg.hilite_spacing, y,
                          x + label_w + cfg.hilite_spacing + text_w, y + rh};
@@ -189,7 +191,9 @@ int text_slack = text_render_slack(rh);
     for (int i = 0; i < (int)candidates.size(); ++i) {
         std::wstring label = std::to_wstring(i + 1) + L".";
         int lw = measure_wstr(hdc, label, font_name, font_size).cx;
-        int tw = measure_wstr(hdc, to_wstr(candidates[i].text), font_name, font_size).cx + text_slack;
+        std::string formatted;
+        const std::string& display_text = candidate_display_text(candidates[i], formatted);
+        int tw = measure_wstr(hdc, to_wstr(display_text), font_name, font_size).cx + text_slack;
         if (lw > widest_label) widest_label = lw;
         if (tw > widest_text) widest_text = tw;
     }
@@ -209,7 +213,8 @@ int text_slack = text_render_slack(rh);
 
         CandidateRect cr;
         cr.index = i;
-        cr.text = candidates[i].text;
+        std::string formatted;
+        cr.text = candidate_display_text(candidates[i], formatted);
         cr.label_rect = {cfg.margin_x, y, cfg.margin_x + widest_label, y + rh};
         cr.text_rect  = {text_x, y, text_x + widest_text, y + rh};
 

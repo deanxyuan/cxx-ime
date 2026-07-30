@@ -250,8 +250,11 @@ void CandidateUIElement::set_page(const cxxime::CandidatePage& page,
     UNREFERENCED_PARAMETER(page_total);
     _candidates.clear();
     _candidates.reserve(page.candidates.size());
-    for (const auto& candidate : page.candidates)
-        _candidates.push_back(utf8_to_wstring(candidate.text));
+    for (const auto& candidate : page.candidates) {
+        std::string formatted;
+        _candidates.push_back(utf8_to_wstring(
+            cxxime::candidate_display_text(candidate, formatted)));
+    }
 
     if (_candidates.empty()) {
         _selection = 0;

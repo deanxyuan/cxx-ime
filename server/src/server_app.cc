@@ -211,6 +211,10 @@ cxxime::IPCResponse ServerApp::handle_request(const cxxime::IPCRequest& request)
             for (uint32_t i = 0; i < response.candidate_count && i < 10; ++i) {
                 strncpy_s(response.candidates[i], r.candidates.candidates[i].text.c_str(),
                           sizeof(response.candidates[i]) - 1);
+                if (!r.candidates.candidates[i].comment.empty()) {
+                    strncpy_s(response.candidate_hints[i], r.candidates.candidates[i].comment.c_str(),
+                              sizeof(response.candidate_hints[i]) - 1);
+                }
             }
             response.highlighted = (uint32_t)r.candidates.highlighted;
             response.page_current = (uint32_t)(r.candidates.page_index + 1);

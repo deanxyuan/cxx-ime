@@ -75,6 +75,7 @@ private:
     HWND hPreeditTypePreview_ = nullptr;
     HWND hFuzzyPinyin_ = nullptr;
     HWND hWubiAutoCommit_ = nullptr;
+    HWND hWubiCodeHint_ = nullptr;
     HWND hCandidateLearning_ = nullptr;
     HWND hInitialChinesePunct_ = nullptr;
     HWND hInitialFullShape_ = nullptr;
