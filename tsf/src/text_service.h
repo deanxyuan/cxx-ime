@@ -91,6 +91,7 @@ public:
     // Helper
     HRESULT insert_text(const std::wstring& text, bool sync = false);
     bool select_candidate_from_ui(UINT index);
+    bool navigate_candidate_page_from_ui(bool previous);
     void abort_candidate_ui_from_tsf();
     HRESULT finalize_exact_candidate_ui_from_tsf();
     bool set_candidate_ui_element_shown(bool show);
@@ -205,6 +206,9 @@ private:
                                        uint32_t candidate_count,
                                        uint32_t page_current,
                                        uint32_t page_total);
+    uint32_t _candidate_page_step() const;
+    static cxxime::CandidatePage _candidate_page_from_response(
+        const cxxime::IPCResponse& response);
     static std::wstring utf8_to_wstring(const char* text);
     void _start_host_compatibility_runtime();
     void _stop_host_compatibility_runtime();

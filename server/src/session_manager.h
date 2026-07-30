@@ -115,7 +115,8 @@ public:
     cxxime::IPCStatus sync_ascii_mode(uint32_t id, bool ascii_mode);
     std::pair<cxxime::IPCStatus, cxxime::ImeStatus> sync_caps_lock(uint32_t id, bool caps_lock);
 
-    ProcessKeyResult process_key(uint32_t id, const cxxime::KeyEvent& event);
+    ProcessKeyResult process_key(uint32_t id, const cxxime::KeyEvent& event,
+                                 uint32_t visible_candidate_count = 0);
     ProcessKeyResult select_candidate(uint32_t id, int index);
     ProcessKeyResult commit_composition(uint32_t id);
     cxxime::IPCStatus clear_composition(uint32_t id);

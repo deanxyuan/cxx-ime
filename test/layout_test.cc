@@ -1,11 +1,13 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
-#include "util/testutil.h"
 #include <cwchar>
 #include <vector>
+
 #include <cxxime/layout.h>
 #include <cxxime/candidate.h>
 #include <cxxime/config.h>
+
+#include "util/testutil.h"
 
 static cxxime::Candidate make_cand(const char* text) {
     cxxime::Candidate c;
@@ -50,6 +52,9 @@ TEST(Layout, horizontal_single_row) {
     // Left to right ordering
     ASSERT_TRUE(lr.rects[0].highlight_rect.left < lr.rects[1].highlight_rect.left);
     ASSERT_TRUE(lr.rects[1].highlight_rect.left < lr.rects[2].highlight_rect.left);
+    ASSERT_EQ(lr.rects[0].text, "abc");
+    ASSERT_EQ(lr.rects[1].text, "def");
+    ASSERT_EQ(lr.rects[2].text, "ghi");
     ASSERT_GT(lr.width, 0);
     ASSERT_GT(lr.height, 0);
 
@@ -67,6 +72,19 @@ TEST(Layout, horizontal_width_limit_stops_when_next_candidate_does_not_fit) {
 
     ASSERT_EQ(lr.rects.size(), 1u);
     ASSERT_EQ(lr.rects[0].index, 0);
+
+    ReleaseDC(nullptr, hdc);
+}
+
+TEST(Layout, horizontal_navigation_respects_width_limit) {
+    HDC hdc = GetDC(nullptr);
+    auto cfg = make_cfg(120);
+    cfg.min_width = 1000;
+    std::vector<cxxime::Candidate> cands = {make_cand("candidate")};
+    auto lr = cxxime::calculate_horizontal_layout(hdc, cands, "Arial", 14, cfg, 2);
+
+    ASSERT_EQ(lr.rects.size(), 1u);
+    ASSERT_LE(lr.width, 120);
 
     ReleaseDC(nullptr, hdc);
 }
@@ -92,6 +110,7 @@ TEST(Layout, horizontal_truncation) {
     ASSERT_EQ(lr.rects.size(), 1u);
     // Width should be constrained
     ASSERT_LE(lr.width, 200 + 24);  // max_width + margin tolerance
+    ASSERT_TRUE(lr.rects[0].text.find(u8"…") != std::string::npos);
     ASSERT_GT(lr.height, 0);
 
     ReleaseDC(nullptr, hdc);

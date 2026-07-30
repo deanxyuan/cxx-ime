@@ -1,12 +1,16 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
-#include "util/testutil.h"
+#include <string>
+#include <utility>
+
+#include <windows.h>
+
 #include <cxxime/candidate_window.h>
-#include <cxxime/render_context.h>
 #include <cxxime/config.h>
 #include <cxxime/data_path.h>
-#include <windows.h>
-#include <string>
+#include <cxxime/render_context.h>
+
+#include "util/testutil.h"
 
 static std::string test_data_path(const char* filename) {
     cxxime::set_data_dir(CXXIME_DATA_DIR);
@@ -126,6 +130,40 @@ TEST(CandidateWindow, recreate_resets_native_window_size_cache) {
 
     ASSERT_EQ(second_rect.right - second_rect.left, first_rect.right - first_rect.left);
     ASSERT_EQ(second_rect.bottom - second_rect.top, first_rect.bottom - first_rect.top);
+    window.destroy();
+}
+
+TEST(CandidateWindow, width_is_clamped_to_monitor_work_area) {
+    cxxime::Config config;
+    config.render_backend = "gdi";
+    config.layout = "horizontal";
+    config.layout_config.min_width = 100000;
+    config.layout_config.max_width = 100000;
+
+    cxxime::CandidatePage page;
+    cxxime::Candidate candidate;
+    candidate.text.assign(4096, 'w');
+    page.candidates.push_back(std::move(candidate));
+    page.total_count = 2;
+
+    cxxime::CandidateWindow window;
+    ASSERT_TRUE(window.create(nullptr, config));
+    window.update(page);
+
+    HWND hwnd = FindWindowW(L"CxxIMECandidateWindow", nullptr);
+    ASSERT_TRUE(hwnd != nullptr);
+    RECT window_rect = {};
+    ASSERT_TRUE(GetWindowRect(hwnd, &window_rect) != FALSE);
+    HMONITOR monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO monitor_info = {sizeof(monitor_info)};
+    ASSERT_TRUE(GetMonitorInfoW(monitor, &monitor_info) != FALSE);
+    ASSERT_LE(window_rect.right - window_rect.left,
+              monitor_info.rcWork.right - monitor_info.rcWork.left);
+
+    window.show();
+    ASSERT_EQ(window.visible_candidate_count(), 1);
+    window.hide();
+    ASSERT_EQ(window.visible_candidate_count(), 0);
     window.destroy();
 }
 

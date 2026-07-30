@@ -698,7 +698,8 @@ std::pair<cxxime::IPCStatus, cxxime::ImeStatus> SessionManager::sync_caps_lock(u
     return {cxxime::IPCStatus::OK, entry->ime_status};
 }
 
-ProcessKeyResult SessionManager::process_key(uint32_t id, const cxxime::KeyEvent& event) {
+ProcessKeyResult SessionManager::process_key(uint32_t id, const cxxime::KeyEvent& event,
+                                             uint32_t visible_candidate_count) {
     // Two-phase lock: lookup session and copy shared_ptr, then lock session
     std::shared_ptr<SessionEntry> entry;
     {
@@ -750,7 +751,7 @@ ProcessKeyResult SessionManager::process_key(uint32_t id, const cxxime::KeyEvent
     engine.set_trace_session_id(id);
 
     // 4. call Engine
-    auto result = engine.process_key(event, opts);
+    auto result = engine.process_key(event, opts, static_cast<int>(visible_candidate_count));
 
     // 5. Publish shared mode changes and retain this session's base language mode.
     bool new_ascii = engine.ascii_composer().is_ascii_mode();

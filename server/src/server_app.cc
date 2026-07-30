@@ -181,7 +181,8 @@ cxxime::IPCResponse ServerApp::handle_request(const cxxime::IPCRequest& request)
         event.modifiers = request.modifiers;
         event.is_key_up = request.is_key_up;
 
-        auto r = session_mgr_.process_key(request.session_id, event);
+        auto r = session_mgr_.process_key(
+            request.session_id, event, request.visible_candidate_count);
 
         if (r.status != cxxime::IPCStatus::OK) {
             response.status = r.status;
@@ -207,8 +208,11 @@ cxxime::IPCResponse ServerApp::handle_request(const cxxime::IPCRequest& request)
 
         if (r.composing) {
             strncpy_s(response.preedit, r.preedit.c_str(), sizeof(response.preedit) - 1);
-            response.candidate_count = (uint32_t)r.candidates.candidates.size();
-            for (uint32_t i = 0; i < response.candidate_count && i < 10; ++i) {
+            response.candidate_count = (std::min)(
+                static_cast<uint32_t>(r.candidates.candidates.size()), 10u);
+            response.candidate_offset = static_cast<uint32_t>(r.candidates.page_offset);
+            response.candidate_total = static_cast<uint32_t>(r.candidates.total_count);
+            for (uint32_t i = 0; i < response.candidate_count; ++i) {
                 strncpy_s(response.candidates[i], r.candidates.candidates[i].text.c_str(),
                           sizeof(response.candidates[i]) - 1);
                 if (!r.candidates.candidates[i].comment.empty()) {
@@ -219,9 +223,10 @@ cxxime::IPCResponse ServerApp::handle_request(const cxxime::IPCRequest& request)
             response.highlighted = (uint32_t)r.candidates.highlighted;
             response.page_current = (uint32_t)(r.candidates.page_index + 1);
             int ps = r.candidates.page_size > 0 ? r.candidates.page_size : 9;
-            response.page_total = (r.candidates.total_count > 0)
+            uint32_t fixed_page_total = (r.candidates.total_count > 0)
                 ? (uint32_t)((r.candidates.total_count + ps - 1) / ps)
                 : 1;
+            response.page_total = (std::max)(response.page_current, fixed_page_total);
         }
 
         if (r.result == cxxime::ProcessResult::COMMITTED) {

@@ -4,10 +4,12 @@
 // Design reference: weasel PipeChannel (WeaselIPC).
 
 #include <cxxime/ipc_client.h>
-#include <windows.h>
+
 #include <algorithm>
-#include <cstring>
 #include <chrono>
+#include <cstring>
+
+#include <windows.h>
 
 namespace cxxime {
 
@@ -189,12 +191,14 @@ bool IpcClient::end_session(uint32_t session_id) {
 }
 
 bool IpcClient::process_key(uint32_t session_id, uint32_t key_code, uint32_t modifiers,
-                            IPCResponse& response, bool is_key_up) {
+                            IPCResponse& response, bool is_key_up,
+                            uint32_t visible_candidate_count) {
     IPCRequest req = {};
     req.command = IPCCommand::PROCESS_KEY;
     req.session_id = session_id;
     req.key_code = key_code;
     req.modifiers = modifiers;
+    req.visible_candidate_count = visible_candidate_count;
     req.is_key_up = is_key_up;
     return send_request(req, response);
 }

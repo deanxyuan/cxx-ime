@@ -3,6 +3,7 @@
 #include "text_service.h"
 
 #include <cstdio>
+#include <utility>
 
 #include "candidate_ui_element.h"
 #include "host_compatibility/host_classification_compatibility.h"
@@ -82,6 +83,33 @@ std::wstring TextService::utf8_to_wstring(const char* text) {
     std::wstring result(len - 1, L'\0');
     MultiByteToWideChar(CP_UTF8, 0, text, -1, &result[0], len);
     return result;
+}
+
+cxxime::CandidatePage
+TextService::_candidate_page_from_response(const cxxime::IPCResponse& response) {
+    cxxime::CandidatePage page;
+    page.page_index = static_cast<int>(response.page_current) - 1;
+    page.page_offset = static_cast<int>(response.candidate_offset);
+    page.total_count = static_cast<int>(response.candidate_total);
+    page.highlighted = static_cast<int>(response.highlighted);
+    for (uint32_t i = 0; i < response.candidate_count && i < 10; ++i) {
+        cxxime::Candidate candidate;
+        candidate.text = response.candidates[i];
+        candidate.comment = response.candidate_hints[i];
+        page.candidates.push_back(std::move(candidate));
+    }
+    return page;
+}
+
+uint32_t TextService::_candidate_page_step() const {
+    int visible_count = _candidateWindow.visible_candidate_count();
+    if (visible_count > 0) {
+        return static_cast<uint32_t>(visible_count);
+    }
+    if (_candidateUiElement && _candidateUiElement->is_active()) {
+        return static_cast<uint32_t>(_publishedCandidatePage.candidates.size());
+    }
+    return 0;
 }
 
 bool TextService::_publish_candidate_ui_element(const cxxime::CandidatePage& page,
@@ -206,6 +234,33 @@ bool TextService::select_candidate_from_ui(UINT index) {
     _candidateWindow.set_preedit("");
     _hide_candidate_window("hide:select_commit");
     _end_reading_ui_element("hide:select_commit_reading");
+    return true;
+}
+
+bool TextService::navigate_candidate_page_from_ui(bool previous) {
+    cxxime::IPCResponse response = {};
+    uint32_t key_code = previous ? VK_PRIOR : VK_NEXT;
+    if (!_ensure_ipc_session() ||
+        !_client.process_key(_sessionId, key_code, 0, response, false, _candidate_page_step())) {
+        return false;
+    }
+    if (response.status != cxxime::IPCStatus::OK || !response.composing ||
+        response.candidate_count == 0) {
+        return false;
+    }
+
+    _sync_ime_status(response.ime_status);
+    cxxime::CandidatePage page = _candidate_page_from_response(response);
+    bool show_external = _publish_candidate_ui_element(page, response.candidate_count,
+                                                        response.page_current, response.page_total);
+    if (!show_external) {
+        _hide_external_candidate_window("hide:page_navigation_host_ui");
+        return true;
+    }
+
+    _candidateWindow.set_page_info(static_cast<int>(response.page_current),
+                                    static_cast<int>(response.page_total));
+    _candidateWindow.update(page);
     return true;
 }
 

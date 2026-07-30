@@ -3,23 +3,24 @@
 #ifndef CXXIME_ENGINE_H_
 #define CXXIME_ENGINE_H_
 
+#include <atomic>
+#include <memory>
 #include <string>
 #include <utility>
-#include <memory>
-#include <atomic>
-#include <cxxime/processor.h>
-#include <cxxime/translator.h>
-#include <cxxime/query_scratch.h>
-#include <cxxime/dict.h>
-#include <cxxime/context.h>
-#include <cxxime/config.h>
+
 #include <cxxime/ascii_composer.h>
+#include <cxxime/config.h>
+#include <cxxime/context.h>
+#include <cxxime/dict.h>
+#include <cxxime/ipc_protocol.h>
 #include <cxxime/output_options.h>
+#include <cxxime/processor.h>
+#include <cxxime/query_budget.h>
+#include <cxxime/query_scratch.h>
+#include <cxxime/query_trace.h>
 #include <cxxime/spellings_index.h>
 #include <cxxime/syllabifier.h>
-#include <cxxime/query_trace.h>
-#include <cxxime/query_budget.h>
-#include <cxxime/ipc_protocol.h>
+#include <cxxime/translator.h>
 
 namespace cxxime {
 
@@ -44,7 +45,8 @@ public:
                                  Syllabifier* syllabifier, Dict* wubi_dict);
 
     ProcessResult process_key(const KeyEvent& event);
-    ProcessResult process_key(const KeyEvent& event, const OutputOptions& opts);
+    ProcessResult process_key(const KeyEvent& event, const OutputOptions& opts,
+                              int visible_candidate_count = 0);
     const Context& context() const;
     Context& context();
     bool select_candidate(int index);

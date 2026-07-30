@@ -2,8 +2,10 @@
 // Layout calculation modeled after Weasel's HorizontalLayout / VerticalLayout.
 
 #include <cxxime/layout.h>
-#include <cxxime/config.h>
+
 #include <algorithm>
+
+#include <cxxime/config.h>
 
 namespace cxxime {
 
@@ -65,12 +67,16 @@ LayoutResult calculate_horizontal_layout(HDC hdc,
     int text_slack = text_render_slack(rh);
 
     int max_w = cfg.max_width > 0 ? cfg.max_width : 600;
-
-    // Reserve space for page nav buttons when there are multiple pages
+    int nav_extra = 0;
     if (page_total > 1) {
-        int nav_w = (16 + 2 + 16);  // prev + gap + next buttons
-        max_w -= nav_w;
-        if (max_w < cfg.min_width) max_w = cfg.min_width;
+        constexpr int nav_buttons_width = 16 + 2 + 16;
+        int nav_overlap = cfg.hilite_padding_x + 4 - cfg.candidate_spacing;
+        nav_extra = nav_buttons_width + (std::max)(0, nav_overlap);
+        max_w = (std::max)(1, max_w - nav_extra);
+    }
+    int min_w = (std::max)(0, cfg.min_width - nav_extra);
+    if (min_w > max_w) {
+        min_w = max_w;
     }
 
     int x = cfg.margin_x, y = cfg.margin_y;
@@ -137,13 +143,17 @@ LayoutResult calculate_horizontal_layout(HDC hdc,
             if (best_prefix + best_suffix < wlen) {
                 std::wstring truncated = wtext.substr(0, best_prefix) + ellipsis + wtext.substr(wlen - best_suffix);
                 // Convert back to UTF-8
-                int utf8_len = WideCharToMultiByte(CP_UTF8, 0, truncated.c_str(), -1, nullptr, 0, nullptr, nullptr);
-                if (utf8_len > 1) {
-                    cr.text.resize(utf8_len - 1);
-                    WideCharToMultiByte(CP_UTF8, 0, truncated.c_str(), -1, &cr.text[0], utf8_len, nullptr, nullptr);
+                int utf8_len = WideCharToMultiByte(CP_UTF8, 0, truncated.data(),
+                                                   static_cast<int>(truncated.size()), nullptr, 0,
+                                                   nullptr, nullptr);
+                if (utf8_len > 0) {
+                    cr.text.resize(utf8_len);
+                    WideCharToMultiByte(CP_UTF8, 0, truncated.data(),
+                                        static_cast<int>(truncated.size()), &cr.text[0], utf8_len,
+                                        nullptr, nullptr);
                 }
                 // Recalculate text_rect width
-int new_tw = measure_wstr(hdc, truncated, font_name, font_size).cx + text_slack;
+                int new_tw = measure_wstr(hdc, truncated, font_name, font_size).cx + text_slack;
                 cr.text_rect.right = cr.text_rect.left + new_tw;
                 cr.highlight_rect.right = cr.text_rect.right;
                 InflateRect(&cr.highlight_rect, cfg.hilite_padding_x, cfg.hilite_padding_y);
@@ -157,9 +167,8 @@ int new_tw = measure_wstr(hdc, truncated, font_name, font_size).cx + text_slack;
         content_w = result.rects.back().text_rect.right + cfg.candidate_spacing;
     result.width = content_w + cfg.margin_x;
     if (result.width > max_w) result.width = max_w;
-    if (result.width < cfg.min_width) result.width = cfg.min_width;
+    if (result.width < min_w) result.width = min_w;
     // Add back nav space for window sizing
-    int nav_extra = (page_total > 1) ? (16 + 2 + 16) : 0;
     result.width += nav_extra;
     result.height = rh + cfg.margin_y * 2;
     return result;
@@ -254,10 +263,14 @@ int text_slack = text_render_slack(rh);
             }
             if (best_prefix + best_suffix < wlen) {
                 std::wstring truncated = wtext.substr(0, best_prefix) + ellipsis + wtext.substr(wlen - best_suffix);
-                int utf8_len = WideCharToMultiByte(CP_UTF8, 0, truncated.c_str(), -1, nullptr, 0, nullptr, nullptr);
-                if (utf8_len > 1) {
-                    cr.text.resize(utf8_len - 1);
-                    WideCharToMultiByte(CP_UTF8, 0, truncated.c_str(), -1, &cr.text[0], utf8_len, nullptr, nullptr);
+                int utf8_len = WideCharToMultiByte(CP_UTF8, 0, truncated.data(),
+                                                   static_cast<int>(truncated.size()), nullptr, 0,
+                                                   nullptr, nullptr);
+                if (utf8_len > 0) {
+                    cr.text.resize(utf8_len);
+                    WideCharToMultiByte(CP_UTF8, 0, truncated.data(),
+                                        static_cast<int>(truncated.size()), &cr.text[0], utf8_len,
+                                        nullptr, nullptr);
                 }
             }
         }

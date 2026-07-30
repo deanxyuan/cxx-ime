@@ -46,6 +46,7 @@ inline const std::string& candidate_display_text(const Candidate& candidate,
 
 struct CandidatePage {
     int page_index = 0;
+    int page_offset = 0;
     int page_size = 9;
     int total_count = 0;
     int highlighted = -1;
