@@ -58,6 +58,7 @@ void GdiRenderer::initialize(HWND hwnd, const Theme& theme) {
     bg_brush_      = CreateSolidBrush(clr(theme.background));
     hl_brush_      = CreateSolidBrush(clr(theme.hilited_back));
     text_color_    = clr(theme.text);
+    comment_color_ = clr(theme.comment_text);
     hl_text_color_ = clr(theme.hilited_text);
     preedit_color_ = clr(theme.preedit_text);
     label_color_   = clr(theme.label_text);
@@ -190,6 +191,12 @@ void GdiRenderer::render(HDC hdc, const RECT& clip, const RenderContext& ctx) {
         SetTextColor(target_dc, hl ? hl_text_color_ : text_color_);
         DrawTextW(target_dc, to_wstr(cr.text).c_str(), -1, const_cast<RECT*>(&cr.text_rect),
             DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        if (!cr.comment.empty()) {
+            SetTextColor(target_dc, hl ? hl_text_color_ : (hv ? text_color_ : comment_color_));
+            DrawTextW(target_dc, to_wstr(cr.comment).c_str(), -1,
+                    const_cast<RECT*>(&cr.comment_rect),
+                    DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        }
     }
 
     // Page nav (always visible, dimmed when disabled)

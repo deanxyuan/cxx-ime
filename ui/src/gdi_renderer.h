@@ -4,6 +4,7 @@
 #define CXXIME_GDI_RENDERER_H_
 
 #include <windows.h>
+
 #include <cxxime/render_context.h>
 
 namespace cxxime {
@@ -23,6 +24,7 @@ private:
     HBRUSH hl_brush_ = nullptr;
     HBRUSH hover_brush_ = nullptr;
     COLORREF text_color_ = 0;
+    COLORREF comment_color_ = 0;
     COLORREF hl_text_color_ = 0;
     COLORREF preedit_color_ = 0;
     COLORREF label_color_ = 0;

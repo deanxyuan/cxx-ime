@@ -422,8 +422,9 @@ void CandidateWindow::update(const CandidatePage& page) {
         int row_h = lr.row_height > 0 ? lr.row_height : (ps.cy > 0 ? ps.cy : cfg.margin_y * 2);
         int preedit_h = (ps.cy > 0 ? ps.cy : row_h) + cfg.spacing;
         for (auto& cr : lr.rects) {
-            cr.label_rect.top += preedit_h;      cr.label_rect.bottom += preedit_h;
+            cr.label_rect.top += preedit_h;       cr.label_rect.bottom += preedit_h;
             cr.text_rect.top += preedit_h;        cr.text_rect.bottom += preedit_h;
+            cr.comment_rect.top += preedit_h;     cr.comment_rect.bottom += preedit_h;
             cr.highlight_rect.top += preedit_h;   cr.highlight_rect.bottom += preedit_h;
         }
         // When no candidates, size window to fit preedit text

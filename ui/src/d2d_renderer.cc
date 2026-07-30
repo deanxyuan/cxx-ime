@@ -1,8 +1,10 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
 #include <cxxime/renderer.h>
-#include <cxxime/config.h>
+
 #include <string>
+
+#include <cxxime/config.h>
 
 namespace cxxime {
 
@@ -54,6 +56,7 @@ bool D2DRenderer::initialize(HWND hwnd, int font_size, const wchar_t* font_name)
     // targets interpret our rectangles as DIP and the content gets clipped.
     render_target_->SetDpi(96.0f, 96.0f);
     render_target_->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Black), &text_brush_);
+    render_target_->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Gray), &comment_brush_);
     render_target_->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &bg_brush_);
     render_target_->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::DodgerBlue), &highlight_brush_);
     render_target_->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &highlight_text_brush_);
@@ -80,7 +83,8 @@ void D2DRenderer::finalize() {
     for (auto* p : {&fmt_small_, &fmt_preedit_, &fmt_right_, &fmt_left_}) { if (*p) { (*p)->Release(); *p = nullptr; } }
     if (dwrite_factory_) { dwrite_factory_->Release(); dwrite_factory_ = nullptr; }
     for (auto* p : {&border_brush_, &nav_brush_, &label_brush_, &preedit_brush_, &hover_brush_,
-                    &highlight_text_brush_, &highlight_brush_, &bg_brush_, &text_brush_})
+                    &highlight_text_brush_, &highlight_brush_, &bg_brush_, &comment_brush_,
+                    &text_brush_})
     { if (*p) { (*p)->Release(); *p = nullptr; } }
     if (render_target_) { render_target_->Release(); render_target_ = nullptr; }
     if (d2d_factory_) { d2d_factory_->Release(); d2d_factory_ = nullptr; }
@@ -96,6 +100,7 @@ void D2DRenderer::render(const RenderContext& ctx) {
     if (ctx.theme) {
         bg_brush_->SetColor(c2d(ctx.theme->background));
         text_brush_->SetColor(c2d(ctx.theme->text));
+        comment_brush_->SetColor(c2d(ctx.theme->comment_text));
         highlight_brush_->SetColor(c2d(ctx.theme->hilited_back));
         highlight_text_brush_->SetColor(c2d(ctx.theme->hilited_text));
         preedit_brush_->SetColor(c2d(ctx.theme->preedit_text));
@@ -186,6 +191,16 @@ void D2DRenderer::render(const RenderContext& ctx) {
                           (float)cr.text_rect.right, (float)cr.text_rect.bottom};
         render_target_->DrawText(wt.c_str(), (UINT32)wt.length(), fmt_left_, tr,
                                  hl ? highlight_text_brush_ : text_brush_);
+        if (!cr.comment.empty()) {
+            auto wc = dec(cr.comment);
+            D2D1_RECT_F comment_rect = {
+                (float)cr.comment_rect.left, (float)cr.comment_rect.top,
+                (float)cr.comment_rect.right, (float)cr.comment_rect.bottom,
+            };
+            auto* brush = hl ? highlight_text_brush_ : (hv ? text_brush_ : comment_brush_);
+            render_target_->DrawText(wc.c_str(), (UINT32)wc.length(), fmt_left_,
+                                    comment_rect, brush);
+        }
     }
 
     // Page nav (always visible, grayed when disabled)

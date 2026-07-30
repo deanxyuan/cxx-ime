@@ -35,6 +35,7 @@ Theme build_theme_from_config(const Config& cfg) {
         Theme t;
         t.background   = {1, 78, 139, 255};
         t.text         = {232, 232, 255, 255};
+        t.comment_text = {139, 170, 208, 255};
         t.label_text   = {100, 150, 198, 255};
         t.hilited_text = {254, 255, 127, 255};
         t.hilited_back = {1, 94, 169, 255};
@@ -51,6 +52,7 @@ Theme build_theme_from_config(const Config& cfg) {
     t.background   = to_color(s->back_color);
     t.border       = to_color(s->border_color);
     t.text         = to_color(s->candidate_text_color);
+    t.comment_text = to_color(s->comment_text_color);
     t.label_text   = to_color(s->label_text_color);
     t.hilited_text = to_color(s->hilited_candidate_text_color);
     t.hilited_back = to_color(s->hilited_candidate_back_color);

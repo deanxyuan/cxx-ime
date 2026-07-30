@@ -6,6 +6,7 @@
 #include <windows.h>
 #include <d2d1.h>
 #include <dwrite.h>
+
 #include <cxxime/render_context.h>
 
 namespace cxxime {
@@ -21,6 +22,7 @@ private:
     ID2D1Factory* d2d_factory_ = nullptr;
     ID2D1HwndRenderTarget* render_target_ = nullptr;
     ID2D1SolidColorBrush* text_brush_ = nullptr;
+    ID2D1SolidColorBrush* comment_brush_ = nullptr;
     ID2D1SolidColorBrush* bg_brush_ = nullptr;
     ID2D1SolidColorBrush* highlight_brush_ = nullptr;
     ID2D1SolidColorBrush* highlight_text_brush_ = nullptr;

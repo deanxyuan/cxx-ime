@@ -183,6 +183,38 @@ TEST(WubiEngine, translator_uses_explicit_candidate_offset) {
     DeleteFileA(dict_path.c_str());
 }
 
+TEST(WubiEngine, translator_keeps_candidate_order_stable_when_page_query_expands) {
+    std::string dict_path = make_temp_path("test_wubi_stable_pages.bin");
+    std::string user_dict_path = make_temp_path("test_wubi_stable_pages_user.tsv");
+    DeleteFileA(user_dict_path.c_str());
+    const std::vector<std::tuple<std::string, std::string, int>> entries = {
+        {"a", "exact", 500},   {"aa", "early", 1},    {"ab", "rank-1", 500},
+        {"ac", "rank-2", 600}, {"ad", "rank-3", 700}, {"ae", "rank-4", 800},
+    };
+    cxxime::Dict::create_test_dict(dict_path, entries);
+
+    cxxime::Dict dict;
+    ASSERT_TRUE(dict.open(dict_path, user_dict_path));
+
+    cxxime::WubiTranslator translator;
+    translator.set_dict(&dict);
+    auto first = translator.translate("a", 0, 2);
+    auto second = translator.translate("a", 1, 2, nullptr, nullptr, nullptr, 2);
+
+    ASSERT_EQ(first.candidates.size(), 2u);
+    ASSERT_EQ(second.candidates.size(), 2u);
+    ASSERT_EQ(second.candidates[0].text, "early");
+    for (const auto& first_candidate : first.candidates) {
+        for (const auto& second_candidate : second.candidates) {
+            ASSERT_TRUE(first_candidate.text != second_candidate.text);
+        }
+    }
+
+    dict.close();
+    DeleteFileA(dict_path.c_str());
+    DeleteFileA(user_dict_path.c_str());
+}
+
 TEST(WubiEngine, translator_empty_code) {
     std::string dict_path = make_temp_path("test_wubi_empty.bin");
     cxxime::Dict::create_test_dict(dict_path, {
