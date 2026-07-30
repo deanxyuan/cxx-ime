@@ -239,21 +239,28 @@ bool update_current_caret_rect(TextService* service,
     return false;
 }
 
-void set_selection_to_range(ITfContext* context, TfEditCookie ec, ITfRange* range) {
+HRESULT set_selection_to_range(ITfContext* context, TfEditCookie ec, ITfRange* range) {
     if (!context || !range)
-        return;
+        return E_INVALIDARG;
 
     ITfRange* selection_range = nullptr;
-    if (FAILED(range->Clone(&selection_range)) || !selection_range)
-        return;
+    HRESULT hr = range->Clone(&selection_range);
+    if (FAILED(hr) || !selection_range)
+        return FAILED(hr) ? hr : E_FAIL;
 
-    selection_range->Collapse(ec, TF_ANCHOR_END);
+    hr = selection_range->Collapse(ec, TF_ANCHOR_END);
+    if (FAILED(hr)) {
+        selection_range->Release();
+        return hr;
+    }
+
     TF_SELECTION selection = {};
     selection.range = selection_range;
     selection.style.ase = TF_AE_NONE;
     selection.style.fInterimChar = FALSE;
-    context->SetSelection(ec, 1, &selection);
+    hr = context->SetSelection(ec, 1, &selection);
     selection_range->Release();
+    return hr;
 }
 
 void clear_display_attribute(ITfContext* context, TfEditCookie ec, ITfRange* range) {
@@ -369,29 +376,62 @@ HRESULT get_or_create_composition_range(TextService* service,
                               start_result, composition_returned);
 }
 
-void clear_and_end_composition(TextService* service,
-                               ITfContext* context,
-                               TfEditCookie ec,
-                               const std::wstring* commit_text) {
+HRESULT clear_and_end_composition(TextService* service,
+                                  ITfContext* context,
+                                  TfEditCookie ec,
+                                  const std::wstring* commit_text) {
     ITfComposition* composition = service ? service->get_composition() : nullptr;
     if (!service || !composition)
-        return;
+        return E_INVALIDARG;
 
+    HRESULT action_result = S_OK;
     ITfRange* range = nullptr;
-    if (SUCCEEDED(composition->GetRange(&range)) && range) {
+    HRESULT hr = composition->GetRange(&range);
+    if (SUCCEEDED(hr) && range) {
         clear_display_attribute(context, ec, range);
         const wchar_t* text = commit_text ? commit_text->c_str() : L"";
         LONG length = commit_text ? static_cast<LONG>(commit_text->length()) : 0;
-        range->SetText(ec, 0, text, length);
-        set_selection_to_range(context, ec, range);
+        action_result = range->SetText(ec, 0, text, length);
+
+        if (SUCCEEDED(action_result) && commit_text && length > 0) {
+            // Push the result out of the composition before ending it. Some context owners do not
+            // advance the caret when the composition is only replaced and ended.
+            ITfRange* committed_end = nullptr;
+            action_result = range->Clone(&committed_end);
+            if (SUCCEEDED(action_result) && committed_end) {
+                LONG shifted = 0;
+                action_result = committed_end->ShiftStart(ec, length, &shifted, nullptr);
+                if (SUCCEEDED(action_result) && shifted != length) {
+                    action_result = E_FAIL;
+                }
+                if (SUCCEEDED(action_result)) {
+                    action_result = committed_end->Collapse(ec, TF_ANCHOR_START);
+                }
+                if (SUCCEEDED(action_result)) {
+                    action_result = composition->ShiftStart(ec, committed_end);
+                }
+                if (SUCCEEDED(action_result)) {
+                    action_result = set_selection_to_range(context, ec, committed_end);
+                }
+                committed_end->Release();
+            } else if (SUCCEEDED(action_result)) {
+                    action_result = E_FAIL;
+            }
+        }
         range->Release();
+    } else {
+        action_result = FAILED(hr) ? hr : E_FAIL;
     }
 
     service->set_composition(nullptr);
     service->set_composition_context(nullptr);
     service->set_composing(false);
-    composition->EndComposition(ec);
+    hr = composition->EndComposition(ec);
+    if (SUCCEEDED(action_result) && FAILED(hr)) {
+        action_result = hr;
+    }
     composition->Release();
+    return action_result;
 }
 
 void insert_at_selection(ITfContext* context, TfEditCookie ec, const std::wstring& text) {
@@ -462,7 +502,7 @@ STDMETHODIMP EditSession::DoEditSession(TfEditCookie ec) {
     if (_action == Action::INSERT_TEXT && !_text.empty()) {
         insert_at_selection(_context, ec, _text);
     } else if (_action == Action::END_COMPOSITION) {
-        clear_and_end_composition(_service, _context, ec, nullptr);
+        _actionResult = clear_and_end_composition(_service, _context, ec, nullptr);
     } else if (_action == Action::UPDATE_COMPOSITION) {
         ITfComposition* pComp = _service->get_composition();
         ITfRange* pRange = nullptr;
@@ -505,9 +545,10 @@ STDMETHODIMP EditSession::DoEditSession(TfEditCookie ec) {
         }
     } else if (_action == Action::COMMIT_COMPOSITION) {
         if (_service->get_composition()) {
-            clear_and_end_composition(_service, _context, ec, &_text);
+            _actionResult = clear_and_end_composition(_service, _context, ec, &_text);
         } else if (!_text.empty()) {
             insert_at_selection(_context, ec, _text);
+            _actionResult = S_OK;
         }
     } else if (_action == Action::QUERY_CARET) {
         RECT rc = {};
