@@ -2,6 +2,7 @@
 
 #include <cxxime/render_context.h>
 
+#include <algorithm>
 #include <string>
 
 #include <cxxime/config.h>
@@ -26,6 +27,14 @@ static const Config::SchemeColors* find_scheme(const Config& cfg, const std::str
     return (it != cfg.preset_color_schemes.end()) ? &it->second : nullptr;
 }
 
+static int preedit_font_size(const Config& cfg) {
+    int size = cfg.font_size > 2 ? cfg.font_size - 2 : cfg.font_size;
+    if (cfg.layout_config.label_font_point > 0) {
+        size = cfg.layout_config.label_font_point;
+    }
+    return std::clamp(size, 1, 72);
+}
+
 Theme build_theme_from_config(const Config& cfg) {
     const Config::SchemeColors* s = find_scheme(cfg, cfg.theme);
     if (!s) s = find_scheme(cfg, "aqua");
@@ -44,6 +53,7 @@ Theme build_theme_from_config(const Config& cfg) {
         t.prev_page    = {100, 150, 198, 255};
         t.next_page    = {100, 150, 198, 255};
         t.font_size    = cfg.font_size;
+        t.preedit_font_size = preedit_font_size(cfg);
         t.font_name    = to_wstr(cfg.font_name);
         return t;
     }
@@ -60,6 +70,7 @@ Theme build_theme_from_config(const Config& cfg) {
     t.prev_page    = to_color(s->prevpage_color);
     t.next_page    = to_color(s->nextpage_color);
     t.font_size    = cfg.font_size;
+    t.preedit_font_size = preedit_font_size(cfg);
     t.font_name    = to_wstr(cfg.font_name);
     return t;
 }

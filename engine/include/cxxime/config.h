@@ -24,7 +24,7 @@ struct LayoutConfig {
     int round_corner = 4;      // highlight rect corner radius
     int round_corner_ex = 4;   // window corner radius
     int border_width = 1;      // window border
-    int label_font_point = 0;  // label/preedit font size, 0 = use font_point
+    int label_font_point = 0;  // preedit font size, 0 = derive from font_point
 };
 
 struct Config {

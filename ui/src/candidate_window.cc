@@ -16,14 +16,6 @@ namespace cxxime {
 class CandidateWindow::GdiRenderer : public cxxime::GdiRenderer {};
 class CandidateWindow::D2DRenderer : public cxxime::D2DRenderer {};
 
-static std::wstring to_wstr(const std::string& s) {
-    int len = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
-    if (len <= 1) return {};
-    std::wstring ws(len - 1, L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, &ws[0], len);
-    return ws;
-}
-
 bool CandidateWindow::create(HWND parent, const Config& config) {
     config_ = &config;
     WNDCLASSEXW wc = {};
@@ -54,8 +46,7 @@ void CandidateWindow::init_gdi_renderer() {
 }
 void CandidateWindow::init_d2d_renderer() {
     d2d_renderer_ = new D2DRenderer();
-    auto wname = to_wstr(config_->font_name);
-    if (!d2d_renderer_->initialize(hwnd_, config_->font_size, wname.c_str())) {
+    if (!d2d_renderer_->initialize(hwnd_, theme_)) {
         delete d2d_renderer_; d2d_renderer_ = nullptr; backend_ = RenderBackend::GDI;
     }
 }
@@ -405,14 +396,11 @@ void CandidateWindow::update(const CandidatePage& page) {
         int wlen = MultiByteToWideChar(CP_UTF8, 0, preedit_text_.c_str(), -1, nullptr, 0);
         std::wstring wpreedit(wlen > 0 ? wlen - 1 : 0, L'\0');
         if (wlen > 0) MultiByteToWideChar(CP_UTF8, 0, preedit_text_.c_str(), -1, &wpreedit[0], wlen);
-        auto wname = to_wstr(config_->font_name);
-        int preedit_fs = config_->layout_config.label_font_point > 0
-            ? config_->layout_config.label_font_point
-            : (config_->font_size > 2 ? config_->font_size - 2 : config_->font_size);
-        HFONT hf = CreateFontW(-MulDiv(preedit_fs, GetDeviceCaps(hdc, LOGPIXELSY), 72),
+        HFONT hf = CreateFontW(-MulDiv(theme_.preedit_font_size,
+                                      GetDeviceCaps(hdc, LOGPIXELSY), 72),
                                0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                                OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                               DEFAULT_PITCH | FF_DONTCARE, wname.c_str());
+                               DEFAULT_PITCH | FF_DONTCARE, theme_.font_name.c_str());
         if (hf && !wpreedit.empty()) {
             HFONT old = (HFONT)SelectObject(hdc, hf);
             GetTextExtentPoint32W(hdc, wpreedit.c_str(), (int)wpreedit.length(), &ps);

@@ -50,6 +50,8 @@ private:
     void export_diagnostics();
     void set_user_dict_status(const std::wstring& text);
     void update_user_dict_status();
+    void update_user_dict_path();
+    void update_user_entry_actions();
     void on_user_entry_selected();
     void apply_candidate_control(int control_id);
     void apply_candidate_layout_to_edits(const cxxime::LayoutConfig& layout);
@@ -59,9 +61,16 @@ private:
     void show_candidate_preview_window();
     void hide_candidate_preview_window();
     void destroy_candidate_preview_window();
+    void update_candidate_preview_buttons();
+    void release_fonts();
 
     HWND hwnd_ = nullptr;
     HWND hList_ = nullptr;
+    HWND hFooter_ = nullptr;
+    HWND hAboutTitle_ = nullptr;
+    HFONT hFooterFont_ = nullptr;
+    HFONT hListFont_ = nullptr;
+    HFONT hAboutTitleFont_ = nullptr;
     int panel_ = 0;
     cxxime::SettingsPanel initial_panel_ = cxxime::SettingsPanel::kInput;
 
@@ -69,7 +78,9 @@ private:
     HWND hPanels_[6] = {};
 
     // Input panel controls
-    HWND hInputMode_ = nullptr;
+    HWND hInputModePinyin_ = nullptr;
+    HWND hInputModeWubi_ = nullptr;
+    HWND hInputModeMixed_ = nullptr;
     HWND hInlinePreedit_ = nullptr;
     HWND hPreeditTypeComposition_ = nullptr;
     HWND hPreeditTypePreview_ = nullptr;
@@ -77,9 +88,10 @@ private:
     HWND hWubiAutoCommit_ = nullptr;
     HWND hWubiCodeHint_ = nullptr;
     HWND hCandidateLearning_ = nullptr;
-    HWND hInitialChinesePunct_ = nullptr;
+    HWND hInitialEnglishPunct_ = nullptr;
     HWND hInitialFullShape_ = nullptr;
     HWND hPageSize_ = nullptr;
+    void update_input_mode_enabled();
     void update_preedit_type_enabled();
 
     // Appearance panel
@@ -99,7 +111,7 @@ private:
     HWND hCandWidth_ = nullptr;
     HWND hCandRecommendBtn_ = nullptr;
     HWND hCandDefaultBtn_ = nullptr;
-    HWND hCandPreviewBtn_ = nullptr;
+    HWND hCandPreviewBtns_[2] = {};
     HWND hCandEdits_[13] = {};
     bool updatingCandControls_ = false;
 
@@ -114,6 +126,12 @@ private:
     HWND hDictText_ = nullptr;
     HWND hDictCode_ = nullptr;
     HWND hDictUserPath_ = nullptr;
+    HWND hDictAdd_ = nullptr;
+    HWND hDictSave_ = nullptr;
+    HWND hDictDelete_ = nullptr;
+    HWND hDictClear_ = nullptr;
+    HWND hDictTooltip_ = nullptr;
+    std::wstring dictPathTooltip_;
     std::wstring selectedDictText_;
     std::wstring selectedDictCode_;
     cxxime::UserDictKind current_user_dict_kind() const;
@@ -126,7 +144,6 @@ private:
     bool candPreviewVisible_ = false;
 
     cxxime::Config config_;
-    std::wstring input_mode_ = L"拼音";
     static LRESULT CALLBACK wndproc(HWND, UINT, WPARAM, LPARAM);
 };
 

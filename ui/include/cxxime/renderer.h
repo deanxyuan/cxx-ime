@@ -13,7 +13,7 @@ namespace cxxime {
 
 class D2DRenderer {
 public:
-    bool initialize(HWND hwnd, int font_size, const wchar_t* font_name);
+    bool initialize(HWND hwnd, const Theme& theme);
     void finalize();
     void render(const RenderContext& ctx);
     void resize(int width, int height);

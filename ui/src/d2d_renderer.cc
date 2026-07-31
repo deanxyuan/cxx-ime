@@ -43,7 +43,7 @@ static IDWriteTextFormat* mkfmt(IDWriteFactory* f, const wchar_t* name, float sz
     return fmt;
 }
 
-bool D2DRenderer::initialize(HWND hwnd, int font_size, const wchar_t* font_name) {
+bool D2DRenderer::initialize(HWND hwnd, const Theme& theme) {
     HRESULT hr = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &d2d_factory_);
     if (FAILED(hr)) return false;
     RECT rc; GetClientRect(hwnd, &rc);
@@ -70,12 +70,16 @@ bool D2DRenderer::initialize(HWND hwnd, int font_size, const wchar_t* font_name)
     HDC dc = GetDC(hwnd);
     float dpi = (float)GetDeviceCaps(dc, LOGPIXELSY);
     ReleaseDC(hwnd, dc);
-    float fsize = (float)font_size * dpi / 72.0f;  // pt→px, match GDI's MulDiv(font_size, dpi, 72)
-    float psize = font_size > 2 ? (float)(font_size - 2) * dpi / 72.0f : fsize;  // preedit: font_size-2 pt
-    fmt_left_   = mkfmt(dwrite_factory_, font_name, fsize, DWRITE_TEXT_ALIGNMENT_LEADING);
-    fmt_right_  = mkfmt(dwrite_factory_, font_name, fsize, DWRITE_TEXT_ALIGNMENT_LEADING);
-    fmt_preedit_ = mkfmt(dwrite_factory_, font_name, psize, DWRITE_TEXT_ALIGNMENT_LEADING);
-    fmt_small_  = mkfmt(dwrite_factory_, font_name, 9.0f * dpi / 72.0f, DWRITE_TEXT_ALIGNMENT_CENTER);
+    float fsize = (float)theme.font_size * dpi / 72.0f;
+    float psize = (float)theme.preedit_font_size * dpi / 72.0f;
+    fmt_left_ = mkfmt(dwrite_factory_, theme.font_name.c_str(), fsize,
+                        DWRITE_TEXT_ALIGNMENT_LEADING);
+    fmt_right_ = mkfmt(dwrite_factory_, theme.font_name.c_str(), fsize,
+                        DWRITE_TEXT_ALIGNMENT_LEADING);
+    fmt_preedit_ = mkfmt(dwrite_factory_, theme.font_name.c_str(), psize,
+                         DWRITE_TEXT_ALIGNMENT_LEADING);
+    fmt_small_ = mkfmt(dwrite_factory_, theme.font_name.c_str(), 9.0f * dpi / 72.0f,
+                        DWRITE_TEXT_ALIGNMENT_CENTER);
     return fmt_left_ && fmt_right_ && fmt_preedit_ && fmt_small_;
 }
 

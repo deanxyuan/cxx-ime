@@ -44,6 +44,22 @@ TEST(Theme, fallback_unknown) {
     ASSERT_EQ((int)t.background.r, 238);
 }
 
+TEST(Theme, preedit_font_uses_configured_size) {
+    cxxime::Config cfg;
+    cfg.font_size = 16;
+    cfg.layout_config.label_font_point = 11;
+    auto theme = cxxime::build_theme_from_config(cfg);
+    ASSERT_EQ(theme.preedit_font_size, 11);
+}
+
+TEST(Theme, preedit_font_defaults_below_candidate_size) {
+    cxxime::Config cfg;
+    cfg.font_size = 16;
+    cfg.layout_config.label_font_point = 0;
+    auto theme = cxxime::build_theme_from_config(cfg);
+    ASSERT_EQ(theme.preedit_font_size, 14);
+}
+
 // --- data_path() verification ---
 TEST(DataPath, not_empty) {
     std::string p = test_data_path("test");
@@ -148,15 +164,19 @@ TEST(CandidateWindow, width_is_clamped_to_monitor_work_area) {
 
     cxxime::CandidateWindow window;
     ASSERT_TRUE(window.create(nullptr, config));
-    window.update(page);
-
     HWND hwnd = FindWindowW(L"CxxIMECandidateWindow", nullptr);
     ASSERT_TRUE(hwnd != nullptr);
-    RECT window_rect = {};
-    ASSERT_TRUE(GetWindowRect(hwnd, &window_rect) != FALSE);
     HMONITOR monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
     MONITORINFO monitor_info = {sizeof(monitor_info)};
     ASSERT_TRUE(GetMonitorInfoW(monitor, &monitor_info) != FALSE);
+
+    RECT caret_rect = {monitor_info.rcWork.left + 16, monitor_info.rcWork.top + 16,
+                       monitor_info.rcWork.left + 16, monitor_info.rcWork.top + 36};
+    window.move_to_caret(caret_rect);
+    window.update(page);
+
+    RECT window_rect = {};
+    ASSERT_TRUE(GetWindowRect(hwnd, &window_rect) != FALSE);
     ASSERT_LE(window_rect.right - window_rect.left,
               monitor_info.rcWork.right - monitor_info.rcWork.left);
 

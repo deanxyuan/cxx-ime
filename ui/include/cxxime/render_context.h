@@ -27,6 +27,7 @@ struct Theme {
     Color prev_page{128, 128, 128, 255};    // page nav arrow color
     Color next_page{128, 128, 128, 255};
     int font_size = 14;
+    int preedit_font_size = 12;
     std::wstring font_name = L"Microsoft YaHei UI";
 };
 
