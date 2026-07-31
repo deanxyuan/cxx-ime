@@ -385,6 +385,7 @@ HRESULT clear_and_end_composition(TextService* service,
         return E_INVALIDARG;
 
     HRESULT action_result = S_OK;
+    ITfRange* committed_end = nullptr;
     ITfRange* range = nullptr;
     HRESULT hr = composition->GetRange(&range);
     if (SUCCEEDED(hr) && range) {
@@ -394,28 +395,11 @@ HRESULT clear_and_end_composition(TextService* service,
         action_result = range->SetText(ec, 0, text, length);
 
         if (SUCCEEDED(action_result) && commit_text && length > 0) {
-            // Push the result out of the composition before ending it. Some context owners do not
-            // advance the caret when the composition is only replaced and ended.
-            ITfRange* committed_end = nullptr;
             action_result = range->Clone(&committed_end);
             if (SUCCEEDED(action_result) && committed_end) {
-                LONG shifted = 0;
-                action_result = committed_end->ShiftStart(ec, length, &shifted, nullptr);
-                if (SUCCEEDED(action_result) && shifted != length) {
-                    action_result = E_FAIL;
-                }
-                if (SUCCEEDED(action_result)) {
-                    action_result = committed_end->Collapse(ec, TF_ANCHOR_START);
-                }
-                if (SUCCEEDED(action_result)) {
-                    action_result = composition->ShiftStart(ec, committed_end);
-                }
-                if (SUCCEEDED(action_result)) {
-                    action_result = set_selection_to_range(context, ec, committed_end);
-                }
-                committed_end->Release();
+                action_result = committed_end->Collapse(ec, TF_ANCHOR_END);
             } else if (SUCCEEDED(action_result)) {
-                    action_result = E_FAIL;
+                action_result = E_FAIL;
             }
         }
         range->Release();
@@ -431,12 +415,23 @@ HRESULT clear_and_end_composition(TextService* service,
         action_result = hr;
     }
     composition->Release();
+
+    // EndComposition can reset the host selection. Apply the committed caret afterwards.
+    if (SUCCEEDED(action_result) && committed_end) {
+        hr = set_selection_to_range(context, ec, committed_end);
+        if (FAILED(hr))
+            action_result = hr;
+    }
+    if (committed_end)
+        committed_end->Release();
     return action_result;
 }
 
-void insert_at_selection(ITfContext* context, TfEditCookie ec, const std::wstring& text) {
+HRESULT insert_at_selection(ITfContext* context,
+                            TfEditCookie ec,
+                            const std::wstring& text) {
     if (!context || text.empty())
-        return;
+        return E_INVALIDARG;
 
     ITfRange* pRange = nullptr;
     TF_SELECTION sel = {};
@@ -447,9 +442,15 @@ void insert_at_selection(ITfContext* context, TfEditCookie ec, const std::wstrin
         // Fallback to document start.
     }
     if (pRange) {
-        pRange->SetText(ec, TF_ST_CORRECTION, text.c_str(), static_cast<LONG>(text.length()));
+        HRESULT hr = pRange->SetText(
+            ec, TF_ST_CORRECTION, text.c_str(), static_cast<LONG>(text.length()));
+        if (SUCCEEDED(hr)) {
+            hr = set_selection_to_range(context, ec, pRange);
+        }
         pRange->Release();
+        return hr;
     }
+    return E_FAIL;
 }
 
 } // namespace
@@ -500,7 +501,7 @@ void EditSession::set_action(Action action, const std::wstring& text) {
 
 STDMETHODIMP EditSession::DoEditSession(TfEditCookie ec) {
     if (_action == Action::INSERT_TEXT && !_text.empty()) {
-        insert_at_selection(_context, ec, _text);
+        _actionResult = insert_at_selection(_context, ec, _text);
     } else if (_action == Action::END_COMPOSITION) {
         _actionResult = clear_and_end_composition(_service, _context, ec, nullptr);
     } else if (_action == Action::UPDATE_COMPOSITION) {
@@ -547,8 +548,7 @@ STDMETHODIMP EditSession::DoEditSession(TfEditCookie ec) {
         if (_service->get_composition()) {
             _actionResult = clear_and_end_composition(_service, _context, ec, &_text);
         } else if (!_text.empty()) {
-            insert_at_selection(_context, ec, _text);
-            _actionResult = S_OK;
+            _actionResult = insert_at_selection(_context, ec, _text);
         }
     } else if (_action == Action::QUERY_CARET) {
         RECT rc = {};
