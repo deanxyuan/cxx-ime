@@ -75,8 +75,7 @@ void GdiRenderer::initialize(HWND hwnd, const Theme& theme) {
                          0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                          OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
                          DEFAULT_PITCH | FF_DONTCARE, theme.font_name.c_str());
-    int preedit_pt = theme.font_size > 2 ? theme.font_size - 2 : theme.font_size;
-    preedit_font_ = CreateFontW(-MulDiv(preedit_pt, dpi, 72),
+    preedit_font_ = CreateFontW(-MulDiv(theme.preedit_font_size, dpi, 72),
                                 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                                 OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
                                 DEFAULT_PITCH | FF_DONTCARE, theme.font_name.c_str());

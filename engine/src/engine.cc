@@ -412,12 +412,13 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
             trace_.candidate_count = (int)context_.candidates.candidates.size();
         }
 
-        // Auto-commit a unique 4-code candidate in Wubi or mixed mode.
+        // Auto-commit a unique 4-code Wubi candidate in Wubi or mixed mode.
         if (!append_raw && config_->wubi_auto_commit &&
             (mode_ == InputMode::WUBI || mode_ == InputMode::MIXED) &&
             result == ProcessResult::ACCEPTED) {
             if (context_.pinyin_buffer.size() == 4 &&
-                context_.candidates.candidates.size() == 1) {
+                context_.candidates.candidates.size() == 1 &&
+                context_.candidates.candidates[0].source == CandidateSource::kWubi) {
                 committed_code_override = context_.pinyin_buffer;
                 committed_candidate_override = context_.candidates.candidates[0];
                 has_committed_candidate_override = true;

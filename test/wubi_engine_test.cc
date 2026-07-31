@@ -9,6 +9,7 @@
 #include <windows.h>
 
 #include <cxxime/engine.h>
+#include <cxxime/syllabifier.h>
 #include <cxxime/wubi_processor.h>
 #include <cxxime/wubi_translator.h>
 
@@ -528,6 +529,58 @@ TEST(WubiEngine, engine_mixed_wubi_auto_commit) {
     wubi_dict.close();
     DeleteFileA(pinyin_path.c_str());
     DeleteFileA(wubi_path.c_str());
+}
+
+TEST(WubiEngine, engine_mixed_does_not_auto_commit_unique_pinyin_candidate) {
+    std::string pinyin_path = make_temp_path("test_mixed_auto_pinyin_only.bin");
+    std::string pinyin_user_path = make_temp_path("test_mixed_auto_pinyin_only.tsv");
+    std::string spellings_path = make_temp_path("test_mixed_auto_pinyin_spellings.bin");
+    std::string wubi_path = make_temp_path("test_mixed_auto_unrelated_wubi.bin");
+    std::string wubi_user_path = make_temp_path("test_mixed_auto_unrelated_wubi.tsv");
+    DeleteFileA(pinyin_user_path.c_str());
+    DeleteFileA(wubi_user_path.c_str());
+
+    ASSERT_TRUE(cxxime::Dict::create_test_dict(pinyin_path, {{"ni:ha", "拼", 100}}));
+    using TestSpelling = std::tuple<std::string, std::string, int, float>;
+    const std::vector<TestSpelling> test_spellings = {
+        {"ni", "ni", 0, 0.0f},
+        {"ha", "ha", 0, 0.0f},
+    };
+    ASSERT_TRUE(cxxime::SpellingsIndex::create_test_trie(spellings_path, test_spellings));
+    ASSERT_TRUE(cxxime::Dict::create_test_dict(wubi_path, {{"zzzz", "五", 300}}));
+
+    cxxime::Dict pinyin_dict;
+    ASSERT_TRUE(pinyin_dict.open(pinyin_path, pinyin_user_path));
+    cxxime::SpellingsIndex spellings;
+    ASSERT_TRUE(spellings.load(spellings_path));
+    cxxime::Syllabifier syllabifier(spellings);
+    cxxime::Config config;
+    config.wubi_auto_commit = true;
+    cxxime::Engine engine;
+    ASSERT_TRUE(engine.initialize(pinyin_dict, spellings, &syllabifier, config));
+
+    cxxime::Dict wubi_dict;
+    ASSERT_TRUE(wubi_dict.open(wubi_path, wubi_user_path));
+    ASSERT_TRUE(wubi_dict.lookup("niha", 10).empty());
+    engine.set_wubi_dict(&wubi_dict);
+    engine.switch_mode(cxxime::InputMode::MIXED);
+
+    engine.process_key(make_key('N'));
+    engine.process_key(make_key('I'));
+    engine.process_key(make_key('H'));
+    auto result = engine.process_key(make_key('A'));
+    ASSERT_EQ(result, cxxime::ProcessResult::ACCEPTED);
+    ASSERT_EQ(engine.context().candidates.candidates.size(), 1u);
+    ASSERT_EQ(engine.context().candidates.candidates[0].source, cxxime::CandidateSource::kPinyin);
+
+    engine.finalize();
+    pinyin_dict.close();
+    wubi_dict.close();
+    DeleteFileA(pinyin_path.c_str());
+    DeleteFileA(pinyin_user_path.c_str());
+    DeleteFileA(spellings_path.c_str());
+    DeleteFileA(wubi_path.c_str());
+    DeleteFileA(wubi_user_path.c_str());
 }
 
 TEST(WubiEngine, engine_mixed_select_candidate) {
