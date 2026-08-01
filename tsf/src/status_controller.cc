@@ -19,14 +19,14 @@ namespace cxxime {
 StatusController::StatusController() = default;
 StatusController::~StatusController() { shutdown(); }
 
-bool StatusController::initialize(HWND parent, IpcClient* client, uint32_t session_id, Config* config) {
+bool StatusController::initialize(HWND owner, IpcClient* client, uint32_t session_id, Config* config) {
     if (initialized_) return true;
 
     client_ = client;
     session_id_ = session_id;
     config_ = config;
 
-    if (!window_.create(parent, cxxime::StatusTheme())) {
+    if (!window_.create(owner, cxxime::StatusTheme())) {
         CXXIME_LOG(L"StatusController: window creation failed");
         return false;
     }
@@ -93,6 +93,12 @@ void StatusController::hide() {
 
 bool StatusController::is_visible() const {
     return initialized_ && window_.is_visible();
+}
+
+void StatusController::set_owner(HWND owner) {
+    if (initialized_) {
+        window_.set_owner(owner);
+    }
 }
 
 void StatusController::update_config(const Config& config) {

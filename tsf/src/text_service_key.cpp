@@ -39,6 +39,40 @@ bool is_status_key(WPARAM key) {
            key == VK_CAPITAL;
 }
 
+bool can_start_text_input(WPARAM key, uint32_t modifiers) {
+    constexpr uint32_t kControlOrAlt = 0x02 | 0x04;
+    if ((modifiers & kControlOrAlt) != 0) {
+        return false;
+    }
+    if ((key >= 'A' && key <= 'Z') || (key >= '0' && key <= '9')) {
+        return true;
+    }
+    switch (key) {
+    case VK_SPACE:
+    case VK_OEM_1:
+    case VK_OEM_PLUS:
+    case VK_OEM_COMMA:
+    case VK_OEM_MINUS:
+    case VK_OEM_PERIOD:
+    case VK_OEM_2:
+    case VK_OEM_3:
+    case VK_OEM_4:
+    case VK_OEM_5:
+    case VK_OEM_6:
+    case VK_OEM_7:
+    case VK_OEM_8:
+    case VK_OEM_102:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool indicates_unavailable_input_target(const char* block_reason) {
+    return block_reason && (std::strcmp(block_reason, "no_context") == 0 ||
+                            std::strcmp(block_reason, "context_not_foreground") == 0);
+}
+
 }  // namespace
 
 // ITfKeyEventSink
@@ -78,11 +112,22 @@ STDMETHODIMP TextService::OnTestKeyDown(ITfContext* pic, WPARAM wParam, LPARAM l
     const char* test_block_reason = _input_context_block_reason(pic);
     _trace_input_decision(test_block_reason);
     if (test_block_reason && !status_key) {
+        cxxime_tsf::trace_stage_context(
+            stage_input_id(), stage_composition_id(), pic, _threadMgr,
+            "blocked_input_context");
         _inputFocused = false;
-        _start_state_poll_timer();
+        if (indicates_unavailable_input_target(test_block_reason)) {
+            _inputTargetUnavailable = true;
+            _stop_state_poll_timer();
+        } else {
+            _start_state_poll_timer();
+        }
         _hide_status_window("hide:test_key_context_rejected");
         _hide_candidate_window("hide:test_key_context_rejected");
         _end_reading_ui_element("hide:test_key_context_rejected_reading");
+        if (wParam < _passThroughKeyUps.size()) {
+            _passThroughKeyUps.set(wParam);
+        }
         *pfEaten = FALSE;
         return S_OK;
     }
@@ -102,6 +147,10 @@ STDMETHODIMP TextService::OnTestKeyUp(ITfContext* pic, WPARAM wParam, LPARAM lPa
     _fTestKeyDownPending = false;
     if (_fTestKeyUpPending) {
         *pfEaten = TRUE;
+        return S_OK;
+    }
+    if (wParam < _passThroughKeyUps.size() && _passThroughKeyUps.test(wParam)) {
+        *pfEaten = FALSE;
         return S_OK;
     }
 
@@ -134,6 +183,11 @@ STDMETHODIMP TextService::OnKeyUp(ITfContext* pic, WPARAM wParam, LPARAM lParam,
         *pfEaten = TRUE;
         return S_OK;
     }
+    if (wParam < _passThroughKeyUps.size() && _passThroughKeyUps.test(wParam)) {
+        _passThroughKeyUps.reset(wParam);
+        *pfEaten = FALSE;
+        return S_OK;
+    }
     if (wParam == VK_CAPITAL) {
         *pfEaten = TRUE;
         return S_OK;
@@ -147,27 +201,56 @@ STDMETHODIMP TextService::OnKeyUp(ITfContext* pic, WPARAM wParam, LPARAM lParam,
 bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam, BOOL* pfEaten) {
     *pfEaten = FALSE;
     _stageTraceSession.begin_input(static_cast<uint32_t>(wParam), lParam);
+    if (wParam < _passThroughKeyUps.size()) {
+        _passThroughKeyUps.reset(wParam);
+    }
 
     bool status_key = is_status_key(wParam);
+    uint32_t modifiers = _get_modifiers();
     const char* block_reason = _input_context_block_reason(pic);
+    bool no_edit_target = false;
+    const bool should_validate_edit_target =
+        !_inputFocused ||
+        (!status_key && _chinese_mode && can_start_text_input(wParam, modifiers));
+    if (!block_reason && stage_composition_id() == 0 && should_validate_edit_target) {
+        no_edit_target = _context_has_no_edit_target(pic);
+        if (no_edit_target) {
+            block_reason = "no_edit_target";
+        }
+    }
     bool input_allowed = block_reason == nullptr;
     _trace_input_decision(block_reason);
     if (!input_allowed && !status_key) {
+        cxxime_tsf::trace_stage_context(
+            stage_input_id(), stage_composition_id(), pic, _threadMgr,
+            "blocked_input_context");
         cxxime_tsf::trace_stage_key_route(
         stage_input_id(), stage_composition_id(), static_cast<uint32_t>(wParam), 0, 0,
         "blocked", block_reason ? block_reason : "input_context");
         _inputFocused = false;
-        _start_state_poll_timer();
+        if (no_edit_target || indicates_unavailable_input_target(block_reason)) {
+            _inputTargetUnavailable = true;
+            _stop_state_poll_timer();
+        } else {
+            _start_state_poll_timer();
+        }
         _hide_status_window("hide:key_context_rejected");
         _hide_candidate_window("hide:key_context_rejected");
         _end_reading_ui_element("hide:key_context_rejected_reading");
+        if (wParam < _passThroughKeyUps.size()) {
+            _passThroughKeyUps.set(wParam);
+        }
         _AbortComposition();
         return false;
     }
 
+    const bool input_was_focused = _inputFocused;
     _inputFocused = input_allowed;
     if (_inputFocused) {
         _start_state_poll_timer();
+        if (!input_was_focused) {
+            _show_status_window_if_allowed("show:key_edit_target");
+        }
     } else {
         _start_state_poll_timer();
         _hide_status_window("hide:key_context_status_only");
@@ -175,7 +258,6 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
         _end_reading_ui_element("hide:key_context_status_only_reading");
         _AbortComposition();
     }
-    uint32_t modifiers = _get_modifiers();
     if (wParam == VK_CAPITAL) {
         // Windows reports VK_CAPITAL after the lock bit has toggled. CxxIME's
         // engine expects the final CapsLock state, so do not infer it from the
@@ -359,15 +441,19 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
             if (external_candidate_window) {
                 bool candidate_was_visible = _candidateWindow.is_visible();
                 _candidateWindow.set_page_info((int)response.page_current, (int)response.page_total);
-                _candidateWindow.update(page);
 
                 // Query the current caret before falling back to the cached rectangle. The cache may
                 // still point to the previous composition after a commit/new preedit boundary.
                 RECT caretRect = {};
                 bool caretResolved = false;
                 RECT trustedNativeRect = {};
+                HWND contextWindow = nullptr;
                 bool hasTrustedNativeCaret =
-                    _resolve_context_native_caret_rect(pic, &trustedNativeRect);
+                    _resolve_context_native_caret_rect(pic, &trustedNativeRect, &contextWindow);
+                if (!candidate_was_visible) {
+                    _candidateWindow.set_owner(contextWindow);
+                }
+                _candidateWindow.update(page);
                 EditSession* pCaretSession = new (std::nothrow) EditSession(this, pic);
                 if (pCaretSession) {
                     pCaretSession->set_action(EditSession::Action::QUERY_CARET);

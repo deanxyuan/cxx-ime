@@ -9,8 +9,7 @@
 #include <string>
 #include <thread>
 
-#include <shlobj.h>
-
+#include <cxxime/diagnostic_log_path.h>
 #include <cxxime/diagnostics_config.h>
 
 #include "tsf_stage.h"
@@ -110,14 +109,19 @@ int tsf_queue_pop_batch(TsfTraceEntry* batch, int max) {
 }
 
 std::string tsf_get_log_dir() {
-    wchar_t buf[MAX_PATH] = {};
-    if (FAILED(SHGetFolderPathW(nullptr, CSIDL_PROFILE, nullptr, 0, buf)))
+    const std::wstring directory = cxxime::diagnostic_log_directory();
+    if (directory.empty()) {
         return {};
-    std::wstring dir = std::wstring(buf) + L"\\cxxime\\logs";
-    CreateDirectoryW((std::wstring(buf) + L"\\cxxime").c_str(), nullptr);
-    CreateDirectoryW(dir.c_str(), nullptr);
-    char utf8[MAX_PATH * 3] = {};
-    WideCharToMultiByte(CP_UTF8, 0, dir.c_str(), -1, utf8, sizeof(utf8), nullptr, nullptr);
+    }
+
+    const int required =
+        WideCharToMultiByte(CP_UTF8, 0, directory.c_str(), -1, nullptr, 0, nullptr, nullptr);
+    if (required <= 1) {
+        return {};
+    }
+    std::string utf8(static_cast<size_t>(required), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, directory.c_str(), -1, &utf8[0], required, nullptr, nullptr);
+    utf8.pop_back();
     return utf8;
 }
 
@@ -133,8 +137,7 @@ void tsf_rotate_log(FILE*& file, size_t& file_size, const std::string& path,
     file_size = 0;
 }
 
-void tsf_writer_thread_func() {
-    std::string dir = tsf_get_log_dir();
+void tsf_writer_thread_func(std::string dir) {
     if (dir.empty()) return;
 
     char pid_str[32];
@@ -216,7 +219,12 @@ void tsf_writer_thread_func() {
 
 void tsf_ensure_writer_started() {
     if (g_tsf_writer_started.exchange(true)) return;
-    g_tsf_writer_thread = std::thread(tsf_writer_thread_func);
+    std::string log_dir = tsf_get_log_dir();
+    if (log_dir.empty()) {
+        g_tsf_writer_started.store(false);
+        return;
+    }
+    g_tsf_writer_thread = std::thread(tsf_writer_thread_func, log_dir);
 }
 
 }  // namespace

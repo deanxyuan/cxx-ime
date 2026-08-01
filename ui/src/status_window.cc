@@ -129,7 +129,7 @@ StatusWindow::~StatusWindow() {
     destroy();
 }
 
-bool StatusWindow::create(HWND parent, const StatusTheme& theme) {
+bool StatusWindow::create(HWND owner, const StatusTheme& theme) {
     if (hwnd_) return true;
 
     theme_ = theme;
@@ -165,7 +165,7 @@ bool StatusWindow::create(HWND parent, const StatusTheme& theme) {
         L"CxxIME Status",
         WS_POPUP,
         x, y, win_w_, win_h_,
-        nullptr, nullptr, GetModuleHandle(nullptr), this
+        owner, nullptr, GetModuleHandle(nullptr), this
     );
 
     if (!hwnd_) return false;
@@ -220,10 +220,40 @@ void StatusWindow::show() {
 
 void StatusWindow::hide() {
     if (hwnd_ && IsWindow(hwnd_)) ShowWindow(hwnd_, SW_HIDE);
+    set_owner(nullptr);
 }
 
 bool StatusWindow::is_visible() const {
     return hwnd_ && IsWindow(hwnd_) && IsWindowVisible(hwnd_);
+}
+
+void StatusWindow::set_owner(HWND owner) {
+    if (!hwnd_ || (owner && !IsWindow(owner))) {
+        return;
+    }
+
+    HWND actual_owner = GetWindow(hwnd_, GW_OWNER);
+    HWND root_owner = owner ? GetAncestor(owner, GA_ROOT) : nullptr;
+    if (actual_owner == owner || (root_owner && actual_owner == root_owner)) {
+        return;
+    }
+
+    SetWindowLongPtrW(hwnd_, GWLP_HWNDPARENT, reinterpret_cast<LONG_PTR>(owner));
+    actual_owner = GetWindow(hwnd_, GW_OWNER);
+    if (actual_owner == owner || (root_owner && actual_owner == root_owner)) {
+        return;
+    }
+
+    if (owner && !IsWindowVisible(hwnd_)) {
+        int x = 0;
+        int y = 0;
+        get_position(x, y);
+        StatusTheme theme = theme_;
+        destroy();
+        if (create(owner, theme)) {
+            set_position(x, y);
+        }
+    }
 }
 
 void StatusWindow::set_enabled(bool enabled) {

@@ -1,6 +1,7 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
 #include "host_compatibility/host_classification_runtime.h"
+
 #include "host_compatibility/host_ime_private_api.h"
 
 #include <cwchar>
@@ -9,16 +10,6 @@ namespace cxxime_tsf {
 namespace {
 
 constexpr wchar_t kTargetProcessName[] = L"dota2.exe";
-constexpr DWORD kInputSystemTimestamp = 0x6a5e7111;
-constexpr DWORD kInputSystemImageSize = 0x52000;
-constexpr DWORD kImeManagerTimestamp = 0x6a5e7102;
-constexpr DWORD kImeManagerImageSize = 0x3d000;
-constexpr uintptr_t kManagerMessageMethodRva = 0xcc70;
-constexpr uintptr_t kWindowMessageMethodRva = 0x56f0;
-constexpr uintptr_t kAuxiliaryClassificationMethodRva = 0x42b0;
-constexpr uintptr_t kCandidateNotifyMethodRva = 0xa410;
-constexpr uintptr_t kCandidateChangeMethodRva = 0xa5f0;
-constexpr uintptr_t kCandidateOpenMethodRva = 0xa840;
 constexpr uint32_t kUnsupportedProfileCode = 0x01000000;
 constexpr uint32_t kDefaultInputSourceCode = 0x02000000;
 constexpr char kImeManagerInterfaceName[] = "IMEManager001";
@@ -113,17 +104,12 @@ HostClassificationCompatibilitySnapshot inspect_host_classification_runtime() {
     snapshot.inputsystem_image_size = inputsystem_identity.image_size;
     snapshot.imemanager_timestamp = imemanager_identity.timestamp;
     snapshot.imemanager_image_size = imemanager_identity.image_size;
-    snapshot.inputsystem_identity_matches =
-        inputsystem_identity.readable &&
-        inputsystem_identity.timestamp == kInputSystemTimestamp &&
-        inputsystem_identity.image_size == kInputSystemImageSize;
-    snapshot.imemanager_identity_matches =
-        imemanager_identity.readable &&
-        imemanager_identity.timestamp == kImeManagerTimestamp &&
-        imemanager_identity.image_size == kImeManagerImageSize;
-    if (!snapshot.inputsystem_identity_matches ||
-        !snapshot.imemanager_identity_matches) {
-        return fail_snapshot(snapshot, "binary_identity_mismatch");
+    snapshot.inputsystem_identity_readable =
+        inputsystem_identity.readable;
+    snapshot.imemanager_identity_readable =
+        imemanager_identity.readable;
+    if (!snapshot.imemanager_identity_readable) {
+        return fail_snapshot(snapshot, "module_identity_unavailable");
     }
 
     const uintptr_t imemanager_base = reinterpret_cast<uintptr_t>(imemanager);
@@ -196,9 +182,10 @@ HostClassificationCompatibilitySnapshot inspect_host_classification_runtime() {
     const HostImePrivateApiSnapshot private_api =
         inspect_host_ime_private_api({
             imemanager_base,
+            imemanager_identity.image_size,
             snapshot.manager,
             auxiliary_input_handler,
-            snapshot.imemanager_identity_matches,
+            snapshot.imemanager_identity_readable,
             true,
             manager_initialized != 0,
             true,
@@ -211,11 +198,14 @@ HostClassificationCompatibilitySnapshot inspect_host_classification_runtime() {
         ? private_api.classification
         : raw_classification;
     snapshot.manager_gate_ready =
-        manager_method == imemanager_base + kManagerMessageMethodRva &&
+        host_ime_manager_message_method_matches(
+            imemanager_base, imemanager_identity.image_size, manager_method) &&
         private_api.manager_called && private_api.manager_initialized &&
         private_api.manager_enabled;
     snapshot.window_gate_ready =
-        window_message_method == imemanager_base + kWindowMessageMethodRva &&
+        host_ime_window_message_method_matches(
+            imemanager_base, imemanager_identity.image_size,
+            window_message_method) &&
         window_message_enabled != 0 && current_process_owns_window(active_hwnd);
 
     uintptr_t candidate_vtable = 0;
@@ -229,15 +219,17 @@ HostClassificationCompatibilitySnapshot inspect_host_classification_runtime() {
         read_process_value(candidate_vtable + 0xe0, &candidate_open_method);
     snapshot.candidate_methods_match =
         candidate_state_read &&
-        candidate_notify_method == imemanager_base + kCandidateNotifyMethodRva &&
-        candidate_change_method == imemanager_base + kCandidateChangeMethodRva &&
-        candidate_open_method == imemanager_base + kCandidateOpenMethodRva;
+        host_ime_candidate_methods_match(
+            imemanager_base, imemanager_identity.image_size,
+            candidate_notify_method, candidate_change_method,
+            candidate_open_method);
     snapshot.runtime_verified =
         snapshot.manager_gate_ready && snapshot.window_gate_ready &&
         snapshot.private_api_verified &&
         private_api.classification == raw_classification &&
-        classification_method ==
-            imemanager_base + kAuxiliaryClassificationMethodRva &&
+        host_ime_classification_method_matches(
+            imemanager_base, imemanager_identity.image_size,
+            classification_method) &&
         snapshot.candidate_methods_match;
     snapshot.result = snapshot.runtime_verified ? "verified" : "runtime_unverified";
     return snapshot;

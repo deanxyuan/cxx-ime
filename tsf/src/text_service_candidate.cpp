@@ -158,18 +158,21 @@ bool TextService::set_candidate_ui_element_shown(bool show) {
 
     _candidateWindow.set_page_info(
         _publishedCandidatePageCurrent, _publishedCandidatePageTotal);
-    _candidateWindow.update(_publishedCandidatePage);
 
     ITfContext* context = _current_edit_context_for_composition();
     RECT caret_rect = {};
     bool caret_resolved = false;
     if (context) {
-        caret_resolved = _resolve_context_native_caret_rect(context, &caret_rect);
+        HWND context_window = nullptr;
+        caret_resolved =
+            _resolve_context_native_caret_rect(context, &caret_rect, &context_window);
+        _candidateWindow.set_owner(context_window);
         if (!caret_resolved) {
             caret_rect = _resolve_caret_rect(context);
             caret_resolved = has_caret_height(caret_rect);
         }
     }
+    _candidateWindow.update(_publishedCandidatePage);
     if (caret_resolved) {
         _caretRect = caret_rect;
         _candidateWindow.move_to_caret(caret_rect);

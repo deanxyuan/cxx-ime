@@ -50,6 +50,22 @@ TEST(StatusWindow, CreateTwice) {
     window.destroy();
 }
 
+TEST(StatusWindow, CreateWithOwnerAndDetachOnHide) {
+    HWND owner = CreateWindowExW(0, L"STATIC", L"", WS_OVERLAPPED, 0, 0, 0, 0, nullptr, nullptr,
+                                 GetModuleHandleW(nullptr), nullptr);
+    ASSERT_TRUE(owner != nullptr);
+
+    cxxime::StatusWindow window;
+    ASSERT_TRUE(window.create(owner, cxxime::StatusTheme()));
+    ASSERT_EQ(GetWindow(window.hwnd_for_test(), GW_OWNER), owner);
+
+    window.hide();
+    ASSERT_TRUE(GetWindow(window.hwnd_for_test(), GW_OWNER) == nullptr);
+
+    window.destroy();
+    DestroyWindow(owner);
+}
+
 TEST(StatusWindow, DestroyWithoutCreate) {
     cxxime::StatusWindow window;
     // Should not crash

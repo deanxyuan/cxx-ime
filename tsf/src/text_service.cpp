@@ -99,7 +99,7 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
     _register_thread_sinks();
     _register_conversion_compartment_sink();
 
-    // Create candidate window (use HWND_MESSAGE parent since TSF runs in-app)
+    // Create hidden UI windows without an owner; bind the active context view before showing them.
     _candidateWindow.create(nullptr, _config);
     _candidateWindow.set_layout(_config.layout);
     _candidateWindow.set_click_callback([this](int index) {
@@ -231,6 +231,7 @@ STDMETHODIMP TextService::Deactivate() {
     CXXIME_LOG(L"Deactivate: sessionId=%u", _sessionId);
     _activated = false;
     _inputFocused = false;
+    _inputTargetUnavailable = false;
     _stop_state_poll_timer();
     _unregister_conversion_compartment_sink();
 

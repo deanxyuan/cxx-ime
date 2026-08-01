@@ -14,6 +14,9 @@ class TextService;
 
 namespace cxxime_tsf {
 
+enum class EditTargetState : uint8_t;
+struct EditTargetEvidence;
+
 void trace_stage_runtime_activate(DWORD activate_flags, TfClientId client_id);
 
 void trace_stage_key_route(uint64_t input_id,
@@ -29,6 +32,11 @@ void trace_stage_context(uint64_t input_id,
                          ITfContext* input_context,
                          ITfThreadMgr* thread_mgr,
                          const char* composition_transport);
+
+void trace_stage_edit_target(uint64_t input_id,
+                             uint64_t composition_id,
+                             EditTargetState state,
+                             const EditTargetEvidence& evidence);
 
 void trace_stage_key_result(uint64_t input_id,
                             uint64_t composition_id,

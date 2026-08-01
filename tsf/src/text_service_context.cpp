@@ -2,7 +2,8 @@
 
 #include "text_service.h"
 
-#include <cwchar>
+#include "edit_target.h"
+#include "tsf_stage.h"
 
 namespace cxxime_tsf {
 
@@ -50,6 +51,36 @@ bool foreground_is_fullscreen() {
 
 }  // namespace cxxime_tsf
 
+HWND TextService::_focused_context_view_window() const {
+    if (!_threadMgr) {
+        return nullptr;
+    }
+
+    ITfDocumentMgr* document_mgr = nullptr;
+    if (FAILED(_threadMgr->GetFocus(&document_mgr)) || !document_mgr) {
+        return nullptr;
+    }
+
+    ITfContext* context = nullptr;
+    HRESULT hr = document_mgr->GetTop(&context);
+    document_mgr->Release();
+    if (FAILED(hr) || !context) {
+        return nullptr;
+    }
+
+    ITfContextView* view = nullptr;
+    hr = context->GetActiveView(&view);
+    context->Release();
+    if (FAILED(hr) || !view) {
+        return nullptr;
+    }
+
+    HWND window = nullptr;
+    hr = view->GetWnd(&window);
+    view->Release();
+    return SUCCEEDED(hr) ? window : nullptr;
+}
+
 void TextService::_show_status_window_if_allowed(const char* reason) {
     if (_activated &&
         _inputFocused &&
@@ -61,6 +92,7 @@ void TextService::_show_status_window_if_allowed(const char* reason) {
         }
         if (!_statusController.is_visible())
             _enqueue_event_trace("status_window", reason);
+        _statusController.set_owner(_focused_context_view_window());
         _statusController.show();
     }
 }
@@ -73,61 +105,6 @@ void TextService::_hide_status_window(const char* reason) {
     _statusController.hide();
 }
 
-bool TextService::_foreground_allows_input() const {
-	HWND foreground = GetForegroundWindow();
-	if (!foreground)
-		return false;
-
-	wchar_t class_name[64] = {};
-	GetClassNameW(foreground, class_name, ARRAYSIZE(class_name));
-	if (wcscmp(class_name, L"Progman") == 0 ||
-		wcscmp(class_name, L"WorkerW") == 0 ||
-		wcscmp(class_name, L"Shell_TrayWnd") == 0) {
-		return false;
-	}
-
-    bool shell_surface = 
-        wcscmp(class_name, L"CabinetWClass") == 0 ||
-        wcscmp(class_name, L"ExploreWClass") == 0 ||
-        wcscmp(class_name, L"ShellTabWindowClass") == 0 ||
-        wcscmp(class_name, L"#32770") == 0;
-    if (!shell_surface)
-        return true;
-
-    DWORD foreground_thread = GetWindowThreadProcessId(foreground, nullptr);
-    GUITHREADINFO gti = { sizeof(gti) };
-    if (!foreground_thread || !GetGUIThreadInfo(foreground_thread, &gti))
-        return true;
-
-    auto belongs_to_foreground = [foreground](HWND hwnd) {
-        return hwnd && (hwnd == foreground || IsChild(foreground, hwnd));
-    };
-
-    if (belongs_to_foreground(gti.hwndCaret))
-        return true;
-    
-    if (!belongs_to_foreground(gti.hwndFocus))
-        return true;
-
-    wchar_t focus_class[64] = {};
-    GetClassNameW(gti.hwndFocus, focus_class, ARRAYSIZE(focus_class));
-    if (wcscmp(focus_class, L"Edit") == 0 ||
-        wcsncmp(focus_class, L"RichEdit", 8) == 0 ||
-        wcscmp(focus_class, L"RICHEDIT50W") == 0) {
-        return true;
-    }
-
-    if (wcscmp(focus_class, L"SysListView32") == 0 ||
-        wcscmp(focus_class, L"SysTreeView32") == 0 ||
-        wcscmp(focus_class, L"DirectUIHWND") == 0 ||
-        wcscmp(focus_class, L"DUIViewWndClassName") == 0 ||
-        wcscmp(focus_class, L"SHELLDLL_DefView") == 0) {
-        return false;
-    }
-
-    return true;
-}
-
 bool TextService::_context_belongs_to_foreground(ITfContext* context) const {
     if (!context)
         return false;
@@ -138,14 +115,28 @@ bool TextService::_context_belongs_to_foreground(ITfContext* context) const {
 
     ITfContextView* view = nullptr;
     if (FAILED(context->GetActiveView(&view)) || !view)
-        return true;
+        return false;
 
     HWND context_hwnd = nullptr;
     HRESULT hr = view->GetWnd(&context_hwnd);
-    view->Release();
+    if (FAILED(hr)) {
+        view->Release();
+        return false;
+    }
+    if (!context_hwnd) {
+        RECT screen_rect = {};
+        hr = view->GetScreenExt(&screen_rect);
+        view->Release();
+        if (FAILED(hr) || screen_rect.right <= screen_rect.left ||
+            screen_rect.bottom <= screen_rect.top) {
+            return false;
+        }
 
-    if (FAILED(hr) || !context_hwnd)
-        return true;
+        DWORD foreground_process = 0;
+        GetWindowThreadProcessId(foreground, &foreground_process);
+        return foreground_process == GetCurrentProcessId();
+    }
+    view->Release();
 
     if (context_hwnd == foreground || IsChild(foreground, context_hwnd))
         return true;
@@ -215,8 +206,6 @@ bool TextService::_context_keyboard_disabled(ITfContext* context) const {
 const char* TextService::_input_context_block_reason(ITfContext* context) const {
     if (!context)
         return "no_context";
-    if (!_foreground_allows_input())
-        return "foreground_denied";
     if (!_context_belongs_to_foreground(context))
         return "context_not_foreground";
     if (_context_keyboard_disabled(context))
@@ -250,6 +239,34 @@ bool TextService::_document_allows_input(ITfDocumentMgr* doc_mgr) const {
     return allowed;
 }
 
+bool TextService::_context_has_no_edit_target(ITfContext* context) {
+    if (!context) {
+        return false;
+    }
+
+    cxxime_tsf::EditTargetEvidence evidence;
+    const cxxime_tsf::EditTargetState state =
+        cxxime_tsf::inspect_edit_target(context, _clientId, &evidence);
+    cxxime_tsf::trace_stage_edit_target(stage_input_id(), stage_composition_id(), state, evidence);
+    _inputTargetUnavailable = state == cxxime_tsf::EditTargetState::NoEditTarget;
+    return state == cxxime_tsf::EditTargetState::NoEditTarget;
+}
+
+bool TextService::_document_has_no_edit_target(ITfDocumentMgr* doc_mgr) {
+    if (!doc_mgr) {
+        return false;
+    }
+
+    ITfContext* context = nullptr;
+    if (FAILED(doc_mgr->GetTop(&context)) || !context) {
+        return false;
+    }
+
+    const bool no_edit_target = _context_has_no_edit_target(context);
+    context->Release();
+    return no_edit_target;
+}
+
 bool TextService::_query_input_focus_from_thread_mgr() const {
     bool focused = false;
     if (_threadMgr) {
@@ -265,14 +282,25 @@ bool TextService::_query_input_focus_from_thread_mgr() const {
 
 bool TextService::_update_input_focus_from_thread_mgr() {
 	bool focused = _query_input_focus_from_thread_mgr();
+    bool no_edit_target = false;
+    if (focused && _threadMgr) {
+        ITfDocumentMgr* doc_mgr = nullptr;
+        if (SUCCEEDED(_threadMgr->GetFocus(&doc_mgr)) && doc_mgr) {
+            no_edit_target = _document_has_no_edit_target(doc_mgr);
+            doc_mgr->Release();
+        }
+        if (no_edit_target) {
+            focused = false;
+        }
+    }
 
     _inputFocused = focused;
-    if (focused) {
-    // Keep the poll timer alive while activated. It is cheap and only acts
-    // when the foreground is not an editable context, covering desktop
-    // clicks where TSF may not send focus/key callbacks.
-        _start_state_poll_timer();
+    if (no_edit_target) {
+        _stop_state_poll_timer();
     } else {
+        // Keep the poll timer alive while activated. It is cheap and only acts
+        // when the foreground is not an editable context, covering desktop
+        // clicks where TSF may not send focus/key callbacks.
         _start_state_poll_timer();
     }
     if (!focused)
@@ -307,6 +335,11 @@ STDMETHODIMP TextService::OnUninitDocumentMgr(ITfDocumentMgr* pDocMgr) {
 STDMETHODIMP TextService::OnSetFocus(ITfDocumentMgr* pDocMgrFocus,
                                      ITfDocumentMgr* pDocMgrPrevFocus) {
     _inputFocused = _document_allows_input(pDocMgrFocus);
+    const bool no_edit_target =
+        _inputFocused && _document_has_no_edit_target(pDocMgrFocus);
+    if (no_edit_target) {
+        _inputFocused = false;
+    }
     if (_inputFocused) {
         _advise_text_layout_sink(pDocMgrFocus);
     } else {
@@ -314,7 +347,11 @@ STDMETHODIMP TextService::OnSetFocus(ITfDocumentMgr* pDocMgrFocus,
     }
 
     if (!_inputFocused) {
-        _start_state_poll_timer();
+        if (no_edit_target) {
+            _stop_state_poll_timer();
+        } else {
+            _start_state_poll_timer();
+        }
         _hide_status_window("hide:document_focus_unfocused");
         _hide_candidate_window("hide:document_focus_unfocused");
         _end_reading_ui_element("hide:document_focus_unfocused_reading");

@@ -21,7 +21,7 @@ public:
     StatusController(const StatusController&) = delete;
     StatusController& operator=(const StatusController&) = delete;
 
-    bool initialize(HWND parent, IpcClient* client, uint32_t session_id, Config* config);
+    bool initialize(HWND owner, IpcClient* client, uint32_t session_id, Config* config);
     void shutdown();
     bool is_initialized() const;
 
@@ -30,6 +30,7 @@ public:
     void show();
     void hide();
     bool is_visible() const;
+    void set_owner(HWND owner);
 
     void update_config(const Config& config);
     void set_menu_command_callback(StatusMenuCommandCallback callback);

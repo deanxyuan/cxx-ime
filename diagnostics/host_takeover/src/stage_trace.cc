@@ -2,12 +2,6 @@
 
 #include <cxxime/stage_trace.h>
 
-#include <cxxime/diagnostics_config.h>
-
-#include <windows.h>
-#include <bcrypt.h>
-#include <shlobj.h>
-
 #include <atomic>
 #include <climits>
 #include <cstdio>
@@ -15,6 +9,12 @@
 #include <mutex>
 #include <string>
 #include <vector>
+
+#include <windows.h>
+#include <bcrypt.h>
+
+#include <cxxime/diagnostic_log_path.h>
+#include <cxxime/diagnostics_config.h>
 
 namespace cxxime {
 namespace {
@@ -55,17 +55,7 @@ std::wstring trace_directory() {
         return override_path;
     }
 
-    wchar_t profile[MAX_PATH] = {};
-    if (FAILED(SHGetFolderPathW(nullptr, CSIDL_PROFILE, nullptr, 0, profile))) {
-        return {};
-    }
-
-    std::wstring root(profile);
-    root += L"\\cxxime";
-    CreateDirectoryW(root.c_str(), nullptr);
-    root += L"\\logs";
-    CreateDirectoryW(root.c_str(), nullptr);
-    return root;
+    return diagnostic_log_directory();
 }
 
 std::wstring component_filename(const char* component) {
