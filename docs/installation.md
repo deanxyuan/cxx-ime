@@ -27,7 +27,7 @@ build.bat clean          # 清理构建目录
 ### 打包分发
 
 ```cmd
-scripts\package.py                    # Release 打包 → ..\output\cxxime-v0.1.0-setup.exe
+scripts\package.py                    # Release 打包
 scripts\package.py --debug            # Debug 打包
 scripts\package.py --fast --skip-dict # 快速复用已有 dist\data 词典打包
 ```
@@ -40,7 +40,9 @@ scripts\package.py --fast --skip-dict # 快速复用已有 dist\data 词典打�
 4. 调用 `prepare_dict.py` 将 `.db` 词典转换为 `.bin` / `.idx` / `.spellings.bin`
 5. 校验发布数据文件、CRT 依赖和热路径日志
 5. 调用 `makensis.exe` 编译 NSIS 安装脚本
-6. 输出 `..\output\cxxime-v0.1.0-setup.exe`
+6. 输出 `..\output\cxxime-v<version>-setup.exe`
+
+安装包文件名中的 `version` 取自仓库根目录的 `VERSION` 文件。
 
 `package.py` 默认使用独立的 `build-package\` 构建目录，避免和 `build.bat` 使用的开发构建目录互相污染。 CMake 生成器默认交给 CMake 和当前命令行环境决定; 如需要显示指定，可使用：
 
@@ -50,7 +52,7 @@ python scripts\package.py --generator "Visual Studio 17 2022" --platform x64
 
 ## 安装
 
-运行 `cxxime-v0.1.0-setup.exe`，按向导操作：
+运行 `cxxime-v<version>-setup.exe`，按向导操作：
 
 1. 许可协议
 2. 选择程序安装目录，默认 `C:\Program Files\CxxIME`
