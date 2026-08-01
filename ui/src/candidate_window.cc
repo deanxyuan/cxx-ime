@@ -16,7 +16,7 @@ namespace cxxime {
 class CandidateWindow::GdiRenderer : public cxxime::GdiRenderer {};
 class CandidateWindow::D2DRenderer : public cxxime::D2DRenderer {};
 
-bool CandidateWindow::create(HWND parent, const Config& config) {
+bool CandidateWindow::create(HWND owner, const Config& config) {
     config_ = &config;
     WNDCLASSEXW wc = {};
     wc.cbSize = sizeof(wc);
@@ -27,7 +27,7 @@ bool CandidateWindow::create(HWND parent, const Config& config) {
     RegisterClassExW(&wc);
     hwnd_ = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
                             L"CxxIMECandidateWindow", L"", WS_POPUP, 0, 0, 300, 30,
-                            parent, nullptr, GetModuleHandle(nullptr), this);
+                            owner, nullptr, GetModuleHandle(nullptr), this);
     if (hwnd_) {
         SetWindowLongPtrW(hwnd_, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(this));
         theme_ = build_theme_from_config(config);
@@ -122,7 +122,32 @@ void CandidateWindow::hide() {
     stop_animation();
     if (hwnd_ && IsWindowVisible(hwnd_))
         ShowWindow(hwnd_, SW_HIDE);
+    set_owner(nullptr);
     visible_candidate_count_ = 0;
+}
+
+void CandidateWindow::set_owner(HWND owner) {
+    if (!hwnd_ || (owner && !IsWindow(owner))) {
+        return;
+    }
+
+    HWND actual_owner = GetWindow(hwnd_, GW_OWNER);
+    HWND root_owner = owner ? GetAncestor(owner, GA_ROOT) : nullptr;
+    if (actual_owner == owner || (root_owner && actual_owner == root_owner)) {
+        return;
+    }
+
+    SetWindowLongPtrW(hwnd_, GWLP_HWNDPARENT, reinterpret_cast<LONG_PTR>(owner));
+    actual_owner = GetWindow(hwnd_, GW_OWNER);
+    if (actual_owner == owner || (root_owner && actual_owner == root_owner)) {
+        return;
+    }
+
+    if (owner && !IsWindowVisible(hwnd_) && config_) {
+        const Config* config = config_;
+        destroy();
+        create(owner, *config);
+    }
 }
 bool CandidateWindow::is_visible() const {
     return hwnd_ && IsWindowVisible(hwnd_) != FALSE;

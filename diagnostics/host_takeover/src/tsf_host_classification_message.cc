@@ -20,21 +20,11 @@
 namespace cxxime_tsf {
 namespace {
 
-constexpr DWORD kInputSystemTimestamp = 0x6a5e7111;
-constexpr DWORD kInputSystemImageSize = 0x52000;
 constexpr uintptr_t kInputSystemManagerRva = 0x444c0;
 constexpr uintptr_t kInputSystemImeEnabledRva = 0x45bf2;
 constexpr uintptr_t kInputSystemCallbackRva = 0x31a0;
 constexpr uintptr_t kInputSystemUserdataRva = 0x45ba0;
 
-constexpr DWORD kImeManagerTimestamp = 0x6a5e7102;
-constexpr DWORD kImeManagerImageSize = 0x3d000;
-constexpr uintptr_t kManagerMessageMethodRva = 0xcc70;
-constexpr uintptr_t kWindowMessageMethodRva = 0x56f0;
-constexpr uintptr_t kAuxiliaryClassificationMethodRva = 0x42b0;
-constexpr uintptr_t kCandidateNotifyMethodRva = 0xa410;
-constexpr uintptr_t kCandidateChangeMethodRva = 0xa5f0;
-constexpr uintptr_t kCandidateOpenMethodRva = 0xa840;
 constexpr uint32_t kUnsupportedInputMethodCode = 0x01000000;
 constexpr uint32_t kDefaultInputSourceCode = 0x02000000;
 constexpr char kImeManagerInterfaceName[] = "IMEManager001";
@@ -120,8 +110,10 @@ const char* candidate_input_method_branch(uint32_t code, WPARAM command) {
 }
 
 const char* candidate_processor_kind(uintptr_t notify_method,
-                                     uintptr_t imemanager_base) {
-    return notify_method == imemanager_base + kCandidateNotifyMethodRva
+                                     uintptr_t imemanager_base,
+                                     DWORD imemanager_image_size) {
+    return host_ime_candidate_notify_method_matches(
+            imemanager_base, imemanager_image_size, notify_method)
         ? "specialized_candidate"
         : "other";
 }
@@ -226,18 +218,9 @@ void inspect_stage_host_classification_message_gate(const MSG& message,
         "tsf", "host.classification_message_gate", std::move(fields));
     return;
 #else
-    const bool inputsystem_matches =
-        inputsystem_identity.readable &&
-        inputsystem_identity.timestamp == kInputSystemTimestamp &&
-        inputsystem_identity.image_size == kInputSystemImageSize;
-    const bool imemanager_matches =
-        imemanager_identity.readable &&
-        imemanager_identity.timestamp == kImeManagerTimestamp &&
-        imemanager_identity.image_size == kImeManagerImageSize;
-    fields["inputsystem_identity_matches"] = inputsystem_matches;
-    fields["imemanager_identity_matches"] = imemanager_matches;
-    if (!imemanager_matches) {
-        fields["result"] = "binary_identity_mismatch";
+    const bool imemanager_identity_ready = imemanager_identity.readable;
+    if (!imemanager_identity_ready) {
+        fields["result"] = "module_identity_unavailable";
         cxxime::write_stage_trace(
             "tsf", "host.classification_message_gate", std::move(fields));
         return;
@@ -245,14 +228,22 @@ void inspect_stage_host_classification_message_gate(const MSG& message,
 
     const uintptr_t inputsystem_base = reinterpret_cast<uintptr_t>(inputsystem);
     const uintptr_t imemanager_base = reinterpret_cast<uintptr_t>(imemanager);
+    const bool inputsystem_layout_probe_available =
+        inputsystem_identity.readable &&
+        inputsystem_identity.image_size > kInputSystemImeEnabledRva;
+    fields["inputsystem_layout_probe_available"] =
+        inputsystem_layout_probe_available;
     fields["inputsystem_expected_userdata"] =
         inputsystem_base + kInputSystemUserdataRva;
     uintptr_t inputsystem_manager = 0;
     uint8_t inputsystem_ime_enabled = 0;
-    const bool inputsystem_manager_read = read_at(
-        inputsystem_base, kInputSystemManagerRva, &inputsystem_manager);
-    const bool inputsystem_enabled_read = read_at(
-        inputsystem_base, kInputSystemImeEnabledRva, &inputsystem_ime_enabled);
+    const bool inputsystem_manager_read =
+        inputsystem_layout_probe_available && read_at(
+            inputsystem_base, kInputSystemManagerRva, &inputsystem_manager);
+    const bool inputsystem_enabled_read =
+        inputsystem_layout_probe_available && read_at(
+            inputsystem_base, kInputSystemImeEnabledRva,
+            &inputsystem_ime_enabled);
     fields["inputsystem_manager_read"] = inputsystem_manager_read;
     fields["inputsystem_manager"] = inputsystem_manager;
     fields["ime_manager_interface_matches_inputsystem_manager"] =
@@ -298,7 +289,8 @@ void inspect_stage_host_classification_message_gate(const MSG& message,
     fields["manager_message_method_rva"] = module_rva(
         imemanager_base, manager_method, imemanager_identity.image_size);
     fields["manager_message_method_matches"] =
-        manager_method == imemanager_base + kManagerMessageMethodRva;
+        host_ime_manager_message_method_matches(
+            imemanager_base, imemanager_identity.image_size, manager_method);
     fields["manager_gate_60"] = manager_gate_60 != 0;
     fields["manager_gate_61"] = manager_gate_61 != 0;
     fields["window_handler"] = window_handler;
@@ -341,7 +333,9 @@ void inspect_stage_host_classification_message_gate(const MSG& message,
     fields["window_message_method_rva"] = module_rva(
         imemanager_base, window_message_method, imemanager_identity.image_size);
     fields["window_message_method_matches"] =
-        window_message_method == imemanager_base + kWindowMessageMethodRva;
+        host_ime_window_message_method_matches(
+            imemanager_base, imemanager_identity.image_size,
+            window_message_method);
     fields["active_hwnd"] = reinterpret_cast<uintptr_t>(active_hwnd);
     fields["active_hwnd_matches"] = active_hwnd == message.hwnd;
     fields["window_message_enabled"] = window_message_enabled != 0;
@@ -349,7 +343,9 @@ void inspect_stage_host_classification_message_gate(const MSG& message,
     fields["auxiliary_input_handler"] = auxiliary_input_handler;
     const bool window_gate_ready =
         window_state_read &&
-        window_message_method == imemanager_base + kWindowMessageMethodRva &&
+        host_ime_window_message_method_matches(
+            imemanager_base, imemanager_identity.image_size,
+            window_message_method) &&
         active_hwnd == message.hwnd &&
         window_message_enabled != 0;
     fields["window_gate_ready"] = window_gate_ready;
@@ -392,8 +388,9 @@ void inspect_stage_host_classification_message_gate(const MSG& message,
         auxiliary_classification_method,
         imemanager_identity.image_size);
     fields["auxiliary_classification_method_matches"] =
-        auxiliary_classification_method ==
-        imemanager_base + kAuxiliaryClassificationMethodRva;
+        host_ime_classification_method_matches(
+            imemanager_base, imemanager_identity.image_size,
+            auxiliary_classification_method);
     fields["auxiliary_input_method_rva"] = module_rva(
         imemanager_base, auxiliary_input_method, imemanager_identity.image_size);
     fields["auxiliary_input_source_code"] = auxiliary_input_source_code;
@@ -402,9 +399,10 @@ void inspect_stage_host_classification_message_gate(const MSG& message,
         raw_effective_classification_code;
     const HostImePrivateApiRequest private_api_request = {
         imemanager_base,
+        imemanager_identity.image_size,
         manager,
         auxiliary_input_handler,
-        imemanager_matches,
+        imemanager_identity_ready,
         manager_gate_60_read,
         manager_gate_60 != 0,
         manager_gate_61_read,
@@ -423,7 +421,8 @@ void inspect_stage_host_classification_message_gate(const MSG& message,
     fields["effective_classification_code"] = effective_classification_code;
     const bool manager_gate_ready =
         manager_state_read &&
-        manager_method == imemanager_base + kManagerMessageMethodRva &&
+        host_ime_manager_message_method_matches(
+            imemanager_base, imemanager_identity.image_size, manager_method) &&
         private_api.manager_called && private_api.manager_initialized &&
         private_api.manager_enabled;
     fields["manager_gate_source"] = "private_api";
@@ -449,7 +448,9 @@ void inspect_stage_host_classification_message_gate(const MSG& message,
         candidate_notify_method_read && candidate_change_method_read &&
         candidate_open_method_read;
     const bool specialized_candidate_processor =
-        candidate_notify_method == imemanager_base + kCandidateNotifyMethodRva;
+        host_ime_candidate_notify_method_matches(
+            imemanager_base, imemanager_identity.image_size,
+            candidate_notify_method);
     const char* input_method_branch = specialized_candidate_processor
         ? candidate_input_method_branch(candidate_input_method_code, message.wParam)
         : "not_specialized_processor";
@@ -468,15 +469,17 @@ void inspect_stage_host_classification_message_gate(const MSG& message,
     fields["candidate_notify_method_rva"] = module_rva(
         imemanager_base, candidate_notify_method, imemanager_identity.image_size);
     fields["candidate_processor_kind"] = candidate_processor_kind(
-        candidate_notify_method, imemanager_base);
+        candidate_notify_method, imemanager_base,
+        imemanager_identity.image_size);
     fields["candidate_change_method_rva"] = module_rva(
         imemanager_base, candidate_change_method, imemanager_identity.image_size);
     fields["candidate_open_method_rva"] = module_rva(
         imemanager_base, candidate_open_method, imemanager_identity.image_size);
     const bool candidate_methods_match =
-        specialized_candidate_processor &&
-        candidate_change_method == imemanager_base + kCandidateChangeMethodRva &&
-        candidate_open_method == imemanager_base + kCandidateOpenMethodRva;
+        candidate_state_read && host_ime_candidate_methods_match(
+            imemanager_base, imemanager_identity.image_size,
+            candidate_notify_method, candidate_change_method,
+            candidate_open_method);
     const bool all_pre_candidate_gates_ready =
         ime_manager_interface_ready && manager_gate_ready && window_gate_ready;
     const HostClassificationCompatibilitySnapshot& compatibility =

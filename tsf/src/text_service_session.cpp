@@ -289,6 +289,12 @@ void TextService::_poll_unfocused_state_keys() {
     bool focused = _query_input_focus_from_thread_mgr();
     if (focused) {
         if (!_inputFocused) {
+            if (_inputTargetUnavailable) {
+                _hide_status_window("hide:poll_no_edit_target");
+                _hide_candidate_window("hide:poll_no_edit_target");
+                _end_reading_ui_element("hide:poll_no_edit_target_reading");
+                return;
+            }
             _inputFocused = true;
             _show_status_window_if_allowed("show:poll_focus_in");
             if (_sessionId && _client.ensure_connected())

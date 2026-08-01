@@ -23,7 +23,7 @@ class CandidateWindow {
 public:
     using ClickCallback = std::function<void(int)>;
 
-    bool create(HWND parent, const Config& config);
+    bool create(HWND owner, const Config& config);
     void destroy();
     void show();
     void hide();
@@ -38,6 +38,7 @@ public:
     void set_theme(const Theme& theme);
     void set_render_backend(RenderBackend backend);
     void set_page_info(int current, int total);
+    void set_owner(HWND owner);
     int visible_candidate_count() const;
 
 private:

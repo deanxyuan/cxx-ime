@@ -9,9 +9,10 @@ namespace cxxime_tsf {
 
 struct HostImePrivateApiRequest {
     uintptr_t imemanager_base = 0;
+    uint32_t imemanager_image_size = 0;
     uintptr_t manager = 0;
     uintptr_t names_manager = 0;
-    bool module_verified = false;
+    bool module_readable = false;
     bool manager_initialized_field_read = false;
     bool manager_initialized_field = false;
     bool manager_enabled_field_read = false;
@@ -45,6 +46,18 @@ struct HostImePrivateApiSnapshot {
 
 HostImePrivateApiSnapshot inspect_host_ime_private_api(
     const HostImePrivateApiRequest& request);
+
+bool host_ime_manager_message_method_matches(uintptr_t module, uint32_t image_size,
+                                             uintptr_t method);
+bool host_ime_window_message_method_matches(uintptr_t module, uint32_t image_size,
+                                            uintptr_t method);
+bool host_ime_classification_method_matches(uintptr_t module, uint32_t image_size,
+                                            uintptr_t method);
+bool host_ime_candidate_notify_method_matches(uintptr_t module, uint32_t image_size,
+                                              uintptr_t method);
+bool host_ime_candidate_methods_match(uintptr_t module, uint32_t image_size,
+                                      uintptr_t notify_method, uintptr_t change_method,
+                                      uintptr_t open_method);
 
 } // namespace cxxime_tsf
 

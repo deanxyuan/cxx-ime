@@ -6,6 +6,7 @@ if(CXXIME_ENABLE_HOST_DIAGNOSTICS)
         ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_activation.cc
         ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_imm_mode.cc
         ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_stage.cc
+        ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_context.cc
         ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_host_window.cc
         ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_imm_candidate_snapshot.cc
         ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_host_imm_state.cc
@@ -30,6 +31,7 @@ add_library(cxxime-tsf SHARED
     src/dllmain.cpp
     src/globals.cpp
     src/class_factory.cpp
+    src/edit_target.cc
     src/text_service.cpp
     src/text_service_key.cpp
     src/text_service_session.cpp

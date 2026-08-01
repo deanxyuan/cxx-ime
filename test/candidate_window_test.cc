@@ -149,6 +149,39 @@ TEST(CandidateWindow, recreate_resets_native_window_size_cache) {
     window.destroy();
 }
 
+TEST(CandidateWindow, owner_can_follow_active_context_window) {
+    HWND first_owner = CreateWindowExW(0, L"STATIC", L"", WS_OVERLAPPED, 0, 0, 0, 0, nullptr,
+                                       nullptr, GetModuleHandleW(nullptr), nullptr);
+    HWND context_window = CreateWindowExW(0, L"STATIC", L"", WS_CHILD, 0, 0, 0, 0, first_owner,
+                                          nullptr, GetModuleHandleW(nullptr), nullptr);
+    HWND second_owner = CreateWindowExW(0, L"STATIC", L"", WS_OVERLAPPED, 0, 0, 0, 0, nullptr,
+                                        nullptr, GetModuleHandleW(nullptr), nullptr);
+    ASSERT_TRUE(first_owner != nullptr);
+    ASSERT_TRUE(context_window != nullptr);
+    ASSERT_TRUE(second_owner != nullptr);
+
+    cxxime::Config config;
+    config.render_backend = "gdi";
+
+    cxxime::CandidateWindow window;
+    ASSERT_TRUE(window.create(nullptr, config));
+    HWND candidate = FindWindowW(L"CxxIMECandidateWindow", nullptr);
+    ASSERT_TRUE(candidate != nullptr);
+
+    window.set_owner(context_window);
+    ASSERT_EQ(GetWindow(candidate, GW_OWNER), context_window);
+
+    window.set_owner(second_owner);
+    ASSERT_EQ(GetWindow(candidate, GW_OWNER), second_owner);
+
+    window.hide();
+    ASSERT_TRUE(GetWindow(candidate, GW_OWNER) == nullptr);
+
+    window.destroy();
+    DestroyWindow(second_owner);
+    DestroyWindow(first_owner);
+}
+
 TEST(CandidateWindow, width_is_clamped_to_monitor_work_area) {
     cxxime::Config config;
     config.render_backend = "gdi";

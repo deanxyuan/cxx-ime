@@ -10,6 +10,7 @@ class ReadingUIElement;
 
 #include "pch.h"
 
+#include <bitset>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -175,20 +176,24 @@ private:
     void _sync_conversion_mode_compartment(const cxxime::ImeStatus& status);
     HRESULT _read_conversion_mode_compartment(DWORD* conversion_mode,
                                               VARTYPE* value_type) const;
-    bool _foreground_allows_input() const;
     bool _context_belongs_to_foreground(ITfContext* context) const;
+    HWND _focused_context_view_window() const;
     bool _advise_text_layout_sink(ITfDocumentMgr* doc_mgr);
     void _unadvise_text_layout_sink();
     void _request_candidate_position_update(ITfContext* pic,
                                             const char* reason,
                                             bool from_layout_change = false);
     bool _resolve_native_caret_rect(RECT* out) const;
-    bool _resolve_context_native_caret_rect(ITfContext* context, RECT* out) const;
+    bool _resolve_context_native_caret_rect(ITfContext* context,
+                                            RECT* out,
+                                            HWND* context_window = nullptr) const;
     bool _read_context_compartment_bool(ITfContext* context, REFGUID guid, bool* value) const;
     bool _context_keyboard_disabled(ITfContext* context) const;
     const char* _input_context_block_reason(ITfContext* context) const;
     bool _context_allows_input(ITfContext* context) const;
     bool _document_allows_input(ITfDocumentMgr* doc_mgr) const;
+    bool _context_has_no_edit_target(ITfContext* context);
+    bool _document_has_no_edit_target(ITfDocumentMgr* doc_mgr);
     bool _query_input_focus_from_thread_mgr() const;
     bool _update_input_focus_from_thread_mgr();
     bool _sync_caps_lock_state(bool caps_lock,
@@ -250,8 +255,10 @@ private:
     bool _hasLastImeStatus = false;
     bool _activated = false;
     bool _inputFocused = false;
+    bool _inputTargetUnavailable = false;
     bool _fTestKeyDownPending = false;
     bool _fTestKeyUpPending = false;
+    std::bitset<256> _passThroughKeyUps;
     bool _candidateShowPending = false;
     bool _candidatePendingHasStaleRect = false;
     bool _hostCompatibilityRuntimeActive = false;

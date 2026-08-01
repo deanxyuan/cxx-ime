@@ -23,8 +23,8 @@ struct HostClassificationCompatibilitySnapshot {
     DWORD inputsystem_image_size = 0;
     DWORD imemanager_timestamp = 0;
     DWORD imemanager_image_size = 0;
-    bool inputsystem_identity_matches = false;
-    bool imemanager_identity_matches = false;
+    bool inputsystem_identity_readable = false;
+    bool imemanager_identity_readable = false;
     bool manager_interface_ready = false;
     bool manager_gate_ready = false;
     bool window_gate_ready = false;

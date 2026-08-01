@@ -2,6 +2,7 @@
 
 #include "tsf_stage.h"
 
+#include "tsf_context.h"
 #include "tsf_host_callsite.h"
 #include "tsf_sdl_runtime.h"
 
@@ -146,6 +147,7 @@ void trace_stage_context(uint64_t input_id,
     if (context_composition) {
         context_composition->Release();
     }
+    trace_stage_context_state(input_id, composition_id, input_context);
 }
 
 void trace_stage_key_result(uint64_t input_id,

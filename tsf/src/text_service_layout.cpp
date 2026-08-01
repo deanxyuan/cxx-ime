@@ -149,8 +149,8 @@ bool TextService::_advise_text_layout_sink(ITfDocumentMgr* doc_mgr) {
 
     DWORD cookie = TF_INVALID_COOKIE;
     HRESULT hr = source->AdviseSink(IID_ITfTextLayoutSink,
-                                    static_cast<ITfTextLayoutSink*>(this),
-                                    &cookie);
+        static_cast<ITfTextLayoutSink*>(this),
+        &cookie);
     source->Release();
     if (FAILED(hr)) {
         context->Release();
@@ -167,8 +167,8 @@ void TextService::_unadvise_text_layout_sink() {
         ITfSource* source = nullptr;
         if (_dwTextLayoutSinkCookie != TF_INVALID_COOKIE &&
             SUCCEEDED(_textLayoutSinkContext->QueryInterface(IID_ITfSource,
-                                                             reinterpret_cast<void**>(&source))) &&
-                                                             source) {
+                reinterpret_cast<void**>(&source))) &&
+            source) {
             source->UnadviseSink(_dwTextLayoutSinkCookie);
             source->Release();
         }
@@ -272,7 +272,12 @@ bool TextService::_resolve_native_caret_rect(RECT* out) const {
     return false;
 }
 
-bool TextService::_resolve_context_native_caret_rect(ITfContext* context, RECT* out) const {
+bool TextService::_resolve_context_native_caret_rect(ITfContext* context,
+                                                     RECT* out,
+                                                     HWND* context_window) const {
+    if (context_window) {
+        *context_window = nullptr;
+    }
     if (!context || !out)
         return false;
 
@@ -283,6 +288,9 @@ bool TextService::_resolve_context_native_caret_rect(ITfContext* context, RECT* 
     HWND context_hwnd = nullptr;
     HRESULT hr = view->GetWnd(&context_hwnd);
     view->Release();
+    if (context_window) {
+        *context_window = SUCCEEDED(hr) ? context_hwnd : nullptr;
+    }
     if (FAILED(hr) || !context_hwnd)
         return false;
     if (is_top_level_window(context_hwnd))

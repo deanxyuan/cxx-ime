@@ -13,6 +13,7 @@ endif()
 add_library(cxxime-shared STATIC
     src/key_event.cc
     src/data_path.cc
+    src/diagnostic_log_path.cc
     src/dictionary_manifest.cc
     src/dictionary_monitor.cc
     src/diagnostics_config.cc
@@ -27,4 +28,7 @@ target_include_directories(cxxime-shared PUBLIC
 )
 
 target_link_libraries(cxxime-shared PUBLIC shell32 bcrypt)
+if(CXXIME_ENABLE_HOST_DIAGNOSTICS)
+    target_link_libraries(cxxime-shared PUBLIC dwmapi)
+endif()
 target_link_libraries(cxxime-shared PUBLIC nlohmann_json)
