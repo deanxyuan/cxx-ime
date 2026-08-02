@@ -49,8 +49,26 @@ STDMETHODIMP TextService::OnCompositionTerminated(TfEditCookie ecWrite,
                                                   ITfComposition* pComposition) {
     UNREFERENCED_PARAMETER(ecWrite);
     if (_composition && pComposition && _composition != pComposition) {
+        _enqueue_event_trace("composition_terminated", "source=stale action=ignore");
         return S_OK;
     }
+
+    const bool host_terminated = _composition != nullptr;
+    bool clear_succeeded = false;
+    if (host_terminated) {
+        if (_sessionId) {
+            clear_succeeded = _client.clear_composition(_sessionId);
+        }
+        _hide_candidate_window("hide:composition_terminated");
+        _candidateWindow.set_preedit("");
+        _reset_stage_composition("host_terminated");
+    }
+
+    char detail[112] = {};
+    snprintf(detail, sizeof(detail), "source=%s action=%s clear_succeeded=%d",
+            host_terminated ? "host" : "self", host_terminated ? "cancel" : "cleanup",
+            clear_succeeded ? 1 : 0);
+    _enqueue_event_trace("composition_terminated", detail, host_terminated && !clear_succeeded);
 
     _composing = false;
     _lastInlineCompositionText.clear();
@@ -158,6 +176,9 @@ HRESULT TextService::update_composition(ITfContext* context,
                                          bool sync) {
     if (!context) {
         return E_POINTER;
+    }
+    if (ensure) {
+        _ensure_text_edit_sink(context);
     }
 
     EditSession* edit_session = new (std::nothrow) EditSession(this, context);

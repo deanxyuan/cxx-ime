@@ -1,6 +1,7 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
 #include <cstdint>
+#include <utility>
 
 #include <windows.h>
 
@@ -84,6 +85,52 @@ void verify_variable_page_offsets() {
     ASSERT_EQ(context.page_offset, 0);
 }
 
+cxxime::CandidatePage make_candidate_page(int page_index, int page_offset, int total_count,
+                                          int candidate_count) {
+    cxxime::CandidatePage page;
+    page.page_index = page_index;
+    page.page_offset = page_offset;
+    page.total_count = total_count;
+    for (int i = 0; i < candidate_count; ++i) {
+        cxxime::Candidate candidate;
+        candidate.text = "candidate";
+        page.candidates.push_back(std::move(candidate));
+    }
+    return page;
+}
+
+template <typename Processor>
+void verify_arrow_pagination_without_wrapping() {
+    Processor processor;
+    cxxime::Context context;
+    context.pinyin_buffer = "ni";
+    context.visible_candidate_count = 2;
+    context.update_candidates(make_candidate_page(0, 0, 4, 3));
+
+    ASSERT_EQ(processor.process_key(make_key(VK_UP), context), cxxime::ProcessResult::ACCEPTED);
+    ASSERT_EQ(context.candidates.highlighted, 0);
+    ASSERT_EQ(context.page_offset, 0);
+
+    ASSERT_EQ(processor.process_key(make_key(VK_DOWN), context), cxxime::ProcessResult::ACCEPTED);
+    ASSERT_EQ(context.candidates.highlighted, 1);
+    ASSERT_EQ(processor.process_key(make_key(VK_DOWN), context), cxxime::ProcessResult::ACCEPTED);
+    ASSERT_EQ(context.page_offset, 2);
+
+    context.update_candidates(make_candidate_page(1, 2, 4, 2));
+    ASSERT_EQ(context.candidates.highlighted, 0);
+    ASSERT_EQ(processor.process_key(make_key(VK_DOWN), context), cxxime::ProcessResult::ACCEPTED);
+    ASSERT_EQ(context.candidates.highlighted, 1);
+    ASSERT_EQ(processor.process_key(make_key(VK_DOWN), context), cxxime::ProcessResult::ACCEPTED);
+    ASSERT_EQ(context.candidates.highlighted, 1);
+    ASSERT_EQ(context.page_offset, 2);
+
+    context.candidates.highlighted = 0;
+    ASSERT_EQ(processor.process_key(make_key(VK_UP), context), cxxime::ProcessResult::ACCEPTED);
+    ASSERT_EQ(context.page_offset, 0);
+    context.update_candidates(make_candidate_page(0, 0, 4, 3));
+    ASSERT_EQ(context.candidates.highlighted, 1);
+}
+
 } // namespace
 
 TEST(ProcessorPagination, pinyin_supports_minus_and_equal) {
@@ -100,6 +147,14 @@ TEST(ProcessorPagination, pinyin_uses_visible_candidate_count_as_page_step) {
 
 TEST(ProcessorPagination, wubi_uses_visible_candidate_count_as_page_step) {
     verify_variable_page_offsets<cxxime::WubiProcessor>();
+}
+
+TEST(ProcessorPagination, pinyin_arrows_cross_pages_without_wrapping) {
+    verify_arrow_pagination_without_wrapping<cxxime::PinyinProcessor>();
+}
+
+TEST(ProcessorPagination, wubi_arrows_cross_pages_without_wrapping) {
+    verify_arrow_pagination_without_wrapping<cxxime::WubiProcessor>();
 }
 
 RUN_ALL_TESTS()

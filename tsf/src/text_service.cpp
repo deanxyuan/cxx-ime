@@ -45,6 +45,8 @@ STDMETHODIMP TextService::QueryInterface(REFIID riid, void** ppvObj) {
         *ppvObj = static_cast<ITfThreadMgrEventSink*>(this);
     else if (IsEqualIID(riid, IID_ITfCompartmentEventSink))
         *ppvObj = static_cast<ITfCompartmentEventSink*>(this);
+    else if (IsEqualIID(riid, IID_ITfTextEditSink))
+        *ppvObj = static_cast<ITfTextEditSink*>(this);
     else if (IsEqualIID(riid, IID_ITfTextLayoutSink))
         *ppvObj = static_cast<ITfTextLayoutSink*>(this);
     else if (IsEqualIID(riid, IID_ITfDisplayAttributeProvider))
@@ -270,6 +272,7 @@ STDMETHODIMP TextService::Deactivate() {
 
     _hide_candidate_window("hide:deactivate_candidates");
     _end_reading_ui_element("hide:deactivate_reading");
+    _unadvise_text_edit_sink();
     _unadvise_text_layout_sink();
     set_composition_context(nullptr);
     if (_candidateUiElement) {

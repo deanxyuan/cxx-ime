@@ -341,8 +341,10 @@ STDMETHODIMP TextService::OnSetFocus(ITfDocumentMgr* pDocMgrFocus,
         _inputFocused = false;
     }
     if (_inputFocused) {
+        _advise_text_edit_sink(pDocMgrFocus);
         _advise_text_layout_sink(pDocMgrFocus);
     } else {
+        _unadvise_text_edit_sink();
         _unadvise_text_layout_sink();
     }
 

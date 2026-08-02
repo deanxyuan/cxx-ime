@@ -131,6 +131,16 @@ void TextService::update_candidate_position(const RECT& rc,
     _candidateWindow.move_to_caret(final_rect);
 }
 
+void TextService::_follow_native_caret() {
+    RECT native_rect = {};
+    if (!_resolve_native_caret_rect(&native_rect) || same_caret_position(native_rect, _caretRect)) {
+        return;
+    }
+
+    trace_caret_event("follow", "native_caret", true, &native_rect);
+    update_candidate_position(native_rect);
+}
+
 bool TextService::_advise_text_layout_sink(ITfDocumentMgr* doc_mgr) {
     _unadvise_text_layout_sink();
     if (!doc_mgr)
