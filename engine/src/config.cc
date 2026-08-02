@@ -2,6 +2,8 @@
 
 #include <cxxime/config.h>
 
+#include <cmath>
+#include <cstdlib>
 #include <fstream>
 
 #include <json.hpp>
@@ -34,6 +36,89 @@ static int muted_text_color(int foreground, int background) {
             (blend_channel(16) << 16);
 }
 
+static double linearized_color_channel(int channel) {
+    const double value = channel / 255.0;
+    if (value <= 0.04045) {
+        return value / 12.92;
+    }
+    return std::pow((value + 0.055) / 1.055, 2.4);
+}
+
+static double relative_luminance(int color) {
+    const int red = color & 0xff;
+    const int green = (color >> 8) & 0xff;
+    const int blue = (color >> 16) & 0xff;
+    return 0.2126 * linearized_color_channel(red) + 0.7152 * linearized_color_channel(green) +
+           0.0722 * linearized_color_channel(blue);
+}
+
+static double contrast_ratio(int left, int right) {
+    const double left_luminance = relative_luminance(left);
+    const double right_luminance = relative_luminance(right);
+    const double lighter = (std::max)(left_luminance, right_luminance);
+    const double darker = (std::min)(left_luminance, right_luminance);
+    return (lighter + 0.05) / (darker + 0.05);
+}
+
+static int color_distance(int left, int right) {
+    const int red = std::abs((left & 0xff) - (right & 0xff));
+    const int green = std::abs(((left >> 8) & 0xff) - ((right >> 8) & 0xff));
+    const int blue = std::abs(((left >> 16) & 0xff) - ((right >> 16) & 0xff));
+    return red + green + blue;
+}
+
+static int blend_color(int source, int target, double amount) {
+    auto blend_channel = [&](int shift) {
+        const int source_channel = (source >> shift) & 0xff;
+        const int target_channel = (target >> shift) & 0xff;
+        return static_cast<int>(
+            std::round(source_channel * (1.0 - amount) + target_channel * amount));
+    };
+    return blend_channel(0) | (blend_channel(8) << 8) | (blend_channel(16) << 16);
+}
+
+static int default_preedit_cursor_color(const Config::SchemeColors& colors) {
+    constexpr double minimum_background_contrast = 4.5;
+    constexpr int minimum_text_distance = 96;
+    constexpr double blend_amounts[] = {0.0, 0.12, 0.24, 0.36, 0.48, 0.60, 0.72, 0.84};
+    const int samples[] = {
+        colors.hilited_candidate_back_color,
+        colors.hilited_back_color,
+        colors.border_color,
+        colors.label_text_color,
+        colors.candidate_text_color,
+        colors.comment_text_color,
+        colors.text_color,
+        colors.hilited_candidate_text_color,
+    };
+    const int adjustment_target =
+        contrast_ratio(0x000000, colors.back_color) > contrast_ratio(0xffffff, colors.back_color)
+        ? 0x000000
+        : 0xffffff;
+    for (int sample : samples) {
+        for (double amount : blend_amounts) {
+            const int candidate = blend_color(sample, adjustment_target, amount);
+            if (contrast_ratio(candidate, colors.back_color) >= minimum_background_contrast &&
+                color_distance(candidate, colors.hilited_text_color) >= minimum_text_distance) {
+                return candidate;
+            }
+        }
+    }
+
+    constexpr int cursor_on_light = 0x00c06700;           // RGB #0067c0
+    constexpr int cursor_on_light_alternate = 0x002c26a4; // RGB #a4262c
+    constexpr int cursor_on_dark = 0x003fd2ff;            // RGB #ffd23f
+    constexpr int cursor_on_dark_alternate = 0x00ffc24c;  // RGB #4cc2ff
+
+    const bool light_background = relative_luminance(colors.back_color) >= 0.5;
+    const int preferred = light_background ? cursor_on_light : cursor_on_dark;
+    const int alternate = light_background ? cursor_on_light_alternate : cursor_on_dark_alternate;
+    if (color_distance(preferred, colors.hilited_text_color) >= minimum_text_distance) {
+        return preferred;
+    }
+    return alternate;
+}
+
 static void apply_config_json(Config& config, nlohmann::json& j) {
     if (j.contains("engine") && j["engine"].is_object()) {
         auto& e = j["engine"];
@@ -63,6 +148,7 @@ static void apply_config_json(Config& config, nlohmann::json& j) {
         if (config.font_size > 72) config.font_size = 72;
         load_string(s, "layout", config.layout);
         load_bool(s, "inline_preedit", config.inline_preedit);
+        load_bool(s, "show_preedit_cursor", config.show_preedit_cursor);
         load_string(s, "render_backend", config.render_backend);
         load_string(s, "preedit_type", config.preedit_type);
         if (config.preedit_type != "composition" && config.preedit_type != "preview")
@@ -113,6 +199,7 @@ static bool apply_color_schemes(Config& config, nlohmann::json& schemes) {
     for (auto& [name, sc] : schemes.items()) {
         if (!sc.is_object()) return false;
         Config::SchemeColors c;
+        load_string(sc, "name", c.name);
         load_int(sc, "back_color", c.back_color);
         load_int(sc, "border_color", c.border_color);
         load_int(sc, "text_color", c.text_color);
@@ -122,6 +209,7 @@ static bool apply_color_schemes(Config& config, nlohmann::json& schemes) {
         load_int(sc, "hilited_back_color", c.hilited_back_color);
         load_int(sc, "hilited_candidate_text_color", c.hilited_candidate_text_color);
         load_int(sc, "hilited_candidate_back_color", c.hilited_candidate_back_color);
+        load_int(sc, "preedit_cursor_color", c.preedit_cursor_color);
         load_int(sc, "comment_text_color", c.comment_text_color);
         load_int(sc, "prevpage_color", c.prevpage_color);
         load_int(sc, "nextpage_color", c.nextpage_color);
@@ -139,6 +227,8 @@ static bool apply_color_schemes(Config& config, nlohmann::json& schemes) {
         if (c.label_text_color == -1) c.label_text_color = c.text_color;
         if (c.comment_text_color == -1)
             c.comment_text_color = muted_text_color(c.candidate_text_color, c.back_color);
+        if (c.preedit_cursor_color == -1)
+            c.preedit_cursor_color = default_preedit_cursor_color(c);
         if (c.prevpage_color == -1) c.prevpage_color = c.text_color;
         if (c.nextpage_color == -1) c.nextpage_color = c.text_color;
         config.preset_color_schemes[name] = c;
@@ -244,6 +334,7 @@ static nlohmann::json build_config_json(const Config& config) {
     j["style"]["layout"] = config.layout;
     j["style"]["render_backend"] = config.render_backend;
     j["style"]["inline_preedit"] = config.inline_preedit;
+    j["style"]["show_preedit_cursor"] = config.show_preedit_cursor;
     j["style"]["preedit_type"] = config.preedit_type;
 
     j["layout"]["min_width"] = config.layout_config.min_width;
@@ -305,6 +396,7 @@ std::string Config::to_runtime_json() const {
         scheme["hilited_back_color"] = colors.hilited_back_color;
         scheme["hilited_candidate_text_color"] = colors.hilited_candidate_text_color;
         scheme["hilited_candidate_back_color"] = colors.hilited_candidate_back_color;
+        scheme["preedit_cursor_color"] = colors.preedit_cursor_color;
         scheme["comment_text_color"] = colors.comment_text_color;
         scheme["prevpage_color"] = colors.prevpage_color;
         scheme["nextpage_color"] = colors.nextpage_color;

@@ -30,6 +30,9 @@ public:
         UPDATE_CANDIDATE_POSITION
     };
     void set_action(Action action, const std::wstring& text = L"");
+    void set_composition_action(Action action,
+                                const std::wstring& text,
+                                size_t selection_offset);
     void set_position_update_from_layout_change(bool from_layout_change) {
         _positionUpdateFromLayoutChange = from_layout_change;
     }
@@ -51,6 +54,8 @@ private:
     ITfContext* _context;
     Action _action = Action::INSERT_TEXT;
     std::wstring _text;
+    size_t _selectionOffset = 0;
+    bool _hasSelectionOffset = false;
     RECT _resultRect = {};
     bool _resultValid = false;
     bool _positionUpdateFromLayoutChange = false;

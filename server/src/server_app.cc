@@ -207,7 +207,14 @@ cxxime::IPCResponse ServerApp::handle_request(const cxxime::IPCRequest& request)
         }
 
         if (r.composing) {
+            if (r.preedit_cursor > r.preedit.size()) {
+                response.status = cxxime::IPCStatus::ERR_ENGINE_PROCESS_FAILED;
+                break;
+            }
             strncpy_s(response.preedit, r.preedit.c_str(), sizeof(response.preedit) - 1);
+            const size_t copied_preedit_length = strlen(response.preedit);
+            response.preedit_cursor = static_cast<uint32_t>(
+                (std::min)(r.preedit_cursor, copied_preedit_length));
             response.candidate_count = (std::min)(
                 static_cast<uint32_t>(r.candidates.candidates.size()), 10u);
             response.candidate_offset = static_cast<uint32_t>(r.candidates.page_offset);

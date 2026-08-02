@@ -153,6 +153,7 @@ HRESULT TextService::_commit_text(ITfContext* context,
 
 HRESULT TextService::update_composition(ITfContext* context,
                                          const std::wstring& preedit,
+                                         size_t preedit_cursor,
                                          bool ensure,
                                          bool sync) {
     if (!context) {
@@ -164,9 +165,10 @@ HRESULT TextService::update_composition(ITfContext* context,
         return E_OUTOFMEMORY;
     }
 
-    edit_session->set_action(ensure ? EditSession::Action::ENSURE_COMPOSITION_TEXT
-                                    : EditSession::Action::UPDATE_COMPOSITION,
-                             preedit);
+    edit_session->set_composition_action(
+        ensure ? EditSession::Action::ENSURE_COMPOSITION_TEXT
+               : EditSession::Action::UPDATE_COMPOSITION,
+        preedit, preedit_cursor);
 
     HRESULT edit_hr = E_FAIL;
     const DWORD flags = TF_ES_READWRITE | (sync ? TF_ES_SYNC : TF_ES_ASYNCDONTCARE);
@@ -184,6 +186,7 @@ HRESULT TextService::update_composition(ITfContext* context,
     cxxime_tsf::StageCompositionEditResult result;
     result.action = ensure ? "ensure" : "update";
     result.text_length = preedit.size();
+    result.selection_offset = preedit_cursor;
     result.sync_requested = sync;
     result.async_fallback = async_fallback;
     result.initial_request_hr = initial_request_hr;

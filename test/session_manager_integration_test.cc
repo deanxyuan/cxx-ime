@@ -272,6 +272,14 @@ TEST(SessionIntegration, process_key_ok) {
     auto r = mgr.process_key(id, make_key('N'));
     ASSERT_EQ(r.status, cxxime::IPCStatus::OK);
     ASSERT_TRUE(r.composing);
+    ASSERT_EQ(r.preedit, "n");
+    ASSERT_EQ(r.preedit_cursor, static_cast<size_t>(1));
+
+    r = mgr.process_key(id, make_key(VK_LEFT));
+    ASSERT_EQ(r.status, cxxime::IPCStatus::OK);
+    ASSERT_TRUE(r.composing);
+    ASSERT_EQ(r.preedit, "n");
+    ASSERT_EQ(r.preedit_cursor, static_cast<size_t>(0));
 }
 
 TEST(SessionIntegration, process_key_invalid_session) {

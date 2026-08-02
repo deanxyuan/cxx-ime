@@ -60,6 +60,22 @@ TEST(Theme, preedit_font_defaults_below_candidate_size) {
     ASSERT_EQ(theme.preedit_font_size, 14);
 }
 
+static bool same_rgb(const cxxime::Color& lhs, const cxxime::Color& rhs) {
+    return lhs.r == rhs.r && lhs.g == rhs.g && lhs.b == rhs.b;
+}
+
+TEST(Theme, preedit_cursor_differs_from_text_and_background) {
+    cxxime::Config cfg;
+    cfg.load_themes(test_data_path("themes.json"));
+
+    for (const auto& scheme : cfg.preset_color_schemes) {
+        cfg.theme = scheme.first;
+        const auto theme = cxxime::build_theme_from_config(cfg);
+        ASSERT_TRUE(!same_rgb(theme.preedit_cursor, theme.preedit_text));
+        ASSERT_TRUE(!same_rgb(theme.preedit_cursor, theme.background));
+    }
+}
+
 // --- data_path() verification ---
 TEST(DataPath, not_empty) {
     std::string p = test_data_path("test");
@@ -78,6 +94,7 @@ TEST(Theme, config_load_themes) {
     auto it = cfg.preset_color_schemes.find("azure");
     ASSERT_TRUE(it != cfg.preset_color_schemes.end());
     ASSERT_EQ(it->second.back_color & 0xFF, 1);
+    ASSERT_TRUE(it->second.name == "青天");
 }
 
 // --- HitTest (using highlight_rect) ---

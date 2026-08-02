@@ -552,6 +552,8 @@ void EditorApp::create_controls(HWND hwnd) {
     make_aligned_label(L"内联显示:", t + kRowH, p0);
     hInlinePreedit_ = make_check(
         1001, L"在应用中显示编码", inputX, t + kRowH, S(180), p0);
+    hPreeditCursor_ = make_check(
+        1006, L"候选窗显示光标", inputX + S(190), t + kRowH, S(160), p0);
 
     make_aligned_label(L"显示内容:", t + kRowH * 2, p0);
     hPreeditTypeComposition_ = make_radio(
@@ -593,6 +595,11 @@ void EditorApp::create_controls(HWND hwnd) {
     cx = make_aligned_label(L"主题:", col1, labelW, t, p1);
     hThemeCombo_ = make_combo(1100, cx, t, S(160), p1);
     set_combo_drop_count(hThemeCombo_, 14);
+    hCandPreviewBtns_[0] = CreateWindowExW(
+        0, L"BUTTON", L"预览窗口", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+        cx + S(170), t, S(110), kCtrlH, p1, (HMENU)(INT_PTR)1222,
+        GetModuleHandle(nullptr), nullptr);
+    SendMessageW(hCandPreviewBtns_[0], WM_SETFONT, (WPARAM)get_font(), TRUE);
 
     cx = make_aligned_label(L"字体:", col1, labelW, t + kRowH, p1);
     hFontBtn_ = CreateWindowExW(0, L"BUTTON", L"...",
@@ -652,11 +659,6 @@ void EditorApp::create_controls(HWND hwnd) {
                                        actionX + S(90), t + kRowH * 8, S(80), kCtrlH,
                                        p1, (HMENU)(INT_PTR)1221, GetModuleHandle(nullptr), nullptr);
     SendMessageW(hCandDefaultBtn_, WM_SETFONT, (WPARAM)get_font(), TRUE);
-    hCandPreviewBtns_[0] = CreateWindowExW(
-        0, L"BUTTON", L"预览窗口", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
-        actionX + S(180), t + kRowH * 8, S(110), kCtrlH, p1, (HMENU)(INT_PTR)1222,
-        GetModuleHandle(nullptr), nullptr);
-    SendMessageW(hCandPreviewBtns_[0], WM_SETFONT, (WPARAM)get_font(), TRUE);
 
     // ── Panel 2: Advanced ───────────────────────────────────────────
     HWND p2 = hPanels_[2]; t = kPanelPadTop;
@@ -886,6 +888,7 @@ void EditorApp::update_preedit_type_enabled() {
     BOOL on = (SendMessageW(hInlinePreedit_, BM_GETCHECK, 0, 0) == BST_CHECKED);
     EnableWindow(hPreeditTypeComposition_, on);
     EnableWindow(hPreeditTypePreview_, on);
+    EnableWindow(hPreeditCursor_, !on);
 }
 
 void EditorApp::update_input_mode_enabled() {
@@ -916,6 +919,47 @@ void EditorApp::destroy_candidate_preview_window() {
     }
     candPreviewCreated_ = false;
     candPreviewVisible_ = false;
+}
+
+void EditorApp::position_candidate_preview_window() {
+    RECT owner = {};
+    if (!hwnd_ || !GetWindowRect(hwnd_, &owner)) {
+        return;
+    }
+
+    RECT theme = {};
+    const LONG preferred_y =
+        hThemeCombo_ && GetWindowRect(hThemeCombo_, &theme) ? theme.top : owner.top;
+    const SIZE preview = candPreviewWindow_.window_size();
+    if (preview.cx <= 0 || preview.cy <= 0) {
+        return;
+    }
+
+    HMONITOR monitor = MonitorFromWindow(hwnd_, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO info = {sizeof(info)};
+    if (!monitor || !GetMonitorInfoW(monitor, &info)) {
+        return;
+    }
+
+    const LONG gap = S(12);
+    const LONG max_x = (std::max)(info.rcWork.left, info.rcWork.right - preview.cx);
+    const LONG max_y = (std::max)(info.rcWork.top, info.rcWork.bottom - preview.cy);
+    LONG x = (std::clamp)(owner.left, info.rcWork.left, max_x);
+    LONG y = (std::clamp)(preferred_y, info.rcWork.top, max_y);
+
+    if (owner.right + gap + preview.cx <= info.rcWork.right) {
+        x = owner.right + gap;
+    } else if (owner.left - gap - preview.cx >= info.rcWork.left) {
+        x = owner.left - gap - preview.cx;
+    } else if (owner.bottom + gap + preview.cy <= info.rcWork.bottom) {
+        y = owner.bottom + gap;
+    } else if (owner.top - gap - preview.cy >= info.rcWork.top) {
+        y = owner.top - gap - preview.cy;
+    } else {
+        y = max_y;
+    }
+
+    candPreviewWindow_.move_to_screen_position(static_cast<int>(x), static_cast<int>(y));
 }
 
 void EditorApp::release_fonts() {
@@ -1121,6 +1165,14 @@ void EditorApp::apply_candidate_control(int control_id) {
 
 // ─── Config ─────────────────────────────────────────────────────────────
 
+std::string EditorApp::selected_theme_id() const {
+    const int index = static_cast<int>(SendMessageW(hThemeCombo_, CB_GETCURSEL, 0, 0));
+    if (index >= 0 && index < static_cast<int>(themeIds_.size())) {
+        return themeIds_[index];
+    }
+    return config_.theme;
+}
+
 void EditorApp::load_config() {
     config_ = {};
     // Load defaults from program directory, then overlay C:\Users\<user>\cxxime\default.json.
@@ -1130,9 +1182,18 @@ void EditorApp::load_config() {
 
     // Populate controls
     SendMessageW(hThemeCombo_, CB_RESETCONTENT, 0, 0);
-    for (auto& kv : config_.preset_color_schemes)
-        combo_add(hThemeCombo_, utf8_to_wstr(kv.first).c_str());
-    combo_sel_str(hThemeCombo_, config_.theme);
+    themeIds_.clear();
+    int selected_theme = -1;
+    for (const auto& kv : config_.preset_color_schemes) {
+        std::string label = kv.second.name.empty()
+            ? kv.first : kv.second.name + " (" + kv.first + ")";
+        combo_add(hThemeCombo_, utf8_to_wstr(label).c_str());
+        themeIds_.push_back(kv.first);
+        if (kv.first == config_.theme) {
+            selected_theme = static_cast<int>(themeIds_.size()) - 1;
+        }
+    }
+    combo_set_index(hThemeCombo_, selected_theme >= 0 ? selected_theme : 0);
 
     std::wstring wfn = utf8_to_wstr(config_.font_name);
     SetWindowTextW(hFontBtn_, wfn.c_str());
@@ -1166,6 +1227,7 @@ void EditorApp::load_config() {
     set_edit_int(hLabelFontPt_, config_.layout_config.label_font_point);
 
     set_check(hInlinePreedit_, config_.inline_preedit);
+    set_check(hPreeditCursor_, config_.show_preedit_cursor);
     if (config_.preedit_type == "preview") {
         SendMessageW(hPreeditTypePreview_, BM_SETCHECK, BST_CHECKED, 0);
     } else {
@@ -1199,6 +1261,7 @@ void EditorApp::load_config() {
 void EditorApp::readback(HWND) {
     auto& c = config_;
     c.inline_preedit = get_check(hInlinePreedit_);
+    c.show_preedit_cursor = get_check(hPreeditCursor_);
     c.fuzzy_pinyin = get_check(hFuzzyPinyin_);
     c.wubi_auto_commit = get_check(hWubiAutoCommit_);
     c.wubi_code_hint = get_check(hWubiCodeHint_);
@@ -1219,20 +1282,11 @@ void EditorApp::readback(HWND) {
 
 void EditorApp::save_config() {
     readback(hwnd_);
-    auto w2s = [](const wchar_t* w) {
-        int len = WideCharToMultiByte(CP_UTF8, 0, w, -1, nullptr, 0, nullptr, nullptr);
-        std::string s(len - 1, '\0');
-        WideCharToMultiByte(CP_UTF8, 0, w, -1, &s[0], len, nullptr, nullptr);
-        return s;
-    };
-    {
-        wchar_t b[128];
-        GetWindowTextW(hThemeCombo_, b, 128);
-        config_.theme = w2s(b);
-    }
+    config_.theme = selected_theme_id();
     config_.preedit_type = (SendMessageW(hPreeditTypePreview_, BM_GETCHECK, 0, 0) == BST_CHECKED)
                           ? "preview" : "composition";
     config_.inline_preedit = get_check(hInlinePreedit_);
+    config_.show_preedit_cursor = get_check(hPreeditCursor_);
     config_.fuzzy_pinyin = get_check(hFuzzyPinyin_);
     config_.wubi_auto_commit = get_check(hWubiAutoCommit_);
     config_.wubi_code_hint = get_check(hWubiCodeHint_);
@@ -1643,9 +1697,8 @@ void EditorApp::on_user_entry_selected() {
 
 cxxime::Config EditorApp::build_appearance_preview_config() {
     cxxime::Config cfg = config_;
-    wchar_t b[128];
-    GetWindowTextW(hThemeCombo_, b, 128);
-    cfg.theme = wstr_to_utf8(b);
+    cfg.show_preedit_cursor = get_check(hPreeditCursor_);
+    cfg.theme = selected_theme_id();
     cfg.font_name = config_.font_name;
     cfg.font_size = std::clamp(get_edit_int(hFontSize_), 8, 72);
     cfg.layout = (SendMessageW(hLayoutH_, BM_GETCHECK, 0, 0) == BST_CHECKED)
@@ -1670,6 +1723,7 @@ void EditorApp::update_cand_preview() {
         return;
 
     candPreviewConfig_ = build_cand_preview_config();
+    const bool should_position = !candPreviewWindow_.is_visible();
     bool first_show = !candPreviewCreated_;
     if (first_show) {
         if (!candPreviewWindow_.create(hwnd_, candPreviewConfig_))
@@ -1681,7 +1735,7 @@ void EditorApp::update_cand_preview() {
     }
 
     candPreviewWindow_.set_layout(candPreviewConfig_.layout);
-    candPreviewWindow_.set_preedit("ni'hao");
+    candPreviewWindow_.set_preedit("ni'hao", 2);
     candPreviewWindow_.set_page_info(1, 2);
 
     cxxime::CandidatePage page;
@@ -1705,17 +1759,8 @@ void EditorApp::update_cand_preview() {
 
     candPreviewWindow_.update(page);
 
-    if (first_show) {
-        RECT owner = {};
-        if (hwnd_)
-            GetWindowRect(hwnd_, &owner);
-        RECT caret = {
-            owner.left + S(240),
-            owner.top + S(96),
-            owner.left + S(240),
-            owner.top + S(120),
-        };
-        candPreviewWindow_.move_to_caret(caret);
+    if (should_position) {
+        position_candidate_preview_window();
     }
     candPreviewWindow_.show();
 }

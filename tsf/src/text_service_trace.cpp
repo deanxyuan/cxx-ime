@@ -243,9 +243,10 @@ const char* TextService::TsfTrace::result_string() const {
 int TextService::TsfTrace::to_json(char* buf, int size) const {
     return snprintf(buf, size,
         "{\"vk\":%u,\"mod\":%u,\"result\":\"%s\",\"cands\":%u,\"preedit_len\":%u,"
+        "\"preedit_cursor\":%u,"
         "\"total_us\":%lld,\"ipc_us\":%lld,\"window_us\":%lld,\"slow\":%s}",
         vk, modifiers, result_string(),
-        candidate_count, preedit_len,
+        candidate_count, preedit_len, preedit_cursor,
         (long long)total_us, (long long)ipc_us, (long long)window_us,
         slow ? "true" : "false");
 }

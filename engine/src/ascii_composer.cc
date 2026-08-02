@@ -43,7 +43,7 @@ static char temporary_ascii_char(const KeyEvent& event) {
 
 static void commit_temporary_ascii(Context& ctx) {
     ctx.committed_text = ctx.pinyin_buffer;
-    ctx.pinyin_buffer.clear();
+    ctx.clear_preedit();
     ctx.candidates = {};
     ctx.reset_pagination();
     ctx.temporary_ascii_composition = false;
@@ -186,10 +186,7 @@ bool AsciiComposer::process_temporary_ascii_composition(const KeyEvent& event, C
             ctx.reset();
             return true;
         }
-        if (event.keycode == VK_BACK) {
-            if (!ctx.pinyin_buffer.empty()) {
-                ctx.pinyin_buffer.pop_back();
-            }
+        if (ctx.edit_preedit(event)) {
             if (ctx.pinyin_buffer.empty()) {
                 ctx.reset();
             }
@@ -202,7 +199,7 @@ bool AsciiComposer::process_temporary_ascii_composition(const KeyEvent& event, C
 
         char ch = temporary_ascii_char(event);
         if (ch != '\0') {
-            ctx.pinyin_buffer.push_back(ch);
+            ctx.insert_preedit(ch);
             ctx.candidates = {};
             ctx.reset_pagination();
             ctx.set_commit_source(CommitSource::kRawCodePreserveCase);
@@ -216,7 +213,7 @@ bool AsciiComposer::process_temporary_ascii_composition(const KeyEvent& event, C
         return false;
     }
 
-    ctx.pinyin_buffer.assign(1, static_cast<char>(event.keycode));
+    ctx.set_preedit(std::string(1, static_cast<char>(event.keycode)));
     ctx.candidates = {};
     ctx.reset_pagination();
     ctx.temporary_ascii_composition = true;
@@ -275,7 +272,7 @@ void AsciiComposer::toggle_mode(uint32_t key_code, Context& ctx) {
             ctx.committed_text = ctx.pinyin_buffer;
             ctx.set_commit_source(CommitSource::kRawCodePreserveCase);
             CXXIME_LOG(L"AsciiComposer::toggle_mode: CODE, committed_text='%S'", ctx.committed_text.c_str());
-            ctx.pinyin_buffer.clear();
+            ctx.clear_preedit();
             ctx.candidates = {};
             ctx.reset_pagination();
             ctx.temporary_ascii_composition = false;
@@ -297,7 +294,7 @@ void AsciiComposer::toggle_mode(uint32_t key_code, Context& ctx) {
                 ctx.committed_text = ctx.candidates.candidates[0].text;
                 ctx.set_commit_source(CommitSource::kCandidate);
             }
-            ctx.pinyin_buffer.clear();
+            ctx.clear_preedit();
             ctx.candidates = {};
             ctx.reset_pagination();
             ctx.temporary_ascii_composition = false;
@@ -339,7 +336,7 @@ void AsciiComposer::apply_caps_lock_overlay(bool caps_lock, Context& ctx) {
                 if (composing) {
                     ctx.committed_text = ctx.pinyin_buffer;
                     ctx.set_commit_source(CommitSource::kRawCodePreserveCase);
-                    ctx.pinyin_buffer.clear();
+                    ctx.clear_preedit();
                     ctx.candidates = {};
                     ctx.reset_pagination();
                     ctx.temporary_ascii_composition = false;
@@ -355,7 +352,7 @@ void AsciiComposer::apply_caps_lock_overlay(bool caps_lock, Context& ctx) {
                         ctx.committed_text = ctx.candidates.candidates[0].text;
                         ctx.set_commit_source(CommitSource::kCandidate);
                     }
-                    ctx.pinyin_buffer.clear();
+                    ctx.clear_preedit();
                     ctx.candidates = {};
                     ctx.reset_pagination();
                     ctx.temporary_ascii_composition = false;

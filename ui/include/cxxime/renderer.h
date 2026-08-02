@@ -19,6 +19,8 @@ public:
     void resize(int width, int height);
 
 private:
+    void draw_preedit(const RenderContext& ctx);
+
     ID2D1Factory* d2d_factory_ = nullptr;
     ID2D1HwndRenderTarget* render_target_ = nullptr;
     ID2D1SolidColorBrush* text_brush_ = nullptr;
@@ -28,6 +30,7 @@ private:
     ID2D1SolidColorBrush* highlight_text_brush_ = nullptr;
     ID2D1SolidColorBrush* hover_brush_ = nullptr;
     ID2D1SolidColorBrush* preedit_brush_ = nullptr;
+    ID2D1SolidColorBrush* preedit_cursor_brush_ = nullptr;
     ID2D1SolidColorBrush* label_brush_ = nullptr;
     ID2D1SolidColorBrush* nav_brush_ = nullptr;
     ID2D1SolidColorBrush* border_brush_ = nullptr;

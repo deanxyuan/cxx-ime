@@ -18,16 +18,8 @@ ProcessResult WubiProcessor::process_key(const KeyEvent& event, Context& context
         return ProcessResult::ACCEPTED;
     }
 
-    // Backspace: remove last char
-    if (vk == VK_BACK) {
-        if (!context.pinyin_buffer.empty()) {
-            context.pinyin_buffer.pop_back();
-            if (context.pinyin_buffer.empty()) {
-                context.candidates = {};
-            }
-            return ProcessResult::ACCEPTED;
-        }
-        return ProcessResult::REJECTED;
+    if (context.edit_preedit(event)) {
+        return ProcessResult::ACCEPTED;
     }
 
     // Space: select first candidate and commit
@@ -72,7 +64,7 @@ ProcessResult WubiProcessor::process_key(const KeyEvent& event, Context& context
     if (vk == VK_RETURN) {
         if (context.is_composing()) {
             context.committed_text = context.pinyin_buffer;
-            context.pinyin_buffer.clear();
+            context.clear_preedit();
             context.candidates = {};
             return ProcessResult::COMMITTED;
         }
@@ -113,7 +105,7 @@ ProcessResult WubiProcessor::process_key(const KeyEvent& event, Context& context
     // Letter keys: append to buffer
     if (vk >= 'A' && vk <= 'Z') {
         char ch = static_cast<char>(vk - 'A' + 'a');
-        context.pinyin_buffer += ch;
+        context.insert_preedit(ch);
         return ProcessResult::ACCEPTED;
     }
 

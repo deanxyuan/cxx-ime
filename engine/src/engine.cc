@@ -153,7 +153,9 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
     CXXIME_LOG(L"Engine::process_key: vk=%u, is_key_up=%d, composing=%d",
                event.keycode, event.is_key_up, context_.is_composing());
 
-    const size_t input_length_before = context_.pinyin_buffer.size();
+    const uint64_t input_revision_before = context_.preedit_revision();
+    const int page_index_before = context_.page_index;
+    const int page_offset_before = context_.page_offset;
     context_.visible_candidate_count = (std::max)(0, visible_candidate_count);
 
     // Phase 0: Initialize trace for this query (only if tracing enabled)
@@ -322,9 +324,12 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
         t0 = std::chrono::steady_clock::now();
     }
     auto result = processor_->process_key(event, context_);
-    if (context_.pinyin_buffer.size() != input_length_before) {
+    const bool input_changed = context_.preedit_revision() != input_revision_before;
+    if (input_changed) {
         context_.reset_pagination();
     }
+    const bool pagination_changed = context_.page_index != page_index_before ||
+                                    context_.page_offset != page_offset_before;
     if (trace_enabled_) {
         t1 = std::chrono::steady_clock::now();
         trace_.processor_us = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
@@ -387,33 +392,36 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
             trace_.page_size = config_->page_size;
         }
         bool append_raw = context_.commit_source() == CommitSource::kRawCodePreserveCase;
-        // Skip translate if deadline already expired (e.g. slow ascii_composer/processor)
-        if (per_query_deadline.enabled && per_query_deadline.expired()) {
-            if (trace_enabled_) {
-                trace_.deadline_exceeded = true;
-                trace_.truncated = true;
+        const bool refresh_candidates = input_changed || pagination_changed;
+        if (refresh_candidates) {
+            // Skip translate if deadline already expired (e.g. slow ascii_composer/processor)
+            if (per_query_deadline.enabled && per_query_deadline.expired()) {
+                if (trace_enabled_) {
+                    trace_.deadline_exceeded = true;
+                    trace_.truncated = true;
+                }
+            } else if (append_raw) {
+                context_.candidates = {};
+                context_.reset_pagination();
+            } else {
+                // Create a budget tuned for this input length, with per-query deadline
+                QueryBudget effective_budget = make_budget((int)context_.pinyin_buffer.size(), config_->page_size);
+                effective_budget.deadline = per_query_deadline;
+                auto page = translator_->translate(context_.pinyin_buffer, context_.page_index, config_->page_size,
+                                                   trace_enabled_ ? &trace_ : nullptr, &effective_budget, &scratch_,
+                                                   context_.page_offset);
+                if (config_->wubi_code_hint) {
+                    add_wubi_code_hints(context_.pinyin_buffer, page);
+                }
+                context_.update_candidates(std::move(page));
             }
-        } else if (append_raw) {
-            context_.candidates = {};
-            context_.reset_pagination();
-        } else {
-            // Create a budget tuned for this input length, with per-query deadline
-            QueryBudget effective_budget = make_budget((int)context_.pinyin_buffer.size(), config_->page_size);
-            effective_budget.deadline = per_query_deadline;
-            auto page = translator_->translate(context_.pinyin_buffer, context_.page_index, config_->page_size,
-                                              trace_enabled_ ? &trace_ : nullptr, &effective_budget, &scratch_,
-                                              context_.page_offset);
-            if (config_->wubi_code_hint) {
-                add_wubi_code_hints(context_.pinyin_buffer, page);
-            }
-            context_.update_candidates(std::move(page));
         }
         if (trace_enabled_) {
             trace_.candidate_count = (int)context_.candidates.candidates.size();
         }
 
         // Auto-commit a unique 4-code Wubi candidate in Wubi or mixed mode.
-        if (!append_raw && config_->wubi_auto_commit &&
+        if (refresh_candidates && !append_raw && config_->wubi_auto_commit &&
             (mode_ == InputMode::WUBI || mode_ == InputMode::MIXED) &&
             result == ProcessResult::ACCEPTED) {
             if (context_.pinyin_buffer.size() == 4 &&
@@ -424,7 +432,7 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
                 has_committed_candidate_override = true;
                 context_.committed_text = context_.candidates.candidates[0].text;
                 context_.set_commit_source(CommitSource::kCandidate);
-                context_.pinyin_buffer.clear();
+                context_.clear_preedit();
                 context_.candidates = {};
                 result = ProcessResult::COMMITTED;
             }
@@ -493,7 +501,7 @@ void Engine::commit_with_punctuation(Context& context, const std::string& output
     } else {
         context.committed_text = output;
     }
-    context.pinyin_buffer.clear();
+    context.clear_preedit();
     context.candidates = {};
     context.reset_pagination();
     context.set_commit_source(CommitSource::kCandidate);

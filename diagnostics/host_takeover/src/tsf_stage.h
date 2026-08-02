@@ -43,6 +43,7 @@ void trace_stage_key_result(uint64_t input_id,
                             uint32_t virtual_key,
                             bool eaten,
                             size_t preedit_length,
+                            size_t preedit_cursor,
                             uint32_t candidate_count,
                             size_t commit_length,
                             const char* result);
