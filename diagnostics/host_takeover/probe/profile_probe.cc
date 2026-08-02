@@ -6,6 +6,7 @@
 #include <imm.h>
 
 #include <cxxime/stage_trace.h>
+#include <cxxime/tsf_factory.h>
 
 namespace cxxime_probe {
 namespace {
@@ -45,11 +46,18 @@ CategoryMembership category_contains(ITfCategoryMgr* manager,
 } // namespace
 
 void ProbeApp::trace_active_keyboard_profile(const char* trigger) {
+    const bool without_com = com_mode_ != ProbeComMode::sta;
     ITfInputProcessorProfileMgr* profile_manager = nullptr;
-    const HRESULT manager_hr = CoCreateInstance(
-        CLSID_TF_InputProcessorProfiles, nullptr, CLSCTX_INPROC_SERVER,
-        IID_ITfInputProcessorProfileMgr,
-        reinterpret_cast<void**>(&profile_manager));
+    HRESULT manager_hr = E_UNEXPECTED;
+    if (without_com) {
+        manager_hr = cxxime::create_tsf_input_processor_profile_manager_without_com(
+            &profile_manager);
+    } else {
+        manager_hr = CoCreateInstance(
+            CLSID_TF_InputProcessorProfiles, nullptr, CLSCTX_INPROC_SERVER,
+            IID_ITfInputProcessorProfileMgr,
+            reinterpret_cast<void**>(&profile_manager));
+    }
 
     TF_INPUTPROCESSORPROFILE profile = {};
     HRESULT profile_hr = E_UNEXPECTED;
@@ -60,13 +68,20 @@ void ProbeApp::trace_active_keyboard_profile(const char* trigger) {
     }
 
     ITfCategoryMgr* category_manager = nullptr;
-    const HRESULT category_manager_hr = CoCreateInstance(
-        CLSID_TF_CategoryMgr, nullptr, CLSCTX_INPROC_SERVER,
-        IID_ITfCategoryMgr, reinterpret_cast<void**>(&category_manager));
+    HRESULT category_manager_hr = E_UNEXPECTED;
+    if (without_com) {
+        category_manager_hr =
+            cxxime::create_tsf_category_manager_without_com(&category_manager);
+    } else {
+        category_manager_hr = CoCreateInstance(
+            CLSID_TF_CategoryMgr, nullptr, CLSCTX_INPROC_SERVER,
+            IID_ITfCategoryMgr, reinterpret_cast<void**>(&category_manager));
+    }
     CategoryMembership keyboard;
     CategoryMembership ui_element;
     CategoryMembership input_mode;
     CategoryMembership display_attribute;
+    CategoryMembership comless;
     if (SUCCEEDED(profile_hr) && category_manager) {
         keyboard = category_contains(
             category_manager, GUID_TFCAT_TIP_KEYBOARD, profile.clsid);
@@ -76,6 +91,8 @@ void ProbeApp::trace_active_keyboard_profile(const char* trigger) {
             category_manager, GUID_TFCAT_TIPCAP_INPUTMODECOMPARTMENT, profile.clsid);
         display_attribute = category_contains(
             category_manager, GUID_TFCAT_DISPLAYATTRIBUTEPROVIDER, profile.clsid);
+        comless = category_contains(
+            category_manager, GUID_TFCAT_TIPCAP_COMLESS, profile.clsid);
     }
     if (category_manager) {
         category_manager->Release();
@@ -89,6 +106,7 @@ void ProbeApp::trace_active_keyboard_profile(const char* trigger) {
     const HKL keyboard_layout = GetKeyboardLayout(0);
     cxxime::write_stage_trace("probe", "probe.active_profile", {
         {"trigger", trigger ? trigger : ""},
+        {"manager_creation", without_com ? "without_com" : "com"},
         {"manager_hr", static_cast<int64_t>(manager_hr)},
         {"profile_hr", static_cast<int64_t>(profile_hr)},
         {"profile_type", profile.dwProfileType},
@@ -112,6 +130,8 @@ void ProbeApp::trace_active_keyboard_profile(const char* trigger) {
         {"input_mode_category_registered", input_mode.registered},
         {"display_attribute_category_hr", static_cast<int64_t>(display_attribute.enum_hr)},
         {"display_attribute_category_registered", display_attribute.registered},
+        {"comless_category_hr", static_cast<int64_t>(comless.enum_hr)},
+        {"comless_category_registered", comless.registered},
         {"thread_hkl", reinterpret_cast<uintptr_t>(keyboard_layout)},
         {"thread_hkl_is_ime", ImmIsIME(keyboard_layout) != FALSE},
         {"result", verified ? "verified" : "incomplete"},

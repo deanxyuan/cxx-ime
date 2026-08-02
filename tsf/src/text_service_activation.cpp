@@ -5,6 +5,7 @@
 #include <new>
 
 #include <cxxime/logging.h>
+#include <cxxime/tsf_factory.h>
 
 #include "about_dialog.h"
 #include "config_coordinator.h"
@@ -274,8 +275,13 @@ HRESULT TextService::_unregister_preserved_key() {
 
 bool TextService::_register_display_attribute_atom() {
     ITfCategoryMgr* category_mgr = nullptr;
-    HRESULT hr = CoCreateInstance(CLSID_TF_CategoryMgr, nullptr, CLSCTX_INPROC_SERVER,
-                                  IID_ITfCategoryMgr, reinterpret_cast<void**>(&category_mgr));
+    HRESULT hr = E_UNEXPECTED;
+    if ((_activateFlags & TF_TMAE_COMLESS) != 0) {
+        hr = cxxime::create_tsf_category_manager_without_com(&category_mgr);
+    } else {
+        hr = CoCreateInstance(CLSID_TF_CategoryMgr, nullptr, CLSCTX_INPROC_SERVER,
+                              IID_ITfCategoryMgr, reinterpret_cast<void**>(&category_mgr));
+    }
     if (FAILED(hr) || !category_mgr)
         return false;
 

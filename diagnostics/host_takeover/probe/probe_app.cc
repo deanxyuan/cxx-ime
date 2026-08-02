@@ -5,6 +5,7 @@
 #include "ui_element_sink.h"
 
 #include <cxxime/stage_trace.h>
+#include <cxxime/tsf_factory.h>
 
 #include <ctfutb.h>
 
@@ -13,6 +14,22 @@
 #include <sstream>
 
 namespace cxxime_probe {
+
+namespace {
+
+const char* com_mode_name(ProbeComMode mode) {
+    switch (mode) {
+    case ProbeComMode::sta:
+        return "sta";
+    case ProbeComMode::uninitialized:
+        return "uninitialized";
+    case ProbeComMode::mta:
+        return "mta";
+    }
+    return "unknown";
+}
+
+} // namespace
 
 const std::wstring& ProbeApp::initialization_error() const {
     return initialization_error_;
@@ -28,17 +45,31 @@ bool ProbeApp::fail_initialization(const char* stage, HRESULT result) {
     cxxime::write_stage_trace("probe", "probe.initialization", {
         {"stage", stage},
         {"hresult", static_cast<uint32_t>(result)},
+        {"com_mode", com_mode_name(com_mode_)},
+        {"activate_flags", activate_flags_},
         {"result", "failed"},
     });
     return false;
 }
 
-bool ProbeApp::initialize(HINSTANCE instance) {
+bool ProbeApp::initialize(HINSTANCE instance, ProbeComMode com_mode) {
     instance_ = instance;
-    const HRESULT com_result = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-    com_initialized_ = SUCCEEDED(com_result);
-    if (FAILED(com_result) && com_result != RPC_E_CHANGED_MODE) {
-        return fail_initialization("CoInitializeEx", com_result);
+    com_mode_ = com_mode;
+    activate_flags_ = TF_TMAE_UIELEMENTENABLEDONLY;
+    if (com_mode_ != ProbeComMode::sta) {
+        activate_flags_ |= TF_TMAE_COMLESS;
+    }
+    if (com_mode_ != ProbeComMode::uninitialized) {
+        DWORD apartment = COINIT_APARTMENTTHREADED;
+        if (com_mode_ == ProbeComMode::mta) {
+            apartment = COINIT_MULTITHREADED;
+        }
+        const HRESULT com_result = CoInitializeEx(nullptr, apartment);
+        com_initialized_ = SUCCEEDED(com_result);
+        if (FAILED(com_result) &&
+            !(com_mode_ == ProbeComMode::sta && com_result == RPC_E_CHANGED_MODE)) {
+            return fail_initialization("CoInitializeEx", com_result);
+        }
     }
 
     WNDCLASSEXW window_class = {};
@@ -77,19 +108,9 @@ bool ProbeApp::initialize(HINSTANCE instance) {
         reinterpret_cast<HMENU>(static_cast<INT_PTR>(kOriginalUiCheckboxId)),
         instance_, nullptr);
     himc_ = ImmGetContext(hwnd_);
-    const HRESULT create_result = CoCreateInstance(
-        CLSID_TF_ThreadMgr, nullptr, CLSCTX_INPROC_SERVER, IID_ITfThreadMgrEx,
-        reinterpret_cast<void**>(&thread_mgr_));
-    if (FAILED(create_result) || !thread_mgr_) {
-        return fail_initialization("CoCreateInstance(CLSID_TF_ThreadMgr)", create_result);
+    if (!initialize_tsf_runtime()) {
+        return false;
     }
-
-    const HRESULT activate_result =
-        thread_mgr_->ActivateEx(&client_id_, TF_TMAE_UIELEMENTENABLEDONLY);
-    if (FAILED(activate_result)) {
-        return fail_initialization("ITfThreadMgrEx::ActivateEx", activate_result);
-    }
-    thread_mgr_active_ = true;
     initialize_conversion_compartment_probe();
 
     const HRESULT manager_result = thread_mgr_->QueryInterface(
@@ -118,13 +139,43 @@ bool ProbeApp::initialize(HINSTANCE instance) {
     cxxime::write_stage_trace("probe", "probe.runtime", {
         {"hwnd", reinterpret_cast<uintptr_t>(hwnd_)},
         {"himc", reinterpret_cast<uintptr_t>(himc_)},
-        {"activate_flags", TF_TMAE_UIELEMENTENABLEDONLY},
+        {"activate_flags", activate_flags_},
+        {"com_mode", com_mode_name(com_mode_)},
+        {"thread_manager_factory",
+         com_mode_ == ProbeComMode::sta ? "CoCreateInstance" : "TF_CreateThreadMgr"},
         {"client_id", client_id_},
         {"result", "ready"},
     });
     ShowWindow(hwnd_, SW_SHOWNORMAL);
     UpdateWindow(hwnd_);
     SetFocus(hwnd_);
+    return true;
+}
+
+bool ProbeApp::initialize_tsf_runtime() {
+    HRESULT create_result = E_UNEXPECTED;
+    if (com_mode_ == ProbeComMode::sta) {
+        create_result =
+            CoCreateInstance(CLSID_TF_ThreadMgr, nullptr, CLSCTX_INPROC_SERVER, IID_ITfThreadMgrEx,
+                             reinterpret_cast<void**>(&thread_mgr_));
+    } else {
+        ITfThreadMgr* thread_manager = nullptr;
+        create_result = cxxime::create_tsf_thread_manager_without_com(&thread_manager);
+        if (SUCCEEDED(create_result) && thread_manager) {
+            create_result = thread_manager->QueryInterface(IID_ITfThreadMgrEx,
+                                                           reinterpret_cast<void**>(&thread_mgr_));
+            thread_manager->Release();
+        }
+    }
+    if (FAILED(create_result) || !thread_mgr_) {
+        return fail_initialization("CreateThreadMgr", create_result);
+    }
+
+    const HRESULT activate_result = thread_mgr_->ActivateEx(&client_id_, activate_flags_);
+    if (FAILED(activate_result)) {
+        return fail_initialization("ITfThreadMgrEx::ActivateEx", activate_result);
+    }
+    thread_mgr_active_ = true;
     return true;
 }
 

@@ -11,6 +11,7 @@
 #include "text_service.h"
 
 #include <cxxime/stage_trace.h>
+#include <cxxime/tsf_factory.h>
 
 #include <cstring>
 #include <utility>
@@ -42,13 +43,21 @@ nlohmann::json text_digests(const std::vector<std::wstring>& values) {
 } // namespace
 
 void trace_stage_runtime_activate(DWORD activate_flags, TfClientId client_id) {
+    const bool without_com = (activate_flags & TF_TMAE_COMLESS) != 0;
     TF_INPUTPROCESSORPROFILE profile = {};
-    HRESULT profile_manager_hr = E_UNEXPECTED;
     HRESULT profile_hr = E_UNEXPECTED;
     ITfInputProcessorProfileMgr* profile_manager = nullptr;
-    profile_manager_hr = CoCreateInstance(
-        CLSID_TF_InputProcessorProfiles, nullptr, CLSCTX_INPROC_SERVER,
-        IID_ITfInputProcessorProfileMgr, reinterpret_cast<void**>(&profile_manager));
+    HRESULT profile_manager_hr = E_UNEXPECTED;
+    if (without_com) {
+        profile_manager_hr =
+            cxxime::create_tsf_input_processor_profile_manager_without_com(
+                &profile_manager);
+    } else {
+        profile_manager_hr = CoCreateInstance(
+            CLSID_TF_InputProcessorProfiles, nullptr, CLSCTX_INPROC_SERVER,
+            IID_ITfInputProcessorProfileMgr,
+            reinterpret_cast<void**>(&profile_manager));
+    }
     if (SUCCEEDED(profile_manager_hr) && profile_manager) {
         profile_hr = profile_manager->GetProfile(
             TF_PROFILETYPE_INPUTPROCESSOR, TEXTSERVICE_LANGID_HANS,
@@ -63,6 +72,7 @@ void trace_stage_runtime_activate(DWORD activate_flags, TfClientId client_id) {
     });
     cxxime::write_stage_trace("tsf", "runtime.activate", {
         {"activate_flags", activate_flags},
+        {"manager_creation", without_com ? "without_com" : "com"},
         {"client_id", client_id},
         {"hkl", reinterpret_cast<uintptr_t>(keyboard_layout)},
         {"hkl_is_ime", ImmIsIME(keyboard_layout) != FALSE},

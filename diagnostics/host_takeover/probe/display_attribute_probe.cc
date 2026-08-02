@@ -6,6 +6,7 @@
 #include <string>
 
 #include <cxxime/stage_trace.h>
+#include <cxxime/tsf_factory.h>
 
 namespace cxxime_probe {
 namespace {
@@ -15,11 +16,13 @@ public:
     DisplayAttributeEditSession(ITfContext* context,
                                  uint64_t composition_id,
                                  DWORD element_id,
-                                 const char* action)
+                                 const char* action,
+                                 bool without_com)
         : context_(context),
           composition_id_(composition_id),
           element_id_(element_id),
-          action_(action ? action : "") {
+          action_(action ? action : ""),
+          without_com_(without_com) {
         context_->AddRef();
     }
 
@@ -102,9 +105,15 @@ public:
 
         GUID attribute_guid = GUID_NULL;
         ITfCategoryMgr* category_manager = nullptr;
-        const HRESULT category_manager_hr = CoCreateInstance(
-            CLSID_TF_CategoryMgr, nullptr, CLSCTX_INPROC_SERVER,
-            IID_ITfCategoryMgr, reinterpret_cast<void**>(&category_manager));
+        HRESULT category_manager_hr = E_UNEXPECTED;
+        if (without_com_) {
+            category_manager_hr =
+                cxxime::create_tsf_category_manager_without_com(&category_manager);
+        } else {
+            category_manager_hr = CoCreateInstance(
+                CLSID_TF_CategoryMgr, nullptr, CLSCTX_INPROC_SERVER,
+                IID_ITfCategoryMgr, reinterpret_cast<void**>(&category_manager));
+        }
         HRESULT atom_guid_hr = E_UNEXPECTED;
         if (SUCCEEDED(category_manager_hr) && category_manager && atom != 0) {
             atom_guid_hr = category_manager->GetGUID(atom, &attribute_guid);
@@ -114,9 +123,15 @@ public:
         }
 
         ITfDisplayAttributeMgr* display_manager = nullptr;
-        const HRESULT display_manager_hr = CoCreateInstance(
-            CLSID_TF_DisplayAttributeMgr, nullptr, CLSCTX_INPROC_SERVER,
-            IID_ITfDisplayAttributeMgr, reinterpret_cast<void**>(&display_manager));
+        HRESULT display_manager_hr = E_UNEXPECTED;
+        if (without_com_) {
+            display_manager_hr =
+                cxxime::create_tsf_display_attribute_manager_without_com(&display_manager);
+        } else {
+            display_manager_hr = CoCreateInstance(
+                CLSID_TF_DisplayAttributeMgr, nullptr, CLSCTX_INPROC_SERVER,
+                IID_ITfDisplayAttributeMgr, reinterpret_cast<void**>(&display_manager));
+        }
         ITfDisplayAttributeInfo* attribute_info = nullptr;
         CLSID owner = CLSID_NULL;
         HRESULT display_info_hr = E_UNEXPECTED;
@@ -143,6 +158,7 @@ public:
             {"composition_id", composition_id_},
             {"element_id", element_id_},
             {"action", action_},
+            {"manager_creation", without_com_ ? "without_com" : "com"},
             {"context_composition_hr", static_cast<int64_t>(context_composition_hr)},
             {"enum_hr", static_cast<int64_t>(enum_hr)},
             {"next_hr", static_cast<int64_t>(next_hr)},
@@ -179,6 +195,7 @@ private:
     uint64_t composition_id_ = 0;
     DWORD element_id_ = TF_INVALID_UIELEMENTID;
     std::string action_;
+    bool without_com_ = false;
 };
 
 } // namespace
@@ -202,7 +219,8 @@ void ProbeApp::trace_composition_display_attribute(
     HRESULT edit_hr = E_UNEXPECTED;
     if (SUCCEEDED(context_hr) && context) {
         auto* edit_session = new (std::nothrow) DisplayAttributeEditSession(
-            context, composition_id_, element_id, action);
+            context, composition_id_, element_id, action,
+            com_mode_ != ProbeComMode::sta);
         if (edit_session) {
             request_hr = context->RequestEditSession(
                 client_id_, edit_session, TF_ES_READ | TF_ES_ASYNCDONTCARE, &edit_hr);

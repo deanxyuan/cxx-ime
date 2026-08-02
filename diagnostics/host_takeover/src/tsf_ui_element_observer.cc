@@ -4,6 +4,7 @@
 #include "tsf_ui_element_identity.h"
 
 #include <cxxime/stage_trace.h>
+#include <cxxime/tsf_factory.h>
 
 #include <ctffunc.h>
 
@@ -25,12 +26,18 @@ ITfUIElementSink* g_ui_element_sink = nullptr;
 DWORD g_ui_element_cookie = TF_INVALID_COOKIE;
 DWORD g_ui_element_thread_id = 0;
 
-void add_active_profile(nlohmann::json& fields) {
+void add_active_profile(nlohmann::json& fields, bool without_com) {
     ITfInputProcessorProfileMgr* profile_manager = nullptr;
-    const HRESULT manager_hr = CoCreateInstance(
-        CLSID_TF_InputProcessorProfiles, nullptr, CLSCTX_INPROC_SERVER,
-        IID_ITfInputProcessorProfileMgr,
-        reinterpret_cast<void**>(&profile_manager));
+    HRESULT manager_hr = E_UNEXPECTED;
+    if (without_com) {
+        manager_hr = cxxime::create_tsf_input_processor_profile_manager_without_com(
+            &profile_manager);
+    } else {
+        manager_hr = CoCreateInstance(
+            CLSID_TF_InputProcessorProfiles, nullptr, CLSCTX_INPROC_SERVER,
+            IID_ITfInputProcessorProfileMgr,
+            reinterpret_cast<void**>(&profile_manager));
+    }
     TF_INPUTPROCESSORPROFILE profile = {};
     const HRESULT profile_hr = profile_manager
         ? profile_manager->GetActiveProfile(GUID_TFCAT_TIP_KEYBOARD, &profile)
@@ -40,6 +47,7 @@ void add_active_profile(nlohmann::json& fields) {
     }
 
     fields["profile_manager_hr"] = static_cast<int64_t>(manager_hr);
+    fields["profile_manager_creation"] = without_com ? "without_com" : "com";
     fields["profile_hr"] = static_cast<int64_t>(profile_hr);
     fields["profile_type"] = profile.dwProfileType;
     fields["profile_clsid"] = cxxime::stage_trace_guid(profile.clsid);
@@ -190,8 +198,12 @@ void trace_candidate_snapshot(ITfThreadMgr* thread_mgr,
 
 class StageUiElementSink final : public ITfUIElementSink {
 public:
-    StageUiElementSink(ITfThreadMgr* thread_mgr, ITfUIElementMgr* ui_element_mgr)
-        : thread_mgr_(thread_mgr), ui_element_mgr_(ui_element_mgr) {
+    StageUiElementSink(ITfThreadMgr* thread_mgr,
+                       ITfUIElementMgr* ui_element_mgr,
+                       bool without_com)
+        : thread_mgr_(thread_mgr),
+          ui_element_mgr_(ui_element_mgr),
+          without_com_(without_com) {
         thread_mgr_->AddRef();
         ui_element_mgr_->AddRef();
     }
@@ -233,7 +245,7 @@ public:
             {"thread_id", GetCurrentThreadId()},
             {"result", "observed"},
         };
-        add_active_profile(fields);
+        add_active_profile(fields, without_com_);
         cxxime::write_stage_trace("tsf", "host.ui_element", std::move(fields));
         trace_snapshot(element_id, "begin");
         return S_OK;
@@ -314,6 +326,7 @@ private:
     std::atomic<ULONG> refs_{1};
     ITfThreadMgr* thread_mgr_ = nullptr;
     ITfUIElementMgr* ui_element_mgr_ = nullptr;
+    bool without_com_ = false;
 };
 
 } // namespace
@@ -353,7 +366,9 @@ void start_stage_ui_element_observer(ITfThreadMgr* thread_mgr, DWORD activate_fl
     HRESULT advise_hr = E_OUTOFMEMORY;
     DWORD cookie = TF_INVALID_COOKIE;
     if (source && thread_mgr) {
-        sink = new (std::nothrow) StageUiElementSink(thread_mgr, ui_element_mgr);
+        sink = new (std::nothrow) StageUiElementSink(
+            thread_mgr, ui_element_mgr,
+            (activate_flags & TF_TMAE_COMLESS) != 0);
         if (sink) {
             advise_hr = source->AdviseSink(
                 IID_ITfUIElementSink, static_cast<ITfUIElementSink*>(sink), &cookie);
