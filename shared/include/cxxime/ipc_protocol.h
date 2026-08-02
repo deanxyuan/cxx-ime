@@ -88,6 +88,7 @@ struct IPCResponse {
     IPCStatus status = IPCStatus::OK;
     char commit_text[256] = {};
     char preedit[256] = {};
+    uint32_t preedit_cursor = 0;
     uint32_t candidate_count = 0;
     uint32_t candidate_offset = 0;
     uint32_t candidate_total = 0;

@@ -1,6 +1,9 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
 #include "edit_session.h"
+
+#include <climits>
+
 #include "globals.h"
 #include "text_service.h"
 
@@ -210,8 +213,8 @@ void update_caret_rect(TextService* service, ITfContext* context, TfEditCookie e
     if (!service || !context)
         return;
 
-    if (!update_caret_rect_from_range(service, context, ec, range, TF_ANCHOR_END, nullptr))
-        update_caret_rect_from_selection(service, context, ec, nullptr);
+    if (!update_caret_rect_from_selection(service, context, ec, nullptr))
+        update_caret_rect_from_range(service, context, ec, range, TF_ANCHOR_END, nullptr);
 }
 
 bool update_current_caret_rect(TextService* service,
@@ -220,17 +223,17 @@ bool update_current_caret_rect(TextService* service,
                                 RECT* out,
                                 const char** source_out = nullptr) {
     RECT rc = {};
-    if (update_caret_rect_from_composition(service, context, ec, &rc, source_out)) {
-        if (out)
-            *out = rc;
-        return true;
-    }
-
     if (update_caret_rect_from_selection(service, context, ec, &rc)) {
         if (out)
             *out = rc;
         if (source_out)
             *source_out = "selection";
+        return true;
+    }
+
+    if (update_caret_rect_from_composition(service, context, ec, &rc, source_out)) {
+        if (out)
+            *out = rc;
         return true;
     }
 
@@ -259,6 +262,38 @@ HRESULT set_selection_to_range(ITfContext* context, TfEditCookie ec, ITfRange* r
     selection.style.ase = TF_AE_NONE;
     selection.style.fInterimChar = FALSE;
     hr = context->SetSelection(ec, 1, &selection);
+    selection_range->Release();
+    return hr;
+}
+
+HRESULT set_selection_to_range_offset(ITfContext* context, TfEditCookie ec, ITfRange* range,
+                                      size_t offset) {
+    if (!context || !range || offset > static_cast<size_t>(LONG_MAX)) {
+        return E_INVALIDARG;
+    }
+
+    ITfRange* selection_range = nullptr;
+    HRESULT hr = range->Clone(&selection_range);
+    if (FAILED(hr) || !selection_range) {
+        return FAILED(hr) ? hr : E_FAIL;
+    }
+
+    hr = selection_range->Collapse(ec, TF_ANCHOR_START);
+    if (SUCCEEDED(hr) && offset > 0) {
+        LONG shifted = 0;
+        hr = selection_range->ShiftStart(ec, static_cast<LONG>(offset), &shifted, nullptr);
+        if (SUCCEEDED(hr) && shifted != static_cast<LONG>(offset)) {
+            hr = E_INVALIDARG;
+        }
+    }
+
+    if (SUCCEEDED(hr)) {
+        TF_SELECTION selection = {};
+        selection.range = selection_range;
+        selection.style.ase = TF_AE_NONE;
+        selection.style.fInterimChar = FALSE;
+        hr = context->SetSelection(ec, 1, &selection);
+    }
     selection_range->Release();
     return hr;
 }
@@ -493,10 +528,19 @@ STDMETHODIMP_(ULONG) EditSession::Release() {
 void EditSession::set_action(Action action, const std::wstring& text) {
     _action = action;
     _text = text;
+    _selectionOffset = 0;
+    _hasSelectionOffset = false;
     _actionResult = E_PENDING;
     _compositionStartAttempted = false;
     _compositionStartResult = E_PENDING;
     _compositionReturned = false;
+}
+
+void EditSession::set_composition_action(Action action, const std::wstring& text,
+                                         size_t selection_offset) {
+    set_action(action, text);
+    _selectionOffset = selection_offset;
+    _hasSelectionOffset = true;
 }
 
 STDMETHODIMP EditSession::DoEditSession(TfEditCookie ec) {
@@ -514,7 +558,10 @@ STDMETHODIMP EditSession::DoEditSession(TfEditCookie ec) {
             if (SUCCEEDED(_actionResult)) {
                 set_composition_language(_context, ec, pRange);
                 _service->apply_composition_display_attribute(_context, pRange, ec);
-                set_selection_to_range(_context, ec, pRange);
+                _actionResult = _hasSelectionOffset
+                    ? set_selection_to_range_offset(
+                        _context, ec, pRange, _selectionOffset)
+                    : set_selection_to_range(_context, ec, pRange);
             }
         } else {
             TF_SELECTION sel = {};
@@ -539,7 +586,10 @@ STDMETHODIMP EditSession::DoEditSession(TfEditCookie ec) {
             if (SUCCEEDED(_actionResult)) {
                 set_composition_language(_context, ec, range);
                 _service->apply_composition_display_attribute(_context, range, ec);
-                set_selection_to_range(_context, ec, range);
+                _actionResult = _hasSelectionOffset
+                    ? set_selection_to_range_offset(
+                        _context, ec, range, _selectionOffset)
+                    : set_selection_to_range(_context, ec, range);
                 update_caret_rect(_service, _context, ec, range);
             }
             range->Release();

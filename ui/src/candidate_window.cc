@@ -16,6 +16,14 @@ namespace cxxime {
 class CandidateWindow::GdiRenderer : public cxxime::GdiRenderer {};
 class CandidateWindow::D2DRenderer : public cxxime::D2DRenderer {};
 
+static int system_caret_width() {
+    DWORD width = 1;
+    if (!SystemParametersInfoW(SPI_GETCARETWIDTH, 0, &width, 0) || width == 0) {
+        return 1;
+    }
+    return static_cast<int>(width);
+}
+
 bool CandidateWindow::create(HWND owner, const Config& config) {
     config_ = &config;
     WNDCLASSEXW wc = {};
@@ -36,6 +44,7 @@ bool CandidateWindow::create(HWND owner, const Config& config) {
         HDC dc = GetDC(hwnd_);
         dpi_scale_ = GetDeviceCaps(dc, LOGPIXELSX) / 96.0f;
         ReleaseDC(hwnd_, dc);
+        preedit_cursor_width_ = system_caret_width();
         init_gdi_renderer();
     }
     return hwnd_ != nullptr;
@@ -70,7 +79,17 @@ bool CandidateWindow::refresh_dpi_scale() {
     return true;
 }
 
+bool CandidateWindow::refresh_preedit_cursor_width() {
+    const int next_width = system_caret_width();
+    if (next_width == preedit_cursor_width_) {
+        return false;
+    }
+    preedit_cursor_width_ = next_width;
+    return true;
+}
+
 void CandidateWindow::recreate_renderers_for_dpi() {
+    refresh_preedit_cursor_width();
     if (gdi_renderer_) {
         gdi_renderer_->finalize();
         gdi_renderer_->initialize(hwnd_, theme_);
@@ -155,8 +174,16 @@ bool CandidateWindow::is_visible() const {
 int CandidateWindow::visible_candidate_count() const {
     return visible_candidate_count_;
 }
+SIZE CandidateWindow::window_size() const {
+    RECT rect = {};
+    if (!hwnd_ || !GetWindowRect(hwnd_, &rect)) {
+        return {};
+    }
+    return {rect.right - rect.left, rect.bottom - rect.top};
+}
 void CandidateWindow::set_config(const Config& config) {
     config_ = &config;
+    refresh_preedit_cursor_width();
     set_theme(build_theme_from_config(config));
     RenderBackend next_backend = config.render_backend != "gdi" ? RenderBackend::D2D : RenderBackend::GDI;
     if (d2d_renderer_) {
@@ -180,7 +207,18 @@ void CandidateWindow::set_render_backend(RenderBackend b) {
     if (b == RenderBackend::D2D && !d2d_renderer_) init_d2d_renderer();
 }
 void CandidateWindow::set_page_info(int cur, int tot) { page_current_ = cur; page_total_ = tot; }
-void CandidateWindow::set_preedit(const std::string& p) { preedit_text_ = p; }
+void CandidateWindow::set_preedit(const std::string& preedit) {
+    set_preedit(preedit, preedit.size());
+}
+
+void CandidateWindow::set_preedit(const std::string& preedit, size_t cursor) {
+    preedit_text_ = preedit;
+    preedit_cursor_ = (std::min)(cursor, preedit.size());
+    while (preedit_cursor_ > 0 && preedit_cursor_ < preedit.size() &&
+           (static_cast<unsigned char>(preedit[preedit_cursor_]) & 0xc0) == 0x80) {
+        --preedit_cursor_;
+    }
+}
 void CandidateWindow::set_layout(const std::string& l) { layout_orientation_ = l; }
 void CandidateWindow::set_click_callback(ClickCallback cb) { click_cb_ = std::move(cb); }
 void CandidateWindow::set_draggable(bool draggable) { draggable_ = draggable; }
@@ -326,11 +364,23 @@ void CandidateWindow::move_to_caret(const RECT& caretRect) {
     move_window_now(target.x, target.y);
 }
 
+void CandidateWindow::move_to_screen_position(int x, int y) {
+    if (!hwnd_) {
+        return;
+    }
+    stop_animation();
+    move_window_now(x, y);
+}
+
 void CandidateWindow::rebuild_render_context(const LayoutConfig& cfg, int window_width) {
     render_ctx_.rects = &candidate_rects_;
     render_ctx_.theme = &theme_;
     render_ctx_.layout_cfg = &cfg;
     render_ctx_.preedit = preedit_text_;
+    render_ctx_.preedit_cursor = preedit_cursor_;
+    render_ctx_.preedit_cursor_width = preedit_cursor_width_;
+    render_ctx_.show_preedit_cursor =
+        config_ && config_->show_preedit_cursor && !preedit_text_.empty();
     render_ctx_.page_current = page_current_;
     render_ctx_.page_total = page_total_;
     render_ctx_.highlighted = page_.candidates.empty() ? -1 : page_.highlighted;
@@ -442,7 +492,8 @@ void CandidateWindow::update(const CandidatePage& page) {
         }
         // When no candidates, size window to fit preedit text
         if (page.candidates.empty()) {
-            int preedit_w = (ps.cx > 0 ? ps.cx : 0) + cfg.margin_x * 2;
+            int cursor_reserve = config_->show_preedit_cursor ? preedit_cursor_width_ : 0;
+            int preedit_w = (ps.cx > 0 ? ps.cx : 0) + cfg.margin_x * 2 + cursor_reserve;
             if (preedit_w > lr.width) lr.width = preedit_w;
         }
         render_ctx_.preedit_rect = {cfg.margin_x, cfg.margin_y,
@@ -573,6 +624,11 @@ LRESULT CALLBACK CandidateWindow::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM
                 self->dpi_scale_ = next_scale;
                 self->recreate_renderers_for_dpi();
             }
+        }
+        return 0;
+    case WM_SETTINGCHANGE:
+        if (self && self->refresh_preedit_cursor_width()) {
+            self->update(self->page_);
         }
         return 0;
     }

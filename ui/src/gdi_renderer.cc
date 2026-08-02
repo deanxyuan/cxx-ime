@@ -1,6 +1,9 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
 #include "gdi_renderer.h"
+
+#include <algorithm>
+
 #include <cxxime/config.h>
 
 namespace cxxime {
@@ -53,6 +56,48 @@ static void draw_border(HDC dc, const RECT& clip, const RenderContext& ctx) {
     DeleteObject(border_pen);
 }
 
+static void draw_preedit(HDC dc, const RenderContext& ctx, HFONT font, COLORREF text_color,
+                         COLORREF cursor_color) {
+    if (ctx.preedit.empty() || ctx.preedit_rect.right <= ctx.preedit_rect.left || !font) {
+        return;
+    }
+
+    HFONT old_font = static_cast<HFONT>(SelectObject(dc, font));
+    const std::wstring preedit = to_wstr(ctx.preedit);
+    if (!preedit.empty()) {
+        SetBkMode(dc, TRANSPARENT);
+        SetTextColor(dc, text_color);
+        DrawTextW(dc, preedit.c_str(), -1, const_cast<RECT*>(&ctx.preedit_rect),
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    }
+
+    if (ctx.show_preedit_cursor) {
+        const size_t cursor = (std::min)(ctx.preedit_cursor, ctx.preedit.size());
+        const std::wstring prefix = to_wstr(ctx.preedit.substr(0, cursor));
+        SIZE extent = {};
+        if (!prefix.empty()) {
+            GetTextExtentPoint32W(dc, prefix.c_str(), static_cast<int>(prefix.length()), &extent);
+        }
+        const int cursor_width = (std::max)(1, ctx.preedit_cursor_width);
+        const int prefix_width = static_cast<int>(extent.cx);
+        const int rect_left = static_cast<int>(ctx.preedit_rect.left);
+        const int rect_right = static_cast<int>(ctx.preedit_rect.right);
+        const int cursor_left = (std::max)(
+            rect_left, (std::min)(rect_left + prefix_width, rect_right - cursor_width));
+        RECT cursor_rect = {
+            cursor_left,
+            ctx.preedit_rect.top + 1,
+            (std::min)(cursor_left + cursor_width, rect_right),
+            ctx.preedit_rect.bottom - 1,
+        };
+        HBRUSH cursor_brush = CreateSolidBrush(cursor_color);
+        FillRect(dc, &cursor_rect, cursor_brush);
+        DeleteObject(cursor_brush);
+    }
+
+    SelectObject(dc, old_font);
+}
+
 void GdiRenderer::initialize(HWND hwnd, const Theme& theme) {
     hwnd_ = hwnd;
     bg_brush_      = CreateSolidBrush(clr(theme.background));
@@ -61,6 +106,7 @@ void GdiRenderer::initialize(HWND hwnd, const Theme& theme) {
     comment_color_ = clr(theme.comment_text);
     hl_text_color_ = clr(theme.hilited_text);
     preedit_color_ = clr(theme.preedit_text);
+    preedit_cursor_color_ = clr(theme.preedit_cursor);
     label_color_   = clr(theme.label_text);
     nav_color_     = clr(theme.prev_page);
 
@@ -121,15 +167,8 @@ void GdiRenderer::render(HDC hdc, const RECT& clip, const RenderContext& ctx) {
     if (!ctx.rects || ctx.rects->empty()) {
         // No candidates — show preedit if available, otherwise placeholder
         if (!ctx.preedit.empty() && ctx.preedit_rect.right > ctx.preedit_rect.left && preedit_font_) {
-            HFONT old = (HFONT)SelectObject(target_dc, preedit_font_);
-            std::wstring wp = to_wstr(ctx.preedit);
-            if (!wp.empty()) {
-                SetBkMode(target_dc, TRANSPARENT);
-                SetTextColor(target_dc, preedit_color_);
-                DrawTextW(target_dc, wp.c_str(), -1, const_cast<RECT*>(&ctx.preedit_rect),
-                    DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-            }
-            SelectObject(target_dc, old);
+            draw_preedit(target_dc, ctx, preedit_font_, preedit_color_,
+                         preedit_cursor_color_);
         } else {
             SetBkMode(target_dc, TRANSPARENT);
             SetTextColor(target_dc, preedit_color_);
@@ -152,14 +191,8 @@ void GdiRenderer::render(HDC hdc, const RECT& clip, const RenderContext& ctx) {
 
     // Preedit (smaller font)
     if (!ctx.preedit.empty() && ctx.preedit_rect.right > ctx.preedit_rect.left && preedit_font_) {
-        SelectObject(target_dc, preedit_font_);
-        std::wstring wp = to_wstr(ctx.preedit);
-        if (!wp.empty()) {
-            SetTextColor(target_dc, preedit_color_);
-            DrawTextW(target_dc, wp.c_str(), -1, const_cast<RECT*>(&ctx.preedit_rect),
-                DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-        }
-        SelectObject(target_dc, hfont_);
+        draw_preedit(target_dc, ctx, preedit_font_, preedit_color_,
+                     preedit_cursor_color_);
         // Thin separator line between preedit and candidates
         draw_preedit_separator(target_dc, clip, ctx, margin);
     }

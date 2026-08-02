@@ -2,6 +2,7 @@
 
 #include <cxxime/renderer.h>
 
+#include <algorithm>
 #include <string>
 
 #include <cxxime/config.h>
@@ -62,6 +63,8 @@ bool D2DRenderer::initialize(HWND hwnd, const Theme& theme) {
     render_target_->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &highlight_text_brush_);
     render_target_->CreateSolidColorBrush(D2D1::ColorF(0.68f, 0.85f, 1.0f, 0.5f), &hover_brush_);
     render_target_->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Gray), &preedit_brush_);
+    render_target_->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::DodgerBlue),
+                                          &preedit_cursor_brush_);
     render_target_->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Gray), &label_brush_);
     render_target_->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Gray), &nav_brush_);
     render_target_->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Gray), &border_brush_);
@@ -86,12 +89,67 @@ bool D2DRenderer::initialize(HWND hwnd, const Theme& theme) {
 void D2DRenderer::finalize() {
     for (auto* p : {&fmt_small_, &fmt_preedit_, &fmt_right_, &fmt_left_}) { if (*p) { (*p)->Release(); *p = nullptr; } }
     if (dwrite_factory_) { dwrite_factory_->Release(); dwrite_factory_ = nullptr; }
-    for (auto* p : {&border_brush_, &nav_brush_, &label_brush_, &preedit_brush_, &hover_brush_,
+    for (auto* p : {&border_brush_, &nav_brush_, &label_brush_, &preedit_cursor_brush_,
+                    &preedit_brush_, &hover_brush_,
                     &highlight_text_brush_, &highlight_brush_, &bg_brush_, &comment_brush_,
                     &text_brush_})
     { if (*p) { (*p)->Release(); *p = nullptr; } }
     if (render_target_) { render_target_->Release(); render_target_ = nullptr; }
     if (d2d_factory_) { d2d_factory_->Release(); d2d_factory_ = nullptr; }
+}
+
+void D2DRenderer::draw_preedit(const RenderContext& ctx) {
+    if (ctx.preedit.empty() || ctx.preedit_rect.right <= ctx.preedit_rect.left || !preedit_brush_) {
+        return;
+    }
+
+    const std::wstring preedit = dec(ctx.preedit);
+    if (preedit.empty()) {
+        return;
+    }
+
+    const D2D1_RECT_F rect = {
+        static_cast<float>(ctx.preedit_rect.left),
+        static_cast<float>(ctx.preedit_rect.top),
+        static_cast<float>(ctx.preedit_rect.right),
+        static_cast<float>(ctx.preedit_rect.bottom),
+    };
+    render_target_->DrawText(preedit.c_str(), static_cast<UINT32>(preedit.length()), fmt_preedit_,
+                             rect, preedit_brush_);
+
+    if (!ctx.show_preedit_cursor || !preedit_cursor_brush_ || !dwrite_factory_) {
+        return;
+    }
+
+    const size_t cursor = (std::min)(ctx.preedit_cursor, ctx.preedit.size());
+    const std::wstring prefix = dec(ctx.preedit.substr(0, cursor));
+    float prefix_width = 0.0f;
+    if (!prefix.empty()) {
+        IDWriteTextLayout* layout = nullptr;
+        const float width = (std::max)(1.0f, rect.right - rect.left);
+        const float height = (std::max)(1.0f, rect.bottom - rect.top);
+        const HRESULT hr = dwrite_factory_->CreateTextLayout(
+            prefix.c_str(), static_cast<UINT32>(prefix.length()), fmt_preedit_, width, height,
+            &layout);
+        if (SUCCEEDED(hr) && layout) {
+            DWRITE_TEXT_METRICS metrics = {};
+            if (SUCCEEDED(layout->GetMetrics(&metrics))) {
+                prefix_width = metrics.widthIncludingTrailingWhitespace;
+            }
+            layout->Release();
+        }
+    }
+
+    const float cursor_width = static_cast<float>((std::max)(1, ctx.preedit_cursor_width));
+    const float cursor_left = (std::max)(
+        rect.left, (std::min)(rect.left + prefix_width, rect.right - cursor_width));
+    const D2D1_RECT_F cursor_rect = {
+        cursor_left,
+        rect.top + 1.0f,
+        (std::min)(cursor_left + cursor_width, rect.right),
+        rect.bottom - 1.0f,
+    };
+    render_target_->FillRectangle(cursor_rect, preedit_cursor_brush_);
 }
 
 void D2DRenderer::render(const RenderContext& ctx) {
@@ -108,6 +166,7 @@ void D2DRenderer::render(const RenderContext& ctx) {
         highlight_brush_->SetColor(c2d(ctx.theme->hilited_back));
         highlight_text_brush_->SetColor(c2d(ctx.theme->hilited_text));
         preedit_brush_->SetColor(c2d(ctx.theme->preedit_text));
+        preedit_cursor_brush_->SetColor(c2d(ctx.theme->preedit_cursor));
         label_brush_->SetColor(c2d(ctx.theme->label_text));
         nav_brush_->SetColor(c2d(ctx.theme->prev_page));
         border_brush_->SetColor(c2d(ctx.theme->border));
@@ -148,12 +207,7 @@ void D2DRenderer::render(const RenderContext& ctx) {
     if (!ctx.rects || ctx.rects->empty()) {
         // No candidates — show preedit if available, otherwise placeholder
         if (!ctx.preedit.empty() && ctx.preedit_rect.right > ctx.preedit_rect.left) {
-            auto wp = dec(ctx.preedit);
-            if (!wp.empty()) {
-                D2D1_RECT_F pr = {(float)ctx.preedit_rect.left, (float)ctx.preedit_rect.top,
-                                  (float)ctx.preedit_rect.right, (float)ctx.preedit_rect.bottom};
-                render_target_->DrawText(wp.c_str(), (UINT32)wp.length(), fmt_preedit_, pr, preedit_brush_);
-            }
+            draw_preedit(ctx);
         } else {
             render_target_->DrawText(L"CxxIME", 6, fmt_left_, D2D1::RectF(0,0,sz.width,sz.height), preedit_brush_);
         }
@@ -164,12 +218,7 @@ void D2DRenderer::render(const RenderContext& ctx) {
 
     // Preedit
     if (!ctx.preedit.empty() && ctx.preedit_rect.right > ctx.preedit_rect.left) {
-        auto wp = dec(ctx.preedit);
-        if (!wp.empty()) {
-            D2D1_RECT_F pr = {(float)ctx.preedit_rect.left, (float)ctx.preedit_rect.top,
-                              (float)ctx.preedit_rect.right, (float)ctx.preedit_rect.bottom};
-            render_target_->DrawText(wp.c_str(), (UINT32)wp.length(), fmt_preedit_, pr, preedit_brush_);
-        }
+        draw_preedit(ctx);
         draw_preedit_separator();
     }
 

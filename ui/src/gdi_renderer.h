@@ -27,6 +27,7 @@ private:
     COLORREF comment_color_ = 0;
     COLORREF hl_text_color_ = 0;
     COLORREF preedit_color_ = 0;
+    COLORREF preedit_cursor_color_ = 0;
     COLORREF label_color_ = 0;
     COLORREF nav_color_ = 0;
 };

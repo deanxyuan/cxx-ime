@@ -3,6 +3,8 @@
 #ifndef CXXIME_CONTEXT_H_
 #define CXXIME_CONTEXT_H_
 
+#include <cstddef>
+#include <cstdint>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -13,6 +15,8 @@
 #include <cxxime/output_options.h>
 
 namespace cxxime {
+
+struct KeyEvent;
 
 class Context {
 public:
@@ -29,6 +33,18 @@ public:
     AsciiModeSwitchStyle caps_lock_style{};
 
     bool is_composing() const;
+    size_t preedit_cursor() const;
+    uint64_t preedit_revision() const { return preedit_revision_; }
+    void set_preedit(std::string text);
+    void clear_preedit();
+    void insert_preedit(char ch);
+    bool erase_preedit_before_cursor();
+    bool erase_preedit_at_cursor();
+    bool move_preedit_cursor_left();
+    bool move_preedit_cursor_right();
+    bool move_preedit_cursor_home();
+    bool move_preedit_cursor_end();
+    bool edit_preedit(const KeyEvent& event);
     void reset();
     std::string commit();
     void update_candidates(CandidatePage&& page);
@@ -49,6 +65,8 @@ public:
     char last_committed_char = '\0';                    // Digit separator guard
 
 private:
+    size_t preedit_cursor_from_end_ = 0;
+    uint64_t preedit_revision_ = 0;
     std::vector<int> previous_page_offsets_;
     CommitSource commit_source_ = CommitSource::kRawCode;
 };

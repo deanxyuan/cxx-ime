@@ -805,6 +805,7 @@ ProcessKeyResult SessionManager::process_key(uint32_t id, const cxxime::KeyEvent
         ret.composing = engine.context().is_composing();
         if (ret.composing) {
             ret.preedit = engine.context().pinyin_buffer;
+            ret.preedit_cursor = engine.context().preedit_cursor();
             ret.candidates = engine.context().candidates;
         }
     }

@@ -14,6 +14,7 @@ namespace cxxime_tsf {
 struct StageCompositionEditResult {
     const char* action = nullptr;
     size_t text_length = 0;
+    size_t selection_offset = 0;
     bool sync_requested = false;
     bool async_fallback = false;
     HRESULT initial_request_hr = E_PENDING;

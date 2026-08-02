@@ -70,6 +70,7 @@ TEST(Protocol, response_zero_init) {
     ASSERT_EQ(resp.status, cxxime::IPCStatus::OK);
     ASSERT_EQ(resp.commit_text[0], '\0');
     ASSERT_EQ(resp.preedit[0], '\0');
+    ASSERT_EQ(resp.preedit_cursor, (uint32_t)0);
     ASSERT_EQ(resp.candidate_count, (uint32_t)0);
 }
 
@@ -179,6 +180,7 @@ TEST(IPC, process_key_preedit) {
             visible_candidate_count = req.visible_candidate_count;
             resp.status = cxxime::IPCStatus::OK;
             strncpy_s(resp.preedit, "ni", sizeof(resp.preedit) - 1);
+            resp.preedit_cursor = 1;
             resp.candidate_count = 2;
             resp.candidate_offset = 4;
             resp.candidate_total = 12;
@@ -196,6 +198,7 @@ TEST(IPC, process_key_preedit) {
     ASSERT_EQ(resp.status, cxxime::IPCStatus::OK);
     ASSERT_EQ(visible_candidate_count, 2u);
     ASSERT_EQ(strcmp(resp.preedit, "ni"), 0);
+    ASSERT_EQ(resp.preedit_cursor, 1u);
     ASSERT_EQ(resp.candidate_count, (uint32_t)2);
     ASSERT_EQ(resp.candidate_offset, 4u);
     ASSERT_EQ(resp.candidate_total, 12u);

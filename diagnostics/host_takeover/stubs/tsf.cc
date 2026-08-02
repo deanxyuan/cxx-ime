@@ -60,7 +60,7 @@ void trace_stage_edit_target(
     uint64_t, uint64_t, EditTargetState, const EditTargetEvidence&) {}
 
 void trace_stage_key_result(
-    uint64_t, uint64_t, uint32_t, bool, size_t, uint32_t, size_t, const char*) {}
+    uint64_t, uint64_t, uint32_t, bool, size_t, size_t, uint32_t, size_t, const char*) {}
 
 void trace_stage_composition_end(uint64_t, uint64_t, const char*) {}
 

@@ -3,6 +3,7 @@
 #ifndef CXXIME_CANDIDATE_WINDOW_H_
 #define CXXIME_CANDIDATE_WINDOW_H_
 
+#include <cstddef>
 #include <functional>
 #include <string>
 #include <vector>
@@ -31,8 +32,10 @@ public:
     void set_config(const Config& config);
     void update(const CandidatePage& page);
     void set_preedit(const std::string& preedit);
+    void set_preedit(const std::string& preedit, size_t cursor);
     void set_layout(const std::string& layout);
     void move_to_caret(const RECT& caretRect);
+    void move_to_screen_position(int x, int y);
     void set_click_callback(ClickCallback cb);
     void set_draggable(bool draggable);
     void set_theme(const Theme& theme);
@@ -40,10 +43,12 @@ public:
     void set_page_info(int current, int total);
     void set_owner(HWND owner);
     int visible_candidate_count() const;
+    SIZE window_size() const;
 
 private:
     void rebuild_render_context(const LayoutConfig& cfg, int window_width);
     bool refresh_dpi_scale();
+    bool refresh_preedit_cursor_width();
     void recreate_renderers_for_dpi();
     void init_gdi_renderer();
     void init_d2d_renderer();
@@ -60,6 +65,8 @@ private:
     LayoutConfig scaled_cfg_;
     CandidatePage page_;
     std::string preedit_text_;
+    size_t preedit_cursor_ = 0;
+    int preedit_cursor_width_ = 1;
     std::string layout_orientation_ = "horizontal";
     ClickCallback click_cb_;
     bool draggable_ = false;

@@ -38,6 +38,7 @@ private:
     void load_config();
     void save_config();
     void readback(HWND hwnd);
+    std::string selected_theme_id() const;
     void refresh_user_entries();
     void query_user_entries();
     void clear_user_entry_form();
@@ -61,6 +62,7 @@ private:
     void show_candidate_preview_window();
     void hide_candidate_preview_window();
     void destroy_candidate_preview_window();
+    void position_candidate_preview_window();
     void update_candidate_preview_buttons();
     void release_fonts();
 
@@ -82,6 +84,7 @@ private:
     HWND hInputModeWubi_ = nullptr;
     HWND hInputModeMixed_ = nullptr;
     HWND hInlinePreedit_ = nullptr;
+    HWND hPreeditCursor_ = nullptr;
     HWND hPreeditTypeComposition_ = nullptr;
     HWND hPreeditTypePreview_ = nullptr;
     HWND hFuzzyPinyin_ = nullptr;
@@ -96,6 +99,7 @@ private:
 
     // Appearance panel
     HWND hThemeCombo_ = nullptr;
+    std::vector<std::string> themeIds_;
     HWND hFontBtn_ = nullptr;
     HWND hFontSize_ = nullptr;
     HWND hLayoutH_ = nullptr, hLayoutV_ = nullptr;

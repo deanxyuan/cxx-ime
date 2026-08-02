@@ -18,16 +18,8 @@ ProcessResult PinyinProcessor::process_key(const KeyEvent& event, Context& conte
         return ProcessResult::ACCEPTED;
     }
 
-    // Backspace: remove last pinyin char
-    if (vk == VK_BACK) {
-        if (!context.pinyin_buffer.empty()) {
-            context.pinyin_buffer.pop_back();
-            if (context.pinyin_buffer.empty()) {
-                context.candidates = {};
-            }
-            return ProcessResult::ACCEPTED;
-        }
-        return ProcessResult::REJECTED;
+    if (context.edit_preedit(event)) {
+        return ProcessResult::ACCEPTED;
     }
 
     // Space: select first candidate, or dismiss if no candidates
@@ -37,7 +29,7 @@ ProcessResult PinyinProcessor::process_key(const KeyEvent& event, Context& conte
             context.committed_text = context.pinyin_buffer;
             context.candidates = {};
             context.reset_pagination();
-            context.pinyin_buffer.clear();
+            context.clear_preedit();
             return ProcessResult::COMMITTED;
         }
         if (context.is_composing() && !context.candidates.candidates.empty()) {
@@ -53,7 +45,7 @@ ProcessResult PinyinProcessor::process_key(const KeyEvent& event, Context& conte
                 context.set_commit_source(CommitSource::kRawCodePreserveCase);
                 context.candidates = {};
                 context.reset_pagination();
-                context.pinyin_buffer.clear();
+                context.clear_preedit();
                 return ProcessResult::COMMITTED;
             }
             context.reset();
@@ -87,7 +79,7 @@ ProcessResult PinyinProcessor::process_key(const KeyEvent& event, Context& conte
             if (context.commit_source() == CommitSource::kRawCodePreserveCase ||
                 (event.is_caps_lock() && context.caps_lock_style == AsciiModeSwitchStyle::APPEND))
                 context.set_commit_source(CommitSource::kRawCodePreserveCase);
-            context.pinyin_buffer.clear();
+            context.clear_preedit();
             context.candidates = {};
             return ProcessResult::COMMITTED;
         }
@@ -140,7 +132,7 @@ ProcessResult PinyinProcessor::process_key(const KeyEvent& event, Context& conte
         } else {
             ch = static_cast<char>(vk - 'A' + 'a');  // force lowercase
         }
-        context.pinyin_buffer += ch;
+        context.insert_preedit(ch);
         return ProcessResult::ACCEPTED;
     }
 

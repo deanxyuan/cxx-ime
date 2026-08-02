@@ -3,6 +3,7 @@
 #ifndef CXXIME_RENDER_CONTEXT_H_
 #define CXXIME_RENDER_CONTEXT_H_
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -21,6 +22,7 @@ struct Theme {
     Color comment_text{102, 102, 102, 255}; // normal candidate comment text
     Color label_text{128, 128, 128, 255};   // label "1. " text
     Color preedit_text{128, 128, 128, 255}; // preedit text
+    Color preedit_cursor{0, 120, 215, 255}; // static cursor in popup preedit
     Color hilited_text{255, 255, 255, 255}; // highlighted candidate text
     Color hilited_back{0, 120, 215, 255};   // highlighted candidate background
     Color border{200, 200, 200, 255};       // window/separator border
@@ -63,6 +65,9 @@ struct RenderContext {
     const Theme* theme = nullptr;
     const LayoutConfig* layout_cfg = nullptr;
     std::string preedit;
+    size_t preedit_cursor = 0;
+    int preedit_cursor_width = 1;
+    bool show_preedit_cursor = false;
     int page_current = 1, page_total = 1;
     int highlighted = -1, hovered_index = -1;
     RECT preedit_rect{};

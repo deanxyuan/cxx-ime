@@ -379,8 +379,11 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
             }
         }
 
+        const size_t preedit_cursor = cxxime_tsf::clamp_preedit_cursor(
+            response.preedit_cursor, preedit.size());
         auto decision = cxxime_tsf::decide_preedit(
-            _config.inline_preedit, _config.preedit_type, preedit, candidate_texts);
+            _config.inline_preedit, _config.preedit_type, preedit, preedit_cursor,
+            candidate_texts);
 
         const bool has_candidates = response.candidate_count > 0;
         cxxime::CandidatePage page = _candidate_page_from_response(response);
@@ -407,24 +410,25 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
             external_candidate_window = _publish_candidate_ui_element(
                 page, response.candidate_count, response.page_current, response.page_total);
             candidate_ui_published = true;
-            update_composition(pic, preedit, true, true);
+            update_composition(pic, preedit, preedit_cursor, true, true);
         } else if (decision.start_composition) {
             _update_reading_ui_element(pic, preedit);
-            update_composition(pic, decision.inline_text, true, true);
+            update_composition(
+                pic, decision.inline_text, decision.inline_cursor, true, true);
         } else {
             _update_reading_ui_element(pic, preedit);
             if (_composing && _composition) {
                 _end_composition(pic);
             }
             _composing = true;
-            update_composition(pic, L"", true, true);
+            update_composition(pic, L"", 0, true, true);
         }
         *pfEaten = TRUE;
 
         std::string popup_preedit =
             ui_element_only ? response.preedit :
             (decision.show_preedit_in_popup ? response.preedit : "");
-        _candidateWindow.set_preedit(popup_preedit);
+        _candidateWindow.set_preedit(popup_preedit, response.preedit_cursor);
 
         const bool has_preedit = !popup_preedit.empty();
 
@@ -523,6 +527,7 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
         trace.result = TsfResult::PREEDIT;
         trace.candidate_count = response.candidate_count;
         trace.preedit_len = (uint32_t)strlen(response.preedit);
+        trace.preedit_cursor = static_cast<uint32_t>(preedit_cursor);
         trace.window_us = _last_window_update_us;
 
         CXXIME_LOG(L"_ProcessKeyEvent: window_us=%lld, ipc_us=%lld", _last_window_update_us, _last_ipc_us);
@@ -533,7 +538,7 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
         _end_reading_ui_element("hide:clear_reading");
         _candidateWindow.set_preedit("");
         if (_composing && _composition) {
-            update_composition(pic, L"");
+            update_composition(pic, L"", 0);
         }
         _end_composition(pic);
         _composing = false;
@@ -560,7 +565,8 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
 
     cxxime_tsf::trace_stage_key_result(
         stage_input_id(), stage_composition_id(), static_cast<uint32_t>(wParam), *pfEaten != FALSE,
-        response.preedit[0] ? strlen(response.preedit) : 0, response.candidate_count,
+        response.preedit[0] ? strlen(response.preedit) : 0, response.preedit_cursor,
+        response.candidate_count,
         response.commit_text[0] ? strlen(response.commit_text) : 0, trace.result_string());
 
     if (trace.result == TsfResult::COMMITTED || trace.result == TsfResult::CLEARED) {
@@ -648,7 +654,8 @@ void TextService::_ProcessKeyUp(WPARAM wParam, LPARAM lParam) {
 
     cxxime_tsf::trace_stage_key_result(
         stage_input_id(), stage_composition_id(), static_cast<uint32_t>(wParam), false,
-        response.preedit[0] ? strlen(response.preedit) : 0, response.candidate_count,
+        response.preedit[0] ? strlen(response.preedit) : 0, response.preedit_cursor,
+        response.candidate_count,
         response.commit_text[0] ? strlen(response.commit_text) : 0,
         committed ? "key_up_commit" : (ok ? "key_up" : "key_up_failed"));
     if (committed) {

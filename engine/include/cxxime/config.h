@@ -53,6 +53,7 @@ struct Config {
     std::string layout = "horizontal";  // horizontal | vertical
     std::string render_backend = "d2d";  // gdi | d2d
     bool inline_preedit = false;
+    bool show_preedit_cursor = true;
     std::string preedit_type = "composition";
 
     // theme
@@ -79,6 +80,7 @@ struct Config {
     // Color scheme loaded from themes.json.
     // Fields default to -1 = "not set" (resolved to Weasel-style fallbacks in load_themes).
     struct SchemeColors {
+        std::string name;
         int text_color = -1;
         int back_color = -1;
         int border_color = -1;
@@ -88,6 +90,7 @@ struct Config {
         int hilited_back_color = -1;
         int hilited_candidate_text_color = -1;
         int hilited_candidate_back_color = -1;
+        int preedit_cursor_color = -1;
         int comment_text_color = -1;
         int prevpage_color = -1;
         int nextpage_color = -1;

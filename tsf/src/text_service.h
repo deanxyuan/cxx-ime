@@ -110,6 +110,7 @@ public:
                            bool important = false);
     HRESULT update_composition(ITfContext* pic,
                                const std::wstring& preedit,
+                               size_t preedit_cursor,
                                bool ensure = false,
                                bool sync = false);
     bool apply_composition_display_attribute(ITfContext* pic, ITfRange* range, TfEditCookie ec);
@@ -140,6 +141,7 @@ public:
         TsfResult result = TsfResult::REJECTED;
         uint32_t candidate_count = 0;
         uint32_t preedit_len = 0;
+        uint32_t preedit_cursor = 0;
         int64_t total_us = 0;
         int64_t ipc_us = 0;
         int64_t window_us = 0;

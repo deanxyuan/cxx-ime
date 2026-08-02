@@ -50,6 +50,7 @@ Theme build_theme_from_config(const Config& cfg) {
         t.hilited_back = {1, 94, 169, 255};
         t.border       = {1, 78, 139, 255};
         t.preedit_text = {248, 255, 255, 255};
+        t.preedit_cursor = {254, 255, 127, 255};
         t.prev_page    = {100, 150, 198, 255};
         t.next_page    = {100, 150, 198, 255};
         t.font_size    = cfg.font_size;
@@ -67,6 +68,7 @@ Theme build_theme_from_config(const Config& cfg) {
     t.hilited_text = to_color(s->hilited_candidate_text_color);
     t.hilited_back = to_color(s->hilited_candidate_back_color);
     t.preedit_text = to_color(s->hilited_text_color);
+    t.preedit_cursor = to_color(s->preedit_cursor_color);
     t.prev_page    = to_color(s->prevpage_color);
     t.next_page    = to_color(s->nextpage_color);
     t.font_size    = cfg.font_size;

@@ -3,6 +3,7 @@
 #ifndef CXXIME_SESSION_MANAGER_H_
 #define CXXIME_SESSION_MANAGER_H_
 
+#include <cstddef>
 #include <chrono>
 #include <cstdint>
 #include <functional>
@@ -84,6 +85,7 @@ struct ProcessKeyResult {
     std::string commit_text;
     bool composing = false;
     std::string preedit;
+    size_t preedit_cursor = 0;
     cxxime::CandidatePage candidates;
     cxxime::ImeStatus ime_status;
 };

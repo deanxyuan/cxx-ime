@@ -148,6 +148,37 @@ TEST(Config, theme_derives_muted_comment_color_unless_explicitly_configured) {
     std::remove(path);
 }
 
+TEST(Config, theme_derives_preedit_cursor_color_unless_explicitly_configured) {
+    const char* path = "test_preedit_cursor_color_themes.json";
+    {
+        std::ofstream file(path);
+        file << R"({"preset_color_schemes":{
+            "derived_light":{"back_color":16777215,"hilited_text_color":0},
+            "derived_dark":{"back_color":0,"hilited_text_color":16777215},
+            "sampled":{"back_color":15528174,"hilited_text_color":0,
+            "hilited_candidate_back_color":16398858},
+            "adjusted":{"back_color":2236962,"hilited_text_color":10153609,
+            "hilited_candidate_back_color":3355443},
+            "explicit":{"back_color":16777215,"hilited_text_color":0,
+            "preedit_cursor_color":1193046},
+            "explicit_black":{"back_color":16777215,"hilited_text_color":16777215,
+            "preedit_cursor_color":0}
+            }})";
+    }
+
+    cxxime::Config config;
+    config.theme = "derived_light";
+    ASSERT_TRUE(config.load_themes(path));
+    ASSERT_EQ(config.preset_color_schemes["derived_light"].preedit_cursor_color, 0x666666);
+    ASSERT_EQ(config.preset_color_schemes["derived_dark"].preedit_cursor_color, 0x7a7a7a);
+    ASSERT_EQ(config.preset_color_schemes["sampled"].preedit_cursor_color, 0xfa3a0a);
+    ASSERT_EQ(config.preset_color_schemes["adjusted"].preedit_cursor_color, 0x959595);
+    ASSERT_EQ(config.preset_color_schemes["explicit"].preedit_cursor_color, 0x123456);
+    ASSERT_EQ(config.preset_color_schemes["explicit_black"].preedit_cursor_color, 0);
+
+    std::remove(path);
+}
+
 TEST(Config, load_missing_file) {
     cxxime::Config cfg;
     ASSERT_TRUE(!cfg.load("nonexistent_file.json"));
@@ -235,6 +266,20 @@ TEST(Config, inline_preedit_false) {
     ASSERT_EQ(cfg.inline_preedit, false);
 
     std::remove(path);
+}
+
+TEST(Config, preedit_cursor_defaults_enabled) {
+    cxxime::Config cfg;
+    ASSERT_TRUE(cfg.show_preedit_cursor);
+}
+
+TEST(Config, preedit_cursor_disabled_round_trip) {
+    cxxime::Config saved;
+    saved.show_preedit_cursor = false;
+
+    cxxime::Config loaded;
+    ASSERT_TRUE(loaded.load_json(saved.to_json()));
+    ASSERT_TRUE(!loaded.show_preedit_cursor);
 }
 
 TEST(Config, preedit_type_preview) {
