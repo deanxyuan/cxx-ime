@@ -485,6 +485,96 @@ class StageTraceToolsTest(unittest.TestCase):
                 check.stderr,
             )
 
+    def test_t3_comless_evidence_checks_probe_mode_and_runtime_flag(self):
+        with tempfile.TemporaryDirectory() as directory:
+            probe_path = os.path.join(directory, "stage1-probe-t3-x64.jsonl")
+            probe = [
+                record(
+                    "probe", "probe.runtime", 1,
+                    activate_flags=12,
+                    com_mode="uninitialized",
+                    thread_manager_factory="TF_CreateThreadMgr",
+                    result="ready",
+                ),
+                record(
+                    "probe", "probe.active_profile", 2,
+                    manager_creation="without_com",
+                    comless_category_hr=0,
+                    comless_category_registered=True,
+                    result="verified",
+                ),
+                record(
+                    "probe", "probe.display_attribute", 3,
+                    manager_creation="without_com",
+                    result="verified",
+                ),
+                record("probe", "probe.imm_read", 4, result_bytes=4),
+                record("probe", "probe.ui_element", 5),
+                record(
+                    "probe", "probe.candidate_snapshot", 6,
+                    count=1,
+                    selection=0,
+                    text_lengths=[1],
+                    text_digests=["1" * 64],
+                    result="read",
+                ),
+            ]
+            self.write_records(probe_path, probe)
+            check = self.run_command([
+                sys.executable,
+                os.path.join(DIAGNOSTICS, "scripts", "check_stage_trace.py"),
+                "--kind",
+                "probe",
+                "--require-comless",
+                "uninitialized",
+                probe_path,
+            ])
+            self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
+
+            check = self.run_command([
+                sys.executable,
+                os.path.join(DIAGNOSTICS, "scripts", "check_stage_trace.py"),
+                "--kind",
+                "probe",
+                "--require-comless",
+                "mta",
+                probe_path,
+            ])
+            self.assertEqual(check.returncode, 2, check.stdout + check.stderr)
+            self.assertIn("T3: Probe did not use the TSF factory in mta COM mode",
+                          check.stderr)
+
+            runtime_path = os.path.join(directory, "stage1-runtime-t3-x64.jsonl")
+            runtime = [
+                record("tsf", "runtime.component_status", 1),
+                record("tsf", "runtime.activate", 2,
+                       activate_flags=12,
+                       manager_creation="without_com",
+                       profile_manager_hr=0,
+                       profile_query_hr=0,
+                       profile_caps=4,
+                       result="success"),
+                record("tsf", "key.route", 3),
+                record(
+                    "tsf", "candidate.snapshot", 4,
+                    count=1,
+                    selection=0,
+                    text_lengths=[1],
+                    text_digests=["1" * 64],
+                ),
+            ]
+            self.write_records(runtime_path, runtime)
+            check = self.run_command([
+                sys.executable,
+                os.path.join(DIAGNOSTICS, "scripts", "check_stage_trace.py"),
+                "--kind",
+                "runtime",
+                "--require-comless",
+                "uninitialized",
+                runtime_path,
+            ])
+            self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
+
 
 def main():
     parser = argparse.ArgumentParser()

@@ -27,12 +27,18 @@ enum class CandidateUiVisibilityCycle {
     completed,
 };
 
+enum class ProbeComMode {
+    sta,
+    uninitialized,
+    mta,
+};
+
 class UiElementSink;
 class ConversionCompartmentProbe;
 
 class ProbeApp {
 public:
-    bool initialize(HINSTANCE instance);
+    bool initialize(HINSTANCE instance, ProbeComMode com_mode);
     int run();
     void shutdown();
     const std::wstring& initialization_error() const;
@@ -81,6 +87,7 @@ private:
     bool candidate_should_draw() const;
     uint64_t ensure_composition_id();
     bool fail_initialization(const char* stage, HRESULT result);
+    bool initialize_tsf_runtime();
 
     HINSTANCE instance_ = nullptr;
     HWND hwnd_ = nullptr;
@@ -96,6 +103,8 @@ private:
     DWORD sink_cookie_ = TF_INVALID_COOKIE;
     bool com_initialized_ = false;
     bool thread_mgr_active_ = false;
+    ProbeComMode com_mode_ = ProbeComMode::sta;
+    DWORD activate_flags_ = TF_TMAE_UIELEMENTENABLEDONLY;
     bool composition_active_ = false;
     bool gate_on_signal_ = false;
     bool original_candidate_ui_requested_ = false;

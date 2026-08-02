@@ -19,8 +19,15 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR command_line, int) {
         return result;
     }
 
+    cxxime_probe::ProbeComMode com_mode = cxxime_probe::ProbeComMode::sta;
+    if (command_line && wcsstr(command_line, L"--comless-mta")) {
+        com_mode = cxxime_probe::ProbeComMode::mta;
+    } else if (command_line && wcsstr(command_line, L"--comless")) {
+        com_mode = cxxime_probe::ProbeComMode::uninitialized;
+    }
+
     cxxime_probe::ProbeApp app;
-    if (!app.initialize(instance)) {
+    if (!app.initialize(instance, com_mode)) {
         MessageBoxW(nullptr, app.initialization_error().c_str(), L"CxxIME Probe",
                     MB_OK | MB_ICONERROR);
         app.shutdown();
