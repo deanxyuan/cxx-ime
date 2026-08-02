@@ -417,10 +417,8 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
                 pic, decision.inline_text, decision.inline_cursor, true, true);
         } else {
             _update_reading_ui_element(pic, preedit);
-            if (_composing && _composition) {
-                _end_composition(pic);
-            }
-            _composing = true;
+            // Keep one empty TSF composition active while preedit is shown in the popup.
+            // The host can then terminate it consistently when its selection moves.
             update_composition(pic, L"", 0, true, true);
         }
         *pfEaten = TRUE;

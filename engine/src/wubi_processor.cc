@@ -45,15 +45,10 @@ ProcessResult WubiProcessor::process_key(const KeyEvent& event, Context& context
     // Up/Down arrows: navigate candidates
     if (vk == VK_UP || vk == VK_DOWN) {
         if (context.is_composing() && !context.candidates.candidates.empty()) {
-            int count = context.selectable_candidate_count();
             if (vk == VK_DOWN) {
-                context.candidates.highlighted++;
-                if (context.candidates.highlighted >= count)
-                    context.candidates.highlighted = 0;
+                context.move_to_next_candidate();
             } else {
-                context.candidates.highlighted--;
-                if (context.candidates.highlighted < 0)
-                    context.candidates.highlighted = count - 1;
+                context.move_to_previous_candidate();
             }
             return ProcessResult::ACCEPTED;
         }

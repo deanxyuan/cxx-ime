@@ -39,6 +39,7 @@ class TextService : public ITfTextInputProcessorEx,
                     public ITfThreadFocusSink,
                     public ITfThreadMgrEventSink,
                     public ITfCompartmentEventSink,
+                    public ITfTextEditSink,
                     public ITfTextLayoutSink,
                     public ITfDisplayAttributeProvider {
 public:
@@ -79,6 +80,11 @@ public:
 
     // ITfCompartmentEventSink
     STDMETHODIMP OnChange(REFGUID rguid) override;
+
+    // ITfTextEditSink
+    STDMETHODIMP OnEndEdit(ITfContext* pic,
+                           TfEditCookie ecReadOnly,
+                           ITfEditRecord* editRecord) override;
 
     // ITfTextLayoutSink
     STDMETHODIMP OnLayoutChange(ITfContext* pic,
@@ -180,11 +186,15 @@ private:
                                               VARTYPE* value_type) const;
     bool _context_belongs_to_foreground(ITfContext* context) const;
     HWND _focused_context_view_window() const;
+    bool _ensure_text_edit_sink(ITfContext* context);
+    bool _advise_text_edit_sink(ITfDocumentMgr* doc_mgr);
+    void _unadvise_text_edit_sink();
     bool _advise_text_layout_sink(ITfDocumentMgr* doc_mgr);
     void _unadvise_text_layout_sink();
     void _request_candidate_position_update(ITfContext* pic,
                                             const char* reason,
                                             bool from_layout_change = false);
+    void _follow_native_caret();
     bool _resolve_native_caret_rect(RECT* out) const;
     bool _resolve_context_native_caret_rect(ITfContext* context,
                                             RECT* out,
@@ -241,8 +251,10 @@ private:
     DWORD _dwThreadFocusCookie = TF_INVALID_COOKIE;
     DWORD _dwThreadMgrEventCookie = TF_INVALID_COOKIE;
     DWORD _dwConversionCompartmentCookie = TF_INVALID_COOKIE;
+    DWORD _dwTextEditSinkCookie = TF_INVALID_COOKIE;
     DWORD _dwTextLayoutSinkCookie = TF_INVALID_COOKIE;
     TfGuidAtom _displayAttributeAtom = 0;
+    ITfContext* _textEditSinkContext = nullptr;
     ITfContext* _textLayoutSinkContext = nullptr;
     ITfCompartment* _conversionCompartment = nullptr;
     ITfSource* _conversionCompartmentSource = nullptr;

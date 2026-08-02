@@ -51,6 +51,8 @@ public:
     void reset_pagination();
     void move_to_next_page();
     void move_to_previous_page();
+    void move_to_next_candidate();
+    void move_to_previous_candidate();
     int selectable_candidate_count() const;
 
     void set_commit_source(CommitSource s) { commit_source_ = s; }
@@ -68,6 +70,7 @@ private:
     size_t preedit_cursor_from_end_ = 0;
     uint64_t preedit_revision_ = 0;
     std::vector<int> previous_page_offsets_;
+    bool highlight_last_after_page_change_ = false;
     CommitSource commit_source_ = CommitSource::kRawCode;
 };
 

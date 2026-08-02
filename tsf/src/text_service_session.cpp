@@ -300,6 +300,9 @@ void TextService::_poll_unfocused_state_keys() {
             if (_sessionId && _client.ensure_connected())
                 _client.focus_in(_sessionId);
         }
+        if (_composing && _candidateWindow.is_visible()) {
+            _follow_native_caret();
+        }
         if (_candidateShowPending && _composing) {
             ITfContext* context = _current_edit_context_for_composition();
             if (context) {
