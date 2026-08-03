@@ -32,7 +32,7 @@ struct CompositionLimits {
     uint32_t max_repeated_short_paths = 1;
     uint32_t max_range_queries = 128;
     uint32_t max_entry_scans = 2048;
-    uint32_t max_candidates_per_range = 8;
+    uint32_t max_candidates_per_range = 1;
     uint32_t max_span_candidates = 256;
     uint32_t max_beam_width = 32;
     uint32_t max_nodes = 1024;

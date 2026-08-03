@@ -258,7 +258,10 @@ PinyinComposer::compose(const std::string& input, const std::vector<CompositionP
         std::vector<std::vector<uint32_t>> edges_by_start(ids.size());
         bool stop_queries = false;
         for (size_t start = 0; start < ids.size() && !stop_queries; ++start) {
-            for (size_t end = start + 1; end <= ids.size(); ++end) {
+            const size_t last_end = path.kind == CompositionPathKind::kRepeatedShortCode
+                                        ? start + 1
+                                        : ids.size();
+            for (size_t end = start + 1; end <= last_end; ++end) {
                 SpanMemoEntry* memo_entry = find_memo(memo, ids, start, end);
                 if (!memo_entry) {
                     SpanMemoEntry entry;
