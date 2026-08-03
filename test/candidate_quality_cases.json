@@ -109,6 +109,37 @@
       }
     },
     {
+      "id": "pinyin-compose-repeated-short-code-keeps-best-text",
+      "mode": "pinyin",
+      "input": "hhhhhhhhhh",
+      "contains": [
+        { "text": "哈哈哈哈哈哈哈哈哈哈", "max_rank": 9 }
+      ],
+      "forbid_visible": [
+        "蛤蛤哈哈哈哈哈哈哈哈",
+        "哈哈哈哈哈哈哈哈蛤蛤"
+      ]
+    },
+    {
+      "id": "pinyin-compose-normal-path-filters-homophone-expansion",
+      "mode": "pinyin",
+      "input": "wahahaha",
+      "contains": [
+        { "text": "哇哈哈哈", "max_rank": 1 }
+      ],
+      "forbid_visible": [
+        "瓦哈哈哈",
+        "挖哈哈哈",
+        "袜哈哈哈",
+        "蛙哈哈哈",
+        "娲哈哈哈",
+        "洼哈哈哈",
+        "娃哈哈蛤",
+        "哇哈哈蛤",
+        "哇哈蛤蛤"
+      ]
+    },
+    {
       "id": "pinyin-user-exact-short-code-promotes",
       "mode": "pinyin",
       "input": "ddd",

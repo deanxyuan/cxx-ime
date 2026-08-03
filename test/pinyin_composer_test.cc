@@ -199,6 +199,9 @@ TEST(PinyinComposer, composes_complete_and_repeated_short_code_paths) {
             {"a:a:a:a:a:a", "啊啊啊啊啊啊", 500},
             {"ni", "你", 9500},
             {"ha", "哈", 9000},
+            {"ha", "蛤", 100},
+            {"ha:ha", "哈哈", 8000},
+            {"ha:ha", "蛤蛤", 50},
             {"ha:ha:ha:ha:ha", "哈哈哈哈哈", 400},
         },
         {
@@ -231,12 +234,62 @@ TEST(PinyinComposer, composes_complete_and_repeated_short_code_paths) {
     ASSERT_TRUE(nine_h_candidate != nullptr);
     ASSERT_TRUE(nine_h_candidate->origin == cxxime::CandidateOrigin::kComposed);
 
+    const auto ten_h = translator.translate("hhhhhhhhhh", 0, 10);
+    ASSERT_EQ(ten_h.candidates.size(), 1u);
+    ASSERT_EQ(ten_h.candidates[0].text, "哈哈哈哈哈哈哈哈哈哈");
+
     cxxime::QueryTrace trace;
     const auto prefixed_repeat = translator.translate("nihh", 0, 10, &trace);
     const auto* prefixed_candidate = find_candidate(prefixed_repeat, "你哈哈");
     ASSERT_TRUE(prefixed_candidate != nullptr);
     ASSERT_TRUE(prefixed_candidate->origin == cxxime::CandidateOrigin::kComposed);
     ASSERT_EQ(trace.composition_repeated_short_path_count, 1u);
+
+    const std::string long_repeat_input = "ni" + std::string(23, 'h');
+    std::string long_repeat_text = "你";
+    for (int i = 0; i < 23; ++i) {
+        long_repeat_text += "哈";
+    }
+    const auto long_repeat = translator.translate(long_repeat_input, 0, 10);
+    const auto* long_repeat_candidate = find_candidate(long_repeat, long_repeat_text);
+    ASSERT_TRUE(long_repeat_candidate != nullptr);
+    ASSERT_TRUE(std::none_of(long_repeat.candidates.begin(), long_repeat.candidates.end(),
+                                [](const auto& candidate) {
+                                    return candidate.text.find("蛤") != std::string::npos;
+                                }));
+}
+
+TEST(PinyinComposer, normal_paths_do_not_expand_low_frequency_homophones) {
+    ComposerFixture fixture;
+    ASSERT_TRUE(fixture.initialize(
+        {
+            {"wa", "哇", 9000},
+            {"wa", "娃", 8000},
+            {"wa", "瓦", 100},
+            {"ha", "哈", 9000},
+            {"ha", "蛤", 100},
+            {"ha:ha", "哈哈", 8000},
+            {"wa:ha:ha", "娃哈哈", 8000},
+            {"wa:ha:ha:ha", "哇哈哈哈", 10000},
+        },
+        {
+            {"wa", "wa", cxxime::kNormalSpelling, 0.0f},
+            {"ha", "ha", cxxime::kNormalSpelling, 0.0f},
+        }));
+
+    cxxime::Syllabifier syllabifier(fixture.spellings);
+    cxxime::PinyinTranslator translator;
+    translator.set_dict(&fixture.dictionary);
+    translator.set_syllabifier(&syllabifier);
+
+    const auto page = translator.translate("wahahaha", 0, 10);
+    ASSERT_TRUE(find_candidate(page, "哇哈哈哈") != nullptr);
+    ASSERT_TRUE(find_candidate(page, "娃哈哈哈") != nullptr);
+    ASSERT_TRUE(
+        std::none_of(page.candidates.begin(), page.candidates.end(), [](const auto& candidate) {
+            return candidate.text.find("瓦") != std::string::npos ||
+                   candidate.text.find("蛤") != std::string::npos;
+        }));
 }
 
 TEST(PinyinComposer, rejects_single_tail_and_mixed_abbreviation_paths) {
