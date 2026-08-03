@@ -35,6 +35,8 @@ public:
                                     int candidate_offset = -1) = 0;
     virtual void update_recent(const std::string& key, const Candidate& candidate) {}
     virtual void clear_recent() {}
+    virtual void clear_query_cache() {}
+    virtual void set_sentence_composition_enabled(bool enabled) {}
 };
 
 // Pinyin translator implementation
@@ -47,6 +49,8 @@ public:
     // Per-session recent candidate cache management.
     void update_recent(const std::string& key, const Candidate& candidate) override;
     void clear_recent() override { recent_cache_.clear(); }
+    void clear_query_cache() override { query_cache_.clear(); }
+    void set_sentence_composition_enabled(bool enabled) override;
 
     CandidatePage translate(const std::string& pinyin, int page_index = 0, int page_size = 9,
                             QueryTrace* trace = nullptr, const QueryBudget* budget = nullptr,
@@ -89,6 +93,7 @@ private:
     uint64_t recent_sequence_ = 0;
     uint64_t query_cache_sequence_ = 0;
     mutable uint64_t cached_user_dict_version_ = 0;  // Phase 5: for cache invalidation
+    bool sentence_composition_enabled_ = true;
     static constexpr size_t kMaxRecentKeys = 128;
     static constexpr size_t kMaxRecentPerKey = 8;
     static constexpr size_t kMaxQueryCacheEntries = 64;

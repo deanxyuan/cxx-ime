@@ -100,11 +100,13 @@ TEST(QueryTrace, trace_mode_off_logs_nothing) {
     cxxime::DiagnosticsConfig cfg;
     cfg.trace_mode = cxxime::DiagnosticTraceMode::kOff;
     cxxime::set_diagnostics_config(cfg);
+
     cxxime::QueryTrace t;
     t.deadline_exceeded = true;
     t.cancelled = true;
-    t.total_us = 100000;
+    t.total_us = 1000000;
     ASSERT_TRUE(!t.should_log());
+
     cxxime::reset_diagnostics_config();
 }
 
@@ -112,11 +114,14 @@ TEST(QueryTrace, trace_mode_error_logs_only_error_paths) {
     cxxime::DiagnosticsConfig cfg;
     cfg.trace_mode = cxxime::DiagnosticTraceMode::kError;
     cxxime::set_diagnostics_config(cfg);
+
     cxxime::QueryTrace t;
-    t.total_us = 100000;
+    t.total_us = 1000000;
     ASSERT_TRUE(!t.should_log());
+
     t.deadline_exceeded = true;
     ASSERT_TRUE(t.should_log());
+
     cxxime::reset_diagnostics_config();
 }
 
@@ -124,10 +129,12 @@ TEST(QueryTrace, trace_mode_verbose_logs_fast_queries) {
     cxxime::DiagnosticsConfig cfg;
     cfg.trace_mode = cxxime::DiagnosticTraceMode::kVerbose;
     cxxime::set_diagnostics_config(cfg);
+
     cxxime::QueryTrace t;
     t.cache_hit = true;
     t.total_us = 10;
     ASSERT_TRUE(t.should_log());
+
     cxxime::reset_diagnostics_config();
 }
 
@@ -152,12 +159,37 @@ TEST(QueryTrace, should_sample_rate_distribution) {
     ASSERT_TRUE(hits < 300) << "hits=" << hits;
 }
 
+TEST(QueryTrace, json_contains_composition_metrics) {
+    cxxime::QueryTrace trace;
+    trace.composition_path_count = 2;
+    trace.composition_repeated_short_path_count = 1;
+    trace.span_query_count = 12;
+    trace.span_entry_scan_count = 34;
+    trace.composition_state_count = 56;
+    trace.composed_candidate_count = 7;
+    trace.composition_truncated = true;
+    trace.composition_us = 89;
+
+    char buffer[2048] = {};
+    const int length = trace.to_json(buffer, sizeof(buffer));
+    ASSERT_TRUE(length > 0);
+    const std::string json(buffer, length);
+    ASSERT_NE(json.find("\"composition_paths\":2"), std::string::npos);
+    ASSERT_NE(json.find("\"composition_repeat_paths\":1"), std::string::npos);
+    ASSERT_NE(json.find("\"span_queries\":12"), std::string::npos);
+    ASSERT_NE(json.find("\"span_scans\":34"), std::string::npos);
+    ASSERT_NE(json.find("\"composition_states\":56"), std::string::npos);
+    ASSERT_NE(json.find("\"composed_candidates\":7"), std::string::npos);
+    ASSERT_NE(json.find("\"composition_truncated\":true"), std::string::npos);
+    ASSERT_NE(json.find("\"composition_us\":89"), std::string::npos);
+}
+
 // ─── QueryScratch ─────────────────────────────────────────────────────
 
 TEST(QueryScratch, reset_clears_all) {
     cxxime::QueryScratch scr;
     scr.id_sequences.push_back({1, 2, 3});
-    scr.live_ids.push_back({4, 5});
+    scr.live_path_indices.push_back(0);
     cxxime::Candidate c1;
     c1.text = "test";
     c1.frequency = 100;
@@ -172,7 +204,7 @@ TEST(QueryScratch, reset_clears_all) {
     scr.reset_for_query();
 
     ASSERT_TRUE(scr.id_sequences.empty());
-    ASSERT_TRUE(scr.live_ids.empty());
+    ASSERT_TRUE(scr.live_path_indices.empty());
     ASSERT_TRUE(scr.merged_candidates.empty());
     ASSERT_TRUE(scr.temp_candidates.empty());
     ASSERT_TRUE(scr.seen_hashes.empty());

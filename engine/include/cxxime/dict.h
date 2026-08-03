@@ -4,6 +4,7 @@
 #define CXXIME_DICT_H_
 
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <shared_mutex>
 #include <string>
@@ -19,7 +20,28 @@ namespace cxxime {
 struct DictEntry;
 struct QueryTrace;
 struct QueryBudget;
+struct QueryDeadline;
 struct UserLookupStats;
+
+struct SpanCandidate {
+    uint16_t end = 0;
+    Candidate candidate;
+};
+
+struct SpanLookupLimits {
+    uint32_t max_range_queries = 128;
+    uint32_t max_entry_scans = 2048;
+    uint32_t max_results = 256;
+    uint32_t max_candidates_per_range = 8;
+};
+
+struct SpanLookupStats {
+    uint32_t range_queries = 0;
+    uint32_t entry_scans = 0;
+    uint32_t result_count = 0;
+    bool truncated = false;
+    bool deadline_exceeded = false;
+};
 
 struct UserDictEntryInfo {
     std::string text;
@@ -68,6 +90,19 @@ public:
     std::vector<Candidate> lookup_by_syllables(const std::vector<std::string>& syllables, int limit, const QueryBudget& budget, QueryTrace* trace = nullptr);
     std::vector<Candidate> lookup_by_ids(const std::vector<uint32_t>& ids, int limit = 10,
                                          QueryTrace* trace = nullptr, const QueryBudget* budget = nullptr);
+    bool lookup_exact_span(const std::vector<uint32_t>& ids,
+                           size_t start,
+                           size_t end,
+                           const SpanLookupLimits& limits,
+                           const QueryDeadline& deadline,
+                           std::vector<Candidate>& output,
+                           SpanLookupStats& stats) const;
+    void lookup_exact_spans(const std::vector<uint32_t>& ids,
+                            size_t start,
+                            const SpanLookupLimits& limits,
+                            const QueryDeadline& deadline,
+                            std::vector<SpanCandidate>& output,
+                            SpanLookupStats& stats) const;
     bool has_prefix(const std::vector<uint32_t>& ids, QueryTrace* trace = nullptr) const;
     int count(const std::string& code_prefix, QueryTrace* trace = nullptr);
     std::string reverse_lookup(const std::string& text);
@@ -120,6 +155,8 @@ private:
     void build_syllabary();
     void build_id_index();
     void unload_id_index();
+    void fill_system_candidate(uint32_t entry_index, Candidate& candidate,
+                               int frequency_boost) const;
 
     char* dict_data_ = nullptr;         // heap-allocated buffer
     size_t dict_data_size_ = 0;

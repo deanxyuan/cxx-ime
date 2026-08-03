@@ -348,7 +348,7 @@ TEST(IndexedFastPath, cache_hit_skips_syllabifier) {
     DeleteFileA(topn_path.c_str());
 }
 
-TEST(IndexedFastPath, long_complete_key_hit_skips_syllabifier) {
+TEST(IndexedFastPath, underfilled_complete_key_checks_composition_once) {
     std::string dict_path = make_temp_path("test_ifp_long.dict.bin");
     std::string topn_path = make_temp_path("test_ifp_long.topn.bin");
 
@@ -376,9 +376,19 @@ TEST(IndexedFastPath, long_complete_key_hit_skips_syllabifier) {
 
     auto& trace = engine.last_trace();
     ASSERT_TRUE(trace.cache_hit);
-    ASSERT_EQ(trace.syllable_path_count, 0);
+    ASSERT_TRUE(trace.syllable_path_count > 0);
     ASSERT_TRUE(!engine.context().candidates.candidates.empty());
     ASSERT_EQ(engine.context().candidates.candidates[0].text, "你好世界");
+
+    engine.clear_composition();
+    for (char c : std::string("nihaoshijie")) {
+        cxxime::KeyEvent ev;
+        ev.keycode = c - 'a' + 'A';
+        ev.is_key_up = false;
+        engine.process_key(ev);
+    }
+    ASSERT_TRUE(engine.last_trace().cache_hit);
+    ASSERT_EQ(engine.last_trace().syllable_path_count, 0);
 
     dict.close();
     DeleteFileA(dict_path.c_str());

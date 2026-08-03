@@ -404,17 +404,24 @@ int QueryTrace::to_json(char* buf, int buf_size) const {
         "{\"q\":%llu,\"sid\":%u,\"rev\":%llu,\"input\":\"%s\","
         "\"page\":%d,\"page_size\":%d,"
         "\"paths\":%d,\"live\":%d,\"candidates\":%d,"
+        "\"composition_paths\":%u,\"composition_repeat_paths\":%u,"
+        "\"span_queries\":%u,\"span_scans\":%u,\"composition_states\":%u,"
+        "\"composed_candidates\":%u,\"composition_truncated\":%s,"
         "\"exact_scan\":%u,\"prefix_scan\":%u,\"user_scan\":%u,"
         "\"mixed_scan\":%u,\"mixed_bucket\":%u,\"mixed_hit\":%s,"
         "\"cache\":%s,\"deadline\":%s,\"cancelled\":%s,"
         "\"truncated\":%s,\"scan_trunc\":%s,\"topk_trunc\":%s,\"page_trunc\":%s,"
-        "\"proc_us\":%lld,\"trans_us\":%lld,\"lookup_us\":%lld,\"merge_us\":%lld,\"total_us\":%lld}",
+        "\"proc_us\":%lld,\"trans_us\":%lld,\"lookup_us\":%lld,"
+        "\"composition_us\":%lld,\"merge_us\":%lld,\"total_us\":%lld}",
         (unsigned long long)query_id,
         (unsigned)session_id,
         (unsigned long long)revision,
         escaped_input,
         page_index, page_size,
         syllable_path_count, live_path_count, candidate_count,
+        composition_path_count, composition_repeated_short_path_count,
+        span_query_count, span_entry_scan_count, composition_state_count,
+        composed_candidate_count, composition_truncated ? "true" : "false",
         exact_scan_count, prefix_scan_count, user_scan_count,
         mixed_scan_count, mixed_bucket_size, mixed_cache_hit ? "true" : "false",
         cache_hit ? "true" : "false",
@@ -427,6 +434,7 @@ int QueryTrace::to_json(char* buf, int buf_size) const {
         (long long)processor_us,
         (long long)translate_us,
         (long long)lookup_us,
+        (long long)composition_us,
         (long long)merge_us,
         (long long)total_us);
 

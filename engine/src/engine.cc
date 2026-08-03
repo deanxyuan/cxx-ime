@@ -65,7 +65,8 @@ static void update_learning_entry(Dict* dict, const std::string& text,
                                   const std::string& fallback_code,
                                   const Candidate* candidate,
                                   bool allow_syllables) {
-    if (!dict || text.empty())
+    if (!dict || text.empty() ||
+        (candidate && candidate->origin == CandidateOrigin::kComposed))
         return;
 
     std::string code = fallback_code;
@@ -689,6 +690,19 @@ void Engine::clear_composition() {
     // Preserve session recent cache; do not call translator_->clear_recent().
 }
 
+void Engine::set_sentence_composition_enabled(bool enabled) {
+    sentence_composition_enabled_ = enabled;
+    if (translator_) {
+        translator_->set_sentence_composition_enabled(enabled);
+    }
+}
+
+void Engine::clear_query_cache() {
+    if (translator_) {
+        translator_->clear_query_cache();
+    }
+}
+
 void Engine::set_wubi_dict(Dict* dict) {
     wubi_dict_ = dict;
     if (wubi_dict_)
@@ -745,6 +759,7 @@ void Engine::rebuild_pipeline(InputMode mode, bool force) {
         }
         translator_ = std::move(pinyin_trans);
     }
+    translator_->set_sentence_composition_enabled(sentence_composition_enabled_);
 }
 
 std::string Engine::derive_spellings_path(const std::string& dict_path) {

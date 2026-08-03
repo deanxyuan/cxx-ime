@@ -2,20 +2,26 @@
 //
 // Offline benchmark tool for pinyin query performance.
 
-#include <cxxime/engine.h>
-#include <cxxime/query_trace.h>
-#include <cxxime/query_budget.h>
-#include <iostream>
-#include <fstream>
-#include <sstream>
-#include <vector>
-#include <string>
 #include <algorithm>
 #include <chrono>
-#include <cstring>
 #include <cmath>
+#include <cstring>
+#include <fstream>
+#include <iostream>
+#include <sstream>
+#include <string>
+#include <vector>
+
+#include <json.hpp>
+
+#include <cxxime/engine.h>
+#include <cxxime/query_budget.h>
+#include <cxxime/query_trace.h>
+
+static constexpr size_t kMaxMaterializedPrefixLength = 6;
 
 enum class BenchMode { FinalKey, FullTyping };
+enum class BenchCacheMode { Warm, Cold };
 
 struct BenchmarkConfig {
     std::string data_dir;
@@ -30,6 +36,10 @@ struct BenchmarkConfig {
     std::string json_output;
     BenchMode mode = BenchMode::FinalKey;
     bool run_both = false;  // --mode both
+    BenchCacheMode cache_mode = BenchCacheMode::Warm;
+    bool run_both_cache_modes = false;
+    bool sentence_composition_enabled = true;
+    bool run_both_composition_modes = false;
 };
 
 // Per-iteration data (one entry per repeat)
@@ -44,6 +54,13 @@ struct IterationData {
     int candidate_count = 0;
     int syllable_paths = 0;
     int live_paths = 0;
+    uint32_t composition_paths = 0;
+    uint32_t repeated_short_paths = 0;
+    uint32_t span_queries = 0;
+    uint32_t span_scans = 0;
+    uint32_t composition_states = 0;
+    uint32_t composed_candidates = 0;
+    bool composition_truncated = false;
     uint32_t exact_scan = 0;
     uint32_t prefix_scan = 0;
     uint32_t user_scan = 0;
@@ -57,6 +74,7 @@ struct IterationData {
     int64_t processor_us = 0;
     int64_t translate_us = 0;
     int64_t lookup_us = 0;
+    int64_t composition_us = 0;
     int64_t merge_us = 0;
     int64_t total_us = 0;
     bool should_log = false;
@@ -65,6 +83,8 @@ struct IterationData {
 struct BenchmarkResult {
     std::string input;
     std::string mode;
+    std::string cache_mode;
+    std::string composition_mode;
     std::vector<IterationData> iterations;
 };
 
@@ -79,9 +99,11 @@ static void print_usage(const char* prog) {
               << "  --page-size <n>     Page size (default: 7)\n"
               << "  --deadline-ms <n>   Deadline in ms (default: 30)\n"
               << "  --mode <m>          Timing mode: final_key, full_typing, both (default: final_key)\n"
+              << "  --cache <m>         Query cache mode: warm, cold, both (default: warm)\n"
+              << "  --sentence-composition <m>  Composition mode: on, off, both (default: on)\n"
               << "  --trace-log         Show should_log() trigger rate\n"
               << "  --require-topn      Fail if topn cache not loaded\n"
-              << "  --require-cache-hit Fail if any short input misses cache\n"
+              << "  --require-cache-hit Fail if a materialized prefix misses cache\n"
               << "  --json <path>       Output JSONL trace file\n"
               << "  --help              Show this help\n";
 }
@@ -132,6 +154,30 @@ static BenchmarkConfig parse_args(int argc, char* argv[]) {
                 std::cerr << "Unknown mode: " << m << "\n";
                 exit(1);
             }
+        } else if (arg == "--cache" && i + 1 < argc) {
+            std::string mode = argv[++i];
+            if (mode == "warm") {
+                config.cache_mode = BenchCacheMode::Warm;
+            } else if (mode == "cold") {
+                config.cache_mode = BenchCacheMode::Cold;
+            } else if (mode == "both") {
+                config.run_both_cache_modes = true;
+            } else {
+                std::cerr << "Unknown cache mode: " << mode << "\n";
+                exit(1);
+            }
+        } else if (arg == "--sentence-composition" && i + 1 < argc) {
+            std::string mode = argv[++i];
+            if (mode == "on") {
+                config.sentence_composition_enabled = true;
+            } else if (mode == "off") {
+                config.sentence_composition_enabled = false;
+            } else if (mode == "both") {
+                config.run_both_composition_modes = true;
+            } else {
+                std::cerr << "Unknown sentence composition mode: " << mode << "\n";
+                exit(1);
+            }
         } else if (arg == "--trace-log") {
             config.trace_log = true;
         } else if (arg == "--require-topn") {
@@ -158,6 +204,13 @@ static void copy_trace(const cxxime::QueryTrace& trace, IterationData& data, int
     data.candidate_count = trace.candidate_count;
     data.syllable_paths = trace.syllable_path_count;
     data.live_paths = trace.live_path_count;
+    data.composition_paths = trace.composition_path_count;
+    data.repeated_short_paths = trace.composition_repeated_short_path_count;
+    data.span_queries = trace.span_query_count;
+    data.span_scans = trace.span_entry_scan_count;
+    data.composition_states = trace.composition_state_count;
+    data.composed_candidates = trace.composed_candidate_count;
+    data.composition_truncated = trace.composition_truncated;
     data.exact_scan = trace.exact_scan_count;
     data.prefix_scan = trace.prefix_scan_count;
     data.user_scan = trace.user_scan_count;
@@ -171,6 +224,7 @@ static void copy_trace(const cxxime::QueryTrace& trace, IterationData& data, int
     data.processor_us = trace.processor_us;
     data.translate_us = trace.translate_us;
     data.lookup_us = trace.lookup_us;
+    data.composition_us = trace.composition_us;
     data.merge_us = trace.merge_us;
     data.total_us = trace.total_us;
     data.should_log = trace.should_log();
@@ -221,15 +275,23 @@ static IterationData run_full_typing(cxxime::Engine& engine, const std::string& 
 
 static void run_benchmark(cxxime::Engine& engine, const std::string& input,
                           int repeat, int warmup, int page_size,
-                          BenchMode mode, BenchmarkResult& result) {
+                          BenchMode mode, BenchCacheMode cache_mode,
+                          bool composition_enabled, BenchmarkResult& result) {
     result.input = input;
     result.mode = (mode == BenchMode::FinalKey) ? "final_key" : "full_typing";
+    result.cache_mode = cache_mode == BenchCacheMode::Warm ? "warm" : "cold";
+    result.composition_mode = composition_enabled ? "on" : "off";
+    engine.set_sentence_composition_enabled(composition_enabled);
+    engine.clear_query_cache();
 
     auto run_fn = (mode == BenchMode::FinalKey) ? run_final_key : run_full_typing;
 
     // Warmup (not counted)
     for (int i = 0; i < warmup; ++i) {
         engine.clear_composition();  // preserve session recent cache
+        if (cache_mode == BenchCacheMode::Cold) {
+            engine.clear_query_cache();
+        }
         run_fn(engine, input, page_size);
     }
 
@@ -237,6 +299,9 @@ static void run_benchmark(cxxime::Engine& engine, const std::string& input,
     result.iterations.reserve(repeat);
     for (int i = 0; i < repeat; ++i) {
         engine.clear_composition();  // preserve session recent cache
+        if (cache_mode == BenchCacheMode::Cold) {
+            engine.clear_query_cache();
+        }
         result.iterations.push_back(run_fn(engine, input, page_size));
     }
 }
@@ -254,13 +319,18 @@ static uint32_t percentile_u32(const std::vector<uint32_t>& sorted, double p) {
 }
 
 static void print_results(const std::vector<BenchmarkResult>& results, bool show_log_rate) {
-    if (show_log_rate)
-        std::cout << "Input                Mode         p50_us   p95_us   p99_us   max_us   cands  seg_p95  look_p95  merge_p95  cache%   trunc%   deadline%  log%\n";
-    else
-        std::cout << "Input                Mode         p50_us   p95_us   p99_us   max_us   cands  seg_p95  look_p95  merge_p95  cache%   trunc%   deadline%\n";
+    if (show_log_rate) {
+        std::cout << "Input                Mode         Cache Comp   p50_us   p95_us   p99_us   "
+                     "max_us   cands  trans_p95  look_p95  comp_p95  merge_p95  cache%   trunc%   "
+                     "deadline%  log%\n";
+    } else {
+        std::cout << "Input                Mode         Cache Comp   p50_us   p95_us   p99_us   "
+                     "max_us   cands  trans_p95  look_p95  comp_p95  merge_p95  cache%   trunc%   "
+                     "deadline%\n";
+    }
 
     for (const auto& r : results) {
-        std::vector<int64_t> elapsed_us, seg_us, look_us, merge_us;
+        std::vector<int64_t> elapsed_us, translate_us, look_us, composition_us, merge_us;
         std::vector<uint32_t> exact_scans, prefix_scans, user_scans;
         int last_cands = 0;
         int trunc_count = 0;
@@ -270,8 +340,9 @@ static void print_results(const std::vector<BenchmarkResult>& results, bool show
 
         for (const auto& it : r.iterations) {
             elapsed_us.push_back(it.elapsed_us);
-            seg_us.push_back(it.translate_us);
+            translate_us.push_back(it.translate_us);
             look_us.push_back(it.lookup_us);
+            composition_us.push_back(it.composition_us);
             merge_us.push_back(it.merge_us);
             exact_scans.push_back(it.exact_scan);
             prefix_scans.push_back(it.prefix_scan);
@@ -284,45 +355,73 @@ static void print_results(const std::vector<BenchmarkResult>& results, bool show
         }
 
         std::sort(elapsed_us.begin(), elapsed_us.end());
-        std::sort(seg_us.begin(), seg_us.end());
+        std::sort(translate_us.begin(), translate_us.end());
         std::sort(look_us.begin(), look_us.end());
+        std::sort(composition_us.begin(), composition_us.end());
         std::sort(merge_us.begin(), merge_us.end());
         std::sort(exact_scans.begin(), exact_scans.end());
         std::sort(prefix_scans.begin(), prefix_scans.end());
         std::sort(user_scans.begin(), user_scans.end());
 
         int n = (int)r.iterations.size();
+        printf("%-20s %-12s %-5s %-4s %8lld %8lld %8lld %8lld %6d",
+               r.input.c_str(), r.mode.c_str(), r.cache_mode.c_str(),
+               r.composition_mode.c_str(),
+               percentile_i64(elapsed_us, 0.50),
+               percentile_i64(elapsed_us, 0.95),
+               percentile_i64(elapsed_us, 0.99),
+               elapsed_us.empty() ? 0LL : elapsed_us.back(),
+               last_cands);
+        printf(" %10lld %9lld %9lld %10lld %6.1f%% %6.1f%% %8.1f%%",
+               percentile_i64(translate_us, 0.95),
+               percentile_i64(look_us, 0.95),
+               percentile_i64(composition_us, 0.95),
+               percentile_i64(merge_us, 0.95),
+               n > 0 ? 100.0 * cache_hit_count / n : 0.0,
+               n > 0 ? 100.0 * trunc_count / n : 0.0,
+               n > 0 ? 100.0 * deadline_count / n : 0.0);
         if (show_log_rate) {
-            printf("%-20s %-12s %8lld %8lld %8lld %8lld %6d %8lld %9lld %10lld %6.1f%% %6.1f%% %8.1f%% %6.1f%%\n",
-                   r.input.c_str(), r.mode.c_str(),
-                   percentile_i64(elapsed_us, 0.50),
-                   percentile_i64(elapsed_us, 0.95),
-                   percentile_i64(elapsed_us, 0.99),
-                   elapsed_us.empty() ? 0LL : elapsed_us.back(),
-                   last_cands,
-                   percentile_i64(seg_us, 0.95),
-                   percentile_i64(look_us, 0.95),
-                   percentile_i64(merge_us, 0.95),
-                   n > 0 ? 100.0 * cache_hit_count / n : 0.0,
-                   n > 0 ? 100.0 * trunc_count / n : 0.0,
-                   n > 0 ? 100.0 * deadline_count / n : 0.0,
-                   n > 0 ? 100.0 * log_count / n : 0.0);
-        } else {
-            printf("%-20s %-12s %8lld %8lld %8lld %8lld %6d %8lld %9lld %10lld %6.1f%% %6.1f%% %8.1f%%\n",
-                   r.input.c_str(), r.mode.c_str(),
-                   percentile_i64(elapsed_us, 0.50),
-                   percentile_i64(elapsed_us, 0.95),
-                   percentile_i64(elapsed_us, 0.99),
-                   elapsed_us.empty() ? 0LL : elapsed_us.back(),
-                   last_cands,
-                   percentile_i64(seg_us, 0.95),
-                   percentile_i64(look_us, 0.95),
-                   percentile_i64(merge_us, 0.95),
-                   n > 0 ? 100.0 * cache_hit_count / n : 0.0,
-                   n > 0 ? 100.0 * trunc_count / n : 0.0,
-                   n > 0 ? 100.0 * deadline_count / n : 0.0);
+            printf(" %6.1f%%", n > 0 ? 100.0 * log_count / n : 0.0);
         }
+        printf("\n");
     }
+}
+
+static nlohmann::ordered_json make_iteration_record(const BenchmarkResult& result,
+                                                    const IterationData& iteration,
+                                                    int repeat_index, int page_size,
+                                                    int deadline_ms) {
+    nlohmann::ordered_json record;
+    record["input"] = result.input;
+    record["repeat_index"] = repeat_index;
+    record["mode"] = result.mode;
+    record["cache"] = result.cache_mode;
+    record["sentence_composition"] = result.composition_mode;
+    record["page_size"] = page_size;
+    record["deadline_ms"] = deadline_ms;
+    record["elapsed_us"] = iteration.elapsed_us;
+    record["processor_us"] = iteration.processor_us;
+    record["translate_us"] = iteration.translate_us;
+    record["lookup_us"] = iteration.lookup_us;
+    record["composition_us"] = iteration.composition_us;
+    record["merge_us"] = iteration.merge_us;
+    record["candidate_count"] = iteration.candidate_count;
+    record["exact_scan_count"] = iteration.exact_scan;
+    record["prefix_scan_count"] = iteration.prefix_scan;
+    record["user_scan_count"] = iteration.user_scan;
+    record["syllable_path_count"] = iteration.syllable_paths;
+    record["live_path_count"] = iteration.live_paths;
+    record["composition_path_count"] = iteration.composition_paths;
+    record["repeated_short_path_count"] = iteration.repeated_short_paths;
+    record["span_query_count"] = iteration.span_queries;
+    record["span_scan_count"] = iteration.span_scans;
+    record["composition_state_count"] = iteration.composition_states;
+    record["composed_candidate_count"] = iteration.composed_candidates;
+    record["cache_hit"] = iteration.cache_hit;
+    record["truncated"] = iteration.truncated;
+    record["composition_truncated"] = iteration.composition_truncated;
+    record["deadline_exceeded"] = iteration.deadline_exceeded;
+    return record;
 }
 
 static void write_jsonl(const std::string& path, const std::vector<BenchmarkResult>& results,
@@ -334,37 +433,19 @@ static void write_jsonl(const std::string& path, const std::vector<BenchmarkResu
     }
 
     int repeat_index = 0;
-    std::string prev_input, prev_mode;
+    std::string prev_input, prev_mode, prev_cache_mode, prev_composition_mode;
     for (const auto& r : results) {
-        if (r.input != prev_input || r.mode != prev_mode) {
+        if (r.input != prev_input || r.mode != prev_mode ||
+            r.cache_mode != prev_cache_mode ||
+            r.composition_mode != prev_composition_mode) {
             repeat_index = 0;
             prev_input = r.input;
             prev_mode = r.mode;
+            prev_cache_mode = r.cache_mode;
+            prev_composition_mode = r.composition_mode;
         }
         for (const auto& it : r.iterations) {
-            char buf[512];
-            snprintf(buf, sizeof(buf),
-                "{\"input\":\"%s\",\"repeat_index\":%d,"
-                "\"mode\":\"%s\",\"page_size\":%d,\"deadline_ms\":%d,"
-                "\"elapsed_us\":%lld,"
-                "\"processor_us\":%lld,\"translate_us\":%lld,"
-                "\"lookup_us\":%lld,\"merge_us\":%lld,"
-                "\"candidate_count\":%d,"
-                "\"exact_scan_count\":%u,\"prefix_scan_count\":%u,\"user_scan_count\":%u,"
-                "\"syllable_path_count\":%d,\"live_path_count\":%d,"
-                "\"cache_hit\":%s,\"truncated\":%s,\"deadline_exceeded\":%s}",
-                r.input.c_str(), repeat_index,
-                r.mode.c_str(), page_size, deadline_ms,
-                (long long)it.elapsed_us,
-                (long long)it.processor_us, (long long)it.translate_us,
-                (long long)it.lookup_us, (long long)it.merge_us,
-                it.candidate_count,
-                it.exact_scan, it.prefix_scan, it.user_scan,
-                it.syllable_paths, it.live_paths,
-                it.cache_hit ? "true" : "false",
-                it.truncated ? "true" : "false",
-                it.deadline_exceeded ? "true" : "false");
-            f << buf << "\n";
+            f << make_iteration_record(r, it, repeat_index, page_size, deadline_ms).dump() << '\n';
             ++repeat_index;
         }
     }
@@ -416,7 +497,17 @@ int main(int argc, char* argv[]) {
               << "  repeat: " << config.repeat << "\n"
               << "  warmup: " << config.warmup << "\n"
               << "  page_size: " << config.page_size << "\n"
-              << "  deadline_ms: " << config.deadline_ms << "\n\n";
+              << "  deadline_ms: " << config.deadline_ms << "\n"
+              << "  cache: "
+              << (config.run_both_cache_modes
+                      ? "both"
+                      : (config.cache_mode == BenchCacheMode::Warm ? "warm" : "cold"))
+              << "\n"
+              << "  sentence_composition: "
+              << (config.run_both_composition_modes
+                      ? "both"
+                      : (config.sentence_composition_enabled ? "on" : "off"))
+              << "\n\n";
 
     // Run benchmarks
     std::vector<BenchmarkResult> results;
@@ -428,16 +519,35 @@ int main(int argc, char* argv[]) {
             modes = {config.mode};
         }
 
-        for (BenchMode m : modes) {
-            std::string mode_str = (m == BenchMode::FinalKey) ? "final_key" : "full_typing";
-            std::cout << "Running: " << input << " [" << mode_str << "] ..." << std::flush;
+        std::vector<BenchCacheMode> cache_modes = config.run_both_cache_modes
+            ? std::vector<BenchCacheMode>{BenchCacheMode::Warm, BenchCacheMode::Cold}
+            : std::vector<BenchCacheMode>{config.cache_mode};
+        std::vector<bool> composition_modes = config.run_both_composition_modes
+            ? std::vector<bool>{false, true}
+            : std::vector<bool>{config.sentence_composition_enabled};
 
-            BenchmarkResult result;
-            run_benchmark(engine, input, config.repeat, config.warmup,
-                          config.page_size, m, result);
-            results.push_back(std::move(result));
+        for (BenchMode mode : modes) {
+            for (BenchCacheMode cache_mode : cache_modes) {
+                for (bool composition_enabled : composition_modes) {
+                    const std::string mode_name = mode == BenchMode::FinalKey
+                        ? "final_key"
+                        : "full_typing";
+                    const char* cache_name = cache_mode == BenchCacheMode::Warm
+                        ? "warm"
+                        : "cold";
+                    const char* composition_name = composition_enabled ? "on" : "off";
+                    std::cout << "Running: " << input << " [" << mode_name << ", "
+                              << cache_name << ", " << composition_name << "] ..."
+                              << std::flush;
 
-            std::cout << " done\n";
+                    BenchmarkResult result;
+                    run_benchmark(engine, input, config.repeat, config.warmup,
+                                  config.page_size, mode, cache_mode,
+                                  composition_enabled, result);
+                    results.push_back(std::move(result));
+                    std::cout << " done\n";
+                }
+            }
         }
     }
 
@@ -450,23 +560,29 @@ int main(int argc, char* argv[]) {
         write_jsonl(config.json_output, results, config.page_size, config.deadline_ms);
     }
 
-    // --require-cache-hit: verify short inputs all hit cache
+    // --require-cache-hit: verify the configured materialized prefix range.
     if (config.require_cache_hit) {
         bool all_ok = true;
         for (const auto& r : results) {
-            // Check if input is a short key (1-6 lowercase letters)
-            bool is_short = r.input.size() >= 1 && r.input.size() <= 6;
-            if (is_short) {
+            if (r.cache_mode != "warm") {
+                continue;
+            }
+            bool is_materialized = !r.input.empty() &&
+                r.input.size() <= kMaxMaterializedPrefixLength;
+            if (is_materialized) {
                 for (char c : r.input) {
-                    if (c < 'a' || c > 'z') { is_short = false; break; }
+                    if (c < 'a' || c > 'z') {
+                        is_materialized = false;
+                        break;
+                    }
                 }
             }
-            if (!is_short) continue;
+            if (!is_materialized) continue;
 
             for (const auto& it : r.iterations) {
                 if (!it.cache_hit) {
                     std::cerr << "Error: " << r.input << " [" << r.mode
-                              << "] cache_hit=false (expected true for short input)\n";
+                              << "] cache_hit=false (expected materialized prefix)\n";
                     all_ok = false;
                     break;
                 }

@@ -410,6 +410,50 @@ TEST(Engine, translate_shurufa) {
     DeleteFileA(spellings_path.c_str());
 }
 
+TEST(Engine, composed_pinyin_candidate_is_not_learned) {
+    std::string dict_path = make_temp_path("test_engine_composed_no_learning.bin");
+    std::string spellings_path = make_temp_path("test_engine_composed_no_learning.spellings");
+    std::string user_path = make_temp_path("test_engine_composed_no_learning.tsv");
+    DeleteFileA(user_path.c_str());
+
+    ASSERT_TRUE(cxxime::Dict::create_test_dict(dict_path, {
+        {"wu", "无", 9000},
+        {"shu:chu", "输出", 8000},
+    }));
+    ASSERT_TRUE(cxxime::SpellingsIndex::create_test_trie(
+        spellings_path, {
+            {"wu", "wu", cxxime::kNormalSpelling, 0.0f},
+            {"shu", "shu", cxxime::kNormalSpelling, 0.0f},
+            {"chu", "chu", cxxime::kNormalSpelling, 0.0f},
+        }));
+
+    cxxime::Dict dict;
+    ASSERT_TRUE(dict.open(dict_path, user_path));
+    cxxime::SpellingsIndex spellings;
+    ASSERT_TRUE(spellings.load(spellings_path));
+    cxxime::Syllabifier syllabifier(spellings);
+    cxxime::Config config;
+    config.candidate_learning = true;
+    cxxime::Engine engine;
+    ASSERT_TRUE(engine.initialize(dict, spellings, &syllabifier, config));
+
+    type_code(engine, "wushuchu");
+    const auto& candidates = engine.context().candidates.candidates;
+    const auto candidate = std::find_if(candidates.begin(), candidates.end(),
+        [](const auto& item) { return item.text == "无输出"; });
+    ASSERT_TRUE(candidate != candidates.end());
+    ASSERT_TRUE(candidate->origin == cxxime::CandidateOrigin::kComposed);
+    ASSERT_TRUE(engine.select_candidate(static_cast<int>(candidate - candidates.begin())));
+    ASSERT_EQ(engine.get_commit_text(), "无输出");
+    ASSERT_TRUE(!dict.has_user_entry("无输出"));
+
+    engine.finalize();
+    dict.close();
+    DeleteFileA(dict_path.c_str());
+    DeleteFileA(spellings_path.c_str());
+    DeleteFileA(user_path.c_str());
+}
+
 TEST(Engine, translate_nihao) {
     std::string dict_path = make_temp_path("test_nihao_dict.bin");
     std::string spellings_path = make_temp_path("test_nihao_spellings.bin");

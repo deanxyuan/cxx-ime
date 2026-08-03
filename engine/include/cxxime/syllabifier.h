@@ -5,9 +5,13 @@
 #ifndef CXXIME_SYLLABIFIER_H_
 #define CXXIME_SYLLABIFIER_H_
 
-#include <string>
-#include <vector>
+#include <cstddef>
+#include <cstdint>
 #include <map>
+#include <string>
+#include <utility>
+#include <vector>
+
 #include <cxxime/spellings_index.h>
 
 namespace cxxime {
@@ -28,9 +32,16 @@ using SyllableGraph = std::map<size_t, std::map<size_t, std::vector<SyllableEdge
 // A syllable segmentation path
 using SyllablePath = std::vector<std::string>;
 
+struct SegmentedPath {
+    SyllablePath syllables;
+    std::vector<uint8_t> spelling_types;
+    std::vector<uint16_t> input_lengths;
+    float credibility = 0.0f;
+};
+
 // Result of syllabifier segmentation (Phase 3: includes deadline status)
 struct SegmentResult {
-    std::vector<SyllablePath> paths;
+    std::vector<SegmentedPath> paths;
     bool truncated = false;
     bool deadline_exceeded = false;
 };
@@ -48,7 +59,8 @@ public:
     // Best (all-normal) paths first, then fuzzy, then abbreviation.
     // Phase 3: optional deadline for internal checking during DFS.
     SegmentResult segment(const std::string& input, const QueryDeadline* deadline = nullptr,
-                          bool enable_terminal_completion = false) const;
+                          bool enable_terminal_completion = false,
+                          bool collect_path_metadata = false) const;
 
 private:
     const SpellingsIndex& spellings_;
@@ -57,9 +69,10 @@ private:
     // Phase 3: returns true if deadline expired during enumeration
     bool enumerate_paths(const SyllableGraph& graph,
                          size_t pos, size_t end_pos,
-                         SyllablePath& current,
-                         std::vector<std::pair<SyllablePath, float>>& results,
+                         SegmentedPath& current,
+                         std::vector<SegmentedPath>& results,
                          const QueryDeadline* deadline,
+                         bool collect_path_metadata,
                          uint32_t& path_count,
                          std::vector<std::pair<size_t, std::vector<SyllableEdge>>>& sorted_scratch,
                          uint32_t& call_count) const;

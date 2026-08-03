@@ -80,6 +80,8 @@ std::string origin_name(cxxime::CandidateOrigin origin) {
         return "user";
     case cxxime::CandidateOrigin::kCache:
         return "cache";
+    case cxxime::CandidateOrigin::kComposed:
+        return "composed";
     case cxxime::CandidateOrigin::kSystem:
     default:
         return "system";

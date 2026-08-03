@@ -17,6 +17,7 @@ enum class CandidateOrigin {
     kSystem,
     kUser,
     kCache,
+    kComposed,
 };
 
 struct Candidate {

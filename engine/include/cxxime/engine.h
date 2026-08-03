@@ -65,6 +65,9 @@ public:
     bool has_short_cache() const { return pinyin_dict_ && pinyin_dict_->has_short_cache(); }
     void set_trace_enabled(bool enabled) { trace_enabled_ = enabled; }
     void set_trace_session_id(uint32_t id) { trace_.session_id = id; }
+    void set_sentence_composition_enabled(bool enabled);
+    bool sentence_composition_enabled() const { return sentence_composition_enabled_; }
+    void clear_query_cache();
 
     // Override config page_size (only for self-contained init)
     void set_config_page_size(int size) {
@@ -126,6 +129,7 @@ private:
     // Query budget (scan limits only); deadline is per-query via QueryDeadline.
     QueryBudget budget_;
     uint32_t query_deadline_ms_ = 30;  // default 30ms deadline
+    bool sentence_composition_enabled_ = true;
 
     // Per-engine reusable scratch buffer for translate() queries
     QueryScratch scratch_;

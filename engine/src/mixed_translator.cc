@@ -187,4 +187,10 @@ void MixedTranslator::clear_recent() {
     wubi_translator_.clear_recent();
 }
 
+void MixedTranslator::clear_query_cache() { pinyin_translator_.clear_query_cache(); }
+
+void MixedTranslator::set_sentence_composition_enabled(bool enabled) {
+    pinyin_translator_.set_sentence_composition_enabled(enabled);
+}
+
 } // namespace cxxime

@@ -4,8 +4,11 @@ add_library(cxxime-engine STATIC
     src/context.cc
     src/pinyin_segmentor.cc
     src/dict.cc
+    src/dict_span_query.cc
     src/spellings_index.cc
     src/syllabifier.cc
+    src/pinyin_composer.cc
+    src/pinyin_path_filter.cc
     src/pinyin_translator.cc
     src/pinyin_processor.cc
     src/wubi_translator.cc
