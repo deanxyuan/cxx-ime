@@ -23,6 +23,13 @@ struct QueryTrace {
     int syllable_path_count = 0;
     int live_path_count = 0;
     int candidate_count = 0;
+    uint32_t composition_path_count = 0;
+    uint32_t composition_repeated_short_path_count = 0;
+    uint32_t span_query_count = 0;
+    uint32_t span_entry_scan_count = 0;
+    uint32_t composition_state_count = 0;
+    uint32_t composed_candidate_count = 0;
+    bool composition_truncated = false;
 
     // Scan counts (items checked, not results returned)
     uint32_t exact_scan_count = 0;      // System dict exact code/syllableId range scans
@@ -45,6 +52,7 @@ struct QueryTrace {
     int64_t processor_us = 0;
     int64_t translate_us = 0;
     int64_t lookup_us = 0;
+    int64_t composition_us = 0;
     int64_t merge_us = 0;
     int64_t total_us = 0;
 

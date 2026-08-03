@@ -6,13 +6,27 @@
 #include <chrono>
 
 #include <cxxime/query_budget.h>
+#include <cxxime/pinyin_composer.h>
 #include <cxxime/query_scratch.h>
 #include <cxxime/query_trace.h>
 #include <cxxime/short_code_cache.h>
 #include <cxxime/syllabifier.h>
 #include <cxxime/topk_collector.h>
 
+#include "pinyin_path_filter.h"
+
 namespace cxxime {
+
+namespace {
+
+struct CompositionPathSpec {
+    size_t id_sequence_index = 0;
+    size_t segmented_path_index = 0;
+    CompositionPathKind kind = CompositionPathKind::kNormal;
+    uint16_t rank = 0;
+};
+
+} // namespace
 
 // Linear dedup helpers — cheaper than hash set for small collections (≤128)
 static bool contains_text(const std::vector<Candidate>& items, const std::string& text) {
@@ -60,6 +74,14 @@ void PinyinTranslator::set_syllabifier(Syllabifier* syllabifier) {
     syllabifier_ = syllabifier;
 }
 
+void PinyinTranslator::set_sentence_composition_enabled(bool enabled) {
+    if (sentence_composition_enabled_ == enabled) {
+        return;
+    }
+    sentence_composition_enabled_ = enabled;
+    query_cache_.clear();
+}
+
 bool PinyinTranslator::is_indexable_key(const std::string& pinyin) {
     if (pinyin.empty())
         return false;
@@ -71,6 +93,9 @@ bool PinyinTranslator::is_indexable_key(const std::string& pinyin) {
 }
 
 void PinyinTranslator::update_recent(const std::string& key, const Candidate& candidate) {
+    if (candidate.origin == CandidateOrigin::kComposed) {
+        return;
+    }
     if (!is_indexable_key(key))
         return;
 
@@ -202,6 +227,14 @@ bool PinyinTranslator::lookup_query_cache(const std::string& input, int page_ind
                 trace->user_scan_count = 0;
                 trace->syllable_path_count = 0;
                 trace->live_path_count = 0;
+                trace->composition_path_count = 0;
+                trace->composition_repeated_short_path_count = 0;
+                trace->span_query_count = 0;
+                trace->span_entry_scan_count = 0;
+                trace->composition_state_count = 0;
+                trace->composed_candidate_count = 0;
+                trace->composition_truncated = false;
+                trace->composition_us = 0;
                 trace->deadline_exceeded = false;
             }
             return true;
@@ -272,7 +305,8 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
     IndexedFastResult fast;
     if (is_indexable_key(pinyin)) {
         fast = lookup_indexed_fast(pinyin, need, trace);
-        if (fast.complete_index_hit && (int)fast.candidates.size() > offset) {
+        if (fast.complete_index_hit &&
+            (!sentence_composition_enabled_ || (int)fast.candidates.size() >= need)) {
             // Enough candidates from cache for this page
             auto& sorted = fast.candidates;
             page.total_count = (int)sorted.size();
@@ -307,15 +341,16 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
     QueryScratch& scr = scratch ? *scratch : local_scratch;
     auto& id_sequences = scr.id_sequences;
 
-    auto add_path = [&](const std::vector<std::string>& syllables) {
-        if (syllables.empty()) return;
+    auto add_path = [&](const std::vector<std::string>& syllables) -> size_t {
+        if (syllables.empty()) return SIZE_MAX;
         std::vector<uint32_t> ids;
         for (auto& s : syllables) {
             uint32_t id = dict_->syllable_to_id(s);
-            if (id == UINT32_MAX) return;
+            if (id == UINT32_MAX) return SIZE_MAX;
             ids.push_back(id);
         }
         id_sequences.push_back(std::move(ids));
+        return id_sequences.size() - 1;
     };
 
     // 1. Syllabifier for abbreviation expansion (reserve first)
@@ -324,18 +359,61 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
     // Need enough paths for fuzzy spellings — abbreviation-heavy graphs can
     // produce hundreds of paths before non-abbreviation paths appear.
     static constexpr size_t kMaxPaths = 64;
+    static constexpr size_t kMaxCompositionPaths = 8;
     bool deadline_hit = false;
+    SegmentResult segment_result;
+    std::vector<CompositionPathSpec> composition_specs;
+    if (sentence_composition_enabled_) {
+        composition_specs.reserve(kMaxCompositionPaths + 1);
+    }
     if (syllabifier_) {
         // Check deadline before syllabifier (it can be slow on long inputs)
         if (budget && budget->deadline.expired()) {
             deadline_hit = true;
         } else {
             // Phase 3: pass deadline to syllabifier for internal checking
-            auto seg_result = syllabifier_->segment(pinyin, budget ? &budget->deadline : nullptr);
-            id_sequences.reserve(std::min(seg_result.paths.size(), kMaxPaths) + 1);
-            for (size_t i = 0; i < seg_result.paths.size() && i < kMaxPaths; ++i)
-                add_path(seg_result.paths[i]);
-            if (seg_result.deadline_exceeded) {
+            segment_result = syllabifier_->segment(
+                pinyin, budget ? &budget->deadline : nullptr, false,
+                sentence_composition_enabled_);
+            id_sequences.reserve(std::min(segment_result.paths.size(), kMaxPaths) + 1);
+            bool has_normal_composition_path = false;
+            bool has_repeated_short_path = false;
+            CompositionPathSpec repeated_short_spec;
+            for (size_t i = 0; i < segment_result.paths.size() && i < kMaxPaths; ++i) {
+                const auto& segmented_path = segment_result.paths[i];
+                const size_t id_index = add_path(segmented_path.syllables);
+                if (id_index == SIZE_MAX) {
+                    continue;
+                }
+
+                if (sentence_composition_enabled_) {
+                    const bool duplicate_composition_path = std::any_of(
+                        composition_specs.begin(), composition_specs.end(),
+                        [&](const auto& spec) {
+                            return id_sequences[spec.id_sequence_index] ==
+                                   id_sequences[id_index];
+                        });
+                    if (is_normal_composition_path(pinyin, segmented_path)) {
+                        has_normal_composition_path = true;
+                        if (!duplicate_composition_path &&
+                            composition_specs.size() < kMaxCompositionPaths) {
+                            composition_specs.push_back({id_index, i,
+                                                        CompositionPathKind::kNormal,
+                                                        static_cast<uint16_t>(i)});
+                        }
+                    } else if (!has_repeated_short_path &&
+                               is_repeated_short_code_path(pinyin, segmented_path)) {
+                        repeated_short_spec = {id_index, i,
+                                               CompositionPathKind::kRepeatedShortCode,
+                                               static_cast<uint16_t>(i)};
+                        has_repeated_short_path = true;
+                    }
+                }
+            }
+            if (!has_normal_composition_path && has_repeated_short_path) {
+                composition_specs.push_back(repeated_short_spec);
+            }
+            if (segment_result.deadline_exceeded) {
                 deadline_hit = true;
                 if (trace) {
                     trace->deadline_exceeded = true;
@@ -361,8 +439,8 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
     }
 
     // Filter: only keep paths that actually have dict entries
-    auto& live_ids = scr.live_ids;
-    live_ids.reserve(id_sequences.size());
+    auto& live_path_indices = scr.live_path_indices;
+    live_path_indices.reserve(id_sequences.size());
     auto collect_live_paths = [&](size_t first_path) {
         for (size_t i = first_path; i < id_sequences.size(); ++i) {
             // Check deadline before each has_prefix (syllabifier may have consumed most of the budget)
@@ -375,14 +453,14 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
                 break;
             }
             if (dict_->has_prefix(id_sequences[i], trace))
-                live_ids.push_back(std::move(id_sequences[i]));
+                live_path_indices.push_back(i);
         }
     };
     collect_live_paths(0);
 
     // If valid full-syllable paths have no dictionary continuation, retry with
     // terminal syllable completion (for example, "ji" -> "jie").
-    if (live_ids.empty() && syllabifier_ && !deadline_hit) {
+    if (live_path_indices.empty() && syllabifier_ && !deadline_hit) {
         auto completion_result = syllabifier_->segment(
             pinyin, budget ? &budget->deadline : nullptr, true);
         if (completion_result.deadline_exceeded) {
@@ -397,7 +475,7 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
                 std::min(completion_result.paths.size(), kMaxPaths));
             for (size_t i = 0;
                  i < completion_result.paths.size() && i < kMaxPaths; ++i)
-                add_path(completion_result.paths[i]);
+                add_path(completion_result.paths[i].syllables);
             collect_live_paths(first_completion);
         }
     }
@@ -408,7 +486,7 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
 
     // Record live path count
     if (trace)
-        trace->live_path_count = (int)live_ids.size();
+        trace->live_path_count = (int)live_path_indices.size();
 
     // Dedup and query — use TopKCollector to cap merged results.
     // Capacity = offset + fetch_limit + 1 (extra one to detect next page).
@@ -432,7 +510,8 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
     std::chrono::steady_clock::time_point t_lookup_start, t_lookup_end;
     if (trace) t_lookup_start = std::chrono::steady_clock::now();
 
-    for (auto& ids : live_ids) {
+    for (size_t live_path_index : live_path_indices) {
+        auto& ids = id_sequences[live_path_index];
         if (contains_ids(processed_ids, ids))
             continue;
         processed_ids.push_back(ids);
@@ -462,6 +541,69 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
     if (trace) t_merge_start = std::chrono::steady_clock::now();
 
     auto sorted = merged.finish();
+    if (trace) {
+        trace->merge_us = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - t_merge_start).count();
+    }
+
+    if (sentence_composition_enabled_ && !composition_specs.empty() &&
+        sorted.size() < static_cast<size_t>(need) &&
+        !(budget && budget->deadline.expired())) {
+        std::vector<CompositionPath> composition_paths;
+        composition_paths.reserve(composition_specs.size());
+        for (const auto& spec : composition_specs) {
+            if (spec.id_sequence_index >= id_sequences.size() ||
+                spec.segmented_path_index >= segment_result.paths.size()) {
+                continue;
+            }
+            CompositionPath path;
+            path.ids = &id_sequences[spec.id_sequence_index];
+            path.syllables = &segment_result.paths[spec.segmented_path_index].syllables;
+            path.kind = spec.kind;
+            path.rank = spec.rank;
+            composition_paths.push_back(path);
+        }
+
+        const auto composition_start = std::chrono::steady_clock::now();
+        PinyinComposer composer(*dict_);
+        CompositionLimits composition_limits;
+        CompositionStats composition_stats;
+        const QueryDeadline no_deadline;
+        const QueryDeadline& composition_deadline = budget ? budget->deadline : no_deadline;
+        auto composed = composer.compose(
+            pinyin, composition_paths, static_cast<size_t>(need) - sorted.size(),
+            composition_deadline, composition_limits, composition_stats);
+        uint32_t appended_count = 0;
+        for (auto& candidate : composed) {
+            if (!contains_text(sorted, candidate.text)) {
+                sorted.push_back(std::move(candidate));
+                ++appended_count;
+            }
+        }
+
+        if (trace) {
+            trace->composition_path_count = composition_stats.normal_path_count +
+                                            composition_stats.repeated_short_path_count;
+            trace->composition_repeated_short_path_count =
+                composition_stats.repeated_short_path_count;
+            trace->span_query_count = composition_stats.span_query_count;
+            trace->span_entry_scan_count = composition_stats.span_entry_scan_count;
+            trace->composition_state_count = composition_stats.state_count;
+            trace->composed_candidate_count = appended_count;
+            trace->composition_truncated = composition_stats.truncated;
+            trace->composition_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - composition_start).count();
+            if (composition_stats.truncated) {
+                trace->truncated = true;
+            }
+            if (composition_stats.deadline_exceeded) {
+                trace->deadline_exceeded = true;
+            }
+        }
+        if (composition_stats.deadline_exceeded) {
+            deadline_hit = true;
+        }
+    }
 
     // total_count before pagination (includes extra one for next-page detection)
     page.total_count = (int)sorted.size();
@@ -480,11 +622,6 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
         c.source = CandidateSource::kPinyin;
     if (!page.candidates.empty())
         page.highlighted = 0;
-
-    if (trace) {
-        auto t_merge_end = std::chrono::steady_clock::now();
-        trace->merge_us = std::chrono::duration_cast<std::chrono::microseconds>(t_merge_end - t_merge_start).count();
-    }
 
     if (!deadline_hit && !(trace && trace->deadline_exceeded))
         store_query_cache(pinyin, page_index, offset, page_size, page);

@@ -111,9 +111,10 @@ SyllableGraph Syllabifier::build_graph(const std::string& input,
 bool Syllabifier::enumerate_paths(
     const SyllableGraph& graph,
     size_t pos, size_t end_pos,
-    SyllablePath& current,
-    std::vector<std::pair<SyllablePath, float>>& results,
+    SegmentedPath& current,
+    std::vector<SegmentedPath>& results,
     const QueryDeadline* deadline,
+    bool collect_path_metadata,
     uint32_t& path_count,
     std::vector<std::pair<size_t, std::vector<SyllableEdge>>>& sorted_scratch,
     uint32_t& call_count) const {
@@ -134,7 +135,7 @@ bool Syllabifier::enumerate_paths(
     }
 
     if (pos >= end_pos) {
-        results.push_back({current, 0.0f});
+        results.push_back(current);
         ++path_count;
         return false;
     }
@@ -166,16 +167,29 @@ bool Syllabifier::enumerate_paths(
 
     for (auto& se : edges_local) {
         for (auto& edge : se.second) {
-            current.push_back(edge.syllable);  // copy, not move
-            size_t before = results.size();
-            bool expired = enumerate_paths(graph, se.first, end_pos, current, results, deadline, path_count, sorted_scratch, call_count);
-            if (expired)
-                return true;  // propagate deadline expiration up
-            if (before < results.size()) {
-                for (size_t i = before; i < results.size(); ++i)
-                    results[i].second += edge.credibility;
+            const size_t input_length = se.first - pos;
+            if (input_length > UINT16_MAX) {
+                continue;
             }
-            current.pop_back();
+            current.syllables.push_back(edge.syllable);
+            if (collect_path_metadata) {
+                current.spelling_types.push_back(static_cast<uint8_t>(edge.type));
+                current.input_lengths.push_back(static_cast<uint16_t>(input_length));
+            }
+            const float previous_credibility = current.credibility;
+            current.credibility += edge.credibility;
+            bool expired = enumerate_paths(graph, se.first, end_pos, current, results, deadline,
+                                           collect_path_metadata, path_count, sorted_scratch,
+                                           call_count);
+            current.credibility = previous_credibility;
+            if (collect_path_metadata) {
+                current.input_lengths.pop_back();
+                current.spelling_types.pop_back();
+            }
+            current.syllables.pop_back();
+            if (expired) {
+                return true;
+            }
             if (results.size() >= kMaxPaths)
                 return false;
         }
@@ -184,7 +198,8 @@ bool Syllabifier::enumerate_paths(
 }
 
 SegmentResult Syllabifier::segment(const std::string& input, const QueryDeadline* deadline,
-                                   bool enable_terminal_completion) const {
+                                   bool enable_terminal_completion,
+                                   bool collect_path_metadata) const {
     SegmentResult result;
     if (input.empty())
         return result;
@@ -209,12 +224,14 @@ SegmentResult Syllabifier::segment(const std::string& input, const QueryDeadline
     // enumerate_paths bails out at kMaxPaths to prevent exponential blowup
     // from dense abbreviation graphs.
     // Phase 3: pass deadline for internal checking during DFS.
-    std::vector<std::pair<SyllablePath, float>> scored;
+    std::vector<SegmentedPath> scored;
     std::vector<std::pair<size_t, std::vector<SyllableEdge>>> sorted_scratch;
-    SyllablePath current;
+    SegmentedPath current;
     uint32_t path_count = 0;
     uint32_t call_count = 0;
-    bool deadline_expired = enumerate_paths(graph, 0, farthest, current, scored, deadline, path_count, sorted_scratch, call_count);
+    bool deadline_expired =
+        enumerate_paths(graph, 0, farthest, current, scored, deadline, collect_path_metadata,
+                        path_count, sorted_scratch, call_count);
 
     if (deadline_expired) {
         result.deadline_exceeded = true;
@@ -224,14 +241,14 @@ SegmentResult Syllabifier::segment(const std::string& input, const QueryDeadline
     // Sort by quality: paths with higher credibility first (fewer abbreviations)
     std::sort(scored.begin(), scored.end(),
         [](const auto& a, const auto& b) {
-            return a.second > b.second;
+            return a.credibility > b.credibility;
         });
 
     // Deduplicate and collect (linear scan — path count bounded by kMaxPaths)
     std::vector<std::string> seen_keys;
-    for (auto& [path, cred] : scored) {
+    for (auto& path : scored) {
         std::string key;
-        for (auto& s : path) key += s + ":";
+        for (auto& s : path.syllables) key += s + ":";
         bool dup = false;
         for (auto& k : seen_keys) {
             if (k == key) { dup = true; break; }

@@ -125,6 +125,15 @@ Dict::~Dict() {
     close();
 }
 
+void Dict::fill_system_candidate(uint32_t entry_index, Candidate& candidate,
+                                 int frequency_boost) const {
+    const auto& entry = dict_entries_[entry_index];
+    candidate.text.assign(dict_strings_ + entry.text_offset, entry.text_len);
+    set_candidate_code(candidate, dict_strings_ + entry.syllable_ids_offset,
+                       entry.syllable_ids_len);
+    candidate.frequency = entry.frequency + frequency_boost;
+}
+
 bool Dict::open(const std::string& dict_path, const std::string& user_dict_path) {
     if (!open_dict(dict_path))
         return false;
@@ -1846,12 +1855,8 @@ std::vector<Candidate> Dict::lookup_by_ids(const std::vector<uint32_t>& query_id
             }
             break;
         }
-        const auto& e = dict_entries_[id_index_[pos].index];
         Candidate c;
-        c.text.assign(dict_strings_ + e.text_offset, e.text_len);
-        set_candidate_code(c, dict_strings_ + e.syllable_ids_offset,
-                           e.syllable_ids_len);
-        c.frequency = e.frequency + 100000;  // exact match boost
+        fill_system_candidate(id_index_[pos].index, c, 100000);
         if (!contains_text(collector.items(), c.text)) {
             if (collector.full() && trace) {
                 trace->truncated = true;
@@ -1900,12 +1905,8 @@ std::vector<Candidate> Dict::lookup_by_ids(const std::vector<uint32_t>& query_id
                 }
                 break;
             }
-            const auto& e = dict_entries_[id_index_[pos].index];
             Candidate c;
-            c.text.assign(dict_strings_ + e.text_offset, e.text_len);
-            set_candidate_code(c, dict_strings_ + e.syllable_ids_offset,
-                               e.syllable_ids_len);
-            c.frequency = e.frequency;
+            fill_system_candidate(id_index_[pos].index, c, 0);
             if (!contains_text(collector.items(), c.text)) {
                 if (collector.full() && trace) {
                     trace->truncated = true;

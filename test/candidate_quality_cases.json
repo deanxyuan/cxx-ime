@@ -76,6 +76,39 @@
       "require_cache_hit": true
     },
     {
+      "id": "pinyin-compose-missing-sentence",
+      "mode": "pinyin",
+      "input": "wushuchu",
+      "contains": [
+        { "text": "无输出", "max_rank": 9 }
+      ],
+      "expect_origins": {
+        "无输出": "composed"
+      }
+    },
+    {
+      "id": "pinyin-compose-repeated-complete-syllable",
+      "mode": "pinyin",
+      "input": "aaaaaaa",
+      "contains": [
+        { "text": "啊啊啊啊啊啊啊", "max_rank": 9 }
+      ],
+      "expect_origins": {
+        "啊啊啊啊啊啊啊": "composed"
+      }
+    },
+    {
+      "id": "pinyin-compose-repeated-short-code",
+      "mode": "pinyin",
+      "input": "hhhhhhhhh",
+      "contains": [
+        { "text": "哈哈哈哈哈哈哈哈哈", "max_rank": 9 }
+      ],
+      "expect_origins": {
+        "哈哈哈哈哈哈哈哈哈": "composed"
+      }
+    },
+    {
       "id": "pinyin-user-exact-short-code-promotes",
       "mode": "pinyin",
       "input": "ddd",

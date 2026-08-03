@@ -58,6 +58,10 @@ public:
         return engine.initialize(dict_, spellings_, syllabifier_.get(), config_);
     }
 
+    void set_page_size(int page_size) {
+        config_.page_size = page_size;
+    }
+
     cxxime::Engine engine;
 
 private:
@@ -424,7 +428,7 @@ TEST(Benchmark, PageSizeAffectsCandidates) {
     const std::string input = "nihaoshijie";
 
     // Run with page_size=3
-    engine.set_config_page_size(3);
+    fixture.set_page_size(3);
     engine.clear_composition();
     for (char c : input) {
         cxxime::KeyEvent event;
@@ -435,7 +439,7 @@ TEST(Benchmark, PageSizeAffectsCandidates) {
     int cands_small = engine.last_trace().candidate_count;
 
     // Run with page_size=7
-    engine.set_config_page_size(7);
+    fixture.set_page_size(7);
     engine.clear_composition();
     for (char c : input) {
         cxxime::KeyEvent event;

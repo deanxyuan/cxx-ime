@@ -121,9 +121,9 @@ static void run_pinyin(const std::string& dict_path, const std::string& spelling
                 std::printf("  %zu path(s):\n", result.paths.size());
                 for (size_t i = 0; i < result.paths.size(); ++i) {
                     std::printf("  [%zu] ", i);
-                    for (size_t j = 0; j < result.paths[i].size(); ++j) {
+                    for (size_t j = 0; j < result.paths[i].syllables.size(); ++j) {
                         if (j > 0) std::fputs(":", stdout);
-                        std::fputs(result.paths[i][j].c_str(), stdout);
+                        std::fputs(result.paths[i].syllables[j].c_str(), stdout);
                     }
                     std::putchar('\n');
                 }

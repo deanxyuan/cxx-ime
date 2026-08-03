@@ -34,7 +34,9 @@ bool contains_spelling(const std::vector<cxxime::SpellingMatch>& matches,
 
 bool contains_path(const cxxime::SegmentResult& result,
                    const std::vector<std::string>& expected) {
-    return std::find(result.paths.begin(), result.paths.end(), expected) != result.paths.end();
+    return std::any_of(result.paths.begin(), result.paths.end(), [&expected](const auto& path) {
+            return path.syllables == expected;
+        });
 }
 
 struct CompletionFixture {
@@ -92,6 +94,23 @@ TEST(SyllabifierCompletion, segment_adds_terminal_completion_on_request) {
     const auto completion_result = syllabifier.segment("nihaoshiji", nullptr, true);
     ASSERT_TRUE(contains_path(completion_result, exact));
     ASSERT_TRUE(contains_path(completion_result, completed));
+}
+
+TEST(SyllabifierCompletion, path_metadata_is_collected_only_on_request) {
+    CompletionFixture fixture;
+    ASSERT_TRUE(fixture.initialize());
+    cxxime::Syllabifier syllabifier(fixture.spellings);
+
+    const auto baseline = syllabifier.segment("nihao");
+    ASSERT_TRUE(!baseline.paths.empty());
+    ASSERT_TRUE(baseline.paths[0].spelling_types.empty());
+    ASSERT_TRUE(baseline.paths[0].input_lengths.empty());
+
+    const auto with_metadata = syllabifier.segment("nihao", nullptr, false, true);
+    ASSERT_TRUE(!with_metadata.paths.empty());
+    ASSERT_EQ(with_metadata.paths[0].syllables.size(),
+              with_metadata.paths[0].spelling_types.size());
+    ASSERT_EQ(with_metadata.paths[0].syllables.size(), with_metadata.paths[0].input_lengths.size());
 }
 
 TEST(SyllabifierCompletion, translator_retries_when_exact_path_has_no_word) {
