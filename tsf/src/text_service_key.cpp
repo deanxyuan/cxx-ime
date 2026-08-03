@@ -90,7 +90,7 @@ STDMETHODIMP TextService::OnSetFocus(BOOL fForeground) {
         }
     } else {
         _inputFocused = false;
-        _start_state_poll_timer();
+        _update_state_poll_timer();
         // Switching away from CxxIME: hide status window immediately.
         // OnKillThreadFocus may not fire when switching IMEs within the same thread.
         _hide_status_window("hide:ime_focus_lost");
@@ -120,7 +120,7 @@ STDMETHODIMP TextService::OnTestKeyDown(ITfContext* pic, WPARAM wParam, LPARAM l
             _inputTargetUnavailable = true;
             _stop_state_poll_timer();
         } else {
-            _start_state_poll_timer();
+            _update_state_poll_timer();
         }
         _hide_status_window("hide:test_key_context_rejected");
         _hide_candidate_window("hide:test_key_context_rejected");
@@ -232,7 +232,7 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
             _inputTargetUnavailable = true;
             _stop_state_poll_timer();
         } else {
-            _start_state_poll_timer();
+            _update_state_poll_timer();
         }
         _hide_status_window("hide:key_context_rejected");
         _hide_candidate_window("hide:key_context_rejected");
@@ -247,12 +247,12 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
     const bool input_was_focused = _inputFocused;
     _inputFocused = input_allowed;
     if (_inputFocused) {
-        _start_state_poll_timer();
+        _update_state_poll_timer();
         if (!input_was_focused) {
             _show_status_window_if_allowed("show:key_edit_target");
         }
     } else {
-        _start_state_poll_timer();
+        _update_state_poll_timer();
         _hide_status_window("hide:key_context_status_only");
         _hide_candidate_window("hide:key_context_status_only");
         _end_reading_ui_element("hide:key_context_status_only_reading");
@@ -501,6 +501,7 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
                         _candidateShowPendingSince.time_since_epoch().count() == 0) {
                         _candidateShowPendingSince = std::chrono::steady_clock::now();
                     }
+                    _update_state_poll_timer();
                     _request_candidate_position_update(pic, "show:preedit_layout_follow");
                 } else {
                     _candidateShowPending = false;

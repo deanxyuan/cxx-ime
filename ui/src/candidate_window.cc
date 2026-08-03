@@ -104,7 +104,6 @@ void CandidateWindow::recreate_renderers_for_dpi() {
 }
 
 void CandidateWindow::destroy() {
-    stop_animation();
     if (gdi_renderer_) { gdi_renderer_->finalize(); delete gdi_renderer_; gdi_renderer_ = nullptr; }
     if (d2d_renderer_) { d2d_renderer_->finalize(); delete d2d_renderer_; d2d_renderer_ = nullptr; }
     if (hwnd_) { DestroyWindow(hwnd_); hwnd_ = nullptr; }
@@ -127,7 +126,6 @@ void CandidateWindow::show() {
                                        wr.right - wr.left,
                                        wr.bottom - wr.top,
                                        target)) {
-            stop_animation();
             move_window_now(target.x, target.y);
         }
     }
@@ -138,7 +136,6 @@ void CandidateWindow::show() {
     RedrawWindow(hwnd_, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE);
 }
 void CandidateWindow::hide() {
-    stop_animation();
     if (hwnd_ && IsWindowVisible(hwnd_))
         ShowWindow(hwnd_, SW_HIDE);
     set_owner(nullptr);
@@ -270,63 +267,6 @@ int CandidateWindow::monitor_work_width() const {
     return info.rcWork.right - info.rcWork.left;
 }
 
-void CandidateWindow::stop_animation() {
-    if (!hwnd_)
-        return;
-    if (move_animating_) {
-        KillTimer(hwnd_, kAnimationTimerId);
-        move_animating_ = false;
-    }
-}
-
-void CandidateWindow::animate_to(int x, int y) {
-    if (move_animating_ && move_target_.x == x && move_target_.y == y)
-        return;
-
-    RECT wr = {};
-    GetWindowRect(hwnd_, &wr);
-    int dx = x - wr.left;
-    int dy = y - wr.top;
-    int distance2 = dx * dx + dy * dy;
-    bool visible = IsWindowVisible(hwnd_) != FALSE;
-
-    if (visible && distance2 <= kPositionDeadzonePx * kPositionDeadzonePx) {
-        stop_animation();
-        return;
-    }
-
-    if (!visible || distance2 > 40000) {
-        stop_animation();
-        move_window_now(x, y);
-        return;
-    }
-
-    move_start_ = {wr.left, wr.top};
-    move_target_ = {x, y};
-    move_start_tick_ = GetTickCount64();
-    move_animating_ = true;
-    SetTimer(hwnd_, kAnimationTimerId, 15, nullptr);
-    tick_animation();
-}
-
-void CandidateWindow::tick_animation() {
-    if (!hwnd_ || !move_animating_)
-        return;
-
-    ULONGLONG elapsed = GetTickCount64() - move_start_tick_;
-    double t = static_cast<double>((std::min<ULONGLONG>)(elapsed, kMoveDurationMs)) /
-               static_cast<double>(kMoveDurationMs);
-    double eased = 1.0 - (1.0 - t) * (1.0 - t);
-    int x = move_start_.x + static_cast<int>((move_target_.x - move_start_.x) * eased + 0.5);
-    int y = move_start_.y + static_cast<int>((move_target_.y - move_start_.y) * eased + 0.5);
-    move_window_now(x, y);
-
-    if (elapsed >= kMoveDurationMs) {
-        stop_animation();
-        move_window_now(move_target_.x, move_target_.y);
-    }
-}
-
 void CandidateWindow::update_window_region(int width, int height, int corner) {
     if (!hwnd_ || width <= 0 || height <= 0)
         return;
@@ -360,7 +300,6 @@ void CandidateWindow::move_to_caret(const RECT& caretRect) {
     if (!calculate_target_position(caretRect, ww, wh, target))
         return;
 
-    stop_animation();
     move_window_now(target.x, target.y);
 }
 
@@ -368,7 +307,6 @@ void CandidateWindow::move_to_screen_position(int x, int y) {
     if (!hwnd_) {
         return;
     }
-    stop_animation();
     move_window_now(x, y);
 }
 
@@ -528,7 +466,6 @@ void CandidateWindow::update(const CandidatePage& page) {
         bool moved_with_resize = false;
         if (IsWindowVisible(hwnd_) && has_last_caret_rect_ &&
             calculate_target_position(last_caret_rect_, lr.width, lr.height, target)) {
-            stop_animation();
             SetWindowPos(hwnd_, nullptr, target.x, target.y, lr.width, lr.height,
                          SWP_NOZORDER | SWP_NOACTIVATE);
             moved_with_resize = true;
@@ -560,12 +497,6 @@ LRESULT CALLBACK CandidateWindow::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM
         }
         EndPaint(hwnd, &ps); return 0;
     }
-    case WM_TIMER:
-        if (self && wp == kAnimationTimerId) {
-            self->tick_animation();
-            return 0;
-        }
-        break;
     case WM_LBUTTONDOWN: {
         if (!self || self->page_.candidates.empty()) return 0;
         if (self->draggable_) {

@@ -298,10 +298,9 @@ bool TextService::_update_input_focus_from_thread_mgr() {
     if (no_edit_target) {
         _stop_state_poll_timer();
     } else {
-        // Keep the poll timer alive while activated. It is cheap and only acts
-        // when the foreground is not an editable context, covering desktop
-        // clicks where TSF may not send focus/key callbacks.
-        _start_state_poll_timer();
+        // Keep the IPC heartbeat active. Candidate display temporarily accelerates
+        // the same timer when caret tracking is needed.
+        _update_state_poll_timer();
     }
     if (!focused)
         _hide_status_window("hide:focus_query_unfocused");
@@ -316,7 +315,7 @@ STDMETHODIMP TextService::OnSetThreadFocus() {
 
 STDMETHODIMP TextService::OnKillThreadFocus() {
     _inputFocused = false;
-    _start_state_poll_timer();
+    _update_state_poll_timer();
     _hide_status_window("hide:thread_focus_lost");
     if (_sessionId && _client.is_connected())
         _client.focus_out(_sessionId);
@@ -352,7 +351,7 @@ STDMETHODIMP TextService::OnSetFocus(ITfDocumentMgr* pDocMgrFocus,
         if (no_edit_target) {
             _stop_state_poll_timer();
         } else {
-            _start_state_poll_timer();
+            _update_state_poll_timer();
         }
         _hide_status_window("hide:document_focus_unfocused");
         _hide_candidate_window("hide:document_focus_unfocused");
@@ -361,7 +360,7 @@ STDMETHODIMP TextService::OnSetFocus(ITfDocumentMgr* pDocMgrFocus,
         return S_OK;
     }
 
-    _start_state_poll_timer();
+    _update_state_poll_timer();
     _show_status_window_if_allowed("show:document_focus");
 
     // Sync status on focus change (user may have toggled via language bar)

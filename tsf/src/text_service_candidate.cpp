@@ -27,6 +27,7 @@ void TextService::_show_candidate_window(const char* reason) {
     if (!_candidateWindow.is_visible())
         _enqueue_event_trace("candidate_window", reason);
     _candidateWindow.show();
+    _update_state_poll_timer();
 }
 
 void TextService::_hide_external_candidate_window(const char* reason) {
@@ -37,6 +38,7 @@ void TextService::_hide_external_candidate_window(const char* reason) {
     if (_candidateWindow.is_visible())
         _enqueue_event_trace("candidate_window", reason);
     _candidateWindow.hide();
+    _update_state_poll_timer();
 }
 
 void TextService::_hide_candidate_window(const char* reason) {
