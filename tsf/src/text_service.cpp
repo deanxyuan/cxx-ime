@@ -217,7 +217,7 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
     //     _sync_ime_status(resp.ime_status);
     // }
     _activated = true;
-    _start_state_poll_timer();
+    _update_state_poll_timer();
     if (_config.status_window.enable && _config.status_window.show_on_startup) {
         _update_input_focus_from_thread_mgr();
         if (_inputFocused) {

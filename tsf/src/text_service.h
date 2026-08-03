@@ -233,9 +233,9 @@ private:
     void _update_reading_ui_element(ITfContext* context, const std::wstring& reading);
     void _end_reading_ui_element(const char* reason);
     void _trace_input_decision(const char* block_reason);
-    void _start_state_poll_timer();
+    void _update_state_poll_timer();
     void _stop_state_poll_timer();
-    void _poll_unfocused_state_keys();
+    void _poll_runtime_state();
     static VOID CALLBACK _state_poll_timer_proc(HWND hwnd, UINT msg, UINT_PTR id_event, DWORD time);
     bool _start_config_updates();
     void _stop_config_updates();
@@ -281,6 +281,7 @@ private:
     RECT _candidatePendingStaleRect = {};
     std::chrono::steady_clock::time_point _candidateShowPendingSince = {};
     UINT_PTR _statePollTimer = 0;
+    UINT _statePollIntervalMs = 0;
     std::chrono::steady_clock::time_point _lastIpcHeartbeat = {};
     bool _ipcHealthy = true;
     std::string _lastInputBlockReason;

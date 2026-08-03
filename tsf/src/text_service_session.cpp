@@ -13,9 +13,10 @@
 
 namespace {
 
-constexpr auto kIpcHeartbeatInterval = std::chrono::milliseconds(1500);
+constexpr UINT kIpcHeartbeatIntervalMs = 1500;
+constexpr auto kIpcHeartbeatInterval = std::chrono::milliseconds(kIpcHeartbeatIntervalMs);
 constexpr int kTsfIpcTimeoutMs = 800;
-constexpr UINT kStatePollIntervalMs = 30;
+constexpr UINT kStatePollFastIntervalMs = 30;
 
 std::mutex g_state_poll_timer_mutex;
 std::unordered_map<UINT_PTR, TextService*> g_state_poll_timers;
@@ -238,11 +239,23 @@ bool TextService::_sync_caps_lock_state(bool caps_lock,
     return false;
 }
 
-void TextService::_start_state_poll_timer() {
-    if (_statePollTimer || !_activated)
+void TextService::_update_state_poll_timer() {
+    if (!_activated || _inputTargetUnavailable) {
+        _stop_state_poll_timer();
+        return;
+    }
+
+    const bool track_candidate =
+        _inputFocused && _composing &&
+        (_candidateShowPending || _candidateWindow.is_visible());
+    const UINT interval = track_candidate ? kStatePollFastIntervalMs
+                                          : kIpcHeartbeatIntervalMs;
+    if (_statePollTimer && _statePollIntervalMs == interval)
         return;
 
-    UINT_PTR timer = SetTimer(nullptr, 0, kStatePollIntervalMs, _state_poll_timer_proc);
+    _stop_state_poll_timer();
+
+    UINT_PTR timer = SetTimer(nullptr, 0, interval, _state_poll_timer_proc);
     if (!timer)
         return;
 
@@ -251,6 +264,10 @@ void TextService::_start_state_poll_timer() {
         g_state_poll_timers[timer] = this;
     }
     _statePollTimer = timer;
+    _statePollIntervalMs = interval;
+    char detail[64] = {};
+    snprintf(detail, sizeof(detail), "interval_ms=%u", static_cast<unsigned int>(interval));
+    _enqueue_event_trace("state_poll_timer", detail, true);
 }
 
 void TextService::_stop_state_poll_timer() {
@@ -259,6 +276,7 @@ void TextService::_stop_state_poll_timer() {
 
     UINT_PTR timer = _statePollTimer;
     _statePollTimer = 0;
+    _statePollIntervalMs = 0;
     {
         std::lock_guard<std::mutex> lock(g_state_poll_timer_mutex);
         g_state_poll_timers.erase(timer);
@@ -275,54 +293,25 @@ VOID CALLBACK TextService::_state_poll_timer_proc(HWND, UINT, UINT_PTR id_event,
             service = it->second;
     }
     if (service)
-        service->_poll_unfocused_state_keys();
+        service->_poll_runtime_state();
 }
 
-void TextService::_poll_unfocused_state_keys() {
+void TextService::_poll_runtime_state() {
     if (!_activated)
         return;
 
     _heartbeat_ipc();
-    if (!_sessionId)
+    if (!_sessionId || !_inputFocused)
         return;
 
-    bool focused = _query_input_focus_from_thread_mgr();
-    if (focused) {
-        if (!_inputFocused) {
-            if (_inputTargetUnavailable) {
-                _hide_status_window("hide:poll_no_edit_target");
-                _hide_candidate_window("hide:poll_no_edit_target");
-                _end_reading_ui_element("hide:poll_no_edit_target_reading");
-                return;
-            }
-            _inputFocused = true;
-            _show_status_window_if_allowed("show:poll_focus_in");
-            if (_sessionId && _client.ensure_connected())
-                _client.focus_in(_sessionId);
-        }
-        if (_composing && _candidateWindow.is_visible()) {
-            _follow_native_caret();
-        }
-        if (_candidateShowPending && _composing) {
-            ITfContext* context = _current_edit_context_for_composition();
-            if (context) {
-                _request_candidate_position_update(context, "show:pending_timeout");
-                context->Release();
-            }
-        }
-        return;
+    if (_composing && _candidateWindow.is_visible()) {
+        _follow_native_caret();
     }
-
-    if (_inputFocused) {
-        _inputFocused = false;
-        if (_sessionId && _client.is_connected())
-            _client.focus_out(_sessionId);
-        _AbortComposition();
+    if (_candidateShowPending && _composing) {
+        ITfContext* context = _current_edit_context_for_composition();
+        if (context) {
+            _request_candidate_position_update(context, "show:pending_timeout");
+            context->Release();
+        }
     }
-    _hide_status_window("hide:poll_unfocused");
-    _hide_candidate_window("hide:poll_unfocused");
-    _end_reading_ui_element("hide:poll_unfocused_reading");
-
-    // Keyboard state belongs to the calling thread's input queue. An unfocused
-    // TSF instance must not publish that potentially stale state globally.
 }
