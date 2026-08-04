@@ -173,7 +173,7 @@ HRESULT TextService::update_composition(ITfContext* context,
                                          const std::wstring& preedit,
                                          size_t preedit_cursor,
                                          bool ensure,
-                                         bool sync) {
+                                         DWORD edit_session_mode) {
     if (!context) {
         return E_POINTER;
     }
@@ -192,7 +192,8 @@ HRESULT TextService::update_composition(ITfContext* context,
         preedit, preedit_cursor);
 
     HRESULT edit_hr = E_FAIL;
-    const DWORD flags = TF_ES_READWRITE | (sync ? TF_ES_SYNC : TF_ES_ASYNCDONTCARE);
+    const bool sync = edit_session_mode == TF_ES_SYNC;
+    const DWORD flags = TF_ES_READWRITE | edit_session_mode;
     HRESULT request_hr =
         context->RequestEditSession(_clientId, edit_session, flags, &edit_hr);
     const HRESULT initial_request_hr = request_hr;

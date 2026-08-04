@@ -796,7 +796,7 @@ ProcessKeyResult SessionManager::process_key(uint32_t id, const cxxime::KeyEvent
     if (result == cxxime::ProcessResult::COMMITTED) {
         auto [raw, source] = engine.take_commit_text_with_source();
         ret.commit_text = cxxime::OutputComposer::transform(raw, opts, source);
-        ret.composing = false;
+        ret.composing = engine.context().is_composing();
     } else if (result == cxxime::ProcessResult::TOGGLE_PUNCT
             || result == cxxime::ProcessResult::TOGGLE_SHAPE) {
         // Toggle results should not carry stale preedit. Clear the composition
@@ -805,11 +805,11 @@ ProcessKeyResult SessionManager::process_key(uint32_t id, const cxxime::KeyEvent
         ret.composing = false;
     } else {
         ret.composing = engine.context().is_composing();
-        if (ret.composing) {
-            ret.preedit = engine.context().pinyin_buffer;
-            ret.preedit_cursor = engine.context().preedit_cursor();
-            ret.candidates = engine.context().candidates;
-        }
+    }
+    if (ret.composing) {
+        ret.preedit = engine.context().pinyin_buffer;
+        ret.preedit_cursor = engine.context().preedit_cursor();
+        ret.candidates = engine.context().candidates;
     }
 
     // trace log

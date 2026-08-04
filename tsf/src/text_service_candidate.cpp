@@ -33,6 +33,7 @@ void TextService::_show_candidate_window(const char* reason) {
 void TextService::_hide_external_candidate_window(const char* reason) {
     _candidateShowPending = false;
     _candidatePendingHasStaleRect = false;
+    _candidateRepositionPending = false;
     _candidatePendingStaleRect = {};
     _candidateShowPendingSince = {};
     if (_candidateWindow.is_visible())
@@ -186,6 +187,7 @@ bool TextService::set_candidate_ui_element_shown(bool show) {
 
     _candidateShowPending = false;
     _candidatePendingHasStaleRect = false;
+    _candidateRepositionPending = false;
     _candidatePendingStaleRect = {};
     _candidateShowPendingSince = {};
     _show_candidate_window("show:ui_element_show");

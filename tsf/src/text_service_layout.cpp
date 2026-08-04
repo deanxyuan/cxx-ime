@@ -22,6 +22,7 @@ bool is_valid_caret_rect(const RECT& rc) {
 namespace {
 
 constexpr int kCandidatePendingFallbackDelayMs = 30;
+constexpr int kCandidateRepositionFallbackDelayMs = 150;
 
 void normalize_caret_rect_size(RECT* rc) {
     if (!rc)
@@ -104,18 +105,25 @@ void TextService::update_candidate_position(const RECT& rc,
     }
     if (!_candidateWindow.is_visible()) {
         if (_candidateShowPending) {
-            if (!from_layout_change && !used_trusted_native &&
+            const bool position_unchanged =
                 _candidatePendingHasStaleRect &&
-                same_caret_position(final_rect, _candidatePendingStaleRect)) {
+                same_caret_position(final_rect, _candidatePendingStaleRect);
+            if (position_unchanged &&
+                (_candidateRepositionPending ||
+                 (!from_layout_change && !used_trusted_native))) {
                 auto now = std::chrono::steady_clock::now();
+                const int fallback_delay = _candidateRepositionPending
+                    ? kCandidateRepositionFallbackDelayMs
+                    : kCandidatePendingFallbackDelayMs;
                 if (_candidateShowPendingSince.time_since_epoch().count() != 0 &&
                     now - _candidateShowPendingSince <
-                        std::chrono::milliseconds(kCandidatePendingFallbackDelayMs)) {
+                        std::chrono::milliseconds(fallback_delay)) {
                     return;
                 }
             }
             _candidateShowPending = false;
             _candidatePendingHasStaleRect = false;
+            _candidateRepositionPending = false;
             _candidatePendingStaleRect = {};
             _candidateShowPendingSince = {};
             _candidateWindow.move_to_caret(final_rect);
@@ -198,7 +206,9 @@ void TextService::_unadvise_text_layout_sink() {
 void TextService::_request_candidate_position_update(ITfContext* pic, 
                                                      const char* reason,
                                                      bool from_layout_change) {
-    if (!pic || !_composing || (!_candidateWindow.is_visible() && !_candidateShowPending))
+    const bool candidate_active =
+        _candidateShowPending || (_composing && _candidateWindow.is_visible());
+    if (!pic || !candidate_active)
         return;
     const bool ui_element_only = (_activateFlags & TF_TMF_UIELEMENTENABLEDONLY) != 0;
     const bool original_ui_allowed =

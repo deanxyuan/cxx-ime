@@ -126,11 +126,16 @@ void Engine::finalize() {
         owned_dict_.close();
     }
     context_.reset();
+    commit_continues_composition_ = false;
 }
 
 void Engine::reload_config(const Config& config) {
     config_ = &config;
     ascii_composer_.load_config(config);
+    if (mode_ == InputMode::MIXED && translator_) {
+        static_cast<MixedTranslator*>(translator_.get())
+            ->set_candidate_preference(config.mixed_candidate_preference);
+    }
     if (!config.candidate_learning && translator_) {
         translator_->clear_recent();
     }
@@ -153,6 +158,7 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
                                   int visible_candidate_count) {
     CXXIME_LOG(L"Engine::process_key: vk=%u, is_key_up=%d, composing=%d",
                event.keycode, event.is_key_up, context_.is_composing());
+    commit_continues_composition_ = false;
 
     const uint64_t input_revision_before = context_.preedit_revision();
     const int page_index_before = context_.page_index;
@@ -318,6 +324,27 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
     std::string committed_code_override;
     Candidate committed_candidate_override;
     bool has_committed_candidate_override = false;
+    const bool plain_letter_key = !event.is_key_up && !event.is_shift() && !event.is_ctrl() &&
+                                  !event.is_alt() && !event.is_caps_lock() &&
+                                  event.keycode >= 'A' && event.keycode <= 'Z';
+    const bool has_multiple_wubi_candidates =
+        !context_.candidates.candidates.empty() &&
+        (context_.candidates.total_count > 1 || context_.candidates.candidates.size() > 1) &&
+        context_.candidates.candidates.front().source == CandidateSource::kWubi;
+    const bool commit_wubi_before_next_code =
+        config_->wubi_commit_first_on_fifth_key &&
+        (mode_ == InputMode::WUBI || mode_ == InputMode::MIXED) &&
+        plain_letter_key && context_.pinyin_buffer.size() == 4 &&
+        context_.preedit_cursor() == context_.pinyin_buffer.size() &&
+        has_multiple_wubi_candidates;
+    if (commit_wubi_before_next_code) {
+        committed_code_override = context_.pinyin_buffer;
+        committed_candidate_override = context_.candidates.candidates.front();
+        has_committed_candidate_override = true;
+        context_.clear_preedit();
+        context_.candidates = {};
+        context_.reset_pagination();
+    }
 
     // Phase 4: PinyinProcessor
     std::chrono::steady_clock::time_point t0, t1, t2;
@@ -438,6 +465,13 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
                 result = ProcessResult::COMMITTED;
             }
         }
+    }
+    if (commit_wubi_before_next_code && result == ProcessResult::ACCEPTED &&
+        context_.is_composing()) {
+        context_.committed_text = committed_candidate_override.text;
+        context_.set_commit_source(CommitSource::kCandidate);
+        commit_continues_composition_ = true;
+        result = ProcessResult::COMMITTED;
     }
     if (trace_enabled_) {
         t2 = std::chrono::steady_clock::now();
@@ -661,32 +695,44 @@ bool Engine::select_candidate(int index) {
 std::string Engine::get_commit_text() {
     std::string text = context_.committed_text;
     context_.reset();
+    commit_continues_composition_ = false;
     return text;
 }
 
 std::pair<std::string, CommitSource> Engine::take_commit_text_with_source() {
     auto result = std::make_pair(std::move(context_.committed_text), context_.commit_source());
-    context_.reset();
+    if (commit_continues_composition_) {
+        context_.committed_text.clear();
+        context_.set_commit_source(CommitSource::kRawCode);
+        commit_continues_composition_ = false;
+    } else {
+        context_.reset();
+    }
     return result;
 }
 
 std::pair<std::string, CommitSource> Engine::commit_composition_with_source() {
-    return context_.commit_with_source();
+    auto result = context_.commit_with_source();
+    commit_continues_composition_ = false;
+    return result;
 }
 
 std::string Engine::commit_raw_composition() {
     std::string raw = std::move(context_.pinyin_buffer);
     context_.reset();
+    commit_continues_composition_ = false;
     return raw;
 }
 
 void Engine::clear() {
     context_.reset();
+    commit_continues_composition_ = false;
     translator_->clear_recent();
 }
 
 void Engine::clear_composition() {
     context_.reset();
+    commit_continues_composition_ = false;
     // Preserve session recent cache; do not call translator_->clear_recent().
 }
 
@@ -728,6 +774,7 @@ void Engine::rebuild_pipeline(InputMode mode, bool force) {
     if (!force && mode == mode_) return;
 
     context_.reset();
+    commit_continues_composition_ = false;
 
     mode_ = mode;
     if (mode == InputMode::WUBI) {
@@ -746,6 +793,7 @@ void Engine::rebuild_pipeline(InputMode mode, bool force) {
         if (pinyin_dict_->has_short_cache()) {
             mixed_trans->set_short_cache(&pinyin_dict_->short_cache());
         }
+        mixed_trans->set_candidate_preference(config_->mixed_candidate_preference);
         translator_ = std::move(mixed_trans);
     } else {
         processor_ = std::make_unique<PinyinProcessor>();
