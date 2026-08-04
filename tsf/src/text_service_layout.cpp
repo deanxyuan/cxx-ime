@@ -132,8 +132,15 @@ void TextService::update_candidate_position(const RECT& rc,
 }
 
 void TextService::_follow_native_caret() {
+    ITfContext* context = _current_edit_context_for_composition();
+    if (!context) {
+        return;
+    }
+
     RECT native_rect = {};
-    if (!_resolve_native_caret_rect(&native_rect) || same_caret_position(native_rect, _caretRect)) {
+    bool resolved = _resolve_context_native_caret_rect(context, &native_rect);
+    context->Release();
+    if (!resolved || same_caret_position(native_rect, _caretRect)) {
         return;
     }
 
