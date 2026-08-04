@@ -375,6 +375,88 @@ TEST(WubiEngine, engine_wubi_auto_commit) {
     DeleteFileA(wubi_path.c_str());
 }
 
+TEST(WubiEngine, engine_wubi_fifth_key_commits_first_and_starts_next_code) {
+    std::string pinyin_path = make_temp_path("test_wubi_fifth_key_pinyin.bin");
+    std::string wubi_path = make_temp_path("test_wubi_fifth_key_wubi.bin");
+    std::string wubi_user_path = make_temp_path("test_wubi_fifth_key_user.tsv");
+    DeleteFileA(wubi_user_path.c_str());
+
+    ASSERT_TRUE(cxxime::Dict::create_test_dict(pinyin_path, {{"a", "拼", 100}}));
+    ASSERT_TRUE(cxxime::Dict::create_test_dict(wubi_path, {
+                                                    {"abcd", "首选", 300},
+                                                    {"abcd", "次选", 200},
+                                                    {"e", "下一项", 100},
+    }));
+
+    cxxime::Engine engine;
+    ASSERT_TRUE(engine.initialize(pinyin_path));
+    cxxime::Dict wubi_dict;
+    ASSERT_TRUE(wubi_dict.open(wubi_path, wubi_user_path));
+    engine.set_wubi_dict(&wubi_dict);
+    engine.switch_mode(cxxime::InputMode::WUBI);
+
+    ASSERT_EQ(engine.process_key(make_key('A')), cxxime::ProcessResult::ACCEPTED);
+    ASSERT_EQ(engine.process_key(make_key('B')), cxxime::ProcessResult::ACCEPTED);
+    ASSERT_EQ(engine.process_key(make_key('C')), cxxime::ProcessResult::ACCEPTED);
+    ASSERT_EQ(engine.process_key(make_key('D')), cxxime::ProcessResult::ACCEPTED);
+    ASSERT_GE(engine.context().candidates.candidates.size(), 2u);
+
+    ASSERT_EQ(engine.process_key(make_key('E')), cxxime::ProcessResult::COMMITTED);
+    ASSERT_EQ(engine.context().committed_text, "首选");
+    ASSERT_EQ(engine.context().pinyin_buffer, "e");
+    ASSERT_TRUE(engine.context().is_composing());
+    ASSERT_EQ(engine.context().candidates.candidates[0].text, "下一项");
+
+    const auto committed = engine.take_commit_text_with_source();
+    ASSERT_EQ(committed.first, "首选");
+    ASSERT_EQ(committed.second, cxxime::CommitSource::kCandidate);
+    ASSERT_EQ(engine.context().pinyin_buffer, "e");
+    ASSERT_TRUE(engine.context().is_composing());
+
+    engine.finalize();
+    wubi_dict.close();
+    DeleteFileA(pinyin_path.c_str());
+    DeleteFileA(wubi_path.c_str());
+    DeleteFileA(wubi_user_path.c_str());
+}
+
+TEST(WubiEngine, engine_wubi_fifth_key_commit_can_be_disabled) {
+    std::string pinyin_path = make_temp_path("test_wubi_fifth_key_off_pinyin.bin");
+    std::string wubi_path = make_temp_path("test_wubi_fifth_key_off_wubi.bin");
+    std::string wubi_user_path = make_temp_path("test_wubi_fifth_key_off_user.tsv");
+    DeleteFileA(wubi_user_path.c_str());
+
+    ASSERT_TRUE(cxxime::Dict::create_test_dict(pinyin_path, {{"a", "拼", 100}}));
+    ASSERT_TRUE(cxxime::Dict::create_test_dict(wubi_path, {
+                                                {"abcd", "首选", 300},
+                                                {"abcd", "次选", 200},
+    }));
+
+    cxxime::Engine engine;
+    ASSERT_TRUE(engine.initialize(pinyin_path));
+    cxxime::Dict wubi_dict;
+    ASSERT_TRUE(wubi_dict.open(wubi_path, wubi_user_path));
+    engine.set_wubi_dict(&wubi_dict);
+    engine.switch_mode(cxxime::InputMode::WUBI);
+    cxxime::Config config;
+    config.wubi_commit_first_on_fifth_key = false;
+    engine.reload_config(config);
+
+    ASSERT_EQ(engine.process_key(make_key('A')), cxxime::ProcessResult::ACCEPTED);
+    ASSERT_EQ(engine.process_key(make_key('B')), cxxime::ProcessResult::ACCEPTED);
+    ASSERT_EQ(engine.process_key(make_key('C')), cxxime::ProcessResult::ACCEPTED);
+    ASSERT_EQ(engine.process_key(make_key('D')), cxxime::ProcessResult::ACCEPTED);
+    ASSERT_EQ(engine.process_key(make_key('E')), cxxime::ProcessResult::ACCEPTED);
+    ASSERT_TRUE(engine.context().committed_text.empty());
+    ASSERT_EQ(engine.context().pinyin_buffer, "abcde");
+
+    engine.finalize();
+    wubi_dict.close();
+    DeleteFileA(pinyin_path.c_str());
+    DeleteFileA(wubi_path.c_str());
+    DeleteFileA(wubi_user_path.c_str());
+}
+
 TEST(WubiEngine, engine_wubi_space_without_candidates_clears) {
     std::string pinyin_path = make_temp_path("test_wubi_space_clear_pinyin.bin");
     std::string wubi_path = make_temp_path("test_wubi_space_clear_wubi.bin");
@@ -497,6 +579,54 @@ TEST(WubiEngine, engine_mixed_returns_candidates) {
     wubi_dict.close();
     DeleteFileA(pinyin_path.c_str());
     DeleteFileA(wubi_path.c_str());
+}
+
+TEST(WubiEngine, mixed_wubi_preference_interleaves_candidate_sources) {
+    std::string pinyin_path = make_temp_path("test_mixed_preference_pinyin.bin");
+    std::string wubi_path = make_temp_path("test_mixed_preference_wubi.bin");
+    std::string pinyin_user_path = make_temp_path("test_mixed_preference_pinyin.tsv");
+    std::string wubi_user_path = make_temp_path("test_mixed_preference_wubi.tsv");
+    DeleteFileA(pinyin_user_path.c_str());
+    DeleteFileA(wubi_user_path.c_str());
+
+    ASSERT_TRUE(cxxime::Dict::create_test_dict(pinyin_path, {
+                                                {"a", "pinyin-one", 400},
+                                                {"a", "pinyin-two", 300},
+    }));
+    ASSERT_TRUE(cxxime::Dict::create_test_dict(wubi_path, {
+                                                {"a", "wubi-one", 400},
+                                                {"a", "wubi-two", 300},
+    }));
+
+    cxxime::Dict pinyin_dict;
+    cxxime::Dict wubi_dict;
+    cxxime::SpellingsIndex spellings;
+    ASSERT_TRUE(pinyin_dict.open(pinyin_path, pinyin_user_path));
+    ASSERT_TRUE(wubi_dict.open(wubi_path, wubi_user_path));
+
+    cxxime::Config config;
+    config.page_size = 10;
+    config.mixed_candidate_preference = cxxime::MixedCandidatePreference::kWubi;
+    cxxime::Engine engine;
+    ASSERT_TRUE(engine.initialize(pinyin_dict, spellings, nullptr, config));
+    engine.set_wubi_dict(&wubi_dict);
+    engine.switch_mode(cxxime::InputMode::MIXED);
+
+    ASSERT_EQ(engine.process_key(make_key('A')), cxxime::ProcessResult::ACCEPTED);
+    const auto& candidates = engine.context().candidates.candidates;
+    ASSERT_GE(candidates.size(), 4u);
+    ASSERT_EQ(candidates[0].source, cxxime::CandidateSource::kWubi);
+    ASSERT_EQ(candidates[1].source, cxxime::CandidateSource::kPinyin);
+    ASSERT_EQ(candidates[2].source, cxxime::CandidateSource::kWubi);
+    ASSERT_EQ(candidates[3].source, cxxime::CandidateSource::kPinyin);
+
+    engine.finalize();
+    pinyin_dict.close();
+    wubi_dict.close();
+    DeleteFileA(pinyin_path.c_str());
+    DeleteFileA(wubi_path.c_str());
+    DeleteFileA(pinyin_user_path.c_str());
+    DeleteFileA(wubi_user_path.c_str());
 }
 
 TEST(WubiEngine, engine_mixed_wubi_auto_commit) {

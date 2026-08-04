@@ -83,12 +83,14 @@ private:
     HWND hInputModePinyin_ = nullptr;
     HWND hInputModeWubi_ = nullptr;
     HWND hInputModeMixed_ = nullptr;
+    HWND hMixedCandidatePreference_ = nullptr;
     HWND hInlinePreedit_ = nullptr;
     HWND hPreeditCursor_ = nullptr;
     HWND hPreeditTypeComposition_ = nullptr;
     HWND hPreeditTypePreview_ = nullptr;
     HWND hFuzzyPinyin_ = nullptr;
     HWND hWubiAutoCommit_ = nullptr;
+    HWND hWubiCommitFirstOnFifthKey_ = nullptr;
     HWND hWubiCodeHint_ = nullptr;
     HWND hCandidateLearning_ = nullptr;
     HWND hInitialEnglishPunct_ = nullptr;

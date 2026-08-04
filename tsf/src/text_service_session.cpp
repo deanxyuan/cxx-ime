@@ -242,8 +242,8 @@ void TextService::_update_state_poll_timer() {
     }
 
     const bool track_candidate =
-        _inputFocused && _composing &&
-        (_candidateShowPending || _candidateWindow.is_visible());
+        _inputFocused &&
+        (_candidateShowPending || (_composing && _candidateWindow.is_visible()));
     const UINT interval = track_candidate ? kStatePollFastIntervalMs
                                           : kIpcHeartbeatIntervalMs;
     if (_statePollTimer && _statePollIntervalMs == interval)
@@ -300,10 +300,10 @@ void TextService::_poll_runtime_state() {
     if (!_sessionId || !_inputFocused)
         return;
 
-    if (_composing && _candidateWindow.is_visible()) {
+    if (_composing && (_candidateShowPending || _candidateWindow.is_visible())) {
         _follow_native_caret();
     }
-    if (_candidateShowPending && _composing) {
+    if (_candidateShowPending) {
         ITfContext* context = _current_edit_context_for_composition();
         if (context) {
             _request_candidate_position_update(context, "show:pending_timeout");

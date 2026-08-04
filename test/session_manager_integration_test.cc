@@ -205,12 +205,39 @@ static void create_test_dictionary_bundle(const std::string& dict_path,
     });
 }
 
+static void
+create_test_dictionary_bundle_with_wubi(const std::string& dict_path,
+                                        const std::vector<TestDictEntry>& pinyin_entries,
+                                        const std::vector<TestDictEntry>& wubi_entries) {
+    create_test_dictionary_bundle(dict_path, pinyin_entries);
+
+    const std::string wubi_path = dict_path + ".wubi.bin";
+    const std::string wubi_idx_path = wubi_path + ".idx";
+    ASSERT_TRUE(cxxime::Dict::create_test_dict(wubi_path, wubi_entries));
+    write_test_id_index(wubi_idx_path, wubi_entries);
+
+    write_manifest_for_files(dict_path, {
+        {"pinyin_dict", dict_path},
+        {"pinyin_idx", dict_path + ".idx"},
+        {"pinyin_spellings", dict_path + ".spellings.bin"},
+        {"pinyin_topn", dict_path + ".topn.bin"},
+        {"wubi_dict", wubi_path},
+        {"wubi_idx", wubi_idx_path},
+    });
+}
+
 static void delete_test_dictionary_bundle(const std::string& dict_path) {
     DeleteFileA(dict_path.c_str());
     DeleteFileA((dict_path + ".idx").c_str());
     DeleteFileA((dict_path + ".spellings.bin").c_str());
     DeleteFileA((dict_path + ".topn.bin").c_str());
     DeleteFileA(cxxime::dictionary_manifest_path_for_dict(dict_path).c_str());
+}
+
+static void delete_test_dictionary_bundle_with_wubi(const std::string& dict_path) {
+    delete_test_dictionary_bundle(dict_path);
+    DeleteFileA((dict_path + ".wubi.bin").c_str());
+    DeleteFileA((dict_path + ".wubi.bin.idx").c_str());
 }
 
 static std::string setup_test_dict() {
@@ -282,6 +309,40 @@ TEST(SessionIntegration, process_key_ok) {
     ASSERT_TRUE(r.composing);
     ASSERT_EQ(r.preedit, "n");
     ASSERT_EQ(r.preedit_cursor, static_cast<size_t>(0));
+}
+
+TEST(SessionIntegration, wubi_fifth_key_returns_commit_and_next_composition) {
+    const std::string dict_path = make_temp_path("test_wubi_fifth_key_session.bin");
+    create_test_dictionary_bundle_with_wubi(dict_path, {{"a", "拼", 100}},
+                                                {
+                                                    {"abcd", "首选", 300},
+                                                    {"abcd", "次选", 200},
+                                                    {"e", "下一项", 100},
+                                                });
+
+    auto config = std::make_shared<cxxime::Config>();
+    config->input_mode = static_cast<int>(cxxime::InputMode::WUBI);
+    config->wubi_commit_first_on_fifth_key = true;
+    SessionManager mgr;
+    ASSERT_TRUE(mgr.initialize(dict_path, config));
+    const uint32_t id = mgr.create_session();
+
+    ASSERT_EQ(mgr.process_key(id, make_key('A')).result, cxxime::ProcessResult::ACCEPTED);
+    ASSERT_EQ(mgr.process_key(id, make_key('B')).result, cxxime::ProcessResult::ACCEPTED);
+    ASSERT_EQ(mgr.process_key(id, make_key('C')).result, cxxime::ProcessResult::ACCEPTED);
+    ASSERT_EQ(mgr.process_key(id, make_key('D')).result, cxxime::ProcessResult::ACCEPTED);
+
+    const auto result = mgr.process_key(id, make_key('E'));
+    ASSERT_EQ(result.status, cxxime::IPCStatus::OK);
+    ASSERT_EQ(result.result, cxxime::ProcessResult::COMMITTED);
+    ASSERT_EQ(result.commit_text, "首选");
+    ASSERT_TRUE(result.composing);
+    ASSERT_EQ(result.preedit, "e");
+    ASSERT_EQ(result.preedit_cursor, static_cast<size_t>(1));
+    ASSERT_TRUE(candidate_contains(result.candidates, "下一项"));
+
+    mgr.destroy_session(id);
+    delete_test_dictionary_bundle_with_wubi(dict_path);
 }
 
 TEST(SessionIntegration, process_key_invalid_session) {

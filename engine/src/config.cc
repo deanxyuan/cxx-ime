@@ -24,6 +24,23 @@ static void load_bool(nlohmann::json& obj, const char* key, bool& val) {
     if (obj.contains(key) && obj[key].is_boolean()) val = obj[key].get<bool>();
 }
 
+static const char* mixed_candidate_preference_name(MixedCandidatePreference preference) {
+    switch (preference) {
+    case MixedCandidatePreference::kWubi:
+        return "wubi";
+    case MixedCandidatePreference::kAuto:
+    default:
+        return "auto";
+    }
+}
+
+static MixedCandidatePreference parse_mixed_candidate_preference(const std::string& value) {
+    if (value == "wubi") {
+        return MixedCandidatePreference::kWubi;
+    }
+    return MixedCandidatePreference::kAuto;
+}
+
 static int muted_text_color(int foreground, int background) {
     constexpr int foreground_weight = 3;
     constexpr int background_weight = 2;
@@ -132,8 +149,15 @@ static void apply_config_json(Config& config, nlohmann::json& j) {
         if (config.input_mode > 2) config.input_mode = 2;
         load_bool(e, "fuzzy_pinyin", config.fuzzy_pinyin);
         load_bool(e, "wubi_auto_commit", config.wubi_auto_commit);
+        load_bool(e, "wubi_commit_first_on_fifth_key",
+                  config.wubi_commit_first_on_fifth_key);
         load_bool(e, "wubi_code_hint", config.wubi_code_hint);
         load_bool(e, "candidate_learning", config.candidate_learning);
+        std::string mixed_candidate_preference =
+            mixed_candidate_preference_name(config.mixed_candidate_preference);
+        load_string(e, "mixed_candidate_preference", mixed_candidate_preference);
+        config.mixed_candidate_preference =
+            parse_mixed_candidate_preference(mixed_candidate_preference);
     }
 
     if (j.contains("initial_state") && j["initial_state"].is_object()) {
@@ -324,8 +348,12 @@ static nlohmann::json build_config_json(const Config& config) {
     j["engine"]["input_mode"] = config.input_mode;
     j["engine"]["fuzzy_pinyin"] = config.fuzzy_pinyin;
     j["engine"]["wubi_auto_commit"] = config.wubi_auto_commit;
+    j["engine"]["wubi_commit_first_on_fifth_key"] =
+        config.wubi_commit_first_on_fifth_key;
     j["engine"]["wubi_code_hint"] = config.wubi_code_hint;
     j["engine"]["candidate_learning"] = config.candidate_learning;
+    j["engine"]["mixed_candidate_preference"] =
+        mixed_candidate_preference_name(config.mixed_candidate_preference);
     j["engine"]["max_pinyin_length"] = kMaxInputCodeLength;
 
     j["initial_state"]["full_shape"] = config.initial_full_shape;

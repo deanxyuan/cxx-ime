@@ -89,14 +89,15 @@ void append_all(std::vector<Candidate>& output, std::unordered_set<std::string>&
 }
 
 void append_interleaved(std::vector<Candidate>& output, std::unordered_set<std::string>& seen,
-                            const std::vector<Candidate>& first,
-                            const std::vector<Candidate>& second) {
+                        const std::vector<Candidate>& first,
+                        const std::vector<Candidate>& second,
+                        CandidateSource preferred_source) {
     size_t fi = 0, si = 0;
     while (fi < first.size() || si < second.size()) {
         if (fi < first.size())
-            append_unique(output, seen, first[fi++], false, CandidateSource::kWubi);
+            append_unique(output, seen, first[fi++], false, preferred_source);
         if (si < second.size())
-            append_unique(output, seen, second[si++], true, CandidateSource::kWubi);
+            append_unique(output, seen, second[si++], true, preferred_source);
     }
 }
 
@@ -116,6 +117,10 @@ void MixedTranslator::set_syllabifier(Syllabifier* syllabifier) {
 
 void MixedTranslator::set_short_cache(const ShortCodeCache* cache) {
     pinyin_translator_.set_short_cache(cache);
+}
+
+void MixedTranslator::set_candidate_preference(MixedCandidatePreference preference) {
+    candidate_preference_ = preference;
 }
 
 CandidatePage MixedTranslator::translate(const std::string& input, int page_index, int page_size,
@@ -142,18 +147,22 @@ CandidatePage MixedTranslator::translate(const std::string& input, int page_inde
     merged.reserve(py.size() + wb.size());
     std::unordered_set<std::string> seen;
 
-    switch (choose_order(input, py, wb)) {
-    case MixedOrder::kWubiFirst:
-        append_all(merged, seen, wb);
-        append_all(merged, seen, py);
-        break;
-    case MixedOrder::kAmbiguousInterleave:
-        append_interleaved(merged, seen, py, wb);
-        break;
-    case MixedOrder::kPinyinFirst:
-        append_all(merged, seen, py);
-        append_all(merged, seen, wb);
-        break;
+    if (candidate_preference_ == MixedCandidatePreference::kWubi) {
+        append_interleaved(merged, seen, wb, py, CandidateSource::kWubi);
+    } else {
+        switch (choose_order(input, py, wb)) {
+        case MixedOrder::kWubiFirst:
+            append_all(merged, seen, wb);
+            append_all(merged, seen, py);
+            break;
+        case MixedOrder::kAmbiguousInterleave:
+            append_interleaved(merged, seen, py, wb, CandidateSource::kWubi);
+            break;
+        case MixedOrder::kPinyinFirst:
+            append_all(merged, seen, py);
+            append_all(merged, seen, wb);
+            break;
+        }
     }
 
     // Paginate

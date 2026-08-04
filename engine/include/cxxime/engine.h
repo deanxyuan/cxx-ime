@@ -120,6 +120,7 @@ private:
 
     // Input mode
     InputMode mode_ = InputMode::PINYIN;
+    bool commit_continues_composition_ = false;
 
     // Query trace (explicit ownership, not thread_local - see TraceContext constraints)
     QueryTrace trace_;

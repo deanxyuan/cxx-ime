@@ -3,6 +3,7 @@
 #ifndef CXXIME_MIXED_TRANSLATOR_H_
 #define CXXIME_MIXED_TRANSLATOR_H_
 
+#include <cxxime/config.h>
 #include <cxxime/translator.h>
 #include <cxxime/wubi_translator.h>
 
@@ -17,6 +18,7 @@ public:
     void set_wubi_dict(Dict* dict);
     void set_syllabifier(Syllabifier* syllabifier);
     void set_short_cache(const ShortCodeCache* cache);
+    void set_candidate_preference(MixedCandidatePreference preference);
 
     CandidatePage translate(const std::string& input, int page_index = 0, int page_size = 9,
                             QueryTrace* trace = nullptr, const QueryBudget* budget = nullptr,
@@ -30,6 +32,7 @@ public:
 private:
     PinyinTranslator pinyin_translator_;
     WubiTranslator wubi_translator_;
+    MixedCandidatePreference candidate_preference_ = MixedCandidatePreference::kAuto;
 };
 
 } // namespace cxxime

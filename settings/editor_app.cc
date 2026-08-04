@@ -549,38 +549,48 @@ void EditorApp::create_controls(HWND hwnd) {
     hInputModeWubi_ = make_radio(1004, L"五笔", inputX + S(80), t, S(70), p0, false);
     hInputModeMixed_ = make_radio(1005, L"混输", inputX + S(160), t, S(70), p0, false);
 
-    make_aligned_label(L"内联显示:", t + kRowH, p0);
+    make_aligned_label(L"混输排序:", t + kRowH, p0);
+    hMixedCandidatePreference_ = make_combo(1007, inputX, t + kRowH, S(140), p0);
+    combo_add(hMixedCandidatePreference_, L"智能排序");
+    combo_add(hMixedCandidatePreference_, L"五笔首选");
+    set_combo_drop_count(hMixedCandidatePreference_, 2);
+
+    make_aligned_label(L"内联显示:", t + kRowH * 2, p0);
     hInlinePreedit_ = make_check(
-        1001, L"在应用中显示编码", inputX, t + kRowH, S(180), p0);
+        1001, L"在应用中显示编码", inputX, t + kRowH * 2, S(180), p0);
     hPreeditCursor_ = make_check(
-        1006, L"候选窗显示光标", inputX + S(190), t + kRowH, S(160), p0);
+        1006, L"候选窗显示光标", inputX + S(190), t + kRowH * 2, S(160), p0);
 
-    make_aligned_label(L"显示内容:", t + kRowH * 2, p0);
+    make_aligned_label(L"显示内容:", t + kRowH * 3, p0);
     hPreeditTypeComposition_ = make_radio(
-        1002, L"编码 (ni'hao)", inputX, t + kRowH * 2, S(130), p0, true);
+        1002, L"编码 (ni'hao)", inputX, t + kRowH * 3, S(130), p0, true);
     hPreeditTypePreview_ = make_radio(
-        1003, L"首选 (你好)", inputX + S(138), t + kRowH * 2, S(120), p0, false);
+        1003, L"首选 (你好)", inputX + S(138), t + kRowH * 3, S(120), p0, false);
 
-    make_aligned_label(L"拼音设置:", t + kRowH * 3, p0);
-    hFuzzyPinyin_ = make_check(1020, L"模糊拼音", inputX, t + kRowH * 3, S(110), p0);
+    make_aligned_label(L"拼音设置:", t + kRowH * 4, p0);
+    hFuzzyPinyin_ = make_check(1020, L"模糊拼音", inputX, t + kRowH * 4, S(110), p0);
 
-    make_aligned_label(L"五笔设置:", t + kRowH * 4, p0);
+    make_aligned_label(L"五笔设置:", t + kRowH * 5, p0);
     hWubiAutoCommit_ = make_check(
-        1022, L"四码唯一自动上屏", inputX, t + kRowH * 4, S(170), p0);
+        1022, L"四码唯一上屏", inputX, t + kRowH * 5, S(125), p0);
+    hWubiCommitFirstOnFifthKey_ = make_check(
+        1028, L"第五码首选上屏", inputX + S(140), t + kRowH * 5, S(155), p0);
+
+    make_aligned_label(L"五笔候选:", t + kRowH * 6, p0);
     hWubiCodeHint_ = make_check(
-        1026, L"显示最短补码", inputX + S(185), t + kRowH * 4, S(150), p0);
+        1026, L"显示最短补码", inputX, t + kRowH * 6, S(150), p0);
 
-    make_aligned_label(L"候选设置:", t + kRowH * 5, p0);
-    hPageSize_ = make_edit(1021, inputX, t + kRowH * 5, S(50), p0);
-    make_label(L"项", inputX + S(54), t + kRowH * 5, p0);
+    make_aligned_label(L"候选设置:", t + kRowH * 7, p0);
+    hPageSize_ = make_edit(1021, inputX, t + kRowH * 7, S(50), p0);
+    make_label(L"项", inputX + S(54), t + kRowH * 7, p0);
     hCandidateLearning_ = make_check(
-        1023, L"记忆选词偏好", inputX + S(92), t + kRowH * 5, S(150), p0);
+        1023, L"记忆选词偏好", inputX + S(92), t + kRowH * 7, S(150), p0);
 
-    make_aligned_label(L"初始状态:", t + kRowH * 6, p0);
+    make_aligned_label(L"初始状态:", t + kRowH * 8, p0);
     hInitialEnglishPunct_ = make_check(
-        1027, L"英文标点", inputX, t + kRowH * 6, S(100), p0);
+        1027, L"英文标点", inputX, t + kRowH * 8, S(100), p0);
     hInitialFullShape_ = make_check(
-        1025, L"全角字符", inputX + S(115), t + kRowH * 6, S(100), p0);
+        1025, L"全角字符", inputX + S(115), t + kRowH * 8, S(100), p0);
 
     // ── Panel 1: Candidate Window ───────────────────────────────────
     HWND p1 = hPanels_[1]; t = kPanelPadTop;
@@ -895,7 +905,9 @@ void EditorApp::update_input_mode_enabled() {
     const bool wubi = get_check(hInputModeWubi_);
     const bool mixed = get_check(hInputModeMixed_);
     EnableWindow(hFuzzyPinyin_, !wubi);
+    EnableWindow(hMixedCandidatePreference_, mixed);
     EnableWindow(hWubiAutoCommit_, wubi || mixed);
+    EnableWindow(hWubiCommitFirstOnFifthKey_, wubi || mixed);
     EnableWindow(hWubiCodeHint_, wubi || mixed);
 }
 
@@ -1235,6 +1247,7 @@ void EditorApp::load_config() {
     }
     set_check(hFuzzyPinyin_, config_.fuzzy_pinyin);
     set_check(hWubiAutoCommit_, config_.wubi_auto_commit);
+    set_check(hWubiCommitFirstOnFifthKey_, config_.wubi_commit_first_on_fifth_key);
     set_check(hWubiCodeHint_, config_.wubi_code_hint);
     set_check(hCandidateLearning_, config_.candidate_learning);
     set_check(hInitialEnglishPunct_, !config_.initial_chinese_punct);
@@ -1251,6 +1264,9 @@ void EditorApp::load_config() {
     set_check(hInputModePinyin_, config_.input_mode == 0);
     set_check(hInputModeWubi_, config_.input_mode == 1);
     set_check(hInputModeMixed_, config_.input_mode == 2);
+    const int mixed_candidate_preference =
+        config_.mixed_candidate_preference == cxxime::MixedCandidatePreference::kWubi ? 1 : 0;
+    combo_set_index(hMixedCandidatePreference_, mixed_candidate_preference);
     update_input_mode_enabled();
 
     show_panel(static_cast<int>(initial_panel_));
@@ -1264,12 +1280,16 @@ void EditorApp::readback(HWND) {
     c.show_preedit_cursor = get_check(hPreeditCursor_);
     c.fuzzy_pinyin = get_check(hFuzzyPinyin_);
     c.wubi_auto_commit = get_check(hWubiAutoCommit_);
+    c.wubi_commit_first_on_fifth_key = get_check(hWubiCommitFirstOnFifthKey_);
     c.wubi_code_hint = get_check(hWubiCodeHint_);
     c.candidate_learning = get_check(hCandidateLearning_);
     c.initial_chinese_punct = !get_check(hInitialEnglishPunct_);
     c.initial_full_shape = get_check(hInitialFullShape_);
     c.page_size = std::clamp(get_edit_int(hPageSize_), 1, 100);
     c.input_mode = get_check(hInputModeMixed_) ? 2 : get_check(hInputModeWubi_) ? 1 : 0;
+    c.mixed_candidate_preference = combo_index(hMixedCandidatePreference_) == 1
+        ? cxxime::MixedCandidatePreference::kWubi
+        : cxxime::MixedCandidatePreference::kAuto;
     c.preedit_type = (SendMessageW(hPreeditTypePreview_, BM_GETCHECK, 0, 0) == BST_CHECKED)
                          ? "preview" : "composition";
 

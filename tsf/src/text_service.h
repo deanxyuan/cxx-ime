@@ -118,7 +118,7 @@ public:
                                const std::wstring& preedit,
                                size_t preedit_cursor,
                                bool ensure = false,
-                               bool sync = false);
+                               DWORD edit_session_mode = TF_ES_ASYNCDONTCARE);
     bool apply_composition_display_attribute(ITfContext* pic, ITfRange* range, TfEditCookie ec);
     ITfComposition* get_composition() const { return _composition; }
     void set_composition(ITfComposition* comp) { _composition = comp; }
@@ -275,6 +275,7 @@ private:
     std::bitset<256> _passThroughKeyUps;
     bool _candidateShowPending = false;
     bool _candidatePendingHasStaleRect = false;
+    bool _candidateRepositionPending = false;
     bool _hostCompatibilityRuntimeActive = false;
     bool _writingConversionCompartment = false;
     bool _handlingConversionCompartmentChange = false;

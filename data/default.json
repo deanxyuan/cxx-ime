@@ -9,8 +9,10 @@
         "max_pinyin_length": 64,
         "fuzzy_pinyin": true,
         "wubi_auto_commit": true,
+        "wubi_commit_first_on_fifth_key": true,
         "wubi_code_hint": false,
-        "candidate_learning": false
+        "candidate_learning": false,
+        "mixed_candidate_preference": "auto"
     },
     "initial_state": {
         "full_shape": false,

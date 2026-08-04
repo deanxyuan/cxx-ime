@@ -345,20 +345,31 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
     }
 
     // Handle committed text (e.g. Shift toggle with commit_text, or normal candidate selection)
-    if (response.commit_text[0] != '\0') {
-        _hide_candidate_window("hide:commit");
-        _end_reading_ui_element("hide:commit_reading");
-        _candidateWindow.set_preedit("");
+    const bool has_committed_text = response.commit_text[0] != '\0';
+    const bool commit_continues_composition =
+        has_committed_text && response.composing && response.preedit[0] != '\0';
+    if (has_committed_text) {
+        if (commit_continues_composition) {
+            _hide_external_candidate_window("hide:commit_continue_reposition");
+        } else {
+            _hide_candidate_window("hide:commit");
+            _end_reading_ui_element("hide:commit_reading");
+            _candidateWindow.set_preedit("");
+        }
         std::wstring commit_text = utf8_to_wstring(response.commit_text);
-            if (!commit_text.empty()) {
-                _commit_text(pic, commit_text, true);
-                _composing = false;
-                _lastInlineCompositionText.clear();
-                *pfEaten = TRUE;
-            }
+        if (!commit_text.empty()) {
+            _commit_text(pic, commit_text, true);
+            _composing = false;
+            _lastInlineCompositionText.clear();
+            *pfEaten = TRUE;
+        }
         trace.result = TsfResult::COMMITTED;
         trace.candidate_count = response.candidate_count;
-    } else if (response.preedit[0] != '\0') {
+    }
+    if (commit_continues_composition) {
+        _reset_stage_composition("commit_continue");
+    }
+    if (response.preedit[0] != '\0') {
         ensure_stage_composition_id();
         // Decode preedit
         std::wstring preedit;
@@ -406,21 +417,25 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
             : (decision.start_composition ? decision.inline_text : L"");
         bool external_candidate_window = true;
         bool candidate_ui_published = false;
+        const DWORD composition_edit_session_mode =
+            commit_continues_composition ? TF_ES_ASYNC : TF_ES_SYNC;
         if (ui_element_only) {
             _end_reading_ui_element("hide:candidate_mirror_no_reading");
             external_candidate_window = _publish_candidate_ui_element(
                 page, response.candidate_count, response.page_current, response.page_total);
             candidate_ui_published = true;
-            update_composition(pic, preedit, preedit_cursor, true, true);
+            update_composition(
+                pic, preedit, preedit_cursor, true, composition_edit_session_mode);
         } else if (decision.start_composition) {
             _update_reading_ui_element(pic, preedit);
             update_composition(
-                pic, decision.inline_text, decision.inline_cursor, true, true);
+                pic, decision.inline_text, decision.inline_cursor, true,
+                composition_edit_session_mode);
         } else {
             _update_reading_ui_element(pic, preedit);
             // Keep one empty TSF composition active while preedit is shown in the popup.
             // The host can then terminate it consistently when its selection moves.
-            update_composition(pic, L"", 0, true, true);
+            update_composition(pic, L"", 0, true, composition_edit_session_mode);
         }
         *pfEaten = TRUE;
 
@@ -471,6 +486,8 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
                                       !caretResolved);
                     pCaretSession->Release();
                 }
+                // A native HWND caret can lag one paint after a synchronous commit. Retain a
+                // successful TSF selection result until the continuation composition catches up.
                 if (!caretResolved) {
                     if (hasTrustedNativeCaret) {
                         caretRect = trustedNativeRect;
@@ -483,21 +500,20 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
                                           true);
                         caretResolved = cxxime_tsf::is_valid_caret_rect(caretRect);
                     }
-                } else if (hasTrustedNativeCaret) {
+                } else if (hasTrustedNativeCaret && !commit_continues_composition) {
                     caretRect = trustedNativeRect;
                 }
 
-                // HWND-backed editors expose a trustworthy native caret. TSF-only hosts can make
-                // GetTextExt lag one layout cycle after a new composition, and the stale rectangle
-                // is not always identical to the previous popup position. Defer first show in those
-                // hosts; the async edit session or OnLayoutChange will show the popup once the
-                // range rectangle catches up.
-                bool defer_show = !candidate_was_visible && !hasTrustedNativeCaret;
+                // Both TSF and HWND caret geometry can lag after a synchronous commit. Defer the
+                // continuation popup until the queued composition edit exposes its new position.
+                bool defer_show = commit_continues_composition ||
+                                  (!candidate_was_visible && !hasTrustedNativeCaret);
                 if (defer_show) {
                     bool was_pending = _candidateShowPending;
                     _candidateShowPending = true;
                     _candidatePendingStaleRect = caretRect;
                     _candidatePendingHasStaleRect = cxxime_tsf::is_valid_caret_rect(caretRect);
+                    _candidateRepositionPending = commit_continues_composition;
                     if (!was_pending ||
                         _candidateShowPendingSince.time_since_epoch().count() == 0) {
                         _candidateShowPendingSince = std::chrono::steady_clock::now();
@@ -507,6 +523,7 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
                 } else {
                     _candidateShowPending = false;
                     _candidatePendingHasStaleRect = false;
+                    _candidateRepositionPending = false;
                     _candidatePendingStaleRect = {};
                     _candidateShowPendingSince = {};
                     _candidateWindow.move_to_caret(caretRect);
@@ -531,7 +548,7 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
         trace.window_us = _last_window_update_us;
 
         CXXIME_LOG(L"_ProcessKeyEvent: window_us=%lld, ipc_us=%lld", _last_window_update_us, _last_ipc_us);
-    } else if (response.status == cxxime::IPCStatus::OK) {
+    } else if (!has_committed_text && response.status == cxxime::IPCStatus::OK) {
         // Server accepted but no commit and no preedit (e.g. Escape cleared the buffer)
         bool was_composing = _composing;
         _hide_candidate_window("hide:clear");
@@ -548,7 +565,7 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
             *pfEaten = TRUE;
         _lastInlineCompositionText.clear();
         trace.result = TsfResult::CLEARED;
-    } else {
+    } else if (!has_committed_text) {
         trace.result = TsfResult::REJECTED;
     }
 

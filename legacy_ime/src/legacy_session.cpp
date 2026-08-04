@@ -321,7 +321,6 @@ void LegacyImeSession::apply_response(const cxxime::IPCResponse& response) {
     const std::wstring commit = utf8_to_wide(response.commit_text);
     if (!commit.empty()) {
         commit_text(commit);
-        return;
     }
 
     const std::wstring preedit = utf8_to_wide(response.preedit);
@@ -335,7 +334,7 @@ void LegacyImeSession::apply_response(const cxxime::IPCResponse& response) {
 
     if (response.composing || !preedit.empty() || !candidates.empty()) {
         update_composition(preedit, candidates, response.highlighted);
-    } else if (composing_ || candidate_open_) {
+    } else if (commit.empty() && (composing_ || candidate_open_)) {
         clear_context();
     }
 }
