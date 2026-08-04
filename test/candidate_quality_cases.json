@@ -98,6 +98,28 @@
       }
     },
     {
+      "id": "pinyin-compose-rejects-unencoded-repeated-short-extension",
+      "mode": "pinyin",
+      "input": "hhhhhhh",
+      "contains": [
+        { "text": "哈哈哈哈哈哈哈", "max_rank": 1 }
+      ],
+      "forbid_visible": [
+        "哈哈哈哈哈哈哈哈"
+      ]
+    },
+    {
+      "id": "mixed-compose-rejects-unencoded-repeated-short-extension",
+      "mode": "mixed",
+      "input": "hhhhhhh",
+      "contains": [
+        { "text": "哈哈哈哈哈哈哈" }
+      ],
+      "forbid_visible": [
+        "哈哈哈哈哈哈哈哈"
+      ]
+    },
+    {
       "id": "pinyin-compose-repeated-short-code",
       "mode": "pinyin",
       "input": "hhhhhhhhh",

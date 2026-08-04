@@ -336,7 +336,7 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
         return false;
     }
 
-    CXXIME_LOG(L"_ProcessKeyEvent: ok, vk=%u, ascii=%d, commit='%S', preedit='%S', composing=%d",
+    CXXIME_LOG(L"_ProcessKeyEvent: ok, vk=%u, ascii=%u, commit='%S', preedit='%S', composing=%u",
                (unsigned int)wParam, response.ascii_mode, response.commit_text, response.preedit, response.composing);
 
     // Sync mode state from engine only when server filled valid ime_status.
@@ -370,7 +370,8 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
 
         // Decode candidates
         std::vector<std::wstring> candidate_texts;
-        for (uint32_t i = 0; i < response.candidate_count && i < 10; ++i) {
+        for (uint32_t i = 0;
+            i < response.candidate_count && i < cxxime::kCandidateCapacity; ++i) {
             int clen = MultiByteToWideChar(CP_UTF8, 0, response.candidates[i], -1, nullptr, 0);
             if (clen > 0) {
                 std::wstring ct(clen - 1, L'\0');
@@ -619,7 +620,7 @@ void TextService::_ProcessKeyUp(WPARAM wParam, LPARAM lParam) {
         stage_input_id(), stage_composition_id(), static_cast<uint32_t>(wParam), modifiers,
         engine_calls, ok ? "processed_key_up" : "ipc_failed_key_up");
 
-    CXXIME_LOG(L"_ProcessKeyUp: ok=%d, ascii_mode=%d, commit='%S', composing=%d",
+    CXXIME_LOG(L"_ProcessKeyUp: ok=%d, ascii_mode=%u, commit='%S', composing=%u",
                ok, response.ascii_mode, response.commit_text, response.composing);
 
     bool committed = false;

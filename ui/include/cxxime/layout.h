@@ -3,9 +3,11 @@
 #ifndef CXXIME_LAYOUT_H_
 #define CXXIME_LAYOUT_H_
 
-#include <windows.h>
 #include <string>
 #include <vector>
+
+#include <windows.h>
+
 #include <cxxime/render_context.h>
 
 namespace cxxime {
@@ -19,6 +21,9 @@ struct LayoutResult {
     int height = 0;
     int row_height = 0;  // measured font height in pixels
 };
+
+// Returns the automatic candidate-window width limit in physical pixels.
+int calculate_auto_candidate_window_max_width(int work_area_width, float dpi_scale);
 
 // Weasel-style: measure label + text separately, compute sub-rects, highlight = Inflate(text_bounds, hilite_padding)
 // page_total: when > 1, reserve space for page nav buttons in horizontal layout

@@ -937,10 +937,16 @@ size_t Dict::user_entry_count() const {
 }
 
 std::vector<UserDictEntryInfo> Dict::query_user_entries(const std::string& query,
-                                                        size_t limit) const {
+                                                        size_t offset,
+                                                        size_t limit,
+                                                        size_t* match_total) const {
     std::vector<UserDictEntryInfo> results;
-    if (limit == 0)
+    if (match_total) {
+        *match_total = 0;
+    }
+    if (limit == 0) {
         return results;
+    }
 
     std::shared_lock<std::shared_mutex> lock(user_mutex_);
     for (const auto& e : user_entries_) {
@@ -970,8 +976,19 @@ std::vector<UserDictEntryInfo> Dict::query_user_entries(const std::string& query
             if (a.code != b.code) return a.code < b.code;
             return a.text < b.text;
         });
-    if (results.size() > limit)
+    if (match_total) {
+        *match_total = results.size();
+    }
+    if (offset >= results.size()) {
+        results.clear();
+        return results;
+    }
+    if (offset != 0) {
+        results.erase(results.begin(), results.begin() + offset);
+    }
+    if (results.size() > limit) {
         results.resize(limit);
+    }
     return results;
 }
 

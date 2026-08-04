@@ -1,15 +1,16 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
 #include "legacy_session.h"
-#include "legacy_stage.h"
-
-#include <cxxime/stage_trace.h>
 
 #include <algorithm>
 #include <cstring>
 #include <map>
 #include <mutex>
 #include <utility>
+
+#include <cxxime/stage_trace.h>
+
+#include "legacy_stage.h"
 
 namespace cxxime_legacy {
 namespace {
@@ -19,10 +20,10 @@ std::map<HIMC, std::shared_ptr<LegacyImeSession>> g_sessions;
 
 DWORD conversion_mode_from_status(const cxxime::ImeStatus& status) {
     DWORD conversion = 0;
-    if (status.chinese_mode && !status.caps_lock) {
+    if (status.chinese_mode() && !status.caps_lock()) {
         conversion |= IME_CMODE_NATIVE;
     }
-    if (status.full_shape) {
+    if (status.full_shape()) {
         conversion |= IME_CMODE_FULLSHAPE;
     }
     return conversion;
@@ -198,7 +199,8 @@ void LegacyImeSession::set_candidate_page_start(DWORD page_start) {
 }
 
 void LegacyImeSession::set_candidate_page_size(DWORD page_size) {
-    candidate_page_size_ = std::max<DWORD>(1, std::min<DWORD>(page_size, 10));
+    candidate_page_size_ = std::max<DWORD>(
+        1, std::min<DWORD>(page_size, static_cast<DWORD>(cxxime::kCandidateCapacity)));
     if (!last_candidates_.empty()) {
         rewrite_last_candidates(true);
     }
@@ -313,7 +315,7 @@ void LegacyImeSession::apply_response(const cxxime::IPCResponse& response) {
         return;
     }
 
-    caps_lock_ = response.ime_status.caps_lock;
+    caps_lock_ = response.ime_status.caps_lock();
     sync_status_to_input_context(response.ime_status);
 
     const std::wstring commit = utf8_to_wide(response.commit_text);
@@ -324,8 +326,10 @@ void LegacyImeSession::apply_response(const cxxime::IPCResponse& response) {
 
     const std::wstring preedit = utf8_to_wide(response.preedit);
     std::vector<std::wstring> candidates;
-    candidates.reserve(std::min<uint32_t>(response.candidate_count, 10));
-    for (uint32_t i = 0; i < response.candidate_count && i < 10; ++i) {
+    candidates.reserve(std::min<uint32_t>(
+        response.candidate_count, static_cast<uint32_t>(cxxime::kCandidateCapacity)));
+    for (uint32_t i = 0;
+         i < response.candidate_count && i < cxxime::kCandidateCapacity; ++i) {
         candidates.push_back(utf8_to_wide(response.candidates[i]));
     }
 
@@ -425,7 +429,8 @@ void LegacyImeSession::write_composition(std::wstring preedit, std::wstring resu
 void LegacyImeSession::write_candidates(const std::vector<std::wstring>& raw_candidates,
                                         uint32_t highlighted) {
     last_candidates_.clear();
-    const size_t count = std::min<size_t>(raw_candidates.size(), 10);
+    const size_t count =
+        std::min<size_t>(raw_candidates.size(), cxxime::kCandidateCapacity);
     last_candidates_.reserve(count);
     for (size_t i = 0; i < count; ++i) {
         last_candidates_.push_back(truncate_text(raw_candidates[i]));

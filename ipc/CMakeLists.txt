@@ -7,6 +7,7 @@ add_library(cxxime-ipc STATIC
     src/ipc_server.cc
     src/ipc_client.cc
     src/pipe_names.cc
+    src/user_dict_control.cc
 )
 
 target_include_directories(cxxime-ipc PUBLIC
@@ -15,4 +16,8 @@ target_include_directories(cxxime-ipc PUBLIC
 
 target_link_libraries(cxxime-ipc PUBLIC
     cxxime-shared
+)
+
+target_link_libraries(cxxime-ipc PRIVATE
+    nlohmann_json
 )

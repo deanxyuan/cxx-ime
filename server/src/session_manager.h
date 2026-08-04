@@ -21,6 +21,7 @@
 #include <cxxime/punct_types.h>
 #include <cxxime/spellings_index.h>
 #include <cxxime/syllabifier.h>
+#include <cxxime/user_dict.h>
 
 struct SharedResourceSnapshot {
     std::shared_ptr<cxxime::Dict> dict;
@@ -54,8 +55,9 @@ struct SharedResources {
     bool reload_dictionaries();
     cxxime::IPCStatus add_user_entry(cxxime::UserDictKind kind,
         const std::string& text, const std::string& code);
-    std::vector<cxxime::UserDictEntryInfo> query_user_entries(
-        const std::string& query, cxxime::UserDictKind kind, size_t limit, size_t& total);
+    cxxime::UserDictQueryResult query_user_entries(const std::string& query,
+                                                   cxxime::UserDictKind kind,
+                                                   size_t offset, size_t limit);
     cxxime::IPCStatus delete_user_entry(cxxime::UserDictKind kind,
                                         const std::string& text,
                                         const std::string& code);
@@ -124,11 +126,11 @@ public:
     cxxime::IPCStatus clear_composition(uint32_t id);
     cxxime::IPCStatus focus_out(uint32_t id);
 
-    cxxime::IPCStatus add_user_entry(uint32_t id, cxxime::UserDictKind kind,
-                                     const std::string& text, const std::string& code);
-    std::vector<cxxime::UserDictEntryInfo> query_user_entries(const std::string& query,
-                                                              cxxime::UserDictKind kind,
-                                                              size_t limit, size_t& total);
+    cxxime::IPCStatus add_user_entry(cxxime::UserDictKind kind, const std::string& text,
+                                     const std::string& code);
+    cxxime::UserDictQueryResult query_user_entries(const std::string& query,
+                                                   cxxime::UserDictKind kind,
+                                                   size_t offset, size_t limit);
     cxxime::IPCStatus delete_user_entry(cxxime::UserDictKind kind,
                                         const std::string& text, const std::string& code);
     cxxime::IPCStatus replace_user_entry(cxxime::UserDictKind kind,

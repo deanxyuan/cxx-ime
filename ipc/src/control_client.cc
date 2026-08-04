@@ -405,9 +405,11 @@ void ControlClient::patch_user_config(const std::string& merge_patch_json) {
 
 bool ControlClient::is_running() const { return impl_->is_running(); }
 
-bool replace_user_config(const std::string& config_json, ConfigGeneration* generation,
-                         unsigned long* error_code, int timeout_ms, const std::wstring& pipe_name) {
-    if (config_json.empty() || config_json.size() > CONTROL_MAX_PAYLOAD) {
+bool send_control_request(ControlMessageType request_type, const std::string& request_payload,
+                          ControlMessageType response_type, ControlMessage* response,
+                          unsigned long* error_code, int timeout_ms,
+                          const std::wstring& pipe_name) {
+    if (!response || request_payload.size() > CONTROL_MAX_PAYLOAD) {
         if (error_code) {
             *error_code = ERROR_INVALID_DATA;
         }
@@ -425,19 +427,48 @@ bool replace_user_config(const std::string& config_json, ConfigGeneration* gener
 
     HANDLE stop_event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     std::vector<std::uint8_t> request;
-    bool request_built = build_control_packet(ControlMessageType::kReplaceUserConfig, {},
-                                              config_json.data(), config_json.size(), &request);
-    std::vector<std::uint8_t> response;
+    bool request_built = build_control_packet(request_type, {}, request_payload.data(),
+                                              request_payload.size(), &request);
+    std::vector<std::uint8_t> response_packet;
     bool ok = stop_event && request_built && write_packet(pipe, stop_event, request, timeout_ms) &&
-              read_packet(pipe, stop_event, &response, timeout_ms);
+              read_packet(pipe, stop_event, &response_packet, timeout_ms);
 
-    ControlMessage message;
     if (ok) {
-        ok = parse_control_packet(response.data(), response.size(), &message) &&
-             message.type == ControlMessageType::kMutationResult &&
-             message.payload.size() == sizeof(ControlMutationResult);
+        ok = parse_control_packet(response_packet.data(), response_packet.size(), response) &&
+             response->type == response_type;
+        if (!ok) {
+            SetLastError(ERROR_INVALID_DATA);
+        }
     }
 
+    if (!ok && error_code) {
+        *error_code = GetLastError();
+    }
+
+    if (stop_event) {
+        CloseHandle(stop_event);
+    }
+    CloseHandle(pipe);
+    return ok;
+}
+
+bool replace_user_config(const std::string& config_json, ConfigGeneration* generation,
+                         unsigned long* error_code, int timeout_ms, const std::wstring& pipe_name) {
+    if (config_json.empty()) {
+        if (error_code) {
+            *error_code = ERROR_INVALID_DATA;
+        }
+        return false;
+    }
+
+    ControlMessage message;
+    bool transaction_ok = send_control_request(
+        ControlMessageType::kReplaceUserConfig, config_json,
+        ControlMessageType::kMutationResult, &message, error_code, timeout_ms, pipe_name);
+    bool ok = transaction_ok && message.payload.size() == sizeof(ControlMutationResult);
+    if (transaction_ok && !ok && error_code) {
+        *error_code = ERROR_INVALID_DATA;
+    }
     ControlMutationResult result = {};
     if (ok) {
         std::memcpy(&result, message.payload.data(), sizeof(result));
@@ -448,14 +479,7 @@ bool replace_user_config(const std::string& config_json, ConfigGeneration* gener
             *error_code = result.error_code;
         }
         ok = result.succeeded != 0;
-    } else if (error_code) {
-        *error_code = GetLastError();
     }
-
-    if (stop_event) {
-        CloseHandle(stop_event);
-    }
-    CloseHandle(pipe);
     return ok;
 }
 

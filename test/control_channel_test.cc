@@ -16,6 +16,7 @@
 #include <cxxime/control_protocol.h>
 #include <cxxime/control_server.h>
 #include <cxxime/ipc_protocol.h>
+#include <cxxime/user_dict_control.h>
 
 #include "util/testutil.h"
 
@@ -323,9 +324,76 @@ TEST(ControlChannel, server_restart_changes_epoch) {
     ASSERT_EQ(latest_generation.revision, 1ULL);
 }
 
-TEST(ControlChannel, input_protocol_size_matches_packed_layout) {
-    ASSERT_EQ(sizeof(cxxime::IPCRequest), static_cast<std::size_t>(217));
-    ASSERT_EQ(sizeof(cxxime::IPCResponse), static_cast<std::size_t>(4450));
+TEST(ControlChannel, user_dict_codec_rejects_invalid_requests) {
+    cxxime::UserDictControlRequest request;
+    ASSERT_TRUE(!cxxime::decode_user_dict_request("not-json", &request));
+    ASSERT_TRUE(!cxxime::decode_user_dict_request(
+        R"({"operation":"query","kind":"pinyin","query":"ni","offset":0,"limit":0})",
+        &request));
+    ASSERT_TRUE(!cxxime::decode_user_dict_request(
+        R"({"operation":"query","kind":"unknown","query":"ni","offset":0,"limit":32})",
+        &request));
+
+    request.operation = cxxime::UserDictOperation::kAdd;
+    request.text.assign(cxxime::CONTROL_MAX_PAYLOAD, 'x');
+    request.code = "x";
+    std::string payload;
+    ASSERT_TRUE(!cxxime::encode_user_dict_request(request, &payload));
+}
+
+TEST(ControlChannel, user_dict_client_supports_all_operations) {
+    const std::wstring pipe_name = test_pipe_name();
+    std::atomic<int> request_count{0};
+
+    cxxime::ControlServer server;
+    ASSERT_TRUE(server.start(
+        R"({"theme":"azure"})", {},
+        [&](const std::string& payload, std::string* response_payload) {
+            cxxime::UserDictControlRequest request;
+            ASSERT_TRUE(cxxime::decode_user_dict_request(payload, &request));
+            request_count.fetch_add(1);
+
+            cxxime::UserDictControlResult result;
+            result.operation = request.operation;
+            result.succeeded = true;
+            result.error_code = ERROR_SUCCESS;
+            if (request.operation == cxxime::UserDictOperation::kQuery) {
+                ASSERT_EQ(request.kind, cxxime::UserDictKind::WUBI);
+                ASSERT_TRUE(request.query == "ni");
+                ASSERT_EQ(request.offset, static_cast<std::size_t>(2));
+                ASSERT_EQ(request.limit, static_cast<std::size_t>(3));
+                result.query.dictionary_total = 9;
+                result.query.match_total = 4;
+                result.query.offset = request.offset;
+                result.query.has_more = true;
+                result.query.entries.push_back({"你好", "wq", 7, 0});
+            }
+            return cxxime::encode_user_dict_result(result, response_payload);
+        },
+        pipe_name));
+
+    cxxime::UserDictControlClient client(3000, pipe_name);
+    cxxime::UserDictControlResult result;
+    ASSERT_TRUE(client.query(cxxime::UserDictKind::WUBI, "ni", 2, 3, &result));
+    ASSERT_EQ(result.query.dictionary_total, static_cast<std::size_t>(9));
+    ASSERT_EQ(result.query.match_total, static_cast<std::size_t>(4));
+    ASSERT_TRUE(result.query.has_more);
+    ASSERT_EQ(result.query.entries.size(), static_cast<std::size_t>(1));
+    ASSERT_TRUE(result.query.entries[0].text == "你好");
+
+    ASSERT_TRUE(client.add_entry(cxxime::UserDictKind::PINYIN, "你好", "nihao", &result));
+    ASSERT_TRUE(client.replace_entry(cxxime::UserDictKind::PINYIN, "你好", "nihao", "您好",
+                                     "ninhao", &result));
+    ASSERT_TRUE(client.delete_entry(cxxime::UserDictKind::PINYIN, "您好", "ninhao", &result));
+    ASSERT_TRUE(client.reload(cxxime::UserDictKind::PINYIN, &result));
+    ASSERT_TRUE(client.save(cxxime::UserDictKind::PINYIN, &result));
+    ASSERT_EQ(request_count.load(), 6);
+    server.stop();
+}
+
+TEST(ControlChannel, input_protocol_size_matches_native_layout) {
+    ASSERT_EQ(sizeof(cxxime::IPCRequest), static_cast<std::size_t>(28));
+    ASSERT_EQ(sizeof(cxxime::IPCResponse), static_cast<std::size_t>(3168));
 }
 
 RUN_ALL_TESTS()

@@ -6,6 +6,8 @@
 #include <string>
 #include <vector>
 
+#include <cxxime/input_limits.h>
+
 namespace cxxime {
 
 enum class CandidateSource {
@@ -30,6 +32,10 @@ struct Candidate {
     CandidateOrigin origin = CandidateOrigin::kSystem;
     int source_frequency = 0;  // Raw dictionary frequency when ranking uses a derived score.
 };
+
+inline bool candidate_text_fits(const std::string& text) {
+    return text.size() < kCandidateTextCapacity;
+}
 
 inline const std::string& candidate_display_text(const Candidate& candidate,
                                    std::string& formatted) {

@@ -28,13 +28,13 @@ struct OutputOptions {
 
     static OutputOptions from(const ImeStatus& status) {
         OutputOptions opts;
-        opts.chinese_mode = status.chinese_mode;
-        opts.caps_lock = status.caps_lock;
-        opts.full_shape = status.full_shape;
+        opts.chinese_mode = status.chinese_mode();
+        opts.caps_lock = status.caps_lock();
+        opts.full_shape = status.full_shape();
         // Effective Chinese punct = chinese_mode && !caps_lock && raw preference
-        opts.chinese_punct = status.chinese_mode
-                          && !status.caps_lock
-                          && status.chinese_punct;
+        opts.chinese_punct = status.chinese_mode()
+                          && !status.caps_lock()
+                          && status.chinese_punct();
         return opts;
     }
 };

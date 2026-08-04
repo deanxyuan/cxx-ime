@@ -26,8 +26,10 @@
 #include <cxxime/key_event.h>
 #include <cxxime/short_code_cache.h>
 #include <cxxime/spellings_index.h>
+#include <cxxime/user_dict_control.h>
 
 #include "../server/src/session_manager.h"
+#include "../server/src/user_dict_control_handler.h"
 #include "util/testutil.h"
 #include "util/topn_test_data.h"
 
@@ -302,7 +304,7 @@ TEST(SessionIntegration, process_key_committed_has_ime_status) {
     auto r = mgr.process_key(id, make_key('A'));
     ASSERT_EQ(r.status, cxxime::IPCStatus::OK);
     // ime_status should be filled
-    ASSERT_EQ(r.ime_status.chinese_mode, false);
+    ASSERT_EQ(r.ime_status.chinese_mode(), false);
 }
 
 TEST(SessionIntegration, english_capslock_letter_preserves_engine_case) {
@@ -354,7 +356,7 @@ TEST(SessionIntegration, english_enter_passes_to_application) {
     ASSERT_EQ(r.result, cxxime::ProcessResult::REJECTED);
     ASSERT_TRUE(r.commit_text.empty());
     ASSERT_TRUE(!r.composing);
-    ASSERT_EQ(r.ime_status.chinese_mode, false);
+    ASSERT_EQ(r.ime_status.chinese_mode(), false);
 }
 
 TEST(SessionIntegration, append_enter_preserves_case_through_output_composer) {
@@ -488,13 +490,13 @@ TEST(SessionIntegration, set_chinese_mode_commits_raw_composition_once) {
     ASSERT_EQ(unchanged.status, cxxime::IPCStatus::OK);
     ASSERT_TRUE(unchanged.commit_text.empty());
     ASSERT_EQ(unchanged.composing, true);
-    ASSERT_EQ(unchanged.ime_status.chinese_mode, true);
+    ASSERT_EQ(unchanged.ime_status.chinese_mode(), true);
 
     auto first = mgr.set_chinese_mode(id, false);
     ASSERT_EQ(first.status, cxxime::IPCStatus::OK);
     ASSERT_EQ(first.commit_text, "ni");
     ASSERT_EQ(first.composing, false);
-    ASSERT_EQ(first.ime_status.chinese_mode, false);
+    ASSERT_EQ(first.ime_status.chinese_mode(), false);
 
     auto second = mgr.set_chinese_mode(id, false);
     ASSERT_EQ(second.status, cxxime::IPCStatus::OK);
@@ -575,9 +577,9 @@ TEST(SessionIntegration, get_status_ok) {
 
     auto [st, s] = mgr.get_ime_status(id);
     ASSERT_EQ(st, cxxime::IPCStatus::OK);
-    ASSERT_EQ(s.chinese_mode, true);
-    ASSERT_EQ(s.full_shape, false);
-    ASSERT_EQ(s.chinese_punct, true);
+    ASSERT_EQ(s.chinese_mode(), true);
+    ASSERT_EQ(s.full_shape(), false);
+    ASSERT_EQ(s.chinese_punct(), true);
 }
 
 TEST(SessionIntegration, get_status_invalid) {
@@ -658,15 +660,15 @@ TEST(SessionIntegration, applied_initial_state_applies_only_to_new_sessions) {
 
     auto [existing_status_result, existing_status] = mgr.get_ime_status(existing);
     ASSERT_EQ(existing_status_result, cxxime::IPCStatus::OK);
-    ASSERT_EQ(existing_status.full_shape, false);
-    ASSERT_EQ(existing_status.chinese_punct, true);
+    ASSERT_EQ(existing_status.full_shape(), false);
+    ASSERT_EQ(existing_status.chinese_punct(), true);
 
     uint32_t created_after_reload = mgr.create_session();
     ASSERT_GT(created_after_reload, (uint32_t)0);
     auto [new_status_result, new_status] = mgr.get_ime_status(created_after_reload);
     ASSERT_EQ(new_status_result, cxxime::IPCStatus::OK);
-    ASSERT_EQ(new_status.full_shape, true);
-    ASSERT_EQ(new_status.chinese_punct, false);
+    ASSERT_EQ(new_status.full_shape(), true);
+    ASSERT_EQ(new_status.chinese_punct(), false);
 
     DeleteFileA(config_path.c_str());
 }
@@ -683,8 +685,8 @@ TEST(SessionIntegration, session_shape_change_does_not_affect_other_session) {
 
     auto [st, status] = mgr.get_ime_status(id2);
     ASSERT_EQ(st, cxxime::IPCStatus::OK);
-    ASSERT_EQ(status.chinese_mode, true);
-    ASSERT_EQ(status.full_shape, false);
+    ASSERT_EQ(status.chinese_mode(), true);
+    ASSERT_EQ(status.full_shape(), false);
 
     auto full_width = mgr.process_key(id1, make_key('5'));
     ASSERT_EQ(full_width.result, cxxime::ProcessResult::COMMITTED);
@@ -693,8 +695,8 @@ TEST(SessionIntegration, session_shape_change_does_not_affect_other_session) {
     auto half_width = mgr.process_key(id2, make_key('5'));
     ASSERT_EQ(half_width.result, cxxime::ProcessResult::REJECTED);
     ASSERT_TRUE(half_width.commit_text.empty());
-    ASSERT_EQ(half_width.ime_status.chinese_mode, true);
-    ASSERT_EQ(half_width.ime_status.full_shape, false);
+    ASSERT_EQ(half_width.ime_status.chinese_mode(), true);
+    ASSERT_EQ(half_width.ime_status.full_shape(), false);
 }
 
 TEST(SessionIntegration, session_punctuation_change_does_not_affect_other_session) {
@@ -712,6 +714,74 @@ TEST(SessionIntegration, session_punctuation_change_does_not_affect_other_sessio
     auto chinese_punct = mgr.process_key(id2, make_key(VK_OEM_PERIOD));
     ASSERT_EQ(chinese_punct.result, cxxime::ProcessResult::COMMITTED);
     ASSERT_EQ(chinese_punct.commit_text, "。");
+}
+
+TEST(SessionIntegration, user_dict_control_mutations_and_pagination) {
+    SessionManager mgr;
+    ASSERT_TRUE(mgr.initialize(setup_test_dict()));
+
+    auto execute = [&](const cxxime::UserDictControlRequest& request,
+                       cxxime::UserDictControlResult* result) {
+        std::string request_payload;
+        std::string response_payload;
+        return cxxime::encode_user_dict_request(request, &request_payload) &&
+               handle_user_dict_control_request(mgr, request_payload, &response_payload) &&
+               cxxime::decode_user_dict_result(response_payload, result);
+    };
+
+    cxxime::UserDictControlRequest request;
+    request.operation = cxxime::UserDictOperation::kAdd;
+    request.kind = cxxime::UserDictKind::PINYIN;
+    request.text = "control-entry";
+    request.code = "controlcode";
+    cxxime::UserDictControlResult result;
+    ASSERT_TRUE(execute(request, &result));
+    ASSERT_TRUE(result.succeeded);
+
+    request.text.assign(cxxime::kCandidateTextCapacity, 'x');
+    ASSERT_TRUE(execute(request, &result));
+    ASSERT_TRUE(!result.succeeded);
+    ASSERT_EQ(result.error_code, static_cast<uint32_t>(ERROR_BUFFER_OVERFLOW));
+
+    request = {};
+    request.operation = cxxime::UserDictOperation::kQuery;
+    request.kind = cxxime::UserDictKind::PINYIN;
+    request.query = "control";
+    request.offset = 0;
+    request.limit = 1;
+    ASSERT_TRUE(execute(request, &result));
+    ASSERT_TRUE(result.succeeded);
+    ASSERT_EQ(result.query.match_total, static_cast<size_t>(1));
+    ASSERT_EQ(result.query.entries.size(), static_cast<size_t>(1));
+    ASSERT_TRUE(result.query.entries[0].text == "control-entry");
+
+    request = {};
+    request.operation = cxxime::UserDictOperation::kReplace;
+    request.kind = cxxime::UserDictKind::PINYIN;
+    request.old_text = "control-entry";
+    request.old_code = "controlcode";
+    request.text = "control-replaced";
+    request.code = "controlcode";
+    ASSERT_TRUE(execute(request, &result));
+    ASSERT_TRUE(result.succeeded);
+
+    request = {};
+    request.operation = cxxime::UserDictOperation::kDelete;
+    request.kind = cxxime::UserDictKind::PINYIN;
+    request.text = "control-replaced";
+    request.code = "controlcode";
+    ASSERT_TRUE(execute(request, &result));
+    ASSERT_TRUE(result.succeeded);
+
+    request = {};
+    request.operation = cxxime::UserDictOperation::kSave;
+    request.kind = cxxime::UserDictKind::PINYIN;
+    ASSERT_TRUE(execute(request, &result));
+    ASSERT_TRUE(result.succeeded);
+
+    request.operation = cxxime::UserDictOperation::kReload;
+    ASSERT_TRUE(execute(request, &result));
+    ASSERT_TRUE(result.succeeded);
 }
 
 // ============================================================

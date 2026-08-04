@@ -122,7 +122,7 @@ void TextService::_sync_conversion_mode_compartment(
     constexpr DWORD kChineseMode =
         TF_CONVERSIONMODE_NATIVE | TF_CONVERSIONMODE_SYMBOL;
     DWORD requested_mode = conversion_mode;
-    if (status.chinese_mode) {
+    if (status.chinese_mode()) {
         requested_mode |= kChineseMode;
     } else {
         requested_mode &= ~kChineseMode;
@@ -139,12 +139,12 @@ void TextService::_sync_conversion_mode_compartment(
         set_value_hr = compartment->SetValue(_clientId, &next);
         _writingConversionCompartment = false;
         CXXIME_LOG(L"sync_conversion_mode: chinese=%d, mode=0x%08x->0x%08x, hr=0x%08x",
-                   status.chinese_mode ? 1 : 0, conversion_mode,
+                   status.chinese_mode() ? 1 : 0, conversion_mode,
                    requested_mode, set_value_hr);
         VariantClear(&next);
     }
     cxxime_tsf::trace_stage_conversion_compartment(
-        status.chinese_mode, get_value_hr, conversion_mode, requested_mode,
+        status.chinese_mode(), get_value_hr, conversion_mode, requested_mode,
         set_attempted, set_value_hr);
     compartment->Release();
 }

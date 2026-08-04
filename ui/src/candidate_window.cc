@@ -373,7 +373,12 @@ void CandidateWindow::update(const CandidatePage& page) {
     scaled_cfg_.max_height = (int)(scaled_cfg_.max_height * s);
     int work_width = monitor_work_width();
     if (work_width > 0) {
-        int layout_width = (std::max)(1, work_width - scaled_cfg_.border_width * 2);
+        int window_width_limit = work_width;
+        if (scaled_cfg_.max_width <= 0) {
+            window_width_limit = calculate_auto_candidate_window_max_width(work_width, s);
+        }
+        int layout_width =
+            (std::max)(1, window_width_limit - scaled_cfg_.border_width * 2);
         if (scaled_cfg_.max_width <= 0 || scaled_cfg_.max_width > layout_width) {
             scaled_cfg_.max_width = layout_width;
         }

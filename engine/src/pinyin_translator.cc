@@ -55,6 +55,28 @@ static void sort_candidates_by_score(std::vector<Candidate>& items) {
         });
 }
 
+static void remove_oversized_candidates(std::vector<Candidate>& candidates) {
+    candidates.erase(std::remove_if(candidates.begin(), candidates.end(),
+                                    [](const Candidate& candidate) {
+                                        return !candidate_text_fits(candidate.text);
+                                    }),
+                     candidates.end());
+}
+
+static void remove_repeated_short_extensions(std::vector<Candidate>& candidates,
+                                             const std::vector<Candidate>& composed) {
+    candidates.erase(
+        std::remove_if(
+            candidates.begin(), candidates.end(),
+            [&](const Candidate& candidate) {
+                return std::any_of(composed.begin(), composed.end(), [&](const Candidate& exact) {
+                    return candidate.text.size() > exact.text.size() &&
+                           candidate.text.compare(0, exact.text.size(), exact.text) == 0;
+                });
+            }),
+        candidates.end());
+}
+
 static bool contains_ids(const std::vector<std::vector<uint32_t>>& items,
                          const std::vector<uint32_t>& ids) {
     for (auto& v : items)
@@ -305,6 +327,7 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
     IndexedFastResult fast;
     if (is_indexable_key(pinyin)) {
         fast = lookup_indexed_fast(pinyin, need, trace);
+        remove_oversized_candidates(fast.candidates);
         if (fast.complete_index_hit &&
             (!sentence_composition_enabled_ || (int)fast.candidates.size() >= need)) {
             // Enough candidates from cache for this page
@@ -573,6 +596,11 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
         auto composed = composer.compose(
             pinyin, composition_paths, static_cast<size_t>(need) - sorted.size(),
             composition_deadline, composition_limits, composition_stats);
+        if (composition_stats.repeated_short_path_count > 0) {
+            // Repeated-short composition consumes every key, so a legacy candidate that extends
+            // an exact composed result contains text not covered by the input.
+            remove_repeated_short_extensions(sorted, composed);
+        }
         uint32_t appended_count = 0;
         for (auto& candidate : composed) {
             if (!contains_text(sorted, candidate.text)) {
@@ -604,6 +632,8 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
             deadline_hit = true;
         }
     }
+
+    remove_oversized_candidates(sorted);
 
     // total_count before pagination (includes extra one for next-page detection)
     page.total_count = (int)sorted.size();

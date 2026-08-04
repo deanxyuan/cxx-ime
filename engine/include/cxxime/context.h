@@ -35,9 +35,9 @@ public:
     bool is_composing() const;
     size_t preedit_cursor() const;
     uint64_t preedit_revision() const { return preedit_revision_; }
-    void set_preedit(std::string text);
+    bool set_preedit(std::string text);
     void clear_preedit();
-    void insert_preedit(char ch);
+    bool insert_preedit(char ch);
     bool erase_preedit_before_cursor();
     bool erase_preedit_at_cursor();
     bool move_preedit_cursor_left();

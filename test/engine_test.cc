@@ -11,11 +11,13 @@
 #include <windows.h>
 
 #include <cxxime/engine.h>
+#include <cxxime/input_limits.h>
 #include <cxxime/query_budget.h>
 #include <cxxime/query_trace.h>
 #include <cxxime/spellings_index.h>
 #include <cxxime/syllabifier.h>
 #include <cxxime/translator.h>
+#include <cxxime/wubi_translator.h>
 
 #include "util/testutil.h"
 
@@ -51,6 +53,58 @@ TEST(Engine, process_letter_key) {
     auto result = processor.process_key(event, ctx);
     ASSERT_EQ(result, cxxime::ProcessResult::ACCEPTED);
     ASSERT_EQ(ctx.pinyin_buffer, "n");
+}
+
+TEST(Engine, input_code_stops_at_shared_limit) {
+    cxxime::Context context;
+    cxxime::PinyinProcessor processor;
+    cxxime::KeyEvent letter;
+    letter.keycode = 'A';
+
+    for (size_t i = 0; i < cxxime::kMaxInputCodeLength; ++i) {
+        ASSERT_EQ(processor.process_key(letter, context), cxxime::ProcessResult::ACCEPTED);
+    }
+    ASSERT_EQ(context.pinyin_buffer.size(), cxxime::kMaxInputCodeLength);
+    const uint64_t revision = context.preedit_revision();
+
+    ASSERT_EQ(processor.process_key(letter, context), cxxime::ProcessResult::ACCEPTED);
+    ASSERT_EQ(context.pinyin_buffer.size(), cxxime::kMaxInputCodeLength);
+    ASSERT_EQ(context.preedit_revision(), revision);
+
+    cxxime::KeyEvent backspace;
+    backspace.keycode = VK_BACK;
+    ASSERT_EQ(processor.process_key(backspace, context), cxxime::ProcessResult::ACCEPTED);
+    ASSERT_EQ(context.pinyin_buffer.size(), cxxime::kMaxInputCodeLength - 1);
+    ASSERT_EQ(processor.process_key(letter, context), cxxime::ProcessResult::ACCEPTED);
+    ASSERT_EQ(context.pinyin_buffer.size(), cxxime::kMaxInputCodeLength);
+}
+
+TEST(Engine, translator_excludes_candidate_text_over_shared_capacity) {
+    std::string dict_path = make_temp_path("test_candidate_text_capacity.bin");
+    std::string accepted;
+    std::string rejected;
+    for (size_t i = 0; i < 64; ++i) {
+        accepted += "界";
+    }
+    for (size_t i = 0; i < 86; ++i) {
+        rejected += "界";
+    }
+    ASSERT_TRUE(cxxime::candidate_text_fits(accepted));
+    ASSERT_TRUE(!cxxime::candidate_text_fits(rejected));
+    ASSERT_TRUE(cxxime::Dict::create_test_dict(
+        dict_path, {{"abc", rejected, 2000}, {"abc", accepted, 1000}}));
+
+    cxxime::Dict dict;
+    ASSERT_TRUE(dict.open_dict(dict_path));
+    cxxime::WubiTranslator translator;
+    translator.set_dict(&dict);
+    auto page = translator.translate("abc", 0, 10);
+    ASSERT_EQ(page.candidates.size(), static_cast<size_t>(1));
+    ASSERT_TRUE(page.candidates[0].text == accepted);
+    ASSERT_TRUE(page.candidates[0].text.size() > 63);
+
+    dict.close();
+    DeleteFileA(dict_path.c_str());
 }
 
 TEST(Engine, process_escape) {

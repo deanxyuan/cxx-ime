@@ -17,6 +17,8 @@ public:
     using MutationHandler =
         std::function<bool(UserConfigMutationKind kind, const std::string& payload,
                            std::string* config_json, unsigned long* error_code)>;
+    using RequestHandler =
+        std::function<bool(const std::string& payload, std::string* response_payload)>;
 
     ControlServer();
     ~ControlServer();
@@ -26,6 +28,8 @@ public:
 
     bool start(const std::string& initial_config_json, MutationHandler mutation_handler,
                const std::wstring& pipe_name = L"");
+    bool start(const std::string& initial_config_json, MutationHandler mutation_handler,
+               RequestHandler request_handler, const std::wstring& pipe_name = L"");
     void stop();
 
     bool publish_snapshot(const std::string& config_json, ConfigGeneration* generation = nullptr);

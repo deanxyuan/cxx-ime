@@ -36,6 +36,11 @@ bool replace_user_config(const std::string& config_json, ConfigGeneration* gener
                          unsigned long* error_code = nullptr, int timeout_ms = 1500,
                          const std::wstring& pipe_name = L"");
 
+bool send_control_request(ControlMessageType request_type, const std::string& request_payload,
+                          ControlMessageType response_type, ControlMessage* response,
+                          unsigned long* error_code = nullptr, int timeout_ms = 1500,
+                          const std::wstring& pipe_name = L"");
+
 } // namespace cxxime
 
 #endif // CXXIME_CONTROL_CLIENT_H_

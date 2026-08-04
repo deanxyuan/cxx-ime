@@ -119,7 +119,7 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
     // correct icon on the first GetIcon call.
     bool initial_input_allows_input = _query_input_focus_from_thread_mgr();
     cxxime::ImeStatus initial_status = {};
-    initial_status.chinese_mode = true; // fallback default matching CLangBarItemButton ctor
+    initial_status.set_chinese_mode(true); // fallback default matching CLangBarItemButton ctor
     bool has_last_status = false;
     {
         std::lock_guard<std::mutex> lock(_lastImeStatusMutex);
@@ -141,16 +141,16 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
         }
     }
     if (initial_input_allows_input && initial_caps_lock) {
-        initial_status.caps_lock = true;
+        initial_status.set_caps_lock(true);
         auto caps_it = _config.ascii_switch_key.find("Caps_Lock");
         if (caps_it != _config.ascii_switch_key.end() && caps_it->second != "noop") {
-            initial_status.chinese_mode = false;
+            initial_status.set_chinese_mode(false);
         }
     }
 
     // Pre-set TextService state so _sync_ime_status sees no delta
-    _chinese_mode = initial_status.chinese_mode;
-    _caps_lock = initial_status.caps_lock;
+    _chinese_mode = initial_status.chinese_mode();
+    _caps_lock = initial_status.caps_lock();
     {
         std::lock_guard<std::mutex> lock(_lastImeStatusMutex);
         _lastImeStatus = initial_status;
@@ -196,7 +196,7 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
                 _client.toggle_chinese(_sessionId, resp);
             }
             CXXIME_LOG(L"toggle_chinese: result status=%d, chinese=%d",
-                       static_cast<int>(resp.status), resp.ime_status.chinese_mode);
+                       static_cast<int>(resp.status), resp.ime_status.chinese_mode());
             if (resp.status == cxxime::IPCStatus::OK) {
                 _sync_ime_status(resp.ime_status);
             }

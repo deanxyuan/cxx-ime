@@ -22,21 +22,17 @@ std::mutex g_state_poll_timer_mutex;
 std::unordered_map<UINT_PTR, TextService*> g_state_poll_timers;
 
 bool same_visible_status(const cxxime::ImeStatus& a, const cxxime::ImeStatus& b) {
-    return a.chinese_mode == b.chinese_mode &&
-           a.caps_lock == b.caps_lock &&
-           a.full_shape == b.full_shape &&
-           a.chinese_punct == b.chinese_punct &&
-           a.input_mode == b.input_mode;
+    return a.flags == b.flags && a.input_mode == b.input_mode;
 }
 
 }  // namespace
 
 void TextService::_sync_ime_status(const cxxime::ImeStatus& status) {
-    bool local_changed = _chinese_mode != status.chinese_mode ||
-                         _caps_lock != status.caps_lock;
+    bool local_changed = _chinese_mode != status.chinese_mode() ||
+                         _caps_lock != status.caps_lock();
     bool visible_changed = true;
-    _chinese_mode = status.chinese_mode;
-    _caps_lock = status.caps_lock;
+    _chinese_mode = status.chinese_mode();
+    _caps_lock = status.caps_lock();
     {
         std::lock_guard<std::mutex> lock(_lastImeStatusMutex);
         visible_changed = !_hasLastImeStatus || !same_visible_status(_lastImeStatus, status);
@@ -109,7 +105,7 @@ bool TextService::_recreate_ipc_session_preserving_status() {
             desired_status = _lastImeStatus;
         }
     }
-    bool desired_chinese_mode = has_desired_status ? desired_status.chinese_mode : _chinese_mode;
+    bool desired_chinese_mode = has_desired_status ? desired_status.chinese_mode() : _chinese_mode;
     bool input_allows_input = _query_input_focus_from_thread_mgr();
     bool physical_caps_lock = false;
 
@@ -134,7 +130,7 @@ bool TextService::_recreate_ipc_session_preserving_status() {
         _sync_ime_status(synced_status);
     }
 
-    if (!synced_status.caps_lock && synced_status.chinese_mode != desired_chinese_mode) {
+    if (!synced_status.caps_lock() && synced_status.chinese_mode() != desired_chinese_mode) {
         cxxime::IPCResponse mode_resp = {};
         if (_client.set_chinese_mode(_sessionId, desired_chinese_mode, mode_resp) &&
             mode_resp.status == cxxime::IPCStatus::OK) {
@@ -154,7 +150,7 @@ bool TextService::_recreate_ipc_session_preserving_status() {
             return false;
         }
     }
-    if (has_desired_status && synced_status.full_shape != desired_status.full_shape) {
+    if (has_desired_status && synced_status.full_shape() != desired_status.full_shape()) {
         cxxime::IPCResponse shape_resp = {};
         if (_client.toggle_shape(_sessionId, shape_resp) &&
             shape_resp.status == cxxime::IPCStatus::OK) {
@@ -164,7 +160,7 @@ bool TextService::_recreate_ipc_session_preserving_status() {
             return false;
         }
     }
-    if (has_desired_status && synced_status.chinese_punct != desired_status.chinese_punct) {
+    if (has_desired_status && synced_status.chinese_punct() != desired_status.chinese_punct()) {
         cxxime::IPCResponse punct_resp = {};
         if (_client.toggle_punct(_sessionId, punct_resp) &&
             punct_resp.status == cxxime::IPCStatus::OK) {

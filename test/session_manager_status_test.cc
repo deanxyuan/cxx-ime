@@ -245,16 +245,16 @@ TEST(SessionStatus, toggle_chinese) {
 
     auto [st0, s0] = mgr.get_ime_status(id);
     ASSERT_EQ(st0, cxxime::IPCStatus::OK);
-    ASSERT_EQ(s0.chinese_mode, true);
+    ASSERT_EQ(s0.chinese_mode(), true);
     ASSERT_EQ(s0.revision, (uint64_t)0);
 
     auto [st1, s1] = mgr.toggle_chinese(id);
     ASSERT_EQ(st1, cxxime::IPCStatus::OK);
-    ASSERT_EQ(s1.chinese_mode, false);
+    ASSERT_EQ(s1.chinese_mode(), false);
     ASSERT_EQ(s1.revision, (uint64_t)1);
 
     auto [st2, s2] = mgr.toggle_chinese(id);
-    ASSERT_EQ(s2.chinese_mode, true);
+    ASSERT_EQ(s2.chinese_mode(), true);
     ASSERT_EQ(s2.revision, (uint64_t)2);
 }
 
@@ -271,20 +271,20 @@ TEST(SessionStatus, set_chinese_mode_is_idempotent) {
 
     auto first = mgr.set_chinese_mode(id, false);
     ASSERT_EQ(first.status, cxxime::IPCStatus::OK);
-    ASSERT_EQ(first.ime_status.chinese_mode, false);
-    ASSERT_EQ(first.ime_status.full_shape, true);
-    ASSERT_EQ(first.ime_status.chinese_punct, false);
+    ASSERT_EQ(first.ime_status.chinese_mode(), false);
+    ASSERT_EQ(first.ime_status.full_shape(), true);
+    ASSERT_EQ(first.ime_status.chinese_punct(), false);
     ASSERT_EQ(first.ime_status.input_mode, cxxime::InputMode::WUBI);
     ASSERT_EQ(first.ime_status.revision, before.revision + 1);
 
     auto second = mgr.set_chinese_mode(id, false);
     ASSERT_EQ(second.status, cxxime::IPCStatus::OK);
-    ASSERT_EQ(second.ime_status.chinese_mode, false);
+    ASSERT_EQ(second.ime_status.chinese_mode(), false);
     ASSERT_EQ(second.ime_status.revision, first.ime_status.revision);
 
     auto third = mgr.set_chinese_mode(id, true);
     ASSERT_EQ(third.status, cxxime::IPCStatus::OK);
-    ASSERT_EQ(third.ime_status.chinese_mode, true);
+    ASSERT_EQ(third.ime_status.chinese_mode(), true);
     ASSERT_EQ(third.ime_status.revision, first.ime_status.revision + 1);
 }
 
@@ -295,15 +295,15 @@ TEST(SessionStatus, toggle_shape) {
     ASSERT_GT(id, (uint32_t)0);
 
     auto [st0, s0] = mgr.get_ime_status(id);
-    ASSERT_EQ(s0.full_shape, false);
+    ASSERT_EQ(s0.full_shape(), false);
 
     auto [st1, s1] = mgr.toggle_shape(id);
     ASSERT_EQ(st1, cxxime::IPCStatus::OK);
-    ASSERT_EQ(s1.full_shape, true);
+    ASSERT_EQ(s1.full_shape(), true);
     ASSERT_EQ(s1.revision, (uint64_t)1);
 
     auto [st2, s2] = mgr.toggle_shape(id);
-    ASSERT_EQ(s2.full_shape, false);
+    ASSERT_EQ(s2.full_shape(), false);
     ASSERT_EQ(s2.revision, (uint64_t)2);
 }
 
@@ -314,15 +314,15 @@ TEST(SessionStatus, toggle_punct) {
     ASSERT_GT(id, (uint32_t)0);
 
     auto [st0, s0] = mgr.get_ime_status(id);
-    ASSERT_EQ(s0.chinese_punct, true);
+    ASSERT_EQ(s0.chinese_punct(), true);
 
     auto [st1, s1] = mgr.toggle_punct(id);
     ASSERT_EQ(st1, cxxime::IPCStatus::OK);
-    ASSERT_EQ(s1.chinese_punct, false);
+    ASSERT_EQ(s1.chinese_punct(), false);
     ASSERT_EQ(s1.revision, (uint64_t)1);
 
     auto [st2, s2] = mgr.toggle_punct(id);
-    ASSERT_EQ(s2.chinese_punct, true);
+    ASSERT_EQ(s2.chinese_punct(), true);
     ASSERT_EQ(s2.revision, (uint64_t)2);
 }
 
@@ -380,21 +380,21 @@ TEST(SessionStatus, sync_caps_lock_sets_current_state) {
     ASSERT_GT(id, (uint32_t)0);
 
     auto [st0, s0] = mgr.get_ime_status(id);
-    ASSERT_EQ(s0.caps_lock, false);
+    ASSERT_EQ(s0.caps_lock(), false);
 
     auto [st1, caps_on] = mgr.sync_caps_lock(id, true);
     ASSERT_EQ(st1, cxxime::IPCStatus::OK);
-    ASSERT_EQ(caps_on.caps_lock, true);
+    ASSERT_EQ(caps_on.caps_lock(), true);
     auto [st2, s1] = mgr.get_ime_status(id);
-    ASSERT_EQ(s1.caps_lock, true);
+    ASSERT_EQ(s1.caps_lock(), true);
 
     mgr.sync_caps_lock(id, true);
     auto [st3, s2] = mgr.get_ime_status(id);
-    ASSERT_EQ(s2.caps_lock, true);
+    ASSERT_EQ(s2.caps_lock(), true);
 
     mgr.sync_caps_lock(id, false);
     auto [st4, s3] = mgr.get_ime_status(id);
-    ASSERT_EQ(s3.caps_lock, false);
+    ASSERT_EQ(s3.caps_lock(), false);
 }
 
 TEST(SessionStatus, sync_caps_lock_enables_ascii_overlay) {
@@ -405,8 +405,8 @@ TEST(SessionStatus, sync_caps_lock_enables_ascii_overlay) {
 
     auto [st1, s1] = mgr.sync_caps_lock(id, true);
     ASSERT_EQ(st1, cxxime::IPCStatus::OK);
-    ASSERT_EQ(s1.caps_lock, true);
-    ASSERT_EQ(s1.chinese_mode, false);
+    ASSERT_EQ(s1.caps_lock(), true);
+    ASSERT_EQ(s1.chinese_mode(), false);
 
     cxxime::KeyEvent letter;
     letter.keycode = 'N';
@@ -419,8 +419,8 @@ TEST(SessionStatus, sync_caps_lock_enables_ascii_overlay) {
 
     auto [st2, s2] = mgr.sync_caps_lock(id, false);
     ASSERT_EQ(st2, cxxime::IPCStatus::OK);
-    ASSERT_EQ(s2.caps_lock, false);
-    ASSERT_EQ(s2.chinese_mode, true);
+    ASSERT_EQ(s2.caps_lock(), false);
+    ASSERT_EQ(s2.chinese_mode(), true);
 }
 
 TEST(SessionStatus, first_key_with_caps_lock_on_enables_ascii_overlay) {
@@ -438,8 +438,8 @@ TEST(SessionStatus, first_key_with_caps_lock_on_enables_ascii_overlay) {
     ASSERT_EQ(r.result, cxxime::ProcessResult::COMMITTED);
     ASSERT_EQ(r.commit_text, "N");
     ASSERT_TRUE(!r.composing);
-    ASSERT_EQ(r.ime_status.caps_lock, true);
-    ASSERT_EQ(r.ime_status.chinese_mode, false);
+    ASSERT_EQ(r.ime_status.caps_lock(), true);
+    ASSERT_EQ(r.ime_status.chinese_mode(), false);
     }
 
 TEST(SessionStatus, caps_lock_key_off_restores_chinese_overlay) {
@@ -450,16 +450,16 @@ TEST(SessionStatus, caps_lock_key_off_restores_chinese_overlay) {
 
     auto [st1, s1] = mgr.sync_caps_lock(id, true);
     ASSERT_EQ(st1, cxxime::IPCStatus::OK);
-    ASSERT_EQ(s1.caps_lock, true);
-    ASSERT_EQ(s1.chinese_mode, false);
+    ASSERT_EQ(s1.caps_lock(), true);
+    ASSERT_EQ(s1.chinese_mode(), false);
 
     cxxime::KeyEvent caps_off;
     caps_off.keycode = VK_CAPITAL;
     caps_off.is_key_up = false;
     auto r = mgr.process_key(id, caps_off);
     ASSERT_EQ(r.status, cxxime::IPCStatus::OK);
-    ASSERT_EQ(r.ime_status.caps_lock, false);
-    ASSERT_EQ(r.ime_status.chinese_mode, true);
+    ASSERT_EQ(r.ime_status.caps_lock(), false);
+    ASSERT_EQ(r.ime_status.chinese_mode(), true);
 }
 
 TEST(SessionStatus, caps_lock_key_up_does_not_override_key_down_state) {
@@ -474,24 +474,24 @@ TEST(SessionStatus, caps_lock_key_up_does_not_override_key_down_state) {
     caps_on_down.set_caps_lock();
     auto r1 = mgr.process_key(id, caps_on_down);
     ASSERT_EQ(r1.status, cxxime::IPCStatus::OK);
-    ASSERT_EQ(r1.ime_status.caps_lock, true);
-    ASSERT_EQ(r1.ime_status.chinese_mode, false);
+    ASSERT_EQ(r1.ime_status.caps_lock(), true);
+    ASSERT_EQ(r1.ime_status.chinese_mode(), false);
 
     cxxime::KeyEvent stale_caps_on_up;
     stale_caps_on_up.keycode = VK_CAPITAL;
     stale_caps_on_up.is_key_up = true;
     auto r2 = mgr.process_key(id, stale_caps_on_up);
     ASSERT_EQ(r2.status, cxxime::IPCStatus::OK);
-    ASSERT_EQ(r2.ime_status.caps_lock, true);
-    ASSERT_EQ(r2.ime_status.chinese_mode, false);
+    ASSERT_EQ(r2.ime_status.caps_lock(), true);
+    ASSERT_EQ(r2.ime_status.chinese_mode(), false);
 
     cxxime::KeyEvent caps_off_down;
     caps_off_down.keycode = VK_CAPITAL;
     caps_off_down.is_key_up = false;
     auto r3 = mgr.process_key(id, caps_off_down);
     ASSERT_EQ(r3.status, cxxime::IPCStatus::OK);
-    ASSERT_EQ(r3.ime_status.caps_lock, false);
-    ASSERT_EQ(r3.ime_status.chinese_mode, true);
+    ASSERT_EQ(r3.ime_status.caps_lock(), false);
+    ASSERT_EQ(r3.ime_status.chinese_mode(), true);
 
     cxxime::KeyEvent stale_caps_off_up;
     stale_caps_off_up.keycode = VK_CAPITAL;
@@ -499,8 +499,8 @@ TEST(SessionStatus, caps_lock_key_up_does_not_override_key_down_state) {
     stale_caps_off_up.set_caps_lock();
     auto r4 = mgr.process_key(id, stale_caps_off_up);
     ASSERT_EQ(r4.status, cxxime::IPCStatus::OK);
-    ASSERT_EQ(r4.ime_status.caps_lock, false);
-    ASSERT_EQ(r4.ime_status.chinese_mode, true);
+    ASSERT_EQ(r4.ime_status.caps_lock(), false);
+    ASSERT_EQ(r4.ime_status.chinese_mode(), true);
 }
 
 TEST(SessionStatus, get_ime_status) {
@@ -514,9 +514,9 @@ TEST(SessionStatus, get_ime_status) {
 
     auto [st, s] = mgr.get_ime_status(id);
     ASSERT_EQ(st, cxxime::IPCStatus::OK);
-    ASSERT_EQ(s.chinese_mode, false);
-    ASSERT_EQ(s.full_shape, true);
-    ASSERT_EQ(s.chinese_punct, true);
+    ASSERT_EQ(s.chinese_mode(), false);
+    ASSERT_EQ(s.full_shape(), true);
+    ASSERT_EQ(s.chinese_punct(), true);
     ASSERT_EQ(s.input_mode, cxxime::InputMode::PINYIN);
     ASSERT_EQ(s.revision, (uint64_t)2);
 }
@@ -577,24 +577,24 @@ TEST(SessionStatus, input_state_is_session_local_while_input_mode_remains_global
     auto [st2, s2] = mgr.get_ime_status(id2);
     ASSERT_EQ(st1, cxxime::IPCStatus::OK);
     ASSERT_EQ(st2, cxxime::IPCStatus::OK);
-    ASSERT_EQ(s1.chinese_mode, false);
-    ASSERT_EQ(s2.chinese_mode, true);
+    ASSERT_EQ(s1.chinese_mode(), false);
+    ASSERT_EQ(s2.chinese_mode(), true);
 
     mgr.toggle_shape(id2);
     auto [st3, s3] = mgr.get_ime_status(id1);
     auto [st4, s4] = mgr.get_ime_status(id2);
     ASSERT_EQ(st3, cxxime::IPCStatus::OK);
     ASSERT_EQ(st4, cxxime::IPCStatus::OK);
-    ASSERT_EQ(s3.full_shape, false);
-    ASSERT_EQ(s4.full_shape, true);
+    ASSERT_EQ(s3.full_shape(), false);
+    ASSERT_EQ(s4.full_shape(), true);
 
     mgr.toggle_punct(id1);
     auto [st5, s5] = mgr.get_ime_status(id1);
     auto [st6, s6] = mgr.get_ime_status(id2);
     ASSERT_EQ(st5, cxxime::IPCStatus::OK);
     ASSERT_EQ(st6, cxxime::IPCStatus::OK);
-    ASSERT_EQ(s5.chinese_punct, false);
-    ASSERT_EQ(s6.chinese_punct, true);
+    ASSERT_EQ(s5.chinese_punct(), false);
+    ASSERT_EQ(s6.chinese_punct(), true);
 
     mgr.switch_input_mode(id1);
     auto [st7, s7] = mgr.get_ime_status(id1);
@@ -616,17 +616,17 @@ TEST(SessionStatus, session_language_mode_survives_other_session_changes) {
     mgr.toggle_chinese(notepad);
     auto [st1, before] = mgr.get_ime_status(notepad);
     ASSERT_EQ(st1, cxxime::IPCStatus::OK);
-    ASSERT_EQ(before.chinese_mode, false);
+    ASSERT_EQ(before.chinese_mode(), false);
 
     auto [st2, desktop_before] = mgr.get_ime_status(desktop);
         ASSERT_EQ(st2, cxxime::IPCStatus::OK);
-    ASSERT_EQ(desktop_before.chinese_mode, true);
+    ASSERT_EQ(desktop_before.chinese_mode(), true);
 
     mgr.toggle_chinese(desktop);
     mgr.toggle_chinese(desktop);
     auto [st3, after] = mgr.get_ime_status(notepad);
     ASSERT_EQ(st3, cxxime::IPCStatus::OK);
-    ASSERT_EQ(after.chinese_mode, false);
+    ASSERT_EQ(after.chinese_mode(), false);
 
     cxxime::KeyEvent letter;
     letter.keycode = 'N';
@@ -635,7 +635,7 @@ TEST(SessionStatus, session_language_mode_survives_other_session_changes) {
     ASSERT_EQ(r.result, cxxime::ProcessResult::COMMITTED);
     ASSERT_EQ(r.commit_text, "n");
     ASSERT_TRUE(!r.composing);
-    ASSERT_EQ(r.ime_status.chinese_mode, false);
+    ASSERT_EQ(r.ime_status.chinese_mode(), false);
     }
 
 TEST(SessionStatus, caps_lock_overlay_restores_each_session_base_mode) {
@@ -651,28 +651,28 @@ TEST(SessionStatus, caps_lock_overlay_restores_each_session_base_mode) {
     auto [st2, chinese] = mgr.get_ime_status(id2);
     ASSERT_EQ(st1, cxxime::IPCStatus::OK);
     ASSERT_EQ(st2, cxxime::IPCStatus::OK);
-    ASSERT_EQ(english.chinese_mode, false);
-    ASSERT_EQ(chinese.chinese_mode, true);
+    ASSERT_EQ(english.chinese_mode(), false);
+    ASSERT_EQ(chinese.chinese_mode(), true);
 
     mgr.sync_caps_lock(id2, true);
     auto [st3, english_caps_on] = mgr.get_ime_status(id1);
     auto [st4, chinese_caps_on] = mgr.get_ime_status(id2);
     ASSERT_EQ(st3, cxxime::IPCStatus::OK);
     ASSERT_EQ(st4, cxxime::IPCStatus::OK);
-    ASSERT_EQ(english_caps_on.caps_lock, true);
-    ASSERT_EQ(chinese_caps_on.caps_lock, true);
-    ASSERT_EQ(english_caps_on.chinese_mode, false);
-    ASSERT_EQ(chinese_caps_on.chinese_mode, false);
+    ASSERT_EQ(english_caps_on.caps_lock(), true);
+    ASSERT_EQ(chinese_caps_on.caps_lock(), true);
+    ASSERT_EQ(english_caps_on.chinese_mode(), false);
+    ASSERT_EQ(chinese_caps_on.chinese_mode(), false);
 
     mgr.sync_caps_lock(id1, false);
     auto [st5, english_caps_off] = mgr.get_ime_status(id1);
     auto [st6, chinese_caps_off] = mgr.get_ime_status(id2);
     ASSERT_EQ(st5, cxxime::IPCStatus::OK);
     ASSERT_EQ(st6, cxxime::IPCStatus::OK);
-    ASSERT_EQ(english_caps_off.caps_lock, false);
-    ASSERT_EQ(chinese_caps_off.caps_lock, false);
-    ASSERT_EQ(english_caps_off.chinese_mode, false);
-    ASSERT_EQ(chinese_caps_off.chinese_mode, true);
+    ASSERT_EQ(english_caps_off.caps_lock(), false);
+    ASSERT_EQ(chinese_caps_off.caps_lock(), false);
+    ASSERT_EQ(english_caps_off.chinese_mode(), false);
+    ASSERT_EQ(chinese_caps_off.chinese_mode(), true);
     }
 
 RUN_ALL_TESTS()

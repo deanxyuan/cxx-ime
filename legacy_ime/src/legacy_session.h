@@ -6,6 +6,7 @@
 #include "legacy_common.h"
 
 #include <cxxime/ipc_client.h>
+#include <cxxime/input_limits.h>
 #include <cxxime/stage_trace.h>
 
 #include <memory>
@@ -61,7 +62,7 @@ private:
     std::vector<std::wstring> last_candidates_;
     uint32_t last_highlighted_ = 0;
     DWORD candidate_page_start_ = 0;
-    DWORD candidate_page_size_ = 10;
+    DWORD candidate_page_size_ = static_cast<DWORD>(cxxime::kCandidateCapacity);
     cxxime::StageTraceSession stage_trace_session_;
     uint32_t last_engine_calls_ = 0;
 };

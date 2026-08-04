@@ -14,6 +14,7 @@
 
 #include <cxxime/candidate.h>
 #include <cxxime/short_code_cache.h>
+#include <cxxime/user_dict.h>
 
 namespace cxxime {
 
@@ -41,13 +42,6 @@ struct SpanLookupStats {
     uint32_t result_count = 0;
     bool truncated = false;
     bool deadline_exceeded = false;
-};
-
-struct UserDictEntryInfo {
-    std::string text;
-    std::string code;
-    int frequency = 1;
-    uint64_t sequence = 0;
 };
 
 struct UserLookupStats {
@@ -109,7 +103,9 @@ public:
     void update_frequency(const std::string& text, const std::string& code);
     void update_frequency(const std::string& text, const std::string& code, const std::string& syllables);
     std::vector<UserDictEntryInfo> query_user_entries(const std::string& query,
-                                                      size_t limit = 32) const;
+                                                      size_t offset,
+                                                      size_t limit,
+                                                      size_t* match_total = nullptr) const;
     bool delete_user_entry(const std::string& text, const std::string& code = "");
     bool replace_user_entry(const std::string& old_text, const std::string& old_code,
                             const std::string& new_text, const std::string& new_code);

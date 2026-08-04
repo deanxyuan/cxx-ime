@@ -10,6 +10,19 @@
 
 namespace cxxime {
 
+int calculate_auto_candidate_window_max_width(int work_area_width, float dpi_scale) {
+    if (work_area_width <= 0) {
+        return 0;
+    }
+
+    constexpr int kComfortableWidthDip = 960;
+    constexpr int kWorkAreaPercent = 80;
+    const float scale = dpi_scale > 0.0f ? dpi_scale : 1.0f;
+    const int comfortable_width = static_cast<int>(kComfortableWidthDip * scale + 0.5f);
+    const int proportional_width = MulDiv(work_area_width, kWorkAreaPercent, 100);
+    return (std::max)(1, (std::min)(comfortable_width, proportional_width));
+}
+
 static std::wstring to_wstr(const std::string& s) {
     int len = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
     if (len <= 1) return {};

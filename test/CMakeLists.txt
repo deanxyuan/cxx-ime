@@ -97,6 +97,7 @@ add_executable(session_manager_integration_test
     session_manager_integration_test.cc
     ${TEST_COMMON_SOURCES}
     ${CMAKE_SOURCE_DIR}/server/src/session_manager.cc
+    ${CMAKE_SOURCE_DIR}/server/src/user_dict_control_handler.cc
 )
 target_include_directories(session_manager_integration_test PRIVATE
     ${TEST_INCLUDE_DIRS}

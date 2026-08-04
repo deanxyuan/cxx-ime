@@ -573,11 +573,17 @@ TEST(Dict, user_dict_management_query_replace_delete) {
     dict.update_frequency("input", "shurufa");
     ASSERT_EQ(dict.user_entry_count(), static_cast<size_t>(3));
 
-    auto by_code = dict.query_user_entries("ni", 10);
-    ASSERT_EQ(by_code.size(), static_cast<size_t>(2));
+    size_t match_total = 0;
+    auto by_code = dict.query_user_entries("ni", 0, 1, &match_total);
+    ASSERT_EQ(match_total, static_cast<size_t>(2));
+    ASSERT_EQ(by_code.size(), static_cast<size_t>(1));
+    auto second_page = dict.query_user_entries("ni", 1, 1, &match_total);
+    ASSERT_EQ(match_total, static_cast<size_t>(2));
+    ASSERT_EQ(second_page.size(), static_cast<size_t>(1));
+    ASSERT_TRUE(second_page[0].text != by_code[0].text);
     ASSERT_TRUE(by_code[0].code == "nihao");
 
-    auto by_text = dict.query_user_entries("inp", 10);
+    auto by_text = dict.query_user_entries("inp", 0, 10);
     ASSERT_EQ(by_text.size(), static_cast<size_t>(1));
     ASSERT_EQ(by_text[0].text, "input");
 

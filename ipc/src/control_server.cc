@@ -167,12 +167,13 @@ public:
     ~Impl() { stop(); }
 
     bool start(const std::string& initial_config_json, MutationHandler mutation_handler,
-               const std::wstring& pipe_name) {
+               RequestHandler request_handler, const std::wstring& pipe_name) {
         if (initial_config_json.empty() || running_.exchange(true)) {
             return false;
         }
 
         mutation_handler_ = std::move(mutation_handler);
+        request_handler_ = std::move(request_handler);
         pipe_name_ = make_user_pipe_name(pipe_name.empty() ? CONTROL_PIPE_BASE_NAME : pipe_name);
         {
             std::lock_guard<std::mutex> lock(state_mutex_);
@@ -429,6 +430,18 @@ private:
                 return write_packet(client->pipe, client->stop_event, packet);
             }
 
+            case ControlMessageType::kUserDictRequest: {
+                std::string response_payload;
+                if (!request_handler_ ||
+                    !request_handler_(message.payload, &response_payload) ||
+                    response_payload.empty() || response_payload.size() > CONTROL_MAX_PAYLOAD) {
+                    return false;
+                }
+                auto packet = make_packet(ControlMessageType::kUserDictResult, {},
+                                          response_payload.data(), response_payload.size());
+                return write_packet(client->pipe, client->stop_event, packet);
+            }
+
             default:
                 return false;
         }
@@ -502,6 +515,7 @@ private:
 
     std::wstring pipe_name_;
     MutationHandler mutation_handler_;
+    RequestHandler request_handler_;
     std::atomic<bool> running_{false};
     std::thread accept_thread_;
 
@@ -521,7 +535,13 @@ ControlServer::~ControlServer() = default;
 
 bool ControlServer::start(const std::string& initial_config_json, MutationHandler mutation_handler,
                           const std::wstring& pipe_name) {
-    return impl_->start(initial_config_json, std::move(mutation_handler), pipe_name);
+    return impl_->start(initial_config_json, std::move(mutation_handler), {}, pipe_name);
+}
+
+bool ControlServer::start(const std::string& initial_config_json, MutationHandler mutation_handler,
+                          RequestHandler request_handler, const std::wstring& pipe_name) {
+    return impl_->start(initial_config_json, std::move(mutation_handler),
+                        std::move(request_handler), pipe_name);
 }
 
 void ControlServer::stop() { impl_->stop(); }

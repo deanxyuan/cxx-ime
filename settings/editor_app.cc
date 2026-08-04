@@ -19,7 +19,7 @@
 #include <cxxime/candidate.h>
 #include <cxxime/control_client.h>
 #include <cxxime/data_path.h>
-#include <cxxime/ipc_client.h>
+#include <cxxime/user_dict_control.h>
 #include <cxxime/version.h>
 
 #pragma comment(lib, "comctl32.lib")
@@ -1378,25 +1378,20 @@ void EditorApp::query_user_entries() {
     update_user_entry_actions();
 
     std::string query = edit_text_utf8(hDictQuery_);
-    cxxime::IpcClient client;
-    if (!client.connect()) {
-        SetWindowTextW(hDictStatus_, L"无法连接到 CxxIME 服务");
-        return;
-    }
-
-    cxxime::IPCResponse resp = {};
-    bool ok = client.query_user_entries(query.c_str(), resp, current_user_dict_kind());
-    client.disconnect();
-    if (!ok || resp.status != cxxime::IPCStatus::OK) {
+    cxxime::UserDictControlClient client;
+    cxxime::UserDictControlResult result;
+    bool ok = client.query(current_user_dict_kind(), query, 0,
+                           cxxime::USER_DICT_CONTROL_DEFAULT_LIMIT, &result);
+    if (!ok) {
         SetWindowTextW(hDictStatus_, L"查询失败");
         return;
     }
 
-    for (uint32_t i = 0; i < resp.user_entry_count && i < 32; ++i) {
-        std::wstring code = utf8_to_wstr(resp.user_entries[i].code);
-        std::wstring text = utf8_to_wstr(resp.user_entries[i].text);
+    for (size_t i = 0; i < result.query.entries.size(); ++i) {
+        std::wstring code = utf8_to_wstr(result.query.entries[i].code);
+        std::wstring text = utf8_to_wstr(result.query.entries[i].text);
         wchar_t freq[32] = {};
-        swprintf_s(freq, L"%d", resp.user_entries[i].frequency);
+        swprintf_s(freq, L"%d", result.query.entries[i].frequency);
 
         LVITEMW item = {};
         item.mask = LVIF_TEXT;
@@ -1410,8 +1405,8 @@ void EditorApp::query_user_entries() {
     std::wstring modified = file_last_write_time_text(current_user_dict_path());
     int shown = ListView_GetItemCount(hDictList_);
     wchar_t buf[192] = {};
-    swprintf_s(buf, L"共 %u 条，显示 %d 条，更新于 %s",
-               resp.user_entry_total, shown, modified.c_str());
+    swprintf_s(buf, L"共 %zu 条，显示 %d 条，更新于 %s",
+               result.query.dictionary_total, shown, modified.c_str());
     SetWindowTextW(hDictStatus_, buf);
     update_user_dict_path();
 }
@@ -1434,19 +1429,10 @@ void EditorApp::add_user_entry() {
         return;
     }
 
-    cxxime::IpcClient client;
-    if (!client.connect()) {
-        MessageBoxW(hwnd_, L"无法连接到 CxxIME 服务。请确保输入法正在运行。",
-            L"CxxIME", MB_OK | MB_ICONERROR);
-        return;
-    }
-
-    cxxime::IPCResponse resp = {};
-    bool ok = client.add_user_entry(0, text.c_str(), code.c_str(), resp,
-                                    current_user_dict_kind());
-    client.disconnect();
-
-    if (!ok || resp.status != cxxime::IPCStatus::OK) {
+    cxxime::UserDictControlClient client;
+    cxxime::UserDictControlResult result;
+    bool ok = client.add_entry(current_user_dict_kind(), text, code, &result);
+    if (!ok) {
         MessageBoxW(hwnd_, L"新增词条失败。", L"CxxIME", MB_OK | MB_ICONERROR);
         return;
     }
@@ -1471,19 +1457,11 @@ void EditorApp::save_user_entry() {
         return;
     }
 
-    cxxime::IpcClient client;
-    if (!client.connect()) {
-        MessageBoxW(hwnd_, L"无法连接到 CxxIME 服务。请确保输入法正在运行。",
-            L"CxxIME", MB_OK | MB_ICONERROR);
-        return;
-    }
-
-    cxxime::IPCResponse resp = {};
-    bool ok = client.replace_user_entry(oldText.c_str(), oldCode.c_str(),
-                                        text.c_str(), code.c_str(), resp,
-                                        current_user_dict_kind());
-    client.disconnect();
-    if (!ok || resp.status != cxxime::IPCStatus::OK) {
+    cxxime::UserDictControlClient client;
+    cxxime::UserDictControlResult result;
+    bool ok = client.replace_entry(current_user_dict_kind(), oldText, oldCode, text, code,
+                                   &result);
+    if (!ok) {
         MessageBoxW(hwnd_, L"保存修改失败。可能存在同名用户词条。", L"CxxIME",
             MB_OK | MB_ICONERROR);
         return;
@@ -1506,18 +1484,10 @@ void EditorApp::delete_user_entry() {
 
     std::string text = wstr_to_utf8(selectedDictText_);
     std::string code = wstr_to_utf8(selectedDictCode_);
-    cxxime::IpcClient client;
-    if (!client.connect()) {
-        MessageBoxW(hwnd_, L"无法连接到 CxxIME 服务。请确保输入法正在运行。",
-            L"CxxIME", MB_OK | MB_ICONERROR);
-        return;
-    }
-
-    cxxime::IPCResponse resp = {};
-    bool ok = client.delete_user_entry(text.c_str(), code.c_str(), resp,
-                                       current_user_dict_kind());
-    client.disconnect();
-    if (!ok || resp.status != cxxime::IPCStatus::OK) {
+    cxxime::UserDictControlClient client;
+    cxxime::UserDictControlResult result;
+    bool ok = client.delete_entry(current_user_dict_kind(), text, code, &result);
+    if (!ok) {
         MessageBoxW(hwnd_, L"删除词条失败。", L"CxxIME", MB_OK | MB_ICONERROR);
         return;
     }
@@ -1549,14 +1519,9 @@ void EditorApp::import_user_dict() {
         return;
     }
 
-    cxxime::IpcClient client;
-    cxxime::IPCResponse resp = {};
-    bool reload_ok = false;
-    if (client.connect()) {
-        reload_ok = client.reload_user_dict(resp, current_user_dict_kind()) &&
-                    resp.status == cxxime::IPCStatus::OK;
-        client.disconnect();
-    }
+    cxxime::UserDictControlClient client;
+    cxxime::UserDictControlResult result;
+    bool reload_ok = client.reload(current_user_dict_kind(), &result);
     clear_user_entry_form();
     query_user_entries();
     if (reload_ok) {
@@ -1587,16 +1552,9 @@ void EditorApp::export_user_dict() {
     if (!GetSaveFileNameW(&ofn))
         return;
 
-    cxxime::IpcClient client;
-    cxxime::IPCResponse resp = {};
-    bool save_requested = false;
-    bool save_ok = false;
-    if (client.connect()) {
-        save_requested = true;
-        save_ok = client.save_user_dict(resp, current_user_dict_kind()) &&
-                  resp.status == cxxime::IPCStatus::OK;
-        client.disconnect();
-    }
+    cxxime::UserDictControlClient client;
+    cxxime::UserDictControlResult result;
+    bool save_ok = client.save(current_user_dict_kind(), &result);
 
     std::string src = current_user_dict_path();
     std::string dst = wstr_to_utf8(file);
@@ -1606,7 +1564,7 @@ void EditorApp::export_user_dict() {
     }
     update_user_dict_status();
     std::wstring msg = L"用户词典已导出到:\n" + path_for_display(dst);
-    if (save_requested && !save_ok) {
+    if (!save_ok) {
         msg += L"\n\n注意: 服务未能立即保存最新内存状态，已导出现有词典文件。";
     }
     MessageBoxW(hwnd_, msg.c_str(), L"CxxIME", MB_OK | MB_ICONINFORMATION);
