@@ -7,20 +7,12 @@
 
 #include <algorithm>
 #include <chrono>
-#include <cstring>
 
 #include <windows.h>
 
 namespace cxxime {
 
 namespace {
-
-void copy_field(char* dst, size_t dst_size, const char* src) {
-    if (!dst || dst_size == 0 || !src)
-        return;
-    strncpy(dst, src, dst_size - 1);
-    dst[dst_size - 1] = '\0';
-}
 
 bool overlapped_io(HANDLE pipe, bool write, void* buffer, DWORD size,
                    DWORD timeout_ms, DWORD& bytes_transferred) {
@@ -304,68 +296,6 @@ bool IpcClient::sync_caps_lock(uint32_t session_id, bool caps_lock, IPCResponse&
     req.session_id = session_id;
     if (caps_lock)
         req.modifiers |= 0x08;
-    return send_request(req, response);
-}
-
-bool IpcClient::add_user_entry(uint32_t session_id, const char* text, const char* code,
-                               IPCResponse& response, UserDictKind kind) {
-    IPCRequest req = {};
-    req.command = IPCCommand::ADD_USER_ENTRY;
-    req.session_id = session_id;
-    req.modifiers = static_cast<uint32_t>(kind);
-    copy_field(req.text, sizeof(req.text), text);
-    copy_field(req.code, sizeof(req.code), code);
-    return send_request(req, response);
-}
-
-bool IpcClient::query_user_entries(const char* query, IPCResponse& response, UserDictKind kind) {
-    IPCRequest req = {};
-    req.command = IPCCommand::QUERY_USER_ENTRIES;
-    req.modifiers = static_cast<uint32_t>(kind);
-    copy_field(req.text, sizeof(req.text), query);
-    return send_request(req, response);
-}
-
-bool IpcClient::delete_user_entry(const char* text, const char* code, IPCResponse& response,
-                                  UserDictKind kind) {
-    IPCRequest req = {};
-    req.command = IPCCommand::DELETE_USER_ENTRY;
-    req.modifiers = static_cast<uint32_t>(kind);
-    copy_field(req.text, sizeof(req.text), text);
-    copy_field(req.code, sizeof(req.code), code);
-    return send_request(req, response);
-}
-
-bool IpcClient::replace_user_entry(const char* old_text, const char* old_code,
-                                   const char* new_text, const char* new_code,
-                                   IPCResponse& response, UserDictKind kind) {
-    IPCRequest req = {};
-    req.command = IPCCommand::REPLACE_USER_ENTRY;
-    req.modifiers = static_cast<uint32_t>(kind);
-    copy_field(req.old_text, sizeof(req.old_text), old_text);
-    copy_field(req.old_code, sizeof(req.old_code), old_code);
-    copy_field(req.text, sizeof(req.text), new_text);
-    copy_field(req.code, sizeof(req.code), new_code);
-    return send_request(req, response);
-}
-
-bool IpcClient::reload_user_dict(IPCResponse& response, UserDictKind kind) {
-    IPCRequest req = {};
-    req.command = IPCCommand::RELOAD_USER_DICT;
-    req.modifiers = static_cast<uint32_t>(kind);
-    return send_request(req, response);
-}
-
-bool IpcClient::reload_dictionaries(IPCResponse& response) {
-    IPCRequest req = {};
-    req.command = IPCCommand::RELOAD_DICTIONARIES;
-    return send_request(req, response);
-}
-
-bool IpcClient::save_user_dict(IPCResponse& response, UserDictKind kind) {
-    IPCRequest req = {};
-    req.command = IPCCommand::SAVE_USER_DICT;
-    req.modifiers = static_cast<uint32_t>(kind);
     return send_request(req, response);
 }
 

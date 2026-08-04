@@ -6,27 +6,22 @@
 #include <cstring>
 #include <memory>
 
+#include <cxxime/candidate.h>
 #include <cxxime/data_path.h>
 #include <cxxime/dictionary_manifest.h>
 #include <cxxime/ipc_protocol.h>
 #include <cxxime/logging.h>
 
+#include "user_dict_control_handler.h"
+
 namespace {
 
-std::string request_text_field(const char* field, size_t size) {
-    return std::string(field, strnlen(field, size));
-}
-
-void response_copy_field(char* dst, size_t dst_size, const std::string& src) {
-    if (!dst || dst_size == 0)
-        return;
-    strncpy_s(dst, dst_size, src.c_str(), _TRUNCATE);
-}
-
-cxxime::UserDictKind request_user_dict_kind(const cxxime::IPCRequest& request) {
-    return request.modifiers == static_cast<uint32_t>(cxxime::UserDictKind::WUBI)
-           ? cxxime::UserDictKind::WUBI
-           : cxxime::UserDictKind::PINYIN;
+bool response_copy_field(char* dst, size_t dst_size, const std::string& src) {
+    if (!dst || dst_size == 0 || src.size() >= dst_size) {
+        return false;
+    }
+    memcpy(dst, src.c_str(), src.size() + 1);
+    return true;
 }
 
 } // namespace
@@ -92,6 +87,9 @@ bool ServerApp::initialize(const std::string& dict_path, const std::string& conf
             [this](cxxime::UserConfigMutationKind kind, const std::string& payload,
                    std::string* config_json, unsigned long* error_code) {
                 return config_writer_.submit(kind, payload, config_json, error_code);
+            },
+            [this](const std::string& payload, std::string* response_payload) {
+                return handle_user_dict_control_request(session_mgr_, payload, response_payload);
             })) {
         config_writer_.stop();
         MessageBoxW(nullptr, L"Failed to start config control server.",
@@ -179,7 +177,7 @@ cxxime::IPCResponse ServerApp::handle_request(const cxxime::IPCRequest& request)
         cxxime::KeyEvent event;
         event.keycode = request.key_code;
         event.modifiers = request.modifiers;
-        event.is_key_up = request.is_key_up;
+        event.is_key_up = request.is_key_up != 0;
 
         auto r = session_mgr_.process_key(
             request.session_id, event, request.visible_candidate_count);
@@ -190,7 +188,7 @@ cxxime::IPCResponse ServerApp::handle_request(const cxxime::IPCRequest& request)
         }
 
         response.status = cxxime::IPCStatus::OK;
-        response.ascii_mode = !r.ime_status.chinese_mode;
+        response.ascii_mode = !r.ime_status.chinese_mode();
         response.composing = r.composing;
         response.ime_status = r.ime_status;
 
@@ -211,20 +209,32 @@ cxxime::IPCResponse ServerApp::handle_request(const cxxime::IPCRequest& request)
                 response.status = cxxime::IPCStatus::ERR_ENGINE_PROCESS_FAILED;
                 break;
             }
-            strncpy_s(response.preedit, r.preedit.c_str(), sizeof(response.preedit) - 1);
+            if (!response_copy_field(response.preedit, sizeof(response.preedit), r.preedit)) {
+                response.status = cxxime::IPCStatus::ERR_ENGINE_PROCESS_FAILED;
+                return response;
+            }
             const size_t copied_preedit_length = strlen(response.preedit);
             response.preedit_cursor = static_cast<uint32_t>(
                 (std::min)(r.preedit_cursor, copied_preedit_length));
             response.candidate_count = (std::min)(
-                static_cast<uint32_t>(r.candidates.candidates.size()), 10u);
+                static_cast<uint32_t>(r.candidates.candidates.size()),
+                static_cast<uint32_t>(cxxime::kCandidateCapacity));
             response.candidate_offset = static_cast<uint32_t>(r.candidates.page_offset);
             response.candidate_total = static_cast<uint32_t>(r.candidates.total_count);
             for (uint32_t i = 0; i < response.candidate_count; ++i) {
-                strncpy_s(response.candidates[i], r.candidates.candidates[i].text.c_str(),
-                          sizeof(response.candidates[i]) - 1);
+                if (!cxxime::candidate_text_fits(r.candidates.candidates[i].text) ||
+                    !response_copy_field(response.candidates[i], sizeof(response.candidates[i]),
+                                         r.candidates.candidates[i].text)) {
+                    response.status = cxxime::IPCStatus::ERR_ENGINE_PROCESS_FAILED;
+                    return response;
+                }
                 if (!r.candidates.candidates[i].comment.empty()) {
-                    strncpy_s(response.candidate_hints[i], r.candidates.candidates[i].comment.c_str(),
-                              sizeof(response.candidate_hints[i]) - 1);
+                    if (!response_copy_field(response.candidate_hints[i],
+                                             sizeof(response.candidate_hints[i]),
+                                             r.candidates.candidates[i].comment)) {
+                        response.status = cxxime::IPCStatus::ERR_ENGINE_PROCESS_FAILED;
+                        return response;
+                    }
                 }
             }
             response.highlighted = (uint32_t)r.candidates.highlighted;
@@ -237,7 +247,11 @@ cxxime::IPCResponse ServerApp::handle_request(const cxxime::IPCRequest& request)
         }
 
         if (r.result == cxxime::ProcessResult::COMMITTED) {
-            strncpy_s(response.commit_text, r.commit_text.c_str(), sizeof(response.commit_text) - 1);
+            if (!response_copy_field(response.commit_text, sizeof(response.commit_text),
+                                     r.commit_text)) {
+                response.status = cxxime::IPCStatus::ERR_ENGINE_PROCESS_FAILED;
+                return response;
+            }
         }
         break;
     }
@@ -251,7 +265,11 @@ cxxime::IPCResponse ServerApp::handle_request(const cxxime::IPCRequest& request)
         response.status = cxxime::IPCStatus::OK;
         response.ime_status = r.ime_status;
         if (r.result == cxxime::ProcessResult::COMMITTED) {
-            strncpy_s(response.commit_text, r.commit_text.c_str(), sizeof(response.commit_text) - 1);
+            if (!response_copy_field(response.commit_text, sizeof(response.commit_text),
+                                     r.commit_text)) {
+                response.status = cxxime::IPCStatus::ERR_ENGINE_PROCESS_FAILED;
+                return response;
+            }
         } else {
             response.status = cxxime::IPCStatus::ERR_ENGINE_PROCESS_FAILED;
         }
@@ -267,7 +285,11 @@ cxxime::IPCResponse ServerApp::handle_request(const cxxime::IPCRequest& request)
         response.status = cxxime::IPCStatus::OK;
         response.ime_status = r.ime_status;
         if (r.result == cxxime::ProcessResult::COMMITTED) {
-            strncpy_s(response.commit_text, r.commit_text.c_str(), sizeof(response.commit_text) - 1);
+            if (!response_copy_field(response.commit_text, sizeof(response.commit_text),
+                                     r.commit_text)) {
+                response.status = cxxime::IPCStatus::ERR_ENGINE_PROCESS_FAILED;
+                return response;
+            }
         }
         break;
     }
@@ -291,7 +313,7 @@ cxxime::IPCResponse ServerApp::handle_request(const cxxime::IPCRequest& request)
             break;
         }
         response.ime_status = ime_status;
-        response.ascii_mode = !ime_status.chinese_mode;
+        response.ascii_mode = !ime_status.chinese_mode();
         break;
     }
 
@@ -303,11 +325,14 @@ cxxime::IPCResponse ServerApp::handle_request(const cxxime::IPCRequest& request)
             break;
         }
         response.ime_status = result.ime_status;
-        response.ascii_mode = !result.ime_status.chinese_mode;
+        response.ascii_mode = !result.ime_status.chinese_mode();
         response.composing = result.composing;
         if (!result.commit_text.empty()) {
-            response_copy_field(response.commit_text, sizeof(response.commit_text),
-                                result.commit_text);
+            if (!response_copy_field(response.commit_text, sizeof(response.commit_text),
+                                     result.commit_text)) {
+                response.status = cxxime::IPCStatus::ERR_ENGINE_PROCESS_FAILED;
+                return response;
+            }
         }
         break;
     }
@@ -358,7 +383,7 @@ cxxime::IPCResponse ServerApp::handle_request(const cxxime::IPCRequest& request)
             break;
         }
         response.status = cxxime::IPCStatus::OK;
-        response.ascii_mode = !ime_status.chinese_mode;
+        response.ascii_mode = !ime_status.chinese_mode();
         response.ime_status = ime_status;
         break;
     }
@@ -371,67 +396,10 @@ cxxime::IPCResponse ServerApp::handle_request(const cxxime::IPCRequest& request)
             break;
         }
         response.status = cxxime::IPCStatus::OK;
-        response.ascii_mode = !ime_status.chinese_mode;
+        response.ascii_mode = !ime_status.chinese_mode();
         response.ime_status = ime_status;
         break;
     }
-
-    case cxxime::IPCCommand::RELOAD_DICTIONARIES:
-        response.status = session_mgr_.reload_dictionaries();
-        break;
-
-    case cxxime::IPCCommand::ADD_USER_ENTRY: {
-        std::string text = request_text_field(request.text, sizeof(request.text));
-        std::string code = request_text_field(request.code, sizeof(request.code));
-        response.status = session_mgr_.add_user_entry(
-            request.session_id, request_user_dict_kind(request), text, code);
-        break;
-    }
-
-    case cxxime::IPCCommand::QUERY_USER_ENTRIES: {
-        std::string query = request_text_field(request.text, sizeof(request.text));
-        size_t total = 0;
-        auto entries = session_mgr_.query_user_entries(
-            query, request_user_dict_kind(request), 32, total);
-        response.status = cxxime::IPCStatus::OK;
-        response.user_entry_total = static_cast<uint32_t>(
-            (std::min)(total, static_cast<size_t>(UINT32_MAX)));
-        response.user_entry_count = static_cast<uint32_t>(entries.size());
-        for (size_t i = 0; i < entries.size() && i < 32; ++i) {
-            response_copy_field(response.user_entries[i].text,
-                sizeof(response.user_entries[i].text), entries[i].text);
-            response_copy_field(response.user_entries[i].code,
-                sizeof(response.user_entries[i].code), entries[i].code);
-            response.user_entries[i].frequency = entries[i].frequency;
-        }
-        break;
-    }
-
-    case cxxime::IPCCommand::DELETE_USER_ENTRY: {
-        std::string text = request_text_field(request.text, sizeof(request.text));
-        std::string code = request_text_field(request.code, sizeof(request.code));
-        response.status = session_mgr_.delete_user_entry(request_user_dict_kind(request),
-                                                         text, code);
-        break;
-    }
-
-    case cxxime::IPCCommand::REPLACE_USER_ENTRY: {
-        std::string old_text = request_text_field(request.old_text, sizeof(request.old_text));
-        std::string old_code = request_text_field(request.old_code, sizeof(request.old_code));
-        std::string text = request_text_field(request.text, sizeof(request.text));
-        std::string code = request_text_field(request.code, sizeof(request.code));
-        response.status = session_mgr_.replace_user_entry(request_user_dict_kind(request),
-                                                          old_text, old_code, text, code);
-        break;
-    }
-
-    case cxxime::IPCCommand::RELOAD_USER_DICT:
-        response.status = session_mgr_.reload_user_dict(request_user_dict_kind(request));
-        break;
-
-    case cxxime::IPCCommand::SAVE_USER_DICT:
-        response.status = session_mgr_.save_user_dict(request_user_dict_kind(request));
-        break;
 
     default:
         response.status = cxxime::IPCStatus::ERR_UNKNOWN_COMMAND;

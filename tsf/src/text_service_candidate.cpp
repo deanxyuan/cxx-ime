@@ -94,7 +94,8 @@ TextService::_candidate_page_from_response(const cxxime::IPCResponse& response) 
     page.page_offset = static_cast<int>(response.candidate_offset);
     page.total_count = static_cast<int>(response.candidate_total);
     page.highlighted = static_cast<int>(response.highlighted);
-    for (uint32_t i = 0; i < response.candidate_count && i < 10; ++i) {
+    for (uint32_t i = 0;
+        i < response.candidate_count && i < cxxime::kCandidateCapacity; ++i) {
         cxxime::Candidate candidate;
         candidate.text = response.candidates[i];
         candidate.comment = response.candidate_hints[i];

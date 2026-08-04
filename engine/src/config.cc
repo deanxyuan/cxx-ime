@@ -8,6 +8,8 @@
 
 #include <json.hpp>
 
+#include <cxxime/input_limits.h>
+
 namespace cxxime {
 
 static void load_int(nlohmann::json& obj, const char* key, int& val) {
@@ -324,7 +326,7 @@ static nlohmann::json build_config_json(const Config& config) {
     j["engine"]["wubi_auto_commit"] = config.wubi_auto_commit;
     j["engine"]["wubi_code_hint"] = config.wubi_code_hint;
     j["engine"]["candidate_learning"] = config.candidate_learning;
-    j["engine"]["max_pinyin_length"] = 64;
+    j["engine"]["max_pinyin_length"] = kMaxInputCodeLength;
 
     j["initial_state"]["full_shape"] = config.initial_full_shape;
     j["initial_state"]["chinese_punct"] = config.initial_chinese_punct;

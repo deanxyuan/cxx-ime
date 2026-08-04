@@ -7,6 +7,7 @@
 #include <windows.h>
 
 #include <cxxime/key_event.h>
+#include <cxxime/input_limits.h>
 
 namespace cxxime {
 
@@ -19,12 +20,19 @@ size_t Context::preedit_cursor() const {
     return pinyin_buffer.size() - distance;
 }
 
-void Context::set_preedit(std::string text) {
+bool Context::set_preedit(std::string text) {
+    if (text.size() > kMaxInputCodeLength ||
+        std::any_of(text.begin(), text.end(), [](char ch) {
+            return ch == '\0' || static_cast<unsigned char>(ch) > 0x7f;
+        })) {
+        return false;
+    }
     if (pinyin_buffer != text) {
         pinyin_buffer = std::move(text);
         ++preedit_revision_;
     }
     preedit_cursor_from_end_ = 0;
+    return true;
 }
 
 void Context::clear_preedit() {
@@ -35,9 +43,14 @@ void Context::clear_preedit() {
     preedit_cursor_from_end_ = 0;
 }
 
-void Context::insert_preedit(char ch) {
+bool Context::insert_preedit(char ch) {
+    if (pinyin_buffer.size() >= kMaxInputCodeLength || ch == '\0' ||
+        static_cast<unsigned char>(ch) > 0x7f) {
+        return false;
+    }
     pinyin_buffer.insert(preedit_cursor(), 1, ch);
     ++preedit_revision_;
+    return true;
 }
 
 bool Context::erase_preedit_before_cursor() {

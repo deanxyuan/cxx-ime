@@ -80,11 +80,7 @@ std::string manifest_role_path(const cxxime::DictionaryManifest& manifest,
 }
 
 bool same_visible_status(const cxxime::ImeStatus& a, const cxxime::ImeStatus& b) {
-    return a.chinese_mode == b.chinese_mode &&
-           a.caps_lock == b.caps_lock &&
-           a.full_shape == b.full_shape &&
-           a.chinese_punct == b.chinese_punct &&
-           a.input_mode == b.input_mode;
+    return a.flags == b.flags && a.input_mode == b.input_mode;
 }
 
 bool load_dictionary_resources(const std::string& manifest_path, DictionaryResources& out) {
@@ -313,10 +309,10 @@ void SessionManager::align_session_to_global(SessionEntry& entry) {
     entry.engine->ascii_composer().set_ascii_mode(!entry.base_chinese_mode);
     entry.engine->ascii_composer().sync_caps_lock(state.caps_lock,
                                                   entry.engine->context());
-    entry.ime_status.chinese_mode = state.caps_lock ? false : entry.base_chinese_mode;
-    entry.ime_status.caps_lock = state.caps_lock;
-    entry.ime_status.full_shape = entry.full_shape;
-    entry.ime_status.chinese_punct = entry.chinese_punct;
+entry.ime_status.set_chinese_mode(state.caps_lock ? false : entry.base_chinese_mode);
+entry.ime_status.set_caps_lock(state.caps_lock);
+entry.ime_status.set_full_shape(entry.full_shape);
+entry.ime_status.set_chinese_punct(entry.chinese_punct);
     entry.ime_status.input_mode = entry.engine->mode();
     entry.ime_status.revision = same_visible_status(previous, entry.ime_status)
         ? previous.revision
@@ -348,8 +344,8 @@ uint32_t SessionManager::create_session() {
     entry->resources = std::move(resources);
     entry->full_shape = entry->resources.config->initial_full_shape;
     entry->chinese_punct = entry->resources.config->initial_chinese_punct;
-    entry->ime_status.full_shape = entry->full_shape;
-    entry->ime_status.chinese_punct = entry->chinese_punct;
+    entry->ime_status.set_full_shape(entry->full_shape);
+    entry->ime_status.set_chinese_punct(entry->chinese_punct);
     entry->engine->set_fuzzy_enabled(entry->resources.config->fuzzy_pinyin);
     align_session_to_global(*entry);
     sessions_[id] = entry;
@@ -451,13 +447,19 @@ cxxime::IPCStatus SharedResources::add_user_entry(cxxime::UserDictKind kind,
     return cxxime::IPCStatus::OK;
 }
 
-std::vector<cxxime::UserDictEntryInfo> SharedResources::query_user_entries(
-        const std::string& query, cxxime::UserDictKind kind, size_t limit, size_t& total) {
+cxxime::UserDictQueryResult SharedResources::query_user_entries(
+    const std::string& query, cxxime::UserDictKind kind, size_t offset, size_t limit) {
     std::lock_guard<std::mutex> lock(mutex);
     auto dict = dict_slot_for(*this, kind);
-    total = dict && dict->is_open() ? dict->user_entry_count() : 0;
-    return dict && dict->is_open() ? dict->query_user_entries(query, limit)
-                                   : std::vector<cxxime::UserDictEntryInfo>{};
+    cxxime::UserDictQueryResult result;
+    result.offset = offset;
+    if (dict && dict->is_open()) {
+        result.dictionary_total = dict->user_entry_count();
+        result.entries = dict->query_user_entries(query, offset, limit, &result.match_total);
+        result.has_more = offset < result.match_total &&
+                          result.entries.size() < result.match_total - offset;
+    }
+    return result;
 }
 
 cxxime::IPCStatus SharedResources::delete_user_entry(cxxime::UserDictKind kind,
@@ -736,7 +738,7 @@ ProcessKeyResult SessionManager::process_key(uint32_t id, const cxxime::KeyEvent
     // TSF may not deliver a VK_CAPITAL event because CapsLock was already on.
     // The physical modifier bit on the first real key is still authoritative.
     bool is_caps_lock_key = event.keycode == VK_CAPITAL;
-    if (!is_caps_lock_key && s.ime_status.caps_lock != event.is_caps_lock()) {
+    if (!is_caps_lock_key && s.ime_status.caps_lock() != event.is_caps_lock()) {
         GlobalVisibleState state = snapshot_global_state();
         state.caps_lock = event.is_caps_lock();
         commit_global_state(state);
@@ -896,14 +898,15 @@ cxxime::IPCStatus SessionManager::focus_out(uint32_t id) {
     return cxxime::IPCStatus::OK;
 }
 
-cxxime::IPCStatus SessionManager::add_user_entry(uint32_t id, cxxime::UserDictKind kind,
-                                                 const std::string& text, const std::string& code) {
+cxxime::IPCStatus SessionManager::add_user_entry(cxxime::UserDictKind kind,
+                                                 const std::string& text,
+                                                 const std::string& code) {
     return shared_.add_user_entry(kind, text, code);
 }
 
-std::vector<cxxime::UserDictEntryInfo> SessionManager::query_user_entries(
-    const std::string& query, cxxime::UserDictKind kind, size_t limit, size_t& total) {
-    return shared_.query_user_entries(query, kind, limit, total);
+cxxime::UserDictQueryResult SessionManager::query_user_entries(
+    const std::string& query, cxxime::UserDictKind kind, size_t offset, size_t limit) {
+    return shared_.query_user_entries(query, kind, offset, limit);
 }
 
 cxxime::IPCStatus SessionManager::delete_user_entry(cxxime::UserDictKind kind,

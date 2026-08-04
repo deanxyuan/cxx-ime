@@ -237,4 +237,41 @@ TEST(CandidateWindow, width_is_clamped_to_monitor_work_area) {
     window.destroy();
 }
 
+TEST(CandidateWindow, automatic_width_uses_comfortable_work_area_limit) {
+    cxxime::Config config;
+    config.render_backend = "gdi";
+    config.layout = "horizontal";
+    config.layout_config.max_width = 0;
+
+    cxxime::CandidatePage page;
+    cxxime::Candidate candidate;
+    candidate.text.assign(4096, 'w');
+    page.candidates.push_back(std::move(candidate));
+
+    cxxime::CandidateWindow window;
+    ASSERT_TRUE(window.create(nullptr, config));
+    HWND hwnd = FindWindowW(L"CxxIMECandidateWindow", nullptr);
+    ASSERT_TRUE(hwnd != nullptr);
+    HMONITOR monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO monitor_info = {sizeof(monitor_info)};
+    ASSERT_TRUE(GetMonitorInfoW(monitor, &monitor_info) != FALSE);
+
+    RECT caret_rect = {monitor_info.rcWork.left + 16, monitor_info.rcWork.top + 16,
+                       monitor_info.rcWork.left + 16, monitor_info.rcWork.top + 36};
+    window.move_to_caret(caret_rect);
+    window.update(page);
+
+    HDC dc = GetDC(hwnd);
+    const float dpi_scale = GetDeviceCaps(dc, LOGPIXELSX) / 96.0f;
+    ReleaseDC(hwnd, dc);
+    const int work_width = monitor_info.rcWork.right - monitor_info.rcWork.left;
+    const int expected_max_width =
+        cxxime::calculate_auto_candidate_window_max_width(work_width, dpi_scale);
+    RECT window_rect = {};
+    ASSERT_TRUE(GetWindowRect(hwnd, &window_rect) != FALSE);
+    ASSERT_LE(window_rect.right - window_rect.left, expected_max_width);
+
+    window.destroy();
+}
+
 RUN_ALL_TESTS()

@@ -268,11 +268,11 @@ void CLangBarItemButton::update_icon(bool chinese_mode) {
 
 void CLangBarItemButton::update_from_status(const cxxime::ImeStatus& status) {
     _input_mode = status.input_mode;
-    if (_chinese_mode != status.chinese_mode || _caps_lock != status.caps_lock) {
+    if (_chinese_mode != status.chinese_mode() || _caps_lock != status.caps_lock()) {
         UINT old_icon = mode_icon_id(_chinese_mode, _caps_lock);
-        UINT new_icon = mode_icon_id(status.chinese_mode, status.caps_lock);
-        _chinese_mode = status.chinese_mode;
-        _caps_lock = status.caps_lock;
+        UINT new_icon = mode_icon_id(status.chinese_mode(), status.caps_lock());
+        _chinese_mode = status.chinese_mode();
+        _caps_lock = status.caps_lock();
         if (_pSink) {
             DWORD flags = TF_LBI_STATUS | TF_LBI_TOOLTIP;
             if (old_icon != new_icon) flags |= TF_LBI_ICON;

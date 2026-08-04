@@ -92,7 +92,8 @@ std::vector<Candidate> WubiTranslator::lookup_candidates(const std::string& code
 
     if (code.size() <= 3) {
         for (auto& recent : recent_cache_) {
-            if (recent.key == code && (int)results.size() < limit) {
+            if (recent.key == code && candidate_text_fits(recent.candidate.text) &&
+                (int)results.size() < limit) {
                 if (std::none_of(results.begin(), results.end(), [&](const Candidate& candidate) {
                     return candidate.text == recent.candidate.text;
                 })) {
@@ -107,6 +108,9 @@ std::vector<Candidate> WubiTranslator::lookup_candidates(const std::string& code
     for (auto& candidate : dict_results) {
         if ((int)results.size() >= limit) {
             break;
+        }
+        if (!candidate_text_fits(candidate.text)) {
+            continue;
         }
         if (std::none_of(results.begin(), results.end(), [&](const Candidate& existing) {
             return existing.text == candidate.text;

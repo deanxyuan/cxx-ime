@@ -40,6 +40,14 @@ static int measure_text_width(HDC hdc, const wchar_t* text,
     return size.cx;
 }
 
+TEST(Layout, automatic_candidate_window_width_adapts_to_dpi_and_work_area) {
+    ASSERT_EQ(cxxime::calculate_auto_candidate_window_max_width(800, 1.0f), 640);
+    ASSERT_EQ(cxxime::calculate_auto_candidate_window_max_width(1024, 1.0f), 819);
+    ASSERT_EQ(cxxime::calculate_auto_candidate_window_max_width(1280, 1.0f), 960);
+    ASSERT_EQ(cxxime::calculate_auto_candidate_window_max_width(1920, 1.0f), 960);
+    ASSERT_EQ(cxxime::calculate_auto_candidate_window_max_width(2560, 1.5f), 1440);
+}
+
 TEST(Layout, horizontal_single_row) {
     HDC hdc = GetDC(nullptr);
     std::vector<cxxime::Candidate> cands = {make_cand("abc"), make_cand("def"), make_cand("ghi")};

@@ -58,11 +58,11 @@ TEST(Protocol, user_pipe_name_preserves_endpoint_and_is_idempotent) {
 }
 
 TEST(Protocol, request_struct_size) {
-    ASSERT_GE(sizeof(cxxime::IPCRequest), 20u);
+    ASSERT_EQ(sizeof(cxxime::IPCRequest), static_cast<size_t>(28));
 }
 
 TEST(Protocol, response_struct_size) {
-    ASSERT_GE(sizeof(cxxime::IPCResponse), 4u + 256 + 256 + 4 + 10 * 64 + 4);
+    ASSERT_EQ(sizeof(cxxime::IPCResponse), static_cast<size_t>(3168));
 }
 
 TEST(Protocol, response_zero_init) {
@@ -72,6 +72,46 @@ TEST(Protocol, response_zero_init) {
     ASSERT_EQ(resp.preedit[0], '\0');
     ASSERT_EQ(resp.preedit_cursor, (uint32_t)0);
     ASSERT_EQ(resp.candidate_count, (uint32_t)0);
+}
+
+TEST(Protocol, candidate_text_over_old_capacity_round_trips) {
+    const std::string candidate(200, 'x');
+    TestServer server;
+    ASSERT_TRUE(server.start([&](const cxxime::IPCRequest&) {
+        cxxime::IPCResponse response = {};
+        response.candidate_count = 1;
+        strcpy_s(response.candidates[0], candidate.c_str());
+        return response;
+    }));
+
+    cxxime::IpcClient client;
+    ASSERT_TRUE(client.connect(cxxime::IPC_PIPE_BASE_NAME, 2000));
+    cxxime::IPCRequest request = {};
+    request.command = cxxime::IPCCommand::PING;
+    cxxime::IPCResponse response = {};
+    ASSERT_TRUE(client.send_request(request, response));
+    ASSERT_TRUE(std::string(response.candidates[0]) == candidate);
+}
+
+TEST(Protocol, ime_status_flags_are_independent) {
+    cxxime::ImeStatus status;
+    ASSERT_TRUE(status.chinese_mode());
+    ASSERT_TRUE(!status.caps_lock());
+    ASSERT_TRUE(!status.full_shape());
+    ASSERT_TRUE(status.chinese_punct());
+
+    status.set_chinese_mode(false);
+    status.set_caps_lock(true);
+    status.set_full_shape(true);
+    status.set_chinese_punct(false);
+
+    ASSERT_TRUE(!status.chinese_mode());
+    ASSERT_TRUE(status.caps_lock());
+    ASSERT_TRUE(status.full_shape());
+    ASSERT_TRUE(!status.chinese_punct());
+    ASSERT_EQ(status.flags,
+              cxxime::ime_status_flag(cxxime::ImeStatusFlag::CAPS_LOCK) |
+              cxxime::ime_status_flag(cxxime::ImeStatusFlag::FULL_SHAPE));
 }
 
 // ============================================================
@@ -298,7 +338,7 @@ TEST(IPC, set_chinese_mode_uses_explicit_target) {
         ASSERT_EQ(req.session_id, static_cast<uint32_t>(7));
         ASSERT_EQ(req.candidate_index, static_cast<uint32_t>(0));
         resp.status = cxxime::IPCStatus::OK;
-        resp.ime_status.chinese_mode = false;
+        resp.ime_status.set_chinese_mode(false);
         return resp;
     }));
 
@@ -307,66 +347,7 @@ TEST(IPC, set_chinese_mode_uses_explicit_target) {
     cxxime::IPCResponse resp = {};
     ASSERT_TRUE(client.set_chinese_mode(7, false, resp));
     ASSERT_EQ(resp.status, cxxime::IPCStatus::OK);
-    ASSERT_EQ(resp.ime_status.chinese_mode, false);
-}
-
-TEST(IPC, user_dict_commands) {
-    TestServer ts;
-    ASSERT_TRUE(ts.start([](const cxxime::IPCRequest& req) -> cxxime::IPCResponse {
-        cxxime::IPCResponse resp = {};
-        resp.status = cxxime::IPCStatus::OK;
-        if (req.command == cxxime::IPCCommand::QUERY_USER_ENTRIES) {
-            ASSERT_EQ(req.modifiers, static_cast<uint32_t>(cxxime::UserDictKind::PINYIN));
-            ASSERT_TRUE(strcmp(req.text, "ni") == 0);
-            resp.user_entry_total = 2;
-            resp.user_entry_count = 1;
-            strcpy_s(resp.user_entries[0].text, "你好");
-            strcpy_s(resp.user_entries[0].code, "nihao");
-            resp.user_entries[0].frequency = 3;
-        } else if (req.command == cxxime::IPCCommand::DELETE_USER_ENTRY) {
-            ASSERT_EQ(req.modifiers, static_cast<uint32_t>(cxxime::UserDictKind::WUBI));
-            ASSERT_TRUE(strcmp(req.text, "你好") == 0);
-            ASSERT_TRUE(strcmp(req.code, "nihao") == 0);
-        } else if (req.command == cxxime::IPCCommand::REPLACE_USER_ENTRY) {
-            ASSERT_EQ(req.modifiers, static_cast<uint32_t>(cxxime::UserDictKind::WUBI));
-            ASSERT_TRUE(strcmp(req.old_text, "你好") == 0);
-            ASSERT_TRUE(strcmp(req.old_code, "nihao") == 0);
-            ASSERT_TRUE(strcmp(req.text, "您好") == 0);
-            ASSERT_TRUE(strcmp(req.code, "ninhao") == 0);
-        } else if (req.command == cxxime::IPCCommand::RELOAD_USER_DICT) {
-            ASSERT_EQ(req.modifiers, static_cast<uint32_t>(cxxime::UserDictKind::WUBI));
-        } else if (req.command == cxxime::IPCCommand::RELOAD_DICTIONARIES) {
-            ASSERT_EQ(req.modifiers, static_cast<uint32_t>(0));
-        } else if (req.command == cxxime::IPCCommand::SAVE_USER_DICT) {
-            ASSERT_EQ(req.modifiers, static_cast<uint32_t>(cxxime::UserDictKind::WUBI));
-        } else if (req.command == cxxime::IPCCommand::SWITCH_INPUT_MODE) {
-            ASSERT_EQ(req.modifiers, cxxime::IPC_SWITCH_INPUT_MODE_EXPLICIT);
-            ASSERT_EQ(req.candidate_index, static_cast<uint32_t>(cxxime::InputMode::PINYIN));
-        } else {
-            resp.status = cxxime::IPCStatus::ERR_UNKNOWN_COMMAND;
-        }
-        return resp;
-    }));
-
-    cxxime::IpcClient client;
-    ASSERT_TRUE(client.connect(cxxime::IPC_PIPE_BASE_NAME, 2000));
-
-    cxxime::IPCResponse resp = {};
-    ASSERT_TRUE(client.query_user_entries("ni", resp));
-    ASSERT_EQ(resp.user_entry_total, static_cast<uint32_t>(2));
-    ASSERT_EQ(resp.user_entry_count, static_cast<uint32_t>(1));
-    ASSERT_TRUE(strcmp(resp.user_entries[0].text, "你好") == 0);
-    ASSERT_TRUE(strcmp(resp.user_entries[0].code, "nihao") == 0);
-    ASSERT_EQ(resp.user_entries[0].frequency, 3);
-
-    ASSERT_TRUE(client.delete_user_entry("你好", "nihao", resp, cxxime::UserDictKind::WUBI));
-    ASSERT_TRUE(client.replace_user_entry("你好", "nihao", "您好", "ninhao", resp,
-                                          cxxime::UserDictKind::WUBI));
-    ASSERT_TRUE(client.reload_user_dict(resp, cxxime::UserDictKind::WUBI));
-    ASSERT_TRUE(client.reload_dictionaries(resp));
-    ASSERT_TRUE(client.save_user_dict(resp, cxxime::UserDictKind::WUBI));
-    ASSERT_TRUE(client.switch_input_mode(1, cxxime::InputMode::PINYIN, resp));
-    client.disconnect();
+    ASSERT_EQ(resp.ime_status.chinese_mode(), false);
 }
 
 TEST(IPC, focus_in_out) {

@@ -6,6 +6,7 @@ add_executable(cxxime-server WIN32
     src/main.cc
     src/server_app.cc
     src/session_manager.cc
+    src/user_dict_control_handler.cc
 )
 
 target_include_directories(cxxime-server PRIVATE

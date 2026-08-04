@@ -195,7 +195,7 @@ private:
             return;
         }
 
-        printf("status=%u rtt=%lldus ascii=%d composing=%d\n",
+        printf("status=%u rtt=%lldus ascii=%u composing=%u\n",
                (uint32_t)resp.status, us,
                resp.ascii_mode, resp.composing);
 

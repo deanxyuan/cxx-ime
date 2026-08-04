@@ -12,10 +12,10 @@
 
 #include <cxxime/candidate_window.h>
 #include <cxxime/config.h>
-#include <cxxime/ipc_protocol.h>
 #include <cxxime/layout.h>
 #include <cxxime/render_context.h>
 #include <cxxime/settings_route.h>
+#include <cxxime/user_dict.h>
 
 namespace cxxime {
 namespace settings {

@@ -183,8 +183,8 @@ STDMETHODIMP TextService::OnChange(REFGUID rguid) {
         std::lock_guard<std::mutex> lock(_lastImeStatusMutex);
         if (_hasLastImeStatus) {
             trace_event.status_details = true;
-            trace_event.before_full_shape = _lastImeStatus.full_shape;
-            trace_event.before_chinese_punct = _lastImeStatus.chinese_punct;
+            trace_event.before_full_shape = _lastImeStatus.full_shape();
+            trace_event.before_chinese_punct = _lastImeStatus.chinese_punct();
             trace_event.before_input_mode =
                 static_cast<uint32_t>(_lastImeStatus.input_mode);
         }
@@ -201,8 +201,8 @@ STDMETHODIMP TextService::OnChange(REFGUID rguid) {
         return S_OK;
     }
 
-    trace_event.after_full_shape = response.ime_status.full_shape;
-    trace_event.after_chinese_punct = response.ime_status.chinese_punct;
+    trace_event.after_full_shape = response.ime_status.full_shape();
+    trace_event.after_chinese_punct = response.ime_status.chinese_punct();
     trace_event.after_input_mode =
         static_cast<uint32_t>(response.ime_status.input_mode);
     _sync_ime_status(response.ime_status);
