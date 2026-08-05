@@ -169,6 +169,59 @@ HRESULT TextService::_commit_text(ITfContext* context,
     return edit_hr;
 }
 
+HRESULT TextService::_commit_and_restart_composition(ITfContext* context,
+                                                     const std::wstring& commit_text,
+                                                     const std::wstring& preedit,
+                                                     size_t preedit_cursor) {
+    if (!context || commit_text.empty()) {
+        return E_INVALIDARG;
+    }
+    _ensure_text_edit_sink(context);
+
+    EditSession* edit_session = new (std::nothrow) EditSession(this, context);
+    if (!edit_session) {
+        return E_OUTOFMEMORY;
+    }
+    edit_session->set_commit_and_restart_action(commit_text, preedit, preedit_cursor);
+
+    HRESULT edit_hr = E_FAIL;
+    HRESULT request_hr = context->RequestEditSession(_clientId, edit_session,
+                                                     TF_ES_READWRITE | TF_ES_SYNC, &edit_hr);
+    const HRESULT initial_request_hr = request_hr;
+    const bool async_fallback = FAILED(request_hr);
+    if (async_fallback) {
+        edit_hr = E_FAIL;
+        request_hr = context->RequestEditSession(_clientId, edit_session,
+                                                 TF_ES_READWRITE | TF_ES_ASYNCDONTCARE, &edit_hr);
+    }
+
+    const HRESULT action_hr = edit_session->action_result();
+    cxxime_tsf::StageCompositionEditResult result;
+    result.action = "commit_restart";
+    result.text_length = preedit.size();
+    result.selection_offset = preedit_cursor;
+    result.sync_requested = true;
+    result.async_fallback = async_fallback;
+    result.initial_request_hr = initial_request_hr;
+    result.request_hr = request_hr;
+    result.edit_hr = edit_hr;
+    result.action_hr = action_hr;
+    result.start_attempted = edit_session->composition_start_attempted();
+    result.start_hr = edit_session->composition_start_result();
+    result.composition_returned = edit_session->composition_returned();
+    result.composition_active = _composing && _composition != nullptr;
+    cxxime_tsf::trace_stage_composition_edit(this, result);
+    edit_session->Release();
+
+    if (FAILED(request_hr)) {
+        return request_hr;
+    }
+    if (FAILED(edit_hr)) {
+        return edit_hr;
+    }
+    return action_hr;
+}
+
 HRESULT TextService::update_composition(ITfContext* context,
                                          const std::wstring& preedit,
                                          size_t preedit_cursor,

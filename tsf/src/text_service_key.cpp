@@ -347,6 +347,7 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
     const bool has_committed_text = response.commit_text[0] != '\0';
     const bool commit_continues_composition =
         has_committed_text && response.composing && response.preedit[0] != '\0';
+    std::wstring commit_text;
     if (has_committed_text) {
         if (commit_continues_composition) {
             _hide_external_candidate_window("hide:commit_continue_reposition");
@@ -355,11 +356,13 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
             _end_reading_ui_element("hide:commit_reading");
             _candidateWindow.set_preedit("");
         }
-        std::wstring commit_text = utf8_to_wstring(response.commit_text);
+        commit_text = utf8_to_wstring(response.commit_text);
         if (!commit_text.empty()) {
-            _commit_text(pic, commit_text, true);
-            _composing = false;
-            _lastInlineCompositionText.clear();
+            if (!commit_continues_composition) {
+                _commit_text(pic, commit_text, true);
+                _composing = false;
+                _lastInlineCompositionText.clear();
+            }
             *pfEaten = TRUE;
         }
         trace.result = TsfResult::COMMITTED;
@@ -416,25 +419,26 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
             : (decision.start_composition ? decision.inline_text : L"");
         bool external_candidate_window = true;
         bool candidate_ui_published = false;
-        const DWORD composition_edit_session_mode =
-            commit_continues_composition ? TF_ES_ASYNC : TF_ES_SYNC;
+        auto apply_composition = [&](const std::wstring& text, size_t cursor) {
+            if (commit_continues_composition) {
+                return _commit_and_restart_composition(pic, commit_text, text, cursor);
+            }
+            return update_composition(pic, text, cursor, true, TF_ES_SYNC);
+        };
         if (ui_element_only) {
             _end_reading_ui_element("hide:candidate_mirror_no_reading");
             external_candidate_window = _publish_candidate_ui_element(
                 page, response.candidate_count, response.page_current, response.page_total);
             candidate_ui_published = true;
-            update_composition(
-                pic, preedit, preedit_cursor, true, composition_edit_session_mode);
+            apply_composition(preedit, preedit_cursor);
         } else if (decision.start_composition) {
             _update_reading_ui_element(pic, preedit);
-            update_composition(
-                pic, decision.inline_text, decision.inline_cursor, true,
-                composition_edit_session_mode);
+            apply_composition(decision.inline_text, decision.inline_cursor);
         } else {
             _update_reading_ui_element(pic, preedit);
             // Keep one empty TSF composition active while preedit is shown in the popup.
             // The host can then terminate it consistently when its selection moves.
-            update_composition(pic, L"", 0, true, composition_edit_session_mode);
+            apply_composition(L"", 0);
         }
         *pfEaten = TRUE;
 

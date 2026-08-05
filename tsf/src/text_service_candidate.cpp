@@ -3,6 +3,7 @@
 #include "text_service.h"
 
 #include <cstdio>
+#include <string>
 #include <utility>
 
 #include "candidate_ui_element.h"
@@ -213,6 +214,21 @@ void TextService::_prepare_host_candidate_compatibility() {
 }
 
 bool TextService::select_candidate_from_ui(UINT index) {
+    if (index < _publishedCandidatePage.candidates.size()) {
+        const std::string& comment = _publishedCandidatePage.candidates[index].comment;
+        if (index < 9 && comment.size() == 3 && comment.front() == '/') {
+            ITfContext* context = _current_edit_context_for_composition();
+            if (!context) {
+                return false;
+            }
+            BOOL eaten = FALSE;
+            const bool processed = _ProcessKeyEvent(
+                context, static_cast<WPARAM>('1' + index), 0, &eaten);
+            context->Release();
+            return processed && eaten != FALSE;
+        }
+    }
+
     cxxime::IPCResponse resp = {};
     if (!_ensure_ipc_session() || !_client.select_candidate(_sessionId, index, resp))
         return false;

@@ -20,6 +20,7 @@
 #include <cxxime/output_composer.h>
 #include <cxxime/punct_types.h>
 #include <cxxime/spellings_index.h>
+#include <cxxime/symbol_table.h>
 #include <cxxime/syllabifier.h>
 #include <cxxime/user_dict.h>
 
@@ -28,6 +29,7 @@ struct SharedResourceSnapshot {
     std::shared_ptr<cxxime::Dict> wubi_dict;
     std::shared_ptr<cxxime::SpellingsIndex> spellings;
     std::shared_ptr<cxxime::Syllabifier> syllabifier;
+    std::shared_ptr<const cxxime::SymbolTable> symbol_table;
     std::shared_ptr<const cxxime::Config> config;
     std::shared_ptr<const cxxime::PunctMapping> punct_mapping;
 };
@@ -38,6 +40,7 @@ struct SharedResources {
     std::shared_ptr<cxxime::Dict> wubi_dict;
     std::shared_ptr<cxxime::SpellingsIndex> spellings;
     std::shared_ptr<cxxime::Syllabifier> syllabifier;
+    std::shared_ptr<const cxxime::SymbolTable> symbol_table;
     std::shared_ptr<const cxxime::Config> config;
     std::shared_ptr<const cxxime::PunctMapping> punct_mapping;
     std::string punct_path;   // Stored for reload

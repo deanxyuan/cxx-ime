@@ -6,13 +6,14 @@ Applies configurable regex rules to expand a syllabary into a Script
 derivation, transformation, erasion, and transliteration.
 
 Usage:
-    from spelling_algebra import SpellingAlgebra, Script, parse_rules_from_yaml
+    from spelling_algebra import SpellingAlgebra, Script, parse_rules_from_json
     script = Script()
     for s in syllabary: script.add_syllable(s)
-    rules = parse_rules_from_yaml("schema.yaml")
+    rules = parse_rules_from_json("schema.json")
     SpellingAlgebra(rules).apply(script)
 """
 
+import json
 import re
 import sys
 from dataclasses import dataclass, field
@@ -311,50 +312,25 @@ def _parse_rule(definition):
     return None
 
 
-def parse_rules_from_yaml(yaml_path):
-    """Parse spelling algebra rules from a YAML schema file.
+def parse_rules_from_json(json_path):
+    """Parse spelling algebra rules from a CxxIME JSON schema file."""
+    with open(json_path, "r", encoding="utf-8") as f:
+        schema = json.load(f)
 
-    Looks for speller.algebra list in the YAML.
-    Uses simple text parsing (no PyYAML dependency).
-    """
+    if not isinstance(schema, dict) or not isinstance(schema.get("speller"), dict):
+        raise ValueError("schema must contain a speller object")
+    definitions = schema["speller"].get("algebra")
+    if not isinstance(definitions, list):
+        raise ValueError("schema must contain a speller.algebra array")
+
     rules = []
-    in_algebra = False
-    indent_level = 0
-
-    with open(yaml_path, "r", encoding="utf-8") as f:
-        for line in f:
-            stripped = line.rstrip()
-            if not stripped or stripped.lstrip().startswith("#"):
-                continue
-
-            current_indent = len(line) - len(line.lstrip())
-            content = stripped.lstrip()
-
-            # Detect "algebra:" under "speller:"
-            if content == "algebra:" or content.startswith("algebra:"):
-                in_algebra = True
-                indent_level = current_indent
-                continue
-
-            if in_algebra:
-                if current_indent <= indent_level and not content.startswith("-"):
-                    in_algebra = False
-                    continue
-
-                # Parse list item: "- rule_definition"
-                if content.startswith("- "):
-                    rule_str = content[2:].strip()
-                    # Remove optional quotes
-                    if (rule_str.startswith('"') and rule_str.endswith('"')) or \
-                       (rule_str.startswith("'") and rule_str.endswith("'")):
-                        rule_str = rule_str[1:-1]
-                    rule = _parse_rule(rule_str)
-                    if rule:
-                        rules.append(rule)
-                    else:
-                        print(f"WARNING: Failed to parse rule: {rule_str}",
-                              file=sys.stderr)
-
+    for definition in definitions:
+        if not isinstance(definition, str):
+            raise ValueError("speller.algebra entries must be strings")
+        rule = _parse_rule(definition)
+        if rule is None:
+            raise ValueError(f"failed to parse spelling rule: {definition}")
+        rules.append(rule)
     return rules
 
 
@@ -372,11 +348,11 @@ def parse_rules_simple(rules_list):
 if __name__ == "__main__":
     import os
 
-    # CLI mode: spelling_algebra.py <dict.db> [schema.yaml]
+    # CLI mode: spelling_algebra.py <dict.db> [schema.json]
     if len(sys.argv) >= 2:
         db_path = sys.argv[1]
         schema_path = sys.argv[2] if len(sys.argv) > 2 else os.path.join(
-            os.path.dirname(__file__), "..", "schemas", "pinyin.schema.yaml")
+            os.path.dirname(__file__), "..", "schemas", "pinyin.schema.json")
 
         if not os.path.exists(schema_path):
             print(f"Schema not found: {schema_path}", file=sys.stderr)
@@ -400,7 +376,7 @@ if __name__ == "__main__":
         script = Script()
         for s in sorted(syllabary):
             script.add_syllable(s)
-        rules = parse_rules_from_yaml(schema_path)
+        rules = parse_rules_from_json(schema_path)
         print(f"Loaded {len(rules)} rules from {schema_path}")
         SpellingAlgebra(rules).apply(script)
 
@@ -486,15 +462,15 @@ if __name__ == "__main__":
     assert "chu" in cu_spellings  # derive keeps original
     print(f"  [OK] multi-rule: 'd' → {[s.syllable for s in script['d']]}, 'cu' → {[s.syllable for s in script['cu']]}")
 
-    # Test 5: Schema YAML parsing
+    # Test 5: Schema JSON parsing
     import os
-    schema_path = os.path.join(os.path.dirname(__file__), "..", "schemas", "pinyin.schema.yaml")
+    schema_path = os.path.join(os.path.dirname(__file__), "..", "schemas", "pinyin.schema.json")
     if os.path.exists(schema_path):
-        rules = parse_rules_from_yaml(schema_path)
-        print(f"  [OK] schema YAML: loaded {len(rules)} rules")
+        rules = parse_rules_from_json(schema_path)
+        print(f"  [OK] schema JSON: loaded {len(rules)} rules")
         for r in rules:
             print(f"       {r.__class__.__name__}")
     else:
-        print(f"  [SKIP] schema YAML not found: {schema_path}")
+        print(f"  [SKIP] schema JSON not found: {schema_path}")
 
     print("\n=== All tests passed ===")

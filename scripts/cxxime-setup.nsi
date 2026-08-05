@@ -194,6 +194,7 @@ Section "Install"
     File "data\settings_presets.json"
     File "data\themes.json"
     File "data\punctuation.json"
+    File "data\symbols.json"
     File "data\dictionary_manifest.json"
     File "data\pinyin.dict.bin"
     File "data\pinyin.dict.idx"
@@ -209,12 +210,6 @@ Section "Install"
     IfFileExists "$PROFILE\cxxime\default.json" user_default_exists 0
         File "data\default.json"
     user_default_exists:
-    IfFileExists "$PROFILE\cxxime\themes.json" user_themes_exists 0
-        File "data\themes.json"
-    user_themes_exists:
-    IfFileExists "$PROFILE\cxxime\punctuation.json" user_punctuation_exists 0
-        File "data\punctuation.json"
-    user_punctuation_exists:
 
     SetOutPath "$WINDIR\Sysnative"
     ClearErrors
@@ -385,6 +380,7 @@ Section "Uninstall"
     Delete "$INSTDIR\data\settings_presets.json"
     Delete "$INSTDIR\data\themes.json"
     Delete "$INSTDIR\data\punctuation.json"
+    Delete "$INSTDIR\data\symbols.json"
     Delete "$INSTDIR\data\dictionary_manifest.json"
     Delete "$INSTDIR\data\pinyin.dict.bin"
     Delete "$INSTDIR\data\pinyin.dict.idx"

@@ -710,6 +710,7 @@ def print_summary(config: str, include_x86_modules: bool, host_diagnostics: bool
     print("    settings_presets.json  Settings UI presets")
     print("    themes.json            Color themes")
     print("    punctuation.json       Punctuation mapping")
+    print("    symbols.json           Symbol categories")
     print("    dictionary_manifest.json Dictionary bundle manifest")
     print("    pinyin.dict.bin        Pinyin binary dictionary (runtime)")
     print("    pinyin.dict.idx        Pinyin syllable index (runtime)")

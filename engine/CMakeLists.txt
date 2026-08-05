@@ -16,9 +16,12 @@ add_library(cxxime-engine STATIC
     src/wubi_processor.cc
     src/config.cc
     src/engine.cc
+    src/engine_symbol.cc
     src/ascii_composer.cc
     src/short_code_cache.cc
     src/output_composer.cc
+    src/symbol_processor.cc
+    src/symbol_table.cc
 )
 
 target_include_directories(cxxime-engine PUBLIC

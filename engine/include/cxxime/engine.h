@@ -19,19 +19,23 @@
 #include <cxxime/query_scratch.h>
 #include <cxxime/query_trace.h>
 #include <cxxime/spellings_index.h>
+#include <cxxime/symbol_processor.h>
 #include <cxxime/syllabifier.h>
 #include <cxxime/translator.h>
 
 namespace cxxime {
 
+class SymbolTable;
+
 class Engine {
 public:
-    // Self-contained init: Engine owns all resources (tests/tools use this).
+    // Self-contained Pinyin init: owns resources loaded from the supplied paths.
     bool initialize(const std::string& dict_path, const std::string& config_path = "");
 
     // Shared-resource init: Engine references pre-loaded resources (server sessions).
     bool initialize(Dict& dict, SpellingsIndex& spellings,
-                    Syllabifier* syllabifier, const Config& config);
+                    Syllabifier* syllabifier, const Config& config,
+                    const SymbolTable* symbol_table = nullptr);
 
     void finalize();
 
@@ -99,12 +103,18 @@ private:
     void init_per_session(const Config& config);
     void rebuild_pipeline(InputMode mode, bool force = false);
     void configure_input_mode_switch_key(const std::string& value);
+    bool symbol_input_enabled(const OutputOptions& opts) const;
+    bool start_symbol_input_after_commit(std::string& committed_code,
+                                         Candidate& committed_candidate,
+                                         bool& has_committed_candidate);
+    CandidatePage translate_symbol_page() const;
 
     std::unique_ptr<IProcessor> processor_;
     std::unique_ptr<ITranslator> translator_;
 
     Context context_;
     AsciiComposer ascii_composer_;
+    SymbolProcessor symbol_processor_;
 
     // Self-contained resources (owned when initialized from file paths).
     Dict owned_dict_;
@@ -112,12 +122,13 @@ private:
     Config owned_config_;
     std::unique_ptr<Syllabifier> owned_syllabifier_;
 
-    // Active resource references (point to owned_* or shared_* depending on init path).
+    // Active resource references point to owned_* or caller-owned objects.
     Dict* pinyin_dict_ = nullptr;
     Dict* wubi_dict_ = nullptr;
     SpellingsIndex* spellings_ = nullptr;
     Syllabifier* syllabifier_ = nullptr;
     const Config* config_ = nullptr;
+    const SymbolTable* symbol_table_ = nullptr;
 
     // Input mode
     InputMode mode_ = InputMode::PINYIN;

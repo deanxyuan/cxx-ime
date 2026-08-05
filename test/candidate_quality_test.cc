@@ -71,7 +71,15 @@ std::string temp_path(const char* filename) {
 }
 
 std::string source_name(cxxime::CandidateSource source) {
-    return source == cxxime::CandidateSource::kWubi ? "wubi" : "pinyin";
+    switch (source) {
+    case cxxime::CandidateSource::kPinyin:
+        return "pinyin";
+    case cxxime::CandidateSource::kWubi:
+        return "wubi";
+    case cxxime::CandidateSource::kSymbol:
+        return "symbol";
+    }
+    return "unknown";
 }
 
 std::string origin_name(cxxime::CandidateOrigin origin) {

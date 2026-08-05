@@ -106,11 +106,13 @@ bool Engine::initialize(const std::string& dict_path, const std::string& config_
 
 // Shared-resource: references pre-loaded data (server sessions).
 bool Engine::initialize(Dict& dict, SpellingsIndex& spellings,
-                        Syllabifier* syllabifier, const Config& config) {
+                        Syllabifier* syllabifier, const Config& config,
+                        const SymbolTable* symbol_table) {
     pinyin_dict_ = &dict;
     spellings_ = &spellings;
     syllabifier_ = syllabifier;
     config_ = &config;
+    symbol_table_ = symbol_table;
 
     rebuild_pipeline(InputMode::PINYIN, true);
     init_per_session(config);
@@ -351,6 +353,12 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
     std::string committed_code_override;
     Candidate committed_candidate_override;
     bool has_committed_candidate_override = false;
+    const bool symbol_trigger_enabled = symbol_input_enabled(opts);
+    const bool symbol_trigger = symbol_trigger_enabled && SymbolProcessor::is_trigger(event);
+    const bool symbol_started_after_commit =
+        symbol_trigger && start_symbol_input_after_commit(
+            committed_code_override, committed_candidate_override,
+            has_committed_candidate_override);
     const bool plain_letter_key = !event.is_key_up && !event.is_shift() && !event.is_ctrl() &&
                                   !event.is_alt() && !event.is_caps_lock() &&
                                   event.keycode >= 'A' && event.keycode <= 'Z';
@@ -378,7 +386,14 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
     if (trace_enabled_) {
         t0 = std::chrono::steady_clock::now();
     }
-    auto result = processor_->process_key(event, context_);
+    ProcessResult result;
+    if (symbol_started_after_commit) {
+        result = ProcessResult::ACCEPTED;
+    } else if (SymbolProcessor::is_active(context_) || symbol_trigger) {
+        result = symbol_processor_.process_key(event, context_, symbol_trigger_enabled);
+    } else {
+        result = processor_->process_key(event, context_);
+    }
     const bool input_changed = context_.preedit_revision() != input_revision_before;
     if (input_changed) {
         context_.reset_pagination();
@@ -420,7 +435,7 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
     }
 
     // Phase 4.5: Punctuation / full-shape handling (only when processor rejected)
-    if (result == ProcessResult::REJECTED) {
+    if (result == ProcessResult::REJECTED && !SymbolProcessor::is_active(context_)) {
         const bool has_pending_candidate = context_.is_composing() &&
             context_.candidates.highlighted >= 0 &&
             context_.candidates.highlighted <
@@ -459,14 +474,22 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
                 context_.candidates = {};
                 context_.reset_pagination();
             } else {
-                // Create a budget tuned for this input length, with per-query deadline
-                QueryBudget effective_budget = make_budget((int)context_.pinyin_buffer.size(), config_->page_size);
-                effective_budget.deadline = per_query_deadline;
-                auto page = translator_->translate(context_.pinyin_buffer, context_.page_index, config_->page_size,
-                                                   trace_enabled_ ? &trace_ : nullptr, &effective_budget, &scratch_,
-                                                   context_.page_offset);
-                if (config_->wubi_code_hint) {
-                    add_wubi_code_hints(context_.pinyin_buffer, page);
+                CandidatePage page;
+                if (SymbolProcessor::is_active(context_)) {
+                    page = translate_symbol_page();
+                } else {
+                    // Create a budget tuned for this input length, with per-query deadline
+                    QueryBudget effective_budget =
+                        make_budget((int)context_.pinyin_buffer.size(), config_->page_size);
+                    effective_budget.deadline = per_query_deadline;
+                    page = translator_->translate(context_.pinyin_buffer, context_.page_index,
+                                                  config_->page_size,
+                                                  trace_enabled_ ? &trace_ : nullptr,
+                                                  &effective_budget, &scratch_,
+                                                  context_.page_offset);
+                    if (config_->wubi_code_hint) {
+                        add_wubi_code_hints(context_.pinyin_buffer, page);
+                    }
                 }
                 context_.update_candidates(std::move(page));
             }
@@ -500,6 +523,11 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
         commit_continues_composition_ = true;
         result = ProcessResult::COMMITTED;
     }
+    if (symbol_started_after_commit && result == ProcessResult::ACCEPTED &&
+        context_.is_composing()) {
+        commit_continues_composition_ = true;
+        result = ProcessResult::COMMITTED;
+    }
     if (trace_enabled_) {
         t2 = std::chrono::steady_clock::now();
         trace_.translate_us = std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count();
@@ -519,29 +547,31 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
             ? &committed_candidate_override
             : committed_candidate_from_context(context_);
 
-        bool is_wubi = false;
-        if (mode_ == InputMode::WUBI) {
-            is_wubi = true;
-        } else if (mode_ == InputMode::MIXED) {
-            is_wubi = committed_candidate
-                ? (committed_candidate->source == CandidateSource::kWubi)
-                : alpha_code_is_probably_wubi(typed_code);
-        }
-
-        Dict* active_dict = is_wubi ? wubi_dict_ : pinyin_dict_;
-        const std::string& learned_text = committed_candidate
-            ? committed_candidate->text
-            : context_.committed_text;
-        update_learning_entry(active_dict, learned_text, typed_code,
-                              committed_candidate, !is_wubi);
-
-        if (!typed_code.empty()) {
-            Candidate recent;
-            if (committed_candidate) {
-                recent = *committed_candidate;
+        if (!committed_candidate || committed_candidate->source != CandidateSource::kSymbol) {
+            bool is_wubi = false;
+            if (mode_ == InputMode::WUBI) {
+                is_wubi = true;
+            } else if (mode_ == InputMode::MIXED) {
+                is_wubi = committed_candidate
+                    ? (committed_candidate->source == CandidateSource::kWubi)
+                    : alpha_code_is_probably_wubi(typed_code);
             }
-            recent.text = learned_text;
-            translator_->update_recent(typed_code, recent);
+
+            Dict* active_dict = is_wubi ? wubi_dict_ : pinyin_dict_;
+            const std::string& learned_text = committed_candidate
+                ? committed_candidate->text
+                : context_.committed_text;
+            update_learning_entry(active_dict, learned_text, typed_code,
+                                  committed_candidate, !is_wubi);
+
+            if (!typed_code.empty()) {
+                Candidate recent;
+                if (committed_candidate) {
+                    recent = *committed_candidate;
+                }
+                recent.text = learned_text;
+                translator_->update_recent(typed_code, recent);
+            }
         }
     }
 
@@ -701,7 +731,8 @@ bool Engine::select_candidate(int index) {
     context_.committed_text = context_.candidates.candidates[index].text;
     context_.set_commit_source(CommitSource::kCandidate);
 
-    if (config_->candidate_learning) {
+    if (config_->candidate_learning &&
+        context_.candidates.candidates[index].source != CandidateSource::kSymbol) {
         auto& cand = context_.candidates.candidates[index];
         std::string code = context_.pinyin_buffer;
         bool is_wubi = mode_ == InputMode::WUBI ||

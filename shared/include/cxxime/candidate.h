@@ -13,6 +13,7 @@ namespace cxxime {
 enum class CandidateSource {
     kPinyin,
     kWubi,
+    kSymbol,
 };
 
 enum class CandidateOrigin {
