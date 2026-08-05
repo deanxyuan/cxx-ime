@@ -41,6 +41,11 @@ static MixedCandidatePreference parse_mixed_candidate_preference(const std::stri
     return MixedCandidatePreference::kAuto;
 }
 
+static bool is_supported_input_mode_switch_key(const std::string& value) {
+    return value == "disabled" || value == "f4" || value == "ctrl_shift_m" ||
+           value == "ctrl_alt_m";
+}
+
 static int muted_text_color(int foreground, int background) {
     constexpr int foreground_weight = 3;
     constexpr int background_weight = 2;
@@ -215,6 +220,14 @@ static void apply_config_json(Config& config, nlohmann::json& j) {
             for (auto& [key, val] : ac["switch_key"].items()) {
                 if (val.is_string()) config.ascii_switch_key[key] = val.get<std::string>();
             }
+        }
+    }
+
+    if (j.contains("shortcuts") && j["shortcuts"].is_object()) {
+        auto& shortcuts = j["shortcuts"];
+        load_string(shortcuts, "input_mode_switch", config.input_mode_switch_key);
+        if (!is_supported_input_mode_switch_key(config.input_mode_switch_key)) {
+            config.input_mode_switch_key = "disabled";
         }
     }
 }
@@ -406,6 +419,8 @@ static nlohmann::json build_config_json(const Config& config) {
         sk[k] = v;
     ac["switch_key"] = sk;
     j["ascii_composer"] = ac;
+
+    j["shortcuts"]["input_mode_switch"] = config.input_mode_switch_key;
 
     return j;
 }

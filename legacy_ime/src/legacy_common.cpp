@@ -195,8 +195,9 @@ bool should_eat_response(const cxxime::IPCResponse& response,
                          bool was_composing) {
     if (response.status != cxxime::IPCStatus::OK)
         return false;
-    return response.commit_text[0] || response.preedit[0] || response.composing ||
-           response.candidate_count > 0 || was_composing || is_status_key(key_code);
+    return response.key_handled || response.commit_text[0] || response.preedit[0] ||
+        response.composing || response.candidate_count > 0 || was_composing ||
+        is_status_key(key_code);
 }
 
 DWORD align4(DWORD value) {

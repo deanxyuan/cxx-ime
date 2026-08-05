@@ -54,6 +54,9 @@
             "Caps_Lock": "clear"
         }
     },
+    "shortcuts": {
+        "input_mode_switch": "disabled"
+    },
     "theme": "azure",
     "status_window": {
         "enable": true,

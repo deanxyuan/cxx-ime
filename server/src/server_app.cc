@@ -191,6 +191,9 @@ cxxime::IPCResponse ServerApp::handle_request(const cxxime::IPCRequest& request)
         response.ascii_mode = !r.ime_status.chinese_mode();
         response.composing = r.composing;
         response.ime_status = r.ime_status;
+        response.key_handled =
+            r.result == cxxime::ProcessResult::SWITCH_INPUT_MODE ||
+            r.result == cxxime::ProcessResult::INPUT_MODE_SHORTCUT_HANDLED;
 
         if (r.result == cxxime::ProcessResult::REJECTED) {
             // If the engine rejected the key but cleared the composition

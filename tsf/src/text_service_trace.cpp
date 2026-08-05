@@ -235,6 +235,7 @@ const char* TextService::TsfTrace::result_string() const {
     case TsfResult::COMMITTED:  return "committed";
     case TsfResult::PREEDIT:    return "preedit";
     case TsfResult::CLEARED:    return "cleared";
+    case TsfResult::HANDLED:    return "handled";
     case TsfResult::REJECTED:   return "rejected";
     default: return "unknown";
     }

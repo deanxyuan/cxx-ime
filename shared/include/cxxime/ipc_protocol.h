@@ -152,6 +152,7 @@ struct IPCResponse {
     ImeStatus ime_status;
     uint32_t page_current = 1;
     uint32_t page_total = 1;
+    uint32_t key_handled = 0;
 };
 
 static_assert(std::is_standard_layout<IPCResponse>::value,
@@ -169,7 +170,9 @@ static_assert(offsetof(IPCResponse, ime_status) == 3144,
               "IPCResponse::ime_status offset changed");
 static_assert(offsetof(IPCResponse, page_current) == 3160,
               "IPCResponse::page_current offset changed");
-static_assert(sizeof(IPCResponse) == 3168, "IPCResponse size changed");
+static_assert(offsetof(IPCResponse, key_handled) == 3168,
+              "IPCResponse::key_handled offset changed");
+static_assert(sizeof(IPCResponse) == 3176, "IPCResponse size changed");
 
 } // namespace cxxime
 

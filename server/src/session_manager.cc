@@ -83,6 +83,18 @@ bool same_visible_status(const cxxime::ImeStatus& a, const cxxime::ImeStatus& b)
     return a.flags == b.flags && a.input_mode == b.input_mode;
 }
 
+cxxime::InputMode next_input_mode(cxxime::InputMode mode) {
+    switch (mode) {
+    case cxxime::InputMode::PINYIN:
+        return cxxime::InputMode::WUBI;
+    case cxxime::InputMode::WUBI:
+        return cxxime::InputMode::MIXED;
+    case cxxime::InputMode::MIXED:
+    default:
+        return cxxime::InputMode::PINYIN;
+    }
+}
+
 bool load_dictionary_resources(const std::string& manifest_path, DictionaryResources& out) {
     cxxime::DictionaryManifest manifest;
     std::string manifest_error;
@@ -655,8 +667,7 @@ std::pair<cxxime::IPCStatus, cxxime::ImeStatus> SessionManager::switch_input_mod
     if (!entry) return {cxxime::IPCStatus::ERR_INVALID_SESSION, {}};
     std::lock_guard<std::mutex> lock(entry->mutex);
     align_session_to_global(*entry);
-    auto target = (entry->ime_status.input_mode == cxxime::InputMode::PINYIN)
-        ? cxxime::InputMode::WUBI : cxxime::InputMode::PINYIN;
+    auto target = next_input_mode(entry->ime_status.input_mode);
     entry->engine->switch_mode(target);
     GlobalVisibleState state = snapshot_global_state();
     state.input_mode = entry->engine->mode();
@@ -785,6 +796,10 @@ ProcessKeyResult SessionManager::process_key(uint32_t id, const cxxime::KeyEvent
             engine.ascii_composer().set_ascii_mode(false);
         }
         s.chinese_punct = !s.chinese_punct;
+    } else if (result == cxxime::ProcessResult::SWITCH_INPUT_MODE) {
+        engine.switch_mode(next_input_mode(engine.mode()));
+        state.input_mode = engine.mode();
+        shared_state_changed = true;
     }
 
     if (shared_state_changed) {
@@ -792,6 +807,9 @@ ProcessKeyResult SessionManager::process_key(uint32_t id, const cxxime::KeyEvent
     }
     align_session_to_global(s);
     ret.ime_status = s.ime_status;
+    if (result == cxxime::ProcessResult::SWITCH_INPUT_MODE) {
+        persist_input_mode(ret.ime_status.input_mode);
+    }
 
     if (result == cxxime::ProcessResult::COMMITTED) {
         auto [raw, source] = engine.take_commit_text_with_source();
@@ -802,6 +820,8 @@ ProcessKeyResult SessionManager::process_key(uint32_t id, const cxxime::KeyEvent
         // Toggle results should not carry stale preedit. Clear the composition
         // so the TSF client ends the inline display cleanly.
         engine.clear_composition();
+        ret.composing = false;
+    } else if (result == cxxime::ProcessResult::SWITCH_INPUT_MODE) {
         ret.composing = false;
     } else {
         ret.composing = engine.context().is_composing();
