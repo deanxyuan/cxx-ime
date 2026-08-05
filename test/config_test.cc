@@ -23,6 +23,7 @@ TEST(Config, defaults) {
     ASSERT_TRUE(!cfg.wubi_code_hint);
     ASSERT_TRUE(!cfg.candidate_learning);
     ASSERT_EQ(cfg.mixed_candidate_preference, cxxime::MixedCandidatePreference::kAuto);
+    ASSERT_TRUE(cfg.input_mode_switch_key == "disabled");
     ASSERT_TRUE(!cfg.initial_full_shape);
     ASSERT_TRUE(cfg.initial_chinese_punct);
 }
@@ -40,6 +41,7 @@ TEST(Config, load_valid_json) {
         "candidate_learning": true,
         "mixed_candidate_preference": "wubi"
         },
+        "shortcuts": {"input_mode_switch": "ctrl_shift_m"},
         "style": {"font_face": "Arial", "font_point": 18},
         "theme": "dark"
         })";
@@ -56,6 +58,7 @@ TEST(Config, load_valid_json) {
     ASSERT_TRUE(cfg.wubi_code_hint);
     ASSERT_TRUE(cfg.candidate_learning);
     ASSERT_EQ(cfg.mixed_candidate_preference, cxxime::MixedCandidatePreference::kWubi);
+    ASSERT_TRUE(cfg.input_mode_switch_key == "ctrl_shift_m");
     ASSERT_TRUE(!cfg.initial_full_shape);
     ASSERT_TRUE(cfg.initial_chinese_punct);
 
@@ -85,6 +88,12 @@ TEST(Config, invalid_mixed_candidate_preference_falls_back_to_auto) {
     ASSERT_EQ(config.mixed_candidate_preference, cxxime::MixedCandidatePreference::kAuto);
 }
 
+TEST(Config, invalid_input_mode_switch_key_falls_back_to_disabled) {
+    cxxime::Config config;
+    ASSERT_TRUE(config.load_json(R"({"shortcuts":{"input_mode_switch":"unknown"}})"));
+    ASSERT_TRUE(config.input_mode_switch_key == "disabled");
+}
+
 TEST(Config, initial_state_round_trip) {
     cxxime::Config saved;
     saved.initial_full_shape = true;
@@ -104,6 +113,7 @@ TEST(Config, runtime_snapshot_round_trip) {
     saved.theme = "dark";
     saved.inline_preedit = true;
     saved.status_window.enable = false;
+    saved.input_mode_switch_key = "ctrl_alt_m";
     saved.ascii_switch_key["Shift_L"] = "commit_code";
     saved.diagnostics.trace_mode = cxxime::DiagnosticTraceMode::kError;
     saved.diagnostics.slow_ipc_us = 2345;
@@ -120,6 +130,7 @@ TEST(Config, runtime_snapshot_round_trip) {
     ASSERT_TRUE(loaded.theme == "dark");
     ASSERT_TRUE(loaded.inline_preedit);
     ASSERT_TRUE(!loaded.status_window.enable);
+    ASSERT_TRUE(loaded.input_mode_switch_key == "ctrl_alt_m");
     ASSERT_TRUE(loaded.ascii_switch_key["Shift_L"] == "commit_code");
     ASSERT_EQ(loaded.diagnostics.trace_mode, cxxime::DiagnosticTraceMode::kError);
     ASSERT_EQ(loaded.diagnostics.slow_ipc_us, 2345);

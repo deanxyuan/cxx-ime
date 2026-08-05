@@ -123,6 +123,7 @@ private:
 
     // Shortcuts
     HWND hKeyCombos_[5] = {};
+    HWND hInputModeSwitchKey_ = nullptr;
 
     // Dictionary panel
     HWND hDictStatus_ = nullptr;

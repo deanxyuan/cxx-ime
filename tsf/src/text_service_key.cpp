@@ -156,8 +156,8 @@ STDMETHODIMP TextService::OnTestKeyUp(ITfContext* pic, WPARAM wParam, LPARAM lPa
 
     *pfEaten = (wParam == VK_CAPITAL) ? TRUE : FALSE;
     CXXIME_LOG(L"OnTestKeyUp: vk=%u, sessionId=%u", (unsigned int)wParam, _sessionId);
-    if (wParam != VK_CAPITAL) {
-        _ProcessKeyUp(wParam, lParam);
+    if (wParam != VK_CAPITAL && _ProcessKeyUp(wParam, lParam)) {
+        *pfEaten = TRUE;
     }
     _fTestKeyUpPending = *pfEaten != FALSE;
     return S_OK;
@@ -193,8 +193,7 @@ STDMETHODIMP TextService::OnKeyUp(ITfContext* pic, WPARAM wParam, LPARAM lParam,
         return S_OK;
     }
     // Some apps call OnKeyUp without OnTestKeyUp
-    _ProcessKeyUp(wParam, lParam);
-    *pfEaten = FALSE;
+    *pfEaten = _ProcessKeyUp(wParam, lParam) ? TRUE : FALSE;
     return S_OK;
 }
 
@@ -561,10 +560,15 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
         _composing = false;
         // Only eat the key if there was an active composition to clean up.
         // Without this guard, keys like Backspace get eaten when not composing.
-        if (was_composing)
+        if (was_composing || response.key_handled)
             *pfEaten = TRUE;
         _lastInlineCompositionText.clear();
-        trace.result = TsfResult::CLEARED;
+        if (was_composing)
+            trace.result = TsfResult::CLEARED;
+        else if (response.key_handled)
+            trace.result = TsfResult::HANDLED;
+        else
+            trace.result = TsfResult::REJECTED;
     } else if (!has_committed_text) {
         trace.result = TsfResult::REJECTED;
     }
@@ -593,9 +597,9 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
     return *pfEaten != FALSE;
 }
 
-void TextService::_ProcessKeyUp(WPARAM wParam, LPARAM lParam) {
+bool TextService::_ProcessKeyUp(WPARAM wParam, LPARAM lParam) {
     if (wParam == VK_CAPITAL) {
-        return;
+        return false;
     }
 
     _stageTraceSession.begin_input(static_cast<uint32_t>(wParam), lParam);
@@ -669,8 +673,10 @@ void TextService::_ProcessKeyUp(WPARAM wParam, LPARAM lParam) {
         }
     }
 
+    const bool handled = ok && response.status == cxxime::IPCStatus::OK &&
+                         response.key_handled;
     cxxime_tsf::trace_stage_key_result(
-        stage_input_id(), stage_composition_id(), static_cast<uint32_t>(wParam), false,
+        stage_input_id(), stage_composition_id(), static_cast<uint32_t>(wParam), handled,
         response.preedit[0] ? strlen(response.preedit) : 0, response.preedit_cursor,
         response.candidate_count,
         response.commit_text[0] ? strlen(response.commit_text) : 0,
@@ -678,6 +684,7 @@ void TextService::_ProcessKeyUp(WPARAM wParam, LPARAM lParam) {
     if (committed) {
         _reset_stage_composition("key_up_commit");
     }
+    return handled;
 }
 
 STDMETHODIMP TextService::OnPreservedKey(ITfContext* pic, REFGUID rguid, BOOL* pfEaten) {

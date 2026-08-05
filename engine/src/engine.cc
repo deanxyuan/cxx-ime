@@ -119,6 +119,7 @@ bool Engine::initialize(Dict& dict, SpellingsIndex& spellings,
 
 void Engine::init_per_session(const Config& config) {
     ascii_composer_.load_config(config);
+    configure_input_mode_switch_key(config.input_mode_switch_key);
 }
 
 void Engine::finalize() {
@@ -127,11 +128,13 @@ void Engine::finalize() {
     }
     context_.reset();
     commit_continues_composition_ = false;
+    handled_shortcut_key_ = 0;
 }
 
 void Engine::reload_config(const Config& config) {
     config_ = &config;
     ascii_composer_.load_config(config);
+    configure_input_mode_switch_key(config.input_mode_switch_key);
     if (mode_ == InputMode::MIXED && translator_) {
         static_cast<MixedTranslator*>(translator_.get())
             ->set_candidate_preference(config.mixed_candidate_preference);
@@ -188,6 +191,30 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
     ascii_composer_.process_key(event.keycode, event.is_key_up, context_, event.is_caps_lock());
 
     CXXIME_LOG(L"Engine::process_key: after ascii_composer, committed_text='%S'", context_.committed_text.c_str());
+
+    if (event.is_key_up && handled_shortcut_key_ != 0 &&
+        event.keycode == handled_shortcut_key_) {
+        handled_shortcut_key_ = 0;
+        record_total_us(trace_, total_start, trace_enabled_);
+        return ProcessResult::INPUT_MODE_SHORTCUT_HANDLED;
+    }
+    if (!event.is_key_up && handled_shortcut_key_ != 0 &&
+        event.keycode != handled_shortcut_key_) {
+        handled_shortcut_key_ = 0;
+    }
+    if (!event.is_key_up && input_mode_switch_key_ != 0 &&
+        event.keycode == input_mode_switch_key_ &&
+        (event.modifiers & 0x07) == input_mode_switch_modifiers_) {
+        if (handled_shortcut_key_ == 0) {
+            handled_shortcut_key_ = event.keycode;
+            context_.reset();
+            commit_continues_composition_ = false;
+            record_total_us(trace_, total_start, trace_enabled_);
+            return ProcessResult::SWITCH_INPUT_MODE;
+        }
+        record_total_us(trace_, total_start, trace_enabled_);
+        return ProcessResult::INPUT_MODE_SHORTCUT_HANDLED;
+    }
 
     if (ascii_composer_.process_temporary_ascii_composition(
             event, context_, opts.chinese_mode)) {
@@ -727,13 +754,29 @@ std::string Engine::commit_raw_composition() {
 void Engine::clear() {
     context_.reset();
     commit_continues_composition_ = false;
+    handled_shortcut_key_ = 0;
     translator_->clear_recent();
 }
 
 void Engine::clear_composition() {
     context_.reset();
     commit_continues_composition_ = false;
+    handled_shortcut_key_ = 0;
     // Preserve session recent cache; do not call translator_->clear_recent().
+}
+
+void Engine::configure_input_mode_switch_key(const std::string& value) {
+    input_mode_switch_key_ = 0;
+    input_mode_switch_modifiers_ = 0;
+    if (value == "f4") {
+        input_mode_switch_key_ = VK_F4;
+    } else if (value == "ctrl_shift_m") {
+        input_mode_switch_key_ = 'M';
+        input_mode_switch_modifiers_ = 0x01 | 0x02;
+    } else if (value == "ctrl_alt_m") {
+        input_mode_switch_key_ = 'M';
+        input_mode_switch_modifiers_ = 0x02 | 0x04;
+    }
 }
 
 void Engine::set_sentence_composition_enabled(bool enabled) {

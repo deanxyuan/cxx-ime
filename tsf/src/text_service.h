@@ -138,6 +138,7 @@ public:
         COMMITTED,
         PREEDIT,
         CLEARED,
+        HANDLED,
         REJECTED,
     };
 
@@ -173,7 +174,7 @@ private:
     HRESULT _end_composition(ITfContext* pic);
     HRESULT _commit_text(ITfContext* pic, const std::wstring& text, bool sync = false);
     bool _ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam, BOOL* pfEaten);
-    void _ProcessKeyUp(WPARAM wParam, LPARAM lParam);
+    bool _ProcessKeyUp(WPARAM wParam, LPARAM lParam);
     void _AbortComposition();
     void _reset_stage_composition(const char* reason);
     ITfContext* _current_edit_context_for_composition() const;

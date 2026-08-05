@@ -93,6 +93,13 @@ const ShortcutOption kCapsLockShortcutOptions[] = {
     {L"不处理 (noop)", "noop"},
 };
 
+const ShortcutOption kInputModeSwitchOptions[] = {
+    {L"禁用", "disabled"},
+    {L"F4", "f4"},
+    {L"Ctrl + Shift + M", "ctrl_shift_m"},
+    {L"Ctrl + Alt + M", "ctrl_alt_m"},
+};
+
 // ─── Helpers ──────────────────────────────────────────────────────────
 
 // Returns control X position (label right edge + gap)
@@ -719,6 +726,11 @@ void EditorApp::create_controls(HWND hwnd) {
         add_shortcut_options(hKeyCombos_[ci], kCapsLockShortcutOptions,
                             _countof(kCapsLockShortcutOptions));
     }
+    cx = make_aligned_label(L"切换输入模式:", kPanelPadLeft, shortcutLabelW,
+                            t + 5 * kRowH, p3);
+    hInputModeSwitchKey_ = make_combo(1305, cx, t + 5 * kRowH, S(300), p3);
+    add_shortcut_options(hInputModeSwitchKey_, kInputModeSwitchOptions,
+                         _countof(kInputModeSwitchOptions));
     // ── Panel 4: Dictionary ─────────────────────────────────────────
     HWND p4 = hPanels_[4]; t = kPanelPadTop;
     SetWindowSubclass(p4, PanelForwardProc, 4000, (DWORD_PTR)hwnd);
@@ -1261,6 +1273,7 @@ void EditorApp::load_config() {
         std::string v = (it != config_.ascii_switch_key.end()) ? it->second : "noop";
         select_shortcut_option(hKeyCombos_[i], v);
     }
+    select_shortcut_option(hInputModeSwitchKey_, config_.input_mode_switch_key);
     set_check(hInputModePinyin_, config_.input_mode == 0);
     set_check(hInputModeWubi_, config_.input_mode == 1);
     set_check(hInputModeMixed_, config_.input_mode == 2);
@@ -1317,6 +1330,10 @@ void EditorApp::save_config() {
         if (value) {
             config_.ascii_switch_key[ks[i]] = value;
         }
+    }
+    const char* input_mode_switch_key = selected_shortcut_option(hInputModeSwitchKey_);
+    if (input_mode_switch_key) {
+        config_.input_mode_switch_key = input_mode_switch_key;
     }
 
     unsigned long error_code = ERROR_SUCCESS;

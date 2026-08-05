@@ -72,6 +72,9 @@ struct Config {
     // ascii_composer
     std::unordered_map<std::string, std::string> ascii_switch_key;
 
+    // shortcuts
+    std::string input_mode_switch_key = "disabled";
+
     // status_window
     struct StatusWindowConfig {
         bool enable = true;

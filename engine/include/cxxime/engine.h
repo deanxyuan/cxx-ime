@@ -98,6 +98,7 @@ public:
 private:
     void init_per_session(const Config& config);
     void rebuild_pipeline(InputMode mode, bool force = false);
+    void configure_input_mode_switch_key(const std::string& value);
 
     std::unique_ptr<IProcessor> processor_;
     std::unique_ptr<ITranslator> translator_;
@@ -121,6 +122,9 @@ private:
     // Input mode
     InputMode mode_ = InputMode::PINYIN;
     bool commit_continues_composition_ = false;
+    uint32_t input_mode_switch_key_ = 0;
+    uint32_t input_mode_switch_modifiers_ = 0;
+    uint32_t handled_shortcut_key_ = 0;
 
     // Query trace (explicit ownership, not thread_local - see TraceContext constraints)
     QueryTrace trace_;

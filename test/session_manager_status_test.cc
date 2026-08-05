@@ -341,8 +341,62 @@ TEST(SessionStatus, switch_input_mode) {
     ASSERT_EQ(s1.revision, (uint64_t)1);
 
     auto [st2, s2] = mgr.switch_input_mode(id);
-    ASSERT_EQ(s2.input_mode, cxxime::InputMode::PINYIN);
+    ASSERT_EQ(s2.input_mode, cxxime::InputMode::MIXED);
     ASSERT_EQ(s2.revision, (uint64_t)2);
+
+    auto [st3, s3] = mgr.switch_input_mode(id);
+    ASSERT_EQ(s3.input_mode, cxxime::InputMode::PINYIN);
+    ASSERT_EQ(s3.revision, (uint64_t)3);
+}
+
+TEST(SessionStatus, input_mode_shortcut_cycles_once_and_cancels_composition) {
+    auto config = std::make_shared<cxxime::Config>();
+    config->input_mode_switch_key = "ctrl_shift_m";
+    SessionManager mgr;
+    ASSERT_TRUE(mgr.initialize(setup_test_dict(), config));
+    uint32_t id = mgr.create_session();
+
+    cxxime::KeyEvent letter;
+    letter.keycode = 'N';
+    ASSERT_TRUE(mgr.process_key(id, letter).composing);
+
+    cxxime::KeyEvent shortcut;
+    shortcut.keycode = 'M';
+    shortcut.set_ctrl();
+    shortcut.set_shift();
+    auto first = mgr.process_key(id, shortcut);
+    ASSERT_EQ(first.result, cxxime::ProcessResult::SWITCH_INPUT_MODE);
+    ASSERT_EQ(first.ime_status.input_mode, cxxime::InputMode::WUBI);
+    ASSERT_TRUE(!first.composing);
+    ASSERT_TRUE(first.commit_text.empty());
+    auto repeated = mgr.process_key(id, shortcut);
+    ASSERT_EQ(repeated.result, cxxime::ProcessResult::INPUT_MODE_SHORTCUT_HANDLED);
+    ASSERT_EQ(repeated.ime_status.input_mode, cxxime::InputMode::WUBI);
+
+    shortcut.is_key_up = true;
+    shortcut.modifiers = 0;
+    auto released = mgr.process_key(id, shortcut);
+    ASSERT_EQ(released.result, cxxime::ProcessResult::INPUT_MODE_SHORTCUT_HANDLED);
+
+    shortcut.is_key_up = false;
+    shortcut.set_ctrl();
+    shortcut.set_shift();
+    auto second = mgr.process_key(id, shortcut);
+    ASSERT_EQ(second.ime_status.input_mode, cxxime::InputMode::MIXED);
+}
+
+TEST(SessionStatus, input_mode_shortcut_is_disabled_by_default) {
+    SessionManager mgr;
+    ASSERT_TRUE(mgr.initialize(setup_test_dict()));
+    uint32_t id = mgr.create_session();
+
+    cxxime::KeyEvent shortcut;
+    shortcut.keycode = 'M';
+    shortcut.set_ctrl();
+    shortcut.set_shift();
+    auto result = mgr.process_key(id, shortcut);
+    ASSERT_EQ(result.result, cxxime::ProcessResult::REJECTED);
+    ASSERT_EQ(result.ime_status.input_mode, cxxime::InputMode::PINYIN);
 }
 
 TEST(SessionStatus, unrelated_config_update_preserves_pending_input_mode) {

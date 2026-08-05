@@ -62,7 +62,7 @@ TEST(Protocol, request_struct_size) {
 }
 
 TEST(Protocol, response_struct_size) {
-    ASSERT_EQ(sizeof(cxxime::IPCResponse), static_cast<size_t>(3168));
+    ASSERT_EQ(sizeof(cxxime::IPCResponse), static_cast<size_t>(3176));
 }
 
 TEST(Protocol, response_zero_init) {
@@ -72,6 +72,7 @@ TEST(Protocol, response_zero_init) {
     ASSERT_EQ(resp.preedit[0], '\0');
     ASSERT_EQ(resp.preedit_cursor, (uint32_t)0);
     ASSERT_EQ(resp.candidate_count, (uint32_t)0);
+    ASSERT_EQ(resp.key_handled, (uint32_t)0);
 }
 
 TEST(Protocol, candidate_text_over_old_capacity_round_trips) {

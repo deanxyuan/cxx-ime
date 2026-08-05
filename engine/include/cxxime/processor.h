@@ -14,6 +14,9 @@ enum class ProcessResult {
     COMMITTED,
     TOGGLE_SHAPE,   // full/half shape toggle (Shift+Space)
     TOGGLE_PUNCT,   // Chinese/English punctuation toggle (Ctrl+.)
+    // The first KeyDown switches; repeats and the matching KeyUp are only consumed.
+    SWITCH_INPUT_MODE,
+    INPUT_MODE_SHORTCUT_HANDLED,
 };
 
 // Abstract processor interface
