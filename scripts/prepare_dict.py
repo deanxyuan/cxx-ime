@@ -51,12 +51,12 @@ REQUIRED_MANIFEST_ROLES = {
 
 def find_source(data_dir: str, name: str) -> str | None:
     """Find .dict.db or .dict.db.zip for a dictionary name."""
-    db = os.path.join(data_dir, f"{name}.dict.db")
-    if os.path.isfile(db):
-        return db
     zip_path = os.path.join(data_dir, f"{name}.dict.db.zip")
     if os.path.isfile(zip_path):
         return zip_path
+    db = os.path.join(data_dir, f"{name}.dict.db")
+    if os.path.isfile(db):
+        return db
     return None
 
 
@@ -87,7 +87,7 @@ def prepare_source_copy(src: str, work_dir: str) -> str:
 def run_spelling_algebra(db_path: str) -> None:
     """Regenerate spellings table from schema rules."""
     script = os.path.join(DATA_TOOLS, "spelling_algebra.py")
-    schema = os.path.join(SCHEMAS, "pinyin.schema.yaml")
+    schema = os.path.join(SCHEMAS, "pinyin.schema.json")
     print("  Running spelling algebra...")
     subprocess.run(
         [sys.executable, script, db_path, schema],
@@ -113,6 +113,42 @@ def run_build_binary(
     subprocess.run(cmd, check=True, capture_output=False)
 
 
+def run_wubi_symbol_split(
+    source_db: str,
+    filtered_db: str,
+    symbols_output: str,
+) -> None:
+    """Split the temporary Wubi source into symbols and dictionary entries."""
+    script = os.path.join(DATA_TOOLS, "split_wubi_symbols.py")
+    print("  Splitting Wubi symbol entries...")
+    subprocess.run(
+        [
+            sys.executable,
+            script,
+            "--input",
+            source_db,
+            "--symbols-output",
+            symbols_output,
+            "--filtered-output",
+            filtered_db,
+        ],
+        check=True,
+        capture_output=False,
+    )
+
+
+def verify_generated_file(generated_path: str, expected_path: str) -> None:
+    """Require a generated source derivative to match its reviewed repository copy."""
+    if not os.path.isfile(expected_path):
+        raise RuntimeError(f"Expected generated file not found: {expected_path}")
+    with open(generated_path, "rb") as generated, open(expected_path, "rb") as expected:
+        if generated.read() != expected.read():
+            raise RuntimeError(
+                f"Generated {os.path.basename(generated_path)} does not match "
+                f"{expected_path}; regenerate the repository copy"
+            )
+
+
 def run_build_short_cache(db_path: str, output_path: str) -> None:
     """Build the v1 intermediate Top-N index."""
     script = os.path.join(SCRIPTS, "build_short_cache.py")
@@ -136,11 +172,20 @@ def finalize_topn_index(output_dir: str, topn_builder: str) -> str:
         header = f.read(20)
     if len(header) < 20:
         raise RuntimeError("pinyin.topn.bin is too small")
+
     magic = header[:8]
     if magic == b"CXTOPN\x01\x00":
         print("  Converting Top-N index to DAT-16...")
         subprocess.run(
-            [topn_builder, "--input", topn_path, "--output", topn_path, "--format", "dat16"],
+            [
+                topn_builder,
+                "--input",
+                topn_path,
+                "--output",
+                topn_path,
+                "--format",
+                "dat16",
+            ],
             check=True,
             capture_output=False,
         )
@@ -157,6 +202,7 @@ def finalize_topn_index(output_dir: str, topn_builder: str) -> str:
             f"(version={version}, header={header_size}, layout={layout})"
         )
     return topn_path
+
 
 def sha256_file(path: str) -> str:
     h = hashlib.sha256()
@@ -240,10 +286,17 @@ def prepare_wubi_dictionary(data_dir: str, output_dir: str) -> list[str]:
 
     generated = []
     with tempfile.TemporaryDirectory(prefix="cxxime_prep_wubi86_") as tmpdir:
-        db_path = prepare_source_copy(src, tmpdir)
+        source_db = prepare_source_copy(src, tmpdir)
+        generated_symbols = os.path.join(tmpdir, "symbols.json")
+        db_path = os.path.join(tmpdir, "wubi86.filtered.dict.db")
+        run_wubi_symbol_split(source_db, db_path, generated_symbols)
+        verify_generated_file(generated_symbols, os.path.join(data_dir, "symbols.json"))
+        symbols_output = os.path.join(output_dir, "symbols.json")
+        shutil.copy2(generated_symbols, symbols_output)
         output_prefix = os.path.join(output_dir, "wubi86")
         run_build_binary(db_path, output_prefix, dict_only=True)
         generated.extend([
+            symbols_output,
             output_prefix + ".dict.bin",
             output_prefix + ".dict.idx",
         ])
@@ -284,6 +337,7 @@ def prepare_dict(
 
     if defer_topn_conversion:
         return generated
+
     if not topn_builder:
         raise RuntimeError("topn_builder is required to produce the DAT-16 runtime index")
     finalize_topn_index(output_dir, os.path.abspath(topn_builder))

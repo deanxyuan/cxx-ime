@@ -179,6 +179,16 @@ std::shared_ptr<const cxxime::PunctMapping> load_punctuation_mapping(const std::
     }
 }
 
+std::shared_ptr<const cxxime::SymbolTable> load_symbol_table(const std::string& path) {
+    auto table = std::make_shared<cxxime::SymbolTable>();
+    if (!table->load(path)) {
+        CXXIME_LOG(L"SharedResources: symbol table not found or invalid: %S", path.c_str());
+        return nullptr;
+    }
+    CXXIME_LOG(L"SharedResources: symbol table loaded");
+    return table;
+}
+
 }  // anonymous namespace
 
 bool SharedResources::load(const std::string& dict_path,
@@ -194,6 +204,7 @@ bool SharedResources::load(const std::string& dict_path,
     // Load punctuation mapping (non-fatal)
     std::string loaded_punct_path = cxxime::data_path("punctuation.json");
     auto loaded_punct_mapping = load_punctuation_mapping(loaded_punct_path);
+    auto loaded_symbol_table = load_symbol_table(cxxime::data_path("symbols.json"));
 
     {
         std::lock_guard<std::mutex> lock(mutex);
@@ -204,6 +215,7 @@ bool SharedResources::load(const std::string& dict_path,
         wubi_dict = std::move(dictionaries.wubi_dict);
         spellings = std::move(dictionaries.spellings);
         syllabifier = std::move(dictionaries.syllabifier);
+        symbol_table = std::move(loaded_symbol_table);
         config = loaded_config;
         punct_mapping = std::move(loaded_punct_mapping);
         punct_path = punct_mapping ? std::move(loaded_punct_path) : std::string{};
@@ -219,6 +231,7 @@ SharedResourceSnapshot SharedResources::snapshot() const {
     s.wubi_dict = wubi_dict;
     s.spellings = spellings;
     s.syllabifier = syllabifier;
+    s.symbol_table = symbol_table;
     s.config = config;
     s.punct_mapping = punct_mapping;
     return s;
@@ -342,7 +355,8 @@ uint32_t SessionManager::create_session() {
         return 0;
 
     if (!engine->initialize(*resources.dict, *resources.spellings,
-            resources.syllabifier.get(), *resources.config))
+            resources.syllabifier.get(), *resources.config,
+            resources.symbol_table.get()))
         return 0;
     if (resources.wubi_dict && resources.wubi_dict->is_open()) {
         engine->set_wubi_dict(resources.wubi_dict.get());

@@ -301,6 +301,7 @@ $dataFiles = @(
     "settings_presets.json",
     "themes.json",
     "punctuation.json",
+    "symbols.json",
     "dictionary_manifest.json",
     "pinyin.dict.bin",
     "pinyin.dict.idx",
@@ -311,8 +312,6 @@ $dataFiles = @(
 )
 $userFiles = @(
     "default.json",
-    "themes.json",
-    "punctuation.json",
     "user.tsv",
     "user_pinyin.tsv",
     "user_wubi.tsv"
@@ -421,8 +420,6 @@ if ($IncludeLogs -and (Test-Path -LiteralPath $logsDir -PathType Container)) {
 if ($IncludeUserConfig) {
     $dst = Join-Path $root "user-config"
     Copy-IfExists (Join-Path $userDir "default.json") $dst
-    Copy-IfExists (Join-Path $userDir "themes.json") $dst
-    Copy-IfExists (Join-Path $userDir "punctuation.json") $dst
 }
 
 if ($IncludeUserDict) {

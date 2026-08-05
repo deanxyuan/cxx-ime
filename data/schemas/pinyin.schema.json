@@ -1,0 +1,17 @@
+{
+  "speller": {
+    "algebra": [
+      "abbrev/^([a-z]).+$/$1/",
+      "abbrev/^([zcs]h).+$/$1/",
+      "derive/^([nl])ve$/$1ue/",
+      "derive/^([jqxy])u/$1v/",
+      "derive/un$/uen/",
+      "derive/ui$/uei/",
+      "derive/iu$/iou/",
+      "derive/([aeiou])ng$/$1gn/",
+      "derive/^([zcs])h/$1/",
+      "fuzz/^n(.*)/l$1/",
+      "derive/^(.*)eng$/$1en/"
+    ]
+  }
+}

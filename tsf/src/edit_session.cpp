@@ -462,6 +462,27 @@ HRESULT clear_and_end_composition(TextService* service,
     return action_result;
 }
 
+HRESULT apply_composition_text(TextService* service, ITfContext* context, TfEditCookie ec,
+                               ITfRange* range, const std::wstring& text, size_t selection_offset,
+                               bool has_selection_offset) {
+    if (!service || !context || !range) {
+        return E_INVALIDARG;
+    }
+
+    HRESULT result = range->SetText(ec, 0, text.c_str(), static_cast<LONG>(text.length()));
+    if (FAILED(result)) {
+        return result;
+    }
+
+    set_composition_language(context, ec, range);
+    service->apply_composition_display_attribute(context, range, ec);
+    result = has_selection_offset
+        ? set_selection_to_range_offset(context, ec, range, selection_offset)
+        : set_selection_to_range(context, ec, range);
+    update_caret_rect(service, context, ec, range);
+    return result;
+}
+
 HRESULT insert_at_selection(ITfContext* context,
                             TfEditCookie ec,
                             const std::wstring& text) {
@@ -528,6 +549,7 @@ STDMETHODIMP_(ULONG) EditSession::Release() {
 void EditSession::set_action(Action action, const std::wstring& text) {
     _action = action;
     _text = text;
+    _commitText.clear();
     _selectionOffset = 0;
     _hasSelectionOffset = false;
     _actionResult = E_PENDING;
@@ -541,6 +563,14 @@ void EditSession::set_composition_action(Action action, const std::wstring& text
     set_action(action, text);
     _selectionOffset = selection_offset;
     _hasSelectionOffset = true;
+}
+
+void EditSession::set_commit_and_restart_action(const std::wstring& commit_text,
+                                                const std::wstring& composition_text,
+                                                size_t selection_offset) {
+    set_composition_action(Action::COMMIT_AND_RESTART_COMPOSITION, composition_text,
+                           selection_offset);
+    _commitText = commit_text;
 }
 
 STDMETHODIMP EditSession::DoEditSession(TfEditCookie ec) {
@@ -581,17 +611,8 @@ STDMETHODIMP EditSession::DoEditSession(TfEditCookie ec) {
             _service, _context, ec, &range, &_compositionStartAttempted,
             &_compositionStartResult, &_compositionReturned);
         if (SUCCEEDED(_actionResult) && range) {
-            _actionResult = range->SetText(
-                ec, 0, _text.c_str(), static_cast<LONG>(_text.length()));
-            if (SUCCEEDED(_actionResult)) {
-                set_composition_language(_context, ec, range);
-                _service->apply_composition_display_attribute(_context, range, ec);
-                _actionResult = _hasSelectionOffset
-                    ? set_selection_to_range_offset(
-                        _context, ec, range, _selectionOffset)
-                    : set_selection_to_range(_context, ec, range);
-                update_caret_rect(_service, _context, ec, range);
-            }
+            _actionResult = apply_composition_text(
+                _service, _context, ec, range, _text, _selectionOffset, _hasSelectionOffset);
             range->Release();
         }
     } else if (_action == Action::COMMIT_COMPOSITION) {
@@ -599,6 +620,27 @@ STDMETHODIMP EditSession::DoEditSession(TfEditCookie ec) {
             _actionResult = clear_and_end_composition(_service, _context, ec, &_text);
         } else if (!_text.empty()) {
             _actionResult = insert_at_selection(_context, ec, _text);
+        }
+    } else if (_action == Action::COMMIT_AND_RESTART_COMPOSITION) {
+        if (_service->get_composition()) {
+            _actionResult = clear_and_end_composition(
+                _service, _context, ec, &_commitText);
+        } else if (!_commitText.empty()) {
+            _actionResult = insert_at_selection(_context, ec, _commitText);
+        }
+
+        ITfRange* range = nullptr;
+        if (SUCCEEDED(_actionResult)) {
+            _actionResult = create_composition(
+                _service, _context, ec, &range, &_compositionStartAttempted,
+                &_compositionStartResult, &_compositionReturned);
+        }
+        if (SUCCEEDED(_actionResult) && range) {
+            _actionResult = apply_composition_text(
+                _service, _context, ec, range, _text, _selectionOffset, true);
+        }
+        if (range) {
+            range->Release();
         }
     } else if (_action == Action::QUERY_CARET) {
         RECT rc = {};

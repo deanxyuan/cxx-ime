@@ -77,3 +77,13 @@ Source ID: 2024-01-15 17:01:13
 SQLite's authors have dedicated the deliverable SQLite source code and
 documentation to the public domain. The authoritative statement is available
 at https://www.sqlite.org/copyright.html.
+
+
+rime-wubi86-jidian 4.3 dictionary data
+---------------------------------------
+
+Upstream: https://github.com/KyleBing/rime-wubi86-jidian
+License: Apache License 2.0
+
+The Wubi dictionary and symbol categories distributed with CxxIME are derived
+from this project. The Apache License 2.0 text is included in LICENSE.

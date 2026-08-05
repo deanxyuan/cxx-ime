@@ -34,6 +34,7 @@ REQUIRED_FILES = [
     "default.json",
     "settings_presets.json",
     "punctuation.json",
+    "symbols.json",
 ]
 
 REQUIRED_TOPN_KEYS = ["s", "sd", "sdf", "sddf", "bj", "srf", "shrf"]
@@ -356,6 +357,54 @@ def check_dictionary_manifest(data_dir, errors):
     return True
 
 
+def check_symbols_json(data_dir, errors):
+    path = os.path.join(data_dir, "symbols.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            root = json.load(f)
+    except Exception as e:
+        errors.append(f"symbols.json: cannot read symbol table: {e}")
+        return False
+
+    if not isinstance(root, dict):
+        errors.append("symbols.json: symbol table must be an object")
+        return False
+    categories = root.get("categories")
+    if root.get("version") != 1 or not isinstance(categories, list) or not categories:
+        errors.append("symbols.json: unsupported or empty symbol table")
+        return False
+
+    codes = set()
+    for category in categories:
+        code = category.get("code") if isinstance(category, dict) else None
+        candidates = category.get("candidates") if isinstance(category, dict) else None
+        if (
+            not isinstance(code, str)
+            or len(code) != 2
+            or not code.isascii()
+            or not code.islower()
+            or not code.isalpha()
+            or code in codes
+        ):
+            errors.append("symbols.json: invalid or duplicate category code")
+            return False
+        if (
+            not isinstance(category.get("name"), str)
+            or not category["name"]
+            or not isinstance(candidates, list)
+            or not candidates
+            or any(not isinstance(value, str) or not value for value in candidates)
+        ):
+            errors.append(f"symbols.json: invalid category: {code}")
+            return False
+        codes.add(code)
+
+    if "bd" not in codes:
+        errors.append("symbols.json: required category missing: bd")
+        return False
+    return True
+
+
 def verify(data_dir):
     """Run all checks. Return list of error strings (empty = pass)."""
     errors = []
@@ -376,6 +425,7 @@ def verify(data_dir):
     wubi_idx_ver = check_dict_idx(data_dir, "wubi86.dict.idx", errors)
     check_spellings_bin(data_dir, errors)
     check_topn_bin(data_dir, errors)
+    check_symbols_json(data_dir, errors)
 
     # 3. Version consistency
     check_version_consistency("pinyin", pinyin_dict_ver, pinyin_idx_ver, errors)

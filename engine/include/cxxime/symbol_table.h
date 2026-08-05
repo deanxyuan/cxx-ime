@@ -1,0 +1,34 @@
+// Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
+
+#ifndef CXXIME_SYMBOL_TABLE_H_
+#define CXXIME_SYMBOL_TABLE_H_
+
+#include <string>
+#include <unordered_map>
+#include <vector>
+
+#include <cxxime/candidate.h>
+
+namespace cxxime {
+
+class SymbolTable {
+public:
+    bool load(const std::string& path);
+    bool empty() const { return categories_.empty(); }
+
+    CandidatePage translate(const std::string& code, int page_index, int page_size,
+                            int candidate_offset = -1) const;
+
+private:
+    struct Category {
+        std::string name;
+        std::vector<std::string> candidates;
+    };
+
+    std::unordered_map<std::string, Category> categories_;
+    std::vector<std::string> category_order_;
+};
+
+} // namespace cxxime
+
+#endif // CXXIME_SYMBOL_TABLE_H_

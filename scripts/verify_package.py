@@ -180,6 +180,7 @@ def check_installer_script(
         "settings_presets.json",
         "themes.json",
         "punctuation.json",
+        "symbols.json",
         "dictionary_manifest.json",
     ] + manifest_files
     for name in installer_data_files:
@@ -318,6 +319,7 @@ def run_checks(dist_dir: str, require_x86: bool, host_diagnostics: bool) -> list
         os.path.join("data", "settings_presets.json"),
         os.path.join("data", "themes.json"),
         os.path.join("data", "punctuation.json"),
+        os.path.join("data", "symbols.json"),
     ]
     diagnostic_files = [
         "export_stage_trace.ps1",

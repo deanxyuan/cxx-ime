@@ -70,6 +70,8 @@ add_test(NAME config_write_coordinator_test COMMAND config_write_coordinator_tes
 add_cxxime_test(dictionary_monitor_test)
 add_cxxime_test(output_composer_test)
 add_cxxime_test(engine_source_test)
+add_cxxime_test(symbol_input_test)
+add_cxxime_test(symbol_table_test)
 add_cxxime_test(wubi_engine_test)
 add_cxxime_test(processor_pagination_test)
 add_cxxime_test(temporary_ascii_test)
@@ -113,6 +115,10 @@ add_test(NAME session_manager_integration_test COMMAND session_manager_integrati
 
 find_package(Python3 QUIET)
 if(Python3_FOUND)
+    add_test(
+        NAME wubi_symbol_pipeline_test
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/wubi_symbol_pipeline_test.py
+    )
     add_test(
         NAME build_short_cache_test
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/build_short_cache_test.py
