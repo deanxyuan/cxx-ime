@@ -37,7 +37,7 @@ scripts\package.py --fast --skip-dict # 快速复用已有 dist\data 词典打�
 1. 检查并触发构建（如未构建）
 2. 复制 `cxxime_tsf_x64.dll`、`cxxime_tsf_x86.dll`、`cxxime-resources.dll`、`cxxime-server.exe`、`cxxime-settings.exe`、`collect_diagnostics.ps1`
 3. 复制 `default.json`、`themes.json`、`settings_presets.json`、`punctuation.json`
-4. 调用 `prepare_dict.py` 将 `.db` 词典转换为 `.bin` / `.idx` / `.spellings.bin`
+4. 调用 `prepare_dictionary_bundle.py` 准备运行时词典（`.bin` / `.idx` / `.spellings.bin` / `.topn.bin`）
 5. 校验发布数据文件、CRT 依赖和热路径日志
 5. 调用 `makensis.exe` 编译 NSIS 安装脚本
 6. 输出 `..\output\cxxime-v<version>-setup.exe`

@@ -292,7 +292,42 @@ Python 格式: `"<IIIIi"`
 
 线性扫描所有条目，比较 `text` 字段。复杂度 O(n)，因为 dict.bin 按 syllable_ids 排序而非 text。
 
-### 3.3 格式版本兼容
+### 3.3 五笔完整前缀索引（wubi86.dict.idx / CXWIDX v1）
+
+本次更新为五笔引入独立的完整前缀索引，取代原来的整数 ID 索引（CXIDX）。`wubi86.dict.idx` 在构建时由 `data/tools/dict_builder/wubi_prefix_index.py` 生成，记录每个可达五笔编码前缀的排序词条列表；运行时由 `WubiPrefixIndex` 整文件加载，`Dict::lookup()` 二分查找后直接取预排序 postings，避免全表扫描。
+
+#### 文件布局
+
+```
+┌────────────────────────────────────────────┐
+│ Header (48 bytes)                          │
+│   magic[8]      = "CXWIDX\x01\x00"         │
+│   version       = 1                        │
+│   header_size / file_size                  │
+│   dict_entry_count / key_count             │
+│   posting_count                            │
+│   keys_offset / postings_offset            │
+│   max_code_length = 4 / reserved = 0       │
+├────────────────────────────────────────────┤
+│ Key[ key_count ]  (每条 12 bytes)           │
+│   packed_code / posting_offset             │
+│   posting_count                            │
+├────────────────────────────────────────────┤
+│ Postings[ posting_count ]  (uint32 数组)    │
+│   dict.bin 词条索引，按排名预排序           │
+└────────────────────────────────────────────┘
+```
+
+- `packed_code`：五笔码按 5 bit/字符 压缩（a=1..z=26），最多 4 码
+- key 按 `packed_code` 升序，`posting_offset` 连续覆盖 postings 区
+- postings 排名：精确匹配 → 码长升序 → 词频降序 → 码序 → 文本长度 → 文本字典序，并按文本去重
+- 构建入口：`build_runtime_dictionary.py --wubi-prefix-index`
+
+#### 运行期查询
+
+`Dict::open_wubi_bundle()` 加载 `wubi86.dict.bin` + `wubi86.dict.idx`；`Dict::lookup()` 优先走 `WubiPrefixIndex::find()`（对 `packed_code` 二分查找），直接返回预排序 postings；无索引时回退到旧的二分 + 扫描路径。
+
+### 3.4 格式版本兼容
 
 通过文件头 magic 字节自动检测版本：
 
@@ -303,6 +338,7 @@ Python 格式: `"<IIIIi"`
 | dict v1 | `43 58 44 49 43 01 00 00` / `CXDIC\x01\x00\x00` | 平坦排序数组 |
 | dict v2 | `43 58 44 49 43 02 00 00` / `CXDIC\x02\x00\x00` | 平坦排序数组（布局相同，版本号升级） |
 | dict.idx v2/v3 | `43 58 49 44 58 00 00 00 00` / `CXIDX\0\0\0\0` | 整数 ID 索引（音节→词条，v2 变长解析，v3 zero-copy） |
+| wubi idx v1 | `43 58 57 49 44 58 01 00` / `CXWIDX\x01\x00` | 五笔完整前缀索引（packed code → 排序 postings） |
 | topn.bin v2 | `43 58 54 4F 50 4E 02 00` / `CXTOPN\x02\0` | DAT-16 格式：Darts-clone 双数组 Trie 键索引 + 内联 16 字节候选条目 |
 
 ## 4. 数据存储方案
@@ -324,7 +360,7 @@ Python 格式: `"<IIIIi"`
 | pinyin Top-N 候选索引 | — | 212 MB (topn.bin, DAT-16) | — |
 | pinyin 拼写索引 | — | 2.9 MB (spellings.bin) | — |
 | wubi86 主词典 | 3.2 MB | 2.6 MB (dict.bin) | 1.7 MB |
-| wubi86 整数 ID 索引 | — | 2.1 MB (dict.idx) | — |
+| wubi86 完整前缀索引 | — | 2.3 MB (dict.idx) | — |
 
 ### 4.3 为什么不用 SQLite 存主词典
 
@@ -365,49 +401,67 @@ CREATE TABLE dict (
 
 ### 5.2 构建工具
 
-`data/tools/build_binary.py` — 将 SQLite 转换为二进制格式：
+`data/tools/build_runtime_dictionary.py`（`dict_builder` 包）— 将 SQLite 转换为二进制格式：
 
 ```bash
 # 从 .dict.db 构建（直接路径）
-python data/tools/build_binary.py -i data/pinyin.dict.db -o data/pinyin
+python data/tools/build_runtime_dictionary.py -i data/pinyin.dict.db -o data/pinyin
 
 # 从 .zip 构建（自动解压到临时目录）
-python data/tools/build_binary.py -i data/pinyin.dict.db.zip -o data/pinyin
+python data/tools/build_runtime_dictionary.py -i data/pinyin.dict.db.zip -o data/pinyin
 
 # 仅构建 spellings 或 dict
-python data/tools/build_binary.py -i data/pinyin.dict.db -o data/pinyin --spellings-only
-python data/tools/build_binary.py -i data/pinyin.dict.db -o data/pinyin --dict-only
+python data/tools/build_runtime_dictionary.py -i data/pinyin.dict.db -o data/pinyin --spellings-only
+python data/tools/build_runtime_dictionary.py -i data/pinyin.dict.db -o data/pinyin --dict-only
 ```
 
 输出文件：
 - `data/pinyin.spellings.bin` — Patricia trie 拼写索引
 - `data/pinyin.dict.bin` — 排序数组主词典
 
+五笔：先拆分符号扩展项，再生成 `dict.bin` + 完整前缀索引：
+
+```bash
+python data/tools/split_wubi_symbols.py --input data/wubi86.dict.db \
+    --symbols-output data/symbols.json --filtered-output <filtered-wubi.dict.db>
+python data/tools/build_runtime_dictionary.py -i <filtered-wubi.dict.db> -o data/wubi86 \
+    --dict-only --wubi-prefix-index
+```
+
 ### 5.3 构建管线
 
 ```
-fetch_dict.py / fetch_wubi.py    从网络获取词典数据
+fetch_pinyin_dictionary.py / fetch_wubi_dictionary.py    从网络获取词典数据
         │
         ▼
    pinyin.dict.db                 SQLite 源文件（git 中以 .zip 存储）
         │
         ▼
-  build_binary.py                 Python 转换工具
-   ├── build_spellings_trie()     SQLite → Patricia trie → spellings.bin
-   └── build_dict_bin()           SQLite → 排序数组 → dict.bin
+  build_runtime_dictionary.py     Python 转换工具（dict_builder 包）
+   ├── pinyin_spellings.py        SQLite → Patricia trie → spellings.bin
+   ├── runtime_dictionary.py      SQLite → 排序数组 → dict.bin
+   └── pinyin_syllable_index.py   SQLite → 整数 ID 索引 → dict.idx
         │
         ▼
    pinyin.spellings.bin           运行时内存加载
    pinyin.dict.bin                 运行时内存加载
    pinyin.dict.idx                 整数 ID 索引
 
-  build_short_cache.py            SQLite → Top-N 候选键与评分
+  build_pinyin_topn.py            SQLite → Top-N 候选键与评分
         │
         ▼
   topn_builder --format dat16     中间文件 → DAT-16 索引
         │
         ▼
    pinyin.topn.bin                运行时内存加载（Darts trie + 内联候选）
+
+  fetch_wubi_dictionary.py / split_wubi_symbols.py   五笔源数据 → symbols.json + 过滤后词典
+        │
+        ▼
+  build_runtime_dictionary.py --dict-only --wubi-prefix-index
+        │
+        ▼
+   wubi86.dict.bin + wubi86.dict.idx（完整前缀索引）
 ```
 
 ### 5.4 Patricia Trie 构建过程
@@ -513,7 +567,7 @@ RUN_ALL_TESTS()                            // main 入口，自动发现并运�
 
 ### 9.2 测试覆盖
 
-共 22 个 C++ 测试可执行文件 + 1 个 Python 测试（23 个 ctest 条目），合计 380+ 个 `TEST()` 用例：
+共 35 个 C++ 测试可执行文件 + 4 个 Python 测试（39 个 ctest 条目），合计 500+ 个 `TEST()` 用例：
 
 | 测试文件 | 用例数 | 测试内容 |
 |----------|--------|----------|
@@ -539,13 +593,15 @@ RUN_ALL_TESTS()                            // main 入口，自动发现并运�
 | `output_composer_test` | 44 | 输出合成（全角/CapsLock/按键拦截） |
 | `session_manager_status_test` | 18 | 会话管理器状态 |
 | `session_manager_integration_test` | 27 | 会话管理器集成 |
-| `build_short_cache_test` | (Python) | 短码缓存构建验证 |
-| **合计** | **380+** | |
+| `wubi_prefix_query_test` | 1 | 五笔完整前缀索引查询排序 |
+| `wubi_prefix_index_test` | (Python) | 五笔完整前缀索引构建验证 |
+| `pinyin_topn_pipeline_test` | (Python) | Top-N 键生成与 DAT-16 转换验证 |
+| **合计** | **500+** | |
 
 ### 9.3 运行测试
 
 ```bash
 cd build
-ctest -C Debug                          # 运行全部测试（23 个）
+ctest -C Debug                          # 运行全部测试（39 个）
 build\test\Debug\engine_test.exe        # 单独运行某个测试
 ```

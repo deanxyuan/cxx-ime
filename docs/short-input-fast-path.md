@@ -111,15 +111,15 @@ score = frequency  (最大 100,000,000 基数)
 
 ```cmd
 # 1. Python 生成候选键与评分
-python scripts/build_short_cache.py --input data/pinyin.dict.db --output data/pinyin.topn.intermediate.bin
+python scripts/build_pinyin_topn.py --input data/pinyin.dict.db --output data/pinyin.topn.intermediate.bin
 
 # 2. topn_builder 转换中间文件为 DAT-16（构建 Darts-clone Trie）
 build\tools\topn_index\Release\topn_builder.exe --input data/pinyin.topn.intermediate.bin --output data/pinyin.topn.bin --format dat16
 ```
 
-`prepare_dict.py` 自动完成上述两步，产出最终 `pinyin.topn.bin`。
+`prepare_dictionary_bundle.py` 自动完成上述两步，产出最终 `pinyin.topn.bin`。
 
-数据流：`pinyin.dict.db` (SQLite) → `build_short_cache.py`（键生成 + 评分排序）→ `topn_builder --format dat16`（Darts-clone Trie 构建 + 写入 DAT-16）。键隐式存储于 Trie 结构中，候选文本共享字符串池并内联写入。
+数据流：`pinyin.dict.db` (SQLite) → `build_pinyin_topn.py`（键生成 + 评分排序）→ `topn_builder --format dat16`（Darts-clone Trie 构建 + 写入 DAT-16）。键隐式存储于 Trie 结构中，候选文本共享字符串池并内联写入。
 
 ### C++ 类
 
@@ -268,7 +268,7 @@ live_path_count = 0
 | `tools/topn_index/main.cc` | topn_builder 入口: 中间文件 → DAT-16 转换 |
 | `tools/topn_index/benchmark.cc` | topn_benchmark 工具: 跨格式延迟/QPS 对比 |
 | `third_party/darts-clone/include/darts.h` | Darts-clone Double Array Trie 库（构建 + 查找） |
-| `scripts/build_short_cache.py` | 离线生成 Top-N 候选键与评分 |
+| `scripts/build_pinyin_topn.py` | 离线生成 Top-N 候选键与评分 |
 | `scripts/benchmark_topn.ps1` | 跨格式 benchmark 脚本 |
 | `engine/include/cxxime/dict.h` | ShortCodeCache 成员 + getter, 用户词索引结构 |
 | `engine/src/dict.cc` | open_dict() / open_bundle() 加载 topn.bin, 用户词索引构建与查询 |

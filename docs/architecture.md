@@ -228,7 +228,7 @@ cxx-ime/
 │   ├── pinyin.spellings.bin# Patricia trie 拼写索引（~2.9 MB）
 │   ├── pinyin.dict.db.zip  # SQLite 源词典（压缩，git 提交）
 │   ├── wubi86.dict.bin     # 五笔主词典（~2.6 MB）
-│   ├── wubi86.dict.idx     # 五笔整数 ID 索引（~2.1 MB）
+│   ├── wubi86.dict.idx     # 五笔完整前缀索引（~2.3 MB）
 │   ├── schemas/            # pinyin.schema.yaml（拼写代数规则）
 │   └── tools/              # Python 词典工具（fetch/convert/build/algebra）
 │
@@ -239,7 +239,7 @@ cxx-ime/
 │         benchmark, short_cache, trace, mpscq, config_monitor,
 │         dictionary_monitor, output_composer, engine_source,
 │         session_manager_status, session_manager_integration,
-│         build_short_cache, stage_trace_tools (Python)}_test.{cc|py}
+│         wubi_prefix_index, pinyin_topn_pipeline, stage_trace_tools (Python)}_test.{cc|py}
 │
 ├── third_party/            # 第三方库
 │   ├── sqlite3/            # SQLite amalgamation（FTS5 + JSON1）
@@ -247,9 +247,9 @@ cxx-ime/
 │   └── darts-clone/        # Darts-clone (Double Array Trie，Top-N 索引)
 │
 ├── resource/               # 图标 + 资源 DLL 素材
-└── scripts/                # package.py, prepare_dict.py, cxxime-setup.nsi,
-                            # verify_data_files.py, build_short_cache.py,
-                            # check_query_bench.py, benchmark.bat
+└── scripts/                # package.py, prepare_dictionary_bundle.py,
+                            # verify_dictionary_bundle.py, build_pinyin_topn.py,
+                            # cxxime-setup.nsi, check_query_bench.py, benchmark.bat
 ```
 
 ---
@@ -277,7 +277,7 @@ cxx-ime/
 | `pinyin.topn.bin` | ~212 MB | 拼音 Top-N 候选索引（DAT-16 格式，Darts trie 查找） |
 | `pinyin.spellings.bin` | ~2.9 MB | Patricia trie 拼写索引 |
 | `wubi86.dict.bin` | ~2.6 MB | 五笔主词典 |
-| `wubi86.dict.idx` | ~2.1 MB | 五笔整数 ID 索引 |
+| `wubi86.dict.idx` | ~2.3 MB | 五笔完整前缀索引 |
 
 ---
 
@@ -320,7 +320,7 @@ TSF DLL 按架构输出 `cxxime_tsf_x64.dll` / `cxxime_tsf_x86.dll`，安装包�
 
 `lookup_indexed_fast()` 在 Trie 命中的 key 上直接返回预计算候选页，完全跳过 Syllabifier 路径枚举与 Dict 扫描，短输入延迟从毫秒级降至个位数微秒。
 
-构建流程：`build_short_cache.py`（SQLite → 中间文件）→ `topn_builder --format dat16`（中间文件 → DAT-16）。详见 [短输入快速路径](short-input-fast-path.md)。
+构建流程：`build_pinyin_topn.py`（SQLite → 中间文件）→ `topn_builder --format dat16`（中间文件 → DAT-16）。详见 [短输入快速路径](short-input-fast-path.md)。
 
 ### 7.8 五笔词典必选打包
 
