@@ -7,6 +7,5 @@
 #define IDI_ICON_ZH 102
 #define IDI_ICON_EN 103
 #define IDI_ICON_C 104
-#define IDI_FREEDLY 105
 
 #endif  // CXXIME_RESOURCE_CXXIME_RESOURCE_IDS_H_

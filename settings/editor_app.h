@@ -34,9 +34,23 @@ public:
 
 private:
     void create_controls(HWND hwnd);
+    void create_input_panel(HWND panel);
+    void create_candidate_panel(HWND panel);
+    void create_advanced_layout_panel(HWND panel);
+    void create_shortcuts_panel(HWND panel);
+    void create_dictionary_panel(HWND panel, int panel_width);
+    void create_about_panel(HWND panel, int panel_width);
+    bool handle_input_command(int control_id, int notification);
+    bool handle_candidate_command(int control_id, int notification);
+    bool handle_advanced_layout_command(int control_id, int notification);
+    bool handle_shortcuts_command(int control_id, int notification);
+    bool handle_dictionary_command(int control_id, int notification);
+    bool handle_dictionary_notify(LPARAM notification);
+    bool handle_about_command(int control_id, int notification);
+    bool handle_about_notify(LPARAM notification);
     void show_panel(int idx);
-    void load_config();
-    void save_config();
+    bool load_config();
+    bool save_config();
     void readback(HWND hwnd);
     std::string selected_theme_id() const;
     void refresh_user_entries();
@@ -122,8 +136,14 @@ private:
     bool updatingCandControls_ = false;
 
     // Shortcuts
+    void load_shortcut_controls();
+    bool read_shortcut_controls();
+    void update_shortcut_controls_enabled();
     HWND hKeyCombos_[5] = {};
+    HWND hInputModeSwitchEnabled_ = nullptr;
     HWND hInputModeSwitchKey_ = nullptr;
+    HWND hActivateImeHotkeyEnabled_ = nullptr;
+    HWND hActivateImeHotkey_ = nullptr;
 
     // Dictionary panel
     HWND hDictStatus_ = nullptr;

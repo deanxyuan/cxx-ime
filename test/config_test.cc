@@ -1,5 +1,6 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
+#include <cstdint>
 #include <cstdio>
 #include <fstream>
 
@@ -23,7 +24,8 @@ TEST(Config, defaults) {
     ASSERT_TRUE(!cfg.wubi_code_hint);
     ASSERT_TRUE(!cfg.candidate_learning);
     ASSERT_EQ(cfg.mixed_candidate_preference, cxxime::MixedCandidatePreference::kAuto);
-    ASSERT_TRUE(cfg.input_mode_switch_key == "disabled");
+    ASSERT_TRUE(!cfg.input_mode_switch_shortcut.enabled());
+    ASSERT_TRUE(!cfg.activate_ime_shortcut.enabled());
     ASSERT_TRUE(!cfg.initial_full_shape);
     ASSERT_TRUE(cfg.initial_chinese_punct);
 }
@@ -41,7 +43,10 @@ TEST(Config, load_valid_json) {
         "candidate_learning": true,
         "mixed_candidate_preference": "wubi"
         },
-        "shortcuts": {"input_mode_switch": "ctrl_shift_m"},
+        "shortcuts": {
+            "input_mode_switch": "Ctrl+Shift+M",
+            "activate_ime": "Ctrl+Alt+C"
+        },
         "style": {"font_face": "Arial", "font_point": 18},
         "theme": "dark"
         })";
@@ -58,7 +63,12 @@ TEST(Config, load_valid_json) {
     ASSERT_TRUE(cfg.wubi_code_hint);
     ASSERT_TRUE(cfg.candidate_learning);
     ASSERT_EQ(cfg.mixed_candidate_preference, cxxime::MixedCandidatePreference::kWubi);
-    ASSERT_TRUE(cfg.input_mode_switch_key == "ctrl_shift_m");
+    ASSERT_EQ(cfg.input_mode_switch_shortcut.modifiers,
+              cxxime::kKeyModifierControl | cxxime::kKeyModifierShift);
+    ASSERT_EQ(cfg.input_mode_switch_shortcut.virtual_key, static_cast<uint32_t>('M'));
+    ASSERT_EQ(cfg.activate_ime_shortcut.modifiers,
+              cxxime::kKeyModifierControl | cxxime::kKeyModifierAlt);
+    ASSERT_EQ(cfg.activate_ime_shortcut.virtual_key, static_cast<uint32_t>('C'));
     ASSERT_TRUE(!cfg.initial_full_shape);
     ASSERT_TRUE(cfg.initial_chinese_punct);
 
@@ -88,10 +98,26 @@ TEST(Config, invalid_mixed_candidate_preference_falls_back_to_auto) {
     ASSERT_EQ(config.mixed_candidate_preference, cxxime::MixedCandidatePreference::kAuto);
 }
 
-TEST(Config, invalid_input_mode_switch_key_falls_back_to_disabled) {
+TEST(Config, invalid_input_mode_shortcut_falls_back_to_disabled) {
     cxxime::Config config;
-    ASSERT_TRUE(config.load_json(R"({"shortcuts":{"input_mode_switch":"unknown"}})"));
-    ASSERT_TRUE(config.input_mode_switch_key == "disabled");
+    ASSERT_TRUE(config.load_json(R"({"shortcuts":{"input_mode_switch":"M"}})"));
+    ASSERT_TRUE(!config.input_mode_switch_shortcut.enabled());
+}
+
+TEST(Config, invalid_activate_ime_shortcut_falls_back_to_disabled) {
+    cxxime::Config config;
+    ASSERT_TRUE(config.load_json(R"({"shortcuts":{"activate_ime":"Ctrl+C"}})"));
+    ASSERT_TRUE(!config.activate_ime_shortcut.enabled());
+}
+
+TEST(Config, conflicting_shortcuts_disable_input_mode_switch) {
+    cxxime::Config config;
+    ASSERT_TRUE(config.load_json(R"({"shortcuts":{
+        "input_mode_switch":"Ctrl+Alt+C",
+        "activate_ime":"Ctrl+Alt+C"
+    }})"));
+    ASSERT_TRUE(!config.input_mode_switch_shortcut.enabled());
+    ASSERT_TRUE(config.activate_ime_shortcut.enabled());
 }
 
 TEST(Config, initial_state_round_trip) {
@@ -113,7 +139,10 @@ TEST(Config, runtime_snapshot_round_trip) {
     saved.theme = "dark";
     saved.inline_preedit = true;
     saved.status_window.enable = false;
-    saved.input_mode_switch_key = "ctrl_alt_m";
+    ASSERT_TRUE(cxxime::parse_keyboard_shortcut("Ctrl+Alt+M",
+                                                &saved.input_mode_switch_shortcut));
+    ASSERT_TRUE(cxxime::parse_keyboard_shortcut("Ctrl+Shift+Space",
+                                                &saved.activate_ime_shortcut));
     saved.ascii_switch_key["Shift_L"] = "commit_code";
     saved.diagnostics.trace_mode = cxxime::DiagnosticTraceMode::kError;
     saved.diagnostics.slow_ipc_us = 2345;
@@ -130,7 +159,10 @@ TEST(Config, runtime_snapshot_round_trip) {
     ASSERT_TRUE(loaded.theme == "dark");
     ASSERT_TRUE(loaded.inline_preedit);
     ASSERT_TRUE(!loaded.status_window.enable);
-    ASSERT_TRUE(loaded.input_mode_switch_key == "ctrl_alt_m");
+    ASSERT_TRUE(cxxime::keyboard_shortcut_string(loaded.input_mode_switch_shortcut) ==
+                "Ctrl+Alt+M");
+    ASSERT_TRUE(cxxime::keyboard_shortcut_string(loaded.activate_ime_shortcut) ==
+                "Ctrl+Shift+Space");
     ASSERT_TRUE(loaded.ascii_switch_key["Shift_L"] == "commit_code");
     ASSERT_EQ(loaded.diagnostics.trace_mode, cxxime::DiagnosticTraceMode::kError);
     ASSERT_EQ(loaded.diagnostics.slow_ipc_us, 2345);
@@ -145,6 +177,57 @@ TEST(Config, production_runtime_snapshot_fits_control_payload) {
     const std::string snapshot = config.to_runtime_json();
     ASSERT_TRUE(!snapshot.empty());
     ASSERT_TRUE(snapshot.size() <= cxxime::CONTROL_MAX_PAYLOAD);
+}
+
+TEST(Config, themes_preserve_file_order_and_fallback_to_first_theme) {
+    const char* path = "test_ordered_themes.json";
+    {
+        std::ofstream file(path);
+        file << R"({"preset_color_schemes":{
+            "second":{"back_color":16777215,"text_color":0},
+            "first":{"back_color":0,"text_color":16777215}
+        }})";
+    }
+
+    cxxime::Config config;
+    config.theme = "removed";
+    ASSERT_TRUE(config.load_themes(path));
+    ASSERT_EQ(config.preset_color_scheme_order.size(), 2u);
+    ASSERT_EQ(config.preset_color_scheme_order[0], "second");
+    ASSERT_EQ(config.preset_color_scheme_order[1], "first");
+    ASSERT_EQ(config.theme, "second");
+
+    std::remove(path);
+}
+
+TEST(Config, invalid_theme_file_preserves_previous_themes) {
+    const char* valid_path = "test_atomic_themes_valid.json";
+    const char* invalid_path = "test_atomic_themes_invalid.json";
+    {
+        std::ofstream file(valid_path);
+        file << R"({"preset_color_schemes":{
+            "stable":{"back_color":16777215,"text_color":0}
+        }})";
+    }
+    {
+        std::ofstream file(invalid_path);
+        file << R"({"preset_color_schemes":{
+            "partial":{"back_color":0,"text_color":16777215},
+            "invalid":false
+        }})";
+    }
+
+    cxxime::Config config;
+    config.theme = "stable";
+    ASSERT_TRUE(config.load_themes(valid_path));
+    ASSERT_TRUE(!config.load_themes(invalid_path));
+    ASSERT_EQ(config.preset_color_scheme_order.size(), 1u);
+    ASSERT_EQ(config.preset_color_scheme_order[0], "stable");
+    ASSERT_TRUE(config.preset_color_schemes.find("stable") != config.preset_color_schemes.end());
+    ASSERT_EQ(config.theme, "stable");
+
+    std::remove(valid_path);
+    std::remove(invalid_path);
 }
 
 TEST(Config, theme_derives_muted_comment_color_unless_explicitly_configured) {

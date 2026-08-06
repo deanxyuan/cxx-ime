@@ -12,6 +12,7 @@ endif()
 
 add_library(cxxime-shared STATIC
     src/key_event.cc
+    src/keyboard_shortcut.cc
     src/data_path.cc
     src/diagnostic_log_path.cc
     src/dictionary_manifest.cc

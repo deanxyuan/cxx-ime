@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <fstream>
+#include <utility>
 
 #include <json.hpp>
 
@@ -12,16 +13,34 @@
 
 namespace cxxime {
 
-static void load_int(nlohmann::json& obj, const char* key, int& val) {
+template <typename Json>
+static void load_int(Json& obj, const char* key, int& val) {
     if (obj.contains(key) && obj[key].is_number()) val = obj[key].get<int>();
 }
 
-static void load_string(nlohmann::json& obj, const char* key, std::string& val) {
+template <typename Json>
+static void load_string(Json& obj, const char* key, std::string& val) {
     if (obj.contains(key) && obj[key].is_string()) val = obj[key].get<std::string>();
 }
 
-static void load_bool(nlohmann::json& obj, const char* key, bool& val) {
+template <typename Json>
+static void load_bool(Json& obj, const char* key, bool& val) {
     if (obj.contains(key) && obj[key].is_boolean()) val = obj[key].get<bool>();
+}
+
+template <typename Json>
+static void load_keyboard_shortcut(Json& obj, const char* key, KeyboardShortcut& value,
+                                   bool (*validator)(const KeyboardShortcut&)) {
+    if (!obj.contains(key) || !obj[key].is_string()) {
+        return;
+    }
+    KeyboardShortcut parsed;
+    if (parse_keyboard_shortcut(obj[key].template get<std::string>(), &parsed) &&
+        validator(parsed)) {
+        value = parsed;
+    } else {
+        value = {};
+    }
 }
 
 static const char* mixed_candidate_preference_name(MixedCandidatePreference preference) {
@@ -39,11 +58,6 @@ static MixedCandidatePreference parse_mixed_candidate_preference(const std::stri
         return MixedCandidatePreference::kWubi;
     }
     return MixedCandidatePreference::kAuto;
-}
-
-static bool is_supported_input_mode_switch_key(const std::string& value) {
-    return value == "disabled" || value == "f4" || value == "ctrl_shift_m" ||
-           value == "ctrl_alt_m";
 }
 
 static int muted_text_color(int foreground, int background) {
@@ -225,15 +239,24 @@ static void apply_config_json(Config& config, nlohmann::json& j) {
 
     if (j.contains("shortcuts") && j["shortcuts"].is_object()) {
         auto& shortcuts = j["shortcuts"];
-        load_string(shortcuts, "input_mode_switch", config.input_mode_switch_key);
-        if (!is_supported_input_mode_switch_key(config.input_mode_switch_key)) {
-            config.input_mode_switch_key = "disabled";
+        load_keyboard_shortcut(shortcuts, "input_mode_switch",
+                               config.input_mode_switch_shortcut,
+                               is_valid_input_mode_shortcut);
+        load_keyboard_shortcut(shortcuts, "activate_ime", config.activate_ime_shortcut,
+                               is_valid_activate_ime_shortcut);
+        if (config.input_mode_switch_shortcut.enabled() &&
+            config.input_mode_switch_shortcut == config.activate_ime_shortcut) {
+            config.input_mode_switch_shortcut = {};
         }
     }
 }
 
-static bool apply_color_schemes(Config& config, nlohmann::json& schemes) {
-    if (!schemes.is_object()) return false;
+template <typename Json>
+static bool apply_color_schemes(Config& config, Json& schemes) {
+    if (!schemes.is_object() || schemes.empty()) return false;
+
+    std::unordered_map<std::string, Config::SchemeColors> parsed_schemes;
+    std::vector<std::string> parsed_order;
 
     for (auto& [name, sc] : schemes.items()) {
         if (!sc.is_object()) return false;
@@ -270,8 +293,11 @@ static bool apply_color_schemes(Config& config, nlohmann::json& schemes) {
             c.preedit_cursor_color = default_preedit_cursor_color(c);
         if (c.prevpage_color == -1) c.prevpage_color = c.text_color;
         if (c.nextpage_color == -1) c.nextpage_color = c.text_color;
-        config.preset_color_schemes[name] = c;
+        parsed_schemes[name] = c;
+        parsed_order.push_back(name);
     }
+    config.preset_color_schemes = std::move(parsed_schemes);
+    config.preset_color_scheme_order = std::move(parsed_order);
     return true;
 }
 
@@ -339,11 +365,13 @@ bool Config::load_themes(const std::string& path) {
     std::ifstream file(path);
     if (!file.is_open()) return false;
     try {
-        nlohmann::json j = nlohmann::json::parse(file);
+        nlohmann::ordered_json j = nlohmann::ordered_json::parse(file);
         if (!j.contains("preset_color_schemes") ||
-            !apply_color_schemes(*this, j["preset_color_schemes"]) ||
-            preset_color_schemes.find(theme) == preset_color_schemes.end()) {
+            !apply_color_schemes(*this, j["preset_color_schemes"])) {
             return false;
+        }
+        if (preset_color_schemes.find(theme) == preset_color_schemes.end()) {
+            theme = preset_color_scheme_order.front();
         }
     } catch (const nlohmann::json::exception&) {
         return false;
@@ -420,7 +448,9 @@ static nlohmann::json build_config_json(const Config& config) {
     ac["switch_key"] = sk;
     j["ascii_composer"] = ac;
 
-    j["shortcuts"]["input_mode_switch"] = config.input_mode_switch_key;
+    j["shortcuts"]["input_mode_switch"] =
+        keyboard_shortcut_string(config.input_mode_switch_shortcut);
+    j["shortcuts"]["activate_ime"] = keyboard_shortcut_string(config.activate_ime_shortcut);
 
     return j;
 }

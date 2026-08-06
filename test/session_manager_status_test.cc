@@ -355,7 +355,10 @@ TEST(SessionStatus, switch_input_mode) {
 
 TEST(SessionStatus, input_mode_shortcut_cycles_once_and_cancels_composition) {
     auto config = std::make_shared<cxxime::Config>();
-    config->input_mode_switch_key = "ctrl_shift_m";
+    config->input_mode_switch_shortcut = {
+        cxxime::kKeyModifierControl | cxxime::kKeyModifierShift,
+        'M',
+    };
     SessionManager mgr;
     ASSERT_TRUE(mgr.initialize(setup_test_dict(), config));
     uint32_t id = mgr.create_session();

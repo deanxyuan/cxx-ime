@@ -137,6 +137,61 @@ TEST(ConfigWriteCoordinator, invalid_patch_does_not_write_or_publish) {
     coordinator.stop();
 }
 
+TEST(ConfigWriteCoordinator, prepare_rejection_does_not_persist_or_apply) {
+    const std::string user_path = test_user_config_path("prepare-rejected");
+    ConfigStore store;
+    std::shared_ptr<const cxxime::Config> initial;
+    ASSERT_TRUE(initialize_store(&store, user_path, &initial));
+
+    std::atomic<int> apply_count{0};
+    std::atomic<int> prepare_count{0};
+    ConfigWriteCoordinator coordinator;
+    ASSERT_TRUE(coordinator.start(
+        &store, [&](const std::shared_ptr<const cxxime::Config>&) { apply_count.fetch_add(1); },
+        [&](const std::shared_ptr<const cxxime::Config>&, unsigned long* error_code) {
+            prepare_count.fetch_add(1);
+            *error_code = ERROR_HOTKEY_ALREADY_REGISTERED;
+            return false;
+        },
+        []() {}));
+
+    unsigned long error_code = ERROR_SUCCESS;
+    ASSERT_TRUE(!coordinator.submit(cxxime::UserConfigMutationKind::kMergePatch,
+                                    R"({"status_window":{"x":99}})", nullptr, &error_code));
+    ASSERT_EQ(error_code, static_cast<unsigned long>(ERROR_HOTKEY_ALREADY_REGISTERED));
+    ASSERT_EQ(prepare_count.load(), 1);
+    ASSERT_EQ(apply_count.load(), 0);
+    ASSERT_EQ(GetFileAttributesA(user_path.c_str()), INVALID_FILE_ATTRIBUTES);
+
+    coordinator.stop();
+}
+
+TEST(ConfigWriteCoordinator, commit_failure_cancels_prepared_runtime_change) {
+    const std::string user_path = test_user_config_path("commit-failure");
+    ConfigStore store;
+    std::shared_ptr<const cxxime::Config> initial;
+    ASSERT_TRUE(initialize_store(&store, user_path, &initial));
+    ASSERT_TRUE(CreateDirectoryA(user_path.c_str(), nullptr) != FALSE);
+
+    std::atomic<int> apply_count{0};
+    std::atomic<int> cancel_count{0};
+    ConfigWriteCoordinator coordinator;
+    ASSERT_TRUE(coordinator.start(
+        &store, [&](const std::shared_ptr<const cxxime::Config>&) { apply_count.fetch_add(1); },
+        [](const std::shared_ptr<const cxxime::Config>&, unsigned long*) { return true; },
+        [&]() { cancel_count.fetch_add(1); }));
+
+    unsigned long error_code = ERROR_SUCCESS;
+    ASSERT_TRUE(!coordinator.submit(cxxime::UserConfigMutationKind::kMergePatch,
+                                    R"({"status_window":{"x":99}})", nullptr, &error_code));
+    ASSERT_TRUE(error_code != ERROR_SUCCESS);
+    ASSERT_EQ(apply_count.load(), 0);
+    ASSERT_EQ(cancel_count.load(), 1);
+
+    coordinator.stop();
+    RemoveDirectoryA(user_path.c_str());
+}
+
 TEST(ConfigWriteCoordinator, stop_persists_accepted_patches) {
     const std::string user_path = test_user_config_path("stop-drain");
     ConfigStore store;
@@ -154,6 +209,27 @@ TEST(ConfigWriteCoordinator, stop_persists_accepted_patches) {
     ASSERT_EQ(saved["status_window"]["x"].get<int>(), 321);
     ASSERT_EQ(saved["status_window"]["y"].get<int>(), 654);
     DeleteFileA(user_path.c_str());
+}
+
+TEST(ConfigStore, identifies_theme_configuration_failure) {
+    const std::string user_path = test_user_config_path("theme-failure-user");
+    const std::string themes_path = test_user_config_path("theme-failure-themes");
+    DeleteFileA(user_path.c_str());
+    {
+        std::ofstream themes(themes_path);
+        themes << "{invalid";
+    }
+
+    ConfigStore store;
+    std::shared_ptr<const cxxime::Config> config;
+    unsigned long error_code = ERROR_SUCCESS;
+    ConfigStoreFailure failure = ConfigStoreFailure::kNone;
+    ASSERT_TRUE(!store.initialize(std::string(CXXIME_DATA_DIR) + "default.json", user_path,
+                                  themes_path, &config, &error_code, &failure));
+    ASSERT_EQ(error_code, static_cast<unsigned long>(ERROR_INVALID_DATA));
+    ASSERT_EQ(failure, ConfigStoreFailure::kThemes);
+
+    DeleteFileA(themes_path.c_str());
 }
 
 RUN_ALL_TESTS()

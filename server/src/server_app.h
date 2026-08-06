@@ -14,6 +14,7 @@
 
 #include "config_store.h"
 #include "config_write_coordinator.h"
+#include "input_method_hotkey.h"
 #include "session_manager.h"
 
 class ServerApp {
@@ -32,6 +33,7 @@ private:
     cxxime::IpcServer ipc_server_;
     cxxime::ControlServer control_server_;
     cxxime::DictionaryMonitor dictionary_monitor_;
+    InputMethodHotkey input_method_hotkey_;
     HWND hwnd_ = nullptr;
     std::string config_path_;
 };

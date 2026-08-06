@@ -7,20 +7,8 @@
 #include <cxxime/status_window.h>
 #include <cxxime/render_context.h>
 
-static HICON load_freedly_icon() {
-    static HICON icon = nullptr;
-    if (!icon) {
-        icon = (HICON)LoadImageW(nullptr,
-            CXXIME_PROJECT_DIR L"resource/freedly.ico",
-            IMAGE_ICON, 64, 64, LR_LOADFROMFILE | LR_DEFAULTCOLOR);
-    }
-    return icon;
-}
-
 static bool create_test_window(cxxime::StatusWindow& w) {
-    bool ok = w.create(GetDesktopWindow(), cxxime::StatusTheme());
-    if (ok) w.set_logo_icon(load_freedly_icon());
-    return ok;
+    return w.create(GetDesktopWindow(), cxxime::StatusTheme());
 }
 
 // ============================================================

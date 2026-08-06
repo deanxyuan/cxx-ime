@@ -102,7 +102,6 @@ public:
 private:
     void init_per_session(const Config& config);
     void rebuild_pipeline(InputMode mode, bool force = false);
-    void configure_input_mode_switch_key(const std::string& value);
     bool symbol_input_enabled(const OutputOptions& opts) const;
     bool start_symbol_input_after_commit(std::string& committed_code,
                                          Candidate& committed_candidate,
@@ -133,8 +132,7 @@ private:
     // Input mode
     InputMode mode_ = InputMode::PINYIN;
     bool commit_continues_composition_ = false;
-    uint32_t input_mode_switch_key_ = 0;
-    uint32_t input_mode_switch_modifiers_ = 0;
+    KeyboardShortcut input_mode_switch_shortcut_;
     uint32_t handled_shortcut_key_ = 0;
 
     // Query trace (explicit ownership, not thread_local - see TraceContext constraints)
