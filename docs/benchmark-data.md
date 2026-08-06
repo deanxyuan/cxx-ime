@@ -179,8 +179,8 @@ build\tools\query_bench\Release\query_bench.exe --data data --input s,sd,sdf,sdd
 ## 重跑基准
 
 ```cmd
-# 重建 topn.bin（build_short_cache.py 生成中间文件，topn_builder 转 DAT-16）
-python scripts\build_short_cache.py --input data\pinyin.dict.db --output data\pinyin.topn.intermediate.bin
+# 重建 topn.bin（build_pinyin_topn.py 生成中间文件，topn_builder 转 DAT-16）
+python scripts\build_pinyin_topn.py --input data\pinyin.dict.db --output data\pinyin.topn.intermediate.bin
 build\tools\topn_index\Release\topn_builder.exe --input data\pinyin.topn.intermediate.bin --output data\pinyin.topn.bin --format dat16
 
 # 离线查询 benchmark（无需 server）

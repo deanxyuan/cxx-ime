@@ -24,7 +24,7 @@ cxx-ime/
 ├── resource/        图标与资源 DLL 素材
 ├── scripts/         打包、词典准备、校验脚本
 ├── tools/           开发调试工具（9 个）
-├── test/            测试套件（22 个 C++ 测试 + 2 个 Python 测试）
+├── test/            测试套件（35 个 C++ 测试 + 4 个 Python 测试）
 └── third_party/     sqlite3, nlohmann/json, darts-clone
 ```
 
@@ -62,7 +62,7 @@ build.bat clean        # 清理构建目录
 
 ## 获取词典
 
-CxxIME 使用 SQLite 格式的词典作为**源数据**，构建时通过 `build_binary.py` 转换为二进制格式（一次性读入内存）。
+CxxIME 使用 SQLite 格式的词典作为**源数据**，构建时通过 `data/tools/build_runtime_dictionary.py`（`dict_builder` 包）转换为二进制格式（一次性读入内存）。
 
 ### 拼音词典
 
@@ -70,7 +70,7 @@ CxxIME 使用 SQLite 格式的词典作为**源数据**，构建时通过 `build
 
 ```cmd
 cd data
-python tools/fetch_dict.py          # 下载 → data/pinyin.dict.db（约 90 MB）
+python tools/fetch_pinyin_dictionary.py   # 下载 → data/pinyin.dict.db（约 90 MB）
 ```
 
 ### 五笔词典
@@ -79,34 +79,34 @@ python tools/fetch_dict.py          # 下载 → data/pinyin.dict.db（约 90 MB
 
 ```cmd
 cd data
-python tools/fetch_wubi.py          # 下载 → data/wubi86.dict.db
+python tools/fetch_wubi_dictionary.py     # 下载 → data/wubi86.dict.db
 ```
 
-也可以手动用 `dict_convert.py` 转换其他 RIME 格式词典：
+也可以手动用 `convert_rime_dictionary.py` 转换其他 RIME 格式词典：
 
 ```cmd
-python tools/dict_convert.py input.yaml output.db
+python tools/convert_rime_dictionary.py input.yaml output.db
 ```
 
 ### 词典数据文件
 
 | 文件 | 来源 | 是否提交 | 说明 |
 |------|------|----------|------|
-| `pinyin.dict.db.zip` | `fetch_dict.py` 下载后压缩 | **是** | 拼音词典分发副本 |
-| `wubi86.dict.db.zip` | `fetch_wubi.py` 下载后压缩 | **是** | 五笔词典分发副本 |
+| `pinyin.dict.db.zip` | `fetch_pinyin_dictionary.py` 下载后压缩 | **是** | 拼音词典分发副本 |
+| `wubi86.dict.db.zip` | `fetch_wubi_dictionary.py` 下载后压缩 | **是** | 五笔词典分发副本 |
 | `pinyin.dict.db` | 解压 `.zip` 得到 | 否 | 拼音 SQLite 源词典 |
 | `wubi86.dict.db` | 解压 `.zip` 得到 | 否 | 五笔 SQLite 源词典 |
-| `pinyin.dict.bin` | `build_binary.py` 生成 | 否 | 拼音二进制词典（运行时） |
-| `pinyin.spellings.bin` | `build_binary.py` 生成 | 否 | Patricia trie 拼写索引（运行时） |
-| `pinyin.dict.idx` | `build_binary.py` 生成 | 否 | 音节 ID 索引（运行时） |
-| `pinyin.topn.bin` | `build_short_cache.py` + `topn_builder` 生成 | 否 | DAT-16 Top-N 索引（运行时） |
-| `wubi86.dict.bin` | `build_binary.py` 生成 | 否 | 五笔二进制词典（运行时） |
-| `wubi86.dict.idx` | `build_binary.py` 生成 | 否 | 五笔编码索引（运行时） |
-| `dictionary_manifest.json` | `prepare_dict.py` 生成 | 否 | 运行时词典 bundle 清单与校验哈希 |
+| `pinyin.dict.bin` | `build_runtime_dictionary.py` 生成 | 否 | 拼音二进制词典（运行时） |
+| `pinyin.spellings.bin` | `build_runtime_dictionary.py` 生成 | 否 | Patricia trie 拼写索引（运行时） |
+| `pinyin.dict.idx` | `build_runtime_dictionary.py` 生成 | 否 | 音节 ID 索引（运行时） |
+| `pinyin.topn.bin` | `build_pinyin_topn.py` + `topn_builder` 生成 | 否 | DAT-16 Top-N 索引（运行时） |
+| `wubi86.dict.bin` | `build_runtime_dictionary.py` 生成 | 否 | 五笔二进制词典（运行时） |
+| `wubi86.dict.idx` | `build_runtime_dictionary.py --wubi-prefix-index` 生成 | 否 | 五笔完整前缀索引（运行时） |
+| `dictionary_manifest.json` | `prepare_dictionary_bundle.py` 生成 | 否 | 运行时词典 bundle 清单与校验哈希 |
 
 ### 词典维护
 
-数据来源链路：**zip → db → algebra → bin/idx/spellings + Top-N 中间文件 → DAT-16 → manifest**
+数据来源链路：**zip → db → 拼写规则展开 → bin/idx/spellings + Top-N 中间文件 → DAT-16 → manifest**
 
 ```cmd
 # 0. 拉取后先解压（仅首次）
@@ -115,12 +115,30 @@ import zipfile; zf = zipfile.ZipFile('pinyin.dict.db.zip'); zf.extractall()
 "
 
 # 1. 生成拼写表（spellings 表，应用 schema 拼写代数规则）
-python data/tools/spelling_algebra.py data/pinyin.dict.db
+python data/tools/generate_pinyin_spellings.py data/pinyin.dict.db
 
 # 2. 生成全部二进制文件（.bin + .idx + .spellings.bin）
-python data/tools/build_binary.py --input data/pinyin.dict.db --output data/pinyin
+python data/tools/build_runtime_dictionary.py --input data/pinyin.dict.db --output data/pinyin
 
-# 3. 如果修改了 .db（修复脏数据等），更新 zip
+# 3. 生成 Top-N 中间文件并转换为 DAT-16（需要 topn_builder）
+python scripts/build_pinyin_topn.py --input data/pinyin.dict.db --output data/pinyin.topn.bin
+build\tools\topn_index\Release\topn_builder.exe ^
+    --input data\pinyin.topn.bin --output data\pinyin.topn.bin --format dat16
+```
+
+以上步骤也可以用 `scripts/prepare_dictionary_bundle.py` 一键完成（并行处理拼音和五笔，自动生成 manifest）：
+
+```cmd
+python scripts/prepare_dictionary_bundle.py ^
+    --data-dir data --output-dir data ^
+    --topn-builder build\tools\topn_index\Release\topn_builder.exe
+```
+
+五笔链路：`wubi86.dict.db.zip` → 解包 → `split_wubi_symbols.py` 拆出 `symbols.json` 和过滤后的临时词典 → `build_runtime_dictionary.py --dict-only --wubi-prefix-index` 生成 `wubi86.dict.bin` + `wubi86.dict.idx`（完整前缀索引）。
+
+如果修改了 `.db`（修复脏数据等），更新 zip：
+
+```cmd
 cd data && del pinyin.dict.db.zip && python -c "
 import zipfile; zf = zipfile.ZipFile('pinyin.dict.db.zip', 'w', zipfile.ZIP_DEFLATED)
 zf.write('pinyin.dict.db'); zf.close()
@@ -152,7 +170,7 @@ scripts\package.py --host-diag         # 宿主诊断包
 
 需要预先安装 [NSIS 3.x](https://nsis.sourceforge.io/) 并确保 `makensis.exe` 在 PATH 中。如果未安装 NSIS，`package.py` 会跳过安装程序生成，`dist/` 目录中保留原始分发文件。
 
-`package.py` 执行流程：构建（x64 + x86 双 TSF DLL）→ 复制配置 → 词典转换（`.db` → `.bin`）→ 数据校验 → NSIS 编译 → 输出单文件安装程序。
+`package.py` 执行流程：构建（x64 + x86 双 TSF DLL）→ 复制配置 → 词典准备与校验（`prepare_dictionary_bundle.py` / `verify_dictionary_bundle.py`）→ NSIS 编译 → 输出单文件安装程序。
 
 打包脚本默认使用 `build-package\` 构建目录，避免和 `build.bat` 的开发构建目录互相污染。CMake 生成器默认交给 CMake 和当前命令行环境决定，也可以通过 `--generator`、`--platform` 或环境变量 `CXXIME_CMAKE_GENERATOR`、`CXXIME_CMAKE_PLATFORM` 覆盖。
 
@@ -202,7 +220,7 @@ scripts\package.py --host-diag         # 宿主诊断包
 
 | 工具 | 用途 |
 |------|------|
-| `dict_query` | 拼音/五笔查词（`--mode pinyin\|wubi`，binary 词典） |
+| `dict_query` | 拼音/五笔查词（`--mode pinyin\|wubi`，wubi 模式支持 `--index` 指定完整前缀索引） |
 | `sqlite_query` | 直读 `.db` 文件调试 |
 | `ipc_tool` | IPC 交互测试（connect / key / bench / stress 等，源码在 `tools/ipc_test/`） |
 | `query_bench` | 查询性能基准（配合 `scripts/check_query_bench.py` 做回归） |
@@ -223,7 +241,7 @@ ctest -C Debug --output-on-failure
 
 或单独运行某个测试：`build\test\Debug\ipc_test.exe`
 
-当前共 24 个 ctest 条目（22 个 C++ 测试 exe + 2 个 Python 测试），390+ 用例。
+当前共 39 个 ctest 条目（35 个 C++ 测试 + 4 个 Python 测试），500+ 用例。
 
 ## 文档
 
