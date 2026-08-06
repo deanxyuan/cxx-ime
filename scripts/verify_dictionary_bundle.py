@@ -10,7 +10,7 @@
 #   4. pinyin.dict.idx and pinyin.dict.bin version consistency
 #   5. dictionary_manifest.json describes the complete pinyin and wubi bundle
 #
-# Usage: python verify_data_files.py --data-dir <dir>
+# Usage: python verify_dictionary_bundle.py --data-dir <dir>
 #
 # Exit codes:
 #   0 = all checks passed
@@ -45,13 +45,19 @@ REQUIRED_MANIFEST_ROLES = {
     "pinyin_spellings",
     "pinyin_topn",
     "wubi_dict",
-    "wubi_idx",
+    "wubi_prefix_index",
 }
 
 # Magic values (first 8 bytes of each binary file)
 DICT_MAGIC_V1 = b"CXDIC\x01\x00\x00"
 DICT_MAGIC_V2 = b"CXDIC\x02\x00\x00"
 IDX_MAGIC = b"CXIDX\x00\x00\x00"
+WUBI_INDEX_MAGIC = b"CXWIDX\x01\x00"
+WUBI_INDEX_HEADER_FORMAT = "<8s10I"
+WUBI_INDEX_HEADER_SIZE = struct.calcsize(WUBI_INDEX_HEADER_FORMAT)
+WUBI_INDEX_KEY_FORMAT = "<III"
+WUBI_INDEX_KEY_SIZE = struct.calcsize(WUBI_INDEX_KEY_FORMAT)
+WUBI_INDEX_MAX_CODE_LENGTH = 4
 SPELLINGS_MAGIC_V2 = b"CXSPL\x02\x00\x00"
 TOPN_MAGIC = b"CXTOPN\x02\x00"
 TOPN_HEADER_FORMAT = "<8s18I"
@@ -125,6 +131,92 @@ def check_dict_idx(data_dir, filename, errors):
         errors.append(f"{filename}: bad version {version}")
         return None
     return version
+
+
+def check_wubi_prefix_index(data_dir, errors):
+    """Validate the complete Wubi prefix posting index."""
+    filename = "wubi86.dict.idx"
+    path = os.path.join(data_dir, filename)
+    with open(path, "rb") as source:
+        data = source.read()
+    if len(data) < WUBI_INDEX_HEADER_SIZE:
+        errors.append(f"{filename}: file too small for header")
+        return False
+
+    (
+        magic,
+        version,
+        header_size,
+        file_size,
+        dict_entry_count,
+        key_count,
+        posting_count,
+        keys_offset,
+        postings_offset,
+        max_code_length,
+        reserved,
+    ) = struct.unpack_from(WUBI_INDEX_HEADER_FORMAT, data, 0)
+    expected_postings_offset = keys_offset + key_count * WUBI_INDEX_KEY_SIZE
+    if (
+        magic != WUBI_INDEX_MAGIC
+        or version != 1
+        or header_size != WUBI_INDEX_HEADER_SIZE
+        or file_size != len(data)
+        or key_count == 0
+        or posting_count == 0
+        or keys_offset != WUBI_INDEX_HEADER_SIZE
+        or postings_offset != expected_postings_offset
+        or postings_offset + posting_count * 4 != len(data)
+        or max_code_length != WUBI_INDEX_MAX_CODE_LENGTH
+        or reserved != 0
+    ):
+        errors.append(f"{filename}: invalid header or section layout")
+        return False
+
+    with open(os.path.join(data_dir, "wubi86.dict.bin"), "rb") as source:
+        dict_header = source.read(16)
+    if len(dict_header) < 16 or struct.unpack_from("<I", dict_header, 12)[0] != dict_entry_count:
+        errors.append(f"{filename}: dictionary entry count mismatch")
+        return False
+
+    previous_code = 0
+    expected_posting_offset = 0
+    for index in range(key_count):
+        offset = keys_offset + index * WUBI_INDEX_KEY_SIZE
+        packed_code, posting_offset, count = struct.unpack_from(
+            WUBI_INDEX_KEY_FORMAT, data, offset
+        )
+        encoded = packed_code
+        code_length = 0
+        valid_code = encoded != 0
+        while encoded:
+            character = encoded & 0x1F
+            code_length += 1
+            if character == 0 or character > 26 or code_length > WUBI_INDEX_MAX_CODE_LENGTH:
+                valid_code = False
+                break
+            encoded >>= 5
+        if (
+            not valid_code
+            or packed_code <= previous_code
+            or count == 0
+            or posting_offset != expected_posting_offset
+            or count > posting_count - posting_offset
+        ):
+            errors.append(f"{filename}: invalid key record at index {index}")
+            return False
+        previous_code = packed_code
+        expected_posting_offset += count
+    if expected_posting_offset != posting_count:
+        errors.append(f"{filename}: posting lists do not cover the posting section")
+        return False
+
+    for index in range(posting_count):
+        entry_index = struct.unpack_from("<I", data, postings_offset + index * 4)[0]
+        if entry_index >= dict_entry_count:
+            errors.append(f"{filename}: invalid posting at index {index}")
+            return False
+    return True
 
 
 def check_spellings_bin(data_dir, errors):
@@ -422,14 +514,13 @@ def verify(data_dir):
     pinyin_dict_ver = check_dict_bin(data_dir, "pinyin.dict.bin", errors)
     pinyin_idx_ver = check_dict_idx(data_dir, "pinyin.dict.idx", errors)
     wubi_dict_ver = check_dict_bin(data_dir, "wubi86.dict.bin", errors)
-    wubi_idx_ver = check_dict_idx(data_dir, "wubi86.dict.idx", errors)
+    check_wubi_prefix_index(data_dir, errors)
     check_spellings_bin(data_dir, errors)
     check_topn_bin(data_dir, errors)
     check_symbols_json(data_dir, errors)
 
     # 3. Version consistency
     check_version_consistency("pinyin", pinyin_dict_ver, pinyin_idx_ver, errors)
-    check_version_consistency("wubi86", wubi_dict_ver, wubi_idx_ver, errors)
 
     return errors
 

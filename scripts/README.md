@@ -1,0 +1,61 @@
+# 构建与发布脚本
+
+`scripts/` 保存跨模块的构建、打包、数据校验、基准测试和诊断收集入口。词典源数据及
+`data/tools/` 内部转换工具见 [`data/README.md`](../data/README.md)。
+
+## 发布流水线
+
+正式打包统一使用：
+
+```bat
+python scripts\package.py
+```
+
+`package.py` 负责构建程序、准备词典 bundle、复制发布文件、验证数据并生成安装包。常用参数：
+
+```bat
+python scripts\package.py --fast
+python scripts\package.py --fast --host-diag
+python scripts\package.py --skip-build
+python scripts\package.py --skip-dict
+```
+
+修改词典源数据、候选排序或索引格式后，正式打包不得使用 `--skip-dict`。
+
+## 脚本职责
+
+| 脚本 | 职责 |
+|------|------|
+| `package.py` | 完整构建和发布打包入口 |
+| `prepare_dictionary_bundle.py` | 并行准备拼音、五笔运行时词典并生成 manifest |
+| `build_pinyin_topn.py` | 生成供 `topn_builder` 使用的拼音 Top-N 中间索引 |
+| `verify_dictionary_bundle.py` | 校验运行时词典、索引及 manifest 的一致性 |
+| `verify_package.py` | 校验发布目录和安装包所需文件 |
+| `benchmark.bat` | 运行主要性能基准 |
+| `benchmark_topn.ps1` | 运行拼音 Top-N 专项基准 |
+| `check_query_bench.py` | 检查查询基准结果是否满足阈值 |
+| `run_sync_regression.bat` | 在 cmd 中运行同步和数据回归检查 |
+| `run_sync_regression.ps1` | 在 PowerShell 中运行同步和数据回归检查 |
+| `collect_diagnostics.ps1` | 收集已安装版本的诊断信息 |
+| `cxxime-setup.nsi` | NSIS 安装包定义 |
+
+## 词典打包阶段
+
+词典 bundle 的正式生成顺序为：
+
+```text
+源词典
+  -> prepare_dictionary_bundle.py
+  -> 拼音 Top-N 构建中间文件
+  -> topn_builder 转换为 DAT-16
+  -> dictionary_manifest.json
+  -> verify_dictionary_bundle.py
+```
+
+单独运行词典准备脚本时必须提供 `topn_builder`：
+
+```bat
+python scripts\prepare_dictionary_bundle.py ^
+    --data-dir data --output-dir dist\data ^
+    --topn-builder build\tools\topn_index\Release\topn_builder.exe
+```

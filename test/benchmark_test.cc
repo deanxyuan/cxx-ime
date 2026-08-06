@@ -762,7 +762,7 @@ TEST(Benchmark, NormalInputNoDeadline) {
 }
 
 TEST(Benchmark, MissingTopnCausesCheckFail) {
-    // verify_data_files.py must fail when pinyin.topn.bin is missing.
+    // verify_dictionary_bundle.py must fail when pinyin.topn.bin is missing.
     // Create a temp directory, copy all data files except topn.bin, run check.
 
     // Use backslash paths for Windows copy/mkdir commands
@@ -803,8 +803,8 @@ TEST(Benchmark, MissingTopnCausesCheckFail) {
         return;
     }
 
-    // Run verify_data_files.py — should fail because topn.bin is missing
-    std::string script = project_path("scripts/verify_data_files.py");
+    // Run verify_dictionary_bundle.py; it should fail because topn.bin is missing.
+    std::string script = project_path("scripts/verify_dictionary_bundle.py");
     std::string tmp_dir_py = tmp_dir;
     for (auto& c : tmp_dir_py) { if (c == '\\') c = '/'; }
     std::string cmd = "python \"" + script + "\" --data-dir \"" + tmp_dir_py + "\"";
@@ -812,7 +812,7 @@ TEST(Benchmark, MissingTopnCausesCheckFail) {
     int exit_code = get_exit_code(rc);
 
     printf("MissingTopnCausesCheckFail: exit_code=%d\n", exit_code);
-    ASSERT_EQ(exit_code, 1) << "verify_data_files.py should fail without pinyin.topn.bin";
+    ASSERT_EQ(exit_code, 1) << "verify_dictionary_bundle.py should fail without pinyin.topn.bin";
 
     // Cleanup
     for (const char* f : files) {

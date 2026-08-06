@@ -112,7 +112,8 @@ bool load_dictionary_resources(const std::string& manifest_path, DictionaryResou
     std::string topn_path = manifest_role_path(manifest, "pinyin_topn");
     std::string spellings_path = manifest_role_path(manifest, "pinyin_spellings");
     std::string wubi_dict_path = manifest_role_path(manifest, "wubi_dict");
-    std::string wubi_idx_path = manifest_role_path(manifest, "wubi_idx");
+    std::string wubi_prefix_index_path =
+        manifest_role_path(manifest, "wubi_prefix_index");
 
     auto loaded_dict = std::make_shared<cxxime::Dict>();
     std::string user_dict_path = user_dict_path_for(cxxime::UserDictKind::PINYIN);
@@ -120,7 +121,6 @@ bool load_dictionary_resources(const std::string& manifest_path, DictionaryResou
         CXXIME_LOG(L"SharedResources: dict.open FAILED");
         return false;
     }
-    loaded_dict->set_user_scoring_profile(cxxime::UserScoringProfile::kPinyin);
 
     auto loaded_spellings = std::make_shared<cxxime::SpellingsIndex>();
     std::shared_ptr<cxxime::Syllabifier> loaded_syllabifier;
@@ -133,16 +133,13 @@ bool load_dictionary_resources(const std::string& manifest_path, DictionaryResou
     }
 
     auto loaded_wubi_dict = std::make_shared<cxxime::Dict>();
-    if (wubi_dict_path.empty() ||
-        !loaded_wubi_dict->open_bundle(wubi_dict_path,
-                                       user_dict_path_for(cxxime::UserDictKind::WUBI),
-                                       wubi_idx_path, {})) {
-        loaded_wubi_dict.reset();
-        CXXIME_LOG(L"SharedResources: wubi dict not found, wubi mode disabled");
-    } else {
-        loaded_wubi_dict->set_user_scoring_profile(cxxime::UserScoringProfile::kWubi);
-        CXXIME_LOG(L"SharedResources: wubi dict loaded");
+    if (!loaded_wubi_dict->open_wubi_bundle(
+            wubi_dict_path, user_dict_path_for(cxxime::UserDictKind::WUBI),
+            wubi_prefix_index_path)) {
+        CXXIME_LOG(L"SharedResources: required Wubi resources load FAILED");
+        return false;
     }
+    CXXIME_LOG(L"SharedResources: wubi dict loaded");
 
     out.dict = std::move(loaded_dict);
     out.wubi_dict = std::move(loaded_wubi_dict);

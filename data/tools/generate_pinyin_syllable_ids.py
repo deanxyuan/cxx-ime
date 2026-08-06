@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fix syllable_ids column in a CxxIME SQLite dictionary.
+"""Generate colon-separated Pinyin syllable IDs for a SQLite dictionary.
 
 Segments spaceless pinyin codes (e.g. "dedao" -> "de:dao") using greedy
 longest-match against the standard pinyin syllable list.

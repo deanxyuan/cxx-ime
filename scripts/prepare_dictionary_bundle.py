@@ -7,7 +7,7 @@
 # Supports both pinyin and wubi86 dictionaries.
 #
 # Usage:
-#   python scripts/prepare_dict.py --data-dir data/ --output-dir dist/data/ \
+#   python scripts/prepare_dictionary_bundle.py --data-dir data/ --output-dir dist/data/ \
 #       --topn-builder build/tools/topn_index/Release/topn_builder.exe
 
 from __future__ import annotations
@@ -23,12 +23,14 @@ import struct
 import subprocess
 import sys
 import tempfile
-import zipfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_TOOLS = os.path.join(ROOT, "data", "tools")
 SCHEMAS = os.path.join(ROOT, "data", "schemas")
 SCRIPTS = os.path.join(ROOT, "scripts")
+sys.path.insert(0, DATA_TOOLS)
+
+from dict_builder import copy_source_database
 
 MANIFEST_FILES = [
     ("pinyin_dict", "pinyin.dict.bin"),
@@ -36,7 +38,7 @@ MANIFEST_FILES = [
     ("pinyin_spellings", "pinyin.spellings.bin"),
     ("pinyin_topn", "pinyin.topn.bin"),
     ("wubi_dict", "wubi86.dict.bin"),
-    ("wubi_idx", "wubi86.dict.idx"),
+    ("wubi_prefix_index", "wubi86.dict.idx"),
 ]
 
 REQUIRED_MANIFEST_ROLES = {
@@ -45,7 +47,7 @@ REQUIRED_MANIFEST_ROLES = {
     "pinyin_spellings",
     "pinyin_topn",
     "wubi_dict",
-    "wubi_idx",
+    "wubi_prefix_index",
 }
 
 
@@ -60,33 +62,20 @@ def find_source(data_dir: str, name: str) -> str | None:
     return None
 
 
-def extract_zip(zip_path: str, work_dir: str) -> str:
-    """Extract .dict.db.zip and return path to the .db file."""
-    print(f"  Extracting {os.path.basename(zip_path)}...")
-    with zipfile.ZipFile(zip_path, "r") as zf:
-        names = zf.namelist()
-        db_name = next((n for n in names if n.endswith(".dict.db")), None)
-        if db_name is None and names:
-            db_name = names[0]
-        if db_name is None:
-            raise RuntimeError(f"No .db file found in {zip_path}")
-        zf.extractall(work_dir)
-    return os.path.join(work_dir, db_name)
-
-
 def prepare_source_copy(src: str, work_dir: str) -> str:
     """Return a writable dictionary DB path in work_dir."""
-    if src.endswith(".zip"):
-        return extract_zip(src, work_dir)
-
-    db_copy = os.path.join(work_dir, os.path.basename(src))
-    shutil.copy2(src, db_copy)
+    source_name = os.path.basename(src)
+    if source_name.endswith(".zip"):
+        source_name = source_name[:-4]
+        print(f"  Extracting {os.path.basename(src)}...")
+    db_copy = os.path.join(work_dir, source_name)
+    copy_source_database(src, db_copy)
     return db_copy
 
 
-def run_spelling_algebra(db_path: str) -> None:
+def run_pinyin_spelling_generation(db_path: str) -> None:
     """Regenerate spellings table from schema rules."""
-    script = os.path.join(DATA_TOOLS, "spelling_algebra.py")
+    script = os.path.join(DATA_TOOLS, "generate_pinyin_spellings.py")
     schema = os.path.join(SCHEMAS, "pinyin.schema.json")
     print("  Running spelling algebra...")
     subprocess.run(
@@ -96,19 +85,22 @@ def run_spelling_algebra(db_path: str) -> None:
     )
 
 
-def run_build_binary(
+def run_build_runtime_dictionary(
     db_path: str,
     output_prefix: str,
     skip_idx: bool = False,
     dict_only: bool = False,
+    wubi_prefix_index: bool = False,
 ) -> None:
-    """Convert .dict.db to binary mmap files."""
-    script = os.path.join(DATA_TOOLS, "build_binary.py")
+    """Convert a SQLite dictionary to runtime files."""
+    script = os.path.join(DATA_TOOLS, "build_runtime_dictionary.py")
     cmd = [sys.executable, script, "--input", db_path, "--output", output_prefix]
     if dict_only:
         cmd.append("--dict-only")
     if skip_idx:
         cmd.append("--skip-idx")
+    if wubi_prefix_index:
+        cmd.append("--wubi-prefix-index")
     print(f"  Building binary dicts: {os.path.basename(output_prefix)}.*")
     subprocess.run(cmd, check=True, capture_output=False)
 
@@ -149,9 +141,9 @@ def verify_generated_file(generated_path: str, expected_path: str) -> None:
             )
 
 
-def run_build_short_cache(db_path: str, output_path: str) -> None:
-    """Build the v1 intermediate Top-N index."""
-    script = os.path.join(SCRIPTS, "build_short_cache.py")
+def run_build_pinyin_topn(db_path: str, output_path: str) -> None:
+    """Build the intermediate representation consumed by topn_builder."""
+    script = os.path.join(SCRIPTS, "build_pinyin_topn.py")
     print("  Building Top-N index intermediate...")
     subprocess.run(
         [sys.executable, script, "--input", db_path, "--output", output_path],
@@ -161,7 +153,7 @@ def run_build_short_cache(db_path: str, output_path: str) -> None:
 
 
 def finalize_topn_index(output_dir: str, topn_builder: str) -> str:
-    """Convert a v1 Top-N intermediate to the runtime DAT-16 format in place."""
+    """Convert the Top-N intermediate to the runtime DAT-16 format in place."""
     topn_path = os.path.join(output_dir, "pinyin.topn.bin")
     if not os.path.isfile(topn_path):
         raise RuntimeError(f"Top-N intermediate not found: {topn_path}")
@@ -260,10 +252,10 @@ def prepare_pinyin_dictionary(data_dir: str, output_dir: str) -> list[str]:
     generated = []
     with tempfile.TemporaryDirectory(prefix="cxxime_prep_pinyin_") as tmpdir:
         db_path = prepare_source_copy(src, tmpdir)
-        run_spelling_algebra(db_path)
+        run_pinyin_spelling_generation(db_path)
 
         output_prefix = os.path.join(output_dir, "pinyin")
-        run_build_binary(db_path, output_prefix)
+        run_build_runtime_dictionary(db_path, output_prefix)
         generated.extend([
             output_prefix + ".dict.bin",
             output_prefix + ".dict.idx",
@@ -271,7 +263,7 @@ def prepare_pinyin_dictionary(data_dir: str, output_dir: str) -> list[str]:
         ])
 
         topn_path = os.path.join(output_dir, "pinyin.topn.bin")
-        run_build_short_cache(db_path, topn_path)
+        run_build_pinyin_topn(db_path, topn_path)
         generated.append(topn_path)
 
     return generated
@@ -294,7 +286,12 @@ def prepare_wubi_dictionary(data_dir: str, output_dir: str) -> list[str]:
         symbols_output = os.path.join(output_dir, "symbols.json")
         shutil.copy2(generated_symbols, symbols_output)
         output_prefix = os.path.join(output_dir, "wubi86")
-        run_build_binary(db_path, output_prefix, dict_only=True)
+        run_build_runtime_dictionary(
+            db_path,
+            output_prefix,
+            dict_only=True,
+            wubi_prefix_index=True,
+        )
         generated.extend([
             symbols_output,
             output_prefix + ".dict.bin",
@@ -304,7 +301,7 @@ def prepare_wubi_dictionary(data_dir: str, output_dir: str) -> list[str]:
     return generated
 
 
-def prepare_dict(
+def prepare_dictionary_bundle(
     data_dir: str,
     output_dir: str,
     workers: int = 2,
@@ -384,7 +381,7 @@ def main():
     print()
 
     try:
-        generated = prepare_dict(
+        generated = prepare_dictionary_bundle(
             data_dir,
             output_dir,
             workers=args.workers,

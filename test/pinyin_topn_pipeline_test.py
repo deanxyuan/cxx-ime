@@ -3,11 +3,12 @@
 
 import argparse
 import os
-import sys
 import sqlite3
+import struct
+import subprocess
+import sys
 import tempfile
 import zipfile
-import struct
 
 SCRIPTS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts")
 sys.path.insert(0, SCRIPTS_DIR)
@@ -26,17 +27,21 @@ def create_test_db(db_path):
         )
     """)
     entries = [
-        ("输入法", "shurufa", 5000, "shu:ru:fa"),       # srf, shrf, shurf
-        ("中国", "zhongguo", 8000, "zhong:guo"),         # zg, zhg, zhongg
-        ("你好", "nihao", 9000, "ni:hao"),               # nihao
+        ("输入法", "shurufa", 5000, "shu:ru:fa"),
+        ("中国", "zhongguo", 8000, "zhong:guo"),
+        ("你好", "nihao", 9000, "ni:hao"),
         ("exact-ni", "ni", 100, "ni"),
         ("high-frequency-ni-prefix", "nian", 90000000, "nian"),
         ("near-nih", "nihao", 100, "ni:hao"),
         ("far-nih", "ninhaimeiyou", 90000000, "nin:hai:mei:you"),
-        ("北京", "beijing", 7000, "bei:jing"),           # bj
-        ("的", "de", 99999, "de"),                        # d
-        ("中华人民共和国", "zhonghuarenmingongheguo", 9500,
-         "zhong:hua:ren:min:gong:he:guo"),               # zhrmghg
+        ("北京", "beijing", 7000, "bei:jing"),
+        ("的", "de", 99999, "de"),
+        (
+            "中华人民共和国",
+            "zhonghuarenmingongheguo",
+            9500,
+            "zhong:hua:ren:min:gong:he:guo",
+        ),
         ("long-complete", LONG_EXACT, 500, LONG_SYLLABLES),
     ]
     conn.executemany("INSERT INTO dict VALUES (?, ?, ?, ?)", entries)
@@ -45,9 +50,8 @@ def create_test_db(db_path):
 
 
 def run_build(input_path, output_path):
-    """Run build_short_cache.py --no-verify and return the result."""
-    import subprocess
-    script = os.path.join(SCRIPTS_DIR, "build_short_cache.py")
+    """Run build_pinyin_topn.py --no-verify and return the result."""
+    script = os.path.join(SCRIPTS_DIR, "build_pinyin_topn.py")
     result = subprocess.run(
         [sys.executable, script, "--input", input_path, "--output", output_path,
          "--no-verify"],
@@ -62,7 +66,8 @@ def read_keys(output_path):
         data = f.read()
 
     HEADER_FMT = "<8sIIIIIII"
-    _, version, key_count, _, _, keys_offset, _, str_offset = struct.unpack_from(HEADER_FMT, data)
+    header = struct.unpack_from(HEADER_FMT, data)
+    _, _, key_count, _, _, keys_offset, _, str_offset = header
 
     KEY_FMT = "<IIIHH"
     KEY_SIZE = struct.calcsize(KEY_FMT)
@@ -247,7 +252,7 @@ def main():
             runtime_topn = os.path.join(tmpdir, "pinyin.topn.bin")
             with open(out_db, "rb") as source, open(runtime_topn, "wb") as destination:
                 destination.write(source.read())
-            from prepare_dict import finalize_topn_index
+            from prepare_dictionary_bundle import finalize_topn_index
             finalize_topn_index(tmpdir, os.path.abspath(args.topn_builder))
             with open(runtime_topn, "rb") as f:
                 header = f.read(20)

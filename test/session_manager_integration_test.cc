@@ -32,6 +32,7 @@
 #include "../server/src/user_dict_control_handler.h"
 #include "util/testutil.h"
 #include "util/topn_test_data.h"
+#include "util/wubi_index_test_data.h"
 
 static char temp_path[MAX_PATH] = {};
 static std::string test_user_data_dir;
@@ -179,6 +180,8 @@ static void create_test_dictionary_bundle(const std::string& dict_path,
     std::string idx_path = dict_path + ".idx";
     std::string spellings_path = dict_path + ".spellings.bin";
     std::string topn_path = dict_path + ".topn.bin";
+    std::string wubi_path = dict_path + ".wubi.bin";
+    std::string wubi_prefix_index_path = wubi_path + ".idx";
 
     ASSERT_TRUE(cxxime::Dict::create_test_dict(dict_path, entries));
     write_test_id_index(idx_path, entries);
@@ -196,12 +199,18 @@ static void create_test_dictionary_bundle(const std::string& dict_path,
     }
     ASSERT_TRUE(cxxime::SpellingsIndex::create_test_trie(spellings_path, spellings));
     ASSERT_TRUE(cxxime::test::create_test_topn(topn_path, topn));
+    const std::vector<TestDictEntry> wubi_entries = {{"a", "wubi-test", 100}};
+    ASSERT_TRUE(cxxime::Dict::create_test_dict(wubi_path, wubi_entries));
+    ASSERT_TRUE(
+        cxxime::test::create_test_wubi_index(wubi_prefix_index_path, wubi_entries));
 
     write_manifest_for_files(dict_path, {
         {"pinyin_dict", dict_path},
         {"pinyin_idx", idx_path},
         {"pinyin_spellings", spellings_path},
         {"pinyin_topn", topn_path},
+        {"wubi_dict", wubi_path},
+        {"wubi_prefix_index", wubi_prefix_index_path},
     });
 }
 
@@ -212,9 +221,10 @@ create_test_dictionary_bundle_with_wubi(const std::string& dict_path,
     create_test_dictionary_bundle(dict_path, pinyin_entries);
 
     const std::string wubi_path = dict_path + ".wubi.bin";
-    const std::string wubi_idx_path = wubi_path + ".idx";
+    const std::string wubi_prefix_index_path = wubi_path + ".idx";
     ASSERT_TRUE(cxxime::Dict::create_test_dict(wubi_path, wubi_entries));
-    write_test_id_index(wubi_idx_path, wubi_entries);
+    ASSERT_TRUE(
+        cxxime::test::create_test_wubi_index(wubi_prefix_index_path, wubi_entries));
 
     write_manifest_for_files(dict_path, {
         {"pinyin_dict", dict_path},
@@ -222,7 +232,7 @@ create_test_dictionary_bundle_with_wubi(const std::string& dict_path,
         {"pinyin_spellings", dict_path + ".spellings.bin"},
         {"pinyin_topn", dict_path + ".topn.bin"},
         {"wubi_dict", wubi_path},
-        {"wubi_idx", wubi_idx_path},
+        {"wubi_prefix_index", wubi_prefix_index_path},
     });
 }
 
@@ -231,13 +241,9 @@ static void delete_test_dictionary_bundle(const std::string& dict_path) {
     DeleteFileA((dict_path + ".idx").c_str());
     DeleteFileA((dict_path + ".spellings.bin").c_str());
     DeleteFileA((dict_path + ".topn.bin").c_str());
-    DeleteFileA(cxxime::dictionary_manifest_path_for_dict(dict_path).c_str());
-}
-
-static void delete_test_dictionary_bundle_with_wubi(const std::string& dict_path) {
-    delete_test_dictionary_bundle(dict_path);
     DeleteFileA((dict_path + ".wubi.bin").c_str());
     DeleteFileA((dict_path + ".wubi.bin.idx").c_str());
+    DeleteFileA(cxxime::dictionary_manifest_path_for_dict(dict_path).c_str());
 }
 
 static std::string setup_test_dict() {
@@ -285,6 +291,23 @@ static bool wait_for_count(std::atomic<int>& value, int expected, int timeout_ms
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
     return true;
+}
+
+TEST(SessionIntegration, initialize_rejects_legacy_wubi_index_role) {
+    const std::string dict_path = make_temp_path("test_legacy_wubi_role_dict.bin");
+    create_test_dictionary_bundle(dict_path, {{"ni", "你", 100}});
+    write_manifest_for_files(dict_path, {
+        {"pinyin_dict", dict_path},
+        {"pinyin_idx", dict_path + ".idx"},
+        {"pinyin_spellings", dict_path + ".spellings.bin"},
+        {"pinyin_topn", dict_path + ".topn.bin"},
+        {"wubi_dict", dict_path + ".wubi.bin"},
+        {"wubi_idx", dict_path + ".wubi.bin.idx"},
+    });
+
+    SessionManager manager;
+    ASSERT_TRUE(!manager.initialize(dict_path));
+    delete_test_dictionary_bundle(dict_path);
 }
 
 // ============================================================
@@ -342,7 +365,7 @@ TEST(SessionIntegration, wubi_fifth_key_returns_commit_and_next_composition) {
     ASSERT_TRUE(candidate_contains(result.candidates, "下一项"));
 
     mgr.destroy_session(id);
-    delete_test_dictionary_bundle_with_wubi(dict_path);
+    delete_test_dictionary_bundle(dict_path);
 }
 
 TEST(SessionIntegration, process_key_invalid_session) {

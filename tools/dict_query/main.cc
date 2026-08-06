@@ -1,22 +1,28 @@
 // dict_query — interactive dictionary lookup tool for pinyin and wubi
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
-#include <cxxime/dict.h>
-#include <cxxime/translator.h>
-#include <cxxime/syllabifier.h>
-#include <cxxime/spellings_index.h>
-#include <cxxime/data_path.h>
 #include <cstdio>
 #include <cstring>
+#include <memory>
 #include <string>
+
 #include <windows.h>
 
+#include <cxxime/data_path.h>
+#include <cxxime/dict.h>
+#include <cxxime/spellings_index.h>
+#include <cxxime/syllabifier.h>
+#include <cxxime/translator.h>
+
 static void print_usage() {
-    std::puts("Usage: dict_query --mode pinyin|wubi [--dict <path>] [--spellings <path>]");
+    std::puts(
+        "Usage: dict_query --mode pinyin|wubi [--dict <path>] [--index <path>] "
+        "[--spellings <path>]");
     std::puts("");
     std::puts("  --mode pinyin   Load dict + spellings trie, use PinyinTranslator");
-    std::puts("  --mode wubi     Load dict (binary). Use sqlite_query to read .db directly");
+    std::puts("  --mode wubi     Load the Wubi runtime dict and complete-prefix index");
     std::puts("  --dict <path>   Dictionary file path");
+    std::puts("  --index <path>  Wubi complete-prefix index path (wubi mode only)");
     std::puts("  --spellings <path>  Spellings trie path (pinyin mode only)");
     std::puts("");
     std::puts("Interactive commands:");
@@ -29,14 +35,13 @@ static std::string to_utf8(const std::string& s) { return s; }
 
 // ─── Wubi mode (binary dict) ──────────────────────────────────────────
 
-static void run_wubi_binary(const std::string& dict_path) {
+static void run_wubi_binary(const std::string& dict_path, const std::string& index_path) {
     cxxime::Dict dict;
-    if (!dict.open_dict(dict_path)) {
-        std::fprintf(stderr, "ERROR: Cannot open dict: %s\n", dict_path.c_str());
+    if (!dict.open_wubi_dict(dict_path, index_path)) {
+        std::fprintf(stderr, "ERROR: Cannot open Wubi runtime data: %s, %s\n",
+                     dict_path.c_str(), index_path.c_str());
         return;
     }
-    dict.set_user_scoring_profile(cxxime::UserScoringProfile::kWubi);
-
     std::puts("Wubi mode (binary). Type :q to quit.\n");
 
     char line[256];
@@ -75,8 +80,6 @@ static void run_pinyin(const std::string& dict_path, const std::string& spelling
         std::fprintf(stderr, "ERROR: Cannot open dict: %s\n", dict_path.c_str());
         return;
     }
-    dict.set_user_scoring_profile(cxxime::UserScoringProfile::kPinyin);
-
     cxxime::SpellingsIndex spellings;
     cxxime::Syllabifier* syllabifier = nullptr;
     std::unique_ptr<cxxime::Syllabifier> syllabifier_owner;
@@ -151,6 +154,7 @@ int main(int argc, char* argv[]) {
 
     std::string mode;
     std::string dict_path;
+    std::string index_path;
     std::string spellings_path;
 
     for (int i = 1; i < argc; ++i) {
@@ -158,6 +162,8 @@ int main(int argc, char* argv[]) {
             mode = argv[++i];
         else if (std::strcmp(argv[i], "--dict") == 0 && i + 1 < argc)
             dict_path = argv[++i];
+        else if (std::strcmp(argv[i], "--index") == 0 && i + 1 < argc)
+            index_path = argv[++i];
         else if (std::strcmp(argv[i], "--spellings") == 0 && i + 1 < argc)
             spellings_path = argv[++i];
         else if (std::strcmp(argv[i], "--help") == 0 || std::strcmp(argv[i], "-h") == 0) {
@@ -183,7 +189,16 @@ int main(int argc, char* argv[]) {
         run_pinyin(dict_path, spellings_path);
     } else if (mode == "wubi") {
         dict_path = resolve_path(dict_path, "wubi86.dict.bin");
-        run_wubi_binary(dict_path);
+        if (index_path.empty()) {
+            index_path = dict_path;
+            const auto suffix = index_path.rfind(".dict.bin");
+            if (suffix != std::string::npos) {
+                index_path.replace(suffix, std::string::npos, ".dict.idx");
+            } else {
+                index_path += ".idx";
+            }
+        }
+        run_wubi_binary(dict_path, index_path);
     } else {
         std::fprintf(stderr, "ERROR: Unknown mode '%s'. Use pinyin or wubi.\n", mode.c_str());
         return 1;

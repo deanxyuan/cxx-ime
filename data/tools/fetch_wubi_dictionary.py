@@ -2,7 +2,7 @@
 """Download and convert rime-wubi86-jidian dictionary to CxxIME SQLite format.
 
 Usage:
-    python fetch_wubi.py [--output wubi86.dict.db]
+    python fetch_wubi_dictionary.py [--output wubi86.dict.db]
 
 Downloads the Wubi 86 dictionary from KyleBing/rime-wubi86-jidian on GitHub
 and converts to CxxIME SQLite format.

@@ -5,6 +5,8 @@ add_library(cxxime-engine STATIC
     src/pinyin_segmentor.cc
     src/dict.cc
     src/dict_span_query.cc
+    src/dict_wubi_query.cc
+    src/wubi_prefix_index.cc
     src/spellings_index.cc
     src/syllabifier.cc
     src/pinyin_composer.cc

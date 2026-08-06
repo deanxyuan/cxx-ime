@@ -6,7 +6,7 @@ Applies configurable regex rules to expand a syllabary into a Script
 derivation, transformation, erasion, and transliteration.
 
 Usage:
-    from spelling_algebra import SpellingAlgebra, Script, parse_rules_from_json
+    from generate_pinyin_spellings import SpellingAlgebra, Script, parse_rules_from_json
     script = Script()
     for s in syllabary: script.add_syllable(s)
     rules = parse_rules_from_json("schema.json")
@@ -348,7 +348,7 @@ def parse_rules_simple(rules_list):
 if __name__ == "__main__":
     import os
 
-    # CLI mode: spelling_algebra.py <dict.db> [schema.json]
+    # CLI mode: generate_pinyin_spellings.py <dict.db> [schema.json]
     if len(sys.argv) >= 2:
         db_path = sys.argv[1]
         schema_path = sys.argv[2] if len(sys.argv) > 2 else os.path.join(
