@@ -121,7 +121,7 @@ bool Engine::initialize(Dict& dict, SpellingsIndex& spellings,
 
 void Engine::init_per_session(const Config& config) {
     ascii_composer_.load_config(config);
-    configure_input_mode_switch_key(config.input_mode_switch_key);
+    input_mode_switch_shortcut_ = config.input_mode_switch_shortcut;
 }
 
 void Engine::finalize() {
@@ -136,7 +136,7 @@ void Engine::finalize() {
 void Engine::reload_config(const Config& config) {
     config_ = &config;
     ascii_composer_.load_config(config);
-    configure_input_mode_switch_key(config.input_mode_switch_key);
+    input_mode_switch_shortcut_ = config.input_mode_switch_shortcut;
     if (mode_ == InputMode::MIXED && translator_) {
         static_cast<MixedTranslator*>(translator_.get())
             ->set_candidate_preference(config.mixed_candidate_preference);
@@ -204,9 +204,7 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
         event.keycode != handled_shortcut_key_) {
         handled_shortcut_key_ = 0;
     }
-    if (!event.is_key_up && input_mode_switch_key_ != 0 &&
-        event.keycode == input_mode_switch_key_ &&
-        (event.modifiers & 0x07) == input_mode_switch_modifiers_) {
+    if (!event.is_key_up && input_mode_switch_shortcut_.matches(event)) {
         if (handled_shortcut_key_ == 0) {
             handled_shortcut_key_ = event.keycode;
             context_.reset();
@@ -794,20 +792,6 @@ void Engine::clear_composition() {
     commit_continues_composition_ = false;
     handled_shortcut_key_ = 0;
     // Preserve session recent cache; do not call translator_->clear_recent().
-}
-
-void Engine::configure_input_mode_switch_key(const std::string& value) {
-    input_mode_switch_key_ = 0;
-    input_mode_switch_modifiers_ = 0;
-    if (value == "f4") {
-        input_mode_switch_key_ = VK_F4;
-    } else if (value == "ctrl_shift_m") {
-        input_mode_switch_key_ = 'M';
-        input_mode_switch_modifiers_ = 0x01 | 0x02;
-    } else if (value == "ctrl_alt_m") {
-        input_mode_switch_key_ = 'M';
-        input_mode_switch_modifiers_ = 0x02 | 0x04;
-    }
 }
 
 void Engine::set_sentence_composition_enabled(bool enabled) {

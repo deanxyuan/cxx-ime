@@ -5,11 +5,10 @@
 
 #include "pch.h"
 
-// {B7E1E5A2-8F3D-4A9C-B6E7-2C4D8F1A3B5E}
-DEFINE_GUID(c_clsidTextService, 0xb7e1e5a2, 0x8f3d, 0x4a9c, 0xb6, 0xe7, 0x2c, 0x4d, 0x8f, 0x1a, 0x3b, 0x5e);
+#include <cxxime/text_service_profile.h>
 
-// {D4F2C7A1-9E6B-4D8A-A3F5-1B2C3D4E5F60}
-DEFINE_GUID(c_guidProfile, 0xd4f2c7a1, 0x9e6b, 0x4d8a, 0xa3, 0xf5, 0x1b, 0x2c, 0x3d, 0x4e, 0x5f, 0x60);
+inline constexpr CLSID c_clsidTextService = cxxime::kTextServiceClsid;
+inline constexpr GUID c_guidProfile = cxxime::kTextServiceProfileGuid;
 
 // {A1B2C3D4-E5F6-7890-ABCD-EF1234567890}
 DEFINE_GUID(c_guidDisplayAttribute, 0xa1b2c3d4, 0xe5f6, 0x7890, 0xab, 0xcd, 0xef, 0x12, 0x34, 0x56, 0x78, 0x90);
@@ -30,7 +29,7 @@ DEFINE_GUID(c_guidLangBarModeButton, 0xc1d2e3f4, 0xa5b6, 0x7890, 0xcd, 0xef, 0x1
 #define TEXTSERVICE_MODEL L"Apartment"
 #define TEXTSERVICE_ICON_INDEX 0
 
-#define TEXTSERVICE_LANGID_HANS  MAKELANGID(LANG_CHINESE, SUBLANG_CHINESE_SIMPLIFIED)
+#define TEXTSERVICE_LANGID_HANS cxxime::kTextServiceLanguageId
 
 // For Windows 8+
 #ifndef TF_IPP_CAPS_IMMERSIVESUPPORT

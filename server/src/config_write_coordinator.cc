@@ -55,13 +55,17 @@ class ConfigWriteCoordinator::Impl {
 public:
     ~Impl() { stop(); }
 
-    bool start(ConfigStore* store, ApplyHandler apply_handler) {
+    bool start(ConfigStore* store, ApplyHandler apply_handler, PrepareHandler prepare_handler,
+               CancelHandler cancel_handler) {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (running_ || !store || !apply_handler) {
+        if (running_ || !store || !apply_handler ||
+            (static_cast<bool>(prepare_handler) != static_cast<bool>(cancel_handler))) {
             return false;
         }
         store_ = store;
         apply_handler_ = std::move(apply_handler);
+        prepare_handler_ = std::move(prepare_handler);
+        cancel_handler_ = std::move(cancel_handler);
         running_ = true;
         worker_ = std::thread([this]() { run(); });
         return true;
@@ -189,13 +193,24 @@ private:
                 mutations.push_back({request->kind, request->payload});
             }
 
-            std::shared_ptr<const cxxime::Config> config;
+            PreparedConfigUpdate update;
             unsigned long error_code = ERROR_INVALID_DATA;
-            bool succeeded = store_->apply(mutations, &config, &error_code);
+            bool succeeded = store_->prepare_update(mutations, &update, &error_code);
+            bool apply_prepared = false;
+            if (succeeded && prepare_handler_) {
+                succeeded = prepare_handler_(update.config, &error_code);
+                apply_prepared = succeeded;
+            }
+            if (succeeded) {
+                succeeded = store_->commit_update(update, &error_code);
+            }
+            if (!succeeded && apply_prepared && cancel_handler_) {
+                cancel_handler_();
+            }
             std::string config_json;
             if (succeeded) {
-                apply_handler_(config);
-                config_json = config->to_runtime_json();
+                apply_handler_(update.config);
+                config_json = update.config->to_runtime_json();
                 error_code = ERROR_SUCCESS;
             }
 
@@ -210,6 +225,8 @@ private:
 
     ConfigStore* store_ = nullptr;
     ApplyHandler apply_handler_;
+    PrepareHandler prepare_handler_;
+    CancelHandler cancel_handler_;
     std::mutex mutex_;
     std::condition_variable queue_event_;
     std::deque<std::shared_ptr<WriteRequest>> queue_;
@@ -222,8 +239,10 @@ ConfigWriteCoordinator::ConfigWriteCoordinator()
 
 ConfigWriteCoordinator::~ConfigWriteCoordinator() = default;
 
-bool ConfigWriteCoordinator::start(ConfigStore* store, ApplyHandler apply_handler) {
-    return impl_->start(store, std::move(apply_handler));
+bool ConfigWriteCoordinator::start(ConfigStore* store, ApplyHandler apply_handler,
+                                   PrepareHandler prepare_handler, CancelHandler cancel_handler) {
+    return impl_->start(store, std::move(apply_handler), std::move(prepare_handler),
+                        std::move(cancel_handler));
 }
 
 void ConfigWriteCoordinator::stop() { impl_->stop(); }

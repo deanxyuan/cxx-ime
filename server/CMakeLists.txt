@@ -3,6 +3,7 @@ project(cxxime-server CXX)
 add_executable(cxxime-server WIN32
     src/config_store.cc
     src/config_write_coordinator.cc
+    src/input_method_hotkey.cc
     src/main.cc
     src/server_app.cc
     src/session_manager.cc
@@ -19,6 +20,8 @@ target_link_libraries(cxxime-server PRIVATE
     cxxime-ipc
     shell32
     advapi32
+    ole32
+    uuid
 )
 
 cxxime_add_version_resource(

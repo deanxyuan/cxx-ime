@@ -15,6 +15,9 @@ class ConfigStore;
 class ConfigWriteCoordinator {
 public:
     using ApplyHandler = std::function<void(const std::shared_ptr<const cxxime::Config>& config)>;
+    using PrepareHandler = std::function<bool(
+        const std::shared_ptr<const cxxime::Config>& config, unsigned long* error_code)>;
+    using CancelHandler = std::function<void()>;
 
     ConfigWriteCoordinator();
     ~ConfigWriteCoordinator();
@@ -22,7 +25,8 @@ public:
     ConfigWriteCoordinator(const ConfigWriteCoordinator&) = delete;
     ConfigWriteCoordinator& operator=(const ConfigWriteCoordinator&) = delete;
 
-    bool start(ConfigStore* store, ApplyHandler apply_handler);
+    bool start(ConfigStore* store, ApplyHandler apply_handler,
+               PrepareHandler prepare_handler = {}, CancelHandler cancel_handler = {});
     void stop();
 
     bool submit(cxxime::UserConfigMutationKind kind, const std::string& payload,

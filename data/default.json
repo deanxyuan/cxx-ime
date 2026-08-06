@@ -55,9 +55,10 @@
         }
     },
     "shortcuts": {
-        "input_mode_switch": "disabled"
+        "input_mode_switch": "disabled",
+        "activate_ime": "disabled"
     },
-    "theme": "azure",
+    "theme": "moon_light",
     "status_window": {
         "enable": true,
         "x": -1,

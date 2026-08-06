@@ -16,6 +16,41 @@
 
 namespace {
 
+constexpr UINT kPrepareConfigMessage = WM_APP + 1;
+constexpr UINT kCommitConfigMessage = WM_APP + 2;
+constexpr UINT kCancelConfigMessage = WM_APP + 3;
+
+std::wstring utf8_to_wide(const std::string& text) {
+    if (text.empty()) {
+        return {};
+    }
+    const int length = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(),
+                                           static_cast<int>(text.size()), nullptr, 0);
+    if (length <= 0) {
+        return {};
+    }
+    std::wstring result(length, L'\0');
+    if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(),
+                            static_cast<int>(text.size()), &result[0], length) != length) {
+        return {};
+    }
+    return result;
+}
+
+const wchar_t* config_failure_message(ConfigStoreFailure failure) {
+    switch (failure) {
+    case ConfigStoreFailure::kBaseConfig:
+        return L"默认配置加载失败。";
+    case ConfigStoreFailure::kUserConfig:
+        return L"用户配置加载失败。";
+    case ConfigStoreFailure::kThemes:
+        return L"主题配置加载失败。请检查 themes.json 的格式和主题内容。";
+    case ConfigStoreFailure::kNone:
+    default:
+        return L"配置加载失败。";
+    }
+}
+
 bool response_copy_field(char* dst, size_t dst_size, const std::string& src) {
     if (!dst || dst_size == 0 || src.size() >= dst_size) {
         return false;
@@ -29,6 +64,8 @@ bool response_copy_field(char* dst, size_t dst_size, const std::string& src) {
 bool ServerApp::initialize(const std::string& dict_path, const std::string& config_path) {
     std::string resolved_dict = dict_path.empty() ? cxxime::data_path("pinyin.dict.bin") : dict_path;
     std::string cfg = config_path.empty() ? cxxime::data_path("default.json") : config_path;
+    std::string user_config = cxxime::user_data_path("default.json");
+    std::string themes = cxxime::data_path("themes.json");
     config_path_ = cfg;
 
     CXXIME_LOG(L"Dictionary path: %S", resolved_dict.c_str());
@@ -36,22 +73,36 @@ bool ServerApp::initialize(const std::string& dict_path, const std::string& conf
 
     std::shared_ptr<const cxxime::Config> initial_config;
     unsigned long config_error = ERROR_SUCCESS;
-    if (!config_store_.initialize(config_path_, cxxime::user_data_path("default.json"),
-                                  cxxime::data_path("themes.json"), &initial_config,
-                                  &config_error) ||
-        !session_mgr_.initialize(resolved_dict, initial_config)) {
-        CXXIME_LOG(L"ServerApp: configuration initialization failed error=%lu", config_error);
-        std::wstring msg = L"Failed to initialize session manager.\n\n";
+    ConfigStoreFailure config_failure = ConfigStoreFailure::kNone;
+    if (!config_store_.initialize(config_path_, user_config, themes, &initial_config, &config_error,
+                                  &config_failure)) {
+        CXXIME_LOG(L"ServerApp: configuration initialization failed source=%d error=%lu",
+                   static_cast<int>(config_failure), config_error);
+        std::wstring msg = config_failure_message(config_failure);
+        msg += L"\n\n默认配置: ";
+        msg += utf8_to_wide(config_path_);
+        msg += L"\n用户配置: ";
+        msg += utf8_to_wide(user_config);
+        msg += L"\n主题文件: ";
+        msg += utf8_to_wide(themes);
+        msg += L"\n错误代码: ";
+        msg += std::to_wstring(config_error);
+        MessageBoxW(nullptr, msg.c_str(), L"CxxIME Server", MB_OK | MB_ICONERROR);
+        return false;
+    }
+    if (!session_mgr_.initialize(resolved_dict, initial_config)) {
+        CXXIME_LOG(L"%s", L"ServerApp: input engine initialization failed");
+        std::wstring msg = L"输入引擎初始化失败。\n\n";
         msg += L"Dict: ";
-        msg += std::wstring(resolved_dict.begin(), resolved_dict.end());
+        msg += utf8_to_wide(resolved_dict);
         msg += L"\nConfig: ";
-        msg += std::wstring(config_path_.begin(), config_path_.end());
+        msg += utf8_to_wide(config_path_);
         msg += L"\nData dir: ";
         std::string dd = cxxime::data_dir();
-        msg += std::wstring(dd.begin(), dd.end());
+        msg += utf8_to_wide(dd);
         msg += L"\nUser data dir: ";
         std::string udd = cxxime::user_data_dir();
-        msg += std::wstring(udd.begin(), udd.end());
+        msg += utf8_to_wide(udd);
         MessageBoxW(nullptr, msg.c_str(), L"CxxIME Server", MB_OK | MB_ICONERROR);
         return false;
     }
@@ -69,12 +120,25 @@ bool ServerApp::initialize(const std::string& dict_path, const std::string& conf
         return false;
 
     SetWindowLongPtrW(hwnd_, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(this));
+    if (!input_method_hotkey_.initialize(hwnd_, initial_config->activate_ime_shortcut)) {
+        CXXIME_LOG(L"%s", L"activate_ime_hotkey event=initialize result=0");
+    }
 
+    const HWND config_window = hwnd_;
     if (!config_writer_.start(
-            &config_store_, [this](const std::shared_ptr<const cxxime::Config>& config) {
+            &config_store_,
+            [this, config_window](const std::shared_ptr<const cxxime::Config>& config) {
+                SendMessageW(config_window, kCommitConfigMessage, 0, 0);
                 session_mgr_.apply_config(config);
                 control_server_.publish_snapshot(config->to_runtime_json());
-            })) {
+            },
+            [config_window](const std::shared_ptr<const cxxime::Config>& config,
+                            unsigned long* error_code) {
+                return SendMessageW(config_window, kPrepareConfigMessage,
+                                    reinterpret_cast<WPARAM>(error_code),
+                                    reinterpret_cast<LPARAM>(config.get())) != 0;
+            },
+            [config_window]() { SendMessageW(config_window, kCancelConfigMessage, 0, 0); })) {
         MessageBoxW(nullptr, L"Failed to start config writer.", L"CxxIME Server",
                     MB_OK | MB_ICONERROR);
         return false;
@@ -136,6 +200,7 @@ void ServerApp::finalize() {
     session_mgr_.set_config_patch_handler({});
     config_writer_.stop();
     control_server_.stop();
+    input_method_hotkey_.shutdown();
 
     if (hwnd_) {
         DestroyWindow(hwnd_);
@@ -413,8 +478,26 @@ cxxime::IPCResponse ServerApp::handle_request(const cxxime::IPCRequest& request)
 }
 
 LRESULT CALLBACK ServerApp::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    ServerApp* app = reinterpret_cast<ServerApp*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    if (msg == kPrepareConfigMessage) {
+        auto* error_code = reinterpret_cast<unsigned long*>(wp);
+        const auto* config = reinterpret_cast<const cxxime::Config*>(lp);
+        return app && config &&
+            app->input_method_hotkey_.prepare_update(config->activate_ime_shortcut, error_code);
+    }
+    if (msg == kCommitConfigMessage) {
+        return app && app->input_method_hotkey_.commit_update();
+    }
+    if (msg == kCancelConfigMessage) {
+        if (app) {
+            app->input_method_hotkey_.cancel_update();
+        }
+        return 0;
+    }
+    if (msg == WM_HOTKEY && app && app->input_method_hotkey_.handle(wp)) {
+        return 0;
+    }
     if (msg == WM_DESTROY) {
-        ServerApp* app = reinterpret_cast<ServerApp*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
         if (app) {
             app->hwnd_ = nullptr;
         }

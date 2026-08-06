@@ -1,10 +1,14 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
 #include "server_app.h"
+
+#include <string>
+
+#include <objbase.h>
+#include <shellapi.h>
+
 #include <cxxime/data_path.h>
 #include <cxxime/query_trace.h>
-#include <string>
-#include <shellapi.h>
 
 static std::string wide_to_utf8(const std::wstring& wstr) {
     if (wstr.empty()) return {};
@@ -24,6 +28,11 @@ static std::string get_arg(int argc, LPWSTR* argv, const std::wstring& flag) {
 }
 
 int WINAPI wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
+    const HRESULT com_result = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    if (FAILED(com_result)) {
+        return 1;
+    }
+
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
 
@@ -41,13 +50,16 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
     }
 
     ServerApp app;
-    if (!app.initialize(dict_path, config_path))
+    if (!app.initialize(dict_path, config_path)) {
+        CoUninitialize();
         return 1;
+    }
     app.run();
     app.finalize();
 
     // Shutdown async trace writer (flush remaining entries)
     cxxime::QueryTrace::shutdown();
+    CoUninitialize();
 
     return 0;
 }

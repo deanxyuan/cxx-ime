@@ -12,6 +12,12 @@
 
 namespace {
 
+void set_failure(ConfigStoreFailure* failure, ConfigStoreFailure value) {
+    if (failure) {
+        *failure = value;
+    }
+}
+
 std::wstring utf8_to_wide(const std::string& text) {
     if (text.empty()) {
         return {};
@@ -105,7 +111,8 @@ bool atomic_write_file(const std::wstring& path, const std::string& contents,
 bool ConfigStore::initialize(const std::string& base_config_path,
                              const std::string& user_config_path, const std::string& themes_path,
                              std::shared_ptr<const cxxime::Config>* config,
-                             unsigned long* error_code) {
+                             unsigned long* error_code, ConfigStoreFailure* failure) {
+    set_failure(failure, ConfigStoreFailure::kNone);
     if (!config || base_config_path.empty() || user_config_path.empty() || themes_path.empty()) {
         if (error_code) {
             *error_code = ERROR_INVALID_PARAMETER;
@@ -115,6 +122,7 @@ bool ConfigStore::initialize(const std::string& base_config_path,
 
     std::wstring user_path = utf8_to_wide(user_config_path);
     if (user_path.empty()) {
+        set_failure(failure, ConfigStoreFailure::kUserConfig);
         if (error_code) {
             *error_code = ERROR_NO_UNICODE_TRANSLATION;
         }
@@ -126,6 +134,7 @@ bool ConfigStore::initialize(const std::string& base_config_path,
     if (attributes != INVALID_FILE_ATTRIBUTES) {
         if ((attributes & FILE_ATTRIBUTE_DIRECTORY) != 0 ||
             !read_file(user_path, &user_json, error_code)) {
+            set_failure(failure, ConfigStoreFailure::kUserConfig);
             return false;
         }
     } else {
@@ -134,6 +143,7 @@ bool ConfigStore::initialize(const std::string& base_config_path,
             if (error_code) {
                 *error_code = attributes_error;
             }
+            set_failure(failure, ConfigStoreFailure::kUserConfig);
             return false;
         }
     }
@@ -141,6 +151,7 @@ bool ConfigStore::initialize(const std::string& base_config_path,
     try {
         nlohmann::json parsed = nlohmann::json::parse(user_json);
         if (!parsed.is_object()) {
+            set_failure(failure, ConfigStoreFailure::kUserConfig);
             if (error_code) {
                 *error_code = ERROR_INVALID_DATA;
             }
@@ -148,6 +159,7 @@ bool ConfigStore::initialize(const std::string& base_config_path,
         }
         user_json = parsed.dump(4);
     } catch (const nlohmann::json::exception&) {
+        set_failure(failure, ConfigStoreFailure::kUserConfig);
         if (error_code) {
             *error_code = ERROR_INVALID_DATA;
         }
@@ -157,7 +169,7 @@ bool ConfigStore::initialize(const std::string& base_config_path,
     base_config_path_ = base_config_path;
     user_config_path_ = user_config_path;
     themes_path_ = themes_path;
-    if (!build_effective_config(user_json, config, error_code)) {
+    if (!build_effective_config(user_json, config, error_code, failure)) {
         return false;
     }
     user_config_json_ = std::move(user_json);
@@ -167,9 +179,9 @@ bool ConfigStore::initialize(const std::string& base_config_path,
     return true;
 }
 
-bool ConfigStore::apply(const std::vector<ConfigMutation>& mutations,
-                        std::shared_ptr<const cxxime::Config>* config, unsigned long* error_code) {
-    if (!config || mutations.empty()) {
+bool ConfigStore::prepare_update(const std::vector<ConfigMutation>& mutations,
+                                PreparedConfigUpdate* update, unsigned long* error_code) {
+    if (!update || mutations.empty()) {
         if (error_code) {
             *error_code = ERROR_INVALID_PARAMETER;
         }
@@ -201,12 +213,28 @@ bool ConfigStore::apply(const std::vector<ConfigMutation>& mutations,
     }
 
     std::string serialized = user_config.dump(4);
-    std::shared_ptr<const cxxime::Config> effective_config;
-    if (!build_effective_config(serialized, &effective_config, error_code)) {
+    PreparedConfigUpdate prepared;
+    if (!build_effective_config(serialized, &prepared.config, error_code)) {
         return false;
     }
 
-    if (serialized != user_config_json_) {
+    prepared.user_config_json = std::move(serialized);
+    *update = std::move(prepared);
+    if (error_code) {
+        *error_code = ERROR_SUCCESS;
+    }
+    return true;
+}
+
+bool ConfigStore::commit_update(const PreparedConfigUpdate& update, unsigned long* error_code) {
+    if (!update.config || update.user_config_json.empty()) {
+        if (error_code) {
+            *error_code = ERROR_INVALID_PARAMETER;
+        }
+        return false;
+    }
+
+    if (update.user_config_json != user_config_json_) {
         std::wstring user_path = utf8_to_wide(user_config_path_);
         if (user_path.empty()) {
             if (error_code) {
@@ -214,13 +242,12 @@ bool ConfigStore::apply(const std::vector<ConfigMutation>& mutations,
             }
             return false;
         }
-        if (!atomic_write_file(user_path, serialized + "\n", error_code)) {
+        if (!atomic_write_file(user_path, update.user_config_json + "\n", error_code)) {
             return false;
         }
-        user_config_json_ = std::move(serialized);
+        user_config_json_ = update.user_config_json;
     }
 
-    *config = std::move(effective_config);
     if (error_code) {
         *error_code = ERROR_SUCCESS;
     }
@@ -229,15 +256,31 @@ bool ConfigStore::apply(const std::vector<ConfigMutation>& mutations,
 
 bool ConfigStore::build_effective_config(const std::string& user_config_json,
                                          std::shared_ptr<const cxxime::Config>* config,
-                                         unsigned long* error_code) const {
+                                         unsigned long* error_code,
+                                         ConfigStoreFailure* failure) const {
     auto candidate = std::make_shared<cxxime::Config>();
-    if (!candidate->load(base_config_path_) || !candidate->load_json(user_config_json) ||
-        !candidate->load_themes(themes_path_)) {
+    if (!candidate->load(base_config_path_)) {
+        set_failure(failure, ConfigStoreFailure::kBaseConfig);
         if (error_code) {
             *error_code = ERROR_INVALID_DATA;
         }
         return false;
     }
+    if (!candidate->load_json(user_config_json)) {
+        set_failure(failure, ConfigStoreFailure::kUserConfig);
+        if (error_code) {
+            *error_code = ERROR_INVALID_DATA;
+        }
+        return false;
+    }
+    if (!candidate->load_themes(themes_path_)) {
+        set_failure(failure, ConfigStoreFailure::kThemes);
+        if (error_code) {
+            *error_code = ERROR_INVALID_DATA;
+        }
+        return false;
+    }
+    set_failure(failure, ConfigStoreFailure::kNone);
     *config = std::move(candidate);
     return true;
 }

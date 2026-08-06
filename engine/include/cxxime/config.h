@@ -5,8 +5,10 @@
 
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 #include <cxxime/diagnostics_config.h>
+#include <cxxime/keyboard_shortcut.h>
 
 namespace cxxime {
 
@@ -73,7 +75,8 @@ struct Config {
     std::unordered_map<std::string, std::string> ascii_switch_key;
 
     // shortcuts
-    std::string input_mode_switch_key = "disabled";
+    KeyboardShortcut input_mode_switch_shortcut;
+    KeyboardShortcut activate_ime_shortcut;
 
     // status_window
     struct StatusWindowConfig {
@@ -106,6 +109,7 @@ struct Config {
         int nextpage_color = -1;
     };
     std::unordered_map<std::string, SchemeColors> preset_color_schemes;
+    std::vector<std::string> preset_color_scheme_order;
 };
 
 } // namespace cxxime

@@ -7,20 +7,27 @@
 
 namespace cxxime {
 
+constexpr uint32_t kKeyModifierShift = 0x01;
+constexpr uint32_t kKeyModifierControl = 0x02;
+constexpr uint32_t kKeyModifierAlt = 0x04;
+constexpr uint32_t kKeyModifierCapsLock = 0x08;
+constexpr uint32_t kShortcutModifierMask =
+    kKeyModifierShift | kKeyModifierControl | kKeyModifierAlt;
+
 struct KeyEvent {
     uint32_t keycode = 0;
     uint32_t modifiers = 0;
     bool is_key_up = false;
 
-    bool is_shift() const { return (modifiers & 0x01) != 0; }
-    bool is_ctrl() const { return (modifiers & 0x02) != 0; }
-    bool is_alt() const { return (modifiers & 0x04) != 0; }
-    bool is_caps_lock() const { return (modifiers & 0x08) != 0; }
+    bool is_shift() const { return (modifiers & kKeyModifierShift) != 0; }
+    bool is_ctrl() const { return (modifiers & kKeyModifierControl) != 0; }
+    bool is_alt() const { return (modifiers & kKeyModifierAlt) != 0; }
+    bool is_caps_lock() const { return (modifiers & kKeyModifierCapsLock) != 0; }
 
-    void set_shift() { modifiers |= 0x01; }
-    void set_ctrl() { modifiers |= 0x02; }
-    void set_alt() { modifiers |= 0x04; }
-    void set_caps_lock() { modifiers |= 0x08; }
+    void set_shift() { modifiers |= kKeyModifierShift; }
+    void set_ctrl() { modifiers |= kKeyModifierControl; }
+    void set_alt() { modifiers |= kKeyModifierAlt; }
+    void set_caps_lock() { modifiers |= kKeyModifierCapsLock; }
 };
 
 // Convert Windows WPARAM/LPARAM to KeyEvent
