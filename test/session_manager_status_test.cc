@@ -22,6 +22,7 @@
 #include "../server/src/session_manager.h"
 #include "util/testutil.h"
 #include "util/topn_test_data.h"
+#include "util/wubi_index_test_data.h"
 
 static char temp_path[MAX_PATH] = {};
 
@@ -217,12 +218,15 @@ static std::string setup_test_dict() {
     ASSERT_TRUE(cxxime::Dict::create_test_dict(wubi_path, {
         {"aaaa", "工", 1000},
     }));
+    ASSERT_TRUE(cxxime::test::create_test_wubi_index(
+        wubi_path + ".idx", {{"aaaa", "工", 1000}}));
     write_manifest_for_dicts(dict_path, {
         {"pinyin_dict", dict_path},
         {"pinyin_idx", dict_path + ".idx"},
         {"pinyin_spellings", dict_path + ".spellings.bin"},
         {"pinyin_topn", dict_path + ".topn.bin"},
         {"wubi_dict", wubi_path},
+        {"wubi_prefix_index", wubi_path + ".idx"},
     });
     return dict_path;
 }
@@ -369,6 +373,7 @@ TEST(SessionStatus, input_mode_shortcut_cycles_once_and_cancels_composition) {
     ASSERT_EQ(first.ime_status.input_mode, cxxime::InputMode::WUBI);
     ASSERT_TRUE(!first.composing);
     ASSERT_TRUE(first.commit_text.empty());
+
     auto repeated = mgr.process_key(id, shortcut);
     ASSERT_EQ(repeated.result, cxxime::ProcessResult::INPUT_MODE_SHORTCUT_HANDLED);
     ASSERT_EQ(repeated.ime_status.input_mode, cxxime::InputMode::WUBI);

@@ -52,7 +52,7 @@ Write-Host ""
 
 # ---- Step 2: Verify data files ----
 Write-Host "[2/5] Verifying data files..."
-$VerifyScript = Join-Path $ScriptDir "verify_data_files.py"
+$VerifyScript = Join-Path $ScriptDir "verify_dictionary_bundle.py"
 $DataDirFull = Join-Path $Root $DataDir
 if (-not (Test-Path $DataDirFull)) { $DataDirFull = $DataDir }
 

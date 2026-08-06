@@ -10,6 +10,11 @@ target_link_libraries(cxxime-test-topn-data PUBLIC
     cxxime-topn-index-builder
 )
 
+add_library(cxxime-test-wubi-index-data STATIC util/wubi_index_test_data.cc)
+target_include_directories(cxxime-test-wubi-index-data PRIVATE
+    ${CMAKE_SOURCE_DIR}/engine/src
+)
+
 function(add_cxxime_test name)
     add_executable(${name} ${name}.cc ${TEST_COMMON_SOURCES})
     target_include_directories(${name} PRIVATE ${TEST_INCLUDE_DIRS})
@@ -36,6 +41,8 @@ target_sources(edit_target_test PRIVATE ${CMAKE_SOURCE_DIR}/tsf/src/edit_target.
 target_link_libraries(edit_target_test PRIVATE ole32 oleaut32 user32)
 add_cxxime_test(ipc_test)
 add_cxxime_test(wubi_test)
+add_cxxime_test(wubi_prefix_query_test)
+target_link_libraries(wubi_prefix_query_test PRIVATE cxxime-test-wubi-index-data)
 add_cxxime_test(candidate_window_test)
 add_cxxime_test(candidate_quality_test)
 add_cxxime_test(status_window_test)
@@ -73,6 +80,7 @@ add_cxxime_test(engine_source_test)
 add_cxxime_test(symbol_input_test)
 add_cxxime_test(symbol_table_test)
 add_cxxime_test(wubi_engine_test)
+target_link_libraries(wubi_engine_test PRIVATE cxxime-test-wubi-index-data)
 add_cxxime_test(processor_pagination_test)
 add_cxxime_test(temporary_ascii_test)
 add_cxxime_test(tsf_factory_test)
@@ -93,6 +101,7 @@ target_compile_definitions(session_manager_status_test PRIVATE
 )
 target_link_libraries(session_manager_status_test PRIVATE ${TEST_COMMON_DEPS})
 target_link_libraries(session_manager_status_test PRIVATE cxxime-test-topn-data)
+target_link_libraries(session_manager_status_test PRIVATE cxxime-test-wubi-index-data)
 add_test(NAME session_manager_status_test COMMAND session_manager_status_test)
 
 add_executable(session_manager_integration_test
@@ -111,6 +120,7 @@ target_compile_definitions(session_manager_integration_test PRIVATE
 )
 target_link_libraries(session_manager_integration_test PRIVATE ${TEST_COMMON_DEPS})
 target_link_libraries(session_manager_integration_test PRIVATE cxxime-test-topn-data)
+target_link_libraries(session_manager_integration_test PRIVATE cxxime-test-wubi-index-data)
 add_test(NAME session_manager_integration_test COMMAND session_manager_integration_test)
 
 find_package(Python3 QUIET)
@@ -120,8 +130,12 @@ if(Python3_FOUND)
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/wubi_symbol_pipeline_test.py
     )
     add_test(
-        NAME build_short_cache_test
-        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/build_short_cache_test.py
+        NAME wubi_prefix_index_test
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/wubi_prefix_index_test.py
+    )
+    add_test(
+        NAME pinyin_topn_pipeline_test
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/pinyin_topn_pipeline_test.py
                 --topn-builder $<TARGET_FILE:topn_builder>
     )
     find_program(POWERSHELL_EXECUTABLE powershell)

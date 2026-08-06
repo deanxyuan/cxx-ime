@@ -244,11 +244,10 @@ public:
             pinyin_user_path_,
             project_path("data/pinyin.dict.idx"),
             project_path("data/pinyin.topn.bin")));
-        ASSERT_TRUE(wubi_dict_.open_bundle(
+        ASSERT_TRUE(wubi_dict_.open_wubi_bundle(
             project_path("data/wubi86.dict.bin"),
             wubi_user_path_,
-            project_path("data/wubi86.dict.idx"),
-            std::string{}));
+            project_path("data/wubi86.dict.idx")));
         ASSERT_TRUE(spellings_.load(project_path("data/pinyin.spellings.bin")));
         ASSERT_TRUE(spellings_.has_spellings());
 

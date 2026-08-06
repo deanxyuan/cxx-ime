@@ -396,13 +396,13 @@ def copy_config() -> None:
 
 
 def prepare_dictionaries(workers: int) -> None:
-    """Run prepare_dict.py for pinyin and wubi."""
-    from prepare_dict import prepare_dict as do_prepare
+    """Prepare the Pinyin and Wubi runtime dictionary bundle."""
+    from prepare_dictionary_bundle import prepare_dictionary_bundle
 
     data_dir = DATA
     output_dir = os.path.join(DIST_DIR, "data")
 
-    generated = do_prepare(
+    generated = prepare_dictionary_bundle(
         data_dir,
         output_dir,
         workers=workers,
@@ -416,7 +416,7 @@ def prepare_dictionaries(workers: int) -> None:
 
 def write_dictionary_manifest_for_existing_data() -> None:
     """Rebuild manifest for existing dist/data dictionary files."""
-    from prepare_dict import write_dictionary_manifest
+    from prepare_dictionary_bundle import write_dictionary_manifest
 
     data_dir = os.path.join(DIST_DIR, "data")
     manifest = write_dictionary_manifest(data_dir)
@@ -425,7 +425,7 @@ def write_dictionary_manifest_for_existing_data() -> None:
 
 def finalize_topn_data(build_dir: str, config: str) -> None:
     """Produce the only runtime Top-N format and refresh its manifest entry."""
-    from prepare_dict import finalize_topn_index
+    from prepare_dictionary_bundle import finalize_topn_index
 
     builder = built_binary_path(
         build_dir,
@@ -437,9 +437,9 @@ def finalize_topn_data(build_dir: str, config: str) -> None:
     write_dictionary_manifest_for_existing_data()
 
 
-def verify_data_files() -> None:
-    """Run verify_data_files.py."""
-    script = os.path.join(SCRIPTS, "verify_data_files.py")
+def verify_dictionary_bundle() -> None:
+    """Verify the generated runtime dictionary bundle."""
+    script = os.path.join(SCRIPTS, "verify_dictionary_bundle.py")
     data_dir = os.path.join(DIST_DIR, "data")
     run([sys.executable, script, "--data-dir", data_dir])
 
@@ -717,7 +717,7 @@ def print_summary(config: str, include_x86_modules: bool, host_diagnostics: bool
     print("    pinyin.spellings.bin   Pinyin spelling trie (runtime)")
     print("    pinyin.topn.bin        Short code cache (runtime)")
     print("    wubi86.dict.bin        Wubi binary dictionary")
-    print("    wubi86.dict.idx        Wubi code index")
+    print("    wubi86.dict.idx        Wubi complete-prefix candidate index")
     optional_scripts = [
         ("install.bat", "Installer helper"),
         ("uninstall.bat", "Uninstaller helper"),
@@ -927,7 +927,7 @@ def main():
     # 4. Verification
     step("[6/9] Verifying data files...")
     stage_start = time.perf_counter()
-    verify_data_files()
+    verify_dictionary_bundle()
     check_debug_crt(config)
     check_hot_path_logs()
     check_log_rotation()

@@ -143,7 +143,7 @@ def check_dictionary_manifest(errors: list[str], dist_dir: str) -> list[str]:
         "pinyin_spellings",
         "pinyin_topn",
         "wubi_dict",
-        "wubi_idx",
+        "wubi_prefix_index",
     }
     missing = sorted(required_roles - roles)
     if missing:

@@ -116,11 +116,13 @@ bool is_sha256_hex(const std::string& text) {
     return true;
 }
 
-const char* const kRequiredPinyinRoles[] = {
+const char* const kRequiredDictionaryRoles[] = {
     "pinyin_dict",
     "pinyin_idx",
     "pinyin_spellings",
     "pinyin_topn",
+    "wubi_dict",
+    "wubi_prefix_index",
 };
 
 } // namespace
@@ -298,7 +300,7 @@ bool load_dictionary_manifest(const std::string& manifest_path,
         out.files.push_back(std::move(manifest_file));
     }
 
-    for (const char* role : kRequiredPinyinRoles) {
+    for (const char* role : kRequiredDictionaryRoles) {
         if (!out.find_role(role)) {
             set_error(error, std::string("manifest missing ") + role);
             return false;
@@ -357,7 +359,7 @@ bool validate_dictionary_manifest(const DictionaryManifest& manifest, std::strin
             return false;
         }
     }
-    for (const char* role : kRequiredPinyinRoles) {
+    for (const char* role : kRequiredDictionaryRoles) {
         const auto* file = manifest.find_role(role);
         if (!file) {
             set_error(error, std::string("manifest missing ") + role);

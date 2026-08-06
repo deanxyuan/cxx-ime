@@ -9,11 +9,13 @@
 #include <windows.h>
 
 #include <cxxime/engine.h>
+#include <cxxime/mixed_translator.h>
 #include <cxxime/syllabifier.h>
 #include <cxxime/wubi_processor.h>
 #include <cxxime/wubi_translator.h>
 
 #include "util/testutil.h"
+#include "util/wubi_index_test_data.h"
 
 static char temp_path[MAX_PATH] = {};
 
@@ -186,6 +188,7 @@ TEST(WubiEngine, translator_uses_explicit_candidate_offset) {
 
 TEST(WubiEngine, translator_keeps_candidate_order_stable_when_page_query_expands) {
     std::string dict_path = make_temp_path("test_wubi_stable_pages.bin");
+    std::string index_path = dict_path + ".idx";
     std::string user_dict_path = make_temp_path("test_wubi_stable_pages_user.tsv");
     DeleteFileA(user_dict_path.c_str());
     const std::vector<std::tuple<std::string, std::string, int>> entries = {
@@ -193,27 +196,96 @@ TEST(WubiEngine, translator_keeps_candidate_order_stable_when_page_query_expands
         {"ac", "rank-2", 600}, {"ad", "rank-3", 700}, {"ae", "rank-4", 800},
     };
     cxxime::Dict::create_test_dict(dict_path, entries);
+    ASSERT_TRUE(cxxime::test::create_test_wubi_index(index_path, entries));
 
     cxxime::Dict dict;
-    ASSERT_TRUE(dict.open(dict_path, user_dict_path));
+    ASSERT_TRUE(dict.open_wubi_bundle(dict_path, user_dict_path, index_path));
 
     cxxime::WubiTranslator translator;
     translator.set_dict(&dict);
     auto first = translator.translate("a", 0, 2);
     auto second = translator.translate("a", 1, 2, nullptr, nullptr, nullptr, 2);
 
+    cxxime::WubiTranslator wide_translator;
+    wide_translator.set_dict(&dict);
+    auto wide = wide_translator.translate("a", 0, 5);
+
     ASSERT_EQ(first.candidates.size(), 2u);
     ASSERT_EQ(second.candidates.size(), 2u);
-    ASSERT_EQ(second.candidates[0].text, "early");
-    for (const auto& first_candidate : first.candidates) {
-        for (const auto& second_candidate : second.candidates) {
-            ASSERT_TRUE(first_candidate.text != second_candidate.text);
-        }
+    ASSERT_GE(wide.candidates.size(), 4u);
+    ASSERT_EQ(first.candidates[0].text, "exact");
+    ASSERT_EQ(first.candidates[1].text, "rank-4");
+    ASSERT_EQ(second.candidates[0].text, "rank-3");
+    ASSERT_EQ(second.candidates[1].text, "rank-2");
+    for (size_t index = 0; index < 2; ++index) {
+        ASSERT_EQ(first.candidates[index].text, wide.candidates[index].text);
+        ASSERT_EQ(second.candidates[index].text, wide.candidates[index + 2].text);
     }
 
     dict.close();
     DeleteFileA(dict_path.c_str());
+    DeleteFileA(index_path.c_str());
     DeleteFileA(user_dict_path.c_str());
+}
+
+TEST(WubiEngine, mixed_order_is_independent_of_page_query_limit) {
+    const std::string pinyin_path = make_temp_path("test_mixed_stable_pinyin.bin");
+    const std::string wubi_path = make_temp_path("test_mixed_stable_wubi.bin");
+    const std::string wubi_index_path = wubi_path + ".idx";
+    const std::string pinyin_user_path = pinyin_path + ".user.tsv";
+    const std::string wubi_user_path = wubi_path + ".user.tsv";
+    const std::vector<std::tuple<std::string, std::string, int>> pinyin_entries = {
+        {"a", "pinyin-one", 900},
+        {"a", "pinyin-two", 800},
+    };
+    const std::vector<std::tuple<std::string, std::string, int>> wubi_entries = {
+        {"a", "wubi-exact", 500},
+        {"aa", "wubi-low", 1},
+        {"ab", "wubi-rank-1", 500},
+        {"ac", "wubi-rank-2", 600},
+        {"ad", "wubi-rank-3", 700},
+        {"ae", "wubi-rank-4", 800},
+    };
+    ASSERT_TRUE(cxxime::Dict::create_test_dict(pinyin_path, pinyin_entries));
+    ASSERT_TRUE(cxxime::Dict::create_test_dict(wubi_path, wubi_entries));
+    ASSERT_TRUE(cxxime::test::create_test_wubi_index(wubi_index_path, wubi_entries));
+    DeleteFileA(pinyin_user_path.c_str());
+    DeleteFileA(wubi_user_path.c_str());
+
+    cxxime::Dict pinyin_dict;
+    cxxime::Dict wubi_dict;
+    ASSERT_TRUE(pinyin_dict.open(pinyin_path, pinyin_user_path));
+    ASSERT_TRUE(wubi_dict.open_wubi_bundle(wubi_path, wubi_user_path, wubi_index_path));
+
+    cxxime::MixedTranslator narrow_translator;
+    narrow_translator.set_pinyin_dict(&pinyin_dict);
+    narrow_translator.set_wubi_dict(&wubi_dict);
+    narrow_translator.set_candidate_preference(cxxime::MixedCandidatePreference::kWubi);
+    const auto narrow = narrow_translator.translate("a", 0, 3);
+
+    cxxime::MixedTranslator wide_translator;
+    wide_translator.set_pinyin_dict(&pinyin_dict);
+    wide_translator.set_wubi_dict(&wubi_dict);
+    wide_translator.set_candidate_preference(cxxime::MixedCandidatePreference::kWubi);
+    const auto wide = wide_translator.translate("a", 0, 10);
+
+    ASSERT_EQ(narrow.candidates.size(), 3u);
+    ASSERT_GE(wide.candidates.size(), narrow.candidates.size());
+    for (size_t index = 0; index < narrow.candidates.size(); ++index) {
+        ASSERT_EQ(narrow.candidates[index].text, wide.candidates[index].text);
+        ASSERT_EQ(narrow.candidates[index].source, wide.candidates[index].source);
+    }
+    ASSERT_EQ(narrow.candidates[0].text, "wubi-exact");
+    ASSERT_EQ(narrow.candidates[1].text, "pinyin-one");
+    ASSERT_EQ(narrow.candidates[2].text, "wubi-rank-4");
+
+    pinyin_dict.close();
+    wubi_dict.close();
+    DeleteFileA(pinyin_path.c_str());
+    DeleteFileA(wubi_path.c_str());
+    DeleteFileA(wubi_index_path.c_str());
+    DeleteFileA(pinyin_user_path.c_str());
+    DeleteFileA(wubi_user_path.c_str());
 }
 
 TEST(WubiEngine, translator_empty_code) {

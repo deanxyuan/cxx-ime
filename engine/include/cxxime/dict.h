@@ -6,6 +6,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <shared_mutex>
 #include <string>
 #include <tuple>
@@ -23,6 +24,7 @@ struct QueryTrace;
 struct QueryBudget;
 struct QueryDeadline;
 struct UserLookupStats;
+class WubiPrefixIndex;
 
 struct SpanCandidate {
     uint16_t end = 0;
@@ -58,7 +60,7 @@ enum class UserScoringProfile {
 
 class Dict {
 public:
-    Dict() = default;
+    Dict();
     ~Dict();
     Dict(const Dict&) = delete;
     Dict& operator=(const Dict&) = delete;
@@ -69,6 +71,11 @@ public:
                      const std::string& user_dict_path,
                      const std::string& idx_path,
                      const std::string& topn_path);
+    bool open_wubi_dict(const std::string& dict_path,
+                        const std::string& prefix_index_path);
+    bool open_wubi_bundle(const std::string& dict_path,
+                          const std::string& user_dict_path,
+                          const std::string& prefix_index_path);
     void close();   // saves user dict before closing
     bool is_open() const;
 
@@ -117,13 +124,12 @@ public:
     // Short code cache (Phase 4 fast path)
     const ShortCodeCache& short_cache() const { return short_cache_; }
     bool has_short_cache() const { return short_cache_.is_loaded(); }
+    bool has_wubi_prefix_index() const;
 
     // Phase 5: user dict version for cache invalidation
     uint64_t user_dict_version() const { return user_dict_version_; }
     bool has_user_entry(const std::string& text) const;
     size_t user_entry_count() const;
-    void set_user_scoring_profile(UserScoringProfile profile) { user_scoring_profile_ = profile; }
-    UserScoringProfile user_scoring_profile() const { return user_scoring_profile_; }
 
     // Phase 5: internal indexed user dict query methods
     std::vector<Candidate> lookup_user_exact(const std::string& code, int limit,
@@ -147,7 +153,8 @@ private:
     bool open_dict_with_aux(const std::string& bin_path,
                             const std::string& idx_path,
                             const std::string& topn_path,
-                            bool derive_aux_paths);
+                            bool derive_aux_paths,
+                            bool use_wubi_prefix_index = false);
     void build_syllabary();
     void build_id_index();
     void unload_id_index();
@@ -162,6 +169,7 @@ private:
 
     // Short code cache (Phase 4)
     ShortCodeCache short_cache_;
+    std::unique_ptr<WubiPrefixIndex> wubi_prefix_index_;
 
     // Integer ID index (.dict.idx, heap-allocated)
     char* idx_data_ = nullptr;

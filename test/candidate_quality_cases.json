@@ -249,6 +249,25 @@
       "require_cache_hit": true
     },
     {
+      "id": "wubi-short-d-stable-system-ranking",
+      "mode": "wubi",
+      "input": "d",
+      "contains": [
+        { "text": "在", "max_rank": 1 },
+        { "text": "石", "max_rank": 2 },
+        { "text": "左", "max_rank": 3 },
+        { "text": "顾", "max_rank": 4 },
+        { "text": "友", "max_rank": 5 }
+      ],
+      "forbid_visible": [
+        "礷",
+        "左划"
+      ],
+      "expect_sources": {
+        "在": "wubi"
+      }
+    },
+    {
       "id": "wubi-short-a",
       "mode": "wubi",
       "input": "a",

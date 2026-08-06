@@ -2,7 +2,7 @@
 """Download and convert rime-ice pinyin dictionary to CxxIME SQLite format.
 
 Usage:
-    python fetch_dict.py [--output pinyin.dict.db] [--limit 100000]
+    python fetch_pinyin_dictionary.py [--output pinyin.dict.db] [--limit 100000]
 
 Downloads the pinyin dictionary from rime-ice (iDvel/rime-ice) on GitHub,
 merges multiple dict files, and converts to CxxIME SQLite format.
@@ -160,7 +160,7 @@ def create_sqlite_db(output_path, entries, limit=0):
     """)
     cur.execute("CREATE INDEX idx_code ON dict(code)")
 
-    from fix_syllable_ids import load_syllables, segment_code
+    from generate_pinyin_syllable_ids import load_syllables, segment_code
     syllables = load_syllables()
 
     cur.executemany(

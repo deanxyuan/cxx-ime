@@ -2,7 +2,7 @@
 """Convert RIME YAML dictionary to CxxIME SQLite format.
 
 Usage:
-    python dict_convert.py input.yaml output.db [--user]
+    python convert_rime_dictionary.py input.yaml output.db [--user]
 
 The input YAML should have the format:
     ---

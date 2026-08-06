@@ -88,8 +88,6 @@ void PinyinTranslator::set_dict(Dict* dict) {
     dict_ = dict;
     query_cache_.clear();
     query_cache_sequence_ = 0;
-    if (dict_)
-        dict_->set_user_scoring_profile(UserScoringProfile::kPinyin);
 }
 
 void PinyinTranslator::set_syllabifier(Syllabifier* syllabifier) {

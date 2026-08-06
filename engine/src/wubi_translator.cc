@@ -10,8 +10,6 @@ namespace cxxime {
 void WubiTranslator::set_dict(Dict* dict) {
     dict_ = dict;
     reset_query_snapshot();
-    if (dict_)
-        dict_->set_user_scoring_profile(UserScoringProfile::kWubi);
 }
 
 void WubiTranslator::reset_query_snapshot() {

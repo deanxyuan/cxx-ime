@@ -17,6 +17,7 @@
 #include <cxxime/topk_collector.h>
 
 #include "binary_format.h"
+#include "wubi_prefix_index.h"
 
 static const char DICT_MAGIC_V1[] = "CXDIC\x01\x00\x00";
 static const char DICT_MAGIC_V2[] = "CXDIC\x02\x00\x00";
@@ -121,6 +122,8 @@ static int score_user_match(UserScoringProfile profile, UserMatchKind kind,
            user_recent_bonus(current_sequence, entry_sequence);
 }
 
+Dict::Dict() {}
+
 Dict::~Dict() {
     close();
 }
@@ -147,8 +150,30 @@ bool Dict::open_bundle(const std::string& dict_path,
                        const std::string& topn_path) {
     if (!open_dict_with_aux(dict_path, idx_path, topn_path, false))
         return false;
+    user_scoring_profile_ = UserScoringProfile::kPinyin;
     load_user_dict(user_dict_path);
     return true;
+}
+
+bool Dict::open_wubi_dict(const std::string& dict_path, const std::string& prefix_index_path) {
+    if (!open_dict_with_aux(dict_path, prefix_index_path, {}, false, true)) {
+        return false;
+    }
+    user_scoring_profile_ = UserScoringProfile::kWubi;
+    return true;
+}
+
+bool Dict::open_wubi_bundle(const std::string& dict_path, const std::string& user_dict_path,
+                            const std::string& prefix_index_path) {
+    if (!open_wubi_dict(dict_path, prefix_index_path)) {
+        return false;
+    }
+    load_user_dict(user_dict_path);
+    return true;
+}
+
+bool Dict::has_wubi_prefix_index() const {
+    return wubi_prefix_index_ != nullptr && wubi_prefix_index_->is_loaded();
 }
 
 bool Dict::is_open() const {
@@ -156,13 +181,18 @@ bool Dict::is_open() const {
 }
 
 bool Dict::open_dict(const std::string& bin_path) {
-    return open_dict_with_aux(bin_path, {}, {}, true);
+    if (!open_dict_with_aux(bin_path, {}, {}, true)) {
+        return false;
+    }
+    user_scoring_profile_ = UserScoringProfile::kPinyin;
+    return true;
 }
 
 bool Dict::open_dict_with_aux(const std::string& bin_path,
                               const std::string& idx_path,
                               const std::string& topn_path,
-                              bool derive_aux_paths) {
+                              bool derive_aux_paths,
+                              bool use_wubi_prefix_index) {
     unload_dict();
     CXXIME_LOG(L"Dict::open_dict path=%S", bin_path.c_str());
 
@@ -229,42 +259,51 @@ bool Dict::open_dict_with_aux(const std::string& bin_path,
 
     CXXIME_LOG(L"Dict::open_dict OK entries=%u", dict_entry_count_);
 
-    // Try to load pre-built ID index (.dict.idx); build from scratch if absent
-    bool index_loaded = false;
-    if (derive_aux_paths) {
-        index_loaded = load_id_index(bin_path);
-    } else if (!idx_path.empty()) {
-        index_loaded = load_id_index_file(idx_path);
+    if (use_wubi_prefix_index) {
+        wubi_prefix_index_ = std::make_unique<WubiPrefixIndex>();
+        if (idx_path.empty() || !wubi_prefix_index_->load(idx_path, dict_entry_count_)) {
+            CXXIME_LOG(L"Dict::open_dict Wubi prefix index not loaded");
+            unload_dict();
+            return false;
+        }
+    } else {
+        // Try to load pre-built ID index (.dict.idx); build from scratch if absent
+        bool index_loaded = false;
+        if (derive_aux_paths) {
+            index_loaded = load_id_index(bin_path);
+        } else if (!idx_path.empty()) {
+            index_loaded = load_id_index_file(idx_path);
+            if (!index_loaded) {
+                CXXIME_LOG(L"Dict::open_dict manifest idx not loaded");
+                unload_dict();
+                return false;
+            }
+        }
         if (!index_loaded) {
-            CXXIME_LOG(L"Dict::open_dict manifest idx not loaded");
-            unload_dict();
-            return false;
+            build_syllabary();
+            build_id_index();
         }
-    }
-    if (!index_loaded) {
-        build_syllabary();
-        build_id_index();
-    }
 
-    // Try to load the pre-built Top-N index (pinyin.topn.bin).
-    if (derive_aux_paths) {
-        // Derive path from dict_bin_path: pinyin.dict.bin -> pinyin.topn.bin
-        std::string topn_path = bin_path;
-        auto pos = topn_path.rfind(".dict.bin");
-        if (pos != std::string::npos)
-            topn_path.replace(pos, std::string::npos, ".topn.bin");
-        else
-            topn_path += ".topn.bin";
-        if (!short_cache_.load(topn_path)) {
-            CXXIME_LOG(L"Dict::open_dict Top-N index not loaded (standalone mode)");
-            // Not fatal for standalone tools/tests. Server runtime uses open_bundle()
-            // with manifest-declared topn_path and treats load failure as fatal.
-        }
-    } else if (!topn_path.empty()) {
-        if (!short_cache_.load(topn_path)) {
-            CXXIME_LOG(L"Dict::open_dict manifest topn not loaded");
-            unload_dict();
-            return false;
+        // Try to load the pre-built Top-N index (pinyin.topn.bin).
+        if (derive_aux_paths) {
+            // Derive path from dict_bin_path: pinyin.dict.bin -> pinyin.topn.bin
+            std::string derived_topn_path = bin_path;
+            auto pos = derived_topn_path.rfind(".dict.bin");
+            if (pos != std::string::npos)
+                derived_topn_path.replace(pos, std::string::npos, ".topn.bin");
+            else
+                derived_topn_path += ".topn.bin";
+            if (!short_cache_.load(derived_topn_path)) {
+                CXXIME_LOG(L"Dict::open_dict Top-N index not loaded (standalone mode)");
+                // Not fatal for standalone tools/tests. Server runtime uses open_bundle()
+                // with manifest-declared topn_path and treats load failure as fatal.
+            }
+        } else if (!topn_path.empty()) {
+            if (!short_cache_.load(topn_path)) {
+                CXXIME_LOG(L"Dict::open_dict manifest topn not loaded");
+                unload_dict();
+                return false;
+            }
         }
     }
 
@@ -651,6 +690,7 @@ void Dict::remove_user_from_indexes(UserEntryId id) {
 void Dict::unload_dict() {
     unload_id_index();
     short_cache_.unload();
+    wubi_prefix_index_.reset();
     delete[] dict_data_;
     dict_data_ = nullptr;
     dict_entries_ = nullptr;
@@ -732,84 +772,6 @@ std::vector<Candidate> Dict::lookup_by_syllables(
         results.resize(limit);
 
     return results;
-}
-
-std::vector<Candidate> Dict::lookup(const std::string& code_prefix, int limit, QueryTrace* trace) {
-    std::vector<Candidate> results;
-    if (!dict_entries_)
-        return results;
-
-    const uint32_t prefix_len = (uint32_t)code_prefix.size();
-    const char* prefix_data = code_prefix.data();
-
-    // Scan all entries for prefix match on code (syllable_ids)
-    // Since dict.bin is sorted by syllable_ids, we can binary search for the start
-    // and scan forward until the prefix no longer matches.
-    uint32_t lo = 0, hi = dict_entry_count_;
-    while (lo < hi) {
-        uint32_t mid = lo + (hi - lo) / 2;
-        const auto& e = dict_entries_[mid];
-        const char* sid = dict_strings_ + e.syllable_ids_offset;
-        uint32_t cmp_len = std::min(e.syllable_ids_len, prefix_len);
-        int cmp = std::memcmp(sid, prefix_data, cmp_len);
-        if (cmp < 0 || (cmp == 0 && e.syllable_ids_len < prefix_len)) {
-            lo = mid + 1;
-        } else {
-            hi = mid;
-        }
-    }
-
-    // Scan forward collecting prefix matches.
-    // Exact matches (same code length) get boosted so they sort before prefix matches.
-    while (lo < dict_entry_count_ && (int)results.size() < limit) {
-        const auto& e = dict_entries_[lo];
-        if (e.syllable_ids_len < prefix_len)
-            break;
-        if (std::memcmp(dict_strings_ + e.syllable_ids_offset, prefix_data, prefix_len) != 0)
-            break;
-
-        Candidate c;
-        c.text.assign(dict_strings_ + e.text_offset, e.text_len);
-        set_candidate_code(c, dict_strings_ + e.syllable_ids_offset,
-                           e.syllable_ids_len);
-        // Exact match first, then shorter codes before longer codes,
-        // then by original frequency. Encode as: exact*100000 + (100-len)*100 + freq
-        c.frequency = (e.syllable_ids_len == prefix_len ? 100000 : 0)
-                    + (100 - (int)e.syllable_ids_len) * 100
-                    + e.frequency;
-        merge_candidate_by_score(results, std::move(c));
-        ++lo;
-    }
-
-    // Phase 5: query user dict via prefix index
-    {
-        QueryBudget ub;
-        UserLookupStats ustats;
-        auto user_results = lookup_user_prefix(code_prefix, limit, ub, trace, &ustats);
-        for (auto& c : user_results) {
-            merge_candidate_by_score(results, std::move(c));
-        }
-    }
-
-    sort_candidates_by_score(results);
-
-    if ((int)results.size() > limit)
-        results.resize(limit);
-
-    return results;
-}
-
-// Budget-aware overload: delegates to non-budget version, adds deadline check
-std::vector<Candidate> Dict::lookup(const std::string& code_prefix, int limit,
-                                     const QueryBudget& budget, QueryTrace* trace) {
-    if (budget.deadline.enabled && budget.deadline.expired()) {
-        if (trace) {
-            trace->deadline_exceeded = true;
-            trace->truncated = true;
-        }
-        return {};
-    }
-    return lookup(code_prefix, limit, trace);
 }
 
 // Budget-aware overload: delegates to non-budget version, adds deadline check

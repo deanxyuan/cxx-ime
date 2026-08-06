@@ -52,7 +52,7 @@ echo.
 
 :: ---- Step 2: Verify data files ----
 echo [2/5] Verifying data files...
-python "%SCRIPT_DIR%verify_data_files.py" --data-dir "%DATA_DIR%"
+python "%SCRIPT_DIR%verify_dictionary_bundle.py" --data-dir "%DATA_DIR%"
 if errorlevel 1 (
     echo ERROR: Data file integrity check failed.
     exit /b 4
