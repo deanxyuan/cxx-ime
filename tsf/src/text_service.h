@@ -216,6 +216,7 @@ private:
     bool _sync_caps_lock_state(bool caps_lock,
                                const char* source,
                                cxxime::ImeStatus* synced_status = nullptr);
+    bool _refresh_caps_lock_on_focus(const char* source);
     bool _ensure_ipc_session();
     bool _recreate_ipc_session_preserving_status();
     bool _heartbeat_ipc();

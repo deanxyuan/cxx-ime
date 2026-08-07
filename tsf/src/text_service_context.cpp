@@ -309,6 +309,9 @@ bool TextService::_update_input_focus_from_thread_mgr() {
 
 STDMETHODIMP TextService::OnSetThreadFocus() {
     _update_input_focus_from_thread_mgr();
+    if (_inputFocused) {
+        _refresh_caps_lock_on_focus("thread_focus");
+    }
     _show_status_window_if_allowed("show:thread_focus");
     return S_OK;
 }
@@ -369,6 +372,7 @@ STDMETHODIMP TextService::OnSetFocus(ITfDocumentMgr* pDocMgrFocus,
         _client.get_status(_sessionId, resp) && resp.status == cxxime::IPCStatus::OK) {
         _sync_ime_status(resp.ime_status);
     }
+    _refresh_caps_lock_on_focus("document_focus");
 
     // Document focus changed; hide candidate window if switching away.
     if (_composing) {
