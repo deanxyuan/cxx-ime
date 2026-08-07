@@ -10,17 +10,21 @@ namespace cxxime_tsf {
 
 void trace_stage_composition_edit(TextService* service,
                                   const StageCompositionEditResult& result) {
+    const bool async_pending = SUCCEEDED(result.request_hr) &&
+                               SUCCEEDED(result.edit_hr) &&
+                               result.action_hr == E_PENDING &&
+                               (!result.sync_requested || result.async_fallback);
     const bool operation_succeeded = SUCCEEDED(result.request_hr) &&
                                      SUCCEEDED(result.edit_hr) &&
                                      SUCCEEDED(result.action_hr);
     const char* outcome = "failed";
-    if (operation_succeeded && result.composition_active) {
+    if (async_pending) {
+        outcome = "async_pending";
+    } else if (operation_succeeded && result.composition_active) {
         outcome = "active";
     } else if (result.start_attempted && SUCCEEDED(result.start_hr) &&
                !result.composition_returned) {
         outcome = "host_rejected";
-    } else if (result.async_fallback && result.action_hr == E_PENDING) {
-        outcome = "async_pending";
     }
     cxxime::write_stage_trace("tsf", "tsf.composition", {
         {"input_id", service ? service->stage_input_id() : 0},

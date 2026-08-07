@@ -26,7 +26,6 @@ public:
         UPDATE_COMPOSITION,
         ENSURE_COMPOSITION_TEXT,
         COMMIT_COMPOSITION,
-        COMMIT_AND_RESTART_COMPOSITION,
         QUERY_CARET,
         UPDATE_CANDIDATE_POSITION
     };
@@ -34,9 +33,6 @@ public:
     void set_composition_action(Action action,
                                 const std::wstring& text,
                                 size_t selection_offset);
-    void set_commit_and_restart_action(const std::wstring& commit_text,
-                                       const std::wstring& composition_text,
-                                       size_t selection_offset);
     void set_position_update_from_layout_change(bool from_layout_change) {
         _positionUpdateFromLayoutChange = from_layout_change;
     }
@@ -58,7 +54,6 @@ private:
     ITfContext* _context;
     Action _action = Action::INSERT_TEXT;
     std::wstring _text;
-    std::wstring _commitText;
     size_t _selectionOffset = 0;
     bool _hasSelectionOffset = false;
     RECT _resultRect = {};

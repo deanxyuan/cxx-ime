@@ -173,10 +173,10 @@ private:
     bool _register_display_attribute_atom();
     HRESULT _end_composition(ITfContext* pic);
     HRESULT _commit_text(ITfContext* pic, const std::wstring& text, bool sync = false);
-    HRESULT _commit_and_restart_composition(ITfContext* pic,
-                                            const std::wstring& commit_text,
-                                            const std::wstring& preedit,
-                                            size_t preedit_cursor);
+    HRESULT _commit_then_restart_composition(ITfContext* pic,
+                                             const std::wstring& commit_text,
+                                             const std::wstring& preedit,
+                                             size_t preedit_cursor);
     bool _ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam, BOOL* pfEaten);
     bool _ProcessKeyUp(WPARAM wParam, LPARAM lParam);
     void _AbortComposition();
