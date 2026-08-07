@@ -422,7 +422,7 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
         bool candidate_ui_published = false;
         auto apply_composition = [&](const std::wstring& text, size_t cursor) {
             if (commit_continues_composition) {
-                return _commit_and_restart_composition(pic, commit_text, text, cursor);
+                return _commit_then_restart_composition(pic, commit_text, text, cursor);
             }
             return update_composition(pic, text, cursor, true, TF_ES_SYNC);
         };
