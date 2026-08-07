@@ -19,31 +19,37 @@ static std::string data_path(const char* rel) {
     return std::string(CXXIME_PROJECT_DIR) + std::string("data/") + rel;
 }
 
+static void enable_normal_diagnostics() {
+    cxxime::DiagnosticsConfig config;
+    config.trace_mode = cxxime::DiagnosticTraceMode::kNormal;
+    cxxime::set_diagnostics_config(config);
+}
+
 // ─── QueryTrace::should_log() ──────────────────────────────────────────
 
 TEST(QueryTrace, should_log_deadline_exceeded) {
-    cxxime::reset_diagnostics_config();
+    enable_normal_diagnostics();
     cxxime::QueryTrace t;
     t.deadline_exceeded = true;
     ASSERT_TRUE(t.should_log());
 }
 
 TEST(QueryTrace, should_log_cancelled) {
-    cxxime::reset_diagnostics_config();
+    enable_normal_diagnostics();
     cxxime::QueryTrace t;
     t.cancelled = true;
     ASSERT_TRUE(t.should_log());
 }
 
 TEST(QueryTrace, should_log_slow_query) {
-    cxxime::reset_diagnostics_config();
+    enable_normal_diagnostics();
     cxxime::QueryTrace t;
     t.total_us = 30001;
     ASSERT_TRUE(t.should_log());
 }
 
 TEST(QueryTrace, should_log_cache_miss_slow) {
-    cxxime::reset_diagnostics_config();
+    enable_normal_diagnostics();
     cxxime::QueryTrace t;
     t.cache_hit = false;
     t.total_us = 10001;
@@ -51,7 +57,7 @@ TEST(QueryTrace, should_log_cache_miss_slow) {
 }
 
 TEST(QueryTrace, should_log_fast_normal_not_logged) {
-    cxxime::reset_diagnostics_config();
+    enable_normal_diagnostics();
     // A fast, non-truncated, normal query should mostly NOT be logged
     // (0.1% sampling rate means < 1 in 100 should log)
     cxxime::QueryTrace t;
@@ -74,7 +80,7 @@ TEST(QueryTrace, should_log_fast_normal_not_logged) {
 }
 
 TEST(QueryTrace, should_log_truncated_sampled) {
-    cxxime::reset_diagnostics_config();
+    enable_normal_diagnostics();
     // Truncated queries use 1% sampling rate
     cxxime::QueryTrace t;
     t.truncated = true;

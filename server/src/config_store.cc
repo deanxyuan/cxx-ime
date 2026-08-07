@@ -266,7 +266,7 @@ bool ConfigStore::build_effective_config(const std::string& user_config_json,
         }
         return false;
     }
-    if (!candidate->load_json(user_config_json)) {
+    if (!candidate->load_user_json(user_config_json)) {
         set_failure(failure, ConfigStoreFailure::kUserConfig);
         if (error_code) {
             *error_code = ERROR_INVALID_DATA;

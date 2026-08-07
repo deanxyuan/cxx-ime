@@ -367,10 +367,18 @@ def copy_binaries(
     copy_binary(build_dir, config, "settings", "cxxime-settings.exe")
 
 
-def copy_config() -> None:
+def copy_config(host_diagnostics: bool) -> None:
     """Copy config and themes to dist/data."""
     data_dir = os.path.join(DIST_DIR, "data")
-    shutil.copy2(os.path.join(DATA, "default.json"), data_dir)
+    default_json = os.path.join(data_dir, "default.json")
+    shutil.copy2(os.path.join(DATA, "default.json"), default_json)
+    if host_diagnostics:
+        with open(default_json, encoding="utf-8") as f:
+            config = json.load(f)
+        config.setdefault("diagnostics", {})["trace_mode"] = "normal"
+        with open(default_json, "w", encoding="utf-8", newline="\n") as f:
+            json.dump(config, f, ensure_ascii=False, indent=4)
+            f.write("\n")
     print("  default.json")
 
     presets = os.path.join(DATA, "settings_presets.json")
@@ -563,19 +571,25 @@ def check_hot_path_logs() -> None:
             print(f"  WARNING: {basename}: {count} CXXIME_LOG call(s) in hot path")
 
 
-def check_log_rotation() -> None:
-    """Check that diagnostics log rotation is configured."""
-    print("  Checking log rotation config...")
+def check_diagnostics_config(host_diagnostics: bool) -> None:
+    """Check the packaged diagnostics mode and log rotation settings."""
+    print("  Checking diagnostics config...")
     default_json = os.path.join(DIST_DIR, "data", "default.json")
     if os.path.isfile(default_json):
         with open(default_json, encoding="utf-8") as f:
             cfg = json.load(f)
-            diag = cfg.get("diagnostics", {})
-            required = ("trace_mode", "log_max_size", "log_max_files")
-            if isinstance(diag, dict) and all(k in diag for k in required):
-                print("  Diagnostics log rotation config found.")
-                return
-    print("  WARNING: default.json does not contain diagnostics log rotation config.")
+        diag = cfg.get("diagnostics", {})
+        required = ("trace_mode", "log_max_size", "log_max_files")
+        if isinstance(diag, dict) and all(k in diag for k in required):
+            expected_mode = "normal" if host_diagnostics else "off"
+            if diag["trace_mode"] != expected_mode:
+                raise RuntimeError(
+                    f"Packaged diagnostics trace_mode must be {expected_mode!r}, "
+                    f"got {diag['trace_mode']!r}"
+                )
+            print(f"  Diagnostics trace mode: {expected_mode}.")
+            return
+    raise RuntimeError("default.json does not contain diagnostics log rotation config")
 
 
 def verify_package_layout(include_x86_modules: bool, host_diagnostics: bool) -> None:
@@ -918,7 +932,7 @@ def main():
         )
 
         print("  Copying config and themes...")
-        copy_config()
+        copy_config(host_diagnostics=args.host_diag)
         timings.append(("copy package files", time.perf_counter() - stage_start))
 
         if dict_future is not None:
@@ -938,7 +952,7 @@ def main():
     verify_dictionary_bundle()
     check_debug_crt(config)
     check_hot_path_logs()
-    check_log_rotation()
+    check_diagnostics_config(host_diagnostics=args.host_diag)
     timings.append(("verify data and checks", time.perf_counter() - stage_start))
 
     # 5. Installer scripts

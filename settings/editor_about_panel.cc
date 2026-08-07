@@ -4,9 +4,6 @@
 
 #include <cwchar>
 
-#include <string>
-#include <thread>
-
 #include <shellapi.h>
 #include <windowsx.h>
 
@@ -99,32 +96,6 @@ LRESULT CALLBACK AboutLinkProc(HWND window, UINT message, WPARAM wparam, LPARAM 
     return DefSubclassProc(window, message, wparam, lparam);
 }
 
-std::wstring module_directory() {
-    wchar_t path[MAX_PATH] = {};
-    if (!GetModuleFileNameW(nullptr, path, MAX_PATH)) {
-        return {};
-    }
-    std::wstring directory(path);
-    size_t separator = directory.find_last_of(L"\\/");
-    if (separator != std::wstring::npos) {
-        directory.resize(separator);
-    }
-    return directory;
-}
-
-std::wstring find_collect_diagnostics_script() {
-    std::wstring directory = module_directory();
-    if (directory.empty()) {
-        return {};
-    }
-    std::wstring script = directory + L"\\collect_diagnostics.ps1";
-    DWORD attributes = GetFileAttributesW(script.c_str());
-    if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0) {
-        return script;
-    }
-    return {};
-}
-
 } // namespace
 
 void EditorApp::create_about_panel(HWND panel, int panel_width) {
@@ -165,21 +136,6 @@ void EditorApp::create_about_panel(HWND panel, int panel_width) {
         nullptr);
     SendMessageW(github_link, WM_SETFONT, reinterpret_cast<WPARAM>(get_font()), TRUE);
     SetWindowSubclass(github_link, AboutLinkProc, kGitHubLinkId, 0);
-    HWND diagnostics = CreateWindowExW(
-        0, L"BUTTON", L"导出诊断包", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
-        kPanelPadLeft, top + kRowH * 6, S(120), kCtrlH, panel,
-        reinterpret_cast<HMENU>(static_cast<INT_PTR>(5001)), GetModuleHandle(nullptr), nullptr);
-    SendMessageW(diagnostics, WM_SETFONT, reinterpret_cast<WPARAM>(get_font()), TRUE);
-}
-
-bool EditorApp::handle_about_command(int control_id, int notification) {
-    if (control_id != 5001) {
-        return false;
-    }
-    if (notification == BN_CLICKED) {
-        export_diagnostics();
-    }
-    return true;
 }
 
 bool EditorApp::handle_about_notify(LPARAM notification) {
@@ -197,54 +153,6 @@ bool EditorApp::handle_about_notify(LPARAM notification) {
         return true;
     }
     return false;
-}
-
-void EditorApp::export_diagnostics() {
-    std::wstring script = find_collect_diagnostics_script();
-    if (script.empty()) {
-        MessageBoxW(hwnd_, L"未找到 collect_diagnostics.ps1。请确认当前版本已完整安装。", L"CxxIME",
-                    MB_OK | MB_ICONERROR);
-        return;
-    }
-
-    std::wstring directory = script;
-    size_t separator = directory.find_last_of(L"\\/");
-    if (separator != std::wstring::npos) {
-        directory.resize(separator);
-    }
-
-    std::wstring parameters = L"-NoProfile -ExecutionPolicy Bypass -File \"" + script + L"\"";
-    SHELLEXECUTEINFOW execute_info = {};
-    execute_info.cbSize = sizeof(execute_info);
-    execute_info.fMask = SEE_MASK_NOCLOSEPROCESS;
-    execute_info.hwnd = hwnd_;
-    execute_info.lpVerb = L"open";
-    execute_info.lpFile = L"powershell.exe";
-    execute_info.lpParameters = parameters.c_str();
-    execute_info.lpDirectory = directory.empty() ? nullptr : directory.c_str();
-    execute_info.nShow = SW_SHOWNORMAL;
-
-    if (!ShellExecuteExW(&execute_info)) {
-        MessageBoxW(hwnd_, L"启动诊断导出失败。", L"CxxIME", MB_OK | MB_ICONERROR);
-        return;
-    }
-    MessageBoxW(hwnd_, L"已开始导出诊断包，完成后会再次提示结果。", L"CxxIME",
-                MB_OK | MB_ICONINFORMATION);
-
-    if (execute_info.hProcess) {
-        HWND window = hwnd_;
-        HANDLE process = execute_info.hProcess;
-        std::thread([window, process]() {
-            WaitForSingleObject(process, INFINITE);
-            DWORD exit_code = 1;
-            GetExitCodeProcess(process, &exit_code);
-            CloseHandle(process);
-            if (IsWindow(window)) {
-                PostMessageW(window, kDiagnosticsCompleteMessage, static_cast<WPARAM>(exit_code),
-                             0);
-            }
-        }).detach();
-    }
 }
 
 } // namespace settings

@@ -39,6 +39,7 @@ private:
     void create_advanced_layout_panel(HWND panel);
     void create_shortcuts_panel(HWND panel);
     void create_dictionary_panel(HWND panel, int panel_width);
+    void create_diagnostics_panel(HWND panel);
     void create_about_panel(HWND panel, int panel_width);
     bool handle_input_command(int control_id, int notification);
     bool handle_candidate_command(int control_id, int notification);
@@ -47,7 +48,7 @@ private:
     bool handle_dictionary_command(int control_id, int notification);
     bool handle_dictionary_notify(LPARAM notification);
     void handle_user_dict_query_complete(WPARAM generation, LPARAM completion);
-    bool handle_about_command(int control_id, int notification);
+    bool handle_diagnostics_command(int control_id, int notification);
     bool handle_about_notify(LPARAM notification);
     void show_panel(int idx);
     bool load_config();
@@ -63,12 +64,15 @@ private:
     void import_user_dict();
     void export_user_dict();
     void open_user_dict_dir();
-    void export_diagnostics();
     void set_user_dict_status(const std::wstring& text);
     void update_user_dict_status();
     void update_user_dict_path();
     void update_user_entry_actions();
     void on_user_entry_selected();
+    void load_diagnostics_controls();
+    void read_diagnostics_controls();
+    void open_diagnostics_log_directory();
+    void export_diagnostics();
     void apply_candidate_control(int control_id);
     void apply_candidate_layout_to_edits(const cxxime::LayoutConfig& layout);
     void apply_default_candidate_settings();
@@ -92,7 +96,7 @@ private:
     cxxime::SettingsPanel initial_panel_ = cxxime::SettingsPanel::kInput;
 
     // Panel container windows
-    HWND hPanels_[6] = {};
+    HWND hPanels_[7] = {};
 
     // Input panel controls
     HWND hInputModePinyin_ = nullptr;
@@ -123,6 +127,9 @@ private:
     HWND hRenderD2D_ = nullptr, hRenderGDI_ = nullptr;
     HWND hStatusWindow_ = nullptr;
     HWND hLabelFontPt_ = nullptr;
+
+    // Diagnostics panel
+    HWND hDiagnosticsLogging_ = nullptr;
 
     // Candidate panel
     HWND hCandDensity_ = nullptr;

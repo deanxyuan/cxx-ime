@@ -10,6 +10,7 @@ namespace cxxime {
 namespace {
 
 bool is_supported_virtual_key(uint32_t virtual_key) {
+    // Windows reserves F12 for debugger use, so shortcut handling stops at F11.
     return (virtual_key >= 'A' && virtual_key <= 'Z') ||
            (virtual_key >= '0' && virtual_key <= '9') ||
            (virtual_key >= VK_F1 && virtual_key <= VK_F11) ||
@@ -171,6 +172,10 @@ bool is_valid_activate_ime_shortcut(const KeyboardShortcut& shortcut) {
         return false;
     }
     if (!shortcut.enabled()) {
+        return true;
+    }
+    if (shortcut.modifiers == 0 &&
+        shortcut.virtual_key >= VK_F1 && shortcut.virtual_key <= VK_F11) {
         return true;
     }
     return (shortcut.modifiers & kKeyModifierControl) != 0 &&

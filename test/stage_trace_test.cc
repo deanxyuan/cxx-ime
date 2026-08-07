@@ -19,7 +19,9 @@ TEST(StageTrace, writes_versioned_jsonl_without_text_payload) {
     CreateDirectoryW(directory.c_str(), nullptr);
     ASSERT_TRUE(SetEnvironmentVariableW(L"CXXIME_STAGE_TRACE_DIR", directory.c_str()) != FALSE);
 
-    cxxime::reset_diagnostics_config();
+    cxxime::DiagnosticsConfig diagnostics;
+    diagnostics.trace_mode = cxxime::DiagnosticTraceMode::kNormal;
+    cxxime::set_diagnostics_config(diagnostics);
     cxxime::write_stage_trace("stage-trace-test", "candidate.snapshot", {
         {"input_id", 42},
         {"composition_id", 43},

@@ -31,6 +31,7 @@ target_include_directories(cxxime-shared PUBLIC
 
 target_link_libraries(cxxime-shared PUBLIC shell32 bcrypt)
 if(CXXIME_ENABLE_HOST_DIAGNOSTICS)
+    target_compile_definitions(cxxime-shared PRIVATE CXXIME_ENABLE_HOST_DIAGNOSTICS=1)
     target_link_libraries(cxxime-shared PUBLIC dwmapi)
 endif()
 target_link_libraries(cxxime-shared PUBLIC nlohmann_json)

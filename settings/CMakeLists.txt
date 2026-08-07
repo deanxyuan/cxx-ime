@@ -9,6 +9,7 @@ add_executable(cxxime-settings WIN32
     editor_app_internal.h
     editor_candidate_panel.cc
     editor_controls.cc
+    editor_diagnostics_panel.cc
     editor_dictionary_panel.cc
     editor_input_panel.cc
     editor_shortcuts_panel.cc

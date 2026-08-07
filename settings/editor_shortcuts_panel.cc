@@ -204,8 +204,8 @@ bool EditorApp::read_shortcut_controls() {
         if (!activate_ime_shortcut.enabled() ||
             !is_valid_activate_ime_shortcut(activate_ime_shortcut)) {
             MessageBoxW(hwnd_,
-                        L"全局快捷键必须使用 Ctrl+Alt 或 Ctrl+Shift，并搭配字母、数字、"
-                        L"F1-F11 或 Space。",
+                        L"全局快捷键可使用 F1-F11，或使用 Ctrl+Alt、Ctrl+Shift 并搭配"
+                        L"字母、数字、F1-F11 或 Space。",
                         L"CxxIME 设置", MB_OK | MB_ICONERROR);
             return false;
         }
