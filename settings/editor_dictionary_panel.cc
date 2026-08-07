@@ -2,10 +2,13 @@
 
 #include "editor_app.h"
 
+#include <thread>
+
 #include <commdlg.h>
 #include <shellapi.h>
 
 #include <cxxime/data_path.h>
+#include <cxxime/pipe_names.h>
 #include <cxxime/user_dict_control.h>
 
 #include "editor_app_internal.h"
@@ -13,6 +16,17 @@
 namespace cxxime {
 namespace settings {
 namespace {
+
+struct UserDictQueryCompletion {
+    UserDictKind kind = UserDictKind::PINYIN;
+    bool succeeded = false;
+    UserDictControlResult result;
+};
+
+bool control_pipe_is_absent() {
+    const std::wstring pipe_name = make_user_pipe_name(CONTROL_PIPE_BASE_NAME);
+    return !WaitNamedPipeW(pipe_name.c_str(), 1) && GetLastError() == ERROR_FILE_NOT_FOUND;
+}
 
 LRESULT CALLBACK QueryEditProc(HWND window, UINT message, WPARAM wparam, LPARAM lparam,
                                UINT_PTR subclass_id, DWORD_PTR reference_data) {
@@ -306,16 +320,41 @@ void EditorApp::query_user_entries() {
     ListView_DeleteAllItems(hDictList_);
     update_user_entry_actions();
 
-    std::string query = edit_text_utf8(hDictQuery_);
-    UserDictControlClient client;
-    UserDictControlResult result;
-    bool ok =
-        client.query(current_user_dict_kind(), query, 0, USER_DICT_CONTROL_DEFAULT_LIMIT, &result);
-    if (!ok) {
-        SetWindowTextW(hDictStatus_, L"查询失败");
+    const std::string query = edit_text_utf8(hDictQuery_);
+    const UserDictKind kind = current_user_dict_kind();
+    const WPARAM generation = ++dictQueryGeneration_;
+    const HWND window = hwnd_;
+    update_user_dict_path();
+    if (control_pipe_is_absent()) {
+        set_user_dict_status(L"CxxIME 后台未运行");
+        return;
+    }
+    set_user_dict_status(L"正在连接 CxxIME 后台...");
+
+    std::thread([window, generation, kind, query]() {
+        UserDictQueryCompletion completion;
+        completion.kind = kind;
+        UserDictControlClient client;
+        completion.succeeded = client.query(kind, query, 0, USER_DICT_CONTROL_DEFAULT_LIMIT,
+                                            &completion.result);
+        SendMessageW(window, kUserDictQueryCompleteMessage, generation,
+                     reinterpret_cast<LPARAM>(&completion));
+    }).detach();
+}
+
+void EditorApp::handle_user_dict_query_complete(WPARAM generation, LPARAM completion_data) {
+    const auto* completion = reinterpret_cast<const UserDictQueryCompletion*>(completion_data);
+    if (!completion || generation != dictQueryGeneration_ ||
+        completion->kind != current_user_dict_kind()) {
         return;
     }
 
+    if (!completion->succeeded) {
+        set_user_dict_status(L"CxxIME 后台不可用");
+        return;
+    }
+
+    const UserDictControlResult& result = completion->result;
     for (size_t i = 0; i < result.query.entries.size(); ++i) {
         std::wstring code = utf8_to_wstr(result.query.entries[i].code);
         std::wstring text = utf8_to_wstr(result.query.entries[i].text);
@@ -330,11 +369,21 @@ void EditorApp::query_user_entries() {
         ListView_SetItemText(hDictList_, row, 2, frequency);
     }
 
-    std::wstring modified = file_last_write_time_text(current_user_dict_path());
     int shown = ListView_GetItemCount(hDictList_);
+    if (result.query.dictionary_total == 0) {
+        set_user_dict_status(L"暂无用户词条");
+        update_user_dict_path();
+        return;
+    }
+
+    std::wstring modified = file_last_write_time_text(current_user_dict_path());
     wchar_t buffer[192] = {};
-    swprintf_s(buffer, L"共 %zu 条，显示 %d 条，更新于 %s", result.query.dictionary_total, shown,
-               modified.c_str());
+    if (modified == L"未创建") {
+        swprintf_s(buffer, L"共 %zu 条，显示 %d 条", result.query.dictionary_total, shown);
+    } else {
+        swprintf_s(buffer, L"共 %zu 条，显示 %d 条，更新于 %s", result.query.dictionary_total,
+            shown, modified.c_str());
+    }
     SetWindowTextW(hDictStatus_, buffer);
     update_user_dict_path();
 }
@@ -370,7 +419,7 @@ void EditorApp::add_user_entry() {
     }
     clear_user_entry_form();
     query_user_entries();
-    set_user_dict_status(L"已新增词条，列表已刷新");
+    set_user_dict_status(L"已新增词条，正在刷新...");
 }
 
 void EditorApp::save_user_entry() {
@@ -396,7 +445,7 @@ void EditorApp::save_user_entry() {
     selectedDictText_ = utf8_to_wstr(text);
     selectedDictCode_ = utf8_to_wstr(code);
     query_user_entries();
-    set_user_dict_status(L"已保存修改，列表已刷新");
+    set_user_dict_status(L"已保存修改，正在刷新...");
 }
 
 void EditorApp::delete_user_entry() {
@@ -418,7 +467,7 @@ void EditorApp::delete_user_entry() {
     }
     clear_user_entry_form();
     query_user_entries();
-    set_user_dict_status(L"已删除词条，列表已刷新");
+    set_user_dict_status(L"已删除词条，正在刷新...");
 }
 
 void EditorApp::import_user_dict() {
@@ -446,9 +495,9 @@ void EditorApp::import_user_dict() {
     UserDictControlResult result;
     bool reloaded = client.reload(current_user_dict_kind(), &result);
     clear_user_entry_form();
-    query_user_entries();
     if (reloaded) {
-        set_user_dict_status(L"导入完成，列表已刷新");
+        query_user_entries();
+        set_user_dict_status(L"导入完成，正在刷新...");
         MessageBoxW(hwnd_, L"用户词典已导入并重新加载。", L"CxxIME", MB_OK | MB_ICONINFORMATION);
     } else {
         set_user_dict_status(L"已复制词典文件，但服务未能立即重新加载");

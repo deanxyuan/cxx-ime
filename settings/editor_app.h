@@ -46,6 +46,7 @@ private:
     bool handle_shortcuts_command(int control_id, int notification);
     bool handle_dictionary_command(int control_id, int notification);
     bool handle_dictionary_notify(LPARAM notification);
+    void handle_user_dict_query_complete(WPARAM generation, LPARAM completion);
     bool handle_about_command(int control_id, int notification);
     bool handle_about_notify(LPARAM notification);
     void show_panel(int idx);
@@ -161,6 +162,7 @@ private:
     std::wstring dictPathTooltip_;
     std::wstring selectedDictText_;
     std::wstring selectedDictCode_;
+    WPARAM dictQueryGeneration_ = 0;
     cxxime::UserDictKind current_user_dict_kind() const;
     std::string current_user_dict_path() const;
 

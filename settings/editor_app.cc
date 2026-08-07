@@ -65,7 +65,7 @@ int EditorApp::run(HINSTANCE hInst,
     RegisterClassExW(&wc);
 
     app.hwnd_ = CreateWindowExW(0, L"CxxIMESettingsClass5", cxxime::kSettingsWindowTitle,
-                                WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
+                                WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_CLIPCHILDREN,
                                 CW_USEDEFAULT, CW_USEDEFAULT, S(700), S(450),
                                 nullptr, nullptr, hInst, &app);
     if (!app.hwnd_) return 1;
@@ -129,8 +129,9 @@ void EditorApp::create_controls(HWND window) {
 
     for (int i = 0; i < kPanelCount; ++i) {
         hPanels_[i] = CreateWindowExW(
-            WS_EX_CONTROLPARENT, L"STATIC", nullptr, WS_CHILD | WS_CLIPSIBLINGS, panel_x, panel_y,
-            panel_width, panel_height, window, nullptr, GetModuleHandle(nullptr), nullptr);
+            WS_EX_CONTROLPARENT, L"STATIC", nullptr,
+            WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS, panel_x, panel_y, panel_width,
+            panel_height, window, nullptr, GetModuleHandle(nullptr), nullptr);
     }
 
     create_input_panel(hPanels_[0]);
@@ -393,6 +394,9 @@ LRESULT CALLBACK EditorApp::wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                         L"诊断导出已结束，但脚本返回失败。请查看打开的 PowerShell 窗口输出。",
                         L"CxxIME", MB_OK | MB_ICONERROR);
         }
+        return 0;
+    case kUserDictQueryCompleteMessage:
+        a->handle_user_dict_query_complete(wp, lp);
         return 0;
     case WM_DPICHANGED: {
         float oldDpi = g_dpi;
