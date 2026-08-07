@@ -22,7 +22,7 @@ static_assert(kKeyModifierAlt == HOTKEYF_ALT,
 constexpr KeyboardShortcut kSuggestedInputModeShortcut = {0, VK_F4};
 constexpr KeyboardShortcut kSuggestedActivateImeShortcut = {
     kKeyModifierControl | kKeyModifierAlt,
-    'C',
+    'M',
 };
 
 struct ShortcutOption {
