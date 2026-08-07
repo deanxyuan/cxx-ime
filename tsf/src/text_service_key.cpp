@@ -80,6 +80,7 @@ STDMETHODIMP TextService::OnSetFocus(BOOL fForeground) {
     if (fForeground) {
         _update_input_focus_from_thread_mgr();
         if (_inputFocused) {
+            _refresh_caps_lock_on_focus("key_sink_focus");
             _show_status_window_if_allowed("show:set_focus");
             if (_sessionId && _client.ensure_connected())
                 _client.focus_in(_sessionId);

@@ -235,6 +235,15 @@ bool TextService::_sync_caps_lock_state(bool caps_lock,
     return false;
 }
 
+bool TextService::_refresh_caps_lock_on_focus(const char* source) {
+    const bool physical_caps_lock = _is_caps_lock_on();
+    if (physical_caps_lock == _caps_lock) {
+        return true;
+    }
+
+    return _sync_caps_lock_state(physical_caps_lock, source);
+}
+
 void TextService::_update_state_poll_timer() {
     if (!_activated || _inputTargetUnavailable) {
         _stop_state_poll_timer();
