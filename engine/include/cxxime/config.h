@@ -36,10 +36,12 @@ struct LayoutConfig {
 
 struct Config {
     bool load(const std::string& path);
+    bool load_user(const std::string& path);
     bool load_json(const std::string& json_text);
+    bool load_user_json(const std::string& json_text);
     bool load_runtime_json(const std::string& json_text);
     bool load_themes(const std::string& path);  // load themes.json separately
-    std::string to_json() const;
+    std::string to_user_json() const;
     std::string to_runtime_json() const;
 
     // engine
@@ -87,7 +89,7 @@ struct Config {
     };
     StatusWindowConfig status_window;
 
-    // diagnostics
+    // Users control only trace_mode; rotation and thresholds remain package settings.
     DiagnosticsConfig diagnostics;
 
     // Color scheme loaded from themes.json.

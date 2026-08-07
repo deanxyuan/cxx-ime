@@ -66,7 +66,7 @@
         "show_on_startup": true
     },
     "diagnostics": {
-        "trace_mode": "normal",
+        "trace_mode": "off",
         "log_max_size": 8388608,
         "log_max_files": 4,
         "normal_sample_rate": 0,

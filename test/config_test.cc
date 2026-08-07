@@ -28,6 +28,37 @@ TEST(Config, defaults) {
     ASSERT_TRUE(!cfg.activate_ime_shortcut.enabled());
     ASSERT_TRUE(!cfg.initial_full_shape);
     ASSERT_TRUE(cfg.initial_chinese_punct);
+    ASSERT_EQ(cfg.diagnostics.trace_mode, cxxime::DiagnosticTraceMode::kOff);
+}
+
+TEST(Config, diagnostic_trace_mode_is_fail_closed) {
+    ASSERT_EQ(cxxime::parse_diagnostic_trace_mode("normal"), cxxime::DiagnosticTraceMode::kNormal);
+    ASSERT_EQ(cxxime::parse_diagnostic_trace_mode("unknown"), cxxime::DiagnosticTraceMode::kOff);
+}
+
+TEST(Config, user_config_controls_only_diagnostic_trace_mode) {
+    const char* path = "test_user_diagnostics_config.json";
+    {
+        std::ofstream file(path);
+        file << R"({"diagnostics":{"trace_mode":"verbose","slow_ipc_us":9999}})";
+    }
+
+    cxxime::Config config;
+    config.diagnostics.trace_mode = cxxime::DiagnosticTraceMode::kError;
+    config.diagnostics.slow_ipc_us = 1234;
+    ASSERT_TRUE(config.load_user(path));
+    ASSERT_EQ(config.diagnostics.trace_mode, cxxime::DiagnosticTraceMode::kVerbose);
+    ASSERT_EQ(config.diagnostics.slow_ipc_us, 1234);
+    ASSERT_TRUE(
+        config.load_user_json(R"({"diagnostics":{"trace_mode":"normal","slow_ipc_us":5678}})"));
+    ASSERT_EQ(config.diagnostics.trace_mode, cxxime::DiagnosticTraceMode::kNormal);
+    ASSERT_EQ(config.diagnostics.slow_ipc_us, 1234);
+
+    const nlohmann::json saved = nlohmann::json::parse(config.to_user_json());
+    ASSERT_TRUE(saved["diagnostics"].is_object());
+    ASSERT_EQ(saved["diagnostics"].size(), 1u);
+    ASSERT_TRUE(saved["diagnostics"]["trace_mode"] == "normal");
+    std::remove(path);
 }
 
 TEST(Config, load_valid_json) {
@@ -84,7 +115,7 @@ TEST(Config, json_round_trip_preserves_wubi_options_and_candidate_learning) {
     saved.mixed_candidate_preference = cxxime::MixedCandidatePreference::kWubi;
 
     cxxime::Config loaded;
-    ASSERT_TRUE(loaded.load_json(saved.to_json()));
+    ASSERT_TRUE(loaded.load_json(saved.to_user_json()));
     ASSERT_TRUE(!loaded.wubi_auto_commit);
     ASSERT_TRUE(!loaded.wubi_commit_first_on_fifth_key);
     ASSERT_TRUE(loaded.wubi_code_hint);
@@ -110,6 +141,13 @@ TEST(Config, invalid_activate_ime_shortcut_falls_back_to_disabled) {
     ASSERT_TRUE(!config.activate_ime_shortcut.enabled());
 }
 
+TEST(Config, activate_ime_shortcut_accepts_standalone_function_key) {
+    cxxime::Config config;
+    ASSERT_TRUE(config.load_json(R"({"shortcuts":{"activate_ime":"F4"}})"));
+    ASSERT_EQ(config.activate_ime_shortcut.modifiers, 0u);
+    ASSERT_TRUE(cxxime::keyboard_shortcut_string(config.activate_ime_shortcut) == "F4");
+}
+
 TEST(Config, conflicting_shortcuts_disable_input_mode_switch) {
     cxxime::Config config;
     ASSERT_TRUE(config.load_json(R"({"shortcuts":{
@@ -126,7 +164,7 @@ TEST(Config, initial_state_round_trip) {
     saved.initial_chinese_punct = false;
 
     cxxime::Config loaded;
-    ASSERT_TRUE(loaded.load_json(saved.to_json()));
+    ASSERT_TRUE(loaded.load_json(saved.to_user_json()));
     ASSERT_TRUE(loaded.initial_full_shape);
     ASSERT_TRUE(!loaded.initial_chinese_punct);
 }
@@ -388,7 +426,7 @@ TEST(Config, preedit_cursor_disabled_round_trip) {
     saved.show_preedit_cursor = false;
 
     cxxime::Config loaded;
-    ASSERT_TRUE(loaded.load_json(saved.to_json()));
+    ASSERT_TRUE(loaded.load_json(saved.to_user_json()));
     ASSERT_TRUE(!loaded.show_preedit_cursor);
 }
 

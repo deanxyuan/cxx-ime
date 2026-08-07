@@ -67,6 +67,9 @@ TEST(KeyboardShortcut, validators_apply_context_specific_rules) {
 
     ASSERT_TRUE(cxxime::parse_keyboard_shortcut("F4", &shortcut));
     ASSERT_TRUE(cxxime::is_valid_input_mode_shortcut(shortcut));
+    ASSERT_TRUE(cxxime::is_valid_activate_ime_shortcut(shortcut));
+
+    ASSERT_TRUE(cxxime::parse_keyboard_shortcut("Shift+F4", &shortcut));
     ASSERT_TRUE(!cxxime::is_valid_activate_ime_shortcut(shortcut));
 
     ASSERT_TRUE(cxxime::parse_keyboard_shortcut("Ctrl+C", &shortcut));

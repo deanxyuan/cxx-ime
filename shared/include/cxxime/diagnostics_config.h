@@ -17,7 +17,7 @@ enum class DiagnosticTraceMode {
 };
 
 struct DiagnosticsConfig {
-    DiagnosticTraceMode trace_mode = DiagnosticTraceMode::kNormal;
+    DiagnosticTraceMode trace_mode = DiagnosticTraceMode::kOff;
     std::size_t log_max_size = 8 * 1024 * 1024;
     int log_max_files = 4;
     int normal_sample_rate = 0;

@@ -318,6 +318,17 @@ bool Config::load(const std::string& path) {
     return true;
 }
 
+bool Config::load_user(const std::string& path) {
+    const DiagnosticsConfig package_diagnostics = diagnostics;
+    if (!load(path)) {
+        return false;
+    }
+    const DiagnosticTraceMode user_trace_mode = diagnostics.trace_mode;
+    diagnostics = package_diagnostics;
+    diagnostics.trace_mode = user_trace_mode;
+    return true;
+}
+
 bool Config::load_json(const std::string& json_text) {
     if (json_text.empty()) {
         return false;
@@ -334,6 +345,17 @@ bool Config::load_json(const std::string& json_text) {
     }
 
     cxxime::load_diagnostics_config_json(json_text, &diagnostics);
+    return true;
+}
+
+bool Config::load_user_json(const std::string& json_text) {
+    const DiagnosticsConfig package_diagnostics = diagnostics;
+    if (!load_json(json_text)) {
+        return false;
+    }
+    const DiagnosticTraceMode user_trace_mode = diagnostics.trace_mode;
+    diagnostics = package_diagnostics;
+    diagnostics.trace_mode = user_trace_mode;
     return true;
 }
 
@@ -379,7 +401,7 @@ bool Config::load_themes(const std::string& path) {
     return true;
 }
 
-static nlohmann::json build_config_json(const Config& config) {
+static nlohmann::json build_config_json(const Config& config, bool include_diagnostics) {
     nlohmann::json j;
     j["schema"]["name"] = "CxxIME";
     j["schema"]["version"] = "1.0";
@@ -430,16 +452,18 @@ static nlohmann::json build_config_json(const Config& config) {
     j["status_window"]["y"] = config.status_window.y;
     j["status_window"]["show_on_startup"] = config.status_window.show_on_startup;
 
-    j["diagnostics"]["trace_mode"] = diagnostic_trace_mode_name(config.diagnostics.trace_mode);
-    j["diagnostics"]["log_max_size"] = config.diagnostics.log_max_size;
-    j["diagnostics"]["log_max_files"] = config.diagnostics.log_max_files;
-    j["diagnostics"]["normal_sample_rate"] = config.diagnostics.normal_sample_rate;
-    j["diagnostics"]["truncated_sample_rate"] = config.diagnostics.truncated_sample_rate;
-    j["diagnostics"]["slow_query_us"] = config.diagnostics.slow_query_us;
-    j["diagnostics"]["cache_miss_slow_us"] = config.diagnostics.cache_miss_slow_us;
-    j["diagnostics"]["slow_ipc_us"] = config.diagnostics.slow_ipc_us;
-    j["diagnostics"]["slow_window_us"] = config.diagnostics.slow_window_us;
-    j["diagnostics"]["slow_total_us"] = config.diagnostics.slow_total_us;
+    if (include_diagnostics) {
+        j["diagnostics"]["trace_mode"] = diagnostic_trace_mode_name(config.diagnostics.trace_mode);
+        j["diagnostics"]["log_max_size"] = config.diagnostics.log_max_size;
+        j["diagnostics"]["log_max_files"] = config.diagnostics.log_max_files;
+        j["diagnostics"]["normal_sample_rate"] = config.diagnostics.normal_sample_rate;
+        j["diagnostics"]["truncated_sample_rate"] = config.diagnostics.truncated_sample_rate;
+        j["diagnostics"]["slow_query_us"] = config.diagnostics.slow_query_us;
+        j["diagnostics"]["cache_miss_slow_us"] = config.diagnostics.cache_miss_slow_us;
+        j["diagnostics"]["slow_ipc_us"] = config.diagnostics.slow_ipc_us;
+        j["diagnostics"]["slow_window_us"] = config.diagnostics.slow_window_us;
+        j["diagnostics"]["slow_total_us"] = config.diagnostics.slow_total_us;
+    }
 
     nlohmann::json ac;
     nlohmann::json sk;
@@ -455,10 +479,14 @@ static nlohmann::json build_config_json(const Config& config) {
     return j;
 }
 
-std::string Config::to_json() const { return build_config_json(*this).dump(4); }
+std::string Config::to_user_json() const {
+    nlohmann::json j = build_config_json(*this, false);
+    j["diagnostics"]["trace_mode"] = diagnostic_trace_mode_name(diagnostics.trace_mode);
+    return j.dump(4);
+}
 
 std::string Config::to_runtime_json() const {
-    nlohmann::json j = build_config_json(*this);
+    nlohmann::json j = build_config_json(*this, true);
     j["resolved_color_schemes"] = nlohmann::json::object();
     for (const auto& [name, colors] : preset_color_schemes) {
         auto& scheme = j["resolved_color_schemes"][name];

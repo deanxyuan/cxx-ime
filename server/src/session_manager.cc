@@ -741,7 +741,7 @@ ProcessKeyResult SessionManager::process_key(uint32_t id, const cxxime::KeyEvent
     auto& engine = *s.engine;
     auto resources = shared_.snapshot();
     apply_resource_snapshot(s, resources);
-    bool trace_enabled = true;
+    bool trace_enabled = false;
     if (resources.config) {
         trace_enabled =
             resources.config->diagnostics.trace_mode != cxxime::DiagnosticTraceMode::kOff;

@@ -13,7 +13,16 @@ namespace cxxime {
 namespace {
 
 std::mutex g_config_mutex;
-DiagnosticsConfig g_config;
+
+DiagnosticsConfig default_diagnostics_config() {
+    DiagnosticsConfig config;
+#ifdef CXXIME_ENABLE_HOST_DIAGNOSTICS
+    config.trace_mode = DiagnosticTraceMode::kNormal;
+#endif
+    return config;
+}
+
+DiagnosticsConfig g_config = default_diagnostics_config();
 
 std::string lower_ascii(std::string value) {
     std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
@@ -110,7 +119,7 @@ const char* diagnostic_trace_mode_name(DiagnosticTraceMode mode) {
         case DiagnosticTraceMode::kVerbose:
             return "verbose";
     }
-    return "normal";
+    return "off";
 }
 
 DiagnosticTraceMode parse_diagnostic_trace_mode(const std::string& mode) {
@@ -119,9 +128,11 @@ DiagnosticTraceMode parse_diagnostic_trace_mode(const std::string& mode) {
         return DiagnosticTraceMode::kOff;
     if (value == "error" || value == "errors")
         return DiagnosticTraceMode::kError;
+    if (value == "normal")
+        return DiagnosticTraceMode::kNormal;
     if (value == "verbose")
         return DiagnosticTraceMode::kVerbose;
-    return DiagnosticTraceMode::kNormal;
+    return DiagnosticTraceMode::kOff;
 }
 
 DiagnosticsConfig diagnostics_config() {
@@ -138,7 +149,7 @@ void set_diagnostics_config(const DiagnosticsConfig& config) {
 
 void reset_diagnostics_config() {
     std::lock_guard<std::mutex> lock(g_config_mutex);
-    g_config = DiagnosticsConfig();
+    g_config = default_diagnostics_config();
 }
 
 bool load_diagnostics_config(const std::string& path, DiagnosticsConfig* config) {

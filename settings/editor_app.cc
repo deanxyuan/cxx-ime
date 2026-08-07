@@ -25,9 +25,9 @@ namespace {
 EditorApp* g_app = nullptr;
 
 const wchar_t* kPanelNames[] = {
-    L"输入", L"候选窗口", L"高级布局", L"快捷键", L"词库管理", L"关于"
+    L"输入", L"候选窗口", L"高级布局", L"快捷键", L"词库管理", L"故障排查", L"关于"
 };
-const int kPanelCount = 6;
+const int kPanelCount = 7;
 
 UINT settings_navigate_message() {
     static const UINT message = RegisterWindowMessageW(cxxime::kSettingsNavigateMessage);
@@ -139,7 +139,8 @@ void EditorApp::create_controls(HWND window) {
     create_advanced_layout_panel(hPanels_[2]);
     create_shortcuts_panel(hPanels_[3]);
     create_dictionary_panel(hPanels_[4], panel_width);
-    create_about_panel(hPanels_[5], panel_width);
+    create_diagnostics_panel(hPanels_[5]);
+    create_about_panel(hPanels_[6], panel_width);
 
     CreateWindowExW(0, L"BUTTON", L"确定", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
                     save_x, button_y, button_width, button_height, window,
@@ -220,7 +221,7 @@ bool EditorApp::load_config() {
     const std::wstring wide_user_path = path_for_display(user_path);
     const DWORD user_attributes = GetFileAttributesW(wide_user_path.c_str());
     if (user_attributes != INVALID_FILE_ATTRIBUTES) {
-        if ((user_attributes & FILE_ATTRIBUTE_DIRECTORY) != 0 || !config_.load(user_path)) {
+        if ((user_attributes & FILE_ATTRIBUTE_DIRECTORY) != 0 || !config_.load_user(user_path)) {
             show_load_error(L"用户配置", user_path);
             return false;
         }
@@ -300,6 +301,7 @@ bool EditorApp::load_config() {
     set_check(hInitialFullShape_, config_.initial_full_shape);
     update_preedit_type_enabled();
     set_check(hStatusWindow_, config_.status_window.enable);
+    load_diagnostics_controls();
 
     load_shortcut_controls();
     set_check(hInputModePinyin_, config_.input_mode == 0);
@@ -337,6 +339,7 @@ void EditorApp::readback(HWND) {
     c.layout = (SendMessageW(hLayoutH_, BM_GETCHECK, 0, 0) == BST_CHECKED) ? "horizontal" : "vertical";
     c.render_backend = (SendMessageW(hRenderD2D_, BM_GETCHECK, 0, 0) == BST_CHECKED) ? "d2d" : "gdi";
     c.status_window.enable = get_check(hStatusWindow_);
+    read_diagnostics_controls();
     c.layout_config = candidate_layout_from_edits();
 }
 
@@ -348,7 +351,7 @@ bool EditorApp::save_config() {
     }
 
     unsigned long error_code = ERROR_SUCCESS;
-    if (!replace_user_config(config_.to_json(), nullptr, &error_code)) {
+    if (!replace_user_config(config_.to_user_json(), nullptr, &error_code)) {
         const wchar_t* message = error_code == ERROR_HOTKEY_ALREADY_REGISTERED
             ? L"全局快捷键已被其他程序占用，配置未保存。"
             : L"后台服务未能保存并应用配置。";
@@ -527,7 +530,7 @@ LRESULT CALLBACK EditorApp::wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             a->handle_advanced_layout_command(control_id, notification) ||
             a->handle_shortcuts_command(control_id, notification) ||
             a->handle_dictionary_command(control_id, notification) ||
-            a->handle_about_command(control_id, notification)) {
+            a->handle_diagnostics_command(control_id, notification)) {
             return 0;
         }
         return 0;
