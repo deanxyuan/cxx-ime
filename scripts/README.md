@@ -11,7 +11,7 @@
 python scripts\package.py
 ```
 
-`package.py` 负责构建程序、准备词典 bundle、复制发布文件、验证数据并生成安装包。常用参数：
+`package.py` 负责构建程序、准备词典 bundle、复制项目与第三方许可证、验证数据并生成安装包。常用参数：
 
 ```bat
 python scripts\package.py --fast
@@ -30,7 +30,7 @@ python scripts\package.py --skip-dict
 | `prepare_dictionary_bundle.py` | 并行准备拼音、五笔运行时词典并生成 manifest |
 | `build_pinyin_topn.py` | 生成供 `topn_builder` 使用的拼音 Top-N 中间索引 |
 | `verify_dictionary_bundle.py` | 校验运行时词典、索引及 manifest 的一致性 |
-| `verify_package.py` | 校验发布目录和安装包所需文件 |
+| `verify_package.py` | 校验发布目录、许可证和安装包所需文件 |
 | `benchmark.bat` | 运行主要性能基准 |
 | `benchmark_topn.ps1` | 运行拼音 Top-N 专项基准 |
 | `check_query_bench.py` | 检查查询基准结果是否满足阈值 |

@@ -325,7 +325,7 @@ Python 格式: `"<IIIIi"`
 
 #### 运行期查询
 
-`Dict::open_wubi_bundle()` 加载 `wubi86.dict.bin` + `wubi86.dict.idx`；`Dict::lookup()` 优先走 `WubiPrefixIndex::find()`（对 `packed_code` 二分查找），直接返回预排序 postings；无索引时回退到旧的二分 + 扫描路径。
+`Dict::open_wubi_bundle()` 加载 `wubi86.dict.bin` + `wubi86.dict.idx`；`Dict::lookup()` 优先走 `WubiPrefixIndex::find()`（对 `packed_code` 二分查找），直接返回预排序 postings。`wubi86.dict.idx` 是必需文件：索引缺失或加载失败时 `open_wubi_bundle()` 返回失败，服务端启动即报错，不再回退到旧的全表扫描路径。
 
 ### 3.4 格式版本兼容
 
@@ -531,31 +531,9 @@ CloseHandle(hFile);
 - 无解析开销：二进制布局与内存布局一致，指针直接偏移
 - 确定性：内存占用等于文件大小，无按需加载的不确定性
 
-## 8. 当前构建状态
+## 8. 测试
 
-### 8.1 已编译的文件 (engine/CMakeLists.txt)
-
-```
-src/dict.cc               ← 二进制加载主词典 + 内存用户词典（多路索引）
-src/spellings_index.cc    ← Patricia trie 拼写索引
-src/syllabifier.cc        ← 音节分词器（BFS+DFS）
-src/pinyin_translator.cc  ← 拼音翻译（主路径，含长查询页缓存）
-src/pinyin_segmentor.cc   ← 简版拼音分词器（Syllabifier 回退）
-src/pinyin_processor.cc   ← 拼音按键处理
-src/wubi_translator.cc    ← 五笔翻译
-src/wubi_processor.cc     ← 五笔按键处理
-src/mixed_translator.cc   ← 混合模式翻译（拼音+五笔交叉排序）
-src/output_composer.cc    ← 输出合成（全角/CapsLock/按键拦截）
-src/ascii_composer.cc     ← 中英文切换
-src/short_code_cache.cc   ← Top-N 候选缓存（pinyin.topn.bin，DAT-16 格式，Darts trie 查找）
-src/engine.cc             ← 引擎入口
-src/context.cc            ← 输入状态上下文
-src/config.cc             ← JSON 配置加载
-```
-
-## 9. 测试
-
-### 9.1 测试框架
+### 8.1 测试框架
 
 自定义轻量级测试框架 (`test/util/testutil.h`)，无外部依赖：
 
@@ -565,43 +543,30 @@ ASSERT_TRUE(cond) / ASSERT_EQ(a, b) / ...  // 断言宏（fatal）
 RUN_ALL_TESTS()                            // main 入口，自动发现并运行
 ```
 
-### 9.2 测试覆盖
+### 8.2 测试覆盖
 
-共 35 个 C++ 测试可执行文件 + 4 个 Python 测试（39 个 ctest 条目），合计 500+ 个 `TEST()` 用例：
+词典相关覆盖共 9 个 C++ 测试 + 3 个 Python 测试，合计 180+ 个 `TEST()` 用例；完整测试套件（40 个 ctest 条目、510+ 用例）见项目 README。
 
 | 测试文件 | 用例数 | 测试内容 |
 |----------|--------|----------|
-| `engine_test` | 66 | 按键处理、集成翻译、多种输入模式 |
-| `engine_source_test` | 22 | 引擎源码级测试 |
-| `segmentor_test` | 5 | 标准拼音切分 |
 | `dict_test` | 26 | 词典打开/前缀查找/音节查找/空查询/反查/用户词频更新 |
-| `config_test` | 12 | 默认值/JSON加载/缺失文件/无效JSON |
-| `layout_test` | 6 | 文本宽度估算/水平布局/换行/垂直布局 |
-| `preedit_mode_test` | 5 | 合成模式/预览模式/内联 |
-| `ipc_test` | 29 | 协议结构体/服务器启停/会话管理/多客户端 |
 | `wubi_test` | 7 | Wubi86 基本查找/前缀匹配/去重 |
-| `wubi_engine_test` | 22 | 五笔引擎集成测试 |
-| `candidate_window_test` | 10 | 候选窗口渲染与交互 |
-| `candidate_quality_test` | 1 | 候选质量排序 |
-| `status_window_test` | 18 | 状态窗口渲染 |
-| `benchmark_test` | 16 | 性能基准测试 |
-| `short_cache_test` | 9 | 短码缓存查询 |
-| `trace_test` | 21 | 查询链路追踪 |
-| `mpscq_test` | 3 | 多生产者单消费者队列 |
-| `config_monitor_test` | 10 | 配置变更监控 |
-| `dictionary_monitor_test` | 3 | 词典 manifest 监控 |
-| `output_composer_test` | 44 | 输出合成（全角/CapsLock/按键拦截） |
-| `session_manager_status_test` | 18 | 会话管理器状态 |
-| `session_manager_integration_test` | 27 | 会话管理器集成 |
 | `wubi_prefix_query_test` | 1 | 五笔完整前缀索引查询排序 |
+| `short_cache_test` | 16 | 短码缓存查询（Top-N 索引） |
+| `dictionary_monitor_test` | 3 | 词典 manifest 监控 |
+| `symbol_table_test` | 4 | symbols.json 符号表加载/分类/分页 |
+| `wubi_engine_test` | 31 | 五笔引擎集成（词典查询路径） |
+| `engine_source_test` | 22 | 引擎源码级测试（词典加载/查询） |
+| `engine_test` | 72 | 引擎集成翻译路径（词典为数据源） |
+| `wubi_symbol_pipeline_test` | (Python) | 五笔符号拆分流水线验证 |
 | `wubi_prefix_index_test` | (Python) | 五笔完整前缀索引构建验证 |
 | `pinyin_topn_pipeline_test` | (Python) | Top-N 键生成与 DAT-16 转换验证 |
-| **合计** | **500+** | |
+| **合计** | **180+** | |
 
-### 9.3 运行测试
+### 8.3 运行测试
 
 ```bash
 cd build
-ctest -C Debug                          # 运行全部测试（39 个）
+ctest -C Debug                          # 运行全部测试（40 个）
 build\test\Debug\engine_test.exe        # 单独运行某个测试
 ```
