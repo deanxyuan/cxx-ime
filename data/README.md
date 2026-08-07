@@ -17,6 +17,15 @@
 `dictionary_manifest.json` 由打包流水线在所有运行时数据生成完毕后写入，记录文件角色、大小和
 SHA-256；它同样不作为源文件维护。
 
+## 数据授权
+
+- 拼音词典派生自 [rime-ice](https://github.com/iDvel/rime-ice)，按 GPL-3.0-only
+  发布。完整许可证保存在 `licenses/rime-ice-GPL-3.0.txt`，并随安装包分发。
+- 五笔词典和 `symbols.json` 派生自
+  [rime-wubi86-jidian](https://github.com/KyleBing/rime-wubi86-jidian)，按
+  Apache-2.0 发布。
+- 项目代码的 Apache-2.0 许可证不替代上述第三方词典数据各自的许可证。
+
 ## 本地工具入口
 
 需要单独调试 SQLite 到运行时格式的转换时，可使用:

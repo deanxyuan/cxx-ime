@@ -137,6 +137,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File collect_diagnostics.ps1 -Inc
 ├── cxxime-server.exe
 ├── cxxime-settings.exe
 ├── collect_diagnostics.ps1
+├── THIRD_PARTY_NOTICES.txt
+├── licenses\
+│   └── rime-ice-GPL-3.0.txt
 ├── uninstall.exe
 └── data\
     ├── default.json
@@ -144,6 +147,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File collect_diagnostics.ps1 -Inc
     ├── settings_presets.json
     ├── themes.json
     ├── punctuation.json
+    ├── symbols.json
     ├── pinyin.dict.bin
     ├── pinyin.dict.idx
     ├── pinyin.spellings.bin

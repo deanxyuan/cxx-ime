@@ -25,7 +25,7 @@
 | 字段 | 类型 | 用途 |
 |------|------|------|
 | `dict` | `shared_ptr<Dict>` | 拼音主字典（二进制堆加载，无 mmap） |
-| `wubi_dict` | `shared_ptr<Dict>` | 五笔字典（可选，文件不存在时为空） |
+| `wubi_dict` | `shared_ptr<Dict>` | 五笔字典（必需：manifest 缺失或加载失败时服务启动失败） |
 | `spellings` | `shared_ptr<SpellingsIndex>` | Patricia trie 拼音索引 |
 | `syllabifier` | `shared_ptr<Syllabifier>` | 拼音切分器（依赖 spellings） |
 | `config` | `shared_ptr<const Config>` | 当前配置（含 engine/style/theme/layout/ascii_composer/status_window/diagnostics） |
@@ -286,31 +286,31 @@ Engine 持有指针引用外部资源（`pinyin_dict_`, `spellings_`, `syllabifi
 
 ## 6. 测试覆盖
 
-共 **22 个 C++ 测试可执行文件 + 1 个 Python 测试**（23 个 ctest 条目），含 **380+ 个测试用例**（`TEST()` 宏计数）：
+共享资源相关覆盖共 **22 个 C++ 测试可执行文件 + 1 个 Python 测试**（23 个 ctest 条目），合计 **440+ 个测试用例**（`TEST()` 宏计数）；完整测试套件（40 个 ctest 条目、510+ 用例）见项目 README。
 
 | 文件 | 用例数 | 覆盖内容 |
 |------|--------|---------|
-| `engine_test.cc` | 66 | Engine 核心逻辑 |
-| `output_composer_test.cc` | 44 | 文本输出组合 |
-| `ipc_test.cc` | 29 | IPC 通信协议 |
+| `engine_test.cc` | 72 | Engine 核心逻辑 |
+| `output_composer_test.cc` | 45 | 文本输出组合 |
+| `ipc_test.cc` | 32 | IPC 通信协议 |
 | `dict_test.cc` | 26 | 字典操作 |
-| `wubi_engine_test.cc` | 22 | 五笔 Engine |
+| `wubi_engine_test.cc` | 31 | 五笔 Engine |
 | `engine_source_test.cc` | 22 | 源码级 Engine 行为 |
-| `trace_test.cc` | 21 | 查询追踪 |
-| `session_manager_status_test.cc` | 18 | 全局状态同步（含 CapsLock） |
-| `status_window_test.cc` | 18 | 状态窗口 |
+| `trace_test.cc` | 22 | 查询追踪 |
+| `session_manager_status_test.cc` | 22 | 全局状态同步（含 CapsLock） |
+| `status_window_test.cc` | 20 | 状态窗口 |
 | `benchmark_test.cc` | 16 | 性能基准 |
-| `config_test.cc` | 12 | 配置解析 |
-| `candidate_window_test.cc` | 10 | 候选窗口 |
-| `config_monitor_test.cc` | 10 | 配置监视器热重载 |
-| `short_cache_test.cc` | 9 | 短输入缓存 |
+| `config_test.cc` | 26 | 配置解析 |
+| `candidate_window_test.cc` | 8 | 候选窗口 |
+| `config_write_coordinator_test.cc` | 7 | 配置写入协调（预检/提交/取消） |
+| `short_cache_test.cc` | 16 | 短输入缓存 |
 | `wubi_test.cc` | 7 | 五笔翻译器 |
-| `layout_test.cc` | 6 | 布局计算 |
+| `layout_test.cc` | 13 | 布局计算 |
 | `segmentor_test.cc` | 5 | 拼音切分 |
-| `preedit_mode_test.cc` | 5 | 预编辑模式 |
+| `preedit_mode_test.cc` | 8 | 预编辑模式 |
 | `mpscq_test.cc` | 3 | MPSC 队列 |
 | `dictionary_monitor_test.cc` | 3 | 字典监视器 |
-| `session_manager_integration_test.cc` | 27 | 集成测试（含 process_key/select 等） |
-| `candidate_quality_test.cc` | 1 | 候选质量 |
+| `session_manager_integration_test.cc` | 34 | 集成测试（含 process_key/select 等） |
+| `candidate_quality_test.cc` | 2 | 候选质量 |
 
 此外 `test/util/testutil.h` 提供轻量测试框架（`TEST()` / `ASSERT_*` 宏，无 EXPECT 风格断言）。

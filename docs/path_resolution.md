@@ -18,7 +18,8 @@ C:\Program Files\CxxIME\
     ├── pinyin.dict.idx       音节索引（运行时）
     ├── pinyin.spellings.bin  拼写 trie（运行时）
     ├── pinyin.topn.bin       短码缓存（运行时）
-    └── wubi86.dict.bin       五笔词典（可选）
+    ├── wubi86.dict.bin       五笔词典（运行时）
+    └── wubi86.dict.idx       五笔完整前缀索引（运行时）
 ```
 
 ### 用户目录 `%USERPROFILE%\cxxime\`

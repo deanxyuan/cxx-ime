@@ -623,7 +623,7 @@ def copy_installer_scripts(config: str, host_diagnostics: bool) -> None:
     # NSIS template
     shutil.copy2(os.path.join(SCRIPTS, "cxxime-setup.nsi"), DIST_DIR)
 
-    # License: copy LICENSE (root) as license.txt for NSIS
+    # Project license for the NSIS license page.
     license_src = os.path.join(ROOT, "LICENSE")
     if os.path.isfile(license_src):
         shutil.copy2(license_src, os.path.join(DIST_DIR, "license.txt"))
@@ -634,6 +634,13 @@ def copy_installer_scripts(config: str, host_diagnostics: bool) -> None:
     notices_src = os.path.join(ROOT, "THIRD_PARTY_NOTICES.txt")
     shutil.copy2(notices_src, os.path.join(DIST_DIR, "THIRD_PARTY_NOTICES.txt"))
     print("  THIRD_PARTY_NOTICES.txt")
+
+    data_license_name = "rime-ice-GPL-3.0.txt"
+    data_license_src = os.path.join(DATA, "licenses", data_license_name)
+    data_license_dir = os.path.join(DIST_DIR, "licenses")
+    os.makedirs(data_license_dir, exist_ok=True)
+    shutil.copy2(data_license_src, os.path.join(data_license_dir, data_license_name))
+    print(f"  licenses/{data_license_name}")
 
 
 def build_nsis(config: str, fast: bool = False, host_diagnostics: bool = False) -> None:
@@ -733,6 +740,7 @@ def print_summary(config: str, include_x86_modules: bool, host_diagnostics: bool
     print("  cxxime-setup.nsi         NSIS script")
     print("  license.txt              License")
     print("  THIRD_PARTY_NOTICES.txt  Third-party notices")
+    print("  licenses/                Third-party data licenses")
 
 
 def main():

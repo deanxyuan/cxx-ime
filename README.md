@@ -6,29 +6,7 @@ A lightweight Windows TSF (Text Services Framework) input method (Pinyin + Wubi 
 
 ## 项目简介
 
-CxxIME 是一个基于 Windows TSF (Text Services Framework) 的输入法，支持拼音、五笔和拼音五笔混输三种模式，采用客户端/服务端架构设计。TSF DLL 负责捕获按键并通过 IPC 与后台服务端通信，服务端执行拼音解析、词典查询和候选生成。
-
-## 架构
-
-```
-cxx-ime/
-├── shared/          共享类型、IPC 协议、日志、数据路径解析
-├── engine/          输入引擎：音节切分、翻译器（拼音/五笔/混输）、词典、配置
-├── ipc/             命名管道 IPC 客户端/服务端（IOCP）
-├── server/          后台服务进程（共享资源 + 会话管理 + 配置/词典热重载）
-├── tsf/             TSF 文本服务 DLL（由 Windows 加载）
-├── ui/              候选窗口 + 状态窗口（D2D / GDI 双后端渲染）
-├── settings/        配置编辑器 GUI（Win32 原生控件）
-├── docs/            项目文档（设计与实现、安装、配置指南）
-├── data/            词典文件、Python 工具和默认配置
-├── resource/        图标与资源 DLL 素材
-├── scripts/         打包、词典准备、校验脚本
-├── tools/           开发调试工具（9 个）
-├── test/            测试套件（35 个 C++ 测试 + 4 个 Python 测试）
-└── third_party/     sqlite3, nlohmann/json, darts-clone
-```
-
-**输入流程：** 按键 → TSF DLL → IPC → 服务端 → 引擎 → IPC → TSF DLL → 文字上屏
+CxxIME 是一个基于 Windows TSF (Text Services Framework) 的输入法，支持拼音、五笔和拼音五笔混输三种模式，采用客户端/服务端架构设计。TSF DLL 负责捕获按键并通过 IPC 与后台服务端通信，服务端执行拼音解析、词典查询和候选生成。项目目录结构见 [docs/architecture.md](docs/architecture.md)。
 
 主要能力：
 
@@ -54,6 +32,7 @@ build.bat clean        # 清理构建目录
 ```
 
 构建产物在 `build/<config>/` 目录下：
+
 - `cxxime_tsf_x64.dll` / `cxxime_tsf_x86.dll` — TSF 文本服务 DLL（双架构）
 - `cxxime-resources.dll` — 输入法 profile 资源 DLL
 - `cxxime-server.exe` — 后台服务进程
@@ -67,6 +46,8 @@ CxxIME 使用 SQLite 格式的词典作为**源数据**，构建时通过 `data/
 ### 拼音词典
 
 来源：[rime-ice](https://github.com/iDvel/rime-ice)（雾凇拼音，约 190 万词条）
+许可证：GPL-3.0-only；完整文本见
+[`data/licenses/rime-ice-GPL-3.0.txt`](data/licenses/rime-ice-GPL-3.0.txt)。
 
 ```cmd
 cd data
@@ -76,6 +57,7 @@ python tools/fetch_pinyin_dictionary.py   # 下载 → data/pinyin.dict.db（约
 ### 五笔词典
 
 来源：[KyleBing/rime-wubi86-jidian](https://github.com/KyleBing/rime-wubi86-jidian)（五笔 86 极点版）
+许可证：Apache-2.0。
 
 ```cmd
 cd data
@@ -241,7 +223,7 @@ ctest -C Debug --output-on-failure
 
 或单独运行某个测试：`build\test\Debug\ipc_test.exe`
 
-当前共 39 个 ctest 条目（35 个 C++ 测试 + 4 个 Python 测试），500+ 用例。
+当前共 40 个 ctest 条目（36 个 C++ 测试 + 4 个 Python 测试），510+ 用例。
 
 ## 文档
 
@@ -253,4 +235,5 @@ ctest -C Debug --output-on-failure
 
 ## 许可证
 
-Apache License 2.0. Copyright (c) 2026 CxxIME Contributors.
+项目代码按 Apache License 2.0 发布。第三方组件和词典数据保留各自许可证，详见
+[`THIRD_PARTY_NOTICES.txt`](THIRD_PARTY_NOTICES.txt)。

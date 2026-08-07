@@ -162,94 +162,22 @@ JSON 配置（`default.json` + `themes.json`），Settings 编辑器（Win32 原
 
 ## 5. 项目目录结构
 
-```
+```text
 cxx-ime/
-├── CMakeLists.txt
-├── README.md
-├── LICENSE                 # Apache 2.0
-├── build.bat
-│
-├── shared/                 # 共享基础类型
-│   ├── include/cxxime/     ipc_protocol.h, key_event.h, logging.h, candidate.h,
-│   │                       query_trace.h, query_budget.h, config_monitor.h,
-│   │                       config_notify.h, diagnostics_config.h, mpscq.h,
-│   │                       data_path.h, dictionary_manifest.h, dictionary_monitor.h
-│   └── src/                key_event.cc, query_trace_log.cc, mpscq.cc
-│
-├── engine/                 # 输入引擎
-│   ├── include/cxxime/     engine.h, processor.h, translator.h, segmentor.h,
-│   │                       dict.h, context.h, config.h, ascii_composer.h,
-│   │                       spellings_index.h, syllabifier.h, query_scratch.h,
-│   │                       topk_collector.h, short_code_cache.h, output_composer.h,
-│   │                       output_options.h, wubi_processor.h, wubi_translator.h,
-│   │                       mixed_translator.h, punct_types.h
-│   └── src/                engine.cc, pinyin_processor.cc, pinyin_translator.cc,
-│                           pinyin_segmentor.cc, wubi_processor.cc, wubi_translator.cc,
-│                           mixed_translator.cc, output_composer.cc,
-│                           short_code_cache.cc, dict.cc, config.cc, context.cc,
-│                           spellings_index.cc, syllabifier.cc, ascii_composer.cc
-│
-├── ipc/                    # IPC 层
-│   ├── include/cxxime/     ipc_client.h, ipc_server.h
-│   └── src/                ipc_client.cc, ipc_server.cc
-│
-├── tsf/                    # TSF 输入法 DLL（x64/x86 双架构）
-│   ├── src/                dllmain.cpp, class_factory.cpp, text_service.cpp,
-│   │                       text_service_candidate.cpp, text_service_composition.cpp,
-│   │                       text_service_activation.cpp, text_service_trace.cpp,
-│   │                       key_event_sink.cpp, edit_session.cpp,
-│   │                       candidate_ui_element.cpp, reading_ui_element.cpp,
-│   │                       display_attribute.cpp, language_bar.cpp, register.cpp,
-│   │                       status_controller.h, status_controller.cc,
-│   │                       resource_loader.h, resource_loader.cc,
-│   │                       host_compatibility/ (宿主兼容性运行时检测),
-│   │                       preedit_mode.h, pch.h, resource.h
-│   └── CMakeLists.txt      按指针大小输出 cxxime_tsf_x64.dll / cxxime_tsf_x86.dll
-│
-├── server/                 # 服务端进程
-│   └── src/                main.cc, server_app.cc, server_app.h,
-│                           session_manager.cc, session_manager.h
-│
-├── settings/               # 配置编辑器 GUI
-│   └── src/                main.cc, editor_app.cc, editor_app.h
-│
-├── ui/                     # 候选窗口 + 状态窗口（GDI/Direct2D）
-│   ├── include/cxxime/     candidate_window.h, status_window.h,
-│   │                       layout.h, renderer.h, render_context.h
-│   └── src/                candidate_window.cc, status_window.cc,
-│                           d2d_renderer.cc, gdi_renderer.cc, layout.cc, theme.cc
-│
-├── data/                   # 数据文件
-│   ├── default.json        # 默认配置
-│   ├── themes.json         # 主题预设
-│   ├── pinyin.dict.bin     # 拼音主词典（~73 MB）
-│   ├── pinyin.dict.idx     # 拼音整数 ID 索引（~48 MB）
-│   ├── pinyin.topn.bin     # 拼音 Top-N 候选索引（DAT-16，~212 MB）
-│   ├── pinyin.spellings.bin# Patricia trie 拼写索引（~2.9 MB）
-│   ├── pinyin.dict.db.zip  # SQLite 源词典（压缩，git 提交）
-│   ├── wubi86.dict.bin     # 五笔主词典（~2.6 MB）
-│   ├── wubi86.dict.idx     # 五笔完整前缀索引（~2.3 MB）
-│   ├── schemas/            # pinyin.schema.yaml（拼写代数规则）
-│   └── tools/              # Python 词典工具（fetch/convert/build/algebra）
-│
-├── test/                   # 22 个 C++ + 2 个 Python 测试（24 ctest 条目, 390+ TEST）
-│   ├── util/testutil.h     # 自研轻量测试框架
-│   └── {engine, segmentor, dict, config, layout, preedit_mode, ipc, wubi,
-│         wubi_engine, candidate_window, candidate_quality, status_window,
-│         benchmark, short_cache, trace, mpscq, config_monitor,
-│         dictionary_monitor, output_composer, engine_source,
-│         session_manager_status, session_manager_integration,
-│         wubi_prefix_index, pinyin_topn_pipeline, stage_trace_tools (Python)}_test.{cc|py}
-│
-├── third_party/            # 第三方库
-│   ├── sqlite3/            # SQLite amalgamation（FTS5 + JSON1）
-│   ├── nlohmann/           # nlohmann/json（header-only）
-│   └── darts-clone/        # Darts-clone (Double Array Trie，Top-N 索引)
-│
-├── resource/               # 图标 + 资源 DLL 素材
-└── scripts/                # package.py, prepare_dictionary_bundle.py,
-                            # verify_dictionary_bundle.py, build_pinyin_topn.py,
-                            # cxxime-setup.nsi, check_query_bench.py, benchmark.bat
+├── shared/          共享类型、IPC 协议、日志、数据路径解析
+├── engine/          输入引擎：音节切分、翻译器（拼音/五笔/混输）、词典、配置
+├── ipc/             命名管道 IPC 客户端/服务端（IOCP）
+├── server/          后台服务进程（共享资源 + 会话管理 + 配置/词典热重载）
+├── tsf/             TSF 文本服务 DLL（由 Windows 加载）
+├── ui/              候选窗口 + 状态窗口（D2D / GDI 双后端渲染）
+├── settings/        配置编辑器 GUI（Win32 原生控件）
+├── docs/            项目文档（设计与实现、安装、配置指南）
+├── data/            词典文件、Python 工具和默认配置
+├── resource/        图标与资源 DLL 素材
+├── scripts/         打包、词典准备、校验脚本
+├── tools/           开发调试工具
+├── test/            测试套件（C++ + Python）
+└── third_party/     sqlite3, nlohmann/json, darts-clone
 ```
 
 ---
@@ -281,62 +209,7 @@ cxx-ime/
 
 ---
 
-## 7. 已实现能力总览
-
-### 7.1 混合输入模式（PINYIN/WUBI/MIXED）
-
-三种输入模式：`InputMode::PINYIN`（纯拼音）、`WUBI`（纯五笔）、`MIXED`（混合）。模式经服务端全局状态同步，所有 session 一致。
-
-MIXED 模式下 `MixedTranslator` 同时向拼音和五笔引擎发起查询，按 `MixedOrder` 排序策略合并：
-- **kPinyinFirst**：拼音候选优先
-- **kWubiFirst**：五笔候选优先（四码全字母输入，且拼音首选不显著更强时）
-- **kAmbiguousInterleave**：短输入交叉交错
-
-### 7.2 候选字段与用户词学习
-
-`Candidate` 携带 `code`（原始输入码）、`syllables`（冒号分隔音节）、`source`（`kPinyin`/`kWubi`）、`origin`（`kSystem`/`kUser`/`kCache`）字段。选词时通过 `update_frequency(text, code, syllables)` 学习：`syllables` 使用户词生成缩写键与混合键索引，简拼、混合码均可命中。
-
-用户词按 `score_user_match()` 分层加分：精确匹配 2×10⁸、缩写/混合键 1.2×10⁸、前缀按接近程度 4000~8×10⁵，叠加词频（上限 5 万）与最近使用加成。详见 [用户词典设计](user-dictionary.md)。
-
-### 7.3 长拼音查询页缓存
-
-`PinyinTranslator` 为超过 6 字符的长拼音维护 LRU 页缓存（64 条），键为 `(input, page_index, page_size, user_dict_version)`。重复查询与翻页直接命中，避免重复分词与词典扫描；用户词典版本变化自动失效，deadline 命中的不完整结果不缓存。
-
-### 7.4 服务端可见状态全局化
-
-`SessionManager` 维护 `GlobalVisibleState`（`ImeStatus` + `base_chinese_mode` 基础模式，Caps 覆盖时派生 `chinese_mode`）。状态变更经 `commit_global_state()` 统一提交并递增 revision，各 session 在按键/查询等入口经 `align_session_to_global()` 对齐；TSF 客户端通过 IPC（GET_STATUS / 心跳）获取状态并驱动状态窗口与语言栏。跨窗口切换中英文/模式不再丢失。
-
-### 7.5 词典 Manifest 与热重载
-
-`DictionaryManifest`（JSON）描述词典文件集合（role/path/sha256/size/required）。`DictionaryMonitor` 轮询 manifest 变更并触发词典资源替换；`ConfigMonitor` 通过共享内存 + Event 接收 Settings 保存通知触发配置重载。详见 [共享资源预加载](shared-resources.md)。
-
-### 7.6 双架构 TSF DLL + 独立资源 DLL
-
-TSF DLL 按架构输出 `cxxime_tsf_x64.dll` / `cxxime_tsf_x86.dll`，安装包同时部署，系统按进程位数加载。输入法 profile 图标由独立的 `cxxime-resources.dll` 提供（`resource_loader.cc` 加载）。
-
-### 7.7 Top-N 候选索引（pinyin.topn.bin，DAT-16 格式）
-
-为 1-6 字符短输入预计算 Top-N 候选，采用 **DAT-16 格式**（magic `CXTOPN\x02`）：双数组 Trie（Darts-clone）做 key 查找，内联 16 字节候选条目（文本/频率/评分）。词典加载时一次性读入堆内存（~212 MB）。
-
-`lookup_indexed_fast()` 在 Trie 命中的 key 上直接返回预计算候选页，完全跳过 Syllabifier 路径枚举与 Dict 扫描，短输入延迟从毫秒级降至个位数微秒。
-
-构建流程：`build_pinyin_topn.py`（SQLite → 中间文件）→ `topn_builder --format dat16`（中间文件 → DAT-16）。详见 [短输入快速路径](short-input-fast-path.md)。
-
-### 7.8 五笔词典必选打包
-
-`wubi86.dict.bin` / `wubi86.dict.idx` 在 manifest 中 `required: true`，打包缺源直接报错。五笔为完整输入法能力而非可选插件。
-
----
-
-## 8. 后续规划
-
-- [ ] IPC 协议版本协商、变长消息
-- [ ] 双拼支持
-- [ ] 候选窗口动画完善
-
----
-
-## 9. 相关文档
+## 7. 相关文档
 
 - [候选词选词算法](candidate-selection.md) — 查询管道与路径枚举
 - [查询预算与候选收集](query-control.md) — QueryBudget、TopKCollector、扫描限制、超时检查点

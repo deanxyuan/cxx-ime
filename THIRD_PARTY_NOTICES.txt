@@ -79,6 +79,20 @@ documentation to the public domain. The authoritative statement is available
 at https://www.sqlite.org/copyright.html.
 
 
+rime-ice dictionary data
+------------------------
+
+Upstream: https://github.com/iDvel/rime-ice
+License: GNU General Public License v3.0 only (GPL-3.0-only)
+
+The Pinyin dictionary data distributed with CxxIME is derived from the
+rime-ice Chinese dictionaries and transformed into CxxIME's SQLite and runtime
+binary formats. The complete license text is distributed in
+licenses/rime-ice-GPL-3.0.txt. The corresponding dictionary source and
+transformation scripts are available in the CxxIME source distribution at
+https://github.com/deanxyuan/cxx-ime under data/ and data/tools/.
+
+
 rime-wubi86-jidian 4.3 dictionary data
 ---------------------------------------
 
@@ -86,4 +100,5 @@ Upstream: https://github.com/KyleBing/rime-wubi86-jidian
 License: Apache License 2.0
 
 The Wubi dictionary and symbol categories distributed with CxxIME are derived
-from this project. The Apache License 2.0 text is included in LICENSE.
+from this project. The Apache License 2.0 text is included in LICENSE in source
+distributions and license.txt in binary packages.

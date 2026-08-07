@@ -169,6 +169,17 @@ def check_installer_script(
     require_text(errors, text, 'File "cxxime_tsf_x64.dll"', label)
     require_text(errors, text, 'File "cxxime_ime_x64.ime"', label)
     require_text(errors, text, 'File "cxxime-resources.dll"', label)
+    require_text(errors, text, 'File "license.txt"', label)
+    require_text(errors, text, 'File "THIRD_PARTY_NOTICES.txt"', label)
+    require_text(errors, text, 'File "licenses\\rime-ice-GPL-3.0.txt"', label)
+    require_text(errors, text, 'Delete "$INSTDIR\\license.txt"', label)
+    require_text(errors, text, 'Delete "$INSTDIR\\THIRD_PARTY_NOTICES.txt"', label)
+    require_text(
+        errors,
+        text,
+        'Delete "$INSTDIR\\licenses\\rime-ice-GPL-3.0.txt"',
+        label,
+    )
     require_text(errors, text, "!ifdef HOST_DIAGNOSTICS", label)
     require_text(errors, text, 'Delete "$INSTDIR\\cxxime-ime-host-probe-x64.exe"', label)
     require_text(errors, text, 'Delete "$INSTDIR\\export_stage_trace.ps1"', label)
@@ -315,6 +326,7 @@ def run_checks(dist_dir: str, require_x86: bool, host_diagnostics: bool) -> list
         "cxxime-setup.nsi",
         "license.txt",
         "THIRD_PARTY_NOTICES.txt",
+        os.path.join("licenses", "rime-ice-GPL-3.0.txt"),
         os.path.join("data", "default.json"),
         os.path.join("data", "settings_presets.json"),
         os.path.join("data", "themes.json"),
@@ -339,6 +351,36 @@ def run_checks(dist_dir: str, require_x86: bool, host_diagnostics: bool) -> list
 
     for name in required_files:
         require_file(errors, os.path.join(dist_dir, name), dist_dir)
+
+    notices_path = os.path.join(dist_dir, "THIRD_PARTY_NOTICES.txt")
+    if os.path.isfile(notices_path):
+        notices = read_text(notices_path)
+        require_text(errors, notices, "rime-ice", "THIRD_PARTY_NOTICES.txt")
+        require_text(errors, notices, "GPL-3.0-only", "THIRD_PARTY_NOTICES.txt")
+        require_text(
+            errors,
+            notices,
+            "licenses/rime-ice-GPL-3.0.txt",
+            "THIRD_PARTY_NOTICES.txt",
+        )
+
+    rime_ice_license_path = os.path.join(
+        dist_dir, "licenses", "rime-ice-GPL-3.0.txt"
+    )
+    if os.path.isfile(rime_ice_license_path):
+        rime_ice_license = read_text(rime_ice_license_path)
+        require_text(
+            errors,
+            rime_ice_license,
+            "GNU GENERAL PUBLIC LICENSE",
+            "rime-ice license",
+        )
+        require_text(
+            errors,
+            rime_ice_license,
+            "Version 3, 29 June 2007",
+            "rime-ice license",
+        )
 
     obsolete_files = ["cxxime_tsf_x64.dll.old", "cxxime_tsf_x86.dll.old"]
     for name in obsolete_files:
