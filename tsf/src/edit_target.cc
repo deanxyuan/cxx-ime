@@ -125,6 +125,13 @@ private:
         evidence_->gui_thread_info_error =
             evidence_->gui_thread_info_ok ? ERROR_SUCCESS : GetLastError();
         evidence_->caret_hwnd = gui_thread_info.hwndCaret;
+        evidence_->focus_hwnd = gui_thread_info.hwndFocus;
+        evidence_->foreground_hwnd = GetForegroundWindow();
+        evidence_->context_is_focused_child =
+            evidence_->gui_thread_info_ok && evidence_->context_hwnd &&
+            evidence_->focus_hwnd == evidence_->context_hwnd && evidence_->foreground_hwnd &&
+            evidence_->context_hwnd != evidence_->foreground_hwnd &&
+            IsChild(evidence_->foreground_hwnd, evidence_->context_hwnd) != FALSE;
         const HWND context_root =
             evidence_->context_hwnd ? GetAncestor(evidence_->context_hwnd, GA_ROOT) : nullptr;
         const HWND caret_root =
@@ -169,7 +176,11 @@ EditTargetState classify_edit_target(const EditTargetEvidence& evidence) {
         evidence.has_meaningful_text_rect) {
         return EditTargetState::Editable;
     }
-    return EditTargetState::NoEditTarget;
+    if (evidence.placeholder_text_rect) {
+        return EditTargetState::NoEditTarget;
+    }
+    return evidence.context_is_focused_child ? EditTargetState::Unknown
+                                             : EditTargetState::NoEditTarget;
 }
 
 EditTargetState inspect_edit_target(ITfContext* context, TfClientId client_id,

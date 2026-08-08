@@ -47,7 +47,6 @@ ITfContext* TextService::_current_edit_context_for_composition() const {
 
 STDMETHODIMP TextService::OnCompositionTerminated(TfEditCookie ecWrite,
                                                   ITfComposition* pComposition) {
-    UNREFERENCED_PARAMETER(ecWrite);
     if (_composition && pComposition && _composition != pComposition) {
         _enqueue_event_trace("composition_terminated", "source=stale action=ignore");
         return S_OK;
@@ -56,6 +55,13 @@ STDMETHODIMP TextService::OnCompositionTerminated(TfEditCookie ecWrite,
     const bool host_terminated = _composition != nullptr;
     bool clear_succeeded = false;
     if (host_terminated) {
+        if (_emptyCompositionPlaceholderActive && pComposition) {
+            ITfRange* range = nullptr;
+            if (SUCCEEDED(pComposition->GetRange(&range)) && range) {
+                range->SetText(ecWrite, 0, nullptr, 0);
+                range->Release();
+            }
+        }
         if (_sessionId) {
             clear_succeeded = _client.clear_composition(_sessionId);
         }
@@ -71,6 +77,7 @@ STDMETHODIMP TextService::OnCompositionTerminated(TfEditCookie ecWrite,
     _enqueue_event_trace("composition_terminated", detail, host_terminated && !clear_succeeded);
 
     _composing = false;
+    _emptyCompositionPlaceholderActive = false;
     _lastInlineCompositionText.clear();
     _end_reading_ui_element("hide:composition_terminated_reading");
     if (_composition) {

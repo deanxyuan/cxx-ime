@@ -149,31 +149,118 @@ void TextService::_sync_conversion_mode_compartment(
     compartment->Release();
 }
 
-void TextService::_register_thread_sinks() {
-    ITfSource* source = nullptr;
-    const HRESULT source_hr = _threadMgr
-        ? _threadMgr->QueryInterface(IID_ITfSource, reinterpret_cast<void**>(&source))
-        : E_POINTER;
-    HRESULT thread_focus_hr = E_NOINTERFACE;
-    HRESULT thread_mgr_hr = E_NOINTERFACE;
-    bool thread_focus_attempted = false;
-    bool thread_mgr_attempted = false;
-    if (SUCCEEDED(source_hr) && source) {
-        thread_focus_attempted = true;
-        thread_focus_hr = source->AdviseSink(
-            IID_ITfThreadFocusSink,
-            static_cast<ITfThreadFocusSink*>(this), &_dwThreadFocusCookie);
-        thread_mgr_attempted = true;
-        thread_mgr_hr = source->AdviseSink(
-            IID_ITfThreadMgrEventSink,
-            static_cast<ITfThreadMgrEventSink*>(this), &_dwThreadMgrEventCookie);
-        source->Release();
+HRESULT TextService::_initialize_required_activation_sinks() {
+    cxxime_tsf::trace_stage_activation_step("activate", "begin", S_OK, true);
+
+    const auto fail_activation = [this](HRESULT result, bool key_sink_registered) {
+        if (key_sink_registered) {
+            _unregister_key_event_sink();
+        }
+        _unregister_thread_sinks();
+        _threadMgr->Release();
+        _threadMgr = nullptr;
+        _clientId = TF_CLIENTID_NULL;
+        cxxime_tsf::trace_stage_activation_step("activate", "failed", result, true);
+        return result;
+    };
+
+    cxxime_tsf::trace_stage_activation_step("thread_mgr_event_sink", "attempt", S_OK, true);
+    const HRESULT thread_mgr_hr = _register_thread_mgr_event_sink();
+    cxxime_tsf::trace_stage_activation_step("thread_mgr_event_sink", "complete", thread_mgr_hr,
+                                            true);
+    if (FAILED(thread_mgr_hr)) {
+        return fail_activation(thread_mgr_hr, false);
     }
-    cxxime_tsf::trace_stage_thread_sinks(
-        "advise", source_hr,
-        thread_focus_attempted, thread_focus_hr, _dwThreadFocusCookie,
-        thread_mgr_attempted, thread_mgr_hr, _dwThreadMgrEventCookie);
+
+    cxxime_tsf::trace_stage_activation_step("key_event_sink", "attempt", S_OK, true);
+    const HRESULT key_event_sink_hr = _register_key_event_sink();
+    cxxime_tsf::trace_stage_activation_step("key_event_sink", "complete", key_event_sink_hr, true);
+    if (FAILED(key_event_sink_hr)) {
+        return fail_activation(key_event_sink_hr, false);
+    }
+
+    cxxime_tsf::trace_stage_activation_step("thread_focus_sink", "attempt", S_OK, true);
+    const HRESULT thread_focus_hr = _register_thread_focus_sink();
+    cxxime_tsf::trace_stage_activation_step("thread_focus_sink", "complete", thread_focus_hr, true);
+    cxxime_tsf::trace_stage_thread_sinks("advise", S_OK, true, thread_focus_hr,
+                                         _dwThreadFocusCookie, true, thread_mgr_hr,
+                                         _dwThreadMgrEventCookie);
+    if (FAILED(thread_focus_hr)) {
+        return fail_activation(thread_focus_hr, true);
+    }
+
+    return S_OK;
+}
+
+void TextService::_initialize_optional_activation_services() {
+    cxxime_tsf::trace_stage_activation_step("ui_element_observer", "attempt", S_OK, false);
     cxxime_tsf::start_stage_ui_element_observer(_threadMgr, _activateFlags);
+    cxxime_tsf::trace_stage_activation_step("ui_element_observer", "complete", S_OK, false);
+
+    cxxime_tsf::trace_stage_activation_step("display_attribute", "attempt", S_OK, false);
+    const HRESULT display_attribute_hr = _register_display_attribute_atom() ? S_OK : E_FAIL;
+    cxxime_tsf::trace_stage_activation_step("display_attribute", "complete", display_attribute_hr,
+                                            false);
+
+    cxxime_tsf::trace_stage_activation_step("preserved_key", "attempt", S_OK, false);
+    const HRESULT preserved_key_hr = _register_preserved_key();
+    cxxime_tsf::trace_stage_activation_step("preserved_key", "complete", preserved_key_hr, false);
+
+    cxxime_tsf::trace_stage_activation_step("conversion_sink", "attempt", S_OK, false);
+    _register_conversion_compartment_sink();
+    cxxime_tsf::trace_stage_activation_step("conversion_sink", "complete", S_OK, false);
+}
+
+void TextService::_synchronize_activation_focus() {
+    _update_input_focus_from_thread_mgr();
+    if (_inputFocused && _threadMgr) {
+        ITfDocumentMgr* focused_document_mgr = nullptr;
+        if (SUCCEEDED(_threadMgr->GetFocus(&focused_document_mgr)) && focused_document_mgr) {
+            _advise_text_edit_sink(focused_document_mgr);
+            _advise_text_layout_sink(focused_document_mgr);
+            focused_document_mgr->Release();
+        }
+        _refresh_caps_lock_on_focus("activate_complete");
+        if (_sessionId && _client.ensure_connected()) {
+            _client.focus_in(_sessionId);
+        }
+    }
+
+    if (_config.status_window.enable && _config.status_window.show_on_startup && _inputFocused) {
+        _show_status_window_if_allowed("show:activate_startup");
+    }
+    cxxime_tsf::trace_stage_activation_step("activate", "complete", S_OK, true);
+}
+
+HRESULT TextService::_register_thread_mgr_event_sink() {
+    ITfSource* source = nullptr;
+    const HRESULT source_hr =
+        _threadMgr ? _threadMgr->QueryInterface(IID_ITfSource, reinterpret_cast<void**>(&source))
+                   : E_POINTER;
+    if (FAILED(source_hr) || !source) {
+        return FAILED(source_hr) ? source_hr : E_NOINTERFACE;
+    }
+
+    const HRESULT result =
+        source->AdviseSink(IID_ITfThreadMgrEventSink, static_cast<ITfThreadMgrEventSink*>(this),
+                           &_dwThreadMgrEventCookie);
+    source->Release();
+    return result;
+}
+
+HRESULT TextService::_register_thread_focus_sink() {
+    ITfSource* source = nullptr;
+    const HRESULT source_hr =
+        _threadMgr ? _threadMgr->QueryInterface(IID_ITfSource, reinterpret_cast<void**>(&source))
+                   : E_POINTER;
+    if (FAILED(source_hr) || !source) {
+        return FAILED(source_hr) ? source_hr : E_NOINTERFACE;
+    }
+
+    const HRESULT result = source->AdviseSink(
+        IID_ITfThreadFocusSink, static_cast<ITfThreadFocusSink*>(this), &_dwThreadFocusCookie);
+    source->Release();
+    return result;
 }
 
 void TextService::_unregister_thread_sinks() {

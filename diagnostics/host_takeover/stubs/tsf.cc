@@ -12,6 +12,8 @@
 
 namespace cxxime_tsf {
 
+void trace_stage_activation_step(const char*, const char*, HRESULT, bool) {}
+
 void trace_stage_thread_sinks(
     const char*, HRESULT, bool, HRESULT, DWORD, bool, HRESULT, DWORD) {}
 

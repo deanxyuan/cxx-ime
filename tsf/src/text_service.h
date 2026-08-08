@@ -126,6 +126,12 @@ public:
     bool is_composing() const { return _composing; }
     void set_composition_context(ITfContext* context);
     void set_composing(bool val) { _composing = val; }
+    bool empty_composition_placeholder_active() const {
+        return _emptyCompositionPlaceholderActive;
+    }
+    void set_empty_composition_placeholder_active(bool active) {
+        _emptyCompositionPlaceholderActive = active;
+    }
     void set_caret_rect(const RECT& rc) { _caretRect = rc; }
     void update_candidate_position(const RECT& rc,
                                    ITfContext* context = nullptr,
@@ -162,9 +168,13 @@ public:
     static void shutdown_trace();  // Call on DLL_PROCESS_DETACH
 
 private:
+    HRESULT _initialize_required_activation_sinks();
+    void _initialize_optional_activation_services();
+    void _synchronize_activation_focus();
     HRESULT _register_key_event_sink();
     HRESULT _unregister_key_event_sink();
-    void _register_thread_sinks();
+    HRESULT _register_thread_mgr_event_sink();
+    HRESULT _register_thread_focus_sink();
     void _unregister_thread_sinks();
     void _register_conversion_compartment_sink();
     void _unregister_conversion_compartment_sink();
@@ -268,6 +278,7 @@ private:
     cxxime::IpcClient _client;
     uint32_t _sessionId = 0;
     bool _composing = false;
+    bool _emptyCompositionPlaceholderActive = false;
     bool _chinese_mode = true;
     bool _caps_lock = false;
     std::mutex _lastImeStatusMutex;
