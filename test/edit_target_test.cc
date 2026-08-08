@@ -33,6 +33,12 @@ TEST(EditTarget, no_target_when_all_editing_evidence_is_absent) {
         cxxime_tsf::EditTargetState::NoEditTarget);
 }
 
+TEST(EditTarget, unknown_when_focused_child_requires_provisional_composition) {
+    auto evidence = captured_selection();
+    evidence.context_is_focused_child = true;
+    ASSERT_EQ(cxxime_tsf::classify_edit_target(evidence), cxxime_tsf::EditTargetState::Unknown);
+}
+
 TEST(EditTarget, editable_when_any_supported_evidence_is_present) {
     auto evidence = captured_selection();
     evidence.has_active_selection = true;

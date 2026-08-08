@@ -20,6 +20,17 @@ void stop_stage_runtime(const HostClassificationCompatibilitySnapshot& snapshot)
     stop_stage_host_message_monitor();
 }
 
+void trace_stage_activation_step(const char* step, const char* phase, HRESULT result,
+                                 bool required) {
+    cxxime::write_stage_trace("tsf", "runtime.activation_step",
+                              {
+                                 {"step", step ? step : ""},
+                                 {"phase", phase ? phase : ""},
+                                 {"operation_hr", static_cast<int64_t>(result)},
+                                 {"required", required},
+                              });
+}
+
 void trace_stage_thread_sinks(const char* action,
                               HRESULT source_result,
                               bool thread_focus_attempted,

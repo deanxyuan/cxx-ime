@@ -14,6 +14,21 @@ bool is_valid_rect(const RECT& rc) {
            rc.right >= rc.left && rc.bottom >= rc.top;
 }
 
+HRESULT set_composition_range_text(ITfRange* range, TfEditCookie edit_cookie,
+                                   const std::wstring& text, bool use_empty_placeholder) {
+    if (!range) {
+        return E_INVALIDARG;
+    }
+
+    // Some text stores return the view origin for an empty composition range. Use a blank
+    // placeholder only when the existing selection cannot provide a usable insertion point.
+    const bool store_placeholder = text.empty() && use_empty_placeholder;
+    const wchar_t* stored_text = store_placeholder ? L" " : text.c_str();
+    const LONG stored_length = store_placeholder ? 1 : static_cast<LONG>(text.length());
+    const DWORD flags = store_placeholder ? TF_ST_CORRECTION : 0;
+    return range->SetText(edit_cookie, flags, stored_text, stored_length);
+}
+
 void normalize_rect_size(RECT* rc) {
     if (!rc)
         return;
@@ -31,6 +46,19 @@ void normalize_rect_size(RECT* rc) {
 bool rect_primary_point_in_rect(const RECT& outer, const RECT& inner) {
     return inner.left >= outer.left && inner.left <= outer.right &&
            inner.top >= outer.top && inner.top <= outer.bottom;
+}
+
+bool is_placeholder_text_ext_rect(const RECT& extent, const RECT& text_rect) {
+    constexpr LONG kOriginTolerance = 2;
+    const bool at_extent_origin =
+        text_rect.left >= extent.left - kOriginTolerance &&
+        text_rect.left <= extent.left + kOriginTolerance &&
+        text_rect.top >= extent.top - kOriginTolerance &&
+        text_rect.top <= extent.top + kOriginTolerance;
+    const bool narrow_placeholder = text_rect.right - text_rect.left <= 2;
+    const bool large_extent =
+        extent.right - extent.left > 100 && extent.bottom - extent.top > 100;
+    return at_extent_origin && narrow_placeholder && large_extent;
 }
 
 bool same_root_window(HWND a, HWND b) {
@@ -72,11 +100,11 @@ bool normalize_text_ext_rect(ITfContextView* view, RECT* rc) {
     if (!rc || !is_valid_rect(*rc))
         return false;
 
-    normalize_rect_size(rc);
-
     HWND foreground = GetForegroundWindow();
     RECT foreground_rect = {};
     bool has_foreground_rect = foreground && GetWindowRect(foreground, &foreground_rect);
+
+    normalize_rect_size(rc);
 
     HWND view_hwnd = nullptr;
     if (view)
@@ -108,6 +136,25 @@ bool normalize_text_ext_rect(ITfContextView* view, RECT* rc) {
     }
 
     return MonitorFromRect(rc, MONITOR_DEFAULTTONULL) != nullptr;
+}
+
+bool is_placeholder_caret_rect(ITfContext* context, const RECT& caret_rect) {
+    ITfContextView* view = nullptr;
+    RECT view_rect = {};
+    const bool has_view_rect = context &&
+        SUCCEEDED(context->GetActiveView(&view)) && view &&
+        SUCCEEDED(view->GetScreenExt(&view_rect));
+    if (view) {
+        view->Release();
+    }
+
+    HWND foreground = GetForegroundWindow();
+    RECT foreground_rect = {};
+    const bool has_foreground_rect =
+        foreground && GetWindowRect(foreground, &foreground_rect);
+    return (has_view_rect && is_placeholder_text_ext_rect(view_rect, caret_rect)) ||
+           (has_foreground_rect &&
+            is_placeholder_text_ext_rect(foreground_rect, caret_rect));
 }
 
 bool get_range_caret_rect(ITfContext* context,
@@ -151,6 +198,12 @@ bool update_caret_rect_from_range(TextService* service,
     RECT rc = {};
     if (!get_range_caret_rect(context, ec, range, anchor, &rc))
         return false;
+    if (is_placeholder_caret_rect(context, rc)) {
+        if (service) {
+            service->trace_caret_event("reject", "placeholder", false, &rc, S_FALSE, true);
+        }
+        return false;
+    }
 
     if (service)
         service->set_caret_rect(rc);
@@ -378,6 +431,7 @@ HRESULT create_composition(TextService* service,
     service->set_composition(composition);
     service->set_composition_context(context);
     service->set_composing(true);
+    service->set_empty_composition_placeholder_active(false);
     *range_out = range;
     return S_OK;
 }
@@ -445,6 +499,7 @@ HRESULT clear_and_end_composition(TextService* service,
     service->set_composition(nullptr);
     service->set_composition_context(nullptr);
     service->set_composing(false);
+    service->set_empty_composition_placeholder_active(false);
     hr = composition->EndComposition(ec);
     if (SUCCEEDED(action_result) && FAILED(hr)) {
         action_result = hr;
@@ -464,12 +519,24 @@ HRESULT clear_and_end_composition(TextService* service,
 
 HRESULT apply_composition_text(TextService* service, ITfContext* context, TfEditCookie ec,
                                ITfRange* range, const std::wstring& text, size_t selection_offset,
-                               bool has_selection_offset) {
+                               bool has_selection_offset, bool composition_started) {
     if (!service || !context || !range) {
         return E_INVALIDARG;
     }
 
-    HRESULT result = range->SetText(ec, 0, text.c_str(), static_cast<LONG>(text.length()));
+    const bool placeholder_already_active =
+        service->empty_composition_placeholder_active();
+    const bool caret_resolved_before_write =
+        text.empty() && !placeholder_already_active &&
+        update_caret_rect_from_selection(service, context, ec, nullptr);
+    const bool use_empty_placeholder =
+        text.empty() &&
+        (placeholder_already_active || (composition_started && !caret_resolved_before_write));
+    if (composition_started) {
+        service->set_empty_composition_placeholder_active(use_empty_placeholder);
+    }
+    HRESULT result =
+        set_composition_range_text(range, ec, text, use_empty_placeholder);
     if (FAILED(result)) {
         return result;
     }
@@ -479,7 +546,9 @@ HRESULT apply_composition_text(TextService* service, ITfContext* context, TfEdit
     result = has_selection_offset
         ? set_selection_to_range_offset(context, ec, range, selection_offset)
         : set_selection_to_range(context, ec, range);
-    update_caret_rect(service, context, ec, range);
+    if (!caret_resolved_before_write) {
+        update_caret_rect(service, context, ec, range);
+    }
     return result;
 }
 
@@ -603,7 +672,8 @@ STDMETHODIMP EditSession::DoEditSession(TfEditCookie ec) {
             &_compositionStartResult, &_compositionReturned);
         if (SUCCEEDED(_actionResult) && range) {
             _actionResult = apply_composition_text(
-                _service, _context, ec, range, _text, _selectionOffset, _hasSelectionOffset);
+                _service, _context, ec, range, _text, _selectionOffset, _hasSelectionOffset,
+                _compositionStartAttempted);
             range->Release();
         }
     } else if (_action == Action::COMMIT_COMPOSITION) {

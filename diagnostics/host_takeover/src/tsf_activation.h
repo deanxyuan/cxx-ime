@@ -11,6 +11,11 @@ namespace cxxime_tsf {
 void start_stage_runtime(const HostClassificationCompatibilitySnapshot& snapshot);
 void stop_stage_runtime(const HostClassificationCompatibilitySnapshot& snapshot);
 
+void trace_stage_activation_step(const char* step,
+                                 const char* phase,
+                                 HRESULT result,
+                                 bool required);
+
 void trace_stage_thread_sinks(const char* action,
                               HRESULT source_result,
                               bool thread_focus_attempted,

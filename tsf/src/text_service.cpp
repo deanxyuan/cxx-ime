@@ -14,6 +14,7 @@
 #include "globals.h"
 #include "language_bar.h"
 #include "reading_ui_element.h"
+#include "tsf_activation.h"
 #include "tsf_stage.h"
 
 TextService::TextService() {}
@@ -83,23 +84,28 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
         _enqueue_event_trace("activate", detail, true);
     }
 
-    _start_config_updates();
-
     _threadMgr = ptim;
     _threadMgr->AddRef();
     _clientId = tid;
     _activateFlags = dwFlags;
+
+    const HRESULT activation_sinks_hr = _initialize_required_activation_sinks();
+    if (FAILED(activation_sinks_hr)) {
+        return activation_sinks_hr;
+    }
+
+    cxxime_tsf::trace_stage_activation_step("runtime_snapshot", "attempt", S_OK, false);
     cxxime_tsf::trace_stage_runtime_activate(dwFlags, tid);
+    cxxime_tsf::trace_stage_activation_step("runtime_snapshot", "complete", S_OK, false);
+
+    cxxime_tsf::trace_stage_activation_step("config_updates", "attempt", S_OK, false);
+    const HRESULT config_updates_hr = _start_config_updates() ? S_OK : E_FAIL;
+    cxxime_tsf::trace_stage_activation_step(
+        "config_updates", "complete", config_updates_hr, false);
     if ((_activateFlags & TF_TMF_UIELEMENTENABLEDONLY) != 0) {
         _start_host_compatibility_runtime();
     }
-    _register_display_attribute_atom();
-
-    _register_key_event_sink();
-    _register_preserved_key();
-
-    _register_thread_sinks();
-    _register_conversion_compartment_sink();
+    _initialize_optional_activation_services();
 
     // Create hidden UI windows without an owner; bind the active context view before showing them.
     _candidateWindow.create(nullptr, _config);
@@ -217,15 +223,7 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
     //     _sync_ime_status(resp.ime_status);
     // }
     _activated = true;
-    _update_state_poll_timer();
-    if (_config.status_window.enable && _config.status_window.show_on_startup) {
-        _update_input_focus_from_thread_mgr();
-        if (_inputFocused) {
-            _show_status_window_if_allowed("show:activate_startup");
-            if (_sessionId && _client.ensure_connected())
-                _client.focus_in(_sessionId);
-        }
-    }
+    _synchronize_activation_focus();
     return S_OK;
 }
 

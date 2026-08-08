@@ -77,6 +77,10 @@ bool indicates_unavailable_input_target(const char* block_reason) {
 
 // ITfKeyEventSink
 STDMETHODIMP TextService::OnSetFocus(BOOL fForeground) {
+    if (!_activated) {
+        return S_OK;
+    }
+
     if (fForeground) {
         _update_input_focus_from_thread_mgr();
         if (_inputFocused) {
@@ -437,8 +441,8 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
             apply_composition(decision.inline_text, decision.inline_cursor);
         } else {
             _update_reading_ui_element(pic, preedit);
-            // Keep one empty TSF composition active while preedit is shown in the popup.
-            // The host can then terminate it consistently when its selection moves.
+            // Keep a popup-only TSF composition active so the host can terminate it
+            // consistently when its selection moves.
             apply_composition(L"", 0);
         }
         *pfEaten = TRUE;

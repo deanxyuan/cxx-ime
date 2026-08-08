@@ -308,6 +308,10 @@ bool TextService::_update_input_focus_from_thread_mgr() {
 }
 
 STDMETHODIMP TextService::OnSetThreadFocus() {
+    if (!_activated) {
+        return S_OK;
+    }
+
     _update_input_focus_from_thread_mgr();
     if (_inputFocused) {
         _refresh_caps_lock_on_focus("thread_focus");
@@ -317,6 +321,10 @@ STDMETHODIMP TextService::OnSetThreadFocus() {
 }
 
 STDMETHODIMP TextService::OnKillThreadFocus() {
+    if (!_activated) {
+        return S_OK;
+    }
+
     _inputFocused = false;
     _update_state_poll_timer();
     _hide_status_window("hide:thread_focus_lost");
@@ -336,6 +344,10 @@ STDMETHODIMP TextService::OnUninitDocumentMgr(ITfDocumentMgr* pDocMgr) {
 
 STDMETHODIMP TextService::OnSetFocus(ITfDocumentMgr* pDocMgrFocus,
                                      ITfDocumentMgr* pDocMgrPrevFocus) {
+    if (!_activated) {
+        return S_OK;
+    }
+
     _inputFocused = _document_allows_input(pDocMgrFocus);
     const bool no_edit_target =
         _inputFocused && _document_has_no_edit_target(pDocMgrFocus);

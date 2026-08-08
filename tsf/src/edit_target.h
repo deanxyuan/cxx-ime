@@ -39,6 +39,9 @@ struct EditTargetEvidence {
     DWORD gui_thread_info_error = ERROR_SUCCESS;
     HWND caret_hwnd = nullptr;
     bool has_native_caret = false;
+    HWND focus_hwnd = nullptr;
+    HWND foreground_hwnd = nullptr;
+    bool context_is_focused_child = false;
     HRESULT screen_rect_hr = E_UNEXPECTED;
     RECT screen_rect = {};
     HRESULT text_rect_hr = E_UNEXPECTED;
