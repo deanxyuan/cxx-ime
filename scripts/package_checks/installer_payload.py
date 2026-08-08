@@ -13,6 +13,8 @@ def check_installer_payload(
     host_diagnostics: bool,
 ) -> None:
     label = "cxxime-setup.nsi"
+    require_text(errors, text, '!define MUI_ICON "cxxime.ico"', label)
+    require_text(errors, text, '!define MUI_UNICON "cxxime.ico"', label)
     require_text(errors, text, 'File /oname=cxxime-installer-helper.exe', label)
     require_text(errors, text, 'File "cxxime_tsf_x64.dll"', label)
     require_text(errors, text, 'File "cxxime_ime_x64.ime"', label)

@@ -643,6 +643,11 @@ def copy_installer_scripts(config: str, host_diagnostics: bool) -> None:
 
     # NSIS template and function includes.
     shutil.copy2(os.path.join(SCRIPTS, "cxxime-setup.nsi"), DIST_DIR)
+    shutil.copy2(
+        os.path.join(ROOT, "resource", "cxxime.ico"),
+        os.path.join(DIST_DIR, "cxxime.ico"),
+    )
+    print("  cxxime.ico")
     nsis_source_dir = os.path.join(SCRIPTS, "nsis")
     nsis_dist_dir = os.path.join(DIST_DIR, "nsis")
     os.makedirs(nsis_dist_dir, exist_ok=True)
