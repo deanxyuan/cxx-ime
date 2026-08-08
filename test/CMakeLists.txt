@@ -87,6 +87,9 @@ add_cxxime_test(temporary_ascii_test)
 add_cxxime_test(tsf_factory_test)
 target_link_libraries(tsf_factory_test PRIVATE ole32 uuid)
 
+add_cxxime_test(installer_lock_test)
+target_link_libraries(installer_lock_test PRIVATE cxxime-installer-lock)
+
 add_executable(session_manager_status_test
     session_manager_status_test.cc
     ${TEST_COMMON_SOURCES}

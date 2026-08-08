@@ -1,11 +1,24 @@
 Unicode true
 !include "MUI2.nsh"
 !include "FileFunc.nsh"
+!include "LogicLib.nsh"
+!include "Win\WinError.nsh"
 !include "x64.nsh"
 
 !define PRODUCT "CxxIME"
 !define PUBLISHER "CxxIME Contributors"
 !define CLSID "{B7E1E5A2-8F3D-4A9C-B6E7-2C4D8F1A3B5E}"
+!define UNINSTALL_KEY "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\CxxIME"
+!define RUN_KEY "SOFTWARE\Microsoft\Windows\CurrentVersion\Run"
+!define TSF_INPROC_KEY "SOFTWARE\Classes\CLSID\${CLSID}\InprocServer32"
+!define INSTALL_MARKER ".cxxime-install-complete"
+!define TRANSACTION_MARKER ".cxxime-install-transaction"
+!define TRANSACTION_TEMP ".cxxime-install-transaction.tmp"
+!define ROLLBACK_DIR ".cxxime-rollback"
+!define UNINSTALL_TRANSACTION_MARKER ".cxxime-uninstall-transaction"
+!define UNINSTALL_TRANSACTION_TEMP ".cxxime-uninstall-transaction.tmp"
+!define UNINSTALL_ROLLBACK_DIR ".cxxime-uninstall-rollback"
+!define MOVEFILE_REPLACE_WRITE_THROUGH 0x9
 
 !ifndef VERSION
     !error "VERSION must be provided by package.py"
@@ -23,6 +36,8 @@ Name "${PRODUCT} ${VERSION}"
 InstallDir "$PROGRAMFILES\CxxIME"
 RequestExecutionLevel admin
 SetCompressor lzma
+ShowInstDetails show
+ShowUninstDetails show
 
 VIProductVersion "${VERSION_NUMERIC}"
 VIAddVersionKey /LANG=2052 "CompanyName" "${PUBLISHER}"
@@ -33,139 +48,88 @@ VIAddVersionKey /LANG=2052 "ProductName" "${PRODUCT}"
 VIAddVersionKey /LANG=2052 "ProductVersion" "${VERSION}"
 
 Var LaunchSettings
+Var ExistingInstall
+Var RegisteredInstallDir
+Var StageDir
+Var BackupDir
+Var TransactionDir
+Var LockReportPath
+Var LockReportText
+Var LockResult
+Var FailureMessage
+Var OldInstallAvailable
+Var OldTsfX64Present
+Var OldTsfX86Present
+Var OldTsfX64Registered
+Var OldTsfX86Registered
+Var SystemImeX64Present
+Var SystemImeX86Present
+Var OldUninstallPresent
+Var OldDisplayVersion
+Var OldRunPresent
+Var OldRunValue
+Var ServerWasRunning
 Var UninstallRemoveUserData
 Var UninstallRemoveUserDataCheckbox
 Var UninstallUserDataDir
 Var UninstallUserDataDirSuffix
+Var UninstallServerWasRunning
+Var UninstallRollbackDir
+Var UninstallTransactionPhase
+Var UninstallSystemImeX64Present
+Var UninstallSystemImeX86Present
+Var UninstallTsfX64Registered
+Var UninstallTsfX86Registered
 
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_LICENSE "license.txt"
+!define MUI_PAGE_CUSTOMFUNCTION_LEAVE ValidateInstallDirectory
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
 Page custom FinishPage FinishPageLeave
 !insertmacro MUI_UNPAGE_CONFIRM
 UninstPage custom un.UserDataPage un.UserDataPageLeave
 !insertmacro MUI_UNPAGE_INSTFILES
-!define MUI_FINISHPAGE_REBOOTLATER_DEFAULT
 !insertmacro MUI_UNPAGE_FINISH
 !insertmacro MUI_LANGUAGE "SimpChinese"
 
-Function .onInit
-    StrCpy $LaunchSettings 0
-    ${IfNot} ${RunningX64}
-        MessageBox MB_ICONSTOP "CxxIME requires 64-bit Windows."
-        Abort
-    ${EndIf}
-    ${If} ${RunningX64}
-        StrCpy $INSTDIR "$PROGRAMFILES64\CxxIME"
-    ${EndIf}
-FunctionEnd
-
-Function un.onInit
-    StrCpy $UninstallRemoveUserData 0
-    StrCpy $UninstallUserDataDir "$PROFILE\cxxime"
-FunctionEnd
-
-Function .onInstSuccess
-    Exec '"$INSTDIR\cxxime-server.exe"'
-    ${If} $LaunchSettings == ${BST_CHECKED}
-        Exec '"$INSTDIR\cxxime-settings.exe"'
-    ${EndIf}
-FunctionEnd
-
-Function FinishPage
-    nsDialogs::Create 1018
-    Pop $1
-    ${NSD_CreateCheckbox} 20u 50u 100% 20u "Launch CxxIME Settings"
-    Pop $1
-    nsDialogs::Show
-FunctionEnd
-
-Function FinishPageLeave
-    ${NSD_GetState} $1 $LaunchSettings
-FunctionEnd
-
-Function un.UserDataPage
-    nsDialogs::Create 1018
-    Pop $0
-    ${If} $0 == error
-        Abort
-    ${EndIf}
-
-    ${NSD_CreateLabel} 20u 16u 100% 24u "Choose whether to remove CxxIME user data. By default it is kept."
-    Pop $0
-    ${NSD_CreateLabel} 20u 46u 100% 12u "User data directory:"
-    Pop $0
-    ${NSD_CreateText} 28u 60u 100% 12u "$UninstallUserDataDir"
-    Pop $0
-    SendMessage $0 0x00CF 1 0
-    ${NSD_CreateCheckbox} 20u 88u 100% 20u "Remove user configuration and dictionary data"
-    Pop $UninstallRemoveUserDataCheckbox
-    ${NSD_SetState} $UninstallRemoveUserDataCheckbox $UninstallRemoveUserData
-    nsDialogs::Show
-FunctionEnd
-
-Function un.UserDataPageLeave
-    ${NSD_GetState} $UninstallRemoveUserDataCheckbox $UninstallRemoveUserData
-FunctionEnd
+!include "nsis\setup.nsh"
+!include "nsis\install_recovery.nsh"
+!include "nsis\install_locks.nsh"
+!include "nsis\install_state.nsh"
+!include "nsis\install_tsf.nsh"
 
 Section "Install"
-    ${If} ${RunningX64}
-        SetRegView 64
-    ${EndIf}
+    SetRegView 64
+    SetShellVarContext all
+    InitPluginsDir
+    SetOutPath "$PLUGINSDIR"
+    File /oname=cxxime-installer-helper.exe "cxxime-installer-helper.exe"
 
-    nsExec::Exec 'taskkill /im cxxime-server.exe'
-    Sleep 1500
-    nsExec::Exec 'taskkill /f /im cxxime-server.exe'
+    Call SetTransactionPaths
+    Call StopServer
+    Call CheckInstallLocks
+    Call RecoverInterruptedInstall
+    Pop $0
+    StrCmp $0 "1" install_recovery_ready
+        StrCmp $FailureMessage "" 0 install_failed_recovery
+        StrCpy $FailureMessage "A previous CxxIME installation could not be recovered safely."
+        Goto install_failed_recovery
 
-    ; Unregister and clean existing TSF DLLs before overwriting them.
-    IfFileExists "$INSTDIR\cxxime_tsf_x86.dll" 0 install_unregister_tsf_x86_done
-        nsExec::Exec '"$SYSDIR\regsvr32.exe" /u /s "$INSTDIR\cxxime_tsf_x86.dll"'
-    install_unregister_tsf_x86_done:
+    install_recovery_ready:
+    Call CheckInstallDirectory
+    Pop $0
+    StrCmp $0 "1" install_directory_checked
+        Goto install_failed_before_swap
 
-    IfFileExists "$INSTDIR\cxxime_tsf_x64.dll" 0 install_unregister_tsf_x64_done
-        nsExec::Exec '"$WINDIR\Sysnative\regsvr32.exe" /u /s "$INSTDIR\cxxime_tsf_x64.dll"'
-    install_unregister_tsf_x64_done:
+    install_directory_checked:
+    Call SnapshotPreviousState
 
-    Delete "$INSTDIR\cxxime_tsf_x64.dll"
-    IfFileExists "$INSTDIR\cxxime_tsf_x64.dll" 0 install_tsf_x64_deleted
-        Delete /REBOOTOK "$INSTDIR\cxxime_tsf_x64.dll"
-    install_tsf_x64_deleted:
+    RMDir /r "$StageDir"
+    CreateDirectory "$StageDir"
+    ClearErrors
 
-    Delete "$INSTDIR\cxxime_tsf_x86.dll"
-    IfFileExists "$INSTDIR\cxxime_tsf_x86.dll" 0 install_tsf_x86_deleted
-        Delete /REBOOTOK "$INSTDIR\cxxime_tsf_x86.dll"
-    install_tsf_x86_deleted:
-
-    Delete "$INSTDIR\cxxime_ime_x64.ime"
-    IfFileExists "$INSTDIR\cxxime_ime_x64.ime" 0 install_ime_x64_deleted
-        Delete /REBOOTOK "$INSTDIR\cxxime_ime_x64.ime"
-    install_ime_x64_deleted:
-
-    Delete "$INSTDIR\cxxime_ime_x86.ime"
-    IfFileExists "$INSTDIR\cxxime_ime_x86.ime" 0 install_ime_x86_deleted
-        Delete /REBOOTOK "$INSTDIR\cxxime_ime_x86.ime"
-    install_ime_x86_deleted:
-
-    Delete "$WINDIR\Sysnative\cxxime.ime.new"
-    Delete "$SYSDIR\cxxime.ime.new"
-
-    Delete "$INSTDIR\cxxime-resources.dll"
-    IfFileExists "$INSTDIR\cxxime-resources.dll" 0 install_resources_dll_deleted
-        Delete /REBOOTOK "$INSTDIR\cxxime-resources.dll"
-    install_resources_dll_deleted:
-
-    Delete "$INSTDIR\cxxime_tsf_x64.dll.old"
-    IfFileExists "$INSTDIR\cxxime_tsf_x64.dll.old" 0 install_tsf_x64_old_deleted
-        Delete /REBOOTOK "$INSTDIR\cxxime_tsf_x64.dll.old"
-    install_tsf_x64_old_deleted:
-
-    Delete "$INSTDIR\cxxime_tsf_x86.dll.old"
-    IfFileExists "$INSTDIR\cxxime_tsf_x86.dll.old" 0 install_tsf_x86_old_deleted
-        Delete /REBOOTOK "$INSTDIR\cxxime_tsf_x86.dll.old"
-    install_tsf_x86_old_deleted:
-
-    SetOutPath "$INSTDIR"
+    SetOutPath "$StageDir"
     File "cxxime_tsf_x64.dll"
     File "cxxime_tsf_x86.dll"
     File "cxxime_ime_x64.ime"
@@ -177,25 +141,20 @@ Section "Install"
     File "license.txt"
     File "THIRD_PARTY_NOTICES.txt"
 
-    SetOutPath "$INSTDIR\licenses"
+    SetOutPath "$StageDir\licenses"
     File "licenses\rime-ice-GPL-3.0.txt"
-    SetOutPath "$INSTDIR"
 
     !ifdef HOST_DIAGNOSTICS
+        SetOutPath "$StageDir"
         File "cxxime-ime-host-probe-x64.exe"
         File "cxxime-ime-host-probe-x86.exe"
         File "export_stage_trace.ps1"
-    !else
-        Delete "$INSTDIR\cxxime-ime-host-probe-x64.exe"
-        Delete "$INSTDIR\cxxime-ime-host-probe-x86.exe"
-        Delete "$INSTDIR\export_stage_trace.ps1"
     !endif
 
     !ifdef FAST
         SetCompress off
     !endif
-
-    SetOutPath "$INSTDIR\data"
+    SetOutPath "$StageDir\data"
     File "data\default.json"
     File "data\settings_presets.json"
     File "data\themes.json"
@@ -208,198 +167,221 @@ Section "Install"
     File "data\pinyin.topn.bin"
     File "data\wubi86.dict.bin"
     File "data\wubi86.dict.idx"
-
-    SetCompress auto
-
-    CreateDirectory "$PROFILE\cxxime"
-    SetOutPath "$PROFILE\cxxime"
-    IfFileExists "$PROFILE\cxxime\default.json" user_default_exists 0
-        File "data\default.json"
-    user_default_exists:
-
-    SetOutPath "$WINDIR\Sysnative"
-    ClearErrors
-    File /oname=cxxime.ime "cxxime_ime_x64.ime"
-    IfErrors 0 install_system_ime_x64_copied
-        Delete /REBOOTOK "$WINDIR\Sysnative\cxxime.ime"
-        ClearErrors
-        File /oname=cxxime.ime.new "cxxime_ime_x64.ime"
-        IfErrors 0 install_system_ime_x64_schedule
-            MessageBox MB_ICONSTOP "Failed to install 64-bit legacy IME module."
-            Abort
-        install_system_ime_x64_schedule:
-        ClearErrors
-        Rename /REBOOTOK "$WINDIR\Sysnative\cxxime.ime.new" "$WINDIR\Sysnative\cxxime.ime"
-        IfErrors 0 install_system_ime_x64_copied
-            MessageBox MB_ICONSTOP "Failed to schedule 64-bit legacy IME module replacement."
-            Abort
-    install_system_ime_x64_copied:
-
-    SetOutPath "$SYSDIR"
-    ClearErrors
-    File /oname=cxxime.ime "cxxime_ime_x86.ime"
-    IfErrors 0 install_system_ime_x86_copied
-        Delete /REBOOTOK "$SYSDIR\cxxime.ime"
-        ClearErrors
-        File /oname=cxxime.ime.new "cxxime_ime_x86.ime"
-        IfErrors 0 install_system_ime_x86_schedule
-            MessageBox MB_ICONSTOP "Failed to install 32-bit legacy IME module."
-            Abort
-        install_system_ime_x86_schedule:
-        ClearErrors
-        Rename /REBOOTOK "$SYSDIR\cxxime.ime.new" "$SYSDIR\cxxime.ime"
-        IfErrors 0 install_system_ime_x86_copied
-            MessageBox MB_ICONSTOP "Failed to schedule 32-bit legacy IME module replacement."
-            Abort
-    install_system_ime_x86_copied:
-
-    SetOutPath "$INSTDIR"
-
-    nsExec::Exec '"$WINDIR\Sysnative\regsvr32.exe" /s "$INSTDIR\cxxime_tsf_x64.dll"'
-    nsExec::Exec '"$SYSDIR\regsvr32.exe" /s "$INSTDIR\cxxime_tsf_x86.dll"'
-
-    WriteRegStr HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Run" "CxxIMEServer" '"$INSTDIR\cxxime-server.exe"'
-
-    WriteRegStr HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\CxxIME" "DisplayName" "CxxIME"
-    WriteRegStr HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\CxxIME" "DisplayVersion" "${VERSION}"
-    WriteRegStr HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\CxxIME" "Publisher" "${PUBLISHER}"
-    WriteRegStr HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\CxxIME" "DisplayIcon" '"$INSTDIR\cxxime-resources.dll",-100'
-    WriteRegStr HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\CxxIME" "InstallLocation" "$INSTDIR"
-    WriteRegStr HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\CxxIME" "UninstallString" '"$INSTDIR\uninstall.exe"'
-    WriteRegStr HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\CxxIME" "QuietUninstallString" '"$INSTDIR\uninstall.exe" /S'
-    WriteRegDWORD HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\CxxIME" "NoModify" 1
-    WriteRegDWORD HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\CxxIME" "NoRepair" 1
-    WriteUninstaller "$INSTDIR\uninstall.exe"
-
-    SetShellVarContext all
-    CreateDirectory "$SMPROGRAMS\CxxIME"
-    CreateShortCut "$SMPROGRAMS\CxxIME\CxxIME Settings.lnk" "$INSTDIR\cxxime-settings.exe"
-    Delete "$SMPROGRAMS\CxxIME\Host Candidate Probe x64.lnk"
-    Delete "$SMPROGRAMS\CxxIME\Host Candidate Probe x86.lnk"
-    Delete "$SMPROGRAMS\CxxIME\Export Stage 1 Trace.lnk"
-    !ifdef HOST_DIAGNOSTICS
-        CreateShortCut "$SMPROGRAMS\CxxIME\Host Candidate Probe x64.lnk" "$INSTDIR\cxxime-ime-host-probe-x64.exe"
-        CreateShortCut "$SMPROGRAMS\CxxIME\Host Candidate Probe x86.lnk" "$INSTDIR\cxxime-ime-host-probe-x86.exe"
-        CreateShortCut "$SMPROGRAMS\CxxIME\Export Stage 1 Trace.lnk" "$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" '-NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\export_stage_trace.ps1"'
+    !ifdef FAST
+        SetCompress auto
     !endif
-    CreateShortCut "$SMPROGRAMS\CxxIME\Collect Diagnostics.lnk" "$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" '-NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\collect_diagnostics.ps1"'
-    CreateShortCut "$SMPROGRAMS\CxxIME\Uninstall CxxIME.lnk" "$INSTDIR\uninstall.exe"
+
+    WriteUninstaller "$StageDir\uninstall.exe"
+    IfErrors 0 install_stage_ready
+        StrCpy $FailureMessage "Failed to extract the CxxIME installation files."
+        Goto install_failed_before_swap
+
+    install_stage_ready:
+    Call BackupSystemIme
+    Pop $0
+    StrCmp $0 "1" install_write_transaction
+        Goto install_failed_before_swap
+
+    install_write_transaction:
+    Call WriteTransactionState
+    Pop $0
+    StrCmp $0 "1" install_transaction_ready
+        Goto install_failed_before_swap
+
+    install_transaction_ready:
+    SetOutPath "$PLUGINSDIR"
+    ${If} $ExistingInstall == 1
+        IfFileExists "$BackupDir\*" 0 install_backup_path_ready
+            StrCpy $FailureMessage "The CxxIME backup directory could not be prepared."
+            Goto install_failed_after_transaction
+        install_backup_path_ready:
+        ClearErrors
+        Rename "$INSTDIR" "$BackupDir"
+        IfErrors 0 install_backup_ready
+            StrCpy $FailureMessage "Failed to back up the installed CxxIME version."
+            Goto install_failed_after_transaction
+        install_backup_ready:
+        Call UnregisterPreviousTsf
+        Pop $0
+        StrCmp $0 "1" install_swap_stage
+            Goto install_failed_after_transaction
+    ${Else}
+        RMDir "$INSTDIR"
+    ${EndIf}
+
+    install_swap_stage:
+    ClearErrors
+    Rename "$StageDir" "$INSTDIR"
+    IfErrors 0 install_stage_swapped
+        StrCpy $FailureMessage "Failed to activate the new CxxIME files."
+        Goto install_failed_after_transaction
+
+    install_stage_swapped:
+    Call CopyNewSystemIme
+    Pop $0
+    StrCmp $0 "1" install_register_tsf
+        Goto install_failed_after_transaction
+
+    install_register_tsf:
+    Call RegisterNewTsf
+    Pop $0
+    StrCmp $0 "1" install_write_registry
+        Goto install_failed_after_transaction
+
+    install_write_registry:
+    Call WriteInstallationRegistry
+    Pop $0
+    StrCmp $0 "1" install_write_marker
+        Goto install_failed_after_transaction
+
+    install_write_marker:
+    Call WriteInstallMarker
+    Pop $0
+    StrCmp $0 "1" install_commit
+        Goto install_failed_after_transaction
+
+    install_commit:
+    RMDir /r "$INSTDIR\${ROLLBACK_DIR}"
+    Delete "$INSTDIR\${TRANSACTION_MARKER}"
+    RMDir /r "$BackupDir"
+    CreateDirectory "$PROFILE\cxxime"
+    IfFileExists "$PROFILE\cxxime\default.json" install_user_config_ready
+        CopyFiles /SILENT /FILESONLY "$INSTDIR\data\default.json" "$PROFILE\cxxime"
+    install_user_config_ready:
+    Call CreateInstallShortcuts
+    DetailPrint "CxxIME ${VERSION} installation committed."
+    Goto install_done
+
+    install_failed_before_swap:
+    RMDir /r "$StageDir"
+    IfSilent install_failed_silent
+        MessageBox MB_ICONSTOP "$FailureMessage$\r$\n$\r$\nNo installed CxxIME files were changed."
+        Goto install_failed_abort
+
+    install_failed_after_transaction:
+    Call RollbackInstall
+    Pop $0
+    StrCmp $0 "1" install_rollback_complete
+        StrCpy $FailureMessage \
+            "$FailureMessage$\r$\n$\r$\nAutomatic rollback did not complete. \
+            Run setup again before using CxxIME."
+        Goto install_failed_silent_or_message
+    install_rollback_complete:
+        StrCpy $FailureMessage "$FailureMessage$\r$\n$\r$\nThe previous CxxIME state was restored."
+        Goto install_failed_silent_or_message
+
+    install_failed_recovery:
+        Goto install_failed_silent_or_message
+
+    install_failed_silent_or_message:
+    IfSilent install_failed_silent
+        MessageBox MB_ICONSTOP "$FailureMessage"
+        Goto install_failed_abort
+
+    install_failed_silent:
+    DetailPrint "$FailureMessage"
+    install_failed_abort:
+    Call RestartInstalledServer
+    SetErrorLevel 1
+    Abort
+
+    install_done:
 SectionEnd
 
+!include "nsis\uninstall_locks.nsh"
+!include "nsis\uninstall_state.nsh"
+!include "nsis\uninstall_files.nsh"
+
 Section "Uninstall"
-    ${If} ${RunningX64}
-        SetRegView 64
-    ${EndIf}
+    SetRegView 64
     SetShellVarContext all
+    InitPluginsDir
+    SetOutPath "$PLUGINSDIR"
+    File /oname=cxxime-installer-helper.exe "cxxime-installer-helper.exe"
+    StrCpy $LockReportPath "$PLUGINSDIR\cxxime-locks.txt"
 
-    ; Stop server
-    nsExec::Exec 'taskkill /im cxxime-server.exe'
-    Sleep 1500
-    nsExec::Exec 'taskkill /f /im cxxime-server.exe'
+    Call un.StopServer
+    Call un.CheckFileLocks
+    Call un.PrepareTransaction
+    Pop $0
+    StrCmp $0 "1" un_transaction_ready
+        Call un.FailAndRestart
 
-    ; Switch system keyboard to English to trigger TSF to unload CxxIME from all processes
-    DeleteRegValue HKCU "Keyboard Layout\Preload" "1"
-    WriteRegStr HKCU "Keyboard Layout\Preload" "1" "00000409"
-    System::Call 'user32::LoadKeyboardLayoutW(w "00000409", i 0x00000001) p .r0'
-    ${If} $0 != 0
-        System::Call 'user32::SendMessageTimeoutW(p 0xFFFF, i 0x0050, p 0, p r0, i 0x0002, i 2000, *p .r1)'
-    ${EndIf}
-    Sleep 1000
+    un_transaction_ready:
+    StrCmp $UninstallTransactionPhase "staged" un_program_files_staged
+    Call un.UnregisterInstalledTsf
+    Pop $0
+    StrCmp $0 "1" un_tsf_unregistered
+        Goto un_rollback_failure
 
-    ; Unregister TSF DLLs and wait for TSF to notify processes
-    nsExec::Exec '"$SYSDIR\regsvr32.exe" /u /s "$INSTDIR\cxxime_tsf_x86.dll"'
-    nsExec::Exec '"$WINDIR\Sysnative\regsvr32.exe" /u /s "$INSTDIR\cxxime_tsf_x64.dll"'
-    Sleep 3000
+    un_tsf_unregistered:
+    Call un.RemoveSystemIme
+    Pop $0
+    StrCmp $0 "1" un_system_ime_removed
+        Goto un_rollback_failure
 
-    ; Remove registry entries
-    DeleteRegValue HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Run" "CxxIMEServer"
-    nsExec::Exec '"$WINDIR\Sysnative\reg.exe" delete "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" /v CxxIMEServer /f'
-    nsExec::Exec '"$SYSDIR\reg.exe" delete "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" /v CxxIMEServer /f'
+    un_system_ime_removed:
+    Call un.StageInstalledFiles
+    Pop $0
+    StrCmp $0 "1" un_mark_files_staged
+        Goto un_rollback_failure
 
-    nsExec::Exec '"$WINDIR\Sysnative\reg.exe" delete "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\CxxIME" /f'
-    nsExec::Exec '"$SYSDIR\reg.exe" delete "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\CxxIME" /f'
+    un_mark_files_staged:
+    Call un.MarkTransactionStaged
+    Pop $0
+    StrCmp $0 "1" un_program_files_staged
+        Goto un_rollback_failure
 
-    nsExec::Exec '"$WINDIR\Sysnative\reg.exe" delete "HKLM\SOFTWARE\Classes\CLSID\${CLSID}" /f'
-    nsExec::Exec '"$SYSDIR\reg.exe" delete "HKLM\SOFTWARE\Classes\CLSID\${CLSID}" /f'
+    un_program_files_staged:
+    Call un.DeleteStagedFiles
+    Pop $0
+    StrCmp $0 "1" un_remove_registry
+        Call un.FailIncomplete
 
-    nsExec::Exec '"$WINDIR\Sysnative\reg.exe" delete "HKLM\SOFTWARE\Microsoft\CTF\TIP\${CLSID}" /f'
-    nsExec::Exec '"$SYSDIR\reg.exe" delete "HKLM\SOFTWARE\Microsoft\CTF\TIP\${CLSID}" /f'
+    un_rollback_failure:
+    Call un.RollbackTransaction
+    Pop $0
+    StrCmp $0 "1" un_rollback_complete
+        StrCpy $FailureMessage \
+            "$FailureMessage$\r$\n$\r$\nAutomatic rollback did not complete. \
+            Run the uninstaller again before using CxxIME."
+        Call un.FailAndRestart
+    un_rollback_complete:
+    StrCpy $FailureMessage "$FailureMessage$\r$\n$\r$\nThe installed CxxIME state was restored."
+    Call un.FailAndRestart
+
+    un_remove_registry:
+    DeleteRegValue HKLM "${RUN_KEY}" "CxxIMEServer"
+    DeleteRegKey HKLM "${UNINSTALL_KEY}"
+    DeleteRegKey HKLM "SOFTWARE\Classes\CLSID\${CLSID}"
+    DeleteRegKey HKLM "SOFTWARE\Microsoft\CTF\TIP\${CLSID}"
+    SetRegView 32
+    DeleteRegKey HKLM "SOFTWARE\Classes\CLSID\${CLSID}"
+    DeleteRegKey HKLM "SOFTWARE\Microsoft\CTF\TIP\${CLSID}"
+    SetRegView 64
+    ClearErrors
+    ReadRegStr $0 HKLM "${UNINSTALL_KEY}" "DisplayName"
+    IfErrors un_uninstall_registry_removed
+        StrCpy $FailureMessage \
+            "The CxxIME uninstall registry entry could not be removed. Run the uninstaller again."
+        Call un.FailIncomplete
+    un_uninstall_registry_removed:
+    ClearErrors
+    ReadRegStr $0 HKLM "${RUN_KEY}" "CxxIMEServer"
+    IfErrors un_run_registry_removed
+        StrCpy $FailureMessage \
+            "The CxxIME startup registry entry could not be removed. Run the uninstaller again."
+        Call un.FailIncomplete
+    un_run_registry_removed:
 
     RMDir /r "$SMPROGRAMS\CxxIME"
-
-    ; Delete TSF DLLs. If a DLL is still loaded, schedule deletion on reboot.
-    Delete "$INSTDIR\cxxime_tsf_x64.dll"
-    IfFileExists "$INSTDIR\cxxime_tsf_x64.dll" 0 tsf_x64_dll_deleted
-        Delete /REBOOTOK "$INSTDIR\cxxime_tsf_x64.dll"
-    tsf_x64_dll_deleted:
-
-    Delete "$INSTDIR\cxxime_tsf_x86.dll"
-    IfFileExists "$INSTDIR\cxxime_tsf_x86.dll" 0 tsf_x86_dll_deleted
-        Delete /REBOOTOK "$INSTDIR\cxxime_tsf_x86.dll"
-    tsf_x86_dll_deleted:
-
-    Delete "$INSTDIR\cxxime_tsf_x64.dll.old"
-    IfFileExists "$INSTDIR\cxxime_tsf_x64.dll.old" 0 tsf_x64_old_deleted
-        Delete /REBOOTOK "$INSTDIR\cxxime_tsf_x64.dll.old"
-    tsf_x64_old_deleted:
-
-    Delete "$INSTDIR\cxxime_tsf_x86.dll.old"
-    IfFileExists "$INSTDIR\cxxime_tsf_x86.dll.old" 0 tsf_x86_old_deleted
-        Delete /REBOOTOK "$INSTDIR\cxxime_tsf_x86.dll.old"
-    tsf_x86_old_deleted:
-
-    Delete "$WINDIR\Sysnative\cxxime.ime"
-    IfFileExists "$WINDIR\Sysnative\cxxime.ime" 0 system_ime_x64_deleted
-        Delete /REBOOTOK "$WINDIR\Sysnative\cxxime.ime"
-    system_ime_x64_deleted:
-
-    Delete "$SYSDIR\cxxime.ime"
-    IfFileExists "$SYSDIR\cxxime.ime" 0 system_ime_x86_deleted
-        Delete /REBOOTOK "$SYSDIR\cxxime.ime"
-    system_ime_x86_deleted:
-
-    Delete "$WINDIR\Sysnative\cxxime.ime.new"
-    Delete "$SYSDIR\cxxime.ime.new"
-
-    Delete "$INSTDIR\cxxime_ime_x64.ime"
-    IfFileExists "$INSTDIR\cxxime_ime_x64.ime" 0 ime_x64_deleted
-        Delete /REBOOTOK "$INSTDIR\cxxime_ime_x64.ime"
-    ime_x64_deleted:
-
-    Delete "$INSTDIR\cxxime_ime_x86.ime"
-    IfFileExists "$INSTDIR\cxxime_ime_x86.ime" 0 ime_x86_deleted
-        Delete /REBOOTOK "$INSTDIR\cxxime_ime_x86.ime"
-    ime_x86_deleted:
-
-    Delete "$INSTDIR\cxxime-resources.dll"
-    IfFileExists "$INSTDIR\cxxime-resources.dll" 0 resources_dll_deleted
-        Delete /REBOOTOK "$INSTDIR\cxxime-resources.dll"
-    resources_dll_deleted:
-    Delete "$INSTDIR\collect_diagnostics.ps1"
-    Delete "$INSTDIR\export_stage_trace.ps1"
-    Delete "$INSTDIR\cxxime-ime-host-probe-x64.exe"
-    Delete "$INSTDIR\cxxime-ime-host-probe-x86.exe"
-    Delete "$INSTDIR\cxxime-server.exe"
-    Delete "$INSTDIR\cxxime-settings.exe"
-    Delete "$INSTDIR\license.txt"
-    Delete "$INSTDIR\THIRD_PARTY_NOTICES.txt"
-    Delete "$INSTDIR\licenses\rime-ice-GPL-3.0.txt"
-    RMDir "$INSTDIR\licenses"
-    Delete "$INSTDIR\data\default.json"
-    Delete "$INSTDIR\data\settings_presets.json"
-    Delete "$INSTDIR\data\themes.json"
-    Delete "$INSTDIR\data\punctuation.json"
-    Delete "$INSTDIR\data\symbols.json"
-    Delete "$INSTDIR\data\dictionary_manifest.json"
-    Delete "$INSTDIR\data\pinyin.dict.bin"
-    Delete "$INSTDIR\data\pinyin.dict.idx"
-    Delete "$INSTDIR\data\pinyin.spellings.bin"
-    Delete "$INSTDIR\data\pinyin.topn.bin"
-    Delete "$INSTDIR\data\wubi86.dict.bin"
-    Delete "$INSTDIR\data\wubi86.dict.idx"
+    Delete "$INSTDIR\${UNINSTALL_TRANSACTION_MARKER}"
+    Delete "$INSTDIR\${UNINSTALL_TRANSACTION_TEMP}"
     Delete "$INSTDIR\uninstall.exe"
-    RMDir /r "$INSTDIR\data"
-    RMDir /REBOOTOK "$INSTDIR"
+    RMDir "$INSTDIR"
+    IfFileExists "$INSTDIR\*" 0 un_program_files_removed
+        DetailPrint "Some unrecognized files remain in $INSTDIR."
+    un_program_files_removed:
 
     ${If} $UninstallRemoveUserData == ${BST_CHECKED}
         StrCpy $UninstallUserDataDirSuffix $UninstallUserDataDir 7 -7

@@ -365,6 +365,12 @@ def copy_binaries(
     copy_binary(build_dir, config, "resource", "cxxime-resources.dll")
     copy_binary(build_dir, config, "server", "cxxime-server.exe")
     copy_binary(build_dir, config, "settings", "cxxime-settings.exe")
+    copy_binary(
+        build_dir,
+        config,
+        "installer",
+        "cxxime-installer-helper.exe",
+    )
 
 
 def copy_config(host_diagnostics: bool) -> None:
@@ -477,6 +483,7 @@ def check_debug_crt(config: str) -> None:
         "cxxime-resources.dll",
         "cxxime-server.exe",
         "cxxime-settings.exe",
+        "cxxime-installer-helper.exe",
     ]:
         path = os.path.join(DIST_DIR, name)
         if not os.path.isfile(path):
@@ -634,8 +641,14 @@ def copy_installer_scripts(config: str, host_diagnostics: bool) -> None:
         shutil.copy2(stage_exporter, DIST_DIR)
         print("  export_stage_trace.ps1")
 
-    # NSIS template
+    # NSIS template and function includes.
     shutil.copy2(os.path.join(SCRIPTS, "cxxime-setup.nsi"), DIST_DIR)
+    nsis_source_dir = os.path.join(SCRIPTS, "nsis")
+    nsis_dist_dir = os.path.join(DIST_DIR, "nsis")
+    os.makedirs(nsis_dist_dir, exist_ok=True)
+    for entry in sorted(os.scandir(nsis_source_dir), key=lambda item: item.name):
+        if entry.is_file() and entry.name.endswith(".nsh"):
+            shutil.copy2(entry.path, nsis_dist_dir)
 
     # Project license for the NSIS license page.
     license_src = os.path.join(ROOT, "LICENSE")
@@ -679,9 +692,7 @@ def build_nsis(config: str, fast: bool = False, host_diagnostics: bool = False) 
                 continue
 
     if makensis is None:
-        print("  WARNING: makensis not found. Install NSIS 3.x or add it to PATH.")
-        print(f"  Distribution files are in: {DIST_DIR}")
-        return
+        raise RuntimeError("makensis was not found; install NSIS 3.x or add it to PATH")
 
     print(f"  Using NSIS: {makensis}")
     nsi_file = os.path.join(DIST_DIR, "cxxime-setup.nsi")
@@ -702,7 +713,7 @@ def build_nsis(config: str, fast: bool = False, host_diagnostics: bool = False) 
         shutil.move(installer, dest)
         print(f"  Installer created: {dest}")
     else:
-        print("  ERROR: NSIS completed but installer not found.", file=sys.stderr)
+        raise RuntimeError("NSIS completed without producing the expected installer")
 
 
 def print_summary(config: str, include_x86_modules: bool, host_diagnostics: bool) -> None:
@@ -726,6 +737,7 @@ def print_summary(config: str, include_x86_modules: bool, host_diagnostics: bool
     print("  cxxime-resources.dll     Stable input profile resources")
     print("  cxxime-server.exe        Background server process")
     print("  cxxime-settings.exe      Configuration editor")
+    print("  cxxime-installer-helper.exe  Installer lock preflight")
     print("  data/")
     print("    default.json           Default configuration")
     print("    settings_presets.json  Settings UI presets")
