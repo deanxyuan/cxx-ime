@@ -47,6 +47,9 @@ VIAddVersionKey /LANG=2052 "LegalCopyright" "Copyright (c) 2026 CxxIME Contribut
 VIAddVersionKey /LANG=2052 "ProductName" "${PRODUCT}"
 VIAddVersionKey /LANG=2052 "ProductVersion" "${VERSION}"
 
+!define MUI_ICON "cxxime.ico"
+!define MUI_UNICON "cxxime.ico"
+
 Var LaunchSettings
 Var ExistingInstall
 Var RegisteredInstallDir

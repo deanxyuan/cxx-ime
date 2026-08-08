@@ -33,6 +33,7 @@ def check_required_files(
         "cxxime-installer-helper.exe",
         "collect_diagnostics.ps1",
         "cxxime-setup.nsi",
+        "cxxime.ico",
         "license.txt",
         "THIRD_PARTY_NOTICES.txt",
         os.path.join("licenses", "rime-ice-GPL-3.0.txt"),
