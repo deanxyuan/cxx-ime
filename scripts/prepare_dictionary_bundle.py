@@ -129,11 +129,13 @@ def run_wubi_symbol_split(
     )
 
 
-def verify_generated_file(generated_path: str, expected_path: str) -> None:
-    """Require a generated source derivative to match its reviewed repository copy."""
+def verify_generated_text_file(generated_path: str, expected_path: str) -> None:
+    """Require generated UTF-8 text to match its reviewed repository copy."""
     if not os.path.isfile(expected_path):
         raise RuntimeError(f"Expected generated file not found: {expected_path}")
-    with open(generated_path, "rb") as generated, open(expected_path, "rb") as expected:
+    with open(generated_path, "r", encoding="utf-8", newline=None) as generated, open(
+        expected_path, "r", encoding="utf-8", newline=None
+    ) as expected:
         if generated.read() != expected.read():
             raise RuntimeError(
                 f"Generated {os.path.basename(generated_path)} does not match "
@@ -282,7 +284,7 @@ def prepare_wubi_dictionary(data_dir: str, output_dir: str) -> list[str]:
         generated_symbols = os.path.join(tmpdir, "symbols.json")
         db_path = os.path.join(tmpdir, "wubi86.filtered.dict.db")
         run_wubi_symbol_split(source_db, db_path, generated_symbols)
-        verify_generated_file(generated_symbols, os.path.join(data_dir, "symbols.json"))
+        verify_generated_text_file(generated_symbols, os.path.join(data_dir, "symbols.json"))
         symbols_output = os.path.join(output_dir, "symbols.json")
         shutil.copy2(generated_symbols, symbols_output)
         output_prefix = os.path.join(output_dir, "wubi86")
