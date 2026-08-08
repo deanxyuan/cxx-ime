@@ -30,14 +30,16 @@ python scripts\package.py --skip-dict
 | `prepare_dictionary_bundle.py` | 并行准备拼音、五笔运行时词典并生成 manifest |
 | `build_pinyin_topn.py` | 生成供 `topn_builder` 使用的拼音 Top-N 中间索引 |
 | `verify_dictionary_bundle.py` | 校验运行时词典、索引及 manifest 的一致性 |
-| `verify_package.py` | 校验发布目录、许可证和安装包所需文件 |
+| `verify_package.py` | 发布包静态校验入口 ，仅负责组织各类检查 |
+| `package_checks/` | 发布文件、词典、诊断和安装器的分模块检查 |
 | `benchmark.bat` | 运行主要性能基准 |
 | `benchmark_topn.ps1` | 运行拼音 Top-N 专项基准 |
 | `check_query_bench.py` | 检查查询基准结果是否满足阈值 |
 | `run_sync_regression.bat` | 在 cmd 中运行同步和数据回归检查 |
 | `run_sync_regression.ps1` | 在 PowerShell 中运行同步和数据回归检查 |
 | `collect_diagnostics.ps1` | 收集已安装版本的诊断信息 |
-| `cxxime-setup.nsi` | NSIS 安装包定义 |
+| `cxxime-setup.nsi` | NSIS 安装与卸载流程入口 |
+| `nsis/` | NSIS 初始化、事务、锁检查、TSF 注册和文件处理模块 |
 
 ## 词典打包阶段
 

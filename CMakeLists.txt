@@ -66,6 +66,7 @@ add_subdirectory(resource)
 add_subdirectory(tsf)
 add_subdirectory(server)
 add_subdirectory(ui)
+add_subdirectory(installer)
 
 if(CXXIME_BUILD_HOST_PROBE)
     add_subdirectory(diagnostics/host_takeover/probe)
