@@ -11,13 +11,15 @@
 python scripts\package.py
 ```
 
-`package.py` 负责构建程序、准备词典 bundle、复制项目与第三方许可证、验证数据并生成安装包。常用参数：
+`package.py` 负责构建程序、准备词典 bundle、复制项目与第三方许可证、验证数据并生成安装包。
+常用参数：
 
 ```bat
 python scripts\package.py --fast
 python scripts\package.py --fast --host-diag
 python scripts\package.py --skip-build
 python scripts\package.py --skip-dict
+python scripts\package.py --output-dir <path>
 ```
 
 修改词典源数据、候选排序或索引格式后，正式打包不得使用 `--skip-dict`。
@@ -30,7 +32,7 @@ python scripts\package.py --skip-dict
 | `prepare_dictionary_bundle.py` | 并行准备拼音、五笔运行时词典并生成 manifest |
 | `build_pinyin_topn.py` | 生成供 `topn_builder` 使用的拼音 Top-N 中间索引 |
 | `verify_dictionary_bundle.py` | 校验运行时词典、索引及 manifest 的一致性 |
-| `verify_package.py` | 发布包静态校验入口 ，仅负责组织各类检查 |
+| `verify_package.py` | 发布包静态校验入口，仅负责组织各类检查 |
 | `package_checks/` | 发布文件、词典、诊断和安装器的分模块检查 |
 | `benchmark.bat` | 运行主要性能基准 |
 | `benchmark_topn.ps1` | 运行拼音 Top-N 专项基准 |

@@ -9,6 +9,7 @@
 #   python scripts/package.py --skip-build   # Skip cmake build (already built)
 #   python scripts/package.py --skip-dict    # Skip dictionary generation
 #   python scripts/package.py --host-diag    # Include host diagnostics and Probe
+#   python scripts/package.py --output-dir output
 #   python scripts/package.py --generator "Visual Studio 17 2022" --platform x64
 
 from __future__ import annotations
@@ -30,7 +31,7 @@ DATA = os.path.join(ROOT, "data")
 DEFAULT_BUILD_DIR = os.path.join(ROOT, "build-package")
 DEFAULT_X86_BUILD_DIR = os.path.join(ROOT, "build-package-x86")
 DIST_DIR = os.path.join(ROOT, "dist")
-OUTPUT_DIR = os.path.join(ROOT, "..", "output")
+DEFAULT_OUTPUT_DIR = os.path.join(ROOT, "..", "output")
 with open(os.path.join(ROOT, "VERSION"), encoding="ascii") as version_file:
     VERSION = version_file.read().strip()
 _VERSION_MATCH = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?", VERSION)
@@ -675,7 +676,12 @@ def copy_installer_scripts(config: str, host_diagnostics: bool) -> None:
     print(f"  licenses/{data_license_name}")
 
 
-def build_nsis(config: str, fast: bool = False, host_diagnostics: bool = False) -> None:
+def build_nsis(
+    config: str,
+    output_dir: str,
+    fast: bool = False,
+    host_diagnostics: bool = False,
+) -> None:
     """Run makensis to create the installer."""
     # Find makensis
     makensis = shutil.which("makensis")
@@ -710,10 +716,10 @@ def build_nsis(config: str, fast: bool = False, host_diagnostics: bool = False) 
     run(cmd, cwd=DIST_DIR)
 
     # Move installer to output
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    os.makedirs(output_dir, exist_ok=True)
     suffix = "-host-diag" if host_diagnostics else ""
     installer = os.path.join(DIST_DIR, f"cxxime-v{VERSION}{suffix}-setup.exe")
-    dest = os.path.join(OUTPUT_DIR, f"cxxime-v{VERSION}{suffix}-setup.exe")
+    dest = os.path.join(output_dir, f"cxxime-v{VERSION}{suffix}-setup.exe")
     if os.path.isfile(installer):
         shutil.move(installer, dest)
         print(f"  Installer created: {dest}")
@@ -791,6 +797,10 @@ def main():
         help="CMake build directory for 32-bit IME module builds (default: build-package-x86)",
     )
     parser.add_argument(
+        "--output-dir", default=DEFAULT_OUTPUT_DIR,
+        help="Installer output directory (default: ../output)",
+    )
+    parser.add_argument(
         "--skip-build", action="store_true",
         help="Skip cmake build step (binaries already built)",
     )
@@ -858,6 +868,7 @@ def main():
     config = "Debug" if args.debug else "Release"
     build_dir = os.path.abspath(args.build_dir)
     x86_build_dir = os.path.abspath(args.x86_build_dir)
+    output_dir = os.path.abspath(args.output_dir)
     if not args.skip_x86_tsf and os.path.normcase(build_dir) == os.path.normcase(x86_build_dir):
         parser.error("--x86-build-dir must be different from --build-dir")
     if args.skip_build:
@@ -993,7 +1004,12 @@ def main():
     else:
         step("[9/9] Building NSIS installer...")
         stage_start = time.perf_counter()
-        build_nsis(config, fast=args.fast, host_diagnostics=args.host_diag)
+        build_nsis(
+            config,
+            output_dir,
+            fast=args.fast,
+            host_diagnostics=args.host_diag,
+        )
         timings.append(("build nsis installer", time.perf_counter() - stage_start))
 
     print_summary(
