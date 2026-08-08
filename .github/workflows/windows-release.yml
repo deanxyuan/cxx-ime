@@ -48,6 +48,10 @@ jobs:
             --jobs 4 `
             --dict-workers 2
 
+      - name: Stage packaged data for tests
+        shell: pwsh
+        run: Copy-Item -Path "dist/data/*" -Destination "data" -Force
+
       - name: Run tests
         shell: pwsh
         run: ctest --test-dir build-package -C Release --output-on-failure

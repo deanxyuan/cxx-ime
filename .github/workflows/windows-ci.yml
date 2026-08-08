@@ -37,6 +37,15 @@ jobs:
         shell: cmd
         run: build.bat
 
+      - name: Prepare test dictionaries
+        shell: pwsh
+        run: |
+          python scripts/prepare_dictionary_bundle.py `
+            --data-dir data `
+            --output-dir data `
+            --workers 2 `
+            --topn-builder build/tools/topn_index/Release/topn_builder.exe
+
       - name: Run tests
         shell: pwsh
         run: ctest --test-dir build -C Release --output-on-failure
