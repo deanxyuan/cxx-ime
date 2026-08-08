@@ -5,6 +5,7 @@
 #include <vector>
 
 #include <windows.h>
+#include <restartmanager.h>
 
 #include <cxxime/installer_lock.h>
 
@@ -40,7 +41,12 @@ TEST(InstallerLock, reports_process_holding_file) {
                      [process_id](const cxxime::installer::LockingApplication& application) {
                          return application.process_id == process_id;
                      });
-    ASSERT_EQ(result.status, cxxime::installer::LockQueryStatus::kSuccess);
+    // This test deliberately owns the resource, which Restart Manager may report as self.
+    const bool detected_self =
+        result.status == cxxime::installer::LockQueryStatus::kRebootRequired &&
+        result.reboot_reasons == static_cast<std::uint32_t>(RmRebootReasonDetectedSelf);
+    ASSERT_TRUE(result.status == cxxime::installer::LockQueryStatus::kSuccess || detected_self)
+        << "status=" << result.status << " reboot_reasons=" << result.reboot_reasons;
     ASSERT_TRUE(current_process != result.applications.end());
 
     CloseHandle(file);
