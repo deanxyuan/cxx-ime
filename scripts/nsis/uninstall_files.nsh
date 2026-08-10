@@ -13,7 +13,7 @@ Function un.MoveInstalledEntry
     Return
 
     un_move_installed_entry_failed:
-    StrCpy $FailureMessage "Failed to stage $2 for removal."
+    StrCpy $FailureMessage "无法暂存待删除项：$2。"
     Push 0
 FunctionEnd
 
@@ -33,7 +33,7 @@ Function un.RestoreInstalledEntry
     Return
 
     un_restore_installed_entry_failed:
-    StrCpy $FailureMessage "Failed to restore $2 after an uninstall error."
+    StrCpy $FailureMessage "卸载出错后无法恢复：$2。"
     Push 0
 FunctionEnd
 
@@ -105,7 +105,7 @@ Function un.RegisterInstalledTsf
         Pop $0
         Pop $1
         StrCmp $0 "0" un_restore_register_x86
-            StrCpy $FailureMessage "Failed to restore the 64-bit TSF registration."
+            StrCpy $FailureMessage "无法恢复 64 位 TSF 注册。"
             Push 0
             Return
     un_restore_register_x86:
@@ -115,7 +115,7 @@ Function un.RegisterInstalledTsf
         Pop $0
         Pop $1
         StrCmp $0 "0" un_restore_register_done
-            StrCpy $FailureMessage "Failed to restore the 32-bit TSF registration."
+            StrCpy $FailureMessage "无法恢复 32 位 TSF 注册。"
             Push 0
             Return
     un_restore_register_done:
@@ -123,12 +123,12 @@ Function un.RegisterInstalledTsf
     Return
 
     un_restore_register_x64_missing:
-    StrCpy $FailureMessage "The 64-bit TSF module could not be restored."
+    StrCpy $FailureMessage "无法恢复 64 位 TSF 模块。"
     Push 0
     Return
 
     un_restore_register_x86_missing:
-    StrCpy $FailureMessage "The 32-bit TSF module could not be restored."
+    StrCpy $FailureMessage "无法恢复 32 位 TSF 模块。"
     Push 0
 FunctionEnd
 
@@ -160,8 +160,7 @@ Function un.DeleteStagedFiles
 
     un_delete_staged_files_failed:
     StrCpy $FailureMessage \
-        "Some CxxIME files could not be removed. \
-        Run the uninstaller again after closing applications."
+        "部分 CxxIME 文件无法删除。请关闭相关应用程序后重新运行卸载程序。"
     Push 0
 FunctionEnd
 

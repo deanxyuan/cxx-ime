@@ -42,7 +42,7 @@ Function un.LoadTransactionState
     Return
 
     un_transaction_state_invalid:
-    StrCpy $FailureMessage "The previous CxxIME uninstall transaction is incomplete or invalid."
+    StrCpy $FailureMessage "先前的 CxxIME 卸载事务不完整或无效。"
     Push 0
 FunctionEnd
 
@@ -76,14 +76,14 @@ Function un.WriteTransactionState
     FileClose $0
     un_write_transaction_failed:
     Delete "$INSTDIR\${UNINSTALL_TRANSACTION_TEMP}"
-    StrCpy $FailureMessage "Failed to write the CxxIME uninstall transaction."
+    StrCpy $FailureMessage "无法写入 CxxIME 卸载事务。"
     Push 0
     Return
 
     un_commit_transaction_failed:
     Delete "$INSTDIR\${UNINSTALL_TRANSACTION_TEMP}"
     StrCpy $FailureMessage \
-        "Failed to commit the CxxIME uninstall transaction (Win32 error $1)."
+        "无法提交 CxxIME 卸载事务（Win32 错误 $1）。"
     Push 0
 FunctionEnd
 
@@ -162,13 +162,13 @@ Function un.PrepareTransaction
 
     un_prepare_transaction_failed:
     Delete "$INSTDIR\${UNINSTALL_TRANSACTION_TEMP}"
-    StrCpy $FailureMessage "Failed to create the CxxIME uninstall transaction."
+    StrCpy $FailureMessage "无法创建 CxxIME 卸载事务。"
     Push 0
     Return
 
     un_prepare_install_incomplete:
     StrCpy $FailureMessage \
-        "A CxxIME installation is incomplete. Run setup again before uninstalling CxxIME."
+        "CxxIME 安装尚未完成。请重新运行安装程序后再卸载。"
     Push 0
 FunctionEnd
 
@@ -183,7 +183,7 @@ Function un.UnregisterInstalledTsf
         Pop $0
         Pop $1
         StrCmp $0 "0" un_unregister_installed_x64_path
-            StrCpy $FailureMessage "Failed to unregister the 32-bit TSF module."
+            StrCpy $FailureMessage "无法注销 32 位 TSF 模块。"
             Push 0
             Return
 
@@ -198,7 +198,7 @@ Function un.UnregisterInstalledTsf
         Pop $0
         Pop $1
         StrCmp $0 "0" un_unregister_installed_done
-            StrCpy $FailureMessage "Failed to unregister the 64-bit TSF module."
+            StrCpy $FailureMessage "无法注销 64 位 TSF 模块。"
             Push 0
             Return
     un_unregister_installed_done:
@@ -206,12 +206,12 @@ Function un.UnregisterInstalledTsf
     Return
 
     un_unregister_installed_x86_missing:
-    StrCpy $FailureMessage "The registered 32-bit TSF module is missing."
+    StrCpy $FailureMessage "缺少已注册的 32 位 TSF 模块。"
     Push 0
     Return
 
     un_unregister_installed_x64_missing:
-    StrCpy $FailureMessage "The registered 64-bit TSF module is missing."
+    StrCpy $FailureMessage "缺少已注册的 64 位 TSF 模块。"
     Push 0
 FunctionEnd
 
@@ -224,7 +224,7 @@ Function un.RemoveSystemIme
     Return
 
     un_remove_system_ime_failed:
-    StrCpy $FailureMessage "Failed to remove the legacy IME modules."
+    StrCpy $FailureMessage "无法删除传统 IME 模块。"
     Push 0
 FunctionEnd
 
@@ -253,6 +253,6 @@ Function un.RestoreSystemIme
     Return
 
     un_restore_system_ime_failed:
-    StrCpy $FailureMessage "Failed to restore the legacy IME modules."
+    StrCpy $FailureMessage "无法恢复传统 IME 模块。"
     Push 0
 FunctionEnd
