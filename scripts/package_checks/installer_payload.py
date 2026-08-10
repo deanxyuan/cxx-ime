@@ -66,7 +66,7 @@ def check_installer_payload(
     require_text(errors, text, '"$WINDIR\\Sysnative\\cxxime.ime"', label)
     require_text(errors, text, '"$SYSDIR\\cxxime.ime"', label)
     require_text(errors, text, 'Delete "$WINDIR\\Sysnative\\cxxime.ime"', label)
-    require_text(errors, text, "CxxIME requires 64-bit Windows.", label)
+    require_text(errors, text, "CxxIME 需要 64 位 Windows。", label)
     require_text(errors, text, 'File "data\\wubi86.dict.bin"', label)
     require_text(errors, text, 'File "data\\wubi86.dict.idx"', label)
     forbid_text(errors, text, 'File /nonfatal "data\\wubi86.dict.bin"', label)
@@ -91,9 +91,9 @@ def check_installer_payload(
         label,
     )
     require_text(errors, text, "UninstPage custom un.UserDataPage un.UserDataPageLeave", label)
-    require_text(errors, text, "User data directory:", label)
+    require_text(errors, text, "用户数据目录：", label)
     require_text(errors, text, '${NSD_CreateText} 28u 60u 100% 12u "$UninstallUserDataDir"', label)
-    require_text(errors, text, "Remove user configuration and dictionary data", label)
+    require_text(errors, text, "删除用户配置和词库数据", label)
     require_text(errors, text, 'StrCpy $UninstallUserDataDir "$PROFILE\\cxxime"', label)
     require_text(
         errors,
