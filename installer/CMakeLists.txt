@@ -11,10 +11,15 @@ target_include_directories(cxxime-installer-lock PUBLIC
 target_link_libraries(cxxime-installer-lock PUBLIC Rstrtmgr.lib)
 
 add_executable(cxxime-installer-helper
+    installer.manifest
     src/main.cc
+    src/installer_prompt.cc
 )
 
-target_link_libraries(cxxime-installer-helper PRIVATE cxxime-installer-lock)
+target_link_libraries(cxxime-installer-helper PRIVATE
+    cxxime-installer-lock
+    comctl32.lib
+)
 
 cxxime_add_version_resource(
     cxxime-installer-helper

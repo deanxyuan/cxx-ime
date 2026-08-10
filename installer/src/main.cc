@@ -1,12 +1,14 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
 #include <cstdint>
+#include <cstdlib>
 #include <string>
 #include <vector>
 
 #include <windows.h>
 
 #include <cxxime/installer_lock.h>
+#include <cxxime/installer_prompt.h>
 
 namespace {
 
@@ -14,7 +16,44 @@ constexpr int kExitNoLocks = 0;
 constexpr int kExitLocked = 2;
 constexpr int kExitRebootRequired = 3;
 constexpr int kExitQueryFailed = 4;
+// NSIS consumes these stable action codes when the helper displays a prompt.
+constexpr int kExitPromptRetry = 10;
+constexpr int kExitPromptDeferUntilRestart = 11;
+constexpr int kExitPromptCancel = 12;
 constexpr int kExitInvalidArguments = 64;
+
+bool starts_with(const std::wstring& value, const wchar_t* prefix) {
+    const std::wstring expected(prefix);
+    return value.compare(0, expected.size(), expected) == 0;
+}
+
+bool parse_parent_window(const std::wstring& value, std::uintptr_t* parent_window) {
+    if (!parent_window || value.empty()) {
+        return false;
+    }
+
+    wchar_t* end = nullptr;
+    const unsigned long long parsed = std::wcstoull(value.c_str(), &end, 0);
+    if (end == value.c_str() || *end != L'\0') {
+        return false;
+    }
+    *parent_window = static_cast<std::uintptr_t>(parsed);
+    return true;
+}
+
+int prompt_exit_code(cxxime::installer::LockPromptChoice choice) {
+    switch (choice) {
+    case cxxime::installer::LockPromptChoice::kRetry:
+        return kExitPromptRetry;
+    case cxxime::installer::LockPromptChoice::kDeferUntilRestart:
+        return kExitPromptDeferUntilRestart;
+    case cxxime::installer::LockPromptChoice::kCancel:
+        return kExitPromptCancel;
+    case cxxime::installer::LockPromptChoice::kFailed:
+        return kExitQueryFailed;
+    }
+    return kExitQueryFailed;
+}
 
 bool write_utf16_report(const std::wstring& path, const std::wstring& report) {
     HANDLE file = CreateFileW(path.c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_ALWAYS,
@@ -44,9 +83,32 @@ int wmain(int argc, wchar_t** argv) {
     }
 
     const std::wstring report_path = argv[3];
+    bool show_prompt = false;
+    cxxime::installer::LockPromptMode prompt_mode = cxxime::installer::LockPromptMode::kInstall;
+    std::uintptr_t parent_window = 0;
     std::vector<std::wstring> resources;
     for (int index = 4; index < argc; ++index) {
-        resources.emplace_back(argv[index]);
+        const std::wstring argument = argv[index];
+        if (starts_with(argument, L"--prompt=")) {
+            const std::wstring mode = argument.substr(std::wstring(L"--prompt=").size());
+            if (mode == L"install") {
+                prompt_mode = cxxime::installer::LockPromptMode::kInstall;
+            } else if (mode == L"uninstall") {
+                prompt_mode = cxxime::installer::LockPromptMode::kUninstall;
+            } else {
+                return kExitInvalidArguments;
+            }
+            show_prompt = true;
+        } else if (starts_with(argument, L"--parent=")) {
+            const std::wstring value = argument.substr(std::wstring(L"--parent=").size());
+            if (!parse_parent_window(value, &parent_window)) {
+                return kExitInvalidArguments;
+            }
+        } else if (starts_with(argument, L"--")) {
+            return kExitInvalidArguments;
+        } else {
+            resources.push_back(argument);
+        }
     }
     if (resources.empty()) {
         return kExitInvalidArguments;
@@ -56,6 +118,13 @@ int wmain(int argc, wchar_t** argv) {
     const std::wstring report = cxxime::installer::format_lock_report(result);
     if (!write_utf16_report(report_path, report)) {
         return kExitQueryFailed;
+    }
+    const bool needs_attention =
+        result.status != cxxime::installer::LockQueryStatus::kSuccess ||
+        !result.applications.empty();
+    if (show_prompt && needs_attention) {
+        return prompt_exit_code(
+            cxxime::installer::show_lock_prompt(prompt_mode, parent_window, result, report));
     }
     if (result.status == cxxime::installer::LockQueryStatus::kFailed) {
         return kExitQueryFailed;

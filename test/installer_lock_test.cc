@@ -65,7 +65,7 @@ TEST(InstallerLock, formats_bounded_application_list) {
     ASSERT_TRUE(report.find(L"First (PID 10)") != std::wstring::npos);
     ASSERT_TRUE(report.find(L"Second (PID 20)") != std::wstring::npos);
     ASSERT_TRUE(report.find(L"Third") == std::wstring::npos);
-    ASSERT_TRUE(report.find(L"and 1 more") != std::wstring::npos);
+    ASSERT_TRUE(report.find(L"另外 1 个应用程序") != std::wstring::npos);
 }
 
 TEST(InstallerLock, truncates_long_application_names) {
@@ -75,6 +75,16 @@ TEST(InstallerLock, truncates_long_application_names) {
     const std::wstring report = cxxime::installer::format_lock_report(result);
     ASSERT_TRUE(report.size() < 160);
     ASSERT_TRUE(report.find(L"...") != std::wstring::npos);
+}
+
+TEST(InstallerLock, formats_query_failure_in_chinese) {
+    cxxime::installer::LockQueryResult result;
+    result.status = cxxime::installer::LockQueryStatus::kFailed;
+    result.error_code = 123;
+
+    const std::wstring report = cxxime::installer::format_lock_report(result);
+    ASSERT_TRUE(report.find(L"无法检查文件占用情况") != std::wstring::npos);
+    ASSERT_TRUE(report.find(L"123") != std::wstring::npos);
 }
 
 RUN_ALL_TESTS()
