@@ -12,7 +12,7 @@
 #include <cxxime/diagnostic_log_path.h>
 #include <cxxime/diagnostics_config.h>
 
-#include "tsf_stage.h"
+#include "tsf_trace.h"
 
 namespace {
 
@@ -325,9 +325,9 @@ void TextService::_trace_input_decision(const char* block_reason) {
     _enqueue_event_trace("input_context", block_reason);
 }
 
-void TextService::_reset_stage_composition(const char* reason) {
-    cxxime_tsf::trace_stage_composition_end(stage_input_id(), stage_composition_id(), reason);
-    _stageTraceSession.reset_composition();
+void TextService::_reset_trace_composition(const char* reason) {
+    cxxime_tsf::trace_composition_end(trace_input_id(), trace_composition_id(), reason);
+    _hostTraceSession.reset_composition();
 }
 
 void TextService::trace_ui_element_method(const char* element, const char* method, bool important) {
@@ -337,8 +337,8 @@ void TextService::trace_ui_element_method(const char* element, const char* metho
     _enqueue_event_trace("ui_element_call", detail, important);
 }
 
-uint64_t TextService::ensure_stage_composition_id() {
-    return _stageTraceSession.ensure_composition();
+uint64_t TextService::ensure_trace_composition_id() {
+    return _hostTraceSession.ensure_composition();
 }
 
 void TextService::trace_caret_event(const char* action,

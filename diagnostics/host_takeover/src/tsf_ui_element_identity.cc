@@ -53,13 +53,13 @@ void add_implementation_module(ITfUIElement* element, nlohmann::json& fields) {
         : 0;
     fields["implementation_module_found"] = module != nullptr && path_length > 0;
     fields["implementation_module_name"] = module_name_utf8(module_path, path_length);
-    fields["implementation_module_path_digest"] = cxxime::stage_trace_digest_utf16(
+    fields["implementation_module_path_digest"] = cxxime::host_trace_digest_utf16(
         module_path, path_length);
 }
 
 } // namespace
 
-void add_stage_ui_element_identity_fields(ITfUIElement* element, nlohmann::json& fields) {
+void add_ui_element_identity_fields(ITfUIElement* element, nlohmann::json& fields) {
     const HMODULE shared_correction_ui = GetModuleHandleW(L"mscand20.dll");
     fields["shared_correction_ui_loaded"] = shared_correction_ui != nullptr;
     fields["shared_correction_ui_module"] =

@@ -2,7 +2,7 @@ project(cxxime-ime CXX)
 
 if(CXXIME_ENABLE_HOST_DIAGNOSTICS)
     set(CXXIME_LEGACY_DIAGNOSTIC_SOURCES
-        ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/legacy_stage.cc
+        ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/legacy_trace.cc
     )
 else()
     set(CXXIME_LEGACY_DIAGNOSTIC_SOURCES

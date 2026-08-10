@@ -2,7 +2,7 @@
 
 #include "probe_app.h"
 
-#include <cxxime/stage_trace.h>
+#include <cxxime/host_trace.h>
 
 #include <algorithm>
 
@@ -58,7 +58,7 @@ void ProbeApp::click_candidate(UINT index) {
     }
 
     const bool finalize_attempted = SUCCEEDED(selection_hr);
-    cxxime::write_stage_trace("probe", "probe.candidate_click", {
+    cxxime::write_host_trace("probe", "probe.candidate_click", {
         {"composition_id", composition_id},
         {"element_id", element_id},
         {"index", index},
@@ -77,7 +77,7 @@ void ProbeApp::click_candidate(UINT index) {
         candidate_click_composition_id_ = composition_id;
         candidate_click_committed_length_ = committed_length;
         finalize_hr = behavior->Finalize();
-        cxxime::write_stage_trace("probe", "probe.candidate_click_return", {
+        cxxime::write_host_trace("probe", "probe.candidate_click_return", {
             {"composition_id", composition_id},
             {"element_id", element_id},
             {"index", index},
@@ -102,7 +102,7 @@ void ProbeApp::finish_candidate_click(const char* result, LONG result_bytes) {
         return;
     }
 
-    cxxime::write_stage_trace("probe", "probe.candidate_click_result", {
+    cxxime::write_host_trace("probe", "probe.candidate_click_result", {
         {"composition_id", candidate_click_composition_id_},
         {"element_id", candidate_click_element_id_},
         {"index", candidate_click_index_},

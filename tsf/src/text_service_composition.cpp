@@ -67,7 +67,7 @@ STDMETHODIMP TextService::OnCompositionTerminated(TfEditCookie ecWrite,
         }
         _hide_candidate_window("hide:composition_terminated");
         _candidateWindow.set_preedit("");
-        _reset_stage_composition("host_terminated");
+        _reset_trace_composition("host_terminated");
     }
 
     char detail[112] = {};
@@ -229,7 +229,7 @@ HRESULT TextService::update_composition(ITfContext* context,
     }
 
     const HRESULT action_hr = edit_session->action_result();
-    cxxime_tsf::StageCompositionEditResult result;
+    cxxime_tsf::TraceCompositionEditResult result;
     result.action = ensure ? "ensure" : "update";
     result.text_length = preedit.size();
     result.selection_offset = preedit_cursor;
@@ -243,7 +243,7 @@ HRESULT TextService::update_composition(ITfContext* context,
     result.start_hr = edit_session->composition_start_result();
     result.composition_returned = edit_session->composition_returned();
     result.composition_active = _composing && _composition != nullptr;
-    cxxime_tsf::trace_stage_composition_edit(this, result);
+    cxxime_tsf::trace_composition_edit(this, result);
     edit_session->Release();
 
     if (FAILED(request_hr)) {
@@ -322,5 +322,5 @@ void TextService::_AbortComposition() {
         }
         _composing = false;
     }
-    _reset_stage_composition("abort");
+    _reset_trace_composition("abort");
 }

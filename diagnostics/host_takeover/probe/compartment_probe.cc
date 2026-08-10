@@ -6,7 +6,7 @@
 
 #include <ctffunc.h>
 
-#include <cxxime/stage_trace.h>
+#include <cxxime/host_trace.h>
 
 namespace cxxime_probe {
 
@@ -38,7 +38,7 @@ public:
                 static_cast<ITfCompartmentEventSink*>(this), &cookie_);
         }
 
-        cxxime::write_stage_trace("probe", "probe.conversion_subscription", {
+        cxxime::write_host_trace("probe", "probe.conversion_subscription", {
             {"manager_hr", static_cast<int64_t>(manager_hr)},
             {"compartment_hr", static_cast<int64_t>(compartment_hr)},
             {"source_hr", static_cast<int64_t>(source_hr)},
@@ -69,7 +69,7 @@ public:
         DWORD current = 0;
         const HRESULT read_hr = read_value(&current);
         if (FAILED(read_hr)) {
-            cxxime::write_stage_trace("probe", "probe.conversion_write", {
+            cxxime::write_host_trace("probe", "probe.conversion_write", {
                 {"read_hr", static_cast<int64_t>(read_hr)},
                 {"result", "read_failed"},
             });
@@ -87,7 +87,7 @@ public:
         value.lVal = static_cast<LONG>(requested);
         const HRESULT write_hr = compartment_->SetValue(client_id_, &value);
         VariantClear(&value);
-        cxxime::write_stage_trace("probe", "probe.conversion_write", {
+        cxxime::write_host_trace("probe", "probe.conversion_write", {
             {"read_hr", static_cast<int64_t>(read_hr)},
             {"previous_mode", current},
             {"requested_mode", requested},
@@ -126,8 +126,8 @@ public:
     STDMETHODIMP OnChange(REFGUID compartment) override {
         const bool expected = IsEqualGUID(
             compartment, GUID_COMPARTMENT_KEYBOARD_INPUTMODE_CONVERSION);
-        cxxime::write_stage_trace("probe", "probe.conversion_change", {
-            {"compartment", cxxime::stage_trace_guid(compartment)},
+        cxxime::write_host_trace("probe", "probe.conversion_change", {
+            {"compartment", cxxime::host_trace_guid(compartment)},
             {"expected_compartment", expected},
             {"result", expected ? "notified" : "unexpected"},
         });
@@ -165,7 +165,7 @@ private:
     void trace_value(const char* trigger) const {
         DWORD conversion_mode = 0;
         const HRESULT value_hr = read_value(&conversion_mode);
-        cxxime::write_stage_trace("probe", "probe.conversion_compartment", {
+        cxxime::write_host_trace("probe", "probe.conversion_compartment", {
             {"trigger", trigger ? trigger : ""},
             {"value_hr", static_cast<int64_t>(value_hr)},
             {"conversion_mode", conversion_mode},
@@ -186,7 +186,7 @@ private:
 void ProbeApp::initialize_conversion_compartment_probe() {
     conversion_compartment_probe_ = new (std::nothrow) ConversionCompartmentProbe();
     if (!conversion_compartment_probe_) {
-        cxxime::write_stage_trace("probe", "probe.conversion_subscription", {
+        cxxime::write_host_trace("probe", "probe.conversion_subscription", {
             {"result", "allocation_failed"},
         });
         return;

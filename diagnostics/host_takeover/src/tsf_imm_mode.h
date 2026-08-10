@@ -11,7 +11,7 @@
 
 namespace cxxime_tsf {
 
-struct StageImmProfileSnapshot {
+struct TraceImmProfileSnapshot {
     DWORD window_thread_id = 0;
     uintptr_t keyboard_layout = 0;
     WORD keyboard_layout_language = 0;
@@ -28,32 +28,32 @@ struct StageImmProfileSnapshot {
     DWORD ime_version = 0;
 };
 
-StageImmProfileSnapshot capture_stage_imm_profile(HWND hwnd);
+TraceImmProfileSnapshot capture_imm_profile(HWND hwnd);
 
-void trace_stage_imm_open_status(HWND hwnd,
-                                 HIMC himc,
-                                 bool open_before,
-                                 bool set_attempted,
-                                 bool set_succeeded,
-                                 bool open_after,
-                                 uint64_t input_id,
-                                 uint64_t composition_id);
+void trace_imm_open_status(HWND hwnd,
+                           HIMC himc,
+                           bool open_before,
+                           bool set_attempted,
+                           bool set_succeeded,
+                           bool open_after,
+                           uint64_t input_id,
+                           uint64_t composition_id);
 
-void trace_stage_conversion_compartment(bool chinese_mode,
-                                        HRESULT get_value_hr,
-                                        DWORD before_mode,
-                                        DWORD requested_mode,
-                                        bool set_attempted,
-                                        HRESULT set_value_hr);
+void trace_conversion_compartment(bool chinese_mode,
+                                  HRESULT get_value_hr,
+                                  DWORD before_mode,
+                                  DWORD requested_mode,
+                                  bool set_attempted,
+                                  HRESULT set_value_hr);
 
-void trace_stage_conversion_sink_lifecycle(const char* action,
-                                           HRESULT manager_hr,
-                                           HRESULT compartment_hr,
-                                           HRESULT source_hr,
-                                           HRESULT operation_hr,
-                                           DWORD cookie);
+void trace_conversion_sink_lifecycle(const char* action,
+                                     HRESULT manager_hr,
+                                     HRESULT compartment_hr,
+                                     HRESULT source_hr,
+                                     HRESULT operation_hr,
+                                     DWORD cookie);
 
-struct StageConversionSinkChange {
+struct TraceConversionSinkChange {
     HRESULT value_hr = E_UNEXPECTED;
     uint16_t value_type = 0;
     DWORD conversion_mode = 0;
@@ -77,15 +77,15 @@ struct StageConversionSinkChange {
     const char* result = "";
 };
 
-void trace_stage_conversion_sink_change(const StageConversionSinkChange& change);
+void trace_conversion_sink_change(const TraceConversionSinkChange& change);
 
-void trace_stage_imm_conversion_status(HWND hwnd,
-                                       HIMC himc,
-                                       bool query_ok,
-                                       DWORD conversion_mode,
-                                       DWORD sentence_mode,
-                                       uint64_t input_id,
-                                       uint64_t composition_id);
+void trace_imm_conversion_status(HWND hwnd,
+                                 HIMC himc,
+                                 bool query_ok,
+                                 DWORD conversion_mode,
+                                 DWORD sentence_mode,
+                                 uint64_t input_id,
+                                 uint64_t composition_id);
 
 } // namespace cxxime_tsf
 

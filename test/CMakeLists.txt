@@ -56,7 +56,7 @@ add_cxxime_test(short_cache_test)
 target_link_libraries(short_cache_test PRIVATE cxxime-test-topn-data)
 add_cxxime_test(trace_test)
 if(CXXIME_ENABLE_HOST_DIAGNOSTICS)
-    add_cxxime_test(stage_trace_test)
+    add_cxxime_test(host_trace_test)
 endif()
 add_cxxime_test(mpscq_test)
 add_cxxime_test(control_channel_test)
@@ -149,8 +149,8 @@ if(Python3_FOUND)
     find_program(POWERSHELL_EXECUTABLE powershell)
     if(POWERSHELL_EXECUTABLE)
         add_test(
-            NAME stage_trace_tools_test
-            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/stage_trace_tools_test.py
+            NAME host_trace_tools_test
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/host_trace_tools_test.py
             --powershell ${POWERSHELL_EXECUTABLE}
         )
     endif()

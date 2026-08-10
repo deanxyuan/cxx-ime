@@ -16,7 +16,7 @@
 #include "edit_session.h"
 #include "globals.h"
 #include "preedit_mode.h"
-#include "tsf_stage.h"
+#include "tsf_trace.h"
 
 namespace {
 
@@ -111,8 +111,8 @@ STDMETHODIMP TextService::OnTestKeyDown(ITfContext* pic, WPARAM wParam, LPARAM l
     const char* test_block_reason = _input_context_block_reason(pic);
     _trace_input_decision(test_block_reason);
     if (test_block_reason && !status_key) {
-        cxxime_tsf::trace_stage_context(
-            stage_input_id(), stage_composition_id(), pic, _threadMgr,
+        cxxime_tsf::trace_context(
+            trace_input_id(), trace_composition_id(), pic, _threadMgr,
             "blocked_input_context");
         _clear_effective_edit_target(
             "test_key_context_rejected",
@@ -191,7 +191,7 @@ STDMETHODIMP TextService::OnKeyUp(ITfContext* pic, WPARAM wParam, LPARAM lParam,
 
 bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam, BOOL* pfEaten) {
     *pfEaten = FALSE;
-    _stageTraceSession.begin_input(static_cast<uint32_t>(wParam), lParam);
+    _hostTraceSession.begin_input(static_cast<uint32_t>(wParam), lParam);
     if (wParam < _passThroughKeyUps.size()) {
         _passThroughKeyUps.reset(wParam);
     }
@@ -205,7 +205,7 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
         !_composing && !status_key && _chinese_mode && can_start_text_input(wParam, modifiers);
     const bool should_validate_edit_target =
         !_inputFocused || !_effectiveEditTarget.valid() || starts_new_composition;
-    if (!block_reason && stage_composition_id() == 0 && should_validate_edit_target) {
+    if (!block_reason && trace_composition_id() == 0 && should_validate_edit_target) {
         no_edit_target = _context_has_no_edit_target(pic);
         if (no_edit_target) {
             block_reason = "no_edit_target";
@@ -216,11 +216,11 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
     bool input_allowed = block_reason == nullptr;
     _trace_input_decision(block_reason);
     if (!input_allowed && !status_key) {
-        cxxime_tsf::trace_stage_context(
-            stage_input_id(), stage_composition_id(), pic, _threadMgr,
+        cxxime_tsf::trace_context(
+            trace_input_id(), trace_composition_id(), pic, _threadMgr,
             "blocked_input_context");
-        cxxime_tsf::trace_stage_key_route(
-            stage_input_id(), stage_composition_id(), static_cast<uint32_t>(wParam), 0, 0,
+        cxxime_tsf::trace_key_route(
+            trace_input_id(), trace_composition_id(), static_cast<uint32_t>(wParam), 0, 0,
             "blocked", block_reason ? block_reason : "input_context");
         _clear_effective_edit_target(
             "key_context_rejected",
@@ -310,8 +310,8 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
         }
     }
     _ipcHealthy = ok;
-    cxxime_tsf::trace_stage_key_route(
-        stage_input_id(), stage_composition_id(), static_cast<uint32_t>(wParam), modifiers,
+    cxxime_tsf::trace_key_route(
+        trace_input_id(), trace_composition_id(), static_cast<uint32_t>(wParam), modifiers,
         engine_calls, ok ? "processed" : "ipc_failed");
 
     // Build trace (populated at all exit paths)
@@ -368,10 +368,10 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
         trace.candidate_count = response.candidate_count;
     }
     if (commit_continues_composition) {
-        _reset_stage_composition("commit_continue");
+        _reset_trace_composition("commit_continue");
     }
     if (response.preedit[0] != '\0') {
-        ensure_stage_composition_id();
+        ensure_trace_composition_id();
         // Decode preedit
         std::wstring preedit;
         int len = MultiByteToWideChar(CP_UTF8, 0, response.preedit, -1, nullptr, 0);
@@ -408,8 +408,8 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
         const bool ui_element_only =
             (_activateFlags & TF_TMF_UIELEMENTENABLEDONLY) != 0;
 
-            cxxime_tsf::trace_stage_context(
-                stage_input_id(), stage_composition_id(), pic, _threadMgr,
+            cxxime_tsf::trace_context(
+                trace_input_id(), trace_composition_id(), pic, _threadMgr,
                 ui_element_only ? "candidate_first_standard_tsf_compat" : "standard_tsf");
 
         _caretRect = {};
@@ -585,14 +585,14 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
     }
     _enqueue_trace(trace);
 
-    cxxime_tsf::trace_stage_key_result(
-        stage_input_id(), stage_composition_id(), static_cast<uint32_t>(wParam), *pfEaten != FALSE,
+    cxxime_tsf::trace_key_result(
+        trace_input_id(), trace_composition_id(), static_cast<uint32_t>(wParam), *pfEaten != FALSE,
         response.preedit[0] ? strlen(response.preedit) : 0, response.preedit_cursor,
         response.candidate_count,
         response.commit_text[0] ? strlen(response.commit_text) : 0, trace.result_string());
 
     if (trace.result == TsfResult::COMMITTED || trace.result == TsfResult::CLEARED) {
-        _reset_stage_composition(trace.result == TsfResult::COMMITTED ? "commit" : "clear");
+        _reset_trace_composition(trace.result == TsfResult::COMMITTED ? "commit" : "clear");
     }
 
     return *pfEaten != FALSE;
@@ -603,7 +603,7 @@ bool TextService::_ProcessKeyUp(WPARAM wParam, LPARAM lParam) {
         return false;
     }
 
-    _stageTraceSession.begin_input(static_cast<uint32_t>(wParam), lParam);
+    _hostTraceSession.begin_input(static_cast<uint32_t>(wParam), lParam);
 
     uint32_t modifiers = _get_modifiers();
     CXXIME_LOG(L"_ProcessKeyUp: vk=%u, mods=%u, sessionId=%u", (unsigned int)wParam, modifiers,
@@ -638,8 +638,8 @@ bool TextService::_ProcessKeyUp(WPARAM wParam, LPARAM lParam) {
         }
     }
     _ipcHealthy = ok;
-    cxxime_tsf::trace_stage_key_route(
-        stage_input_id(), stage_composition_id(), static_cast<uint32_t>(wParam), modifiers,
+    cxxime_tsf::trace_key_route(
+        trace_input_id(), trace_composition_id(), static_cast<uint32_t>(wParam), modifiers,
         engine_calls, ok ? "processed_key_up" : "ipc_failed_key_up");
 
     CXXIME_LOG(L"_ProcessKeyUp: ok=%d, ascii_mode=%u, commit='%S', composing=%u",
@@ -676,14 +676,14 @@ bool TextService::_ProcessKeyUp(WPARAM wParam, LPARAM lParam) {
 
     const bool handled = ok && response.status == cxxime::IPCStatus::OK &&
                          response.key_handled;
-    cxxime_tsf::trace_stage_key_result(
-        stage_input_id(), stage_composition_id(), static_cast<uint32_t>(wParam), handled,
+    cxxime_tsf::trace_key_result(
+        trace_input_id(), trace_composition_id(), static_cast<uint32_t>(wParam), handled,
         response.preedit[0] ? strlen(response.preedit) : 0, response.preedit_cursor,
         response.candidate_count,
         response.commit_text[0] ? strlen(response.commit_text) : 0,
         committed ? "key_up_commit" : (ok ? "key_up" : "key_up_failed"));
     if (committed) {
-        _reset_stage_composition("key_up_commit");
+        _reset_trace_composition("key_up_commit");
     }
     return handled;
 }

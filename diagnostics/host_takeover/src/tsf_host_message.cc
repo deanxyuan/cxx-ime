@@ -6,7 +6,7 @@
 #include "tsf_imm_candidate_snapshot.h"
 #include "tsf_sdl_runtime.h"
 
-#include <cxxime/stage_trace.h>
+#include <cxxime/host_trace.h>
 
 #include <windows.h>
 #include <imm.h>
@@ -83,7 +83,7 @@ void add_candidate_fields(nlohmann::json& fields, HWND hwnd) {
         return;
     }
 
-    const StageImmCandidateSnapshot snapshot = capture_stage_imm_candidate_snapshot(himc);
+    const TraceImmCandidateSnapshot snapshot = capture_imm_candidate_snapshot(himc);
     fields["candidate_query_bytes"] = snapshot.query_bytes;
     fields["candidate_copy_bytes"] = snapshot.copied_bytes;
     fields["candidate_valid"] = snapshot.list_valid;
@@ -152,8 +152,8 @@ void trace_host_message(const CWPSTRUCT& message, bool sent_by_current_thread) {
     };
     add_observed_message_fields(
         fields, message.hwnd, message.message, message.wParam, message.lParam);
-    cxxime::write_stage_trace("tsf", "host.message", std::move(fields));
-    trace_stage_host_imm_state(
+    cxxime::write_host_trace("tsf", "host.message", std::move(fields));
+    trace_host_imm_state(
         message.hwnd, message.message, message.wParam, message.lParam);
 }
 
@@ -175,16 +175,16 @@ void trace_queued_message(const MSG& message) {
     };
     if (is_key_message(message.message)) {
         add_key_fields(fields, message.wParam, message.lParam);
-        cxxime::write_stage_trace("tsf", "host.key_message", std::move(fields));
+        cxxime::write_host_trace("tsf", "host.key_message", std::move(fields));
         return;
     }
 
     add_observed_message_fields(
         fields, message.hwnd, message.message, message.wParam, message.lParam);
-    cxxime::write_stage_trace("tsf", "host.message", std::move(fields));
-    trace_stage_host_imm_state(
+    cxxime::write_host_trace("tsf", "host.message", std::move(fields));
+    trace_host_imm_state(
         message.hwnd, message.message, message.wParam, message.lParam);
-    trace_stage_host_classification_message_gate(message);
+    trace_host_classification_message_gate(message);
 }
 
 LRESULT CALLBACK call_wnd_proc(int code, WPARAM wparam, LPARAM lparam) {
@@ -217,7 +217,7 @@ void trace_monitor(const char* action,
                    HHOOK hook,
                    DWORD error,
                    const char* result) {
-    cxxime::write_stage_trace("tsf", "host.message_monitor", {
+    cxxime::write_host_trace("tsf", "host.message_monitor", {
         {"action", action},
         {"source", source},
         {"hook", reinterpret_cast<uintptr_t>(hook)},
@@ -229,7 +229,7 @@ void trace_monitor(const char* action,
 
 void arm_profile_transition_capture() {
     if (g_profile_transition_capture_armed ||
-        !stage_profile_transition_capture_requested()) {
+        !trace_profile_transition_capture_requested()) {
         return;
     }
 
@@ -240,7 +240,7 @@ void arm_profile_transition_capture() {
         reinterpret_cast<LPCWSTR>(&call_wnd_proc), &module) != FALSE;
     const DWORD error = pinned ? ERROR_SUCCESS : GetLastError();
     g_profile_transition_capture_armed = pinned;
-    cxxime::write_stage_trace("tsf", "host.profile_transition_capture", {
+    cxxime::write_host_trace("tsf", "host.profile_transition_capture", {
         {"action", "arm"},
         {"module_pinned", pinned},
         {"win32_error", error},
@@ -250,8 +250,8 @@ void arm_profile_transition_capture() {
 
 } // namespace
 
-bool start_stage_host_message_monitor() {
-    const bool response_monitor_ready = start_stage_host_imm_response_monitor();
+bool start_host_message_monitor() {
+    const bool response_monitor_ready = start_host_imm_response_monitor();
     if (!g_call_wnd_proc_hook) {
         SetLastError(ERROR_SUCCESS);
         g_call_wnd_proc_hook = SetWindowsHookExW(
@@ -278,11 +278,11 @@ bool start_stage_host_message_monitor() {
     return monitor_ready;
 }
 
-void stop_stage_host_message_monitor() {
+void stop_host_message_monitor() {
     if (g_profile_transition_capture_armed) {
         if (!g_profile_transition_capture_preserved) {
             g_profile_transition_capture_preserved = true;
-            cxxime::write_stage_trace("tsf", "host.profile_transition_capture", {
+            cxxime::write_host_trace("tsf", "host.profile_transition_capture", {
                 {"action", "preserve"},
                 {"thread_id", GetCurrentThreadId()},
                 {"result", "preserved_until_process_exit"},
@@ -291,8 +291,8 @@ void stop_stage_host_message_monitor() {
         return;
     }
 
-    stop_stage_host_imm_response_monitor();
-    stop_stage_sdl_event_watch();
+    stop_host_imm_response_monitor();
+    stop_sdl_event_watch();
     if (g_get_message_hook) {
         HHOOK hook = g_get_message_hook;
         g_get_message_hook = nullptr;

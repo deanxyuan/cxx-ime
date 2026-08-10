@@ -25,7 +25,7 @@ def check_installer_payload(
     require_text(errors, text, "!ifdef HOST_DIAGNOSTICS", label)
     if host_diagnostics:
         require_text(errors, text, 'File "cxxime-ime-host-probe-x64.exe"', label)
-        require_text(errors, text, 'File "export_stage_trace.ps1"', label)
+        require_text(errors, text, 'File "export_host_trace.ps1"', label)
     installer_data_files = [
         "default.json",
         "settings_presets.json",
@@ -50,7 +50,7 @@ def check_installer_payload(
         "collect_diagnostics.ps1",
         "cxxime-ime-host-probe-x64.exe",
         "cxxime-ime-host-probe-x86.exe",
-        "export_stage_trace.ps1",
+        "export_host_trace.ps1",
         "license.txt",
         "THIRD_PARTY_NOTICES.txt",
     ]

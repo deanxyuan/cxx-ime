@@ -15,7 +15,7 @@
 #include "language_bar.h"
 #include "reading_ui_element.h"
 #include "tsf_activation.h"
-#include "tsf_stage.h"
+#include "tsf_trace.h"
 
 TextService::TextService() {}
 
@@ -95,13 +95,13 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
         return activation_sinks_hr;
     }
 
-    cxxime_tsf::trace_stage_activation_step("runtime_snapshot", "attempt", S_OK, false);
-    cxxime_tsf::trace_stage_runtime_activate(dwFlags, tid);
-    cxxime_tsf::trace_stage_activation_step("runtime_snapshot", "complete", S_OK, false);
+    cxxime_tsf::trace_activation_step("runtime_snapshot", "attempt", S_OK, false);
+    cxxime_tsf::trace_runtime_activate(dwFlags, tid);
+    cxxime_tsf::trace_activation_step("runtime_snapshot", "complete", S_OK, false);
 
-    cxxime_tsf::trace_stage_activation_step("config_updates", "attempt", S_OK, false);
+    cxxime_tsf::trace_activation_step("config_updates", "attempt", S_OK, false);
     const HRESULT config_updates_hr = _start_config_updates() ? S_OK : E_FAIL;
-    cxxime_tsf::trace_stage_activation_step(
+    cxxime_tsf::trace_activation_step(
         "config_updates", "complete", config_updates_hr, false);
     if ((_activateFlags & TF_TMF_UIELEMENTENABLEDONLY) != 0) {
         _start_host_compatibility_runtime();

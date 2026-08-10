@@ -6,23 +6,23 @@
 #include "tsf_host_classification.h"
 #include "tsf_host_message.h"
 
-#include <cxxime/stage_trace.h>
+#include <cxxime/host_trace.h>
 
 namespace cxxime_tsf {
 
-void start_stage_runtime(const HostClassificationCompatibilitySnapshot& snapshot) {
-    trace_stage_host_classification_compatibility(snapshot);
-    start_stage_host_message_monitor();
+void start_host_trace_runtime(const HostClassificationCompatibilitySnapshot& snapshot) {
+    trace_host_classification_compatibility(snapshot);
+    start_host_message_monitor();
 }
 
-void stop_stage_runtime(const HostClassificationCompatibilitySnapshot& snapshot) {
-    trace_stage_host_classification_compatibility(snapshot);
-    stop_stage_host_message_monitor();
+void stop_host_trace_runtime(const HostClassificationCompatibilitySnapshot& snapshot) {
+    trace_host_classification_compatibility(snapshot);
+    stop_host_message_monitor();
 }
 
-void trace_stage_activation_step(const char* step, const char* phase, HRESULT result,
-                                 bool required) {
-    cxxime::write_stage_trace("tsf", "runtime.activation_step",
+void trace_activation_step(const char* step, const char* phase, HRESULT result,
+                           bool required) {
+    cxxime::write_host_trace("tsf", "runtime.activation_step",
                               {
                                  {"step", step ? step : ""},
                                  {"phase", phase ? phase : ""},
@@ -31,18 +31,18 @@ void trace_stage_activation_step(const char* step, const char* phase, HRESULT re
                               });
 }
 
-void trace_stage_thread_sinks(const char* action,
-                              HRESULT source_result,
-                              bool thread_focus_attempted,
-                              HRESULT thread_focus_result,
-                              DWORD thread_focus_cookie,
-                              bool thread_mgr_attempted,
-                              HRESULT thread_mgr_result,
-                              DWORD thread_mgr_cookie) {
+void trace_thread_sinks(const char* action,
+                        HRESULT source_result,
+                        bool thread_focus_attempted,
+                        HRESULT thread_focus_result,
+                        DWORD thread_focus_cookie,
+                        bool thread_mgr_attempted,
+                        HRESULT thread_mgr_result,
+                        DWORD thread_mgr_cookie) {
     const bool success = SUCCEEDED(source_result) && thread_focus_attempted &&
                          SUCCEEDED(thread_focus_result) && thread_mgr_attempted &&
                          SUCCEEDED(thread_mgr_result);
-    cxxime::write_stage_trace("tsf", "runtime.thread_sinks", {
+    cxxime::write_host_trace("tsf", "runtime.thread_sinks", {
         {"action", action ? action : ""},
         {"source_hr", static_cast<int64_t>(source_result)},
         {"thread_focus_attempted", thread_focus_attempted},
@@ -114,10 +114,10 @@ void TextService::trace_candidate_activation_state(
         !no_activate_tip && SUCCEEDED(thread_focus_hr) &&
         has_thread_focus != FALSE && candidate_matches_focus;
 
-    cxxime::write_stage_trace("tsf", "runtime.activation_snapshot", {
+    cxxime::write_host_trace("tsf", "runtime.activation_snapshot", {
         {"trigger", "candidate_begin"},
-        {"input_id", stage_input_id()},
-        {"composition_id", stage_composition_id()},
+        {"input_id", trace_input_id()},
+        {"composition_id", trace_composition_id()},
         {"service_activated", _activated},
         {"client_id", _clientId},
         {"activate_flags", _activateFlags},

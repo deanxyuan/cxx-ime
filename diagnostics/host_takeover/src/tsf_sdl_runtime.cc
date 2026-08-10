@@ -3,7 +3,7 @@
 #include "tsf_sdl_runtime.h"
 #include "tsf_sdl_message_hook.h"
 
-#include <cxxime/stage_trace.h>
+#include <cxxime/host_trace.h>
 
 #include <windows.h>
 
@@ -54,7 +54,7 @@ bool __cdecl trace_sdl_event(void*, void* raw_event) {
         return true;
     }
 
-    cxxime::write_stage_trace("tsf", "sdl.candidate_event", {
+    cxxime::write_host_trace("tsf", "sdl.candidate_event", {
         {"event_type", event->type},
         {"timestamp_ns", event->timestamp},
         {"window_id", event->window_id},
@@ -74,7 +74,7 @@ void start_sdl_event_watch(HMODULE module, bool handles_candidates) {
         load_sdl_export<SdlEventEnabled>(module, "SDL_EventEnabled");
     const bool candidate_event_enabled =
         event_enabled && event_enabled(kSdlEventTextEditingCandidates);
-    const bool transition_capture = stage_profile_transition_capture_requested();
+    const bool transition_capture = trace_profile_transition_capture_requested();
     const bool should_install = handles_candidates || transition_capture;
     const bool already_installed = g_event_watch_installed.load();
     bool installed = already_installed;
@@ -93,7 +93,7 @@ void start_sdl_event_watch(HMODULE module, bool handles_candidates) {
     } else if (should_install) {
         result = installed ? "installed" : "install_failed";
     }
-    cxxime::write_stage_trace("tsf", "sdl.event_watch", {
+    cxxime::write_host_trace("tsf", "sdl.event_watch", {
         {"action", "start"},
         {"candidate_event_type", kSdlEventTextEditingCandidates},
         {"candidate_event_enabled_export_present", event_enabled != nullptr},
@@ -106,14 +106,14 @@ void start_sdl_event_watch(HMODULE module, bool handles_candidates) {
 
 } // namespace
 
-bool stage_profile_transition_capture_requested() {
+bool trace_profile_transition_capture_requested() {
     return true;
 }
 
-void trace_stage_sdl_runtime() {
+void trace_sdl_runtime() {
     HMODULE module = GetModuleHandleW(L"SDL3.dll");
     if (!module) {
-        cxxime::write_stage_trace("tsf", "sdl.runtime", {
+        cxxime::write_host_trace("tsf", "sdl.runtime", {
             {"module", "SDL3.dll"},
             {"result", "module_not_loaded"},
         });
@@ -131,7 +131,7 @@ void trace_stage_sdl_runtime() {
     const std::string hint = hint_value ? hint_value : "";
 
     const bool handles_candidates = contains_capability(hint, "candidates");
-    cxxime::write_stage_trace("tsf", "sdl.runtime", {
+    cxxime::write_host_trace("tsf", "sdl.runtime", {
         {"module", "SDL3.dll"},
         {"version_export_present", get_version != nullptr},
         {"version", version},
@@ -147,11 +147,11 @@ void trace_stage_sdl_runtime() {
         {"handles_composition", contains_capability(hint, "composition")},
         {"result", get_version && get_revision && get_hint ? "queried" : "partial"},
     });
-    trace_stage_sdl_windows_message_hook(module);
+    trace_sdl_windows_message_hook(module);
     start_sdl_event_watch(module, handles_candidates);
 }
 
-void stop_stage_sdl_event_watch() {
+void stop_sdl_event_watch() {
     if (!g_event_watch_installed.exchange(false)) {
         return;
     }
@@ -163,7 +163,7 @@ void stop_stage_sdl_event_watch() {
     if (remove_event_watch) {
         remove_event_watch(trace_sdl_event, nullptr);
     }
-    cxxime::write_stage_trace("tsf", "sdl.event_watch", {
+    cxxime::write_host_trace("tsf", "sdl.event_watch", {
         {"action", "stop"},
         {"remove_event_watch_export_present", remove_event_watch != nullptr},
         {"result", remove_event_watch ? "removed" : "remove_unavailable"},

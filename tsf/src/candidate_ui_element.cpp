@@ -3,7 +3,7 @@
 #include "candidate_ui_element.h"
 #include "globals.h"
 #include "text_service.h"
-#include "tsf_stage.h"
+#include "tsf_trace.h"
 #include <algorithm>
 
 namespace {
@@ -40,7 +40,7 @@ STDMETHODIMP CandidateUIElement::QueryInterface(REFIID riid, void** ppvObj) {
     }
 
     const HRESULT result = *ppvObj ? S_OK : E_NOINTERFACE;
-    cxxime_tsf::trace_stage_ui_query(_service, "candidate", riid, result);
+    cxxime_tsf::trace_ui_query(_service, "candidate", riid, result);
     if (*ppvObj) {
         AddRef();
         return S_OK;
@@ -77,7 +77,7 @@ STDMETHODIMP CandidateUIElement::GetGUID(GUID* pguid) {
 STDMETHODIMP CandidateUIElement::Show(BOOL show) {
     const bool requested_show = show != FALSE;
     if (!_active || !_service) {
-        cxxime_tsf::trace_stage_ui_show(
+        cxxime_tsf::trace_ui_show(
             _service, "candidate", _ui_element_id, requested_show, false, E_FAIL);
         return E_FAIL;
     }
@@ -86,7 +86,7 @@ STDMETHODIMP CandidateUIElement::Show(BOOL show) {
     const bool actual_show = _service->set_candidate_ui_element_shown(requested_show);
     _shown = actual_show ? TRUE : FALSE;
     const HRESULT result = !requested_show || actual_show ? S_OK : E_FAIL;
-    cxxime_tsf::trace_stage_ui_show(
+    cxxime_tsf::trace_ui_show(
         _service, "candidate", _ui_element_id, requested_show, actual_show, result);
     return result;
 }
@@ -97,7 +97,7 @@ STDMETHODIMP CandidateUIElement::IsShown(BOOL* show) {
     }
     _shown = _active && _service && _service->is_candidate_ui_element_shown() ? TRUE : FALSE;
     *show = _shown;
-    cxxime_tsf::trace_stage_ui_get_bool(
+    cxxime_tsf::trace_ui_get_bool(
         _service, "candidate", _ui_element_id, "IsShown", "shown", _shown != FALSE);
     return S_OK;
 }
@@ -110,7 +110,7 @@ STDMETHODIMP CandidateUIElement::GetUpdatedFlags(DWORD* flags) {
         return E_INVALIDARG;
     }
     *flags = kPublishedUpdatedFlags;
-    cxxime_tsf::trace_stage_ui_get_number(
+    cxxime_tsf::trace_ui_get_number(
         _service, "candidate", _ui_element_id, "GetUpdatedFlags", "updated_flags", *flags);
     return S_OK;
 }
@@ -124,14 +124,14 @@ STDMETHODIMP CandidateUIElement::GetDocumentMgr(ITfDocumentMgr** doc_mgr) {
     }
     *doc_mgr = nullptr;
     if (!_document_mgr) {
-        cxxime_tsf::trace_stage_ui_get_presence(
+        cxxime_tsf::trace_ui_get_presence(
             _service, "candidate", _ui_element_id, "GetDocumentMgr",
             "document_mgr_present", false, E_FAIL);
         return E_FAIL;
     }
     _document_mgr->AddRef();
     *doc_mgr = _document_mgr;
-    cxxime_tsf::trace_stage_ui_get_presence(
+    cxxime_tsf::trace_ui_get_presence(
         _service, "candidate", _ui_element_id, "GetDocumentMgr", "document_mgr_present",
         true, S_OK);
     return S_OK;
@@ -143,7 +143,7 @@ STDMETHODIMP CandidateUIElement::GetCount(UINT* count) {
     if (!count)
         return E_INVALIDARG;
     *count = static_cast<UINT>(_candidates.size());
-    cxxime_tsf::trace_stage_ui_get_number(
+    cxxime_tsf::trace_ui_get_number(
         _service, "candidate", _ui_element_id, "GetCount", "count", *count);
     return S_OK;
 }
@@ -154,7 +154,7 @@ STDMETHODIMP CandidateUIElement::GetSelection(UINT* index) {
     if (!index)
         return E_INVALIDARG;
     *index = _selection;
-    cxxime_tsf::trace_stage_ui_get_number(
+    cxxime_tsf::trace_ui_get_number(
         _service, "candidate", _ui_element_id, "GetSelection", "selection", *index);
     return S_OK;
 }
@@ -166,14 +166,14 @@ STDMETHODIMP CandidateUIElement::GetString(UINT index, BSTR* text) {
         return E_INVALIDARG;
     *text = nullptr;
     if (index >= _candidates.size()) {
-        cxxime_tsf::trace_stage_candidate_get_string(
+        cxxime_tsf::trace_candidate_get_string(
             _service, _ui_element_id, index, nullptr, E_INVALIDARG);
         return E_INVALIDARG;
     }
     const auto& candidate = _candidates[index];
     *text = SysAllocStringLen(candidate.c_str(), static_cast<UINT>(candidate.size()));
     const HRESULT result = *text ? S_OK : E_OUTOFMEMORY;
-    cxxime_tsf::trace_stage_candidate_get_string(
+    cxxime_tsf::trace_candidate_get_string(
         _service, _ui_element_id, index, &candidate, result);
     return result;
 }
@@ -185,14 +185,14 @@ STDMETHODIMP CandidateUIElement::GetPageIndex(UINT* index, UINT size, UINT* page
         return E_INVALIDARG;
     *page_count = 1;
     if (!index) {
-        cxxime_tsf::trace_stage_candidate_get_page(
+        cxxime_tsf::trace_candidate_get_page(
             _service, _ui_element_id, size, *page_count, true, 0, S_OK);
         return S_OK;
     }
     if (size < 1)
         return E_INVALIDARG;
     index[0] = 0;
-    cxxime_tsf::trace_stage_candidate_get_page(
+    cxxime_tsf::trace_candidate_get_page(
         _service, _ui_element_id, size, *page_count, false, index[0], S_OK);
     return S_OK;
 }
@@ -200,7 +200,7 @@ STDMETHODIMP CandidateUIElement::GetPageIndex(UINT* index, UINT size, UINT* page
 STDMETHODIMP CandidateUIElement::SetPageIndex(UINT* index, UINT page_count) {
     if (page_count > 0 && !index)
         return E_INVALIDARG;
-    cxxime_tsf::trace_stage_candidate_page_set(
+    cxxime_tsf::trace_candidate_page_set(
         _service, _ui_element_id, page_count, page_count > 0 ? index[0] : 0, S_OK);
     return S_OK;
 }
@@ -211,7 +211,7 @@ STDMETHODIMP CandidateUIElement::GetCurrentPage(UINT* page) {
     if (!page)
         return E_INVALIDARG;
     *page = 0;
-    cxxime_tsf::trace_stage_ui_get_number(
+    cxxime_tsf::trace_ui_get_number(
         _service, "candidate", _ui_element_id, "GetCurrentPage", "current_page", *page);
     return S_OK;
 }
@@ -220,7 +220,7 @@ STDMETHODIMP CandidateUIElement::SetSelection(UINT index) {
     if (index >= _candidates.size())
         return E_INVALIDARG;
     _selection = index;
-    cxxime_tsf::trace_stage_candidate_behavior_number(
+    cxxime_tsf::trace_candidate_behavior_number(
         _service, _ui_element_id, "SetSelection", "selection", index);
     return S_OK;
 }
@@ -232,7 +232,7 @@ STDMETHODIMP CandidateUIElement::Finalize() {
     if (_service && !_candidates.empty()) {
         result = _service->select_candidate_from_ui(selection) ? S_OK : E_FAIL;
     }
-    cxxime_tsf::trace_stage_candidate_behavior_number(
+    cxxime_tsf::trace_candidate_behavior_number(
         _service, element_id, "Finalize", "selection", selection, result);
     return result;
 }
@@ -264,7 +264,7 @@ void CandidateUIElement::set_page(const cxxime::CandidatePage& page,
     } else {
         _selection = std::min<UINT>(_selection, static_cast<UINT>(_candidates.size() - 1));
     }
-    cxxime_tsf::trace_stage_candidate_snapshot(
+    cxxime_tsf::trace_candidate_snapshot(
         _service, _candidates, _selection, page_current, page_total);
 }
 
@@ -277,7 +277,7 @@ bool CandidateUIElement::begin(ITfThreadMgr* thread_mgr, ITfDocumentMgr* documen
     if (FAILED(query_ui_element_mgr(thread_mgr, &ui_mgr)) || !ui_mgr) {
         _show_external = TRUE;
         const bool show_external = true;
-        cxxime_tsf::trace_stage_candidate_lifecycle(
+        cxxime_tsf::trace_candidate_lifecycle(
             _service, "begin", TF_INVALID_UIELEMENTID, E_NOINTERFACE,
             "ui_element_mgr_unavailable", &show_external);
         return true;
@@ -297,7 +297,7 @@ bool CandidateUIElement::begin(ITfThreadMgr* thread_mgr, ITfDocumentMgr* documen
         release_document_mgr();
         _show_external = TRUE;
         const bool show_external = true;
-        cxxime_tsf::trace_stage_candidate_lifecycle(
+        cxxime_tsf::trace_candidate_lifecycle(
             _service, "begin", element_id, hr, "failed", &show_external);
         return true;
     }
@@ -306,9 +306,9 @@ bool CandidateUIElement::begin(ITfThreadMgr* thread_mgr, ITfDocumentMgr* documen
     _ui_element_id = element_id;
     _shown = FALSE;
     const bool show_external = _show_external != FALSE;
-    cxxime_tsf::trace_stage_candidate_lifecycle(
+    cxxime_tsf::trace_candidate_lifecycle(
         _service, "begin", _ui_element_id, hr, "success", &show_external);
-    cxxime_tsf::trace_stage_external_ui_decision(_service, _ui_element_id, show_external);
+    cxxime_tsf::trace_external_ui_decision(_service, _ui_element_id, show_external);
     return wants_external_window();
 }
 
@@ -318,11 +318,11 @@ void CandidateUIElement::notify_update(ITfThreadMgr* thread_mgr) {
     ITfUIElementMgr* ui_mgr = nullptr;
     if (SUCCEEDED(query_ui_element_mgr(thread_mgr, &ui_mgr)) && ui_mgr) {
         const HRESULT hr = ui_mgr->UpdateUIElement(_ui_element_id);
-        cxxime_tsf::trace_stage_candidate_lifecycle(
+        cxxime_tsf::trace_candidate_lifecycle(
             _service, "update", _ui_element_id, hr, SUCCEEDED(hr) ? "success" : "failed");
         ui_mgr->Release();
     } else {
-        cxxime_tsf::trace_stage_candidate_lifecycle(
+        cxxime_tsf::trace_candidate_lifecycle(
             _service, "update", _ui_element_id, E_NOINTERFACE, "ui_element_mgr_unavailable");
     }
 }
@@ -338,7 +338,7 @@ void CandidateUIElement::end(ITfThreadMgr* thread_mgr) {
         ui_mgr->Release();
     }
 
-    cxxime_tsf::trace_stage_candidate_lifecycle(
+    cxxime_tsf::trace_candidate_lifecycle(
         _service, "end", _ui_element_id, end_hr, SUCCEEDED(end_hr) ? "success" : "failed");
 
     _active = false;

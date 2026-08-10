@@ -2,7 +2,7 @@
 
 #include "tsf_imm_candidate_snapshot.h"
 
-#include <cxxime/stage_trace.h>
+#include <cxxime/host_trace.h>
 
 #include <algorithm>
 #include <cstddef>
@@ -38,8 +38,8 @@ bool read_candidate_string(const BYTE* storage,
 
 } // namespace
 
-StageImmCandidateSnapshot capture_stage_imm_candidate_snapshot(HIMC himc) {
-    StageImmCandidateSnapshot snapshot;
+TraceImmCandidateSnapshot capture_imm_candidate_snapshot(HIMC himc) {
+    TraceImmCandidateSnapshot snapshot;
     if (!himc) {
         return snapshot;
     }
@@ -101,7 +101,7 @@ StageImmCandidateSnapshot capture_stage_imm_candidate_snapshot(HIMC himc) {
         }
         snapshot.text_lengths.push_back(static_cast<uint32_t>(text.size()));
         snapshot.text_digests.push_back(
-            cxxime::stage_trace_digest_utf16(text.c_str(), text.size()));
+            cxxime::host_trace_digest_utf16(text.c_str(), text.size()));
     }
     return snapshot;
 }

@@ -2,7 +2,7 @@
 
 #include "tsf_host_window.h"
 
-#include <cxxime/stage_trace.h>
+#include <cxxime/host_trace.h>
 
 #include <dwmapi.h>
 #include <immdev.h>
@@ -113,10 +113,10 @@ BOOL CALLBACK collect_thread_window(HWND hwnd, LPARAM parameter) {
 
 } // namespace
 
-void trace_stage_host_window_snapshot(HWND target_hwnd,
-                                      HIMC target_himc,
-                                      uint64_t input_id,
-                                      uint64_t composition_id) {
+void trace_host_window_snapshot(HWND target_hwnd,
+                                HIMC target_himc,
+                                uint64_t input_id,
+                                uint64_t composition_id) {
     DWORD process_id = 0;
     const DWORD thread_id = target_hwnd
         ? GetWindowThreadProcessId(target_hwnd, &process_id)
@@ -146,7 +146,7 @@ void trace_stage_host_window_snapshot(HWND target_hwnd,
             reinterpret_cast<LPARAM>(&context)) != FALSE;
     const DWORD enumerate_error = enumerated ? ERROR_SUCCESS : GetLastError();
 
-    cxxime::write_stage_trace("tsf", "host.window_snapshot", {
+    cxxime::write_host_trace("tsf", "host.window_snapshot", {
         {"input_id", input_id},
         {"composition_id", composition_id},
         {"target_hwnd", reinterpret_cast<uintptr_t>(target_hwnd)},

@@ -2,7 +2,7 @@
 
 #include "probe_app.h"
 
-#include <cxxime/stage_trace.h>
+#include <cxxime/host_trace.h>
 
 namespace cxxime_probe {
 namespace {
@@ -32,7 +32,7 @@ bool ProbeApp::apply_candidate_ui_visibility(const char* trigger) {
     if (!ui_element_mgr_ || candidate_element_id_ == TF_INVALID_UIELEMENTID) {
         original_candidate_ui_shown_ = false;
         candidate_ui_visibility_pending_ = true;
-        cxxime::write_stage_trace("probe", "probe.ui_element_visibility", {
+        cxxime::write_host_trace("probe", "probe.ui_element_visibility", {
             {"composition_id", composition_id_},
             {"element_id", candidate_element_id_},
             {"trigger", trigger ? trigger : ""},
@@ -49,7 +49,7 @@ bool ProbeApp::apply_candidate_ui_visibility(const char* trigger) {
     if (FAILED(get_hr) || !element) {
         original_candidate_ui_shown_ = false;
         candidate_ui_visibility_pending_ = true;
-        cxxime::write_stage_trace("probe", "probe.ui_element_visibility", {
+        cxxime::write_host_trace("probe", "probe.ui_element_visibility", {
             {"composition_id", composition_id_},
             {"element_id", candidate_element_id_},
             {"trigger", trigger ? trigger : ""},
@@ -71,7 +71,7 @@ bool ProbeApp::apply_candidate_ui_visibility(const char* trigger) {
     candidate_ui_visibility_pending_ =
         FAILED(show_hr) || FAILED(is_shown_hr) ||
         original_candidate_ui_shown_ != original_candidate_ui_requested_;
-    cxxime::write_stage_trace("probe", "probe.ui_element_visibility", {
+    cxxime::write_host_trace("probe", "probe.ui_element_visibility", {
         {"composition_id", composition_id_},
         {"element_id", candidate_element_id_},
         {"trigger", trigger ? trigger : ""},
@@ -92,7 +92,7 @@ void ProbeApp::set_candidate_ui_visibility_cycle(bool enabled, const char* trigg
                                              : CandidateUiVisibilityCycle::disabled;
     original_candidate_ui_requested_ = false;
     candidate_ui_visibility_pending_ = false;
-    cxxime::write_stage_trace("probe", "probe.ui_element_visibility_cycle", {
+    cxxime::write_host_trace("probe", "probe.ui_element_visibility_cycle", {
         {"composition_id", composition_id_},
         {"trigger", trigger ? trigger : ""},
         {"state", visibility_cycle_name(candidate_ui_visibility_cycle_)},
@@ -110,7 +110,7 @@ void ProbeApp::schedule_candidate_ui_visibility_cycle(const char* trigger) {
 
     candidate_ui_visibility_cycle_ = CandidateUiVisibilityCycle::waiting_to_show;
     const UINT_PTR timer = SetTimer(hwnd_, kCandidateUiVisibilityTimerId, kShowDelayMs, nullptr);
-    cxxime::write_stage_trace("probe", "probe.ui_element_visibility_cycle", {
+    cxxime::write_host_trace("probe", "probe.ui_element_visibility_cycle", {
         {"composition_id", composition_id_},
         {"element_id", candidate_element_id_},
         {"trigger", trigger ? trigger : ""},
@@ -152,7 +152,7 @@ void ProbeApp::advance_candidate_ui_visibility_cycle() {
         return;
     }
 
-    cxxime::write_stage_trace("probe", "probe.ui_element_visibility_cycle", {
+    cxxime::write_host_trace("probe", "probe.ui_element_visibility_cycle", {
         {"composition_id", composition_id_},
         {"element_id", candidate_element_id_},
         {"state", visibility_cycle_name(candidate_ui_visibility_cycle_)},
@@ -166,7 +166,7 @@ void ProbeApp::reset_candidate_ui_visibility_cycle(const char* trigger) {
     candidate_ui_visibility_cycle_ = candidate_ui_visibility_cycle_enabled_
                                          ? CandidateUiVisibilityCycle::armed
                                          : CandidateUiVisibilityCycle::disabled;
-    cxxime::write_stage_trace("probe", "probe.ui_element_visibility_cycle", {
+    cxxime::write_host_trace("probe", "probe.ui_element_visibility_cycle", {
         {"composition_id", composition_id_},
         {"trigger", trigger ? trigger : ""},
         {"state", visibility_cycle_name(candidate_ui_visibility_cycle_)},

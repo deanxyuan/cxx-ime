@@ -44,7 +44,7 @@ def check_required_files(
         os.path.join("data", "symbols.json"),
     ]
     diagnostic_files = [
-        "export_stage_trace.ps1",
+        "export_host_trace.ps1",
         "cxxime-ime-host-probe-x64.exe",
     ]
     if host_diagnostics:

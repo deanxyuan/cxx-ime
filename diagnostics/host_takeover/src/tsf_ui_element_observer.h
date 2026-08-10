@@ -7,7 +7,7 @@
 
 namespace cxxime_tsf {
 
-void start_stage_ui_element_observer(ITfThreadMgr* thread_mgr, DWORD activate_flags);
+void start_ui_element_observer(ITfThreadMgr* thread_mgr, DWORD activate_flags);
 
 } // namespace cxxime_tsf
 

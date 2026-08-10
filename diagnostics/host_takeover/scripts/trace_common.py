@@ -12,7 +12,6 @@ DEFAULT_BUILD_ID = "cxxime-host-takeover-20260725-b"
 COMMON_FIELDS = {
     "schema_version",
     "build_id",
-    "stage",
     "arch",
     "event",
     "seq",
@@ -50,7 +49,7 @@ def load_records(paths: list[str]) -> tuple[list[dict[str, Any]], list[str]]:
 
 
 def validate_records(
-    records: list[dict[str, Any]], stage: int, build_id: str
+    records: list[dict[str, Any]], build_id: str
 ) -> tuple[list[str], list[str]]:
     errors: list[str] = []
     gaps: list[str] = []
@@ -59,10 +58,8 @@ def validate_records(
         missing = sorted(COMMON_FIELDS - record.keys())
         if missing:
             errors.append(f"{source}: missing common field(s): {', '.join(missing)}")
-        if record.get("schema_version") != 1:
+        if record.get("schema_version") != 2:
             errors.append(f"{source}: unsupported schema_version")
-        if record.get("stage") != stage:
-            errors.append(f"{source}: expected stage {stage}")
         if record.get("build_id") != build_id:
             errors.append(f"{source}: expected build_id {build_id}")
         leaked = sorted(TEXT_PAYLOAD_FIELDS & record.keys())
@@ -109,7 +106,7 @@ def evidence_gaps(
         if not ({"runtime.activate", "legacy.callback"} & events):
             required.add("runtime.activate or legacy.callback")
     if require_summary:
-        required.add("stage.summary")
+        required.add("trace.summary")
     gaps = []
     for event in sorted(required):
         if event == "runtime.activate or legacy.callback":

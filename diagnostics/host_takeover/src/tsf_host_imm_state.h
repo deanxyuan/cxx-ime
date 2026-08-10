@@ -7,9 +7,9 @@
 
 namespace cxxime_tsf {
 
-bool start_stage_host_imm_response_monitor();
-void stop_stage_host_imm_response_monitor();
-void trace_stage_host_imm_state(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam);
+bool start_host_imm_response_monitor();
+void stop_host_imm_response_monitor();
+void trace_host_imm_state(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam);
 
 } // namespace cxxime_tsf
 

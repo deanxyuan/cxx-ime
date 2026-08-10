@@ -177,6 +177,7 @@ Function CreateInstallShortcuts
     Delete "$SMPROGRAMS\CxxIME\Host Candidate Probe x64.lnk"
     Delete "$SMPROGRAMS\CxxIME\Host Candidate Probe x86.lnk"
     Delete "$SMPROGRAMS\CxxIME\Export Stage 1 Trace.lnk"
+    Delete "$SMPROGRAMS\CxxIME\Export Host Trace.lnk"
     !ifdef HOST_DIAGNOSTICS
         CreateShortCut \
             "$SMPROGRAMS\CxxIME\Host Candidate Probe x64.lnk" \
@@ -185,9 +186,9 @@ Function CreateInstallShortcuts
             "$SMPROGRAMS\CxxIME\Host Candidate Probe x86.lnk" \
             "$INSTDIR\cxxime-ime-host-probe-x86.exe"
         CreateShortCut \
-            "$SMPROGRAMS\CxxIME\Export Stage 1 Trace.lnk" \
+            "$SMPROGRAMS\CxxIME\Export Host Trace.lnk" \
             "$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" \
-            '-NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\export_stage_trace.ps1"'
+            '-NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\export_host_trace.ps1"'
     !endif
     CreateShortCut \
         "$SMPROGRAMS\CxxIME\Collect Diagnostics.lnk" \

@@ -5,7 +5,7 @@ if(CXXIME_ENABLE_HOST_DIAGNOSTICS)
         ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_composition.cc
         ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_activation.cc
         ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_imm_mode.cc
-        ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_stage.cc
+        ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_trace.cc
         ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_context.cc
         ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_host_window.cc
         ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/tsf_imm_candidate_snapshot.cc

@@ -2,7 +2,7 @@
 
 #include "tsf_host_callsite.h"
 
-#include <cxxime/stage_trace.h>
+#include <cxxime/host_trace.h>
 
 #include <windows.h>
 
@@ -47,7 +47,7 @@ std::string module_basename(HMODULE module) {
 
 } // namespace
 
-void trace_stage_host_ui_callsite(const char* boundary, bool element_registered) {
+void trace_host_ui_callsite(const char* boundary, bool element_registered) {
     static volatile LONG begin_callback_traced = 0;
     static volatile LONG registered_element_traced = 0;
     volatile LONG* traced =
@@ -79,7 +79,7 @@ void trace_stage_host_ui_callsite(const char* boundary, bool element_registered)
         frames.push_back(std::move(frame));
     }
 
-    cxxime::write_stage_trace("tsf", "ui_element.host_callsite", {
+    cxxime::write_host_trace("tsf", "ui_element.host_callsite", {
         {"boundary", boundary ? boundary : ""},
         {"element_registered", element_registered},
         {"reader_phase", element_registered ? "registered_element" : "begin_callback"},

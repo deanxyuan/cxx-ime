@@ -1,8 +1,8 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
-#include "legacy_stage.h"
+#include "legacy_trace.h"
 
-#include <cxxime/stage_trace.h>
+#include <cxxime/host_trace.h>
 
 #include <cstddef>
 #include <cwchar>
@@ -20,7 +20,7 @@ nlohmann::json callback_fields(HIMC himc, const char* callback) {
 }
 
 void write_callback(nlohmann::json fields) {
-    cxxime::write_stage_trace("legacy", "legacy.callback", std::move(fields));
+    cxxime::write_host_trace("legacy", "legacy.callback", std::move(fields));
 }
 
 struct ImmTextReadback {
@@ -51,7 +51,7 @@ ImmTextReadback read_imm_text(HIMC himc, DWORD index) {
 nlohmann::json text_digests(const std::vector<std::wstring>& values) {
     nlohmann::json digests = nlohmann::json::array();
     for (const auto& value : values) {
-        digests.push_back(cxxime::stage_trace_digest_utf16(value));
+        digests.push_back(cxxime::host_trace_digest_utf16(value));
     }
     return digests;
 }
@@ -102,7 +102,7 @@ CandidateReadback read_candidate_list(HIMC himc) {
         if (length == max_length) {
             return result;
         }
-        result.digests.push_back(cxxime::stage_trace_digest_utf16(text, length));
+        result.digests.push_back(cxxime::host_trace_digest_utf16(text, length));
     }
     result.valid = true;
     return result;
@@ -110,8 +110,8 @@ CandidateReadback read_candidate_list(HIMC himc) {
 
 } // namespace
 
-void trace_stage_legacy_inquire(DWORD system_info_flags, bool valid_arguments) {
-    cxxime::write_stage_trace("legacy", "runtime.component_status", {
+void trace_legacy_inquire(DWORD system_info_flags, bool valid_arguments) {
+    cxxime::write_host_trace("legacy", "runtime.component_status", {
         {"name", "cxxime.ime"},
         {"result", "loaded_and_called"},
     });
@@ -121,26 +121,26 @@ void trace_stage_legacy_inquire(DWORD system_info_flags, bool valid_arguments) {
     write_callback(std::move(fields));
 }
 
-void trace_stage_legacy_select(HIMC himc, bool selected) {
+void trace_legacy_select(HIMC himc, bool selected) {
     auto fields = callback_fields(himc, "ImeSelect");
     fields["select"] = selected;
     write_callback(std::move(fields));
 }
 
-void trace_stage_legacy_active_context(HIMC himc, bool active) {
+void trace_legacy_active_context(HIMC himc, bool active) {
     auto fields = callback_fields(himc, "ImeSetActiveContext");
     fields["active"] = active;
     write_callback(std::move(fields));
 }
 
-void trace_stage_legacy_process_key(HIMC himc,
-                                    uint64_t input_id,
-                                    UINT virtual_key,
-                                    LPARAM key_data,
-                                    uint32_t engine_calls,
-                                    bool eaten,
-                                    const char* result,
-                                    bool emit_route) {
+void trace_legacy_process_key(HIMC himc,
+                              uint64_t input_id,
+                              UINT virtual_key,
+                              LPARAM key_data,
+                              uint32_t engine_calls,
+                              bool eaten,
+                              const char* result,
+                              bool emit_route) {
     auto fields = callback_fields(himc, "ImeProcessKey");
     fields["input_id"] = input_id;
     fields["vk"] = virtual_key;
@@ -151,15 +151,15 @@ void trace_stage_legacy_process_key(HIMC himc,
     fields["result"] = result ? result : "";
     write_callback(fields);
     if (emit_route) {
-        cxxime::write_stage_trace("legacy", "key.route", std::move(fields));
+        cxxime::write_host_trace("legacy", "key.route", std::move(fields));
     }
 }
 
-void trace_stage_legacy_to_ascii(HIMC himc,
-                                 uint64_t input_id,
-                                 UINT virtual_key,
-                                 UINT scan_code,
-                                 UINT state) {
+void trace_legacy_to_ascii(HIMC himc,
+                           uint64_t input_id,
+                           UINT virtual_key,
+                           UINT scan_code,
+                           UINT state) {
     auto fields = callback_fields(himc, "ImeToAsciiEx");
     fields["input_id"] = input_id;
     fields["vk"] = virtual_key;
@@ -170,7 +170,7 @@ void trace_stage_legacy_to_ascii(HIMC himc,
     write_callback(std::move(fields));
 }
 
-void trace_stage_legacy_notify(HIMC himc, DWORD action, DWORD index, DWORD value) {
+void trace_legacy_notify(HIMC himc, DWORD action, DWORD index, DWORD value) {
     auto fields = callback_fields(himc, "NotifyIME");
     fields["action"] = action;
     fields["index"] = index;
@@ -178,23 +178,23 @@ void trace_stage_legacy_notify(HIMC himc, DWORD action, DWORD index, DWORD value
     write_callback(std::move(fields));
 }
 
-void trace_stage_legacy_destroy() {
+void trace_legacy_destroy() {
     auto fields = callback_fields(nullptr, "ImeDestroy");
     fields["result"] = "clear_sessions";
     write_callback(std::move(fields));
 }
 
-void trace_stage_legacy_response(uint64_t input_id,
-                                 uint64_t composition_id,
-                                 uint32_t session_id,
-                                 UINT virtual_key,
-                                 int status,
-                                 bool composing,
-                                 size_t preedit_length,
-                                 size_t commit_length,
-                                 uint32_t candidate_count,
-                                 uint32_t highlighted) {
-    cxxime::write_stage_trace("legacy", "legacy.response", {
+void trace_legacy_response(uint64_t input_id,
+                           uint64_t composition_id,
+                           uint32_t session_id,
+                           UINT virtual_key,
+                           int status,
+                           bool composing,
+                           size_t preedit_length,
+                           size_t commit_length,
+                           uint32_t candidate_count,
+                           uint32_t highlighted) {
+    cxxime::write_host_trace("legacy", "legacy.response", {
         {"input_id", input_id},
         {"composition_id", composition_id},
         {"session", session_id},
@@ -209,13 +209,13 @@ void trace_stage_legacy_response(uint64_t input_id,
     });
 }
 
-void trace_stage_legacy_candidate_signal(uint64_t input_id,
-                                         uint64_t composition_id,
-                                         size_t preedit_length,
-                                         size_t candidate_count,
-                                         uint32_t highlighted,
-                                         bool candidate_was_open) {
-    cxxime::write_stage_trace("legacy", "candidate.signal", {
+void trace_legacy_candidate_signal(uint64_t input_id,
+                                   uint64_t composition_id,
+                                   size_t preedit_length,
+                                   size_t candidate_count,
+                                   uint32_t highlighted,
+                                   bool candidate_was_open) {
+    cxxime::write_host_trace("legacy", "candidate.signal", {
         {"input_id", input_id},
         {"composition_id", composition_id},
         {"preedit_len", preedit_length},
@@ -226,42 +226,42 @@ void trace_stage_legacy_candidate_signal(uint64_t input_id,
     });
 }
 
-void trace_stage_legacy_imm_write(HIMC himc,
-                                  uint64_t input_id,
-                                  uint64_t composition_id,
-                                  const std::wstring& composition,
-                                  const std::wstring& result) {
+void trace_legacy_imm_write(HIMC himc,
+                            uint64_t input_id,
+                            uint64_t composition_id,
+                            const std::wstring& composition,
+                            const std::wstring& result) {
     const ImmTextReadback composition_readback = read_imm_text(himc, GCS_COMPSTR);
     const ImmTextReadback result_readback = read_imm_text(himc, GCS_RESULTSTR);
-    cxxime::write_stage_trace("legacy", "imm.write", {
+    cxxime::write_host_trace("legacy", "imm.write", {
         {"input_id", input_id},
         {"composition_id", composition_id},
         {"himc", reinterpret_cast<uintptr_t>(himc)},
         {"comp_len", composition.size()},
-        {"comp_digest", cxxime::stage_trace_digest_utf16(composition)},
+        {"comp_digest", cxxime::host_trace_digest_utf16(composition)},
         {"result_len", result.size()},
-        {"result_digest", cxxime::stage_trace_digest_utf16(result)},
+        {"result_digest", cxxime::host_trace_digest_utf16(result)},
         {"readback_comp_bytes", composition_readback.bytes},
-        {"readback_comp_digest", cxxime::stage_trace_digest_utf16(composition_readback.text)},
+        {"readback_comp_digest", cxxime::host_trace_digest_utf16(composition_readback.text)},
         {"readback_result_bytes", result_readback.bytes},
-        {"readback_result_digest", cxxime::stage_trace_digest_utf16(result_readback.text)},
+        {"readback_result_digest", cxxime::host_trace_digest_utf16(result_readback.text)},
         {"result", "written"},
     });
 }
 
-void trace_stage_legacy_candidate_snapshot(HIMC himc,
-                                           uint64_t input_id,
-                                           uint64_t composition_id,
-                                           const std::vector<std::wstring>& candidates,
-                                           uint32_t selection,
-                                           DWORD page_start,
-                                           DWORD page_size) {
+void trace_legacy_candidate_snapshot(HIMC himc,
+                                     uint64_t input_id,
+                                     uint64_t composition_id,
+                                     const std::vector<std::wstring>& candidates,
+                                     uint32_t selection,
+                                     DWORD page_start,
+                                     DWORD page_size) {
     const CandidateReadback readback = read_candidate_list(himc);
     nlohmann::json lengths = nlohmann::json::array();
     for (const auto& candidate : candidates) {
         lengths.push_back(candidate.size());
     }
-    cxxime::write_stage_trace("legacy", "candidate.snapshot", {
+    cxxime::write_host_trace("legacy", "candidate.snapshot", {
         {"input_id", input_id},
         {"composition_id", composition_id},
         {"count", candidates.size()},
@@ -281,14 +281,14 @@ void trace_stage_legacy_candidate_snapshot(HIMC himc,
     });
 }
 
-void trace_stage_legacy_imm_message(HIMC himc,
-                                    uint64_t input_id,
-                                    uint64_t composition_id,
-                                    UINT message,
-                                    WPARAM wparam,
-                                    LPARAM flags,
-                                    bool generated) {
-    cxxime::write_stage_trace("legacy", "imm.message", {
+void trace_legacy_imm_message(HIMC himc,
+                              uint64_t input_id,
+                              uint64_t composition_id,
+                              UINT message,
+                              WPARAM wparam,
+                              LPARAM flags,
+                              bool generated) {
+    cxxime::write_host_trace("legacy", "imm.message", {
         {"input_id", input_id},
         {"composition_id", composition_id},
         {"himc", reinterpret_cast<uintptr_t>(himc)},
