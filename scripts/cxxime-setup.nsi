@@ -18,7 +18,9 @@ Unicode true
 !define UNINSTALL_TRANSACTION_MARKER ".cxxime-uninstall-transaction"
 !define UNINSTALL_TRANSACTION_TEMP ".cxxime-uninstall-transaction.tmp"
 !define UNINSTALL_ROLLBACK_DIR ".cxxime-uninstall-rollback"
+!define UNINSTALL_DEFERRED_MARKER ".cxxime-uninstall-pending"
 !define MOVEFILE_REPLACE_WRITE_THROUGH 0x9
+!define MOVEFILE_DELAY_UNTIL_REBOOT 0x4
 
 !ifndef VERSION
     !error "VERSION must be provided by package.py"
@@ -41,7 +43,7 @@ ShowUninstDetails show
 
 VIProductVersion "${VERSION_NUMERIC}"
 VIAddVersionKey /LANG=2052 "CompanyName" "${PUBLISHER}"
-VIAddVersionKey /LANG=2052 "FileDescription" "CxxIME Installer"
+VIAddVersionKey /LANG=2052 "FileDescription" "CxxIME 安装程序"
 VIAddVersionKey /LANG=2052 "FileVersion" "${VERSION_NUMERIC}"
 VIAddVersionKey /LANG=2052 "LegalCopyright" "Copyright (c) 2026 CxxIME Contributors"
 VIAddVersionKey /LANG=2052 "ProductName" "${PRODUCT}"
@@ -59,6 +61,7 @@ Var TransactionDir
 Var LockReportPath
 Var LockReportText
 Var LockResult
+Var LockPromptOptions
 Var FailureMessage
 Var OldInstallAvailable
 Var OldTsfX64Present
@@ -77,6 +80,8 @@ Var UninstallRemoveUserDataCheckbox
 Var UninstallUserDataDir
 Var UninstallUserDataDirSuffix
 Var UninstallServerWasRunning
+Var UninstallDeferred
+Var UninstallDeferredResume
 Var UninstallRollbackDir
 Var UninstallTransactionPhase
 Var UninstallSystemImeX64Present
@@ -93,6 +98,9 @@ Page custom FinishPage FinishPageLeave
 !insertmacro MUI_UNPAGE_CONFIRM
 UninstPage custom un.UserDataPage un.UserDataPageLeave
 !insertmacro MUI_UNPAGE_INSTFILES
+!define MUI_FINISHPAGE_REBOOTLATER_DEFAULT
+!define MUI_FINISHPAGE_TEXT_REBOOT \
+    "CxxIME 已停用。请重新启动 Windows，以删除仍在使用的文件并完成卸载。"
 !insertmacro MUI_UNPAGE_FINISH
 !insertmacro MUI_LANGUAGE "SimpChinese"
 
@@ -116,7 +124,7 @@ Section "Install"
     Pop $0
     StrCmp $0 "1" install_recovery_ready
         StrCmp $FailureMessage "" 0 install_failed_recovery
-        StrCpy $FailureMessage "A previous CxxIME installation could not be recovered safely."
+        StrCpy $FailureMessage "无法安全恢复上一次未完成的 CxxIME 安装。"
         Goto install_failed_recovery
 
     install_recovery_ready:
@@ -176,7 +184,7 @@ Section "Install"
 
     WriteUninstaller "$StageDir\uninstall.exe"
     IfErrors 0 install_stage_ready
-        StrCpy $FailureMessage "Failed to extract the CxxIME installation files."
+        StrCpy $FailureMessage "无法解压 CxxIME 安装文件。"
         Goto install_failed_before_swap
 
     install_stage_ready:
@@ -195,13 +203,13 @@ Section "Install"
     SetOutPath "$PLUGINSDIR"
     ${If} $ExistingInstall == 1
         IfFileExists "$BackupDir\*" 0 install_backup_path_ready
-            StrCpy $FailureMessage "The CxxIME backup directory could not be prepared."
+            StrCpy $FailureMessage "无法准备 CxxIME 备份目录。"
             Goto install_failed_after_transaction
         install_backup_path_ready:
         ClearErrors
         Rename "$INSTDIR" "$BackupDir"
         IfErrors 0 install_backup_ready
-            StrCpy $FailureMessage "Failed to back up the installed CxxIME version."
+            StrCpy $FailureMessage "无法备份已安装的 CxxIME 版本。"
             Goto install_failed_after_transaction
         install_backup_ready:
         Call UnregisterPreviousTsf
@@ -216,7 +224,7 @@ Section "Install"
     ClearErrors
     Rename "$StageDir" "$INSTDIR"
     IfErrors 0 install_stage_swapped
-        StrCpy $FailureMessage "Failed to activate the new CxxIME files."
+        StrCpy $FailureMessage "无法启用新的 CxxIME 文件。"
         Goto install_failed_after_transaction
 
     install_stage_swapped:
@@ -252,13 +260,13 @@ Section "Install"
         CopyFiles /SILENT /FILESONLY "$INSTDIR\data\default.json" "$PROFILE\cxxime"
     install_user_config_ready:
     Call CreateInstallShortcuts
-    DetailPrint "CxxIME ${VERSION} installation committed."
+    DetailPrint "CxxIME ${VERSION} 安装已完成。"
     Goto install_done
 
     install_failed_before_swap:
     RMDir /r "$StageDir"
     IfSilent install_failed_silent
-        MessageBox MB_ICONSTOP "$FailureMessage$\r$\n$\r$\nNo installed CxxIME files were changed."
+        MessageBox MB_ICONSTOP "$FailureMessage$\r$\n$\r$\n已安装的 CxxIME 文件未发生变化。"
         Goto install_failed_abort
 
     install_failed_after_transaction:
@@ -266,11 +274,10 @@ Section "Install"
     Pop $0
     StrCmp $0 "1" install_rollback_complete
         StrCpy $FailureMessage \
-            "$FailureMessage$\r$\n$\r$\nAutomatic rollback did not complete. \
-            Run setup again before using CxxIME."
+            "$FailureMessage$\r$\n$\r$\n自动回滚未能完成。请重新运行安装程序后再使用 CxxIME。"
         Goto install_failed_silent_or_message
     install_rollback_complete:
-        StrCpy $FailureMessage "$FailureMessage$\r$\n$\r$\nThe previous CxxIME state was restored."
+        StrCpy $FailureMessage "$FailureMessage$\r$\n$\r$\n已恢复 CxxIME 安装前的状态。"
         Goto install_failed_silent_or_message
 
     install_failed_recovery:
@@ -294,6 +301,7 @@ SectionEnd
 !include "nsis\uninstall_locks.nsh"
 !include "nsis\uninstall_state.nsh"
 !include "nsis\uninstall_files.nsh"
+!include "nsis\uninstall_deferred.nsh"
 
 Section "Uninstall"
     SetRegView 64
@@ -304,7 +312,9 @@ Section "Uninstall"
     StrCpy $LockReportPath "$PLUGINSDIR\cxxime-locks.txt"
 
     Call un.StopServer
+    StrCmp $UninstallDeferredResume "1" un_deferred_resume
     Call un.CheckFileLocks
+    StrCmp $UninstallDeferred "1" un_deferred_prepare
     Call un.PrepareTransaction
     Pop $0
     StrCmp $0 "1" un_transaction_ready
@@ -341,16 +351,34 @@ Section "Uninstall"
     StrCmp $0 "1" un_remove_registry
         Call un.FailIncomplete
 
+    un_deferred_prepare:
+    Call un.PrepareTransaction
+    Pop $0
+    StrCmp $0 "1" un_deferred_unregister
+        Call un.FailAndRestart
+
+    un_deferred_unregister:
+    Call un.UnregisterInstalledTsf
+    Pop $0
+    StrCmp $0 "1" un_deferred_schedule
+        Goto un_rollback_failure
+
+    un_deferred_resume:
+    un_deferred_schedule:
+    Call un.BeginDeferredUninstall
+    Pop $0
+    StrCmp $0 "1" un_remove_registry
+        Call un.FailDeferred
+
     un_rollback_failure:
     Call un.RollbackTransaction
     Pop $0
     StrCmp $0 "1" un_rollback_complete
         StrCpy $FailureMessage \
-            "$FailureMessage$\r$\n$\r$\nAutomatic rollback did not complete. \
-            Run the uninstaller again before using CxxIME."
+            "$FailureMessage$\r$\n$\r$\n自动回滚未能完成。请重新运行卸载程序后再使用 CxxIME。"
         Call un.FailAndRestart
     un_rollback_complete:
-    StrCpy $FailureMessage "$FailureMessage$\r$\n$\r$\nThe installed CxxIME state was restored."
+    StrCpy $FailureMessage "$FailureMessage$\r$\n$\r$\n已恢复卸载前的 CxxIME 状态。"
     Call un.FailAndRestart
 
     un_remove_registry:
@@ -366,26 +394,39 @@ Section "Uninstall"
     ReadRegStr $0 HKLM "${UNINSTALL_KEY}" "DisplayName"
     IfErrors un_uninstall_registry_removed
         StrCpy $FailureMessage \
-            "The CxxIME uninstall registry entry could not be removed. Run the uninstaller again."
+            "无法删除 CxxIME 卸载注册表项。请重新运行卸载程序。"
+        StrCmp $UninstallDeferred "1" 0 +2
+            Call un.FailDeferred
         Call un.FailIncomplete
     un_uninstall_registry_removed:
     ClearErrors
     ReadRegStr $0 HKLM "${RUN_KEY}" "CxxIMEServer"
     IfErrors un_run_registry_removed
         StrCpy $FailureMessage \
-            "The CxxIME startup registry entry could not be removed. Run the uninstaller again."
+            "无法删除 CxxIME 启动注册表项。请重新运行卸载程序。"
+        StrCmp $UninstallDeferred "1" 0 +2
+            Call un.FailDeferred
         Call un.FailIncomplete
     un_run_registry_removed:
 
     RMDir /r "$SMPROGRAMS\CxxIME"
+    StrCmp $UninstallDeferred "1" un_commit_deferred
     Delete "$INSTDIR\${UNINSTALL_TRANSACTION_MARKER}"
     Delete "$INSTDIR\${UNINSTALL_TRANSACTION_TEMP}"
     Delete "$INSTDIR\uninstall.exe"
     RMDir "$INSTDIR"
     IfFileExists "$INSTDIR\*" 0 un_program_files_removed
-        DetailPrint "Some unrecognized files remain in $INSTDIR."
+        DetailPrint "$INSTDIR 中仍有无法识别的文件。"
     un_program_files_removed:
+    Goto un_remove_user_data
 
+    un_commit_deferred:
+    Call un.CommitDeferredUninstall
+    Pop $0
+    StrCmp $0 "1" un_remove_user_data
+        Call un.FailDeferred
+
+    un_remove_user_data:
     ${If} $UninstallRemoveUserData == ${BST_CHECKED}
         StrCpy $UninstallUserDataDirSuffix $UninstallUserDataDir 7 -7
         ${If} $UninstallUserDataDir != ""

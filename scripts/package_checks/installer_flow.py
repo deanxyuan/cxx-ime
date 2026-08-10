@@ -39,11 +39,15 @@ def check_installer_flow(
     require_text(errors, text, '$UninstallTransactionPhase "staged"', label)
     require_text(errors, text, '"transaction" "phase"', label)
     require_text(errors, text, "phase=$UninstallTransactionPhase", label)
-    if text.count("kernel32::MoveFileExW") != 2:
+    if text.count("MOVEFILE_REPLACE_WRITE_THROUGH})") != 2:
         add_error(errors, f"{label}: install and uninstall transactions must commit atomically")
     require_text(errors, text, "!define MOVEFILE_REPLACE_WRITE_THROUGH 0x9", label)
-    if text.count("FileWriteUTF16LE /BOM") != 2:
-        add_error(errors, f"{label}: transaction files must be written as UTF-16 INI files")
+    require_text(errors, text, "!define MOVEFILE_DELAY_UNTIL_REBOOT 0x4", label)
+    if text.count("FileWriteUTF16LE /BOM") != 3:
+        add_error(
+            errors,
+            f"{label}: transaction and deferred marker files must be UTF-16 INI files",
+        )
     if text.count('"format=2$\\r$\\n"') != 2:
         add_error(errors, f"{label}: install and uninstall transactions must use format 2")
     if text.count('ReadRegStr $0 HKLM "${TSF_INPROC_KEY}" ""') != 4:
@@ -58,9 +62,23 @@ def check_installer_flow(
     require_text(errors, text, 'Rename "$StageDir" "$INSTDIR"', label)
     require_text(errors, text, "Call RollbackInstall", label)
     require_text(errors, text, ".cxxime-install-complete", label)
+    require_text(errors, text, 'IfFileExists "$INSTDIR\\cxxime-resources.dll"', label)
+    require_text(errors, text, 'IfFileExists "$INSTDIR\\cxxime_tsf_x64.dll"', label)
+    require_text(errors, text, 'IfFileExists "$INSTDIR\\cxxime_tsf_x86.dll"', label)
     require_text(errors, text, ".cxxime-install-transaction", label)
     require_text(errors, text, ".cxxime-uninstall-transaction", label)
+    require_text(errors, text, ".cxxime-uninstall-pending", label)
+    require_text(errors, text, 'Push "removing"', label)
+    require_text(errors, text, 'Push "pending_restart"', label)
+    require_text(errors, text, '$UninstallDeferredResume "1"', label)
+    require_text(errors, text, "Function un.BeginDeferredUninstall", label)
+    require_text(errors, text, "Function un.CommitDeferredUninstall", label)
+    require_text(errors, text, "Call un.FailDeferred", label)
+    require_text(errors, text, "SetRebootFlag true", label)
     require_text(errors, text, "cxxime-installer-helper.exe", label)
+    require_text(errors, text, "--prompt=install", label)
+    require_text(errors, text, "--prompt=uninstall", label)
+    require_text(errors, text, "--parent=$HWNDPARENT", label)
     if text.count('"$WINDIR\\System32\\cxxime.ime"') != 2:
         add_error(errors, f"{label}: lock checks must use the x64 helper's System32 path")
     require_text(errors, text, "nsExec::ExecToStack", label)
@@ -102,7 +120,7 @@ def check_installer_flow(
         ],
         "Uninstall section",
     )
-    forbid_text(errors, text, "/REBOOTOK", label)
+    forbid_text(errors, install_text, "/REBOOTOK", "Install section")
     forbid_text(errors, text, r"Keyboard Layout\Preload", label)
     forbid_text(errors, text, "LoadKeyboardLayoutW", label)
     forbid_text(errors, text, "RequireReplaceableTsfDll", label)

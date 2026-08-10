@@ -5,7 +5,7 @@ Function UnregisterPreviousTsf
         Pop $0
         Pop $1
         ${If} $0 != "0"
-            StrCpy $FailureMessage "Failed to unregister the installed 32-bit TSF module."
+            StrCpy $FailureMessage "无法注销已安装的 32 位 TSF 模块。"
             Push 0
             Return
         ${EndIf}
@@ -16,7 +16,7 @@ Function UnregisterPreviousTsf
         Pop $0
         Pop $1
         ${If} $0 != "0"
-            StrCpy $FailureMessage "Failed to unregister the installed 64-bit TSF module."
+            StrCpy $FailureMessage "无法注销已安装的 64 位 TSF 模块。"
             Push 0
             Return
         ${EndIf}
@@ -25,12 +25,12 @@ Function UnregisterPreviousTsf
     Return
 
     unregister_previous_x86_missing:
-    StrCpy $FailureMessage "The registered 32-bit TSF module is missing from the installed version."
+    StrCpy $FailureMessage "已安装版本中缺少已注册的 32 位 TSF 模块。"
     Push 0
     Return
 
     unregister_previous_x64_missing:
-    StrCpy $FailureMessage "The registered 64-bit TSF module is missing from the installed version."
+    StrCpy $FailureMessage "已安装版本中缺少已注册的 64 位 TSF 模块。"
     Push 0
 FunctionEnd
 
@@ -39,7 +39,7 @@ Function RegisterNewTsf
     Pop $0
     Pop $1
     ${If} $0 != "0"
-        StrCpy $FailureMessage "Failed to register the 64-bit TSF module."
+        StrCpy $FailureMessage "无法注册 64 位 TSF 模块。"
         Push 0
         Return
     ${EndIf}
@@ -48,7 +48,7 @@ Function RegisterNewTsf
     Pop $0
     Pop $1
     ${If} $0 != "0"
-        StrCpy $FailureMessage "Failed to register the 32-bit TSF module."
+        StrCpy $FailureMessage "无法注册 32 位 TSF 模块。"
         Push 0
         Return
     ${EndIf}
@@ -63,7 +63,7 @@ Function RegisterPreviousTsf
         Pop $0
         Pop $1
         StrCmp $0 "0" restore_register_x86
-            StrCpy $FailureMessage "Failed to restore the previous 64-bit TSF registration."
+            StrCpy $FailureMessage "无法恢复先前的 64 位 TSF 注册。"
             Push 0
             Return
     restore_register_x86:
@@ -73,7 +73,7 @@ Function RegisterPreviousTsf
         Pop $0
         Pop $1
         StrCmp $0 "0" restore_register_done
-            StrCpy $FailureMessage "Failed to restore the previous 32-bit TSF registration."
+            StrCpy $FailureMessage "无法恢复先前的 32 位 TSF 注册。"
             Push 0
             Return
     restore_register_done:
@@ -81,12 +81,12 @@ Function RegisterPreviousTsf
     Return
 
     restore_register_x64_missing:
-    StrCpy $FailureMessage "The previous 64-bit TSF module could not be restored."
+    StrCpy $FailureMessage "无法恢复先前的 64 位 TSF 模块。"
     Push 0
     Return
 
     restore_register_x86_missing:
-    StrCpy $FailureMessage "The previous 32-bit TSF module could not be restored."
+    StrCpy $FailureMessage "无法恢复先前的 32 位 TSF 模块。"
     Push 0
 FunctionEnd
 
@@ -103,7 +103,7 @@ Function WriteInstallationRegistry
     WriteRegDWORD HKLM "${UNINSTALL_KEY}" "NoModify" 1
     WriteRegDWORD HKLM "${UNINSTALL_KEY}" "NoRepair" 1
     IfErrors 0 installation_registry_written
-        StrCpy $FailureMessage "Failed to write the CxxIME installation registry entries."
+        StrCpy $FailureMessage "无法写入 CxxIME 安装注册表项。"
         Push 0
         Return
     installation_registry_written:
@@ -137,7 +137,7 @@ Function RestorePreviousRegistry
     Return
 
     restore_registry_failed:
-    StrCpy $FailureMessage "Failed to restore the previous CxxIME registry state."
+    StrCpy $FailureMessage "无法恢复先前的 CxxIME 注册表状态。"
     Push 0
 FunctionEnd
 
@@ -152,7 +152,7 @@ Function RollbackInstall
         Call RecoverTransaction
         Return
     rollback_transaction_missing:
-    StrCpy $FailureMessage "The CxxIME rollback transaction could not be found."
+    StrCpy $FailureMessage "找不到 CxxIME 回滚事务。"
     Push 0
 FunctionEnd
 
@@ -166,7 +166,7 @@ Function WriteInstallMarker
     Push 1
     Return
     install_marker_failed:
-        StrCpy $FailureMessage "Failed to finalize the CxxIME installation."
+        StrCpy $FailureMessage "无法完成 CxxIME 安装。"
         Push 0
 FunctionEnd
 

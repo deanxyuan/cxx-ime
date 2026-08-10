@@ -34,16 +34,20 @@ Function ReadLockReport
     lock_report_done:
     ${If} $LockReportText == ""
         StrCpy $LockReportText \
-            "Windows could not provide details about the applications using \
-            CxxIME."
+            "Windows 无法提供正在使用 CxxIME 的应用程序详情。"
     ${EndIf}
 FunctionEnd
 
 Function CheckInstallLocks
+    StrCpy $LockPromptOptions ""
+    IfSilent install_lock_options_ready
+        StrCpy $LockPromptOptions "--prompt=install --parent=$HWNDPARENT"
+    install_lock_options_ready:
     install_lock_retry:
         Delete "$LockReportPath"
         nsExec::ExecToStack \
             '"$PLUGINSDIR\cxxime-installer-helper.exe" query --report "$LockReportPath" \
+            $LockPromptOptions \
             "$INSTDIR\cxxime_tsf_x64.dll" "$INSTDIR\cxxime_tsf_x86.dll" \
             "$INSTDIR\cxxime_ime_x64.ime" "$INSTDIR\cxxime_ime_x86.ime" \
             "$INSTDIR\cxxime-resources.dll" "$INSTDIR\cxxime-server.exe" \
@@ -56,6 +60,7 @@ Function CheckInstallLocks
     install_lock_check_backup:
         nsExec::ExecToStack \
             '"$PLUGINSDIR\cxxime-installer-helper.exe" query --report "$LockReportPath" \
+            $LockPromptOptions \
             "$BackupDir\cxxime_tsf_x64.dll" "$BackupDir\cxxime_tsf_x86.dll" \
             "$BackupDir\cxxime_ime_x64.ime" "$BackupDir\cxxime_ime_x86.ime" \
             "$BackupDir\cxxime-resources.dll" "$BackupDir\cxxime-server.exe" \
@@ -67,6 +72,7 @@ Function CheckInstallLocks
     install_lock_check_stage:
         nsExec::ExecToStack \
             '"$PLUGINSDIR\cxxime-installer-helper.exe" query --report "$LockReportPath" \
+            $LockPromptOptions \
             "$StageDir\cxxime_tsf_x64.dll" "$StageDir\cxxime_tsf_x86.dll" \
             "$StageDir\cxxime_ime_x64.ime" "$StageDir\cxxime_ime_x86.ime" \
             "$StageDir\cxxime-resources.dll" "$StageDir\cxxime-server.exe" \
@@ -78,20 +84,12 @@ Function CheckInstallLocks
         StrCpy $LockResult $0
         Call ReadLockReport
         IfSilent install_lock_silent
-        ${If} $LockResult == "2"
-            MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION|MB_DEFBUTTON1 \
-                "$LockReportText$\r$\n$\r$\nClose these applications and click Retry. \
-                If a Windows process retains CxxIME, sign out or restart Windows first." \
-                IDRETRY install_lock_retry
-        ${ElseIf} $LockResult == "3"
-            MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION|MB_DEFBUTTON1 \
-                "$LockReportText$\r$\n$\r$\nRestart Windows, then run setup again." \
-                IDRETRY install_lock_retry
-        ${Else}
-            MessageBox MB_RETRYCANCEL|MB_ICONSTOP|MB_DEFBUTTON1 \
-                "$LockReportText$\r$\n$\r$\nSetup cannot safely replace the installed files." \
-                IDRETRY install_lock_retry
-        ${EndIf}
+        StrCmp $LockResult "10" install_lock_retry
+        StrCmp $LockResult "12" install_lock_cancel
+        MessageBox MB_RETRYCANCEL|MB_ICONSTOP|MB_DEFBUTTON1 \
+            "$LockReportText$\r$\n$\r$\n无法显示文件占用详情。关闭相关应用程序后单击“重试”。" \
+            IDRETRY install_lock_retry
+    install_lock_cancel:
         Call RestartInstalledServer
         SetErrorLevel 2
         Abort

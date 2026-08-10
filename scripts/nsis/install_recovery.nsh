@@ -75,7 +75,7 @@ Function LoadTransactionState
     Return
 
     transaction_state_invalid:
-    StrCpy $FailureMessage "The previous CxxIME installation transaction is incomplete or invalid."
+    StrCpy $FailureMessage "先前的 CxxIME 安装事务不完整或无效。"
     Push 0
 FunctionEnd
 
@@ -86,7 +86,7 @@ Function UnregisterTransactionTsf
         Pop $0
         Pop $1
         StrCmp $0 "0" unregister_transaction_x64
-            StrCpy $FailureMessage "Failed to unregister the interrupted 32-bit TSF module."
+            StrCpy $FailureMessage "无法注销中断安装留下的 32 位 TSF 模块。"
             Push 0
             Return
     unregister_transaction_x64:
@@ -96,7 +96,7 @@ Function UnregisterTransactionTsf
         Pop $0
         Pop $1
         StrCmp $0 "0" unregister_transaction_done
-            StrCpy $FailureMessage "Failed to unregister the interrupted 64-bit TSF module."
+            StrCpy $FailureMessage "无法注销中断安装留下的 64 位 TSF 模块。"
             Push 0
             Return
     unregister_transaction_done:
@@ -177,19 +177,19 @@ Function RecoverTransaction
     StrCmp $TransactionDir "$StageDir" 0 +2
         RMDir /r "$StageDir"
     RMDir /r "$BackupDir"
-    DetailPrint "Recovered the previous CxxIME installation state."
+    DetailPrint "已恢复先前的 CxxIME 安装状态。"
     Push 1
     Return
 
     transaction_recovery_failed:
-    StrCpy $FailureMessage "Failed to restore the previous CxxIME program files."
+    StrCpy $FailureMessage "无法恢复先前的 CxxIME 程序文件。"
     Push 0
 FunctionEnd
 
 Function RecoverInterruptedInstall
     IfFileExists "$INSTDIR\${UNINSTALL_TRANSACTION_MARKER}" 0 recover_check_committed_install
         StrCpy $FailureMessage \
-            "A CxxIME uninstall is incomplete. Run the installed uninstaller again before setup."
+            "上一次 CxxIME 卸载尚未完成。请先重新运行已安装的卸载程序。"
         Push 0
         Return
 
@@ -219,8 +219,7 @@ Function RecoverInterruptedInstall
     recover_untracked_backup:
     IfFileExists "$BackupDir\*" 0 recover_remove_uncommitted_stage
         StrCpy $FailureMessage \
-            "A CxxIME backup directory exists without a valid installation transaction. \
-            Setup cannot recover it safely."
+            "检测到 CxxIME 备份目录，但没有有效的安装事务，无法安全恢复。"
         Push 0
         Return
 
@@ -230,6 +229,6 @@ Function RecoverInterruptedInstall
     Return
 
     recover_committed_cleanup_failed:
-    StrCpy $FailureMessage "Failed to clean files left by a completed CxxIME installation."
+    StrCpy $FailureMessage "无法清理已完成安装留下的 CxxIME 文件。"
     Push 0
 FunctionEnd

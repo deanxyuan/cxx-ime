@@ -60,7 +60,7 @@ Function BackupSystemIme
             w "$StageDir\${ROLLBACK_DIR}\system-x64.ime", \
             i 0) i .r0'
         ${If} $0 == 0
-            StrCpy $FailureMessage "Failed to back up the installed 64-bit legacy IME module."
+            StrCpy $FailureMessage "无法备份已安装的 64 位传统 IME 模块。"
             Push 0
             Return
         ${EndIf}
@@ -72,7 +72,7 @@ Function BackupSystemIme
             w "$StageDir\${ROLLBACK_DIR}\system-x86.ime", \
             i 0) i .r0'
         ${If} $0 == 0
-            StrCpy $FailureMessage "Failed to back up the installed 32-bit legacy IME module."
+            StrCpy $FailureMessage "无法备份已安装的 32 位传统 IME 模块。"
             Push 0
             Return
         ${EndIf}
@@ -82,7 +82,7 @@ Function BackupSystemIme
     Return
 
     backup_system_directory_failed:
-    StrCpy $FailureMessage "Failed to create the CxxIME rollback directory."
+    StrCpy $FailureMessage "无法创建 CxxIME 回滚目录。"
     Push 0
 FunctionEnd
 
@@ -124,14 +124,14 @@ Function WriteTransactionState
     FileClose $0
     transaction_state_write_failed:
     Delete "$StageDir\${TRANSACTION_TEMP}"
-    StrCpy $FailureMessage "Failed to write the CxxIME installation transaction."
+    StrCpy $FailureMessage "无法写入 CxxIME 安装事务。"
     Push 0
     Return
 
     transaction_state_commit_failed:
     Delete "$StageDir\${TRANSACTION_TEMP}"
     StrCpy $FailureMessage \
-        "Failed to commit the CxxIME installation transaction (Win32 error $1)."
+        "无法提交 CxxIME 安装事务（Win32 错误 $1）。"
     Push 0
 FunctionEnd
 
@@ -162,7 +162,7 @@ Function RestoreSystemIme
     Return
 
     restore_system_failed:
-    StrCpy $FailureMessage "Failed to restore the previous legacy IME modules."
+    StrCpy $FailureMessage "无法恢复先前的传统 IME 模块。"
     Push 0
 FunctionEnd
 
@@ -172,7 +172,7 @@ Function CopyNewSystemIme
         w "$WINDIR\Sysnative\cxxime.ime", \
         i 0) i .r0'
     ${If} $0 == 0
-        StrCpy $FailureMessage "Failed to install the 64-bit legacy IME module."
+        StrCpy $FailureMessage "无法安装 64 位传统 IME 模块。"
         Push 0
         Return
     ${EndIf}
@@ -181,7 +181,7 @@ Function CopyNewSystemIme
         w "$SYSDIR\cxxime.ime", \
         i 0) i .r0'
     ${If} $0 == 0
-        StrCpy $FailureMessage "Failed to install the 32-bit legacy IME module."
+        StrCpy $FailureMessage "无法安装 32 位传统 IME 模块。"
         Push 0
         Return
     ${EndIf}

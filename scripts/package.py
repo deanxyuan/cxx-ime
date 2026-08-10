@@ -707,7 +707,13 @@ def build_nsis(
 
     print(f"  Using NSIS: {makensis}")
     nsi_file = os.path.join(DIST_DIR, "cxxime-setup.nsi")
-    cmd = [makensis, f"/DVERSION={VERSION}", f"/DVERSION_NUMERIC={VERSION_NUMERIC}"]
+    cmd = [
+        makensis,
+        "/INPUTCHARSET",
+        "UTF8",
+        f"/DVERSION={VERSION}",
+        f"/DVERSION_NUMERIC={VERSION_NUMERIC}",
+    ]
     if fast:
         cmd.append("/DFAST")
     if host_diagnostics:

@@ -1,5 +1,4 @@
 Function un.StopServer
-    StrCpy $UninstallServerWasRunning 0
     nsExec::Exec 'taskkill /im cxxime-server.exe'
     Pop $0
     StrCmp $0 "0" 0 +2
@@ -34,16 +33,20 @@ Function un.ReadLockReport
     un_lock_report_done:
     ${If} $LockReportText == ""
         StrCpy $LockReportText \
-            "Windows could not provide details about the applications using \
-            CxxIME."
+            "Windows 无法提供正在使用 CxxIME 的应用程序详情。"
     ${EndIf}
 FunctionEnd
 
 Function un.CheckFileLocks
+    StrCpy $LockPromptOptions ""
+    IfSilent un_lock_options_ready
+        StrCpy $LockPromptOptions "--prompt=uninstall --parent=$HWNDPARENT"
+    un_lock_options_ready:
     un_lock_retry:
         Delete "$LockReportPath"
         nsExec::ExecToStack \
             '"$PLUGINSDIR\cxxime-installer-helper.exe" query --report "$LockReportPath" \
+            $LockPromptOptions \
             "$INSTDIR\cxxime_tsf_x64.dll" "$INSTDIR\cxxime_tsf_x86.dll" \
             "$INSTDIR\cxxime_ime_x64.ime" "$INSTDIR\cxxime_ime_x86.ime" \
             "$INSTDIR\cxxime-resources.dll" "$INSTDIR\cxxime-server.exe" \
@@ -56,6 +59,7 @@ Function un.CheckFileLocks
     un_lock_check_rollback:
         nsExec::ExecToStack \
             '"$PLUGINSDIR\cxxime-installer-helper.exe" query --report "$LockReportPath" \
+            $LockPromptOptions \
             "$UninstallRollbackDir\cxxime_tsf_x64.dll" \
             "$UninstallRollbackDir\cxxime_tsf_x86.dll" \
             "$UninstallRollbackDir\cxxime_ime_x64.ime" \
@@ -67,15 +71,22 @@ Function un.CheckFileLocks
         Pop $1
         StrCmp $0 "0" un_lock_done
     un_lock_report:
+        StrCpy $LockResult $0
         Call un.ReadLockReport
         IfSilent un_lock_silent
-        MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION|MB_DEFBUTTON1 \
-            "$LockReportText$\r$\n$\r$\nClose these applications and click Retry. \
-            If a Windows process retains CxxIME, sign out or restart Windows first." \
+        StrCmp $LockResult "10" un_lock_retry
+        StrCmp $LockResult "11" un_lock_deferred
+        StrCmp $LockResult "12" un_lock_cancel
+        MessageBox MB_RETRYCANCEL|MB_ICONSTOP|MB_DEFBUTTON1 \
+            "$LockReportText$\r$\n$\r$\n无法显示文件占用详情。关闭相关应用程序后单击“重试”。" \
             IDRETRY un_lock_retry
+    un_lock_cancel:
         Call un.RestartInstalledServer
         SetErrorLevel 2
         Abort
+    un_lock_deferred:
+        StrCpy $UninstallDeferred 1
+        Return
     un_lock_silent:
         DetailPrint "$LockReportText"
         Call un.RestartInstalledServer
