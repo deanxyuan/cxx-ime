@@ -34,11 +34,14 @@ static std::vector<HWND> s_windows;
 static std::mutex s_windows_mutex;
 
 void StatusWindow::cleanup_all() {
-    std::lock_guard<std::mutex> lock(s_windows_mutex);
-    for (HWND h : s_windows) {
+    std::vector<HWND> windows;
+    {
+        std::lock_guard<std::mutex> lock(s_windows_mutex);
+        windows.swap(s_windows);
+    }
+    for (HWND h : windows) {
         if (IsWindow(h)) DestroyWindow(h);
     }
-    s_windows.clear();
 }
 
 static void register_window(HWND h) {
@@ -130,7 +133,8 @@ StatusWindow::~StatusWindow() {
 }
 
 bool StatusWindow::create(HWND owner, const StatusTheme& theme) {
-    if (hwnd_) return true;
+    if (hwnd_ && IsWindow(hwnd_)) return true;
+    if (hwnd_ || gdiplus_initialized_) destroy();
 
     theme_ = theme;
 
@@ -174,6 +178,7 @@ bool StatusWindow::create(HWND owner, const StatusTheme& theme) {
     register_window(hwnd_);
 
     init_gdiplus();
+    gdiplus_initialized_ = true;
     CreateFonts();
     InitLayeredSurface();
     InitD2D();
@@ -182,11 +187,28 @@ bool StatusWindow::create(HWND owner, const StatusTheme& theme) {
     return true;
 }
 
+bool StatusWindow::ensure_created(HWND owner) {
+    if (!is_created()) {
+        StatusTheme theme = theme_;
+        if (hwnd_ || gdiplus_initialized_) {
+            destroy();
+        }
+        if (!create(owner, theme)) {
+            return false;
+        }
+    }
+    if (!owner_matches(owner) && is_visible()) {
+        hide();
+    }
+    set_owner(owner);
+    return is_created() && owner_matches(owner);
+}
+
 void StatusWindow::destroy() {
     if (tooltip_hwnd_ && IsWindow(tooltip_hwnd_)) {
         DestroyWindow(tooltip_hwnd_);
-        tooltip_hwnd_ = nullptr;
     }
+    tooltip_hwnd_ = nullptr;
     CleanupD2D();
     CleanupLayeredSurface();
     if (font_cn_)   { DeleteObject(font_cn_);   font_cn_   = nullptr; }
@@ -202,11 +224,14 @@ void StatusWindow::destroy() {
     is_dragging_ = false;
     layered_ready_ = false;
 
-    shutdown_gdiplus();
+    if (gdiplus_initialized_) {
+        shutdown_gdiplus();
+        gdiplus_initialized_ = false;
+    }
 }
 
 bool StatusWindow::is_created() const {
-    return hwnd_ != nullptr;
+    return hwnd_ && IsWindow(hwnd_);
 }
 
 // ============================================================
@@ -254,6 +279,16 @@ void StatusWindow::set_owner(HWND owner) {
             set_position(x, y);
         }
     }
+}
+
+bool StatusWindow::owner_matches(HWND owner) const {
+    if (!is_created() || (owner && !IsWindow(owner))) {
+        return false;
+    }
+
+    HWND actual_owner = GetWindow(hwnd_, GW_OWNER);
+    HWND root_owner = owner ? GetAncestor(owner, GA_ROOT) : nullptr;
+    return actual_owner == owner || (root_owner && actual_owner == root_owner);
 }
 
 void StatusWindow::set_enabled(bool enabled) {
@@ -405,6 +440,7 @@ LRESULT StatusWindow::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     }
 
     case WM_DESTROY:
+        unregister_window(hwnd);
         SetWindowLongPtrW(hwnd_, GWLP_USERDATA, 0);
         hwnd_ = nullptr;
         return 0;

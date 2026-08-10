@@ -24,6 +24,7 @@ class ReadingUIElement;
 #include <cxxime/ipc_protocol.h>
 #include <cxxime/stage_trace.h>
 
+#include "effective_edit_target.h"
 #include "status_controller.h"
 
 namespace cxxime_tsf {
@@ -202,9 +203,9 @@ private:
     bool _context_belongs_to_foreground(ITfContext* context) const;
     HWND _focused_context_view_window() const;
     bool _ensure_text_edit_sink(ITfContext* context);
-    bool _advise_text_edit_sink(ITfDocumentMgr* doc_mgr);
+    bool _bind_text_edit_sink(ITfContext* context);
     void _unadvise_text_edit_sink();
-    bool _advise_text_layout_sink(ITfDocumentMgr* doc_mgr);
+    bool _bind_text_layout_sink(ITfContext* context);
     void _unadvise_text_layout_sink();
     void _request_candidate_position_update(ITfContext* pic,
                                             const char* reason,
@@ -220,9 +221,26 @@ private:
     bool _context_allows_input(ITfContext* context) const;
     bool _document_allows_input(ITfDocumentMgr* doc_mgr) const;
     bool _context_has_no_edit_target(ITfContext* context);
-    bool _document_has_no_edit_target(ITfDocumentMgr* doc_mgr);
     bool _query_input_focus_from_thread_mgr() const;
-    bool _update_input_focus_from_thread_mgr();
+    bool _synchronize_effective_edit_target(ITfContext* event_context,
+                                            ITfDocumentMgr* event_document_mgr,
+                                            const char* source,
+                                            bool context_already_validated = false,
+                                            bool allow_status_window = true);
+    bool _synchronize_effective_edit_target_from_thread_mgr(
+        const char* source, bool allow_status_window = true);
+    void _clear_effective_edit_target(const char* source, bool target_unavailable = false);
+    void _release_effective_edit_target();
+    cxxime_tsf::EffectiveEditTargetBindings _effective_edit_target_bindings(
+        const cxxime_tsf::EffectiveEditTargetSnapshot& target,
+        bool expect_status_window) const;
+    void _trace_effective_edit_target_sync(
+        const char* source,
+        cxxime_tsf::EffectiveEditTargetAction action,
+        const cxxime_tsf::EffectiveEditTargetSnapshot& previous,
+        const cxxime_tsf::EffectiveEditTargetSnapshot& next,
+        const cxxime_tsf::EffectiveEditTargetBindings& bindings,
+        bool succeeded);
     bool _sync_caps_lock_state(bool caps_lock,
                                const char* source,
                                cxxime::ImeStatus* synced_status = nullptr);
@@ -272,6 +290,9 @@ private:
     TfGuidAtom _displayAttributeAtom = 0;
     ITfContext* _textEditSinkContext = nullptr;
     ITfContext* _textLayoutSinkContext = nullptr;
+    ITfDocumentMgr* _effectiveDocumentMgr = nullptr;
+    ITfContext* _effectiveContext = nullptr;
+    cxxime_tsf::EffectiveEditTargetSnapshot _effectiveEditTarget;
     ITfCompartment* _conversionCompartment = nullptr;
     ITfSource* _conversionCompartmentSource = nullptr;
 

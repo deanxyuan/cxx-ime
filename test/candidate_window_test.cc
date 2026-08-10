@@ -112,6 +112,29 @@ TEST(CandidateWindow, owner_can_follow_active_context_window) {
     DestroyWindow(first_owner);
 }
 
+TEST(CandidateWindow, ensure_created_recovers_destroyed_window_and_owner) {
+    HWND owner = CreateWindowExW(0, L"STATIC", L"", WS_OVERLAPPED, 0, 0, 0, 0, nullptr, nullptr,
+                                 GetModuleHandleW(nullptr), nullptr);
+    ASSERT_TRUE(owner != nullptr);
+
+    cxxime::Config config;
+    config.render_backend = "gdi";
+
+    cxxime::CandidateWindow window;
+    ASSERT_TRUE(window.create(nullptr, config));
+    HWND stale_window = FindWindowW(L"CxxIMECandidateWindow", nullptr);
+    ASSERT_TRUE(stale_window != nullptr);
+    ASSERT_TRUE(DestroyWindow(stale_window) != FALSE);
+    ASSERT_TRUE(!window.is_created());
+
+    ASSERT_TRUE(window.ensure_created(owner));
+    ASSERT_TRUE(window.is_created());
+    ASSERT_TRUE(window.owner_matches(owner));
+
+    window.destroy();
+    DestroyWindow(owner);
+}
+
 TEST(CandidateWindow, width_is_clamped_to_monitor_work_area) {
     cxxime::Config config;
     config.render_backend = "gdi";

@@ -51,6 +51,7 @@ public:
     static void cleanup_all();
 
     bool create(HWND owner, const StatusTheme& theme);
+    bool ensure_created(HWND owner);
     void destroy();
     bool is_created() const;
 
@@ -58,6 +59,7 @@ public:
     void hide();
     bool is_visible() const;
     void set_owner(HWND owner);
+    bool owner_matches(HWND owner) const;
 
     void set_enabled(bool enabled);
 
@@ -151,6 +153,7 @@ private:
     IDWriteTextFormat* d2d_font_en_ = nullptr;
     IDWriteTextFormat* d2d_font_icon_ = nullptr;
     bool use_d2d_ = false;
+    bool gdiplus_initialized_ = false;
 
     // ── GDI+ fallback fonts ───────────────────────────────────
     HFONT font_cn_ = nullptr;

@@ -268,7 +268,7 @@ void CandidateUIElement::set_page(const cxxime::CandidatePage& page,
         _service, _candidates, _selection, page_current, page_total);
 }
 
-bool CandidateUIElement::begin(ITfThreadMgr* thread_mgr) {
+bool CandidateUIElement::begin(ITfThreadMgr* thread_mgr, ITfDocumentMgr* document_mgr) {
     if (_active) {
         return wants_external_window();
     }
@@ -283,7 +283,7 @@ bool CandidateUIElement::begin(ITfThreadMgr* thread_mgr) {
         return true;
     }
 
-    capture_document_mgr(thread_mgr);
+    capture_document_mgr(thread_mgr, document_mgr);
     if (_service) {
         _service->trace_candidate_activation_state(_document_mgr);
     }
@@ -315,7 +315,6 @@ bool CandidateUIElement::begin(ITfThreadMgr* thread_mgr) {
 void CandidateUIElement::notify_update(ITfThreadMgr* thread_mgr) {
     if (!_active)
         return;
-    capture_document_mgr(thread_mgr);
     ITfUIElementMgr* ui_mgr = nullptr;
     if (SUCCEEDED(query_ui_element_mgr(thread_mgr, &ui_mgr)) && ui_mgr) {
         const HRESULT hr = ui_mgr->UpdateUIElement(_ui_element_id);
@@ -359,13 +358,14 @@ HRESULT CandidateUIElement::query_ui_element_mgr(ITfThreadMgr* thread_mgr,
     return thread_mgr->QueryInterface(IID_ITfUIElementMgr, reinterpret_cast<void**>(ui_mgr));
 }
 
-void CandidateUIElement::capture_document_mgr(ITfThreadMgr* thread_mgr) {
-    if (!thread_mgr)
+void CandidateUIElement::capture_document_mgr(ITfThreadMgr* thread_mgr,
+                                              ITfDocumentMgr* document_mgr) {
+    ITfDocumentMgr* doc_mgr = document_mgr;
+    if (doc_mgr) {
+        doc_mgr->AddRef();
+    } else if (!thread_mgr || FAILED(thread_mgr->GetFocus(&doc_mgr)) || !doc_mgr) {
         return;
-
-    ITfDocumentMgr* doc_mgr = nullptr;
-    if (FAILED(thread_mgr->GetFocus(&doc_mgr)) || !doc_mgr)
-        return;
+    }
 
     if (_document_mgr != doc_mgr) {
         release_document_mgr();

@@ -30,7 +30,10 @@ public:
     void show();
     void hide();
     bool is_visible() const;
+    bool ensure_window(HWND owner);
+    bool is_window_valid() const;
     void set_owner(HWND owner);
+    bool owner_matches(HWND owner) const;
 
     void update_config(const Config& config);
     void set_menu_command_callback(StatusMenuCommandCallback callback);

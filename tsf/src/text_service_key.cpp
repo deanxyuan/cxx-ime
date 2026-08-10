@@ -82,26 +82,20 @@ STDMETHODIMP TextService::OnSetFocus(BOOL fForeground) {
     }
 
     if (fForeground) {
-        _update_input_focus_from_thread_mgr();
-        if (_inputFocused) {
+        if (_synchronize_effective_edit_target_from_thread_mgr("key_sink_focus")) {
             _refresh_caps_lock_on_focus("key_sink_focus");
-            _show_status_window_if_allowed("show:set_focus");
             if (_sessionId && _client.ensure_connected())
                 _client.focus_in(_sessionId);
         } else {
             if (_sessionId && _client.is_connected())
                 _client.focus_out(_sessionId);
-            _AbortComposition();
         }
     } else {
-        _inputFocused = false;
-        _update_state_poll_timer();
         // Switching away from CxxIME: hide status window immediately.
         // OnKillThreadFocus may not fire when switching IMEs within the same thread.
-        _hide_status_window("hide:ime_focus_lost");
+        _clear_effective_edit_target("ime_focus_lost");
         if (_sessionId && _client.is_connected())
             _client.focus_out(_sessionId);
-        _AbortComposition();
     }
     return S_OK;
 }
@@ -120,16 +114,9 @@ STDMETHODIMP TextService::OnTestKeyDown(ITfContext* pic, WPARAM wParam, LPARAM l
         cxxime_tsf::trace_stage_context(
             stage_input_id(), stage_composition_id(), pic, _threadMgr,
             "blocked_input_context");
-        _inputFocused = false;
-        if (indicates_unavailable_input_target(test_block_reason)) {
-            _inputTargetUnavailable = true;
-            _stop_state_poll_timer();
-        } else {
-            _update_state_poll_timer();
-        }
-        _hide_status_window("hide:test_key_context_rejected");
-        _hide_candidate_window("hide:test_key_context_rejected");
-        _end_reading_ui_element("hide:test_key_context_rejected_reading");
+        _clear_effective_edit_target(
+            "test_key_context_rejected",
+            indicates_unavailable_input_target(test_block_reason));
         if (wParam < _passThroughKeyUps.size()) {
             _passThroughKeyUps.set(wParam);
         }
@@ -213,13 +200,17 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
     uint32_t modifiers = _get_modifiers();
     const char* block_reason = _input_context_block_reason(pic);
     bool no_edit_target = false;
+    bool edit_target_validated = false;
+    const bool starts_new_composition =
+        !_composing && !status_key && _chinese_mode && can_start_text_input(wParam, modifiers);
     const bool should_validate_edit_target =
-        !_inputFocused ||
-        (!status_key && _chinese_mode && can_start_text_input(wParam, modifiers));
+        !_inputFocused || !_effectiveEditTarget.valid() || starts_new_composition;
     if (!block_reason && stage_composition_id() == 0 && should_validate_edit_target) {
         no_edit_target = _context_has_no_edit_target(pic);
         if (no_edit_target) {
             block_reason = "no_edit_target";
+        } else {
+            edit_target_validated = true;
         }
     }
     bool input_allowed = block_reason == nullptr;
@@ -229,23 +220,26 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
             stage_input_id(), stage_composition_id(), pic, _threadMgr,
             "blocked_input_context");
         cxxime_tsf::trace_stage_key_route(
-        stage_input_id(), stage_composition_id(), static_cast<uint32_t>(wParam), 0, 0,
-        "blocked", block_reason ? block_reason : "input_context");
-        _inputFocused = false;
-        if (no_edit_target || indicates_unavailable_input_target(block_reason)) {
-            _inputTargetUnavailable = true;
-            _stop_state_poll_timer();
-        } else {
-            _update_state_poll_timer();
-        }
-        _hide_status_window("hide:key_context_rejected");
-        _hide_candidate_window("hide:key_context_rejected");
-        _end_reading_ui_element("hide:key_context_rejected_reading");
+            stage_input_id(), stage_composition_id(), static_cast<uint32_t>(wParam), 0, 0,
+            "blocked", block_reason ? block_reason : "input_context");
+        _clear_effective_edit_target(
+            "key_context_rejected",
+            no_edit_target || indicates_unavailable_input_target(block_reason));
         if (wParam < _passThroughKeyUps.size()) {
             _passThroughKeyUps.set(wParam);
         }
-        _AbortComposition();
         return false;
+    }
+
+    if (input_allowed && should_validate_edit_target) {
+        input_allowed = _synchronize_effective_edit_target(
+            pic, nullptr, "key_event", edit_target_validated);
+        if (!input_allowed && !status_key) {
+            if (wParam < _passThroughKeyUps.size()) {
+                _passThroughKeyUps.set(wParam);
+            }
+            return false;
+        }
     }
 
     const bool input_was_focused = _inputFocused;
@@ -465,7 +459,7 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
                     page, response.candidate_count, response.page_current, response.page_total);
             }
             if (external_candidate_window) {
-                bool candidate_was_visible = _candidateWindow.is_visible();
+                const bool candidate_was_visible = _candidateWindow.is_visible();
                 _candidateWindow.set_page_info((int)response.page_current, (int)response.page_total);
 
                 // Query the current caret before falling back to the cached rectangle. The cache may
@@ -476,9 +470,7 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
                 HWND contextWindow = nullptr;
                 bool hasTrustedNativeCaret =
                     _resolve_context_native_caret_rect(pic, &trustedNativeRect, &contextWindow);
-                if (!candidate_was_visible) {
-                    _candidateWindow.set_owner(contextWindow);
-                }
+                _candidateWindow.ensure_created(contextWindow);
                 _candidateWindow.update(page);
                 EditSession* pCaretSession = new (std::nothrow) EditSession(this, pic);
                 if (pCaretSession) {

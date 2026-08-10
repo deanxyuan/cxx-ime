@@ -212,14 +212,7 @@ void TextService::_initialize_optional_activation_services() {
 }
 
 void TextService::_synchronize_activation_focus() {
-    _update_input_focus_from_thread_mgr();
-    if (_inputFocused && _threadMgr) {
-        ITfDocumentMgr* focused_document_mgr = nullptr;
-        if (SUCCEEDED(_threadMgr->GetFocus(&focused_document_mgr)) && focused_document_mgr) {
-            _advise_text_edit_sink(focused_document_mgr);
-            _advise_text_layout_sink(focused_document_mgr);
-            focused_document_mgr->Release();
-        }
+    if (_synchronize_effective_edit_target_from_thread_mgr("activate_complete", false)) {
         _refresh_caps_lock_on_focus("activate_complete");
         if (_sessionId && _client.ensure_connected()) {
             _client.focus_in(_sessionId);

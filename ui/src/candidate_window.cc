@@ -25,6 +25,14 @@ static int system_caret_width() {
 }
 
 bool CandidateWindow::create(HWND owner, const Config& config) {
+    if (hwnd_ && IsWindow(hwnd_)) {
+        config_ = &config;
+        return true;
+    }
+    if (hwnd_) {
+        destroy();
+    }
+
     config_ = &config;
     WNDCLASSEXW wc = {};
     wc.cbSize = sizeof(wc);
@@ -48,6 +56,30 @@ bool CandidateWindow::create(HWND owner, const Config& config) {
         init_gdi_renderer();
     }
     return hwnd_ != nullptr;
+}
+
+bool CandidateWindow::ensure_created(HWND owner) {
+    if (!is_created()) {
+        if (!config_) {
+            return false;
+        }
+        const Config* config = config_;
+        if (hwnd_) {
+            destroy();
+        }
+        if (!create(owner, *config)) {
+            return false;
+        }
+    }
+    const bool was_visible = is_visible();
+    if (!owner_matches(owner) && was_visible) {
+        hide();
+    }
+    set_owner(owner);
+    if (was_visible && owner_matches(owner)) {
+        show();
+    }
+    return is_created() && owner_matches(owner);
 }
 
 void CandidateWindow::init_gdi_renderer() {
@@ -114,8 +146,13 @@ void CandidateWindow::destroy() {
     has_last_caret_rect_ = false;
     last_caret_rect_ = {};
 }
+
+bool CandidateWindow::is_created() const {
+    return hwnd_ && IsWindow(hwnd_);
+}
+
 void CandidateWindow::show() {
-    if (!hwnd_)
+    if (!is_created())
         return;
 
     if (!IsWindowVisible(hwnd_) && has_last_caret_rect_) {
@@ -123,9 +160,9 @@ void CandidateWindow::show() {
         GetWindowRect(hwnd_, &wr);
         POINT target = {};
         if (calculate_target_position(last_caret_rect_,
-                                       wr.right - wr.left,
-                                       wr.bottom - wr.top,
-                                       target)) {
+                                      wr.right - wr.left,
+                                      wr.bottom - wr.top,
+                                      target)) {
             move_window_now(target.x, target.y);
         }
     }
@@ -166,7 +203,16 @@ void CandidateWindow::set_owner(HWND owner) {
     }
 }
 bool CandidateWindow::is_visible() const {
-    return hwnd_ && IsWindowVisible(hwnd_) != FALSE;
+    return is_created() && IsWindowVisible(hwnd_) != FALSE;
+}
+bool CandidateWindow::owner_matches(HWND owner) const {
+    if (!is_created() || (owner && !IsWindow(owner))) {
+        return false;
+    }
+
+    HWND actual_owner = GetWindow(hwnd_, GW_OWNER);
+    HWND root_owner = owner ? GetAncestor(owner, GA_ROOT) : nullptr;
+    return actual_owner == owner || (root_owner && actual_owner == root_owner);
 }
 int CandidateWindow::visible_candidate_count() const {
     return visible_candidate_count_;

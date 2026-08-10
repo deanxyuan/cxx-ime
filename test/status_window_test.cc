@@ -61,6 +61,24 @@ TEST(StatusWindow, DestroyWithoutCreate) {
     ASSERT_TRUE(!window.is_created());
 }
 
+TEST(StatusWindow, EnsureCreatedRecoversDestroyedWindowAndOwner) {
+    HWND owner = CreateWindowExW(0, L"STATIC", L"", WS_OVERLAPPED, 0, 0, 0, 0, nullptr, nullptr,
+                                 GetModuleHandleW(nullptr), nullptr);
+    ASSERT_TRUE(owner != nullptr);
+
+    cxxime::StatusWindow window;
+    ASSERT_TRUE(window.create(nullptr, cxxime::StatusTheme()));
+    ASSERT_TRUE(DestroyWindow(window.hwnd_for_test()) != FALSE);
+    ASSERT_TRUE(!window.is_created());
+
+    ASSERT_TRUE(window.ensure_created(owner));
+    ASSERT_TRUE(window.is_created());
+    ASSERT_TRUE(window.owner_matches(owner));
+
+    window.destroy();
+    DestroyWindow(owner);
+}
+
 // ============================================================
 // Show / Hide
 // ============================================================

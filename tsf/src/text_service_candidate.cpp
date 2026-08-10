@@ -134,7 +134,7 @@ bool TextService::_publish_candidate_ui_element(const cxxime::CandidatePage& pag
         if (prepare_before_begin) {
             _prepare_host_candidate_compatibility();
         }
-        show_external = _candidateUiElement->begin(_threadMgr);
+        show_external = _candidateUiElement->begin(_threadMgr, _effectiveDocumentMgr);
         _candidateUiElement->notify_update(_threadMgr);
         show_external = _candidateUiElement->wants_external_window();
         if (!was_active) {

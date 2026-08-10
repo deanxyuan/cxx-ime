@@ -24,6 +24,7 @@ TextService::~TextService() {
     _stop_state_poll_timer();
     _unregister_conversion_compartment_sink();
     set_composition_context(nullptr);
+    _release_effective_edit_target();
     _stop_host_compatibility_runtime();
 }
 
@@ -272,6 +273,7 @@ STDMETHODIMP TextService::Deactivate() {
     _end_reading_ui_element("hide:deactivate_reading");
     _unadvise_text_edit_sink();
     _unadvise_text_layout_sink();
+    _release_effective_edit_target();
     set_composition_context(nullptr);
     if (_candidateUiElement) {
         _candidateUiElement->Release();
