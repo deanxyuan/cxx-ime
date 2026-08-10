@@ -156,28 +156,28 @@ LockQueryResult query_file_locks(const std::vector<std::wstring>& paths) {
 
 std::wstring format_lock_report(const LockQueryResult& result, std::size_t max_applications) {
     if (result.status == LockQueryStatus::kFailed) {
-        return L"Windows Restart Manager failed with error " + std::to_wstring(result.error_code) +
-               L".";
+        return L"Windows 重启管理器无法检查文件占用情况，错误代码：" +
+               std::to_wstring(result.error_code) + L"。";
     }
 
     std::wstring report;
     if (result.status == LockQueryStatus::kRebootRequired) {
-        report = L"Windows reports that a restart is required before CxxIME can be updated.";
+        report = L"Windows 要求重新启动后才能更新 CxxIME。";
     } else if (!result.applications.empty()) {
-        report = L"The following applications are using CxxIME:";
+        report = L"以下应用程序正在使用 CxxIME：";
     }
 
     const std::size_t count = std::min(result.applications.size(), max_applications);
     for (std::size_t index = 0; index < count; ++index) {
         const auto& application = result.applications[index];
         const std::wstring name = application.name.empty()
-            ? L"Unknown application"
+            ? L"未知应用程序"
             : bounded_application_name(application.name);
         report += L"\r\n- " + name + L" (PID " + std::to_wstring(application.process_id) + L")";
     }
     if (result.applications.size() > count) {
-        report +=
-            L"\r\n- ... and " + std::to_wstring(result.applications.size() - count) + L" more";
+        report += L"\r\n- ……以及另外 " + std::to_wstring(result.applications.size() - count) +
+                  L" 个应用程序";
     }
     return report;
 }
