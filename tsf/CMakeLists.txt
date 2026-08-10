@@ -31,8 +31,10 @@ add_library(cxxime-tsf SHARED
     src/dllmain.cpp
     src/globals.cpp
     src/class_factory.cpp
+    src/effective_edit_target.cpp
     src/edit_target.cc
     src/text_service.cpp
+    src/text_service_focus.cpp
     src/text_service_key.cpp
     src/text_service_session.cpp
     src/text_service_context.cpp

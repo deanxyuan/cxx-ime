@@ -45,17 +45,18 @@ static constexpr DWORD kPublishedUpdatedFlags =
     STDMETHODIMP Abort() override;
 
     void set_page(const cxxime::CandidatePage& page, int page_current, int page_total);
-    bool begin(ITfThreadMgr* thread_mgr);
+    bool begin(ITfThreadMgr* thread_mgr, ITfDocumentMgr* document_mgr = nullptr);
     void notify_update(ITfThreadMgr* thread_mgr);
     void end(ITfThreadMgr* thread_mgr);
     bool wants_external_window() const { return !_active || _show_external != FALSE; }
     bool is_active() const { return _active; }
+    ITfDocumentMgr* bound_document_mgr() const { return _document_mgr; }
 
 private:
     ~CandidateUIElement();
 
     HRESULT query_ui_element_mgr(ITfThreadMgr* thread_mgr, ITfUIElementMgr** ui_mgr) const;
-    void capture_document_mgr(ITfThreadMgr* thread_mgr);
+    void capture_document_mgr(ITfThreadMgr* thread_mgr, ITfDocumentMgr* document_mgr);
     void release_document_mgr();
 
     LONG _cRef = 1;

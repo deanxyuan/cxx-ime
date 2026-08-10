@@ -119,41 +119,18 @@ bool TextService::_ensure_text_edit_sink(ITfContext* context) {
         return true;
     }
 
-    ITfDocumentMgr* document_mgr = nullptr;
-    const HRESULT hr = context->GetDocumentMgr(&document_mgr);
-    if (FAILED(hr) || !document_mgr) {
-        char detail[112] = {};
-        snprintf(detail, sizeof(detail), "action=ensure step=get_document hr=0x%08x",
-                 static_cast<unsigned int>(hr));
-        _enqueue_event_trace("text_edit_sink", detail, true);
-        return false;
-    }
-
-    const bool advised = _advise_text_edit_sink(document_mgr);
-    document_mgr->Release();
-    return advised && _textEditSinkContext == context;
+    return _bind_text_edit_sink(context);
 }
 
-bool TextService::_advise_text_edit_sink(ITfDocumentMgr* document_mgr) {
+bool TextService::_bind_text_edit_sink(ITfContext* context) {
     _unadvise_text_edit_sink();
-    if (!document_mgr) {
+    if (!context) {
         return true;
     }
 
-    ITfContext* context = nullptr;
-    HRESULT hr = document_mgr->GetTop(&context);
-    if (FAILED(hr) || !context) {
-        char detail[112] = {};
-        snprintf(detail, sizeof(detail), "action=advise step=get_top hr=0x%08x",
-                 static_cast<unsigned int>(hr));
-        _enqueue_event_trace("text_edit_sink", detail, true);
-        return false;
-    }
-
     ITfSource* source = nullptr;
-    hr = context->QueryInterface(IID_ITfSource, reinterpret_cast<void**>(&source));
+    HRESULT hr = context->QueryInterface(IID_ITfSource, reinterpret_cast<void**>(&source));
     if (FAILED(hr) || !source) {
-        context->Release();
         char detail[112] = {};
         snprintf(detail, sizeof(detail), "action=advise step=query_source hr=0x%08x",
                  static_cast<unsigned int>(hr));
@@ -165,13 +142,13 @@ bool TextService::_advise_text_edit_sink(ITfDocumentMgr* document_mgr) {
     hr = source->AdviseSink(IID_ITfTextEditSink, static_cast<ITfTextEditSink*>(this), &cookie);
     source->Release();
     if (FAILED(hr)) {
-        context->Release();
         char detail[96] = {};
         snprintf(detail, sizeof(detail), "action=advise hr=0x%08x", static_cast<unsigned int>(hr));
         _enqueue_event_trace("text_edit_sink", detail, true);
         return false;
     }
 
+    context->AddRef();
     _textEditSinkContext = context;
     _dwTextEditSinkCookie = cookie;
     _enqueue_event_trace("text_edit_sink", "action=advise hr=0x00000000");

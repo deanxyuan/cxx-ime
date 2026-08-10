@@ -84,15 +84,18 @@ HWND TextService::_focused_context_view_window() const {
 void TextService::_show_status_window_if_allowed(const char* reason) {
     if (_activated &&
         _inputFocused &&
-        _config.status_window.enable &&
-        _statusController.is_initialized()) {
+        _config.status_window.enable) {
         if (cxxime_tsf::foreground_is_fullscreen()) {
             _hide_status_window("hide:fullscreen_foreground");
             return;
         }
+        HWND owner = _effectiveEditTarget.valid()
+                         ? reinterpret_cast<HWND>(_effectiveEditTarget.owner_window)
+                         : _focused_context_view_window();
+        if (!_statusController.ensure_window(owner))
+            return;
         if (!_statusController.is_visible())
             _enqueue_event_trace("status_window", reason);
-        _statusController.set_owner(_focused_context_view_window());
         _statusController.show();
     }
 }
@@ -163,7 +166,7 @@ bool TextService::_read_context_compartment_bool(ITfContext* context, REFGUID gu
     compartment_mgr->Release();
     if (FAILED(hr) || !compartment)
         return false;
-    
+
     VARIANT current = {};
     VariantInit(&current);
     bool found = false;
@@ -252,21 +255,6 @@ bool TextService::_context_has_no_edit_target(ITfContext* context) {
     return state == cxxime_tsf::EditTargetState::NoEditTarget;
 }
 
-bool TextService::_document_has_no_edit_target(ITfDocumentMgr* doc_mgr) {
-    if (!doc_mgr) {
-        return false;
-    }
-
-    ITfContext* context = nullptr;
-    if (FAILED(doc_mgr->GetTop(&context)) || !context) {
-        return false;
-    }
-
-    const bool no_edit_target = _context_has_no_edit_target(context);
-    context->Release();
-    return no_edit_target;
-}
-
 bool TextService::_query_input_focus_from_thread_mgr() const {
     bool focused = false;
     if (_threadMgr) {
@@ -278,143 +266,4 @@ bool TextService::_query_input_focus_from_thread_mgr() const {
     }
 
     return focused;
-}
-
-bool TextService::_update_input_focus_from_thread_mgr() {
-	bool focused = _query_input_focus_from_thread_mgr();
-    bool no_edit_target = false;
-    if (focused && _threadMgr) {
-        ITfDocumentMgr* doc_mgr = nullptr;
-        if (SUCCEEDED(_threadMgr->GetFocus(&doc_mgr)) && doc_mgr) {
-            no_edit_target = _document_has_no_edit_target(doc_mgr);
-            doc_mgr->Release();
-        }
-        if (no_edit_target) {
-            focused = false;
-        }
-    }
-
-    _inputFocused = focused;
-    if (no_edit_target) {
-        _stop_state_poll_timer();
-    } else {
-        // Keep the IPC heartbeat active. Candidate display temporarily accelerates
-        // the same timer when caret tracking is needed.
-        _update_state_poll_timer();
-    }
-    if (!focused)
-        _hide_status_window("hide:focus_query_unfocused");
-    return focused;
-}
-
-STDMETHODIMP TextService::OnSetThreadFocus() {
-    if (!_activated) {
-        return S_OK;
-    }
-
-    _update_input_focus_from_thread_mgr();
-    if (_inputFocused) {
-        _refresh_caps_lock_on_focus("thread_focus");
-    }
-    _show_status_window_if_allowed("show:thread_focus");
-    return S_OK;
-}
-
-STDMETHODIMP TextService::OnKillThreadFocus() {
-    if (!_activated) {
-        return S_OK;
-    }
-
-    _inputFocused = false;
-    _update_state_poll_timer();
-    _hide_status_window("hide:thread_focus_lost");
-    if (_sessionId && _client.is_connected())
-        _client.focus_out(_sessionId);
-    _AbortComposition();
-    return S_OK;
-}
-
-STDMETHODIMP TextService::OnInitDocumentMgr(ITfDocumentMgr* pDocMgr) {
-    return S_OK;
-}
-
-STDMETHODIMP TextService::OnUninitDocumentMgr(ITfDocumentMgr* pDocMgr) {
-    return S_OK;
-}
-
-STDMETHODIMP TextService::OnSetFocus(ITfDocumentMgr* pDocMgrFocus,
-                                     ITfDocumentMgr* pDocMgrPrevFocus) {
-    if (!_activated) {
-        return S_OK;
-    }
-
-    _inputFocused = _document_allows_input(pDocMgrFocus);
-    const bool no_edit_target =
-        _inputFocused && _document_has_no_edit_target(pDocMgrFocus);
-    if (no_edit_target) {
-        _inputFocused = false;
-    }
-    if (_inputFocused) {
-        _advise_text_edit_sink(pDocMgrFocus);
-        _advise_text_layout_sink(pDocMgrFocus);
-    } else {
-        _unadvise_text_edit_sink();
-        _unadvise_text_layout_sink();
-    }
-
-    if (!_inputFocused) {
-        if (no_edit_target) {
-            _stop_state_poll_timer();
-        } else {
-            _update_state_poll_timer();
-        }
-        _hide_status_window("hide:document_focus_unfocused");
-        _hide_candidate_window("hide:document_focus_unfocused");
-        _end_reading_ui_element("hide:document_focus_unfocused_reading");
-        _reset_stage_composition("document_unfocused");
-        return S_OK;
-    }
-
-    _update_state_poll_timer();
-    _show_status_window_if_allowed("show:document_focus");
-
-    // Sync status on focus change (user may have toggled via language bar)
-    cxxime::IPCResponse resp = {};
-    if (_ensure_ipc_session() &&
-        _client.get_status(_sessionId, resp) && resp.status == cxxime::IPCStatus::OK) {
-        _sync_ime_status(resp.ime_status);
-    }
-    _refresh_caps_lock_on_focus("document_focus");
-
-    // Document focus changed; hide candidate window if switching away.
-    if (_composing) {
-        _hide_candidate_window("hide:document_focus_switch");
-        _end_reading_ui_element("hide:document_focus_switch_reading");
-        _candidateWindow.set_preedit("");
-        if (_sessionId && _client.is_connected())
-            _client.focus_out(_sessionId);
-        // End composition in the previous context
-        ITfContext* pContext = nullptr;
-        if (_compositionContext) {
-            pContext = _compositionContext;
-            pContext->AddRef();
-        } else if (pDocMgrPrevFocus) {
-            pDocMgrPrevFocus->GetTop(&pContext);
-        }
-        if (pContext) {
-            _end_composition(pContext);
-            pContext->Release();
-        }
-        _composing = false;
-        _reset_stage_composition("document_switch");
-    }
-    return S_OK;
-}
-
-STDMETHODIMP TextService::OnPushContext(ITfContext* pic) {
-    return S_OK;
-}
-
-STDMETHODIMP TextService::OnPopContext(ITfContext* pic) {
-    return S_OK;
 }

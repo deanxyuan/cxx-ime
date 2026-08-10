@@ -95,10 +95,44 @@ bool StatusController::is_visible() const {
     return initialized_ && window_.is_visible();
 }
 
+bool StatusController::ensure_window(HWND owner) {
+    bool recovered = false;
+    if (!initialized_) {
+        if (!client_ || !config_ || !initialize(owner, client_, session_id_, config_)) {
+            return false;
+        }
+        recovered = true;
+    } else if (!window_.is_created() || !window_.owner_matches(owner)) {
+        if (!window_.ensure_created(owner)) {
+            return false;
+        }
+        recovered = true;
+    }
+
+    if (!recovered) {
+        return true;
+    }
+
+    if (logo_icon_) {
+        window_.set_logo_icon(logo_icon_);
+    }
+    update_config(*config_);
+    sync_status(current_status_);
+    return true;
+}
+
+bool StatusController::is_window_valid() const {
+    return initialized_ && window_.is_created();
+}
+
 void StatusController::set_owner(HWND owner) {
     if (initialized_) {
         window_.set_owner(owner);
     }
+}
+
+bool StatusController::owner_matches(HWND owner) const {
+    return initialized_ && window_.owner_matches(owner);
 }
 
 void StatusController::update_config(const Config& config) {

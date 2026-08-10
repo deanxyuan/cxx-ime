@@ -25,7 +25,9 @@ public:
     using ClickCallback = std::function<void(int)>;
 
     bool create(HWND owner, const Config& config);
+    bool ensure_created(HWND owner);
     void destroy();
+    bool is_created() const;
     void show();
     void hide();
     bool is_visible() const;
@@ -42,6 +44,7 @@ public:
     void set_render_backend(RenderBackend backend);
     void set_page_info(int current, int total);
     void set_owner(HWND owner);
+    bool owner_matches(HWND owner) const;
     int visible_candidate_count() const;
     SIZE window_size() const;
 

@@ -156,32 +156,27 @@ void TextService::_follow_native_caret() {
     update_candidate_position(native_rect);
 }
 
-bool TextService::_advise_text_layout_sink(ITfDocumentMgr* doc_mgr) {
+bool TextService::_bind_text_layout_sink(ITfContext* context) {
     _unadvise_text_layout_sink();
-    if (!doc_mgr)
+    if (!context) {
         return true;
-
-    ITfContext* context = nullptr;
-    if (FAILED(doc_mgr->GetTop(&context)) || !context)
-        return false;
+    }
 
     ITfSource* source = nullptr;
     if (FAILED(context->QueryInterface(IID_ITfSource, reinterpret_cast<void**>(&source))) ||
         !source) {
-        context->Release();
         return false;
     }
 
     DWORD cookie = TF_INVALID_COOKIE;
-    HRESULT hr = source->AdviseSink(IID_ITfTextLayoutSink,
-        static_cast<ITfTextLayoutSink*>(this),
-        &cookie);
+    HRESULT hr =
+        source->AdviseSink(IID_ITfTextLayoutSink, static_cast<ITfTextLayoutSink*>(this), &cookie);
     source->Release();
     if (FAILED(hr)) {
-        context->Release();
         return false;
     }
 
+    context->AddRef();
     _textLayoutSinkContext = context;
     _dwTextLayoutSinkCookie = cookie;
     return true;
@@ -203,7 +198,7 @@ void TextService::_unadvise_text_layout_sink() {
     _dwTextLayoutSinkCookie = TF_INVALID_COOKIE;
 }
 
-void TextService::_request_candidate_position_update(ITfContext* pic, 
+void TextService::_request_candidate_position_update(ITfContext* pic,
                                                      const char* reason,
                                                      bool from_layout_change) {
     const bool candidate_active =

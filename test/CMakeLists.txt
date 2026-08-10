@@ -40,6 +40,10 @@ add_cxxime_test(preedit_edit_test)
 add_cxxime_test(edit_target_test)
 target_sources(edit_target_test PRIVATE ${CMAKE_SOURCE_DIR}/tsf/src/edit_target.cc)
 target_link_libraries(edit_target_test PRIVATE ole32 oleaut32 user32)
+add_cxxime_test(effective_edit_target_test)
+target_sources(effective_edit_target_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/tsf/src/effective_edit_target.cpp
+)
 add_cxxime_test(ipc_test)
 add_cxxime_test(wubi_test)
 add_cxxime_test(wubi_prefix_query_test)
