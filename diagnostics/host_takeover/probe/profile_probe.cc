@@ -5,7 +5,7 @@
 #include <ctffunc.h>
 #include <imm.h>
 
-#include <cxxime/stage_trace.h>
+#include <cxxime/host_trace.h>
 #include <cxxime/tsf_factory.h>
 
 namespace cxxime_probe {
@@ -104,16 +104,16 @@ void ProbeApp::trace_active_keyboard_profile(const char* trigger) {
                           input_mode.registered && display_attribute.registered &&
                           (profile.dwCaps & TF_IPP_CAPS_UIELEMENTENABLED) != 0;
     const HKL keyboard_layout = GetKeyboardLayout(0);
-    cxxime::write_stage_trace("probe", "probe.active_profile", {
+    cxxime::write_host_trace("probe", "probe.active_profile", {
         {"trigger", trigger ? trigger : ""},
         {"manager_creation", without_com ? "without_com" : "com"},
         {"manager_hr", static_cast<int64_t>(manager_hr)},
         {"profile_hr", static_cast<int64_t>(profile_hr)},
         {"profile_type", profile.dwProfileType},
         {"langid", profile.langid},
-        {"clsid", cxxime::stage_trace_guid(profile.clsid)},
-        {"profile_guid", cxxime::stage_trace_guid(profile.guidProfile)},
-        {"category", cxxime::stage_trace_guid(profile.catid)},
+        {"clsid", cxxime::host_trace_guid(profile.clsid)},
+        {"profile_guid", cxxime::host_trace_guid(profile.guidProfile)},
+        {"category", cxxime::host_trace_guid(profile.catid)},
         {"category_is_keyboard",
          IsEqualGUID(profile.catid, GUID_TFCAT_TIP_KEYBOARD) != FALSE},
         {"profile_hkl", reinterpret_cast<uintptr_t>(profile.hkl)},

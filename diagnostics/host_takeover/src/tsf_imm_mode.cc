@@ -2,15 +2,15 @@
 
 #include "tsf_imm_mode.h"
 
-#include <cxxime/stage_trace.h>
+#include <cxxime/host_trace.h>
 #include <msctf.h>
 
 #include <cstring>
 
 namespace cxxime_tsf {
 
-StageImmProfileSnapshot capture_stage_imm_profile(HWND hwnd) {
-    StageImmProfileSnapshot snapshot;
+TraceImmProfileSnapshot capture_imm_profile(HWND hwnd) {
+    TraceImmProfileSnapshot snapshot;
     snapshot.window_thread_id = hwnd ? GetWindowThreadProcessId(hwnd, nullptr)
                                     : GetCurrentThreadId();
     const HKL keyboard_layout = GetKeyboardLayout(snapshot.window_thread_id);
@@ -42,19 +42,19 @@ StageImmProfileSnapshot capture_stage_imm_profile(HWND hwnd) {
     return snapshot;
 }
 
-void trace_stage_imm_open_status(HWND hwnd,
-                                 HIMC himc,
-                                 bool open_before,
-                                 bool set_attempted,
-                                 bool set_succeeded,
-                                 bool open_after,
-                                 uint64_t input_id,
-                                 uint64_t composition_id) {
+void trace_imm_open_status(HWND hwnd,
+                           HIMC himc,
+                           bool open_before,
+                           bool set_attempted,
+                           bool set_succeeded,
+                           bool open_after,
+                           uint64_t input_id,
+                           uint64_t composition_id) {
     const char* result = "already_open";
     if (set_attempted) {
         result = set_succeeded && open_after ? "opened" : "failed";
     }
-    cxxime::write_stage_trace("tsf", "imm.open_status", {
+    cxxime::write_host_trace("tsf", "imm.open_status", {
         {"input_id", input_id},
         {"composition_id", composition_id},
         {"hwnd", reinterpret_cast<uintptr_t>(hwnd)},
@@ -68,16 +68,16 @@ void trace_stage_imm_open_status(HWND hwnd,
     });
 }
 
-void trace_stage_conversion_compartment(bool chinese_mode,
-                                        HRESULT get_value_hr,
-                                        DWORD before_mode,
-                                        DWORD requested_mode,
-                                        bool set_attempted,
-                                        HRESULT set_value_hr) {
+void trace_conversion_compartment(bool chinese_mode,
+                                  HRESULT get_value_hr,
+                                  DWORD before_mode,
+                                  DWORD requested_mode,
+                                  bool set_attempted,
+                                  HRESULT set_value_hr) {
     const bool success = set_attempted
         ? SUCCEEDED(set_value_hr)
         : SUCCEEDED(get_value_hr);
-    cxxime::write_stage_trace("tsf", "runtime.conversion_compartment", {
+    cxxime::write_host_trace("tsf", "runtime.conversion_compartment", {
         {"chinese_mode", chinese_mode},
         {"get_value_hr", static_cast<int64_t>(get_value_hr)},
         {"before_mode", before_mode},
@@ -94,13 +94,13 @@ void trace_stage_conversion_compartment(bool chinese_mode,
     });
 }
 
-void trace_stage_conversion_sink_lifecycle(const char* action,
-                                          HRESULT manager_hr,
-                                          HRESULT compartment_hr,
-                                          HRESULT source_hr,
-                                          HRESULT operation_hr,
-                                          DWORD cookie) {
-    cxxime::write_stage_trace("tsf", "runtime.conversion_sink", {
+void trace_conversion_sink_lifecycle(const char* action,
+                                     HRESULT manager_hr,
+                                     HRESULT compartment_hr,
+                                     HRESULT source_hr,
+                                     HRESULT operation_hr,
+                                     DWORD cookie) {
+    cxxime::write_host_trace("tsf", "runtime.conversion_sink", {
         {"action", action ? action : ""},
         {"manager_hr", static_cast<int64_t>(manager_hr)},
         {"compartment_hr", static_cast<int64_t>(compartment_hr)},
@@ -111,8 +111,8 @@ void trace_stage_conversion_sink_lifecycle(const char* action,
     });
 }
 
-void trace_stage_conversion_sink_change(const StageConversionSinkChange& change) {
-    cxxime::write_stage_trace("tsf", "runtime.conversion_change", {
+void trace_conversion_sink_change(const TraceConversionSinkChange& change) {
+    cxxime::write_host_trace("tsf", "runtime.conversion_change", {
         {"value_hr", static_cast<int64_t>(change.value_hr)},
         {"value_type", change.value_type},
         {"conversion_mode", change.conversion_mode},
@@ -139,17 +139,17 @@ void trace_stage_conversion_sink_change(const StageConversionSinkChange& change)
     });
 }
 
-void trace_stage_imm_conversion_status(HWND hwnd,
-                                       HIMC himc,
-                                       bool query_ok,
-                                       DWORD conversion_mode,
-                                       DWORD sentence_mode,
-                                       uint64_t input_id,
-                                       uint64_t composition_id) {
+void trace_imm_conversion_status(HWND hwnd,
+                                 HIMC himc,
+                                 bool query_ok,
+                                 DWORD conversion_mode,
+                                 DWORD sentence_mode,
+                                 uint64_t input_id,
+                                 uint64_t composition_id) {
     constexpr DWORD kObservedMicrosoftMode =
         IME_CMODE_NATIVE | IME_CMODE_SYMBOL;
     const bool aligned = query_ok && conversion_mode == kObservedMicrosoftMode;
-    cxxime::write_stage_trace("tsf", "imm.conversion_status", {
+    cxxime::write_host_trace("tsf", "imm.conversion_status", {
         {"input_id", input_id},
         {"composition_id", composition_id},
         {"hwnd", reinterpret_cast<uintptr_t>(hwnd)},

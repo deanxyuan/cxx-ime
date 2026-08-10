@@ -5,7 +5,7 @@
 #include <new>
 #include <string>
 
-#include <cxxime/stage_trace.h>
+#include <cxxime/host_trace.h>
 #include <cxxime/tsf_factory.h>
 
 namespace cxxime_probe {
@@ -154,7 +154,7 @@ public:
                               SUCCEEDED(atom_guid_hr) &&
                               SUCCEEDED(display_info_hr) &&
                               SUCCEEDED(attribute_hr);
-        cxxime::write_stage_trace("probe", "probe.display_attribute", {
+        cxxime::write_host_trace("probe", "probe.display_attribute", {
             {"composition_id", composition_id_},
             {"element_id", element_id_},
             {"action", action_},
@@ -169,10 +169,10 @@ public:
             {"atom", atom},
             {"category_manager_hr", static_cast<int64_t>(category_manager_hr)},
             {"atom_guid_hr", static_cast<int64_t>(atom_guid_hr)},
-            {"attribute_guid", cxxime::stage_trace_guid(attribute_guid)},
+            {"attribute_guid", cxxime::host_trace_guid(attribute_guid)},
             {"display_manager_hr", static_cast<int64_t>(display_manager_hr)},
             {"display_info_hr", static_cast<int64_t>(display_info_hr)},
-            {"owner_clsid", cxxime::stage_trace_guid(owner)},
+            {"owner_clsid", cxxime::host_trace_guid(owner)},
             {"attribute_hr", static_cast<int64_t>(attribute_hr)},
             {"attribute_type", attribute.bAttr},
             {"line_style", attribute.lsStyle},
@@ -231,7 +231,7 @@ void ProbeApp::trace_composition_display_attribute(
         context->Release();
     }
 
-    cxxime::write_stage_trace("probe", "probe.display_attribute_request", {
+    cxxime::write_host_trace("probe", "probe.display_attribute_request", {
         {"composition_id", composition_id_},
         {"element_id", element_id},
         {"action", action ? action : ""},

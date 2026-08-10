@@ -114,7 +114,7 @@ Function un.BeginDeferredUninstall
     !insertmacro DeleteDeferredFile "$INSTDIR\collect_diagnostics.ps1"
     !insertmacro DeleteDeferredFile "$INSTDIR\cxxime-ime-host-probe-x64.exe"
     !insertmacro DeleteDeferredFile "$INSTDIR\cxxime-ime-host-probe-x86.exe"
-    !insertmacro DeleteDeferredFile "$INSTDIR\export_stage_trace.ps1"
+    !insertmacro DeleteDeferredFile "$INSTDIR\export_host_trace.ps1"
     !insertmacro DeleteDeferredFile "$INSTDIR\license.txt"
     !insertmacro DeleteDeferredFile "$INSTDIR\THIRD_PARTY_NOTICES.txt"
     !insertmacro DeleteDeferredFile "$INSTDIR\${INSTALL_MARKER}"

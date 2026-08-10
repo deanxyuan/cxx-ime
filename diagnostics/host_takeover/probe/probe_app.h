@@ -86,7 +86,7 @@ private:
     void paint(HDC dc);
     bool candidate_should_draw() const;
     uint64_t ensure_composition_id();
-    bool fail_initialization(const char* stage, HRESULT result);
+    bool fail_initialization(const char* step, HRESULT result);
     bool initialize_tsf_runtime();
 
     HINSTANCE instance_ = nullptr;

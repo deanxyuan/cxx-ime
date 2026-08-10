@@ -2,7 +2,7 @@
 
 #include "tsf_sdl_message_hook.h"
 
-#include <cxxime/stage_trace.h>
+#include <cxxime/host_trace.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -110,7 +110,7 @@ bool decode_rip_store(const uint8_t* code,
 
 } // namespace
 
-void trace_stage_sdl_windows_message_hook(HMODULE module) {
+void trace_sdl_windows_message_hook(HMODULE module) {
     const void* export_address = reinterpret_cast<const void*>(
         module ? GetProcAddress(module, "SDL_SetWindowsMessageHook") : nullptr);
     nlohmann::json fields = {
@@ -120,7 +120,7 @@ void trace_stage_sdl_windows_message_hook(HMODULE module) {
     add_address_identity(fields, "export", export_address);
     if (!export_address) {
         fields["result"] = "export_unavailable";
-        cxxime::write_stage_trace(
+        cxxime::write_host_trace(
             "tsf", "sdl.windows_message_hook", std::move(fields));
         return;
     }
@@ -139,7 +139,7 @@ void trace_stage_sdl_windows_message_hook(HMODULE module) {
         fields["result"] = slot_decoded
             ? "implementation_unavailable"
             : "dispatch_decode_failed";
-        cxxime::write_stage_trace(
+        cxxime::write_host_trace(
             "tsf", "sdl.windows_message_hook", std::move(fields));
         return;
     }
@@ -147,7 +147,7 @@ void trace_stage_sdl_windows_message_hook(HMODULE module) {
     uint8_t code[48] = {};
     if (!read_process_value(implementation, &code)) {
         fields["result"] = "implementation_read_failed";
-        cxxime::write_stage_trace(
+        cxxime::write_host_trace(
             "tsf", "sdl.windows_message_hook", std::move(fields));
         return;
     }
@@ -192,7 +192,7 @@ void trace_stage_sdl_windows_message_hook(HMODULE module) {
 #else
     fields["result"] = "architecture_unsupported";
 #endif
-    cxxime::write_stage_trace(
+    cxxime::write_host_trace(
         "tsf", "sdl.windows_message_hook", std::move(fields));
 }
 

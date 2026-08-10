@@ -16,9 +16,8 @@ DIAGNOSTICS = os.path.join(ROOT, "diagnostics", "host_takeover")
 
 def record(component, event, seq, **fields):
     value = {
-        "schema_version": 1,
+        "schema_version": 2,
         "build_id": BUILD_ID,
-        "stage": 1,
         "arch": "x64",
         "event": event,
         "seq": seq,
@@ -32,7 +31,7 @@ def record(component, event, seq, **fields):
     return value
 
 
-class StageTraceToolsTest(unittest.TestCase):
+class HostTraceToolsTest(unittest.TestCase):
     powershell = "powershell"
 
     def run_command(self, command):
@@ -107,7 +106,7 @@ class StageTraceToolsTest(unittest.TestCase):
                     result="applied",
                 ),
             ]
-            raw_path = os.path.join(directory, "stage1-test-100-x64.jsonl")
+            raw_path = os.path.join(directory, "host-test-100-x64.jsonl")
             self.write_records(raw_path, raw)
 
             export = self.run_command([
@@ -116,7 +115,7 @@ class StageTraceToolsTest(unittest.TestCase):
                 "-ExecutionPolicy",
                 "Bypass",
                 "-File",
-                os.path.join(DIAGNOSTICS, "scripts", "export_stage_trace.ps1"),
+                os.path.join(DIAGNOSTICS, "scripts", "export_host_trace.ps1"),
                 "-LogsDir",
                 directory,
                 "-OutputDir",
@@ -125,11 +124,11 @@ class StageTraceToolsTest(unittest.TestCase):
             self.assertEqual(export.returncode, 0, export.stdout + export.stderr)
 
             for kind in ("runtime", "probe"):
-                path = os.path.join(directory, f"cxxime-stage1-{kind}-{BUILD_ID}.jsonl")
+                path = os.path.join(directory, f"cxxime-host-{kind}-{BUILD_ID}.jsonl")
                 self.assertTrue(os.path.isfile(path), path)
                 check = self.run_command([
                     sys.executable,
-                    os.path.join(DIAGNOSTICS, "scripts", "check_stage_trace.py"),
+                    os.path.join(DIAGNOSTICS, "scripts", "check_host_trace.py"),
                     "--kind",
                     kind,
                     "--require-summary",
@@ -172,12 +171,12 @@ class StageTraceToolsTest(unittest.TestCase):
                     result="success",
                 ),
             ]
-            raw_path = os.path.join(directory, "stage1-tsf-100-x64.jsonl")
+            raw_path = os.path.join(directory, "host-tsf-100-x64.jsonl")
             self.write_records(raw_path, raw)
 
             command = [
                 sys.executable,
-                os.path.join(DIAGNOSTICS, "scripts", "check_stage_trace.py"),
+                os.path.join(DIAGNOSTICS, "scripts", "check_host_trace.py"),
                 "--kind",
                 "runtime",
                 "--require-candidate-visibility-toggle",
@@ -188,7 +187,7 @@ class StageTraceToolsTest(unittest.TestCase):
 
             check = self.run_command([*command, "--require-summary"])
             self.assertEqual(check.returncode, 2, check.stdout + check.stderr)
-            self.assertIn("missing evidence event: stage.summary", check.stderr)
+            self.assertIn("missing evidence event: trace.summary", check.stderr)
 
     def test_t2_evidence_accepts_complete_runtime_and_probe_traces(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -409,11 +408,11 @@ class StageTraceToolsTest(unittest.TestCase):
             ]
 
             for kind, values in (("probe", probe), ("runtime", runtime)):
-                path = os.path.join(directory, f"stage1-{kind}-t2-x64.jsonl")
+                path = os.path.join(directory, f"host-{kind}-t2-x64.jsonl")
                 self.write_records(path, values)
                 check = self.run_command([
                     sys.executable,
-                    os.path.join(DIAGNOSTICS, "scripts", "check_stage_trace.py"),
+                    os.path.join(DIAGNOSTICS, "scripts", "check_host_trace.py"),
                     "--kind",
                     kind,
                     "--require-t2",
@@ -423,7 +422,7 @@ class StageTraceToolsTest(unittest.TestCase):
 
                 check = self.run_command([
                     sys.executable,
-                    os.path.join(DIAGNOSTICS, "scripts", "check_stage_trace.py"),
+                    os.path.join(DIAGNOSTICS, "scripts", "check_host_trace.py"),
                     "--kind",
                     kind,
                     "--require-conversion-sync",
@@ -441,7 +440,7 @@ class StageTraceToolsTest(unittest.TestCase):
             self.write_records(path, runtime)
             check = self.run_command([
                 sys.executable,
-                os.path.join(DIAGNOSTICS, "scripts", "check_stage_trace.py"),
+                os.path.join(DIAGNOSTICS, "scripts", "check_host_trace.py"),
                 "--kind",
                 "runtime",
                 "--require-t2",
@@ -455,7 +454,7 @@ class StageTraceToolsTest(unittest.TestCase):
 
     def test_t2_evidence_reports_missing_display_attribute(self):
         with tempfile.TemporaryDirectory() as directory:
-            path = os.path.join(directory, "stage1-probe-t2-x64.jsonl")
+            path = os.path.join(directory, "host-probe-t2-x64.jsonl")
             values = [
                 record("probe", "probe.runtime", 1,
                        activate_flags=4, result="ready"),
@@ -473,7 +472,7 @@ class StageTraceToolsTest(unittest.TestCase):
             self.write_records(path, values)
             check = self.run_command([
                 sys.executable,
-                os.path.join(DIAGNOSTICS, "scripts", "check_stage_trace.py"),
+                os.path.join(DIAGNOSTICS, "scripts", "check_host_trace.py"),
                 "--kind",
                 "probe",
                 "--require-t2",
@@ -487,7 +486,7 @@ class StageTraceToolsTest(unittest.TestCase):
 
     def test_t3_comless_evidence_checks_probe_mode_and_runtime_flag(self):
         with tempfile.TemporaryDirectory() as directory:
-            probe_path = os.path.join(directory, "stage1-probe-t3-x64.jsonl")
+            probe_path = os.path.join(directory, "host-probe-t3-x64.jsonl")
             probe = [
                 record(
                     "probe", "probe.runtime", 1,
@@ -522,7 +521,7 @@ class StageTraceToolsTest(unittest.TestCase):
             self.write_records(probe_path, probe)
             check = self.run_command([
                 sys.executable,
-                os.path.join(DIAGNOSTICS, "scripts", "check_stage_trace.py"),
+                os.path.join(DIAGNOSTICS, "scripts", "check_host_trace.py"),
                 "--kind",
                 "probe",
                 "--require-comless",
@@ -533,7 +532,7 @@ class StageTraceToolsTest(unittest.TestCase):
 
             check = self.run_command([
                 sys.executable,
-                os.path.join(DIAGNOSTICS, "scripts", "check_stage_trace.py"),
+                os.path.join(DIAGNOSTICS, "scripts", "check_host_trace.py"),
                 "--kind",
                 "probe",
                 "--require-comless",
@@ -544,7 +543,7 @@ class StageTraceToolsTest(unittest.TestCase):
             self.assertIn("T3: Probe did not use the TSF factory in mta COM mode",
                           check.stderr)
 
-            runtime_path = os.path.join(directory, "stage1-runtime-t3-x64.jsonl")
+            runtime_path = os.path.join(directory, "host-runtime-t3-x64.jsonl")
             runtime = [
                 record("tsf", "runtime.component_status", 1),
                 record("tsf", "runtime.activate", 2,
@@ -566,7 +565,7 @@ class StageTraceToolsTest(unittest.TestCase):
             self.write_records(runtime_path, runtime)
             check = self.run_command([
                 sys.executable,
-                os.path.join(DIAGNOSTICS, "scripts", "check_stage_trace.py"),
+                os.path.join(DIAGNOSTICS, "scripts", "check_host_trace.py"),
                 "--kind",
                 "runtime",
                 "--require-comless",
@@ -580,7 +579,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--powershell", default="powershell")
     args, remaining = parser.parse_known_args()
-    StageTraceToolsTest.powershell = args.powershell
+    HostTraceToolsTest.powershell = args.powershell
     unittest.main(argv=[sys.argv[0], *remaining])
 
 

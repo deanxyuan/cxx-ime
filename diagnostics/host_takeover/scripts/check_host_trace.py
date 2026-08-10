@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate staged host-takeover JSONL evidence without exposing candidate text."""
+"""Validate host trace JSONL evidence without exposing candidate text."""
 
 import argparse
 import sys
@@ -19,7 +19,6 @@ from trace_common import (
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("paths", nargs="+", help="one runtime JSONL or one Probe JSONL")
-    parser.add_argument("--stage", type=int, default=1)
     parser.add_argument("--build-id", default=DEFAULT_BUILD_ID)
     parser.add_argument("--kind", choices=("runtime", "probe"), required=True)
     parser.add_argument("--require-summary", action="store_true")
@@ -30,7 +29,7 @@ def main() -> int:
     args = parser.parse_args()
 
     records, errors = load_records(args.paths)
-    validation_errors, gaps = validate_records(records, args.stage, args.build_id)
+    validation_errors, gaps = validate_records(records, args.build_id)
     errors.extend(validation_errors)
     gaps.extend(evidence_gaps(records, args.kind, args.require_summary))
     if args.require_candidate_visibility_toggle:

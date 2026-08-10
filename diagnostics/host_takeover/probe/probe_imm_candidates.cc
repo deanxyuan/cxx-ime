@@ -2,7 +2,7 @@
 
 #include "probe_app.h"
 
-#include <cxxime/stage_trace.h>
+#include <cxxime/host_trace.h>
 
 #include <algorithm>
 #include <cstddef>
@@ -73,7 +73,7 @@ CandidateReadback read_candidate_list(HIMC himc) {
             return result;
         }
         result.lengths.push_back(length);
-        result.digests.push_back(cxxime::stage_trace_digest_utf16(text, length));
+        result.digests.push_back(cxxime::host_trace_digest_utf16(text, length));
     }
     result.valid = true;
     return result;
@@ -87,7 +87,7 @@ void ProbeApp::trace_imm_candidate_snapshot(const char* trigger,
     const CandidateReadback readback = read_candidate_list(himc_);
     const char* result = readback.valid ? "read" :
                          (readback.query_bytes == 0 ? "empty" : "invalid");
-    cxxime::write_stage_trace("probe", "probe.imm_candidate_snapshot", {
+    cxxime::write_host_trace("probe", "probe.imm_candidate_snapshot", {
         {"composition_id", composition_id_},
         {"element_id", element_id},
         {"trigger", trigger ? trigger : ""},

@@ -4,22 +4,22 @@
 
 #include <imm.h>
 
-#include <cxxime/stage_trace.h>
+#include <cxxime/host_trace.h>
 
 #include "tsf_host_window.h"
 
 namespace cxxime_tsf {
 
-void trace_stage_edit_target(uint64_t input_id, uint64_t composition_id, EditTargetState state,
-const EditTargetEvidence& evidence) {
-    cxxime::write_stage_trace("tsf", "tsf.context_selection_request",
+void trace_edit_target(uint64_t input_id, uint64_t composition_id, EditTargetState state,
+                       const EditTargetEvidence& evidence) {
+    cxxime::write_host_trace("tsf", "tsf.context_selection_request",
                               {
                                   {"input_id", input_id},
                                   {"composition_id", composition_id},
                                   {"request_hr", static_cast<int64_t>(evidence.request_hr)},
                                   {"session_hr", static_cast<int64_t>(evidence.session_hr)},
                               });
-    cxxime::write_stage_trace(
+    cxxime::write_host_trace(
         "tsf", "tsf.context_selection",
         {
             {"input_id", input_id},
@@ -38,7 +38,7 @@ const EditTargetEvidence& evidence) {
             {"has_input_scope", evidence.has_input_scope},
             {"result", evidence.selection_available ? "captured" : "unavailable"},
         });
-    cxxime::write_stage_trace(
+    cxxime::write_host_trace(
         "tsf", "tsf.edit_target_evidence",
         {
             {"input_id", input_id},
@@ -74,7 +74,7 @@ const EditTargetEvidence& evidence) {
         });
 }
 
-void trace_stage_context_state(uint64_t input_id, uint64_t composition_id, ITfContext* context) {
+void trace_context_state(uint64_t input_id, uint64_t composition_id, ITfContext* context) {
     TF_STATUS status = {};
     const HRESULT status_hr = context ? context->GetStatus(&status) : E_POINTER;
 
@@ -91,7 +91,7 @@ void trace_stage_context_state(uint64_t input_id, uint64_t composition_id, ITfCo
     const HWND foreground_hwnd = GetForegroundWindow();
     const HWND context_root = context_hwnd ? GetAncestor(context_hwnd, GA_ROOT) : nullptr;
     const HWND foreground_root = foreground_hwnd ? GetAncestor(foreground_hwnd, GA_ROOT) : nullptr;
-    cxxime::write_stage_trace(
+    cxxime::write_host_trace(
         "tsf", "tsf.context_state",
         {
             {"input_id", input_id},
@@ -106,17 +106,17 @@ void trace_stage_context_state(uint64_t input_id, uint64_t composition_id, ITfCo
             {"same_window", context_hwnd && context_hwnd == foreground_hwnd},
             {"context_is_child",
              context_hwnd && foreground_hwnd && IsChild(foreground_hwnd, context_hwnd) != FALSE},
-            {"same_root", context_root && context_root == foreground_root},
-            {"screen_rect_hr", static_cast<int64_t>(screen_rect_hr)},
-            {"screen_left", screen_rect.left},
-            {"screen_top", screen_rect.top},
-            {"screen_right", screen_rect.right},
-            {"screen_bottom", screen_rect.bottom},
-        });
+                                                        {"same_root", context_root && context_root == foreground_root},
+                                                        {"screen_rect_hr", static_cast<int64_t>(screen_rect_hr)},
+                                                        {"screen_left", screen_rect.left},
+                                                        {"screen_top", screen_rect.top},
+                                                        {"screen_right", screen_rect.right},
+                                                        {"screen_bottom", screen_rect.bottom},
+                                                        });
 
     if (context_hwnd) {
         HIMC input_context = ImmGetContext(context_hwnd);
-        trace_stage_host_window_snapshot(context_hwnd, input_context, input_id, composition_id);
+        trace_host_window_snapshot(context_hwnd, input_context, input_id, composition_id);
         if (input_context) {
             ImmReleaseContext(context_hwnd, input_context);
         }

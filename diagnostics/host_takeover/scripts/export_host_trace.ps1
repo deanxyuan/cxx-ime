@@ -1,16 +1,15 @@
 # Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 #
-# Export stage diagnostics into at most two JSONL files for manual test handoff.
+# Export host diagnostics into at most two JSONL files for manual test handoff.
 
 param(
-    [int]$Stage = 1,
     [string]$BuildId = "cxxime-host-takeover-20260725-b",
     [string]$LogsDir = "",
     [string]$OutputDir = ""
 )
 
 $ErrorActionPreference = "Stop"
-$SchemaVersion = 1
+$SchemaVersion = 2
 
 if (-not $LogsDir) {
     $LogsDir = Join-Path $env:USERPROFILE "cxxime\logs"
@@ -24,7 +23,7 @@ if (-not $OutputDir) {
 
 New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
 
-function New-StageEvent {
+function New-HostEvent {
     param(
         [string]$Event,
         [string]$Component,
@@ -34,7 +33,6 @@ function New-StageEvent {
     $record = [ordered]@{
         schema_version = $SchemaVersion
         build_id = $BuildId
-        stage = $Stage
         arch = if ([Environment]::Is64BitOperatingSystem) { "x64" } else { "x86" }
         event = $Event
         seq = 0
@@ -50,7 +48,7 @@ function New-StageEvent {
     return [pscustomobject]$record
 }
 
-function Read-StageRecords {
+function Read-HostRecords {
     param([string]$Directory)
 
     $records = New-Object System.Collections.Generic.List[object]
@@ -59,8 +57,8 @@ function Read-StageRecords {
     }
 
     $files = Get-ChildItem -LiteralPath $Directory -File -ErrorAction SilentlyContinue |
-        Where-Object { $_.Name -like "stage$Stage-*.jsonl" -or
-                       $_.Name -like "stage$Stage-*.jsonl.1" }
+        Where-Object { $_.Name -like "host-*.jsonl" -or
+                       $_.Name -like "host-*.jsonl.1" }
     foreach ($file in $files) {
         foreach ($line in Get-Content -LiteralPath $file.FullName -Encoding UTF8) {
             if ([string]::IsNullOrWhiteSpace($line)) {
@@ -72,7 +70,6 @@ function Read-StageRecords {
                 continue
             }
             if ($record.schema_version -ne $SchemaVersion -or
-                $record.stage -ne $Stage -or
                 $record.build_id -ne $BuildId) {
                 continue
             }
@@ -88,10 +85,10 @@ function Add-DotaModuleStatus {
 
     $processes = @(Get-Process -Name "dota2" -ErrorAction SilentlyContinue)
     if ($processes.Count -eq 0) {
-        $Records.Add((New-StageEvent -Event "runtime.component_status" -Component "exporter" -Fields @{
-                name = "dota2.exe"
-                result = "process_not_running"
-            }))
+        $Records.Add((New-HostEvent -Event "runtime.component_status" -Component "exporter" -Fields @{
+            name = "dota2.exe"
+            result = "process_not_running"
+        }))
         return
     }
 
@@ -116,10 +113,10 @@ function Add-DotaModuleStatus {
                         $fields.sha256 = "unavailable"
                     }
                 }
-                $Records.Add((New-StageEvent -Event "runtime.component_status" -Component "exporter" -Fields $fields))
+                $Records.Add((New-HostEvent -Event "runtime.component_status" -Component "exporter" -Fields $fields))
             }
         } catch {
-            $Records.Add((New-StageEvent -Event "runtime.component_status" -Component "exporter" -Fields @{
+            $Records.Add((New-HostEvent -Event "runtime.component_status" -Component "exporter" -Fields @{
                 name = "dota2_modules"
                 host_pid = $process.Id
                 result = "access_denied"
@@ -129,7 +126,7 @@ function Add-DotaModuleStatus {
     }
 }
 
-function Add-StageSummary {
+function Add-HostSummary {
     param([System.Collections.Generic.List[object]]$Records)
 
     $eventCounts = [ordered]@{}
@@ -152,7 +149,7 @@ function Add-StageSummary {
         }
     }
 
-    $Records.Add((New-StageEvent -Event "stage.summary" -Component "exporter" -Fields @{
+    $Records.Add((New-HostEvent -Event "trace.summary" -Component "exporter" -Fields @{
         record_count = $Records.Count
         event_counts = $eventCounts
         owner_conflicts = $ownerConflicts
@@ -175,7 +172,7 @@ function Write-JsonLines {
     [IO.File]::WriteAllLines($Path, [string[]]$lines, $utf8NoBom)
 }
 
-$records = Read-StageRecords -Directory $LogsDir
+$records = Read-HostRecords -Directory $LogsDir
 $runtimeRecords = New-Object System.Collections.Generic.List[object]
 $probeRecords = New-Object System.Collections.Generic.List[object]
 foreach ($record in $records) {
@@ -187,15 +184,15 @@ foreach ($record in $records) {
 }
 
 Add-DotaModuleStatus -Records $runtimeRecords
-Add-StageSummary -Records $runtimeRecords
+Add-HostSummary -Records $runtimeRecords
 
-$runtimePath = Join-Path $OutputDir "cxxime-stage$Stage-runtime-$BuildId.jsonl"
+$runtimePath = Join-Path $OutputDir "cxxime-host-runtime-$BuildId.jsonl"
 Write-JsonLines -Path $runtimePath -Records $runtimeRecords.ToArray()
 Write-Host "Runtime trace: $runtimePath"
 
 if ($probeRecords.Count -gt 0) {
-    Add-StageSummary -Records $probeRecords
-    $probePath = Join-Path $OutputDir "cxxime-stage$Stage-probe-$BuildId.jsonl"
+    Add-HostSummary -Records $probeRecords
+    $probePath = Join-Path $OutputDir "cxxime-host-probe-$BuildId.jsonl"
     Write-JsonLines -Path $probePath -Records $probeRecords.ToArray()
     Write-Host "Probe trace:   $probePath"
 } else {

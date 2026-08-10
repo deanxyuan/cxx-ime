@@ -1,6 +1,6 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
-#include "tsf_stage.h"
+#include "tsf_trace.h"
 
 #include "tsf_context.h"
 #include "tsf_host_callsite.h"
@@ -10,7 +10,7 @@
 #include "globals.h"
 #include "text_service.h"
 
-#include <cxxime/stage_trace.h>
+#include <cxxime/host_trace.h>
 #include <cxxime/tsf_factory.h>
 
 #include <cstring>
@@ -25,24 +25,24 @@ void trace_ui(TextService* service,
               const char* element_type,
               DWORD element_id,
               nlohmann::json fields) {
-    fields["input_id"] = service ? service->stage_input_id() : 0;
-    fields["composition_id"] = service ? service->stage_composition_id() : 0;
+    fields["input_id"] = service ? service->trace_input_id() : 0;
+    fields["composition_id"] = service ? service->trace_composition_id() : 0;
     fields["element_type"] = element_type ? element_type : "";
     fields["element_id"] = element_id;
-    cxxime::write_stage_trace("tsf", event, std::move(fields));
+    cxxime::write_host_trace("tsf", event, std::move(fields));
 }
 
 nlohmann::json text_digests(const std::vector<std::wstring>& values) {
     nlohmann::json digests = nlohmann::json::array();
     for (const auto& value : values) {
-        digests.push_back(cxxime::stage_trace_digest_utf16(value));
+        digests.push_back(cxxime::host_trace_digest_utf16(value));
     }
     return digests;
 }
 
 } // namespace
 
-void trace_stage_runtime_activate(DWORD activate_flags, TfClientId client_id) {
+void trace_runtime_activate(DWORD activate_flags, TfClientId client_id) {
     const bool without_com = (activate_flags & TF_TMAE_COMLESS) != 0;
     TF_INPUTPROCESSORPROFILE profile = {};
     HRESULT profile_hr = E_UNEXPECTED;
@@ -66,11 +66,11 @@ void trace_stage_runtime_activate(DWORD activate_flags, TfClientId client_id) {
     }
     const HKL keyboard_layout = GetKeyboardLayout(0);
 
-    cxxime::write_stage_trace("tsf", "runtime.component_status", {
+    cxxime::write_host_trace("tsf", "runtime.component_status", {
         {"name", "cxxime-tsf"},
         {"result", "loaded"},
     });
-    cxxime::write_stage_trace("tsf", "runtime.activate", {
+    cxxime::write_host_trace("tsf", "runtime.activate", {
         {"activate_flags", activate_flags},
         {"manager_creation", without_com ? "without_com" : "com"},
         {"client_id", client_id},
@@ -87,17 +87,17 @@ void trace_stage_runtime_activate(DWORD activate_flags, TfClientId client_id) {
         {"result", "success"},
     });
     if ((activate_flags & TF_TMF_UIELEMENTENABLEDONLY) != 0) {
-        trace_stage_sdl_runtime();
+        trace_sdl_runtime();
     }
 }
 
-void trace_stage_key_route(uint64_t input_id,
-                           uint64_t composition_id,
-                           uint32_t virtual_key,
-                           uint32_t modifiers,
-                           uint32_t engine_calls,
-                           const char* result,
-                           const char* reason) {
+void trace_key_route(uint64_t input_id,
+                     uint64_t composition_id,
+                     uint32_t virtual_key,
+                     uint32_t modifiers,
+                     uint32_t engine_calls,
+                     const char* result,
+                     const char* reason) {
     nlohmann::json fields = {
         {"input_id", input_id},
         {"composition_id", composition_id},
@@ -110,14 +110,14 @@ void trace_stage_key_route(uint64_t input_id,
     if (reason) {
         fields["reason"] = reason;
     }
-    cxxime::write_stage_trace("tsf", "key.route", std::move(fields));
+    cxxime::write_host_trace("tsf", "key.route", std::move(fields));
 }
 
-void trace_stage_context(uint64_t input_id,
-                         uint64_t composition_id,
-                         ITfContext* input_context,
-                         ITfThreadMgr* thread_mgr,
-                         const char* composition_transport) {
+void trace_context(uint64_t input_id,
+                   uint64_t composition_id,
+                   ITfContext* input_context,
+                   ITfThreadMgr* thread_mgr,
+                   const char* composition_transport) {
     ITfDocumentMgr* document_mgr = nullptr;
     ITfContext* top_context = nullptr;
     ITfInsertAtSelection* insert_at_selection = nullptr;
@@ -132,7 +132,7 @@ void trace_stage_context(uint64_t input_id,
         ? input_context->QueryInterface(
             IID_ITfContextComposition, reinterpret_cast<void**>(&context_composition))
         : E_POINTER;
-    cxxime::write_stage_trace("tsf", "tsf.context", {
+    cxxime::write_host_trace("tsf", "tsf.context", {
         {"input_id", input_id},
         {"composition_id", composition_id},
         {"context_present", input_context != nullptr},
@@ -157,19 +157,19 @@ void trace_stage_context(uint64_t input_id,
     if (context_composition) {
         context_composition->Release();
     }
-    trace_stage_context_state(input_id, composition_id, input_context);
+    trace_context_state(input_id, composition_id, input_context);
 }
 
-void trace_stage_key_result(uint64_t input_id,
-                            uint64_t composition_id,
-                            uint32_t virtual_key,
-                            bool eaten,
-                            size_t preedit_length,
-                            size_t preedit_cursor,
-                            uint32_t candidate_count,
-                            size_t commit_length,
-                            const char* result) {
-    cxxime::write_stage_trace("tsf", "key.result", {
+void trace_key_result(uint64_t input_id,
+                      uint64_t composition_id,
+                      uint32_t virtual_key,
+                      bool eaten,
+                      size_t preedit_length,
+                      size_t preedit_cursor,
+                      uint32_t candidate_count,
+                      size_t commit_length,
+                      const char* result) {
+    cxxime::write_host_trace("tsf", "key.result", {
         {"input_id", input_id},
         {"composition_id", composition_id},
         {"vk", virtual_key},
@@ -182,13 +182,13 @@ void trace_stage_key_result(uint64_t input_id,
     });
 }
 
-void trace_stage_composition_end(uint64_t input_id,
-                                 uint64_t composition_id,
-                                 const char* reason) {
+void trace_composition_end(uint64_t input_id,
+                           uint64_t composition_id,
+                           const char* reason) {
     if (composition_id == 0) {
         return;
     }
-    cxxime::write_stage_trace("tsf", "composition.lifecycle", {
+    cxxime::write_host_trace("tsf", "composition.lifecycle", {
         {"input_id", input_id},
         {"composition_id", composition_id},
         {"action", "end"},
@@ -197,23 +197,23 @@ void trace_stage_composition_end(uint64_t input_id,
     });
 }
 
-void trace_stage_ui_query(TextService* service,
-                          const char* element_type,
-                          REFIID iid,
-                          HRESULT result) {
+void trace_ui_query(TextService* service,
+                    const char* element_type,
+                    REFIID iid,
+                    HRESULT result) {
     trace_ui(service, "ui_element.query_interface", element_type, TF_INVALID_UIELEMENTID, {
-        {"iid", cxxime::stage_trace_guid(iid)},
+        {"iid", cxxime::host_trace_guid(iid)},
         {"hr", static_cast<int64_t>(result)},
         {"result", SUCCEEDED(result) ? "supported" : "unsupported"},
     });
 }
 
-void trace_stage_ui_show(TextService* service,
-                         const char* element_type,
-                         DWORD element_id,
-                         bool requested_show,
-                         bool actual_show,
-                         HRESULT result) {
+void trace_ui_show(TextService* service,
+                   const char* element_type,
+                   DWORD element_id,
+                   bool requested_show,
+                   bool actual_show,
+                   HRESULT result) {
     trace_ui(service, "ui_element.show", element_type, element_id, {
         {"requested_show", requested_show},
         {"actual_show", actual_show},
@@ -222,15 +222,15 @@ void trace_stage_ui_show(TextService* service,
     });
 }
 
-void trace_stage_ui_get_number(TextService* service,
-                               const char* element_type,
-                               DWORD element_id,
-                               const char* method,
-                               const char* field,
-                               uint64_t value,
-                               HRESULT result) {
+void trace_ui_get_number(TextService* service,
+                         const char* element_type,
+                         DWORD element_id,
+                         const char* method,
+                         const char* field,
+                         uint64_t value,
+                         HRESULT result) {
     if (method && std::strcmp(method, "GetUpdatedFlags") == 0) {
-        trace_stage_host_ui_callsite(
+        trace_host_ui_callsite(
             "ITfCandidateListUIElement::GetUpdatedFlags",
             element_id != TF_INVALID_UIELEMENTID);
     }
@@ -242,13 +242,13 @@ void trace_stage_ui_get_number(TextService* service,
     trace_ui(service, "ui_element.get", element_type, element_id, std::move(fields));
 }
 
-void trace_stage_ui_get_bool(TextService* service,
-                             const char* element_type,
-                             DWORD element_id,
-                             const char* method,
-                             const char* field,
-                             bool value,
-                             HRESULT result) {
+void trace_ui_get_bool(TextService* service,
+                       const char* element_type,
+                       DWORD element_id,
+                       const char* method,
+                       const char* field,
+                       bool value,
+                       HRESULT result) {
     nlohmann::json fields = {
         {"method", method ? method : ""},
         {"hr", static_cast<int64_t>(result)},
@@ -257,13 +257,13 @@ void trace_stage_ui_get_bool(TextService* service,
     trace_ui(service, "ui_element.get", element_type, element_id, std::move(fields));
 }
 
-void trace_stage_ui_get_presence(TextService* service,
-                                 const char* element_type,
-                                 DWORD element_id,
-                                 const char* method,
-                                 const char* field,
-                                 bool present,
-                                 HRESULT result) {
+void trace_ui_get_presence(TextService* service,
+                           const char* element_type,
+                           DWORD element_id,
+                           const char* method,
+                           const char* field,
+                           bool present,
+                           HRESULT result) {
     nlohmann::json fields = {
         {"method", method ? method : ""},
         {"hr", static_cast<int64_t>(result)},
@@ -272,11 +272,11 @@ void trace_stage_ui_get_presence(TextService* service,
     trace_ui(service, "ui_element.get", element_type, element_id, std::move(fields));
 }
 
-void trace_stage_candidate_get_string(TextService* service,
-                                      DWORD element_id,
-                                      UINT index,
-                                      const std::wstring* text,
-                                      HRESULT result) {
+void trace_candidate_get_string(TextService* service,
+                                DWORD element_id,
+                                UINT index,
+                                const std::wstring* text,
+                                HRESULT result) {
     nlohmann::json fields = {
         {"method", "GetString"},
         {"index", index},
@@ -284,18 +284,18 @@ void trace_stage_candidate_get_string(TextService* service,
         {"hr", static_cast<int64_t>(result)},
     };
     if (text) {
-        fields["text_digest"] = cxxime::stage_trace_digest_utf16(*text);
+        fields["text_digest"] = cxxime::host_trace_digest_utf16(*text);
     }
     trace_ui(service, "ui_element.get", "candidate", element_id, std::move(fields));
 }
 
-void trace_stage_candidate_get_page(TextService* service,
-                                    DWORD element_id,
-                                    UINT buffer_size,
-                                    UINT page_count,
-                                    bool query_only,
-                                    UINT first_page_index,
-                                    HRESULT result) {
+void trace_candidate_get_page(TextService* service,
+                              DWORD element_id,
+                              UINT buffer_size,
+                              UINT page_count,
+                              bool query_only,
+                              UINT first_page_index,
+                              HRESULT result) {
     trace_ui(service, "ui_element.get", "candidate", element_id, {
         {"method", "GetPageIndex"},
         {"buffer_size", buffer_size},
@@ -306,11 +306,11 @@ void trace_stage_candidate_get_page(TextService* service,
     });
 }
 
-void trace_stage_candidate_page_set(TextService* service,
-                                    DWORD element_id,
-                                    UINT page_count,
-                                    UINT first_page_index,
-                                    HRESULT result) {
+void trace_candidate_page_set(TextService* service,
+                              DWORD element_id,
+                              UINT page_count,
+                              UINT first_page_index,
+                              HRESULT result) {
     trace_ui(service, "candidate.behavior", "candidate", element_id, {
         {"method", "SetPageIndex"},
         {"page_count", page_count},
@@ -319,12 +319,12 @@ void trace_stage_candidate_page_set(TextService* service,
     });
 }
 
-void trace_stage_candidate_behavior_number(TextService* service,
-                                           DWORD element_id,
-                                           const char* method,
-                                           const char* field,
-                                           uint64_t value,
-                                           HRESULT result) {
+void trace_candidate_behavior_number(TextService* service,
+                                     DWORD element_id,
+                                     const char* method,
+                                     const char* field,
+                                     uint64_t value,
+                                     HRESULT result) {
     nlohmann::json fields = {
         {"method", method ? method : ""},
         {"hr", static_cast<int64_t>(result)},
@@ -333,12 +333,12 @@ void trace_stage_candidate_behavior_number(TextService* service,
     trace_ui(service, "candidate.behavior", "candidate", element_id, std::move(fields));
 }
 
-void trace_stage_candidate_behavior_bool(TextService* service,
-                                         DWORD element_id,
-                                         const char* method,
-                                         const char* field,
-                                         bool value,
-                                         HRESULT result) {
+void trace_candidate_behavior_bool(TextService* service,
+                                   DWORD element_id,
+                                   const char* method,
+                                   const char* field,
+                                   bool value,
+                                   HRESULT result) {
     nlohmann::json fields = {
         {"method", method ? method : ""},
         {"hr", static_cast<int64_t>(result)},
@@ -347,23 +347,23 @@ void trace_stage_candidate_behavior_bool(TextService* service,
     trace_ui(service, "candidate.behavior", "candidate", element_id, std::move(fields));
 }
 
-void trace_stage_candidate_integration_style(TextService* service,
-                                             DWORD element_id,
-                                             REFGUID integration_style,
-                                             HRESULT result) {
+void trace_candidate_integration_style(TextService* service,
+                                       DWORD element_id,
+                                       REFGUID integration_style,
+                                       HRESULT result) {
     trace_ui(service, "candidate.behavior", "candidate", element_id, {
         {"method", "SetIntegrationStyle"},
-        {"integration_style", cxxime::stage_trace_guid(integration_style)},
+        {"integration_style", cxxime::host_trace_guid(integration_style)},
         {"hr", static_cast<int64_t>(result)},
     });
 }
 
-void trace_stage_candidate_key(TextService* service,
-                               DWORD element_id,
-                               WPARAM virtual_key,
-                               LPARAM key_data,
-                               bool eaten,
-                               HRESULT result) {
+void trace_candidate_key(TextService* service,
+                         DWORD element_id,
+                         WPARAM virtual_key,
+                         LPARAM key_data,
+                         bool eaten,
+                         HRESULT result) {
     trace_ui(service, "candidate.behavior", "candidate", element_id, {
         {"method", "OnKeyDown"},
         {"vk", static_cast<uint64_t>(virtual_key)},
@@ -373,11 +373,11 @@ void trace_stage_candidate_key(TextService* service,
     });
 }
 
-void trace_stage_candidate_snapshot(TextService* service,
-                                    const std::vector<std::wstring>& candidates,
-                                    UINT selection,
-                                    int page_current,
-                                    int page_total) {
+void trace_candidate_snapshot(TextService* service,
+                              const std::vector<std::wstring>& candidates,
+                              UINT selection,
+                              int page_current,
+                              int page_total) {
     nlohmann::json lengths = nlohmann::json::array();
     for (const auto& candidate : candidates) {
         lengths.push_back(candidate.size());
@@ -396,12 +396,12 @@ void trace_stage_candidate_snapshot(TextService* service,
     });
 }
 
-void trace_stage_candidate_lifecycle(TextService* service,
-                                     const char* action,
-                                     DWORD element_id,
-                                     HRESULT result,
-                                     const char* result_name,
-                                     const bool* show_external) {
+void trace_candidate_lifecycle(TextService* service,
+                               const char* action,
+                               DWORD element_id,
+                               HRESULT result,
+                               const char* result_name,
+                               const bool* show_external) {
     nlohmann::json fields = {
         {"hr", static_cast<int64_t>(result)},
         {"result", result_name ? result_name : ""},
@@ -414,9 +414,9 @@ void trace_stage_candidate_lifecycle(TextService* service,
     trace_ui(service, event.c_str(), "candidate", element_id, std::move(fields));
 }
 
-void trace_stage_external_ui_decision(TextService* service,
-                                      DWORD element_id,
-                                      bool show_external) {
+void trace_external_ui_decision(TextService* service,
+                                DWORD element_id,
+                                bool show_external) {
     trace_ui(service, "external_ui.decision", "candidate", element_id, {
         {"show_external", show_external},
         {"result", show_external ? "allowed" : "suppressed"},
@@ -424,25 +424,25 @@ void trace_stage_external_ui_decision(TextService* service,
     });
 }
 
-void trace_stage_reading_snapshot(TextService* service,
-                                  const std::wstring& text,
-                                  UINT max_length,
-                                  bool context_present) {
+void trace_reading_snapshot(TextService* service,
+                            const std::wstring& text,
+                            UINT max_length,
+                            bool context_present) {
     trace_ui(service, "reading.snapshot", "reading", TF_INVALID_UIELEMENTID, {
         {"text_len", text.size()},
-        {"text_digest", cxxime::stage_trace_digest_utf16(text)},
+        {"text_digest", cxxime::host_trace_digest_utf16(text)},
         {"max_length", max_length},
         {"context_present", context_present},
         {"result", "updated"},
     });
 }
 
-void trace_stage_reading_lifecycle(TextService* service,
-                                   const char* action,
-                                   DWORD element_id,
-                                   HRESULT result,
-                                   const char* result_name,
-                                   const bool* show_external) {
+void trace_reading_lifecycle(TextService* service,
+                             const char* action,
+                             DWORD element_id,
+                             HRESULT result,
+                             const char* result_name,
+                             const bool* show_external) {
     nlohmann::json fields = {
         {"action", action ? action : ""},
         {"hr", static_cast<int64_t>(result)},

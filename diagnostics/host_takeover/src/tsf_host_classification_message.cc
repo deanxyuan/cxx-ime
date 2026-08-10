@@ -7,7 +7,7 @@
 #include "host_compatibility/host_classification_compatibility.h"
 #include "host_compatibility/host_ime_private_api.h"
 
-#include <cxxime/stage_trace.h>
+#include <cxxime/host_trace.h>
 
 #include <imm.h>
 
@@ -136,8 +136,8 @@ void add_module_fields(nlohmann::json& fields,
     fields[name + "_image_size"] = identity.image_size;
 }
 
-void inspect_stage_host_classification_message_gate(const MSG& message,
-                                                    const char* trigger) {
+void inspect_host_classification_message_gate(const MSG& message,
+                                              const char* trigger) {
     if (message.message != WM_IME_NOTIFY ||
         (message.wParam != IMN_OPENCANDIDATE &&
          message.wParam != IMN_CHANGECANDIDATE &&
@@ -192,8 +192,8 @@ void inspect_stage_host_classification_message_gate(const MSG& message,
     fields["ime_manager_interface_ready"] = ime_manager_interface_ready;
     fields["compatibility_manager_source"] = "create_interface";
     fields["inputsystem_gate_required"] = false;
-    const StageImmProfileSnapshot imm_profile =
-        capture_stage_imm_profile(message.hwnd);
+    const TraceImmProfileSnapshot imm_profile =
+        capture_imm_profile(message.hwnd);
     fields["window_thread_id"] = imm_profile.window_thread_id;
     fields["keyboard_layout"] = imm_profile.keyboard_layout;
     fields["keyboard_layout_language"] = imm_profile.keyboard_layout_language;
@@ -214,14 +214,14 @@ void inspect_stage_host_classification_message_gate(const MSG& message,
 
 #if !defined(_M_X64)
     fields["result"] = "architecture_unsupported";
-    cxxime::write_stage_trace(
+    cxxime::write_host_trace(
         "tsf", "host.classification_message_gate", std::move(fields));
     return;
 #else
     const bool imemanager_identity_ready = imemanager_identity.readable;
     if (!imemanager_identity_ready) {
         fields["result"] = "module_identity_unavailable";
-        cxxime::write_stage_trace(
+        cxxime::write_host_trace(
             "tsf", "host.classification_message_gate", std::move(fields));
         return;
     }
@@ -239,11 +239,11 @@ void inspect_stage_host_classification_message_gate(const MSG& message,
     uint8_t inputsystem_ime_enabled = 0;
     const bool inputsystem_manager_read =
         inputsystem_layout_probe_available && read_at(
-            inputsystem_base, kInputSystemManagerRva, &inputsystem_manager);
+                                                      inputsystem_base, kInputSystemManagerRva, &inputsystem_manager);
     const bool inputsystem_enabled_read =
         inputsystem_layout_probe_available && read_at(
-            inputsystem_base, kInputSystemImeEnabledRva,
-            &inputsystem_ime_enabled);
+                                                      inputsystem_base, kInputSystemImeEnabledRva,
+                                                      &inputsystem_ime_enabled);
     fields["inputsystem_manager_read"] = inputsystem_manager_read;
     fields["inputsystem_manager"] = inputsystem_manager;
     fields["ime_manager_interface_matches_inputsystem_manager"] =
@@ -258,7 +258,7 @@ void inspect_stage_host_classification_message_gate(const MSG& message,
     fields["inputsystem_gate_ready"] = inputsystem_gate_ready;
     if (!ime_manager_interface_ready) {
         fields["result"] = "manager_unavailable";
-        cxxime::write_stage_trace(
+        cxxime::write_host_trace(
             "tsf", "host.classification_message_gate", std::move(fields));
         return;
     }
@@ -296,7 +296,7 @@ void inspect_stage_host_classification_message_gate(const MSG& message,
     fields["window_handler"] = window_handler;
     if (!manager_state_read || window_handler == 0) {
         fields["result"] = "manager_state_unavailable";
-        cxxime::write_stage_trace(
+        cxxime::write_host_trace(
             "tsf", "host.classification_message_gate", std::move(fields));
         return;
     }
@@ -351,7 +351,7 @@ void inspect_stage_host_classification_message_gate(const MSG& message,
     fields["window_gate_ready"] = window_gate_ready;
     if (!window_state_read || candidate_processor == 0) {
         fields["result"] = "window_state_unavailable";
-        cxxime::write_stage_trace(
+        cxxime::write_host_trace(
             "tsf", "host.classification_message_gate", std::move(fields));
         return;
     }
@@ -477,9 +477,9 @@ void inspect_stage_host_classification_message_gate(const MSG& message,
         imemanager_base, candidate_open_method, imemanager_identity.image_size);
     const bool candidate_methods_match =
         candidate_state_read && host_ime_candidate_methods_match(
-            imemanager_base, imemanager_identity.image_size,
-            candidate_notify_method, candidate_change_method,
-            candidate_open_method);
+                                                                 imemanager_base, imemanager_identity.image_size,
+                                                                 candidate_notify_method, candidate_change_method,
+                                                                 candidate_open_method);
     const bool all_pre_candidate_gates_ready =
         ime_manager_interface_ready && manager_gate_ready && window_gate_ready;
     const HostClassificationCompatibilitySnapshot& compatibility =
@@ -514,24 +514,24 @@ void inspect_stage_host_classification_message_gate(const MSG& message,
         input_method_branch != std::string("not_specialized_processor");
     fields["all_pre_candidate_gates_ready"] = all_pre_candidate_gates_ready;
     fields["result"] = candidate_state_read ? "captured" : "candidate_state_unavailable";
-    cxxime::write_stage_trace(
+    cxxime::write_host_trace(
         "tsf", "host.classification_message_gate", std::move(fields));
 #endif
 }
 
 } // namespace
 
-void preflight_stage_host_classification_compatibility(HWND hwnd) {
+void preflight_host_classification_compatibility(HWND hwnd) {
     MSG message = {};
     message.hwnd = hwnd;
     message.message = WM_IME_NOTIFY;
     message.wParam = IMN_OPENCANDIDATE;
     message.lParam = 1;
-    inspect_stage_host_classification_message_gate(message, "candidate_preflight");
+    inspect_host_classification_message_gate(message, "candidate_preflight");
 }
 
-void trace_stage_host_classification_message_gate(const MSG& message) {
-    inspect_stage_host_classification_message_gate(message, "queued_message");
+void trace_host_classification_message_gate(const MSG& message) {
+    inspect_host_classification_message_gate(message, "queued_message");
 }
 
 } // namespace cxxime_tsf

@@ -7,7 +7,7 @@
 
 namespace cxxime_tsf {
 
-void trace_stage_sdl_windows_message_hook(HMODULE module);
+void trace_sdl_windows_message_hook(HMODULE module);
 
 } // namespace cxxime_tsf
 

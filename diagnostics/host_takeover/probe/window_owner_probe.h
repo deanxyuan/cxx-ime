@@ -29,7 +29,7 @@ private:
     static BOOL CALLBACK enum_window_proc(HWND hwnd, LPARAM context);
 
     bool install_hook(DWORD event_min, DWORD event_max);
-    bool fail_initialization(const char* stage, DWORD error);
+    bool fail_initialization(const char* step, DWORD error);
     void trace_window(const char* action,
                       DWORD event,
                       HWND hwnd,

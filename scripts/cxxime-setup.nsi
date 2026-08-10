@@ -159,7 +159,7 @@ Section "Install"
         SetOutPath "$StageDir"
         File "cxxime-ime-host-probe-x64.exe"
         File "cxxime-ime-host-probe-x86.exe"
-        File "export_stage_trace.ps1"
+        File "export_host_trace.ps1"
     !endif
 
     !ifdef FAST

@@ -3,7 +3,7 @@
 #include "text_service.h"
 
 #include "edit_target.h"
-#include "tsf_stage.h"
+#include "tsf_trace.h"
 
 namespace cxxime_tsf {
 
@@ -250,7 +250,7 @@ bool TextService::_context_has_no_edit_target(ITfContext* context) {
     cxxime_tsf::EditTargetEvidence evidence;
     const cxxime_tsf::EditTargetState state =
         cxxime_tsf::inspect_edit_target(context, _clientId, &evidence);
-    cxxime_tsf::trace_stage_edit_target(stage_input_id(), stage_composition_id(), state, evidence);
+    cxxime_tsf::trace_edit_target(trace_input_id(), trace_composition_id(), state, evidence);
     _inputTargetUnavailable = state == cxxime_tsf::EditTargetState::NoEditTarget;
     return state == cxxime_tsf::EditTargetState::NoEditTarget;
 }

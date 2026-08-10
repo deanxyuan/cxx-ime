@@ -58,7 +58,7 @@ void TextService::_register_conversion_compartment_sink() {
             &_dwConversionCompartmentCookie);
     }
 
-    cxxime_tsf::trace_stage_conversion_sink_lifecycle(
+    cxxime_tsf::trace_conversion_sink_lifecycle(
         "advise", manager_hr, compartment_hr, source_hr, advise_hr,
         _dwConversionCompartmentCookie);
     if (FAILED(advise_hr)) {
@@ -77,7 +77,7 @@ void TextService::_unregister_conversion_compartment_sink() {
     if (_conversionCompartmentSource ||
         _conversionCompartment ||
         cookie != TF_INVALID_COOKIE) {
-        cxxime_tsf::trace_stage_conversion_sink_lifecycle(
+        cxxime_tsf::trace_conversion_sink_lifecycle(
             "unadvise", S_OK, S_OK, S_OK, unadvise_hr, cookie);
     }
 
@@ -139,7 +139,7 @@ STDMETHODIMP TextService::OnChange(REFGUID rguid) {
     const bool was_composing = _composing;
     ScopedFlag handling_change(_handlingConversionCompartmentChange);
 
-    cxxime_tsf::StageConversionSinkChange trace_event;
+    cxxime_tsf::TraceConversionSinkChange trace_event;
     trace_event.value_hr = value_hr;
     trace_event.value_type = static_cast<uint16_t>(value_type);
     trace_event.conversion_mode = conversion_mode;
@@ -159,7 +159,7 @@ STDMETHODIMP TextService::OnChange(REFGUID rguid) {
         trace_event.commit_text_length = commit_text_length;
         trace_event.after_chinese = _chinese_mode;
         trace_event.result = result;
-        cxxime_tsf::trace_stage_conversion_sink_change(trace_event);
+        cxxime_tsf::trace_conversion_sink_change(trace_event);
     };
 
     if (FAILED(value_hr)) {
@@ -237,7 +237,7 @@ STDMETHODIMP TextService::OnChange(REFGUID rguid) {
         _hide_candidate_window("hide:conversion_change_commit");
         _end_reading_ui_element("hide:conversion_change_commit_reading");
         _candidateWindow.set_preedit("");
-        _reset_stage_composition("conversion_change_commit");
+        _reset_trace_composition("conversion_change_commit");
     }
 
     trace_change(true, true, commit_requested, commit_text_length,

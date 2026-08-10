@@ -12,9 +12,9 @@
 
 namespace cxxime_tsf {
 
-void trace_stage_edit_target(uint64_t input_id, uint64_t composition_id, EditTargetState state,
-                             const EditTargetEvidence& evidence);
-void trace_stage_context_state(uint64_t input_id, uint64_t composition_id, ITfContext* context);
+void trace_edit_target(uint64_t input_id, uint64_t composition_id, EditTargetState state,
+                       const EditTargetEvidence& evidence);
+void trace_context_state(uint64_t input_id, uint64_t composition_id, ITfContext* context);
 
 } // namespace cxxime_tsf
 

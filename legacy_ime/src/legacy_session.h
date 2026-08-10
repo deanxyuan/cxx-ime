@@ -7,7 +7,7 @@
 
 #include <cxxime/ipc_client.h>
 #include <cxxime/input_limits.h>
-#include <cxxime/stage_trace.h>
+#include <cxxime/host_trace.h>
 
 #include <memory>
 #include <vector>
@@ -63,7 +63,7 @@ private:
     uint32_t last_highlighted_ = 0;
     DWORD candidate_page_start_ = 0;
     DWORD candidate_page_size_ = static_cast<DWORD>(cxxime::kCandidateCapacity);
-    cxxime::StageTraceSession stage_trace_session_;
+    cxxime::HostTraceSession host_trace_session_;
     uint32_t last_engine_calls_ = 0;
 };
 

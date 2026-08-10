@@ -5,8 +5,8 @@
 
 namespace cxxime_tsf {
 
-bool start_stage_host_message_monitor();
-void stop_stage_host_message_monitor();
+bool start_host_message_monitor();
+void stop_host_message_monitor();
 
 } // namespace cxxime_tsf
 

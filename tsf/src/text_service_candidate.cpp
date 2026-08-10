@@ -206,9 +206,9 @@ bool TextService::is_candidate_ui_element_shown() const {
 void TextService::_prepare_host_candidate_compatibility() {
     const cxxime_tsf::HostClassificationCompatibilitySnapshot snapshot =
         cxxime_tsf::prepare_host_classification_compatibility();
-    cxxime_tsf::trace_stage_host_classification_compatibility(snapshot);
+    cxxime_tsf::trace_host_classification_compatibility(snapshot);
     if (snapshot.process_matches) {
-        cxxime_tsf::preflight_stage_host_classification_compatibility(
+        cxxime_tsf::preflight_host_classification_compatibility(
             reinterpret_cast<HWND>(snapshot.active_hwnd));
     }
 }

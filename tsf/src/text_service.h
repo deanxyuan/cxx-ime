@@ -22,7 +22,7 @@ class ReadingUIElement;
 #include <cxxime/control_protocol.h>
 #include <cxxime/ipc_client.h>
 #include <cxxime/ipc_protocol.h>
-#include <cxxime/stage_trace.h>
+#include <cxxime/host_trace.h>
 
 #include "effective_edit_target.h"
 #include "status_controller.h"
@@ -106,9 +106,9 @@ public:
     bool is_candidate_ui_element_shown() const;
     void trace_ui_element_method(const char* element, const char* method, bool important = false);
     void trace_candidate_activation_state(ITfDocumentMgr* candidate_document_mgr) const;
-    uint64_t stage_input_id() const { return _stageTraceSession.input_id(); }
-    uint64_t stage_composition_id() const { return _stageTraceSession.composition_id(); }
-    uint64_t ensure_stage_composition_id();
+    uint64_t trace_input_id() const { return _hostTraceSession.input_id(); }
+    uint64_t trace_composition_id() const { return _hostTraceSession.composition_id(); }
+    uint64_t ensure_trace_composition_id();
     void trace_caret_event(const char* action,
                            const char* source,
                            bool resolved,
@@ -191,7 +191,7 @@ private:
     bool _ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam, BOOL* pfEaten);
     bool _ProcessKeyUp(WPARAM wParam, LPARAM lParam);
     void _AbortComposition();
-    void _reset_stage_composition(const char* reason);
+    void _reset_trace_composition(const char* reason);
     ITfContext* _current_edit_context_for_composition() const;
     uint32_t _get_modifiers() const;
     bool _is_caps_lock_on() const;
@@ -347,7 +347,7 @@ private:
     std::chrono::steady_clock::time_point _key_event_start;
     int64_t _last_ipc_us = 0;
     int64_t _last_window_update_us = 0;
-    cxxime::StageTraceSession _stageTraceSession;
+    cxxime::HostTraceSession _hostTraceSession;
 
     // Async trace writer (bounded queue, writer thread, batch flush)
     void _enqueue_trace(const TsfTrace& trace);

@@ -3,7 +3,7 @@
 #include "tsf_ui_element_observer.h"
 #include "tsf_ui_element_identity.h"
 
-#include <cxxime/stage_trace.h>
+#include <cxxime/host_trace.h>
 #include <cxxime/tsf_factory.h>
 
 #include <ctffunc.h>
@@ -50,8 +50,8 @@ void add_active_profile(nlohmann::json& fields, bool without_com) {
     fields["profile_manager_creation"] = without_com ? "without_com" : "com";
     fields["profile_hr"] = static_cast<int64_t>(profile_hr);
     fields["profile_type"] = profile.dwProfileType;
-    fields["profile_clsid"] = cxxime::stage_trace_guid(profile.clsid);
-    fields["profile_guid"] = cxxime::stage_trace_guid(profile.guidProfile);
+    fields["profile_clsid"] = cxxime::host_trace_guid(profile.clsid);
+    fields["profile_guid"] = cxxime::host_trace_guid(profile.guidProfile);
     fields["profile_hkl"] = reinterpret_cast<uintptr_t>(profile.hkl);
 }
 
@@ -59,7 +59,7 @@ void add_element_fields(ITfUIElement* element, nlohmann::json& fields) {
     BSTR description = nullptr;
     const HRESULT description_hr = element->GetDescription(&description);
     const UINT description_length = description ? SysStringLen(description) : 0;
-    const std::string description_digest = cxxime::stage_trace_digest_utf16(
+    const std::string description_digest = cxxime::host_trace_digest_utf16(
         description ? description : L"", description_length);
 
     GUID element_guid = {};
@@ -71,7 +71,7 @@ void add_element_fields(ITfUIElement* element, nlohmann::json& fields) {
     fields["description_len"] = description_length;
     fields["description_digest"] = description_digest;
     fields["guid_hr"] = static_cast<int64_t>(guid_hr);
-    fields["element_guid"] = cxxime::stage_trace_guid(element_guid);
+    fields["element_guid"] = cxxime::host_trace_guid(element_guid);
     fields["is_shown_hr"] = static_cast<int64_t>(shown_hr);
     fields["is_shown"] = shown != FALSE;
     SysFreeString(description);
@@ -130,7 +130,7 @@ void trace_candidate_snapshot(ITfThreadMgr* thread_mgr,
         }
         const UINT length = text ? SysStringLen(text) : 0;
         text_lengths.push_back(length);
-        text_digests.push_back(cxxime::stage_trace_digest_utf16(
+        text_digests.push_back(cxxime::host_trace_digest_utf16(
             text ? text : L"", length));
         SysFreeString(text);
         ++strings_read;
@@ -185,8 +185,8 @@ void trace_candidate_snapshot(ITfThreadMgr* thread_mgr,
         {"result", SUCCEEDED(count_hr) && SUCCEEDED(strings_hr) ? "read" : "incomplete"},
     };
     add_element_fields(element, fields);
-    add_stage_ui_element_identity_fields(element, fields);
-    cxxime::write_stage_trace("tsf", "host.candidate_ui_element", std::move(fields));
+    add_ui_element_identity_fields(element, fields);
+    cxxime::write_host_trace("tsf", "host.candidate_ui_element", std::move(fields));
 
     if (focused_document_mgr) {
         focused_document_mgr->Release();
@@ -196,9 +196,9 @@ void trace_candidate_snapshot(ITfThreadMgr* thread_mgr,
     }
 }
 
-class StageUiElementSink final : public ITfUIElementSink {
+class TraceUiElementSink final : public ITfUIElementSink {
 public:
-    StageUiElementSink(ITfThreadMgr* thread_mgr,
+    TraceUiElementSink(ITfThreadMgr* thread_mgr,
                        ITfUIElementMgr* ui_element_mgr,
                        bool without_com)
         : thread_mgr_(thread_mgr),
@@ -246,13 +246,13 @@ public:
             {"result", "observed"},
         };
         add_active_profile(fields, without_com_);
-        cxxime::write_stage_trace("tsf", "host.ui_element", std::move(fields));
+        cxxime::write_host_trace("tsf", "host.ui_element", std::move(fields));
         trace_snapshot(element_id, "begin");
         return S_OK;
     }
 
     STDMETHODIMP UpdateUIElement(DWORD element_id) override {
-        cxxime::write_stage_trace("tsf", "host.ui_element", {
+        cxxime::write_host_trace("tsf", "host.ui_element", {
             {"action", "update"},
             {"element_id", element_id},
             {"thread_id", GetCurrentThreadId()},
@@ -263,7 +263,7 @@ public:
     }
 
     STDMETHODIMP EndUIElement(DWORD element_id) override {
-        cxxime::write_stage_trace("tsf", "host.ui_element", {
+        cxxime::write_host_trace("tsf", "host.ui_element", {
             {"action", "end"},
             {"element_id", element_id},
             {"thread_id", GetCurrentThreadId()},
@@ -273,7 +273,7 @@ public:
     }
 
 private:
-    ~StageUiElementSink() {
+    ~TraceUiElementSink() {
         ui_element_mgr_->Release();
         thread_mgr_->Release();
     }
@@ -282,7 +282,7 @@ private:
         ITfUIElement* element = nullptr;
         const HRESULT get_hr = ui_element_mgr_->GetUIElement(element_id, &element);
         if (FAILED(get_hr) || !element) {
-            cxxime::write_stage_trace("tsf", "host.ui_element_snapshot", {
+            cxxime::write_host_trace("tsf", "host.ui_element_snapshot", {
                 {"action", action ? action : ""},
                 {"element_id", element_id},
                 {"get_hr", static_cast<int64_t>(get_hr)},
@@ -319,7 +319,7 @@ private:
             {"result", "read"},
         };
         add_element_fields(element, fields);
-        cxxime::write_stage_trace("tsf", "host.ui_element_snapshot", std::move(fields));
+        cxxime::write_host_trace("tsf", "host.ui_element_snapshot", std::move(fields));
         element->Release();
     }
 
@@ -331,9 +331,9 @@ private:
 
 } // namespace
 
-void start_stage_ui_element_observer(ITfThreadMgr* thread_mgr, DWORD activate_flags) {
+void start_ui_element_observer(ITfThreadMgr* thread_mgr, DWORD activate_flags) {
     if ((activate_flags & TF_TMF_UIELEMENTENABLEDONLY) == 0) {
-        cxxime::write_stage_trace("tsf", "host.ui_element_observer", {
+        cxxime::write_host_trace("tsf", "host.ui_element_observer", {
             {"action", "start"},
             {"activate_flags", activate_flags},
             {"thread_id", GetCurrentThreadId()},
@@ -343,7 +343,7 @@ void start_stage_ui_element_observer(ITfThreadMgr* thread_mgr, DWORD activate_fl
     }
 
     if (g_ui_element_cookie != TF_INVALID_COOKIE) {
-        cxxime::write_stage_trace("tsf", "host.ui_element_observer", {
+        cxxime::write_host_trace("tsf", "host.ui_element_observer", {
             {"action", "start"},
             {"installed_thread_id", g_ui_element_thread_id},
             {"current_thread_id", GetCurrentThreadId()},
@@ -362,11 +362,11 @@ void start_stage_ui_element_observer(ITfThreadMgr* thread_mgr, DWORD activate_fl
         ? ui_element_mgr->QueryInterface(
             IID_ITfSource, reinterpret_cast<void**>(&source))
         : E_NOINTERFACE;
-    StageUiElementSink* sink = nullptr;
+    TraceUiElementSink* sink = nullptr;
     HRESULT advise_hr = E_OUTOFMEMORY;
     DWORD cookie = TF_INVALID_COOKIE;
     if (source && thread_mgr) {
-        sink = new (std::nothrow) StageUiElementSink(
+        sink = new (std::nothrow) TraceUiElementSink(
             thread_mgr, ui_element_mgr,
             (activate_flags & TF_TMAE_COMLESS) != 0);
         if (sink) {
@@ -393,7 +393,7 @@ void start_stage_ui_element_observer(ITfThreadMgr* thread_mgr, DWORD activate_fl
         ui_element_mgr->Release();
     }
 
-    cxxime::write_stage_trace("tsf", "host.ui_element_observer", {
+    cxxime::write_host_trace("tsf", "host.ui_element_observer", {
         {"action", "start"},
         {"manager_hr", static_cast<int64_t>(manager_hr)},
         {"source_hr", static_cast<int64_t>(source_hr)},

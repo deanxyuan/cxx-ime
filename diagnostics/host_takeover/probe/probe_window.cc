@@ -2,7 +2,7 @@
 
 #include "probe_app.h"
 
-#include <cxxime/stage_trace.h>
+#include <cxxime/host_trace.h>
 
 #include <utility>
 #include <windowsx.h>
@@ -32,17 +32,17 @@ void ProbeApp::read_composition(LPARAM flags) {
         if (result_bytes > 0) {
             std::wstring text(static_cast<size_t>(result_bytes) / sizeof(wchar_t), L'\0');
             ImmGetCompositionStringW(himc_, GCS_RESULTSTR, &text[0], result_bytes);
-            result_digest = cxxime::stage_trace_digest_utf16(text);
+            result_digest = cxxime::host_trace_digest_utf16(text);
             committed_ += text;
         }
     }
-    cxxime::write_stage_trace("probe", "probe.imm_read", {
+    cxxime::write_host_trace("probe", "probe.imm_read", {
         {"composition_id", ensure_composition_id()},
         {"flags", static_cast<uint64_t>(flags)},
         {"comp_bytes", comp_bytes},
         {"result_bytes", result_bytes},
         {"comp_len", composition_.size()},
-        {"comp_digest", cxxime::stage_trace_digest_utf16(composition_)},
+        {"comp_digest", cxxime::host_trace_digest_utf16(composition_)},
         {"result_digest", result_digest},
         {"committed_len", committed_.size()},
         {"result", "read"},
@@ -58,7 +58,7 @@ void ProbeApp::trace_ime_message(UINT message,
                                     WPARAM command,
                                     LPARAM flags,
                                     const char* action) {
-    cxxime::write_stage_trace("probe", "probe.ime_message", {
+    cxxime::write_host_trace("probe", "probe.ime_message", {
         {"composition_id", composition_id_},
         {"message", message},
         {"command", static_cast<uint64_t>(command)},
@@ -80,7 +80,7 @@ bool ProbeApp::candidate_should_draw() const {
 
 uint64_t ProbeApp::ensure_composition_id() {
     if (composition_id_ == 0) {
-        composition_id_ = cxxime::stage_trace_next_id();
+        composition_id_ = cxxime::host_trace_next_id();
     }
     return composition_id_;
 }
@@ -168,7 +168,7 @@ LRESULT ProbeApp::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
     case WM_COMMAND:
         if (LOWORD(wparam) == kGateCheckboxId) {
             gate_on_signal_ = SendMessageW(gate_checkbox_, BM_GETCHECK, 0, 0) == BST_CHECKED;
-            cxxime::write_stage_trace("probe", "probe.signal_gate", {
+            cxxime::write_host_trace("probe", "probe.signal_gate", {
                 {"composition_id", composition_id_},
                 {"enabled", gate_on_signal_},
                 {"result", "changed"},
@@ -253,7 +253,7 @@ LRESULT ProbeApp::handle_message(UINT message, WPARAM wparam, LPARAM lparam) {
         return result;
     }
     case WM_INPUTLANGCHANGE:
-        cxxime::write_stage_trace("probe", "probe.input_language", {
+        cxxime::write_host_trace("probe", "probe.input_language", {
             {"hkl", reinterpret_cast<uintptr_t>(reinterpret_cast<HKL>(lparam))},
             {"result", "changed"},
         });

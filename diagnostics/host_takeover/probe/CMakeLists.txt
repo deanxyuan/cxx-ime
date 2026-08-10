@@ -17,7 +17,7 @@ add_executable(cxxime-ime-host-probe WIN32
 
 if(NOT CXXIME_ENABLE_HOST_DIAGNOSTICS)
     target_sources(cxxime-ime-host-probe PRIVATE
-        ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/stage_trace.cc
+        ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/host_trace.cc
     )
 endif()
 

@@ -5,7 +5,7 @@
 
 namespace cxxime_tsf {
 
-void trace_stage_host_ui_callsite(const char* boundary, bool element_registered);
+void trace_host_ui_callsite(const char* boundary, bool element_registered);
 
 } // namespace cxxime_tsf
 

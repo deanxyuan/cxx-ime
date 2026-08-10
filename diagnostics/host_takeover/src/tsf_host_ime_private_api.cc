@@ -5,9 +5,9 @@
 namespace cxxime_tsf {
 
 void add_host_ime_private_api_fields(
-    nlohmann::json& fields,
-    const HostImePrivateApiRequest& request,
-    const HostImePrivateApiSnapshot& snapshot) {
+                                     nlohmann::json& fields,
+                                     const HostImePrivateApiRequest& request,
+                                     const HostImePrivateApiSnapshot& snapshot) {
     fields["private_api_architecture_supported"] =
         snapshot.architecture_supported;
     fields["private_api_manager_vtable_read"] = snapshot.manager_vtable_read;

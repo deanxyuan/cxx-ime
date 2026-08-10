@@ -8,9 +8,9 @@
 #include <mutex>
 #include <utility>
 
-#include <cxxime/stage_trace.h>
+#include <cxxime/host_trace.h>
 
-#include "legacy_stage.h"
+#include "legacy_trace.h"
 
 namespace cxxime_legacy {
 namespace {
@@ -91,7 +91,7 @@ void LegacyImeSession::set_active(bool active) {
 }
 
 bool LegacyImeSession::process_key(UINT key_code, LPARAM key_data, const BYTE* key_state) {
-    stage_trace_session_.begin_input(key_code, key_data);
+    host_trace_session_.begin_input(key_code, key_data);
     last_engine_calls_ = 0;
     if (!ImmGetOpenStatus(himc_)) {
         return false;
@@ -130,17 +130,17 @@ bool LegacyImeSession::process_key(UINT key_code, LPARAM key_data, const BYTE* k
     const bool has_visible_state = response.composing || response.preedit[0] ||
                                    response.commit_text[0] || response.candidate_count > 0;
     if (has_visible_state) {
-        stage_trace_session_.ensure_composition();
+        host_trace_session_.ensure_composition();
     }
-    trace_stage_legacy_response(
-        stage_trace_session_.input_id(), stage_trace_session_.composition_id(),
+    trace_legacy_response(
+        host_trace_session_.input_id(), host_trace_session_.composition_id(),
         session_id_, key_code,
         static_cast<int>(response.status), response.composing, strlen(response.preedit),
         strlen(response.commit_text), response.candidate_count, response.highlighted);
     apply_response(response);
     const bool eaten = should_eat_response(response, key_code, was_composing);
     if (!composing_ && !candidate_open_) {
-        stage_trace_session_.reset_composition();
+        host_trace_session_.reset_composition();
     }
     return eaten;
 }
@@ -345,8 +345,8 @@ void LegacyImeSession::update_composition(const std::wstring& preedit,
     write_composition(truncate_text(preedit), {});
     write_candidates(candidates, highlighted);
 
-    trace_stage_legacy_candidate_signal(stage_trace_session_.input_id(),
-                                        stage_trace_session_.composition_id(), preedit.size(),
+    trace_legacy_candidate_signal(host_trace_session_.input_id(),
+                                        host_trace_session_.composition_id(), preedit.size(),
                                         candidates.size(), highlighted, candidate_open_);
 
     if (!composing_) {
@@ -420,8 +420,8 @@ void LegacyImeSession::write_composition(std::wstring preedit, std::wstring resu
     ImmUnlockIMCC(input_context->hCompStr);
     ImmUnlockIMC(himc_);
 
-    trace_stage_legacy_imm_write(
-        himc_, stage_trace_session_.input_id(), stage_trace_session_.composition_id(),
+    trace_legacy_imm_write(
+        himc_, host_trace_session_.input_id(), host_trace_session_.composition_id(),
         preedit, result);
 }
 
@@ -447,8 +447,8 @@ void LegacyImeSession::write_candidates(const std::vector<std::wstring>& raw_can
     }
     rewrite_last_candidates(false);
 
-    trace_stage_legacy_candidate_snapshot(
-        himc_, stage_trace_session_.input_id(), stage_trace_session_.composition_id(),
+    trace_legacy_candidate_snapshot(
+        himc_, host_trace_session_.input_id(), host_trace_session_.composition_id(),
         last_candidates_, last_highlighted_,
         candidate_page_start_, candidate_page_size_);
 }
@@ -557,8 +557,8 @@ void LegacyImeSession::add_ime_message(UINT message, WPARAM wparam, LPARAM lpara
     ImmUnlockIMCC(input_context->hMsgBuf);
     ImmUnlockIMC(himc_);
     const BOOL generated = ImmGenerateMessage(himc_);
-    trace_stage_legacy_imm_message(himc_, stage_trace_session_.input_id(),
-                                   stage_trace_session_.composition_id(), message,
+    trace_legacy_imm_message(himc_, host_trace_session_.input_id(),
+                                   host_trace_session_.composition_id(), message,
                                    wparam, lparam, generated != FALSE);
 }
 

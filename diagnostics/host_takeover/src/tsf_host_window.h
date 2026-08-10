@@ -10,10 +10,10 @@
 
 namespace cxxime_tsf {
 
-void trace_stage_host_window_snapshot(HWND target_hwnd,
-                                      HIMC target_himc,
-                                      uint64_t input_id,
-                                      uint64_t composition_id);
+void trace_host_window_snapshot(HWND target_hwnd,
+                                HIMC target_himc,
+                                uint64_t input_id,
+                                uint64_t composition_id);
 
 } // namespace cxxime_tsf
 

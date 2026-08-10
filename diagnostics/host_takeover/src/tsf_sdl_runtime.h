@@ -5,9 +5,9 @@
 
 namespace cxxime_tsf {
 
-bool stage_profile_transition_capture_requested();
-void trace_stage_sdl_runtime();
-void stop_stage_sdl_event_watch();
+bool trace_profile_transition_capture_requested();
+void trace_sdl_runtime();
+void stop_sdl_event_watch();
 
 } // namespace cxxime_tsf
 

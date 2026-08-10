@@ -11,7 +11,7 @@ class TextService;
 
 namespace cxxime_tsf {
 
-struct StageCompositionEditResult {
+struct TraceCompositionEditResult {
     const char* action = nullptr;
     size_t text_length = 0;
     size_t selection_offset = 0;
@@ -27,8 +27,8 @@ struct StageCompositionEditResult {
     bool composition_active = false;
 };
 
-void trace_stage_composition_edit(TextService* service,
-                                  const StageCompositionEditResult& result);
+void trace_composition_edit(TextService* service,
+                            const TraceCompositionEditResult& result);
 
 } // namespace cxxime_tsf
 

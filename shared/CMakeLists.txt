@@ -2,11 +2,11 @@ project(cxxime-shared CXX)
 
 if(CXXIME_ENABLE_HOST_DIAGNOSTICS)
     set(CXXIME_SHARED_DIAGNOSTIC_SOURCES
-        ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/stage_trace.cc
+        ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/src/host_trace.cc
     )
 else()
     set(CXXIME_SHARED_DIAGNOSTIC_SOURCES
-        ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/stubs/stage_trace.cc
+        ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/stubs/host_trace.cc
     )
 endif()
 

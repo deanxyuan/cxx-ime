@@ -4,7 +4,7 @@
 
 #include "ui_element_sink.h"
 
-#include <cxxime/stage_trace.h>
+#include <cxxime/host_trace.h>
 #include <cxxime/tsf_factory.h>
 
 #include <ctfutb.h>
@@ -35,15 +35,15 @@ const std::wstring& ProbeApp::initialization_error() const {
     return initialization_error_;
 }
 
-bool ProbeApp::fail_initialization(const char* stage, HRESULT result) {
+bool ProbeApp::fail_initialization(const char* step, HRESULT result) {
     std::wostringstream message;
-    message << L"Failed to initialize the IME host Probe.\n\nStep: " << stage
+    message << L"Failed to initialize the IME host Probe.\n\nStep: " << step
             << L"\nHRESULT: 0x" << std::uppercase << std::hex << std::setw(8)
             << std::setfill(L'0') << static_cast<uint32_t>(result);
     initialization_error_ = message.str();
 
-    cxxime::write_stage_trace("probe", "probe.initialization", {
-        {"stage", stage},
+    cxxime::write_host_trace("probe", "probe.initialization", {
+        {"step", step},
         {"hresult", static_cast<uint32_t>(result)},
         {"com_mode", com_mode_name(com_mode_)},
         {"activate_flags", activate_flags_},
@@ -136,7 +136,7 @@ bool ProbeApp::initialize(HINSTANCE instance, ProbeComMode com_mode) {
         return fail_initialization("ITfSource::AdviseSink(ITfUIElementSink)", advise_result);
     }
 
-    cxxime::write_stage_trace("probe", "probe.runtime", {
+    cxxime::write_host_trace("probe", "probe.runtime", {
         {"hwnd", reinterpret_cast<uintptr_t>(hwnd_)},
         {"himc", reinterpret_cast<uintptr_t>(himc_)},
         {"activate_flags", activate_flags_},

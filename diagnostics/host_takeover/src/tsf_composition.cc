@@ -4,12 +4,12 @@
 
 #include "text_service.h"
 
-#include <cxxime/stage_trace.h>
+#include <cxxime/host_trace.h>
 
 namespace cxxime_tsf {
 
-void trace_stage_composition_edit(TextService* service,
-                                  const StageCompositionEditResult& result) {
+void trace_composition_edit(TextService* service,
+                            const TraceCompositionEditResult& result) {
     const bool async_pending = SUCCEEDED(result.request_hr) &&
                                SUCCEEDED(result.edit_hr) &&
                                result.action_hr == E_PENDING &&
@@ -26,9 +26,9 @@ void trace_stage_composition_edit(TextService* service,
                !result.composition_returned) {
         outcome = "host_rejected";
     }
-    cxxime::write_stage_trace("tsf", "tsf.composition", {
-        {"input_id", service ? service->stage_input_id() : 0},
-        {"composition_id", service ? service->stage_composition_id() : 0},
+    cxxime::write_host_trace("tsf", "tsf.composition", {
+        {"input_id", service ? service->trace_input_id() : 0},
+        {"composition_id", service ? service->trace_composition_id() : 0},
         {"action", result.action ? result.action : ""},
         {"text_len", result.text_length},
         {"selection_offset", result.selection_offset},

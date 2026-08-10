@@ -636,11 +636,11 @@ def copy_installer_scripts(config: str, host_diagnostics: bool) -> None:
             print(f"  {fn}")
 
     if host_diagnostics:
-        stage_exporter = os.path.join(
-            HOST_TAKEOVER_DIAGNOSTICS, "scripts", "export_stage_trace.ps1"
+        host_trace_exporter = os.path.join(
+            HOST_TAKEOVER_DIAGNOSTICS, "scripts", "export_host_trace.ps1"
         )
-        shutil.copy2(stage_exporter, DIST_DIR)
-        print("  export_stage_trace.ps1")
+        shutil.copy2(host_trace_exporter, DIST_DIR)
+        print("  export_host_trace.ps1")
 
     # NSIS template and function includes.
     shutil.copy2(os.path.join(SCRIPTS, "cxxime-setup.nsi"), DIST_DIR)
@@ -779,7 +779,7 @@ def print_summary(config: str, include_x86_modules: bool, host_diagnostics: bool
             print(f"  {filename:<24} {description}")
     print("  collect_diagnostics.ps1  Diagnostics collector")
     if host_diagnostics:
-        print("  export_stage_trace.ps1   Host trace exporter")
+        print("  export_host_trace.ps1    Host trace exporter")
     print("  cxxime-setup.nsi         NSIS script")
     print("  license.txt              License")
     print("  THIRD_PARTY_NOTICES.txt  Third-party notices")

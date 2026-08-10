@@ -2,13 +2,13 @@
 
 #include "tsf_host_classification.h"
 
-#include <cxxime/stage_trace.h>
+#include <cxxime/host_trace.h>
 
 namespace cxxime_tsf {
 
-void trace_stage_host_classification_compatibility(
-    const HostClassificationCompatibilitySnapshot& snapshot) {
-    cxxime::write_stage_trace("tsf", "host.classification_compatibility", {
+void trace_host_classification_compatibility(
+                                             const HostClassificationCompatibilitySnapshot& snapshot) {
+    cxxime::write_host_trace("tsf", "host.classification_compatibility", {
         {"action", snapshot.action},
         {"result", snapshot.result},
         {"active", snapshot.active},

@@ -1,6 +1,6 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
-#include <cxxime/stage_trace.h>
+#include <cxxime/host_trace.h>
 
 #include <atomic>
 #include <climits>
@@ -19,9 +19,9 @@
 namespace cxxime {
 namespace {
 
-std::atomic<uint64_t> g_stage_trace_sequence{0};
-std::atomic<uint64_t> g_stage_trace_id{0};
-std::mutex g_stage_trace_mutex;
+std::atomic<uint64_t> g_host_trace_sequence{0};
+std::atomic<uint64_t> g_host_trace_id{0};
+std::mutex g_host_trace_mutex;
 
 std::string wide_to_utf8(const wchar_t* text) {
     if (!text || !text[0]) {
@@ -49,7 +49,7 @@ std::string current_process_name() {
 std::wstring trace_directory() {
     wchar_t override_path[32768] = {};
     const DWORD override_len = GetEnvironmentVariableW(
-        L"CXXIME_STAGE_TRACE_DIR", override_path, ARRAYSIZE(override_path));
+        L"CXXIME_HOST_TRACE_DIR", override_path, ARRAYSIZE(override_path));
     if (override_len > 0 && override_len < ARRAYSIZE(override_path)) {
         CreateDirectoryW(override_path, nullptr);
         return override_path;
@@ -79,8 +79,8 @@ std::wstring trace_path(const char* component) {
         return {};
     }
 
-    const std::wstring arch = strcmp(stage_trace_arch(), "x64") == 0 ? L"x64" : L"x86";
-    const std::wstring filename = L"stage1-" + component_filename(component) + L"-" +
+    const std::wstring arch = strcmp(host_trace_arch(), "x64") == 0 ? L"x64" : L"x86";
+    const std::wstring filename = L"host-" + component_filename(component) + L"-" +
                                   std::to_wstring(GetCurrentProcessId()) + L"-" + arch +
                                   L".jsonl";
     return directory + L"\\" + filename;
@@ -125,11 +125,11 @@ uint64_t mix64(uint64_t value) {
 
 } // namespace
 
-const char* stage_trace_build_id() {
-    return kStageTraceBuildId;
+const char* host_trace_build_id() {
+    return kHostTraceBuildId;
 }
 
-const char* stage_trace_arch() {
+const char* host_trace_arch() {
 #ifdef _WIN64
     return "x64";
 #else
@@ -137,19 +137,19 @@ const char* stage_trace_arch() {
 #endif
 }
 
-uint64_t stage_trace_next_id() {
-    const uint64_t local = g_stage_trace_id.fetch_add(1, std::memory_order_relaxed) + 1;
+uint64_t host_trace_next_id() {
+    const uint64_t local = g_host_trace_id.fetch_add(1, std::memory_order_relaxed) + 1;
     return (static_cast<uint64_t>(GetCurrentProcessId()) << 32) | (local & 0xffffffffULL);
 }
 
-uint64_t stage_trace_input_id(uint32_t key_code, intptr_t key_data) {
+uint64_t host_trace_input_id(uint32_t key_code, intptr_t key_data) {
     UNREFERENCED_PARAMETER(key_data);
     const uint64_t thread = static_cast<uint64_t>(GetCurrentThreadId());
     const uint64_t message_time = static_cast<uint32_t>(GetMessageTime());
     return mix64((thread << 32) ^ message_time ^ (static_cast<uint64_t>(key_code) << 16));
 }
 
-std::string stage_trace_guid(REFGUID guid) {
+std::string host_trace_guid(REFGUID guid) {
     char buffer[64] = {};
     snprintf(buffer, sizeof(buffer),
              "{%08lx-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x}",
@@ -159,7 +159,7 @@ std::string stage_trace_guid(REFGUID guid) {
     return buffer;
 }
 
-std::string stage_trace_digest_utf16(const wchar_t* text, size_t length) {
+std::string host_trace_digest_utf16(const wchar_t* text, size_t length) {
     BCRYPT_ALG_HANDLE algorithm = nullptr;
     BCRYPT_HASH_HANDLE hash = nullptr;
     DWORD object_size = 0;
@@ -217,11 +217,11 @@ std::string stage_trace_digest_utf16(const wchar_t* text, size_t length) {
     return result;
 }
 
-std::string stage_trace_digest_utf16(const std::wstring& text) {
-    return stage_trace_digest_utf16(text.data(), text.size());
+std::string host_trace_digest_utf16(const std::wstring& text) {
+    return host_trace_digest_utf16(text.data(), text.size());
 }
 
-void write_stage_trace(const char* component, const char* event, nlohmann::json fields) {
+void write_host_trace(const char* component, const char* event, nlohmann::json fields) {
     if (diagnostics_config().trace_mode == DiagnosticTraceMode::kOff) {
         return;
     }
@@ -229,12 +229,11 @@ void write_stage_trace(const char* component, const char* event, nlohmann::json 
         fields = nlohmann::json::object();
     }
 
-    fields["schema_version"] = kStageTraceSchemaVersion;
-    fields["build_id"] = kStageTraceBuildId;
-    fields["stage"] = kStageTraceStage;
-    fields["arch"] = stage_trace_arch();
+    fields["schema_version"] = kHostTraceSchemaVersion;
+    fields["build_id"] = kHostTraceBuildId;
+    fields["arch"] = host_trace_arch();
     fields["event"] = event ? event : "";
-    fields["seq"] = g_stage_trace_sequence.fetch_add(1, std::memory_order_relaxed) + 1;
+    fields["seq"] = g_host_trace_sequence.fetch_add(1, std::memory_order_relaxed) + 1;
     fields["timestamp_100ns"] = timestamp_100ns();
     fields["pid"] = GetCurrentProcessId();
     fields["tid"] = GetCurrentThreadId();
@@ -253,7 +252,7 @@ void write_stage_trace(const char* component, const char* event, nlohmann::json 
         return;
     }
 
-    std::lock_guard<std::mutex> lock(g_stage_trace_mutex);
+    std::lock_guard<std::mutex> lock(g_host_trace_mutex);
     rotate_if_needed(path);
     FILE* file = nullptr;
     if (_wfopen_s(&file, path.c_str(), L"ab") != 0 || !file) {

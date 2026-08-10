@@ -12,7 +12,7 @@
 
 namespace cxxime_tsf {
 
-struct StageImmCandidateSnapshot {
+struct TraceImmCandidateSnapshot {
     DWORD query_bytes = 0;
     DWORD copied_bytes = 0;
     DWORD style = 0;
@@ -27,7 +27,7 @@ struct StageImmCandidateSnapshot {
     std::vector<std::string> text_digests;
 };
 
-StageImmCandidateSnapshot capture_stage_imm_candidate_snapshot(HIMC himc);
+TraceImmCandidateSnapshot capture_imm_candidate_snapshot(HIMC himc);
 
 } // namespace cxxime_tsf
 

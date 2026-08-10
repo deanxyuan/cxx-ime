@@ -2,7 +2,7 @@
 
 #include "window_owner_probe.h"
 
-#include <cxxime/stage_trace.h>
+#include <cxxime/host_trace.h>
 
 #include <dwmapi.h>
 
@@ -97,14 +97,14 @@ const std::wstring& WindowOwnerProbe::initialization_error() const {
     return initialization_error_;
 }
 
-bool WindowOwnerProbe::fail_initialization(const char* stage, DWORD error) {
+bool WindowOwnerProbe::fail_initialization(const char* step, DWORD error) {
     std::wostringstream message;
-    message << L"Failed to initialize the window owner Probe.\n\nStep: " << stage
+    message << L"Failed to initialize the window owner Probe.\n\nStep: " << step
             << L"\nWin32 error: 0x" << std::uppercase << std::hex << std::setw(8)
             << std::setfill(L'0') << error;
     initialization_error_ = message.str();
-    cxxime::write_stage_trace("probe", "probe.window_owner.initialization", {
-        {"stage", stage ? stage : ""},
+    cxxime::write_host_trace("probe", "probe.window_owner.initialization", {
+        {"step", step ? step : ""},
         {"win32_error", error},
         {"result", "failed"},
     });
@@ -157,7 +157,7 @@ bool WindowOwnerProbe::initialize(HINSTANCE instance) {
 
     ShowWindow(hwnd_, SW_SHOWNORMAL);
     UpdateWindow(hwnd_);
-    cxxime::write_stage_trace("probe", "probe.window_owner.runtime", {
+    cxxime::write_host_trace("probe", "probe.window_owner.runtime", {
         {"hwnd", reinterpret_cast<uintptr_t>(hwnd_)},
         {"hook_count", hooks_.size()},
         {"result", "ready"},
@@ -237,7 +237,7 @@ void WindowOwnerProbe::trace_window(const char* action,
     const HRESULT cloaked_result = DwmGetWindowAttribute(
         hwnd, DWMWA_CLOAKED, &cloaked, sizeof(cloaked));
 
-    cxxime::write_stage_trace("probe", "probe.window_owner.event", {
+    cxxime::write_host_trace("probe", "probe.window_owner.event", {
         {"action", action ? action : ""},
         {"win_event", event},
         {"event_thread", event_thread},

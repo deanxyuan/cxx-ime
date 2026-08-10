@@ -2,7 +2,7 @@
 
 #include "probe_app.h"
 
-#include <cxxime/stage_trace.h>
+#include <cxxime/host_trace.h>
 
 #include <ctffunc.h>
 
@@ -17,7 +17,7 @@ HRESULT ProbeApp::on_begin_ui_element(DWORD element_id, BOOL* show) {
     *show = FALSE;
     ensure_composition_id();
     trace_active_keyboard_profile("begin_ui_element");
-    cxxime::write_stage_trace("probe", "probe.ui_element", {
+    cxxime::write_host_trace("probe", "probe.ui_element", {
         {"composition_id", composition_id_},
         {"element_id", element_id},
         {"action", "begin"},
@@ -29,7 +29,7 @@ HRESULT ProbeApp::on_begin_ui_element(DWORD element_id, BOOL* show) {
 }
 
 HRESULT ProbeApp::on_update_ui_element(DWORD element_id) {
-    cxxime::write_stage_trace("probe", "probe.ui_element", {
+    cxxime::write_host_trace("probe", "probe.ui_element", {
         {"composition_id", ensure_composition_id()},
         {"element_id", element_id},
         {"action", "update"},
@@ -57,7 +57,7 @@ HRESULT ProbeApp::on_end_ui_element(DWORD element_id) {
         reading_element_id_ = TF_INVALID_UIELEMENTID;
         reading_.clear();
     }
-    cxxime::write_stage_trace("probe", "probe.ui_element", {
+    cxxime::write_host_trace("probe", "probe.ui_element", {
         {"composition_id", composition_id_},
         {"element_id", element_id},
         {"element_type", element_type},
@@ -79,7 +79,7 @@ void ProbeApp::update_ui_element(DWORD element_id, const char* action) {
     ITfUIElement* element = nullptr;
     const HRESULT get_hr = ui_element_mgr_->GetUIElement(element_id, &element);
     if (FAILED(get_hr) || !element) {
-        cxxime::write_stage_trace("probe", "probe.ui_element", {
+        cxxime::write_host_trace("probe", "probe.ui_element", {
             {"composition_id", composition_id_},
             {"element_id", element_id},
             {"action", action ? action : ""},
@@ -106,7 +106,7 @@ void ProbeApp::update_ui_element(DWORD element_id, const char* action) {
         update_reading(element, element_id, action);
         reading->Release();
     } else {
-        cxxime::write_stage_trace("probe", "probe.ui_element", {
+        cxxime::write_host_trace("probe", "probe.ui_element", {
             {"composition_id", composition_id_},
             {"element_id", element_id},
             {"action", action ? action : ""},
@@ -157,7 +157,7 @@ void ProbeApp::update_candidate(ITfUIElement* element, DWORD element_id, const c
             }
             std::wstring value(text ? text : L"", text ? SysStringLen(text) : 0);
             lengths.push_back(value.size());
-            digests.push_back(cxxime::stage_trace_digest_utf16(value));
+            digests.push_back(cxxime::host_trace_digest_utf16(value));
             next_candidates.push_back(std::move(value));
             SysFreeString(text);
         }
@@ -182,7 +182,7 @@ void ProbeApp::update_candidate(ITfUIElement* element, DWORD element_id, const c
     current_page_ = current_page;
     candidate_element_id_ = element_id;
     EnableWindow(original_ui_checkbox_, FALSE);
-    cxxime::write_stage_trace("probe", "probe.candidate_snapshot", {
+    cxxime::write_host_trace("probe", "probe.candidate_snapshot", {
         {"composition_id", composition_id_},
         {"element_id", element_id},
         {"action", action ? action : ""},
@@ -228,12 +228,12 @@ void ProbeApp::update_reading(ITfUIElement* element, DWORD element_id, const cha
     }
     SysFreeString(text);
     reading_element_id_ = element_id;
-    cxxime::write_stage_trace("probe", "probe.reading_snapshot", {
+    cxxime::write_host_trace("probe", "probe.reading_snapshot", {
         {"composition_id", composition_id_},
         {"element_id", element_id},
         {"action", action ? action : ""},
         {"text_len", reading_.size()},
-        {"text_digest", cxxime::stage_trace_digest_utf16(reading_)},
+        {"text_digest", cxxime::host_trace_digest_utf16(reading_)},
         {"string_hr", static_cast<int64_t>(string_hr)},
         {"result", SUCCEEDED(string_hr) ? "read" : "failed"},
     });
