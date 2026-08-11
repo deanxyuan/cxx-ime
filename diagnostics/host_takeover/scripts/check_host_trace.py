@@ -5,8 +5,8 @@ import argparse
 import sys
 
 from conversion_check import conversion_sync_gaps
-from t2_check import candidate_visibility_gaps, t2_evidence_gaps
-from t3_check import comless_evidence_gaps
+from comless_check import comless_evidence_gaps
+from host_behavior_check import candidate_visibility_gaps, host_behavior_evidence_gaps
 from trace_common import (
     DEFAULT_BUILD_ID,
     evidence_gaps,
@@ -24,7 +24,7 @@ def main() -> int:
     parser.add_argument("--require-summary", action="store_true")
     parser.add_argument("--require-candidate-visibility-toggle", action="store_true")
     parser.add_argument("--require-conversion-sync", action="store_true")
-    parser.add_argument("--require-t2", action="store_true")
+    parser.add_argument("--require-host-behavior", action="store_true")
     parser.add_argument("--require-comless", choices=("uninitialized", "mta"))
     args = parser.parse_args()
 
@@ -36,8 +36,8 @@ def main() -> int:
         gaps.extend(candidate_visibility_gaps(records, args.kind))
     if args.require_conversion_sync:
         gaps.extend(conversion_sync_gaps(records, args.kind))
-    if args.require_t2:
-        gaps.extend(t2_evidence_gaps(records, args.kind))
+    if args.require_host_behavior:
+        gaps.extend(host_behavior_evidence_gaps(records, args.kind))
     if args.require_comless:
         gaps.extend(comless_evidence_gaps(records, args.kind, args.require_comless))
     report(records, args.kind)

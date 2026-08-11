@@ -1,4 +1,4 @@
-"""T3 COM-less activation evidence checks."""
+"""COM-less activation evidence checks."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ def probe_comless_gaps(
     )
     if not activation_verified:
         gaps.append(
-            f"T3: Probe did not use the TSF factory in {com_mode} COM mode"
+            f"Probe did not use the TSF factory in {com_mode} COM mode"
         )
 
     if not any(
@@ -36,7 +36,7 @@ def probe_comless_gaps(
         for record in records
     ):
         gaps.append(
-            "T3: Probe did not verify the COM-less profile through "
+            "Probe did not verify the COM-less profile through "
             "without-COM manager creation"
         )
     if not any(
@@ -46,7 +46,7 @@ def probe_comless_gaps(
         for record in records
     ):
         gaps.append(
-            "T3: Probe did not resolve the composition display attribute through "
+            "Probe did not resolve the composition display attribute through "
             "without-COM manager creation"
         )
     if not any(
@@ -56,14 +56,14 @@ def probe_comless_gaps(
         and record["count"] > 0
         for record in records
     ):
-        gaps.append("T3: Probe did not read a non-empty candidate snapshot")
+        gaps.append("Probe did not read a non-empty candidate snapshot")
     if not any(
         record.get("event") == "probe.imm_read"
         and isinstance(record.get("result_bytes"), int)
         and record["result_bytes"] > 0
         for record in records
     ):
-        gaps.append("T3: Probe did not read a committed result")
+        gaps.append("Probe did not read a committed result")
     return gaps
 
 
@@ -83,7 +83,7 @@ def runtime_comless_gaps(records: list[dict[str, Any]]) -> list[str]:
     )
     if not activation_verified:
         gaps.append(
-            "T3: runtime COM-less activation or without-COM profile factory "
+            "runtime COM-less activation or without-COM profile factory "
             "evidence is incomplete"
         )
 
@@ -93,7 +93,7 @@ def runtime_comless_gaps(records: list[dict[str, Any]]) -> list[str]:
         and record["count"] > 0
         for record in records
     ):
-        gaps.append("T3: runtime did not publish a non-empty candidate snapshot")
+        gaps.append("runtime did not publish a non-empty candidate snapshot")
     return gaps
 
 

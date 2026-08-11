@@ -1,4 +1,4 @@
-"""T2 UIElement and capability evidence checks."""
+"""Host UI element and capability evidence checks."""
 
 from __future__ import annotations
 
@@ -42,7 +42,7 @@ def candidate_visibility_gaps(
     return []
 
 
-def t2_probe_gaps(records: list[dict[str, Any]]) -> list[str]:
+def probe_host_behavior_gaps(records: list[dict[str, Any]]) -> list[str]:
     gaps: list[str] = []
 
     runtime_ready = any(
@@ -53,7 +53,7 @@ def t2_probe_gaps(records: list[dict[str, Any]]) -> list[str]:
         for record in records
     )
     if not runtime_ready:
-        gaps.append("T2: Probe did not activate with UIELEMENTENABLEDONLY")
+        gaps.append("Probe did not activate with UIELEMENTENABLEDONLY")
 
     profile_fields = (
         "category_is_keyboard",
@@ -70,7 +70,7 @@ def t2_probe_gaps(records: list[dict[str, Any]]) -> list[str]:
         for record in records
     )
     if not profile_verified:
-        gaps.append("T2: active keyboard profile categories were not verified")
+        gaps.append("active keyboard profile categories were not verified")
 
     snapshots = [
         record for record in records
@@ -88,7 +88,7 @@ def t2_probe_gaps(records: list[dict[str, Any]]) -> list[str]:
         and 0 <= record["current_page"] < record["page_count"]
     ]
     if not snapshots:
-        gaps.append("T2: candidate UIElement methods or paging metadata were incomplete")
+        gaps.append("candidate UIElement methods or paging metadata were incomplete")
 
     candidate_ids = {
         record.get("element_id") for record in snapshots
@@ -105,7 +105,7 @@ def t2_probe_gaps(records: list[dict[str, Any]]) -> list[str]:
             lifecycle_actions.add(action)
     for action in ("begin", "update", "end"):
         if action not in lifecycle_actions:
-            gaps.append(f"T2: missing candidate UIElement {action} callback")
+            gaps.append(f"missing candidate UIElement {action} callback")
 
     display_attribute_verified = any(
         record.get("event") == "probe.display_attribute"
@@ -120,32 +120,32 @@ def t2_probe_gaps(records: list[dict[str, Any]]) -> list[str]:
         for record in records
     )
     if not display_attribute_verified:
-        gaps.append("T2: composition display attribute was not resolved")
+        gaps.append("composition display attribute was not resolved")
 
     if not any(
         record.get("event") == "probe.conversion_subscription"
         and record.get("result") == "subscribed"
         for record in records
     ):
-        gaps.append("T2: conversion compartment sink was not subscribed")
+        gaps.append("conversion compartment sink was not subscribed")
     if not any(
         record.get("event") == "probe.conversion_compartment"
         and record.get("result") == "read"
         for record in records
     ):
-        gaps.append("T2: conversion compartment value was not read")
+        gaps.append("conversion compartment value was not read")
     if not any(
         record.get("event") == "probe.conversion_write"
         and record.get("result") == "written"
         for record in records
     ):
-        gaps.append("T2: conversion compartment was not actively changed")
+        gaps.append("conversion compartment was not actively changed")
     if not any(
         record.get("event") == "probe.conversion_change"
         and record.get("result") == "notified"
         for record in records
     ):
-        gaps.append("T2: conversion compartment change notification was not received")
+        gaps.append("conversion compartment change notification was not received")
 
     committed = any(
         record.get("event") == "probe.imm_read"
@@ -154,13 +154,13 @@ def t2_probe_gaps(records: list[dict[str, Any]]) -> list[str]:
         for record in records
     )
     if not committed:
-        gaps.append("T2: Probe did not read a committed result")
+        gaps.append("Probe did not read a committed result")
 
     gaps.extend(candidate_visibility_gaps(records, "probe"))
     return gaps
 
 
-def t2_runtime_gaps(records: list[dict[str, Any]]) -> list[str]:
+def runtime_host_behavior_gaps(records: list[dict[str, Any]]) -> list[str]:
     gaps: list[str] = []
 
     activation_verified = any(
@@ -175,7 +175,7 @@ def t2_runtime_gaps(records: list[dict[str, Any]]) -> list[str]:
         for record in records
     )
     if not activation_verified:
-        gaps.append("T2: TSF activation flags or profile capability bits were incomplete")
+        gaps.append("TSF activation flags or profile capability bits were incomplete")
 
     for event in ("ui_element.begin", "ui_element.update", "ui_element.end"):
         if not any(
@@ -184,7 +184,7 @@ def t2_runtime_gaps(records: list[dict[str, Any]]) -> list[str]:
             and record.get("hr") == 0
             for record in records
         ):
-            gaps.append(f"T2: missing successful runtime {event}")
+            gaps.append(f"missing successful runtime {event}")
 
     page_records = [
         record for record in records
@@ -193,14 +193,14 @@ def t2_runtime_gaps(records: list[dict[str, Any]]) -> list[str]:
     ]
     pages = {record["engine_page_current"] for record in page_records}
     if 1 not in pages or not any(page > 1 for page in pages):
-        gaps.append("T2: candidate snapshots did not cover first and later pages")
+        gaps.append("candidate snapshots did not cover first and later pages")
 
     routed_keys = {
         record.get("vk") for record in records
         if record.get("event") == "key.route"
     }
     if VK_OEM_PLUS not in routed_keys or VK_OEM_MINUS not in routed_keys:
-        gaps.append("T2: '-' and '=' pagination keys were not both routed")
+        gaps.append("'-' and '=' pagination keys were not both routed")
 
     aligned_modes: set[bool] = set()
     for record in records:
@@ -216,7 +216,7 @@ def t2_runtime_gaps(records: list[dict[str, Any]]) -> list[str]:
             aligned_modes.add(chinese_mode)
     if aligned_modes != {False, True}:
         gaps.append(
-            "T2: conversion compartment was not aligned in both Chinese and English modes"
+            "conversion compartment was not aligned in both Chinese and English modes"
         )
 
     sink_subscribed = any(
@@ -227,7 +227,7 @@ def t2_runtime_gaps(records: list[dict[str, Any]]) -> list[str]:
         for record in records
     )
     if not sink_subscribed:
-        gaps.append("T2: conversion compartment sink was not subscribed")
+        gaps.append("conversion compartment sink was not subscribed")
 
     externally_applied_modes = {
         record.get("requested_chinese")
@@ -245,7 +245,7 @@ def t2_runtime_gaps(records: list[dict[str, Any]]) -> list[str]:
         and record.get("after_chinese") is record.get("requested_chinese")
     }
     if externally_applied_modes != {False, True}:
-        gaps.append("T2: external conversion changes were not applied in both directions")
+        gaps.append("external conversion changes were not applied in both directions")
 
     composition_change_applied = any(
         record.get("event") == "runtime.conversion_change"
@@ -265,13 +265,13 @@ def t2_runtime_gaps(records: list[dict[str, Any]]) -> list[str]:
         for record in records
     )
     if not composition_change_applied:
-        gaps.append("T2: composition change did not commit raw input and apply mode")
+        gaps.append("composition change did not commit raw input and apply mode")
 
     gaps.extend(candidate_visibility_gaps(records, "runtime"))
     return gaps
 
 
-def t2_evidence_gaps(
+def host_behavior_evidence_gaps(
     records: list[dict[str, Any]], kind: str
 ) -> list[str]:
-    return t2_probe_gaps(records) if kind == "probe" else t2_runtime_gaps(records)
+    return probe_host_behavior_gaps(records) if kind == "probe" else runtime_host_behavior_gaps(records)
