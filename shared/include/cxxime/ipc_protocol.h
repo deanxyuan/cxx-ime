@@ -11,8 +11,6 @@
 
 namespace cxxime {
 
-constexpr uint32_t IPC_SWITCH_INPUT_MODE_EXPLICIT = 0x01;
-
 enum class InputMode : uint32_t {
     PINYIN = 0,
     WUBI = 1,
@@ -123,7 +121,7 @@ struct IPCRequest {
     uint32_t session_id = 0;
     uint32_t key_code = 0;
     uint32_t modifiers = 0;
-    uint32_t candidate_index = 0;  // candidate selection; explicit mode commands carry target value
+    uint32_t candidate_index = 0;  // Candidate selection or target input mode.
     uint32_t visible_candidate_count = 0;  // Number actually presented by the current UI page.
     uint32_t is_key_up = 0;
 };

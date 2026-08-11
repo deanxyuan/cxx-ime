@@ -3,13 +3,41 @@
 # Export host diagnostics into at most two JSONL files for manual test handoff.
 
 param(
-    [string]$BuildId = "cxxime-host-takeover-20260725-b",
+    [string]$ProductVersion = "",
     [string]$LogsDir = "",
     [string]$OutputDir = ""
 )
 
 $ErrorActionPreference = "Stop"
-$SchemaVersion = 2
+$SchemaVersion = 3
+
+function Resolve-ProductVersion {
+    param([string]$RequestedVersion)
+
+    if (-not [string]::IsNullOrWhiteSpace($RequestedVersion)) {
+        return $RequestedVersion.Trim()
+    }
+
+    $serverPath = Join-Path $PSScriptRoot "cxxime-server.exe"
+    if (Test-Path -LiteralPath $serverPath -PathType Leaf) {
+        $installedVersion = (Get-Item -LiteralPath $serverPath).VersionInfo.ProductVersion
+        if (-not [string]::IsNullOrWhiteSpace($installedVersion)) {
+            return $installedVersion.Trim()
+        }
+    }
+
+    $versionPath = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\..\..\VERSION"))
+    if (Test-Path -LiteralPath $versionPath -PathType Leaf) {
+        $sourceVersion = (Get-Content -LiteralPath $versionPath -Raw).Trim()
+        if (-not [string]::IsNullOrWhiteSpace($sourceVersion)) {
+            return $sourceVersion
+        }
+    }
+
+    throw "Unable to determine the CxxIME product version."
+}
+
+$ProductVersion = Resolve-ProductVersion -RequestedVersion $ProductVersion
 
 if (-not $LogsDir) {
     $LogsDir = Join-Path $env:USERPROFILE "cxxime\logs"
@@ -32,7 +60,7 @@ function New-HostEvent {
 
     $record = [ordered]@{
         schema_version = $SchemaVersion
-        build_id = $BuildId
+        product_version = $ProductVersion
         arch = if ([Environment]::Is64BitOperatingSystem) { "x64" } else { "x86" }
         event = $Event
         seq = 0
@@ -70,7 +98,7 @@ function Read-HostRecords {
                 continue
             }
             if ($record.schema_version -ne $SchemaVersion -or
-                $record.build_id -ne $BuildId) {
+                $record.product_version -ne $ProductVersion) {
                 continue
             }
             Add-Member -InputObject $record -NotePropertyName export_source -NotePropertyValue $file.Name
@@ -186,13 +214,13 @@ foreach ($record in $records) {
 Add-DotaModuleStatus -Records $runtimeRecords
 Add-HostSummary -Records $runtimeRecords
 
-$runtimePath = Join-Path $OutputDir "cxxime-host-runtime-$BuildId.jsonl"
+$runtimePath = Join-Path $OutputDir "cxxime-host-runtime-v$ProductVersion.jsonl"
 Write-JsonLines -Path $runtimePath -Records $runtimeRecords.ToArray()
 Write-Host "Runtime trace: $runtimePath"
 
 if ($probeRecords.Count -gt 0) {
     Add-HostSummary -Records $probeRecords
-    $probePath = Join-Path $OutputDir "cxxime-host-probe-$BuildId.jsonl"
+    $probePath = Join-Path $OutputDir "cxxime-host-probe-v$ProductVersion.jsonl"
     Write-JsonLines -Path $probePath -Records $probeRecords.ToArray()
     Write-Host "Probe trace:   $probePath"
 } else {

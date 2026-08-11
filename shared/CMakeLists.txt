@@ -28,6 +28,9 @@ target_include_directories(cxxime-shared PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CXXIME_HOST_TAKEOVER_DIAGNOSTICS_DIR}/include
 )
+target_include_directories(cxxime-shared PRIVATE
+    ${CXXIME_GENERATED_INCLUDE_DIR}
+)
 
 target_link_libraries(cxxime-shared PUBLIC shell32 bcrypt)
 if(CXXIME_ENABLE_HOST_DIAGNOSTICS)

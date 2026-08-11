@@ -673,21 +673,6 @@ std::pair<cxxime::IPCStatus, cxxime::ImeStatus> SessionManager::toggle_punct(uin
     return {cxxime::IPCStatus::OK, entry->ime_status};
 }
 
-std::pair<cxxime::IPCStatus, cxxime::ImeStatus> SessionManager::switch_input_mode(uint32_t id) {
-    auto entry = lookup_session(id);
-    if (!entry) return {cxxime::IPCStatus::ERR_INVALID_SESSION, {}};
-    std::lock_guard<std::mutex> lock(entry->mutex);
-    align_session_to_global(*entry);
-    auto target = next_input_mode(entry->ime_status.input_mode);
-    entry->engine->switch_mode(target);
-    GlobalVisibleState state = snapshot_global_state();
-    state.input_mode = entry->engine->mode();
-    commit_global_state(state);
-    align_session_to_global(*entry);
-    persist_input_mode(entry->ime_status.input_mode);
-    return {cxxime::IPCStatus::OK, entry->ime_status};
-}
-
 std::pair<cxxime::IPCStatus, cxxime::ImeStatus> SessionManager::switch_input_mode(uint32_t id, cxxime::InputMode mode) {
     auto entry = lookup_session(id);
     if (!entry) return {cxxime::IPCStatus::ERR_INVALID_SESSION, {}};

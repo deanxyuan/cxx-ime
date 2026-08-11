@@ -351,6 +351,26 @@ TEST(IPC, set_chinese_mode_uses_explicit_target) {
     ASSERT_EQ(resp.ime_status.chinese_mode(), false);
 }
 
+TEST(IPC, switch_input_mode_carries_target) {
+    TestServer ts;
+    ASSERT_TRUE(ts.start([](const cxxime::IPCRequest& req) -> cxxime::IPCResponse {
+        cxxime::IPCResponse resp = {};
+        ASSERT_EQ(req.command, cxxime::IPCCommand::SWITCH_INPUT_MODE);
+        ASSERT_EQ(req.session_id, static_cast<uint32_t>(7));
+        ASSERT_EQ(req.candidate_index, static_cast<uint32_t>(cxxime::InputMode::WUBI));
+        resp.status = cxxime::IPCStatus::OK;
+        resp.ime_status.input_mode = cxxime::InputMode::WUBI;
+        return resp;
+    }));
+
+    cxxime::IpcClient client;
+    ASSERT_TRUE(client.connect(cxxime::IPC_PIPE_BASE_NAME, 2000));
+    cxxime::IPCResponse resp = {};
+    ASSERT_TRUE(client.switch_input_mode(7, cxxime::InputMode::WUBI, resp));
+    ASSERT_EQ(resp.status, cxxime::IPCStatus::OK);
+    ASSERT_EQ(resp.ime_status.input_mode, cxxime::InputMode::WUBI);
+}
+
 TEST(IPC, focus_in_out) {
     TestServer ts;
     ASSERT_TRUE(ts.start([](const cxxime::IPCRequest&) -> cxxime::IPCResponse {

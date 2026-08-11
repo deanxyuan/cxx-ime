@@ -267,18 +267,10 @@ bool IpcClient::toggle_punct(uint32_t session_id, IPCResponse& response) {
     return send_request(req, response);
 }
 
-bool IpcClient::switch_input_mode(uint32_t session_id, IPCResponse& response) {
-    IPCRequest req = {};
-    req.command = IPCCommand::SWITCH_INPUT_MODE;
-    req.session_id = session_id;
-    return send_request(req, response);
-}
-
 bool IpcClient::switch_input_mode(uint32_t session_id, InputMode mode, IPCResponse& response) {
     IPCRequest req = {};
     req.command = IPCCommand::SWITCH_INPUT_MODE;
     req.session_id = session_id;
-    req.modifiers = IPC_SWITCH_INPUT_MODE_EXPLICIT;
     req.candidate_index = static_cast<uint32_t>(mode);
     return send_request(req, response);
 }

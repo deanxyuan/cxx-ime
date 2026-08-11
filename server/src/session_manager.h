@@ -117,7 +117,6 @@ public:
     ProcessKeyResult set_chinese_mode(uint32_t id, bool chinese_mode);
     std::pair<cxxime::IPCStatus, cxxime::ImeStatus> toggle_shape(uint32_t id);
     std::pair<cxxime::IPCStatus, cxxime::ImeStatus> toggle_punct(uint32_t id);
-    std::pair<cxxime::IPCStatus, cxxime::ImeStatus> switch_input_mode(uint32_t id);
     std::pair<cxxime::IPCStatus, cxxime::ImeStatus> switch_input_mode(uint32_t id, cxxime::InputMode mode);
     cxxime::IPCStatus sync_ascii_mode(uint32_t id, bool ascii_mode);
     std::pair<cxxime::IPCStatus, cxxime::ImeStatus> sync_caps_lock(uint32_t id, bool caps_lock);

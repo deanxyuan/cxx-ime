@@ -21,6 +21,10 @@ if(NOT CXXIME_ENABLE_HOST_DIAGNOSTICS)
     )
 endif()
 
+target_include_directories(cxxime-ime-host-probe PRIVATE
+    ${CXXIME_GENERATED_INCLUDE_DIR}
+)
+
 target_link_libraries(cxxime-ime-host-probe PRIVATE
     cxxime-shared
     ole32

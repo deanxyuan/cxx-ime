@@ -12,10 +12,9 @@
 
 namespace cxxime {
 
-inline constexpr int kHostTraceSchemaVersion = 2;
-inline constexpr char kHostTraceBuildId[] = "cxxime-host-takeover-20260725-b";
+inline constexpr int kHostTraceSchemaVersion = 3;
 
-const char* host_trace_build_id();
+const char* host_trace_product_version();
 const char* host_trace_arch();
 
 uint64_t host_trace_next_id();
