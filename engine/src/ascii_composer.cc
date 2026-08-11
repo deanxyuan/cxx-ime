@@ -304,7 +304,7 @@ void AsciiComposer::toggle_mode(uint32_t key_code, Context& ctx) {
 
     case AsciiModeSwitchStyle::APPEND:
         // CapsLock in append mode does nothing on its own —
-        // letter handling is deferred to Engine Phase 2.4 / PinyinProcessor.
+        // letter handling is deferred to PinyinProcessor.
         return;
     }
 }

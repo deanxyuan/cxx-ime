@@ -121,17 +121,17 @@ public:
     bool load_user_dict(const std::string& path);
     bool save_user_dict();
 
-    // Short code cache (Phase 4 fast path)
+    // Short-code cache fast path
     const ShortCodeCache& short_cache() const { return short_cache_; }
     bool has_short_cache() const { return short_cache_.is_loaded(); }
     bool has_wubi_prefix_index() const;
 
-    // Phase 5: user dict version for cache invalidation
+    // User dictionary version for cache invalidation
     uint64_t user_dict_version() const { return user_dict_version_; }
     bool has_user_entry(const std::string& text) const;
     size_t user_entry_count() const;
 
-    // Phase 5: internal indexed user dict query methods
+    // Internal indexed user dictionary query methods
     std::vector<Candidate> lookup_user_exact(const std::string& code, int limit,
         const QueryBudget& budget, QueryTrace* trace, UserLookupStats* stats) const;
     std::vector<Candidate> lookup_user_prefix(const std::string& prefix, int limit,
@@ -167,7 +167,7 @@ private:
     const char* dict_strings_ = nullptr;
     uint32_t dict_entry_count_ = 0;
 
-    // Short code cache (Phase 4)
+    // Short-code cache
     ShortCodeCache short_cache_;
     std::unique_ptr<WubiPrefixIndex> wubi_prefix_index_;
 
@@ -205,7 +205,7 @@ private:
     std::vector<UserEntry> user_entries_;
     std::unordered_map<std::string, size_t> user_text_index_; // text → entries_ index
 
-    // Phase 5: multi-way indexes
+    // User dictionary indexes
     std::unordered_map<std::string, UserBucket> user_exact_index_;
     std::unordered_map<std::string, UserBucket> user_prefix_index_;
     std::unordered_map<std::string, UserBucket> user_abbr_index_;
@@ -219,7 +219,7 @@ private:
     std::atomic<bool> user_dirty_{false};
     std::string user_dict_path_;
 
-    // Phase 5: index maintenance helpers
+    // User dictionary index maintenance helpers
     void rebuild_user_indexes_locked();
     void insert_user_into_indexes(UserEntryId id);
     void remove_user_from_indexes(UserEntryId id);

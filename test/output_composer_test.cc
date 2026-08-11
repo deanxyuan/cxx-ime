@@ -525,7 +525,7 @@ TEST(OutputComposer, full_shape_period) {
 
 TEST(OutputComposer, full_shape_letter) {
     // In the current engine flow, letters in Chinese mode are accepted by
-    // PinyinProcessor (Phase 4), so handle_full_shape is not reached.
+    // PinyinProcessor, so handle_full_shape is not reached.
     // Verify to_full_width conversion logic directly.
     ASSERT_EQ(cxxime::OutputComposer::to_full_width('a'), "ａ");  // ａ
     ASSERT_EQ(cxxime::OutputComposer::to_full_width('z'), "ｚ");  // ｚ

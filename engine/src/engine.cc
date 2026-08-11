@@ -170,7 +170,7 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
     const int page_offset_before = context_.page_offset;
     context_.visible_candidate_count = (std::max)(0, visible_candidate_count);
 
-    // Phase 0: Initialize trace for this query (only if tracing enabled)
+    // Initialize the trace for this query when tracing is enabled.
     // Preserve session_id/revision set by caller (server) before this call.
     std::chrono::steady_clock::time_point total_start;
     if (trace_enabled_) {
@@ -183,13 +183,13 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
         total_start = std::chrono::steady_clock::now();
     }
 
-    // Phase 1: Reset scratch buffer for this query
+    // Reset the scratch buffer for this query.
     scratch_.reset_for_query();
 
-    // Create per-query deadline (Phase 3: QueryDeadline with expires_at)
+    // Create the per-query deadline.
     QueryDeadline per_query_deadline = QueryDeadline::from_now(query_deadline_ms_);
 
-    // Phase 2: Let AsciiComposer track modifier key state (may toggle ascii_mode)
+    // Let AsciiComposer track modifier key state and update ascii_mode when needed.
     ascii_composer_.process_key(event.keycode, event.is_key_up, context_, event.is_caps_lock());
 
     CXXIME_LOG(L"Engine::process_key: after ascii_composer, committed_text='%S'", context_.committed_text.c_str());
@@ -224,7 +224,7 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
             : ProcessResult::COMMITTED;
     }
 
-    // Phase 2.3: keyboard shortcuts for toggles
+    // Handle keyboard shortcuts for mode toggles.
     if (!event.is_key_up) {
         // Shift+Space toggles full/half shape.
         if (event.keycode == 0x20 && event.is_shift() && !event.is_ctrl() && !event.is_alt()) {
@@ -253,7 +253,7 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
     // Propagate CapsLock style to Context for PinyinProcessor
     context_.caps_lock_style = ascii_composer_.get_binding(VK_CAPITAL);
 
-    // Phase 2.4: CapsLock + letter commits directly with case inversion.
+    // CapsLock plus a letter commits directly with case inversion.
     // When CapsLock is not configured as an IME switch, keep the OS CapsLock
     // behavior: letters commit directly with case inversion.
     if (!event.is_key_up && event.is_caps_lock() && !ascii_composer_.is_ascii_mode() &&
@@ -272,7 +272,7 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
         }
     }
 
-    // Phase 2.5: intercept digit keys in English full-width mode.
+    // Intercept digit keys in English full-width mode.
     if (OutputComposer::intercept_key(event, opts, context_.committed_text)) {
         context_.set_commit_source(CommitSource::kRawCode);
         record_total_us(trace_, total_start, trace_enabled_);
@@ -379,7 +379,7 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
         context_.reset_pagination();
     }
 
-    // Phase 4: PinyinProcessor
+    // Process pinyin and Wubi input.
     std::chrono::steady_clock::time_point t0, t1, t2;
     if (trace_enabled_) {
         t0 = std::chrono::steady_clock::now();
@@ -432,7 +432,7 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
         ascii_composer_.set_ascii_mode(false);
     }
 
-    // Phase 4.5: Punctuation / full-shape handling (only when processor rejected)
+    // Handle punctuation and full-width input only when the input processor rejects the key.
     if (result == ProcessResult::REJECTED && !SymbolProcessor::is_active(context_)) {
         const bool has_pending_candidate = context_.is_composing() &&
             context_.candidates.highlighted >= 0 &&
@@ -453,7 +453,7 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
         }
     }
 
-    // Phase 5: After processing, update candidates if still composing
+    // Update candidates after processing while the composition remains active.
     if (result == ProcessResult::ACCEPTED && context_.is_composing()) {
         if (trace_enabled_) {
             trace_.page_index = context_.page_index;
@@ -534,7 +534,7 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
     CXXIME_LOG(L"Engine::process_key: result=%d, buf='%S'",
                (int)result, context_.pinyin_buffer.c_str());
 
-    // Phase 6: If a candidate was committed, update user frequency and recent cache.
+    // Update user frequency and the recent cache after committing a candidate.
     if (config_->candidate_learning &&
         result == ProcessResult::COMMITTED && !context_.committed_text.empty() &&
         context_.commit_source() == CommitSource::kCandidate) {
@@ -573,7 +573,7 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
         }
     }
 
-    // Phase 7: Finalize trace
+    // Finalize the query trace.
     if (trace_enabled_) {
         auto total_end = std::chrono::steady_clock::now();
         trace_.total_us = std::chrono::duration_cast<std::chrono::microseconds>(total_end - total_start).count();

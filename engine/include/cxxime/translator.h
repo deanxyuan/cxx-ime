@@ -87,12 +87,12 @@ private:
     const ShortCodeCache* short_cache_ = nullptr;
     PinyinSegmentor segmentor_;
 
-    // Phase 4: per-session recent candidate cache
+    // Per-session recent candidate cache
     std::vector<RecentCandidate> recent_cache_;
     std::vector<QueryCacheEntry> query_cache_;
     uint64_t recent_sequence_ = 0;
     uint64_t query_cache_sequence_ = 0;
-    mutable uint64_t cached_user_dict_version_ = 0;  // Phase 5: for cache invalidation
+    mutable uint64_t cached_user_dict_version_ = 0;  // Used for cache invalidation
     bool sentence_composition_enabled_ = true;
     static constexpr size_t kMaxRecentKeys = 128;
     static constexpr size_t kMaxRecentPerKey = 8;
