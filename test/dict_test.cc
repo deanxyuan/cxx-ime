@@ -130,7 +130,7 @@ TEST(Dict, user_dict_frequency) {
     DeleteFileA(path.c_str());
 }
 
-// --- Phase 2: TopK collector + budget tests ---
+// TopK collector and budget tests
 
 TEST(Dict, lookup_by_ids_topk_limits_results) {
     std::string path = make_temp_path("test_dict_topk.bin");
@@ -369,7 +369,7 @@ TEST(Dict, lookup_by_ids_scan_budget_sets_truncated) {
     DeleteFileA(path.c_str());
 }
 
-// --- Phase 5: User dictionary index tests ---
+// User dictionary index tests
 
 TEST(Dict, user_dict_3col_and_4col_tsv) {
     std::string path = make_temp_path("test_dict_tsv.bin");

@@ -1545,7 +1545,7 @@ static bool _engine_init = []() {
     return true;
 }();
 
-// --- Phase 3: QueryDeadline tests ---
+// QueryDeadline tests
 
 TEST(QueryDeadline, disabled_deadline_never_expires) {
     cxxime::QueryDeadline deadline;
@@ -1585,7 +1585,7 @@ TEST(Deadline, expired_deadline_sets_trace_flags) {
 
     cxxime::QueryTrace trace = {};
     cxxime::QueryBudget budget;
-    // Phase 3: create an already-expired deadline
+    // Create an already-expired deadline.
     budget.deadline.enabled = true;
     budget.deadline.expires_at = std::chrono::steady_clock::now() - std::chrono::milliseconds(1);
 
@@ -1661,7 +1661,7 @@ TEST(Deadline, engine_sets_trace_deadline_from_deadline_ms) {
     cxxime::Engine engine;
     ASSERT_TRUE(engine.initialize(dict_path));
 
-    // Phase 3: set deadline via new API (0ms = disabled, but we'll test with 1ms)
+    // Set the deadline through the public API (0ms disables it; this test uses 1ms).
     engine.set_query_deadline_ms(0);  // disable deadline first
     engine.set_trace_enabled(true);
 
@@ -1702,7 +1702,7 @@ TEST(Deadline, engine_no_budget_means_no_deadline) {
     DeleteFileA(dict_path.c_str());
 }
 
-// --- Phase 2: make_budget + TopK translator tests ---
+// make_budget and TopK translator tests
 
 TEST(Budget, make_budget_scales_by_input_length) {
     auto b1 = cxxime::make_budget(1, 9);
@@ -1776,7 +1776,7 @@ TEST(Translator, translate_topk_merge_across_paths) {
     DeleteFileA(spellings_path.c_str());
 }
 
-// --- Phase 3: Deadline protection tests ---
+// Deadline protection tests
 
 TEST(Deadline, expired_deadline_stops_dict_scan) {
     std::string dict_path = make_temp_path("test_deadline_stop_scan.bin");
@@ -1795,7 +1795,7 @@ TEST(Deadline, expired_deadline_stops_dict_scan) {
 
     cxxime::QueryTrace trace = {};
     cxxime::QueryBudget budget;
-    // Phase 3: create an already-expired deadline
+    // Create an already-expired deadline.
     budget.deadline.enabled = true;
     budget.deadline.expires_at = std::chrono::steady_clock::now() - std::chrono::milliseconds(1);
 

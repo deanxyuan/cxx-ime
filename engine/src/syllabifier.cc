@@ -223,7 +223,7 @@ SegmentResult Syllabifier::segment(const std::string& input, const QueryDeadline
     // Enumerate paths from 0 to farthest.
     // enumerate_paths bails out at kMaxPaths to prevent exponential blowup
     // from dense abbreviation graphs.
-    // Phase 3: pass deadline for internal checking during DFS.
+    // Pass the deadline for internal checks during DFS.
     std::vector<SegmentedPath> scored;
     std::vector<std::pair<size_t, std::vector<SyllableEdge>>> sorted_scratch;
     SegmentedPath current;

@@ -37,7 +37,7 @@ struct QueryBudget {
     uint32_t max_prefix_scan = 2048;
     uint32_t max_results_before_merge = 64;  // cap collected candidates per lookup (dict layer)
     uint32_t topk = 0;                       // translator 层合并总容量上限，0 = 不限制
-    uint32_t max_user_scan = 256;            // Phase 5: cap user dict index scans
+    uint32_t max_user_scan = 256;            // Cap user dictionary index scans
     QueryDeadline deadline;
 };
 

@@ -401,7 +401,7 @@ bool Dict::save_user_dict() {
     return true;
 }
 
-// ─── Phase 5: User dictionary index helpers ───────────────────────
+// User dictionary index helpers
 
 // Generate abbreviation from colon-separated syllables: "shu:ru:fa" → "srf"
 static std::string make_abbr(const std::string& syllables) {
@@ -757,7 +757,7 @@ std::vector<Candidate> Dict::lookup_by_syllables(
         ++lo;
     }
 
-    // Phase 5: query user dict via exact index
+    // Query the user dictionary through the exact index.
     QueryBudget ub;
     UserLookupStats ustats;
     auto user_results = lookup_user_exact(concat_code, limit, ub, trace, &ustats);
@@ -821,7 +821,7 @@ int Dict::count(const std::string& code_prefix, QueryTrace* trace) {
         ++lo;
     }
 
-    // Phase 5: count user dict via index
+    // Count user dictionary entries through the index.
     {
         std::shared_lock<std::shared_mutex> lock(user_mutex_);
         if (code_prefix.size() <= kMaxMaterializedUserPrefixLength) {
@@ -1078,7 +1078,7 @@ void Dict::update_frequency(const std::string& text, const std::string& code,
     user_dict_version_++;
 }
 
-// ─── Phase 5: Indexed user dict query methods ─────────────────────
+// Indexed user dictionary query methods
 
 std::vector<Candidate> Dict::lookup_user_exact(
     const std::string& code, int limit,
@@ -1785,7 +1785,7 @@ std::vector<Candidate> Dict::lookup_by_ids(const std::vector<uint32_t>& query_id
     }
 
     // Determine TopK capacity: min(limit, max_results_before_merge)
-    // Per Phase 2 design: collector should not collect more than the caller needs.
+    // The collector should not retain more results than the caller requests.
     size_t topk_cap = (size_t)limit;
     if (budget && budget->max_results_before_merge > 0 &&
         (size_t)budget->max_results_before_merge < topk_cap)
@@ -1807,7 +1807,7 @@ std::vector<Candidate> Dict::lookup_by_ids(const std::vector<uint32_t>& query_id
     uint32_t exact_count = 0;
     uint32_t check_interval = budget ? budget->deadline.check_interval : 64;
 
-    // Phase 3: check deadline before entering scan loop (upstream may have already exhausted budget)
+    // Upstream work may already have exhausted the deadline before the scan starts.
     if (budget && budget->deadline.enabled && budget->deadline.expired()) {
         deadline_hit = true;
         if (trace) {
@@ -1825,7 +1825,7 @@ std::vector<Candidate> Dict::lookup_by_ids(const std::vector<uint32_t>& query_id
             }
             break;
         }
-        // Phase 3: check deadline every check_interval entries
+        // Check the deadline every check_interval entries.
         if (budget && exact_count > 0 && exact_count % check_interval == 0 && budget->deadline.expired()) {
             deadline_hit = true;
             if (trace) {
@@ -1850,7 +1850,7 @@ std::vector<Candidate> Dict::lookup_by_ids(const std::vector<uint32_t>& query_id
     // Second pass: prefix matches (skip if deadline already hit)
     uint32_t prefix_count = 0;
     if (!deadline_hit) {
-        // Phase 3: check deadline before entering prefix scan
+        // Check the deadline before starting the prefix scan.
         if (budget && budget->deadline.enabled && budget->deadline.expired()) {
             deadline_hit = true;
             if (trace) {
@@ -1876,7 +1876,7 @@ std::vector<Candidate> Dict::lookup_by_ids(const std::vector<uint32_t>& query_id
                 }
                 break;
             }
-            // Phase 3: check deadline every check_interval entries
+            // Check the deadline every check_interval entries.
             if (budget && prefix_count > 0 && prefix_count % check_interval == 0 && budget->deadline.expired()) {
                 if (trace) {
                     trace->deadline_exceeded = true;

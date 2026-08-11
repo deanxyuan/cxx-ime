@@ -177,7 +177,7 @@ PinyinTranslator::IndexedFastResult PinyinTranslator::lookup_indexed_fast(
         return result;
 
     // 1. Session recent cache (highest priority)
-    // Phase 5: filter entries whose user dict entry has been deleted
+    // Filter entries whose user dictionary entry has been deleted.
     uint64_t current_version = dict_ ? dict_->user_dict_version() : 0;
     bool version_changed = (current_version != cached_user_dict_version_);
     for (auto& rc : recent_cache_) {
@@ -376,7 +376,7 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
 
     // 1. Syllabifier for abbreviation expansion (reserve first)
     // Limit paths to avoid CPU cache thrashing on short inputs (e.g. single letter 's')
-    // Phase 3: syllabifier now has internal deadline checking, no need to skip
+    // The syllabifier checks the deadline internally, so it does not need to be skipped.
     // Need enough paths for fuzzy spellings — abbreviation-heavy graphs can
     // produce hundreds of paths before non-abbreviation paths appear.
     static constexpr size_t kMaxPaths = 64;
@@ -392,7 +392,7 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
         if (budget && budget->deadline.expired()) {
             deadline_hit = true;
         } else {
-            // Phase 3: pass deadline to syllabifier for internal checking
+            // Pass the deadline to the syllabifier for internal checks.
             segment_result = syllabifier_->segment(
                 pinyin, budget ? &budget->deadline : nullptr, false,
                 sentence_composition_enabled_);

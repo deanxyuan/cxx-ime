@@ -39,7 +39,7 @@ inline bool candidate_text_fits(const std::string& text) {
 }
 
 inline const std::string& candidate_display_text(const Candidate& candidate,
-                                   std::string& formatted) {
+                                                 std::string& formatted) {
     if (candidate.comment.empty()) {
         return candidate.text;
     }
@@ -61,7 +61,7 @@ struct CandidatePage {
     std::vector<Candidate> candidates;
 };
 
-// Phase 5: cache wrapper with user dict version for invalidation
+// Candidate page cache with user dictionary version for invalidation.
 struct CachedCandidatePage {
     uint64_t user_dict_version = 0;
     CandidatePage page;

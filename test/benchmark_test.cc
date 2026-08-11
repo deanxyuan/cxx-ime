@@ -1,7 +1,7 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 //
 // Performance overhead verification for QueryTrace instrumentation.
-// Phase 7: regression threshold and field semantic tests.
+// Regression threshold and trace field semantic tests.
 
 #include <algorithm>
 #include <chrono>
@@ -281,7 +281,7 @@ TEST(Benchmark, FallbackQueryCacheHitOnRepeat) {
     engine.finalize();
 }
 
-// ---- Phase 7 helpers ----
+// Benchmark test helpers
 
 #ifdef _WIN32
 inline int get_exit_code(int rc) { return rc; }
@@ -328,7 +328,7 @@ static int64_t percentile_vec(const std::vector<int64_t>& sorted, double p) {
     return sorted[std::min(idx, sorted.size() - 1)];
 }
 
-// ---- Phase 7: JSONL field completeness ----
+// JSONL field completeness
 
 TEST(Benchmark, JsonlFieldsComplete) {
     BenchmarkEngineFixture fixture("jsonl_fields");
@@ -369,7 +369,7 @@ TEST(Benchmark, JsonlFieldsComplete) {
     engine.finalize();
 }
 
-// ---- Phase 7: repeat count exactness ----
+// Repeat count exactness
 
 TEST(Benchmark, RepeatCountExact) {
     BenchmarkEngineFixture fixture("repeat_count");
@@ -415,7 +415,7 @@ TEST(Benchmark, RepeatCountExact) {
     engine.finalize();
 }
 
-// ---- Phase 7: page_size affects candidate_count ----
+// page_size affects candidate_count
 
 TEST(Benchmark, PageSizeAffectsCandidates) {
     BenchmarkEngineFixture fixture("page_size");
@@ -458,7 +458,7 @@ TEST(Benchmark, PageSizeAffectsCandidates) {
     engine.finalize();
 }
 
-// ---- Phase 7: deadline triggering ----
+// Deadline triggering
 
 TEST(Benchmark, DeadlineTriggered) {
     BenchmarkEngineFixture fixture("deadline");
@@ -491,7 +491,7 @@ TEST(Benchmark, DeadlineTriggered) {
     engine.finalize();
 }
 
-// ---- Phase 7: data file integrity ----
+// Data file integrity
 
 TEST(Benchmark, DataFileIntegrity) {
     struct FileCheck {
@@ -539,7 +539,7 @@ TEST(Benchmark, DataFileIntegrity) {
     printf("All data files verified.\n");
 }
 
-// ---- Phase 7: check_query_bench.py threshold pass/fail ----
+// check_query_bench.py threshold pass/fail
 
 static int run_check_script(const std::string& threshold_path, const std::string& jsonl_path,
                             const std::string& output_dir) {
@@ -621,7 +621,7 @@ TEST(Benchmark, CheckQueryBenchFail) {
     std::remove(jsonl_path.c_str());
 }
 
-// ---- Phase 7: state field semantic tests ----
+// State field semantic tests
 
 TEST(Benchmark, CacheHitScanZero) {
     // Short input "s" should hit topn cache with all scan counts = 0

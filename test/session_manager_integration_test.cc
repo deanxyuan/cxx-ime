@@ -869,13 +869,13 @@ TEST(SessionIntegration, user_dict_control_mutations_and_pagination) {
 }
 
 // ============================================================
-// Punctuation IPC integration
+// Dictionary reload integration
 // ============================================================
 
 TEST(SessionIntegration, reload_dictionaries_updates_active_session) {
     std::string dict_path = make_temp_path("test_hot_reload_dict.bin");
     create_test_dictionary_bundle(dict_path, {
-        {"kao", "stage3-old", 100},
+        {"kao", "reload-old", 100},
     });
 
     SessionManager mgr;
@@ -886,19 +886,19 @@ TEST(SessionIntegration, reload_dictionaries_updates_active_session) {
     auto old_result = type_kao(mgr, id);
     ASSERT_EQ(old_result.status, cxxime::IPCStatus::OK);
     ASSERT_TRUE(old_result.composing);
-    ASSERT_TRUE(candidate_contains(old_result.candidates, "stage3-old"));
+    ASSERT_TRUE(candidate_contains(old_result.candidates, "reload-old"));
 
     ASSERT_EQ(mgr.clear_composition(id), cxxime::IPCStatus::OK);
     create_test_dictionary_bundle(dict_path, {
-        {"kao", "stage3-new", 100},
+        {"kao", "reload-new", 100},
     });
     ASSERT_EQ(mgr.reload_dictionaries(), cxxime::IPCStatus::OK);
 
     auto new_result = type_kao(mgr, id);
     ASSERT_EQ(new_result.status, cxxime::IPCStatus::OK);
     ASSERT_TRUE(new_result.composing);
-    ASSERT_TRUE(candidate_contains(new_result.candidates, "stage3-new"));
-    ASSERT_TRUE(!candidate_contains(new_result.candidates, "stage3-old"));
+    ASSERT_TRUE(candidate_contains(new_result.candidates, "reload-new"));
+    ASSERT_TRUE(!candidate_contains(new_result.candidates, "reload-old"));
 
     delete_test_dictionary_bundle(dict_path);
 }
@@ -956,7 +956,7 @@ TEST(SessionIntegration, dictionary_monitor_reload_updates_active_session) {
 TEST(SessionIntegration, reload_dictionaries_failure_keeps_active_session_resources) {
     std::string dict_path = make_temp_path("test_hot_reload_failure_dict.bin");
     create_test_dictionary_bundle(dict_path, {
-        {"kao", "stage3-still-live", 100},
+        {"kao", "reload-still-live", 100},
     });
 
     SessionManager mgr;
@@ -971,7 +971,7 @@ TEST(SessionIntegration, reload_dictionaries_failure_keeps_active_session_resour
     auto result = type_kao(mgr, id);
     ASSERT_EQ(result.status, cxxime::IPCStatus::OK);
     ASSERT_TRUE(result.composing);
-    ASSERT_TRUE(candidate_contains(result.candidates, "stage3-still-live"));
+    ASSERT_TRUE(candidate_contains(result.candidates, "reload-still-live"));
 }
 
 static std::string write_temp_punct_json(const char* name, const char* content) {

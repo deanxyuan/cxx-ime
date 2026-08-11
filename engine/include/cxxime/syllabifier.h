@@ -39,7 +39,7 @@ struct SegmentedPath {
     float credibility = 0.0f;
 };
 
-// Result of syllabifier segmentation (Phase 3: includes deadline status)
+// Syllabifier segmentation result, including deadline status.
 struct SegmentResult {
     std::vector<SegmentedPath> paths;
     bool truncated = false;
@@ -57,7 +57,7 @@ public:
 
     // Segment input into syllable paths, sorted by quality.
     // Best (all-normal) paths first, then fuzzy, then abbreviation.
-    // Phase 3: optional deadline for internal checking during DFS.
+    // Optional deadline for internal checks during DFS.
     SegmentResult segment(const std::string& input, const QueryDeadline* deadline = nullptr,
                           bool enable_terminal_completion = false,
                           bool collect_path_metadata = false) const;
@@ -66,7 +66,7 @@ private:
     const SpellingsIndex& spellings_;
 
     // DFS enumeration of all paths through the graph
-    // Phase 3: returns true if deadline expired during enumeration
+    // Returns true if the deadline expired during enumeration.
     bool enumerate_paths(const SyllableGraph& graph,
                          size_t pos, size_t end_pos,
                          SegmentedPath& current,

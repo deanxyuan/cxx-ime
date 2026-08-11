@@ -83,7 +83,7 @@ public:
     void set_query_budget(const QueryBudget& budget) { budget_ = budget; }
     const QueryBudget& query_budget() const { return budget_; }
 
-    // Deadline protection (Phase 3)
+    // Query deadline protection
     void set_query_deadline_ms(uint32_t deadline_ms) { query_deadline_ms_ = deadline_ms; }
     uint32_t query_deadline_ms() const { return query_deadline_ms_; }
 
@@ -148,7 +148,7 @@ private:
     // Per-engine reusable scratch buffer for translate() queries
     QueryScratch scratch_;
 
-    // Punctuation handling (Phase 2.5 / 4.5)
+    // Punctuation handling
     bool handle_punctuation(const KeyEvent& event, Context& context, const OutputOptions& opts);
     bool handle_full_shape(const KeyEvent& event, Context& context, const OutputOptions& opts);
     void commit_with_punctuation(Context& context, const std::string& output,
