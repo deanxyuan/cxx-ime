@@ -426,16 +426,8 @@ cxxime::IPCResponse ServerApp::handle_request(const cxxime::IPCRequest& request)
     }
 
     case cxxime::IPCCommand::SWITCH_INPUT_MODE: {
-        // Explicit calls carry target mode in candidate_index. Legacy toggle
-        // calls leave modifiers clear and keep the old cycle behavior.
-        std::pair<cxxime::IPCStatus, cxxime::ImeStatus> result;
-        if ((request.modifiers & cxxime::IPC_SWITCH_INPUT_MODE_EXPLICIT) != 0) {
-            auto mode = static_cast<cxxime::InputMode>(request.candidate_index);
-            result = session_mgr_.switch_input_mode(request.session_id, mode);
-        } else {
-            result = session_mgr_.switch_input_mode(request.session_id);
-        }
-        auto [status, ime_status] = result;
+        const auto mode = static_cast<cxxime::InputMode>(request.candidate_index);
+        auto [status, ime_status] = session_mgr_.switch_input_mode(request.session_id, mode);
         if (status != cxxime::IPCStatus::OK) {
             response.status = status;
             break;

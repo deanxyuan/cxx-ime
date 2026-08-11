@@ -8,10 +8,10 @@ import os
 from typing import Any
 
 
-DEFAULT_BUILD_ID = "cxxime-host-takeover-20260725-b"
+HOST_TRACE_SCHEMA_VERSION = 3
 COMMON_FIELDS = {
     "schema_version",
-    "build_id",
+    "product_version",
     "arch",
     "event",
     "seq",
@@ -49,19 +49,25 @@ def load_records(paths: list[str]) -> tuple[list[dict[str, Any]], list[str]]:
 
 
 def validate_records(
-    records: list[dict[str, Any]], build_id: str
+    records: list[dict[str, Any]], product_version: str | None = None
 ) -> tuple[list[str], list[str]]:
     errors: list[str] = []
     gaps: list[str] = []
+    observed_versions: set[str] = set()
     for record in records:
         source = record["_source"]
         missing = sorted(COMMON_FIELDS - record.keys())
         if missing:
             errors.append(f"{source}: missing common field(s): {', '.join(missing)}")
-        if record.get("schema_version") != 2:
+        if record.get("schema_version") != HOST_TRACE_SCHEMA_VERSION:
             errors.append(f"{source}: unsupported schema_version")
-        if record.get("build_id") != build_id:
-            errors.append(f"{source}: expected build_id {build_id}")
+        record_version = record.get("product_version")
+        if not isinstance(record_version, str) or not record_version:
+            errors.append(f"{source}: product_version is invalid")
+        else:
+            observed_versions.add(record_version)
+            if product_version is not None and record_version != product_version:
+                errors.append(f"{source}: expected product_version {product_version}")
         leaked = sorted(TEXT_PAYLOAD_FIELDS & record.keys())
         if leaked:
             errors.append(f"{source}: raw text field(s) are forbidden: {', '.join(leaked)}")
@@ -90,6 +96,10 @@ def validate_records(
             ):
                 errors.append(f"{source}: candidate selection is out of range")
 
+    if product_version is None and len(observed_versions) > 1:
+        errors.append(
+            "mixed product_version values: " + ", ".join(sorted(observed_versions))
+        )
     if not records:
         gaps.append("no records")
     return errors, gaps

@@ -4,7 +4,7 @@
 
 namespace cxxime {
 
-const char* host_trace_build_id() {
+const char* host_trace_product_version() {
     return "";
 }
 

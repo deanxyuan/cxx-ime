@@ -47,7 +47,8 @@ TEST(HostTrace, writes_versioned_jsonl_without_text_payload) {
 
     const nlohmann::json record = nlohmann::json::parse(bytes.data());
     ASSERT_EQ(record["schema_version"].get<int>(), cxxime::kHostTraceSchemaVersion);
-    ASSERT_EQ(record["build_id"].get<std::string>(), std::string(cxxime::kHostTraceBuildId));
+    ASSERT_EQ(record["product_version"].get<std::string>(),
+              std::string(cxxime::host_trace_product_version()));
     ASSERT_EQ(record["event"].get<std::string>(), std::string("candidate.snapshot"));
     ASSERT_EQ(record["count"].get<int>(), 2);
     ASSERT_TRUE(!record.contains("text"));

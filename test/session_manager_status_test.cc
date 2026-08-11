@@ -330,7 +330,7 @@ TEST(SessionStatus, toggle_punct) {
     ASSERT_EQ(s2.revision, (uint64_t)2);
 }
 
-TEST(SessionStatus, switch_input_mode) {
+TEST(SessionStatus, switch_input_mode_sets_target) {
     SessionManager mgr;
     mgr.initialize(setup_test_dict());
     uint32_t id = mgr.create_session();
@@ -339,16 +339,16 @@ TEST(SessionStatus, switch_input_mode) {
     auto [st0, s0] = mgr.get_ime_status(id);
     ASSERT_EQ(s0.input_mode, cxxime::InputMode::PINYIN);
 
-    auto [st1, s1] = mgr.switch_input_mode(id);
+    auto [st1, s1] = mgr.switch_input_mode(id, cxxime::InputMode::WUBI);
     ASSERT_EQ(st1, cxxime::IPCStatus::OK);
     ASSERT_EQ(s1.input_mode, cxxime::InputMode::WUBI);
     ASSERT_EQ(s1.revision, (uint64_t)1);
 
-    auto [st2, s2] = mgr.switch_input_mode(id);
+    auto [st2, s2] = mgr.switch_input_mode(id, cxxime::InputMode::MIXED);
     ASSERT_EQ(s2.input_mode, cxxime::InputMode::MIXED);
     ASSERT_EQ(s2.revision, (uint64_t)2);
 
-    auto [st3, s3] = mgr.switch_input_mode(id);
+    auto [st3, s3] = mgr.switch_input_mode(id, cxxime::InputMode::PINYIN);
     ASSERT_EQ(s3.input_mode, cxxime::InputMode::PINYIN);
     ASSERT_EQ(s3.revision, (uint64_t)3);
 }
@@ -611,7 +611,7 @@ TEST(SessionStatus, invalid_session_toggle_punct) {
 TEST(SessionStatus, invalid_session_switch_input_mode) {
     SessionManager mgr;
     mgr.initialize(setup_test_dict());
-    auto [st, s] = mgr.switch_input_mode(999);
+    auto [st, s] = mgr.switch_input_mode(999, cxxime::InputMode::PINYIN);
     ASSERT_EQ(st, cxxime::IPCStatus::ERR_INVALID_SESSION);
 }
 
@@ -658,7 +658,7 @@ TEST(SessionStatus, input_state_is_session_local_while_input_mode_remains_global
     ASSERT_EQ(s5.chinese_punct(), false);
     ASSERT_EQ(s6.chinese_punct(), true);
 
-    mgr.switch_input_mode(id1);
+    mgr.switch_input_mode(id1, cxxime::InputMode::WUBI);
     auto [st7, s7] = mgr.get_ime_status(id1);
     auto [st8, s8] = mgr.get_ime_status(id2);
     ASSERT_EQ(st7, cxxime::IPCStatus::OK);

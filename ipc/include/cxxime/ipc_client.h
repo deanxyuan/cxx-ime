@@ -38,7 +38,6 @@ public:
     bool set_chinese_mode(uint32_t session_id, bool chinese_mode, IPCResponse& response);
     bool toggle_shape(uint32_t session_id, IPCResponse& response);
     bool toggle_punct(uint32_t session_id, IPCResponse& response);
-    bool switch_input_mode(uint32_t session_id, IPCResponse& response);
     bool switch_input_mode(uint32_t session_id, InputMode mode, IPCResponse& response);
     bool get_status(uint32_t session_id, IPCResponse& response);
     bool sync_caps_lock(uint32_t session_id, bool caps_lock, IPCResponse& response);

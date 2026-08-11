@@ -15,6 +15,7 @@
 
 #include <cxxime/diagnostic_log_path.h>
 #include <cxxime/diagnostics_config.h>
+#include <cxxime/version.h>
 
 namespace cxxime {
 namespace {
@@ -125,8 +126,8 @@ uint64_t mix64(uint64_t value) {
 
 } // namespace
 
-const char* host_trace_build_id() {
-    return kHostTraceBuildId;
+const char* host_trace_product_version() {
+    return CXXIME_VERSION_STRING;
 }
 
 const char* host_trace_arch() {
@@ -230,7 +231,7 @@ void write_host_trace(const char* component, const char* event, nlohmann::json f
     }
 
     fields["schema_version"] = kHostTraceSchemaVersion;
-    fields["build_id"] = kHostTraceBuildId;
+    fields["product_version"] = host_trace_product_version();
     fields["arch"] = host_trace_arch();
     fields["event"] = event ? event : "";
     fields["seq"] = g_host_trace_sequence.fetch_add(1, std::memory_order_relaxed) + 1;

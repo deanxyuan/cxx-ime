@@ -8,7 +8,6 @@ from conversion_check import conversion_sync_gaps
 from comless_check import comless_evidence_gaps
 from host_behavior_check import candidate_visibility_gaps, host_behavior_evidence_gaps
 from trace_common import (
-    DEFAULT_BUILD_ID,
     evidence_gaps,
     load_records,
     report,
@@ -19,7 +18,7 @@ from trace_common import (
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("paths", nargs="+", help="one runtime JSONL or one Probe JSONL")
-    parser.add_argument("--build-id", default=DEFAULT_BUILD_ID)
+    parser.add_argument("--product-version")
     parser.add_argument("--kind", choices=("runtime", "probe"), required=True)
     parser.add_argument("--require-summary", action="store_true")
     parser.add_argument("--require-candidate-visibility-toggle", action="store_true")
@@ -29,7 +28,7 @@ def main() -> int:
     args = parser.parse_args()
 
     records, errors = load_records(args.paths)
-    validation_errors, gaps = validate_records(records, args.build_id)
+    validation_errors, gaps = validate_records(records, args.product_version)
     errors.extend(validation_errors)
     gaps.extend(evidence_gaps(records, args.kind, args.require_summary))
     if args.require_candidate_visibility_toggle:

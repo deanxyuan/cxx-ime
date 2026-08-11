@@ -9,15 +9,15 @@ import tempfile
 import unittest
 
 
-BUILD_ID = "cxxime-host-takeover-20260725-b"
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DIAGNOSTICS = os.path.join(ROOT, "diagnostics", "host_takeover")
-
+with open(os.path.join(ROOT, "VERSION"), encoding="utf-8") as version_file:
+    PRODUCT_VERSION = version_file.read().strip()
 
 def record(component, event, seq, **fields):
     value = {
-        "schema_version": 2,
-        "build_id": BUILD_ID,
+        "schema_version": 3,
+        "product_version": PRODUCT_VERSION,
         "arch": "x64",
         "event": event,
         "seq": seq,
@@ -124,7 +124,9 @@ class HostTraceToolsTest(unittest.TestCase):
             self.assertEqual(export.returncode, 0, export.stdout + export.stderr)
 
             for kind in ("runtime", "probe"):
-                path = os.path.join(directory, f"cxxime-host-{kind}-{BUILD_ID}.jsonl")
+                path = os.path.join(
+                    directory, f"cxxime-host-{kind}-v{PRODUCT_VERSION}.jsonl"
+                )
                 self.assertTrue(os.path.isfile(path), path)
                 check = self.run_command([
                     sys.executable,
@@ -136,6 +138,29 @@ class HostTraceToolsTest(unittest.TestCase):
                     path,
                 ])
                 self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
+
+    def test_check_rejects_mixed_product_versions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "mixed-versions.jsonl")
+            values = [
+                record("tsf", "runtime.component_status", 1),
+                record(
+                    "tsf",
+                    "runtime.activate",
+                    2,
+                    product_version="0.0.0-other",
+                ),
+            ]
+            self.write_records(path, values)
+            check = self.run_command([
+                sys.executable,
+                os.path.join(DIAGNOSTICS, "scripts", "check_host_trace.py"),
+                "--kind",
+                "runtime",
+                path,
+            ])
+            self.assertEqual(check.returncode, 1, check.stdout + check.stderr)
+            self.assertIn("mixed product_version values", check.stderr)
 
     def test_raw_trace_does_not_require_export_summary(self):
         with tempfile.TemporaryDirectory() as directory:
