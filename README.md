@@ -1,8 +1,14 @@
 # CxxIME
 
-轻量级 Windows TSF 输入法（拼音 / 五笔 / 混输）
+![C++](https://img.shields.io/badge/C%2B%2B-17-00599C?style=flat-square&logo=cplusplus&logoColor=white)
+![Windows](https://img.shields.io/badge/Windows-10%2F11-0078D6?style=flat-square&logo=windows&logoColor=white)
+![CMake](https://img.shields.io/badge/CMake-3.15%2B-064F8C?style=flat-square&logo=cmake&logoColor=white)
+![Windows CI](https://img.shields.io/github/actions/workflow/status/deanxyuan/cxx-ime/windows-ci.yml?branch=master&label=Windows%20CI&style=flat-square)
+![License](https://img.shields.io/github/license/deanxyuan/cxx-ime?style=flat-square)
 
-A lightweight Windows TSF (Text Services Framework) input method (Pinyin + Wubi + Mixed).
+> 轻量级 Windows TSF 输入法（拼音 / 五笔 / 混输）
+>
+> A lightweight Windows TSF (Text Services Framework) input method (Pinyin + Wubi + Mixed).
 
 ## 项目简介
 
@@ -21,7 +27,7 @@ CxxIME 是一个基于 Windows TSF (Text Services Framework) 的输入法，支�
 - Windows 10/11
 - Visual Studio 2022（或 Build Tools），需要 C++ 工作负载
 - CMake 3.15+
-- Python 3.6+（用于词典下载工具，可选）
+- Python 3.10+（词典生成、测试和打包时需要；运行安装包不需要）
 
 ## 构建
 
@@ -31,9 +37,11 @@ build.bat debug        # Debug 构建
 build.bat clean        # 清理构建目录
 ```
 
-构建产物在 `build/<config>/` 目录下：
+`build.bat` 构建当前 CMake 生成器对应的平台；正式打包流程会分别生成 x64 和 x86
+平台模块。构建产物在 `build/<config>/` 目录下：
 
-- `cxxime_tsf_x64.dll` / `cxxime_tsf_x86.dll` — TSF 文本服务 DLL（双架构）
+- `cxxime_tsf_<arch>.dll` — TSF 文本服务 DLL
+- `cxxime_ime_<arch>.ime` — IMM 兼容模块
 - `cxxime-resources.dll` — 输入法 profile 资源 DLL
 - `cxxime-server.exe` — 后台服务进程
 - `cxxime-settings.exe` — 配置编辑器
@@ -152,7 +160,7 @@ scripts\package.py --host-diag         # 宿主诊断包
 
 需要预先安装 [NSIS 3.x](https://nsis.sourceforge.io/) 并确保 `makensis.exe` 在 PATH 中。如果未安装 NSIS，`package.py` 会跳过安装程序生成，`dist/` 目录中保留原始分发文件。
 
-`package.py` 执行流程：构建（x64 + x86 双 TSF DLL）→ 复制配置 → 词典准备与校验（`prepare_dictionary_bundle.py` / `verify_dictionary_bundle.py`）→ NSIS 编译 → 输出单文件安装程序。
+`package.py` 执行流程：构建 → 复制配置 → 词典转换（`.db` → `.bin`）→ 数据校验 → NSIS 编译 → 输出单文件安装程序。
 
 打包脚本默认使用 `build-package\` 构建目录，避免和 `build.bat` 的开发构建目录互相污染。CMake 生成器默认交给 CMake 和当前命令行环境决定，也可以通过 `--generator`、`--platform` 或环境变量 `CXXIME_CMAKE_GENERATOR`、`CXXIME_CMAKE_PLATFORM` 覆盖。
 
@@ -223,15 +231,7 @@ ctest -C Debug --output-on-failure
 
 或单独运行某个测试：`build\test\Debug\ipc_test.exe`
 
-当前共 40 个 ctest 条目（36 个 C++ 测试 + 4 个 Python 测试），510+ 用例。
-
-## 文档
-
-`docs/` 下为项目级文档（面向维护者、开发者与用户），主要入口：
-
-- [架构总览](docs/architecture.md) — 总体架构、模块划分、技术选型与专题文档索引
-- [安装与卸载](docs/installation.md) — 安装细节、手动注册与故障排查
-- [设置指南](docs/settings-guide.md) — 设置窗口与配置文件参考
+CTest 项目由 CMake 自动注册；宿主诊断构建会额外加入宿主跟踪相关测试。
 
 ## 许可证
 

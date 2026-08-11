@@ -71,13 +71,13 @@ stop():
 
 ### 单元测试
 
-`test/ipc_test.cc` 共 32 个用例：
+`test/ipc_test.cc` 共 33 个用例：
 
 - **Protocol**（7）：`pipe_name`、`user_pipe_name_preserves_endpoint_and_is_idempotent`、`request_struct_size`、`response_struct_size`、`response_zero_init`、`candidate_text_over_old_capacity_round_trips`、`ime_status_flags_are_independent`
 - **Server**（2）：`start_stop`、`double_stop`
 - **Client**（3）：`connect_no_server`、`connect_with_server`、`disconnect_idempotent`
 - **Error**（3）：`unknown_command`、`invalid_session`、`engine_not_initialized`
-- **IPC**（12）：`start_session`、`end_session`、`ping`、`process_key_preedit`、`request_timeout_disconnects_client`、`process_key_commit`、`process_key_rejected`、`select_candidate`、`commit_composition`、`set_chinese_mode_uses_explicit_target`、`focus_in_out`、`send_request`
+- **IPC**（13）：`start_session`、`end_session`、`ping`、`process_key_preedit`、`request_timeout_disconnects_client`、`process_key_commit`、`process_key_rejected`、`select_candidate`、`commit_composition`、`set_chinese_mode_uses_explicit_target`、`switch_input_mode_carries_target`、`focus_in_out`、`send_request`
 - **MultiClient**（2）：`two_clients_simultaneous`、`sequential_sessions`
 - **Reconnect**（1）：`server_restart`
 - **Stress**（2）：`rapid_requests`、`concurrent_clients`
