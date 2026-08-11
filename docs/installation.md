@@ -1,17 +1,5 @@
 # 安装与卸载
 
-## 目录
-
-- [构建与打包](#构建与打包)
-- [安装](#安装)
-- [卸载](#卸载)
-- [安装模式](#安装模式)
-- [数据目录结构](#数据目录结构)
-- [命令行参数](#命令行参数)
-- [配置编辑器](#配置编辑器)
-- [诊断包](#诊断包)
-- [常见问题](#常见问题)
-
 ## 构建与打包
 
 ### 开发构建
@@ -30,7 +18,15 @@ build.bat clean          # 清理构建目录
 scripts\package.py                    # Release 打包
 scripts\package.py --debug            # Debug 打包
 scripts\package.py --fast --skip-dict # 快速复用已有 dist\data 词典打包
+scripts\package.py --host-diag        # 宿主诊断包
 ```
+
+安装包输出到 `..\output\cxxime-v<version>-setup.exe`；诊断包文件名包含
+`-host-diag` 后缀。`<version>` 取自仓库根目录的 `VERSION`。
+
+默认包关闭宿主诊断，不包含 IME Host Probe、宿主跟踪导出脚本及其快捷方式。
+`--host-diag` 同时启用产品内宿主诊断并打包这些工具。两种包都保留通用的
+`collect_diagnostics.ps1`。
 
 需要预先安装 [NSIS 3.x](https://nsis.sourceforge.io/)。`package.py` 执行：
 
@@ -41,8 +37,6 @@ scripts\package.py --fast --skip-dict # 快速复用已有 dist\data 词典打�
 5. 校验发布数据文件、CRT 依赖和热路径日志
 5. 调用 `makensis.exe` 编译 NSIS 安装脚本
 6. 输出 `..\output\cxxime-v<version>-setup.exe`
-
-安装包文件名中的 `version` 取自仓库根目录的 `VERSION` 文件。
 
 `package.py` 默认使用独立的 `build-package\` 构建目录，避免和 `build.bat` 使用的开发构建目录互相污染。 CMake 生成器默认交给 CMake 和当前命令行环境决定; 如需要显示指定，可使用：
 
@@ -56,20 +50,25 @@ python scripts\package.py --generator "Visual Studio 17 2022" --platform x64
 
 1. 许可协议
 2. 选择程序安装目录，默认 `C:\Program Files\CxxIME`
-3. 停止已有 `cxxime-server.exe` 进程
-4. 反注册已有旧版 TSF DLL（x86 和 x64）
-5. 删除旧版 TSF DLL 及 `.old` 残留
-6. 复制程序文件：
-   - `cxxime_tsf_x64.dll`、`cxxime_tsf_x86.dll`、`cxxime-resources.dll`
-   - `cxxime-server.exe`、`cxxime-settings.exe`、`collect_diagnostics.ps1`
-7. 复制出厂数据（配置文件、主题、标点、二进制词典、清单）至 `<安装目录>\data\`
-8. 创建用户配置目录 `%USERPROFILE%\cxxime\`，首次安装时复制默认配置
-9. 注册 TSF DLL（x64: Sysnative regsvr32，x86: SysDir regsvr32）
-10. 写入注册表自启动项 `Run\CxxIMEServer`
-11. 写入卸载注册表项（`DisplayIcon` 引用 `cxxime-resources.dll`）
-12. 创建开始菜单快捷方式（设置、诊断收集、卸载）
-13. 启动 `cxxime-server.exe`
-14. 可选：启动 `cxxime-settings.exe`
+3. 检查占用旧版 CxxIME 文件的应用
+4. 将新程序和出厂数据解压到同卷暂存目录
+5. 备份旧版本并切换到新版本
+6. 注册 TSF、复制 IMM 兼容模块并写入安装信息
+7. 初始化用户配置目录 `%USERPROFILE\cxxime\%`，创建快捷方式并启动服务端
+
+安装器使用同卷的暂存目录和备份目录完成升级。切换程序目录前，安装器会将旧程序状态、
+64 位和 32 位 TSF 模块的实际注册状态、系统 IMM 模块和安装注册表状态写入持久事务文件，
+不会根据 DLL 是否存在推断 TSF 是否已注册。TSF 注册、系统 IMM 模块复制或安装信息写入失败时，
+会按事务文件恢复原状态；安装提交成功后才删除事务数据和旧版本。
+如果安装进程异常终止，下次运行安装器会先停止服务端、检查当前目录和备份目录的文件占用，
+再恢复未提交的安装或清理已经提交的备份。恢复未完成时不会继续覆盖文件。
+
+覆盖安装会沿用注册表记录的安装目录。安装程序不会覆盖
+`%USERPROFILE%\cxxime\default.json` 和用户词典。
+
+如果有应用正在使用 CxxIME，安装器会列出 Restart Manager 检测到的进程，要求关闭后
+重试。仅切换到其他输入法不能保证 TSF DLL 已从宿主进程卸载；Windows 系统进程仍占用文件时，
+需要注销或重启后再运行安装器。安装阶段不使用重启后延迟覆盖，避免新旧模块混装。
 
 安装完成后**注销并重新登录**，输入法出现在系统输入法列表中。按 `Ctrl+Space` 或 `Win+Space` 切换。
 
@@ -78,18 +77,20 @@ python scripts\package.py --generator "Visual Studio 17 2022" --platform x64
 - **推荐：** 开始菜单 → CxxIME → 卸载 CxxIME
 - 或控制面板 → 添加/删除程序 → CxxIME
 
-卸载过程如下：
+卸载程序自动：停止服务端 → 检查文件占用 → 创建卸载事务 → 反注册 TSF DLL →
+删除系统 IMM 模块 → 暂存并删除程序文件 → 移除自启动和注册表。
 
-1. 停止 `cxxime-server.exe`
-2. 将系统键盘布局切换为英文（00000409），通过 `SendMessageTimeout` 通知 TSF 从所有进程卸载 CxxIME
-3. 等待 3 秒确保 TSF 通知完成
-4. 反注册 TSF DLL（x86: SysDir regsvr32 /u，x64: Sysnative regsvr32 /u）
-5. 移除注册表项：`Run\CxxIMEServer`、Uninstall、CLSID、`CTF\TIP`
-6. 删除开始菜单快捷方式
-7. 删除程序文件（TSF DLL、可执行文件、数据文件等）。若 DLL 仍被占用，调度重启删除（`/REBOOTOK`）
-8. **可选清除用户数据**：卸载向导中会出现"用户数据清理"页面（`un.UserDataPage`），默认保留。勾选"删除用户配置和词典数据"复选框并指定路径后，会删除 `%USERPROFILE%\cxxime\` 及其内容
+默认卸载只删除程序文件、开始菜单快捷方式、TSF 注册项、自启动项和卸载项。用户目录
+`%USERPROFILE%\cxxime\` 下的配置和用户词典会保留，便于重新安装或升级后继续使用。
 
-卸载后如果安装目录暂时残留，重启后应自动清理。
+卸载器只删除安装器拥有的文件；安装目录中无法识别的文件会保留。删除程序文件成功前
+控制面板卸载项和 `uninstall.exe` 保持可用。卸载中断后可再次运行卸载器继续处理；删除程序文件
+前发生错误时会按卸载前记录的 64 位和 32 位状态恢复 TSF 注册和系统 IMM 模块。
+全部程序文件安全移入同卷暂存目录后，卸载事务进入提交阶段；此后即使卸载中断，再次运行也会
+继续删除和清理注册表，不会尝试恢复已经永久删除的文件。
+
+如果 TSF DLL 或其他程序文件仍被宿主进程占用，卸载器会列出相关应用并要求关闭后重试。
+卸载不会修改当前用户的键盘布局预加载项，卸载后如果安装目录暂时残留，重启后应自动清理。
 
 > **注意**：卸载完成后建议注销重新登录。如果 TSF DLL 被占用，重启后才能完成清理。
 

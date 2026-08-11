@@ -189,7 +189,7 @@ class HostTraceToolsTest(unittest.TestCase):
             self.assertEqual(check.returncode, 2, check.stdout + check.stderr)
             self.assertIn("missing evidence event: trace.summary", check.stderr)
 
-    def test_t2_evidence_accepts_complete_runtime_and_probe_traces(self):
+    def test_host_behavior_evidence_accepts_complete_runtime_and_probe_traces(self):
         with tempfile.TemporaryDirectory() as directory:
             probe = [
                 record("probe", "probe.runtime", 1,
@@ -408,14 +408,14 @@ class HostTraceToolsTest(unittest.TestCase):
             ]
 
             for kind, values in (("probe", probe), ("runtime", runtime)):
-                path = os.path.join(directory, f"host-{kind}-t2-x64.jsonl")
+                path = os.path.join(directory, f"host-{kind}-behavior-x64.jsonl")
                 self.write_records(path, values)
                 check = self.run_command([
                     sys.executable,
                     os.path.join(DIAGNOSTICS, "scripts", "check_host_trace.py"),
                     "--kind",
                     kind,
-                    "--require-t2",
+                    "--require-host-behavior",
                     path,
                 ])
                 self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
@@ -443,7 +443,7 @@ class HostTraceToolsTest(unittest.TestCase):
                 os.path.join(DIAGNOSTICS, "scripts", "check_host_trace.py"),
                 "--kind",
                 "runtime",
-                "--require-t2",
+                "--require-host-behavior",
                 path,
             ])
             self.assertEqual(check.returncode, 2, check.stdout + check.stderr)
@@ -452,9 +452,9 @@ class HostTraceToolsTest(unittest.TestCase):
                 check.stderr,
             )
 
-    def test_t2_evidence_reports_missing_display_attribute(self):
+    def test_host_behavior_evidence_reports_missing_display_attribute(self):
         with tempfile.TemporaryDirectory() as directory:
-            path = os.path.join(directory, "host-probe-t2-x64.jsonl")
+            path = os.path.join(directory, "host-probe-behavior-x64.jsonl")
             values = [
                 record("probe", "probe.runtime", 1,
                        activate_flags=4, result="ready"),
@@ -475,18 +475,18 @@ class HostTraceToolsTest(unittest.TestCase):
                 os.path.join(DIAGNOSTICS, "scripts", "check_host_trace.py"),
                 "--kind",
                 "probe",
-                "--require-t2",
+                "--require-host-behavior",
                 path,
             ])
             self.assertEqual(check.returncode, 2, check.stdout + check.stderr)
             self.assertIn(
-                "T2: composition display attribute was not resolved",
+                "composition display attribute was not resolved",
                 check.stderr,
             )
 
-    def test_t3_comless_evidence_checks_probe_mode_and_runtime_flag(self):
+    def test_comless_evidence_checks_probe_mode_and_runtime_flag(self):
         with tempfile.TemporaryDirectory() as directory:
-            probe_path = os.path.join(directory, "host-probe-t3-x64.jsonl")
+            probe_path = os.path.join(directory, "host-probe-comless-x64.jsonl")
             probe = [
                 record(
                     "probe", "probe.runtime", 1,
@@ -540,10 +540,10 @@ class HostTraceToolsTest(unittest.TestCase):
                 probe_path,
             ])
             self.assertEqual(check.returncode, 2, check.stdout + check.stderr)
-            self.assertIn("T3: Probe did not use the TSF factory in mta COM mode",
+            self.assertIn("Probe did not use the TSF factory in mta COM mode",
                           check.stderr)
 
-            runtime_path = os.path.join(directory, "host-runtime-t3-x64.jsonl")
+            runtime_path = os.path.join(directory, "host-runtime-comless-x64.jsonl")
             runtime = [
                 record("tsf", "runtime.component_status", 1),
                 record("tsf", "runtime.activate", 2,

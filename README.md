@@ -147,7 +147,7 @@ scripts\package.py --host-diag         # 宿主诊断包
 修改词典源数据或短码排序算法后，正式打包不得使用 `skip-dict`，必须重新生成
 `pinyin.topn.bin` 和词典清单。
 
-普通安装包不包含 IME Host Probe 和阶段日志导出工具，但包含通用的
+普通安装包不包含 IME Host Probe 和宿主跟踪导出工具，但包含通用的
 `collect_diagnostics.ps1`。仅在复现宿主接管问题时使用 `--host-diag`。
 
 需要预先安装 [NSIS 3.x](https://nsis.sourceforge.io/) 并确保 `makensis.exe` 在 PATH 中。如果未安装 NSIS，`package.py` 会跳过安装程序生成，`dist/` 目录中保留原始分发文件。
