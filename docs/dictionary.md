@@ -282,7 +282,7 @@ Python 格式: `"<IIIIi"`
 2. 二分查找 `syllable_ids` 匹配的条目（memcmp 比较）
 3. 从匹配位置向前扫描，收集所有相同 `syllable_ids` 的条目
 4. 查询内存 user_entries_（同一 code）
-5. 合并结果，按 frequency 降序排列
+5. 合并结果，按 frequency 降序排列（同频时按文本长度升序、文本字典序）
 
 #### 搜索算法 (lookup — 前缀匹配)
 
@@ -294,7 +294,7 @@ Python 格式: `"<IIIIi"`
 
 ### 3.3 五笔完整前缀索引（wubi86.dict.idx / CXWIDX v1）
 
-本次更新为五笔引入独立的完整前缀索引，取代原来的整数 ID 索引（CXIDX）。`wubi86.dict.idx` 在构建时由 `data/tools/dict_builder/wubi_prefix_index.py` 生成，记录每个可达五笔编码前缀的排序词条列表；运行时由 `WubiPrefixIndex` 整文件加载，`Dict::lookup()` 二分查找后直接取预排序 postings，避免全表扫描。
+五笔使用独立的完整前缀索引，取代原来的整数 ID 索引（CXIDX）。`wubi86.dict.idx` 在构建时由 `data/tools/dict_builder/wubi_prefix_index.py` 生成，记录每个可达五笔编码前缀的排序词条列表；运行时由 `WubiPrefixIndex` 整文件加载，`Dict::lookup()` 二分查找后直接取预排序 postings，避免全表扫描。
 
 #### 文件布局
 
@@ -327,17 +327,15 @@ Python 格式: `"<IIIIi"`
 
 `Dict::open_wubi_bundle()` 加载 `wubi86.dict.bin` + `wubi86.dict.idx`；`Dict::lookup()` 优先走 `WubiPrefixIndex::find()`（对 `packed_code` 二分查找），直接返回预排序 postings。`wubi86.dict.idx` 是必需文件：索引缺失或加载失败时 `open_wubi_bundle()` 返回失败，服务端启动即报错，不再回退到旧的全表扫描路径。
 
-### 3.4 格式版本兼容
+### 3.4 当前格式版本
 
-通过文件头 magic 字节自动检测版本：
+运行时加载与构建校验（`scripts/verify_dictionary_bundle.py`）只接受以下当前格式：
 
 | 格式 | magic (hex/ASCII) | 说明 |
 |------|-------------------|------|
-| spellings v1 | `43 58 53 50 4C 01 00 00` / `CXSPL\x01\x00\x00` | 平坦排序数组（旧格式，向后兼容） |
 | spellings v2 | `43 58 53 50 4C 02 00 00` / `CXSPL\x02\x00\x00` | Patricia trie（当前生产格式） |
-| dict v1 | `43 58 44 49 43 01 00 00` / `CXDIC\x01\x00\x00` | 平坦排序数组 |
-| dict v2 | `43 58 44 49 43 02 00 00` / `CXDIC\x02\x00\x00` | 平坦排序数组（布局相同，版本号升级） |
-| dict.idx v2/v3 | `43 58 49 44 58 00 00 00 00` / `CXIDX\0\0\0\0` | 整数 ID 索引（音节→词条，v2 变长解析，v3 zero-copy） |
+| dict v2 | `43 58 44 49 43 02 00 00` / `CXDIC\x02\x00\x00` | 平坦排序数组 |
+| dict.idx v3 | `43 58 49 44 58 00 00 00 00` / `CXIDX\0\0\0\0` | 整数 ID 索引（音节→词条，zero-copy） |
 | wubi idx v1 | `43 58 57 49 44 58 01 00` / `CXWIDX\x01\x00` | 五笔完整前缀索引（packed code → 排序 postings） |
 | topn.bin v2 | `43 58 54 4F 50 4E 02 00` / `CXTOPN\x02\0` | DAT-16 格式：Darts-clone 双数组 Trie 键索引 + 内联 16 字节候选条目 |
 
@@ -355,11 +353,11 @@ Python 格式: `"<IIIIi"`
 
 | 文件 | SQLite (.db) | 二进制 (.bin / .idx) | 压缩 (.zip) |
 |------|-------------|----------------------|-------------|
-| pinyin 主词典 | 146 MB | 72.8 MB (dict.bin) | 57 MB |
-| pinyin 整数 ID 索引 | — | 48.4 MB (dict.idx) | — |
-| pinyin Top-N 候选索引 | — | 212 MB (topn.bin, DAT-16) | — |
-| pinyin 拼写索引 | — | 2.9 MB (spellings.bin) | — |
-| wubi86 主词典 | 3.2 MB | 2.6 MB (dict.bin) | 1.7 MB |
+| pinyin 主词典 | 146 MB | 69.5 MB (dict.bin) | 64.3 MB |
+| pinyin 整数 ID 索引 | — | 46.2 MB (dict.idx) | — |
+| pinyin Top-N 候选索引 | — | 211.5 MB (topn.bin, DAT-16) | — |
+| pinyin 拼写索引 | — | 0.03 MB (spellings.bin) | — |
+| wubi86 主词典 | 3.2 MB | 2.5 MB (dict.bin) | 2.0 MB |
 | wubi86 完整前缀索引 | — | 2.3 MB (dict.idx) | — |
 
 ### 4.3 为什么不用 SQLite 存主词典
@@ -545,11 +543,12 @@ RUN_ALL_TESTS()                            // main 入口，自动发现并运�
 
 ### 8.2 测试覆盖
 
-词典相关覆盖共 9 个 C++ 测试 + 3 个 Python 测试，合计 180+ 个 `TEST()` 用例；完整测试套件（40 个 ctest 条目、510+ 用例）见项目 README。
+词典相关覆盖共 10 个 C++ 测试 + 4 个 Python 测试，合计 186 个 `TEST()` 用例；完整测试套件（含其他模块测试）见项目 README。
 
 | 测试文件 | 用例数 | 测试内容 |
 |----------|--------|----------|
 | `dict_test` | 26 | 词典打开/前缀查找/音节查找/空查询/反查/用户词频更新 |
+| `dictionary_format_test` | 4 | 当前格式可加载；dict v1 / spellings v1 / dict.idx v2 被拒绝 |
 | `wubi_test` | 7 | Wubi86 基本查找/前缀匹配/去重 |
 | `wubi_prefix_query_test` | 1 | 五笔完整前缀索引查询排序 |
 | `short_cache_test` | 16 | 短码缓存查询（Top-N 索引） |
@@ -561,12 +560,13 @@ RUN_ALL_TESTS()                            // main 入口，自动发现并运�
 | `wubi_symbol_pipeline_test` | (Python) | 五笔符号拆分流水线验证 |
 | `wubi_prefix_index_test` | (Python) | 五笔完整前缀索引构建验证 |
 | `pinyin_topn_pipeline_test` | (Python) | Top-N 键生成与 DAT-16 转换验证 |
-| **合计** | **180+** | |
+| `dictionary_format_verifier_test` | (Python) | 构建校验器对当前格式 magic/version 的检查 |
+| **合计** | **186** | |
 
 ### 8.3 运行测试
 
 ```bash
 cd build
-ctest -C Debug                          # 运行全部测试（40 个）
+ctest -C Debug                          # 运行全部测试
 build\test\Debug\engine_test.exe        # 单独运行某个测试
 ```

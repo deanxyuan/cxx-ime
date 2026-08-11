@@ -1,7 +1,7 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
-#ifndef CXXIME_TOOLS_TOPN_LEGACY_READER_H_
-#define CXXIME_TOOLS_TOPN_LEGACY_READER_H_
+#ifndef CXXIME_TOOLS_TOPN_INTERMEDIATE_READER_H_
+#define CXXIME_TOOLS_TOPN_INTERMEDIATE_READER_H_
 
 #include <cstddef>
 #include <cstdint>
@@ -13,7 +13,7 @@
 
 namespace cxxime::topn {
 
-class LegacyReader : public Source {
+class IntermediateReader : public Source {
 public:
     bool load(const std::string& path, std::string* error);
 
@@ -40,4 +40,4 @@ private:
 
 } // namespace cxxime::topn
 
-#endif // CXXIME_TOOLS_TOPN_LEGACY_READER_H_
+#endif // CXXIME_TOOLS_TOPN_INTERMEDIATE_READER_H_

@@ -19,7 +19,6 @@
 #include "binary_format.h"
 #include "wubi_prefix_index.h"
 
-static const char DICT_MAGIC_V1[] = "CXDIC\x01\x00\x00";
 static const char DICT_MAGIC_V2[] = "CXDIC\x02\x00\x00";
 
 namespace cxxime {
@@ -229,8 +228,7 @@ bool Dict::open_dict_with_aux(const std::string& bin_path,
     }
 
     auto* hdr = (const DictHeader*)dict_data_;
-    if (std::memcmp(hdr->magic, DICT_MAGIC_V1, 8) != 0 &&
-        std::memcmp(hdr->magic, DICT_MAGIC_V2, 8) != 0) {
+    if (std::memcmp(hdr->magic, DICT_MAGIC_V2, 8) != 0) {
         CXXIME_LOG(L"Dict::open_dict bad magic");
         unload_dict();
         return false;
@@ -238,7 +236,7 @@ bool Dict::open_dict_with_aux(const std::string& bin_path,
 
     // Bounds validation: ensure header fields don't point outside the file
     uint32_t version = hdr->version;
-    if (version != 1 && version != 2) {
+    if (version != 2) {
         CXXIME_LOG(L"Dict::open_dict bad version=%u", version);
         unload_dict();
         return false;
@@ -1543,7 +1541,7 @@ bool Dict::load_id_index_file(const std::string& idx_path) {
     const uint32_t* h = (const uint32_t*)(base + 8);
     uint32_t ver = h[0], syl_count = h[1], syl_str_size = h[2];
     uint32_t idx_count = h[3], idx_data_size = h[4];
-    if (ver < 2 || ver > 3) {
+    if (ver != 3) {
         unload_id_index();
         return false;
     }
@@ -1574,70 +1572,40 @@ bool Dict::load_id_index_file(const std::string& idx_path) {
 
     const uint8_t* after_syl = (const uint8_t*)(syl_strs + syl_str_size);
 
-    if (ver == 3) {
-        // v3: zero-copy — offsets table + data section
-        const uint32_t* id_offsets = (const uint32_t*)after_syl;
-        const uint8_t*  id_data    = after_syl + idx_count * 4;
-        const uint8_t*  id_end     = id_data + idx_data_size;
-        if (after_syl + (uint64_t)idx_count * 4 > (const uint8_t*)file_end ||
-            id_end > (const uint8_t*)file_end) {
-            unload_id_index();
-            return false;
-        }
+    // v3: offsets table + ID data stored directly in the loaded file buffer.
+    const uint32_t* id_offsets = (const uint32_t*)after_syl;
+    const uint8_t*  id_data    = after_syl + idx_count * 4;
+    const uint8_t*  id_end     = id_data + idx_data_size;
+    if (after_syl + (uint64_t)idx_count * 4 > (const uint8_t*)file_end ||
+        id_end > (const uint8_t*)file_end) {
+        unload_id_index();
+        return false;
+    }
 
-        id_index_.clear();
-        id_index_.reserve(idx_count);
-        for (uint32_t i = 0; i < idx_count; ++i) {
-            if (id_offsets[i] >= idx_data_size) {
-                unload_id_index();
-                return false;
-            }
-            const uint8_t* e = id_data + id_offsets[i];
-            if (e + 8 > id_end) {
-                unload_id_index();
-                return false;
-            }
-            uint32_t cnt = *(const uint32_t*)e;
-            if (e + 4 + (uint64_t)cnt * 4 + 4 > id_end) {
-                unload_id_index();
-                return false;
-            }
-            uint32_t dict_index = *(const uint32_t*)(e + 4 + cnt * 4);
-            if (dict_index >= dict_entry_count_) {
-                unload_id_index();
-                return false;
-            }
-            id_index_.push_back({(const uint32_t*)(e + 4), cnt,
-                                 dict_index});
-        }
-    } else {
-        // v2: parse variable-length entries (backward compat)
-        id_index_.clear();
-        id_index_.reserve(idx_count);
-        const uint8_t* p = after_syl;
-        const uint8_t* end = p + idx_data_size;
-        if (end > (const uint8_t*)file_end) {
+    id_index_.clear();
+    id_index_.reserve(idx_count);
+    for (uint32_t i = 0; i < idx_count; ++i) {
+        if (id_offsets[i] >= idx_data_size) {
             unload_id_index();
             return false;
         }
-        for (uint32_t i = 0; i < idx_count && p < end; ++i) {
-            if (p + 4 > end)
-                break;
-            uint32_t cnt = *(const uint32_t*)p;
-            p += 4;
-            if (p + cnt * 4 + 4 > end) break;
-            const uint32_t* ids = (const uint32_t*)p; p += cnt * 4;
-            uint32_t idx = *(const uint32_t*)p; p += 4;
-            if (idx >= dict_entry_count_) {
-                unload_id_index();
-                return false;
-            }
-            id_index_.push_back({ids, cnt, idx});
-        }
-        if (id_index_.size() != idx_count) {
+        const uint8_t* e = id_data + id_offsets[i];
+        if (e + 8 > id_end) {
             unload_id_index();
             return false;
         }
+        uint32_t cnt = *(const uint32_t*)e;
+        if (e + 4 + (uint64_t)cnt * 4 + 4 > id_end) {
+            unload_id_index();
+            return false;
+        }
+        uint32_t dict_index = *(const uint32_t*)(e + 4 + cnt * 4);
+        if (dict_index >= dict_entry_count_) {
+            unload_id_index();
+            return false;
+        }
+        id_index_.push_back({(const uint32_t*)(e + 4), cnt,
+                                dict_index});
     }
 
     CXXIME_LOG(L"Dict::load_id_index v%u syllables=%u idx=%zu",

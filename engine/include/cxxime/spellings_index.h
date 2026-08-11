@@ -54,17 +54,6 @@ struct SpellingEntry {
     float credibility;
 };
 
-// v1 flat array entry (for backward compatibility)
-struct SpellingEntryV1 {
-    uint32_t key_offset;
-    uint32_t syllable_offset;
-    uint32_t key_len;
-    uint32_t syllable_len;
-    uint8_t type;
-    uint8_t padding;
-    float credibility;
-};
-
 struct ChildEntry {
     uint8_t first_char;
     uint8_t padding[3];
@@ -103,15 +92,9 @@ private:
     const char* nodes_ = nullptr;      // raw node data
     const char* strings_ = nullptr;
     uint32_t node_count_ = 0;
-    uint32_t nodes_size_ = 0;          // total bytes of node data
 
-    // Pre-built offset table for O(1) node access (v2 trie)
+    // Pre-built offset table for O(1) node access.
     std::unique_ptr<uint32_t[]> node_offsets_;
-
-    // v1 flat array fallback
-    const SpellingEntryV1* flat_entries_ = nullptr;
-    uint32_t flat_entry_count_ = 0;
-    bool is_trie_ = false;
     bool fuzzy_enabled_ = true;
 };
 

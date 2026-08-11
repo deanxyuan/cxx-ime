@@ -3,13 +3,13 @@
 #include <iostream>
 #include <string>
 
+#include "intermediate_reader.h"
 #include "index_writer.h"
-#include "legacy_reader.h"
 
 namespace {
 
 void print_usage() {
-    std::cerr << "Usage: topn_builder --input <v1.bin> --output <v2.bin> "
+    std::cerr << "Usage: topn_builder --input <intermediate.bin> --output <runtime.bin> "
                  "--format <flat16|dat16|dat8>\n";
 }
 
@@ -41,7 +41,7 @@ int main(int argc, char** argv) {
     }
 
     std::string error;
-    cxxime::topn::LegacyReader source;
+    cxxime::topn::IntermediateReader source;
     if (!source.load(input_path, &error)) {
         std::cerr << "Failed to read source: " << error << "\n";
         return 1;

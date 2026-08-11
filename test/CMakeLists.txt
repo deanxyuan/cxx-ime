@@ -32,6 +32,8 @@ add_cxxime_test(segmentor_test)
 add_cxxime_test(syllabifier_completion_test)
 add_cxxime_test(pinyin_composer_test)
 add_cxxime_test(dict_test)
+add_cxxime_test(dictionary_format_test)
+target_link_libraries(dictionary_format_test PRIVATE cxxime-test-topn-data)
 add_cxxime_test(config_test)
 add_cxxime_test(keyboard_shortcut_test)
 add_cxxime_test(layout_test)
@@ -63,18 +65,18 @@ add_cxxime_test(control_channel_test)
 add_cxxime_test(control_lifecycle_test)
 
 add_executable(config_write_coordinator_test
-	config_write_coordinator_test.cc
-	${TEST_COMMON_SOURCES}
-	${CMAKE_SOURCE_DIR}/server/src/config_store.cc
-	${CMAKE_SOURCE_DIR}/server/src/config_write_coordinator.cc
+    config_write_coordinator_test.cc
+    ${TEST_COMMON_SOURCES}
+    ${CMAKE_SOURCE_DIR}/server/src/config_store.cc
+    ${CMAKE_SOURCE_DIR}/server/src/config_write_coordinator.cc
 )
 target_include_directories(config_write_coordinator_test PRIVATE
-	${TEST_INCLUDE_DIRS}
-	${CMAKE_SOURCE_DIR}/server/src
+    ${TEST_INCLUDE_DIRS}
+    ${CMAKE_SOURCE_DIR}/server/src
 )
 target_compile_definitions(config_write_coordinator_test PRIVATE
-	CXXIME_PROJECT_DIR="${CMAKE_SOURCE_DIR}/"
-	CXXIME_DATA_DIR="${CMAKE_SOURCE_DIR}/data/"
+    CXXIME_PROJECT_DIR="${CMAKE_SOURCE_DIR}/"
+    CXXIME_DATA_DIR="${CMAKE_SOURCE_DIR}/data/"
 )
 target_link_libraries(config_write_coordinator_test PRIVATE ${TEST_COMMON_DEPS})
 add_test(NAME config_write_coordinator_test COMMAND config_write_coordinator_test)
@@ -134,6 +136,11 @@ add_test(NAME session_manager_integration_test COMMAND session_manager_integrati
 find_package(Python3 QUIET)
 if(Python3_FOUND)
     add_test(
+        NAME dictionary_format_verifier_test
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/dictionary_format_verifier_test.py
+    )
+    add_test(
         NAME wubi_symbol_pipeline_test
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/wubi_symbol_pipeline_test.py
     )
@@ -151,7 +158,7 @@ if(Python3_FOUND)
         add_test(
             NAME host_trace_tools_test
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/host_trace_tools_test.py
-            --powershell ${POWERSHELL_EXECUTABLE}
+                    --powershell ${POWERSHELL_EXECUTABLE}
         )
     endif()
 endif()
