@@ -2,7 +2,7 @@ project(topn_index_tools CXX)
 
 add_library(cxxime-topn-index-builder STATIC
     index_writer.cc
-    legacy_reader.cc
+    intermediate_reader.cc
 )
 target_include_directories(cxxime-topn-index-builder PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}

@@ -11,9 +11,9 @@
 #include <utility>
 #include <vector>
 
+#include "intermediate_reader.h"
 #include "index_reader.h"
 #include "index_writer.h"
-#include "legacy_reader.h"
 
 namespace {
 
@@ -64,7 +64,7 @@ bool equal_candidate(const cxxime::topn::SourceCandidate& lhs,
     return lhs.text == rhs.text && lhs.frequency == rhs.frequency && lhs.score == rhs.score;
 }
 
-bool verify_index(const cxxime::topn::LegacyReader& baseline,
+bool verify_index(const cxxime::topn::IntermediateReader& baseline,
                   const cxxime::topn::IndexReader& index, const char* name) {
     if (index.key_count() != baseline.key_count()) {
         std::cerr << name << ": key count mismatch\n";
@@ -110,8 +110,8 @@ uint64_t touch_candidate(const cxxime::topn::SourceCandidate& candidate) {
     return value;
 }
 
-Timings benchmark_legacy(const cxxime::topn::LegacyReader& reader,
-                         const std::vector<size_t>& query_indices) {
+Timings benchmark_intermediate(const cxxime::topn::IntermediateReader& reader,
+                               const std::vector<size_t>& query_indices) {
     Timings result;
     result.locate.reserve(query_indices.size());
     result.expand.reserve(query_indices.size());
@@ -144,7 +144,7 @@ Timings benchmark_legacy(const cxxime::topn::LegacyReader& reader,
     return result;
 }
 
-Timings benchmark_index(const cxxime::topn::LegacyReader& source,
+Timings benchmark_index(const cxxime::topn::IntermediateReader& source,
                         const cxxime::topn::IndexReader& reader,
                         const std::vector<size_t>& query_indices) {
     Timings result;
@@ -201,7 +201,7 @@ void print_timings(const char* name, const char* order, Timings timings) {
               << " checksum=" << timings.checksum << "\n";
 }
 
-std::vector<std::string> make_missing_keys(const cxxime::topn::LegacyReader& baseline,
+std::vector<std::string> make_missing_keys(const cxxime::topn::IntermediateReader& baseline,
                                            const std::vector<size_t>& query_indices) {
     std::vector<std::string> missing;
     missing.reserve(query_indices.size());
@@ -217,7 +217,7 @@ std::vector<std::string> make_missing_keys(const cxxime::topn::LegacyReader& bas
     return missing;
 }
 
-bool benchmark_missing(const cxxime::topn::LegacyReader& baseline,
+bool benchmark_missing(const cxxime::topn::IntermediateReader& baseline,
                        const cxxime::topn::IndexReader& flat16,
                        const cxxime::topn::IndexReader& dat16,
                        const cxxime::topn::IndexReader& dat8,
@@ -232,10 +232,10 @@ bool benchmark_missing(const cxxime::topn::LegacyReader& baseline,
     dat8_timings.reserve(missing.size());
 
     for (const auto& key : missing) {
-        size_t legacy_index = 0;
+        size_t intermediate_index = 0;
         cxxime::topn::IndexMatch match;
         auto start = Clock::now();
-        const bool baseline_found = baseline.find(key, &legacy_index);
+        const bool baseline_found = baseline.find(key, &intermediate_index);
         auto end = Clock::now();
         baseline_timings.push_back(static_cast<uint64_t>(
             std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count()));
@@ -311,7 +311,7 @@ void print_throughput(const char* name, size_t query_count, size_t thread_count,
               << " qps=" << queries_per_second << " checksum=" << checksum << "\n";
 }
 
-void benchmark_concurrent(const cxxime::topn::LegacyReader& baseline,
+void benchmark_concurrent(const cxxime::topn::IntermediateReader& baseline,
                           const cxxime::topn::IndexReader& flat16,
                           const cxxime::topn::IndexReader& dat16,
                           const cxxime::topn::IndexReader& dat8,
@@ -367,13 +367,13 @@ bool load_timed(Reader* reader, const std::string& path, cxxime::TopnIndexLayout
 int main(int argc, char** argv) {
     Paths paths;
     if (!parse_args(argc, argv, &paths)) {
-        std::cerr << "Usage: topn_benchmark --baseline <v1> --flat16 <file> "
+        std::cerr << "Usage: topn_benchmark --baseline <intermediate> --flat16 <file> "
                      "--dat16 <file> --dat8 <file> [--queries N] [--threads N]\n";
         return 2;
     }
 
     std::string error;
-    cxxime::topn::LegacyReader baseline;
+    cxxime::topn::IntermediateReader baseline;
     auto start = Clock::now();
     if (!baseline.load(paths.baseline, &error)) {
         std::cerr << "baseline: " << error << "\n";
@@ -410,7 +410,8 @@ int main(int argc, char** argv) {
 
     for (const auto& order : {std::make_pair("sequential", &sequential),
                                std::make_pair("random", &random)}) {
-        print_timings("flat24", order.first, benchmark_legacy(baseline, *order.second));
+        print_timings("flat24", order.first,
+                      benchmark_intermediate(baseline, *order.second));
         print_timings("flat16", order.first,
                       benchmark_index(baseline, flat16, *order.second));
         print_timings("dat16", order.first,

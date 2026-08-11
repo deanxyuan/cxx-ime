@@ -1,13 +1,15 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
 #include <cxxime/spellings_index.h>
+
 #include <cstring>
 #include <algorithm>
+
 #include <windows.h>
+
 #include <cxxime/logging.h>
 
 static const char SPELLINGS_MAGIC_V2[] = "CXSPL\x02\x00\x00";
-static const char SPELLINGS_MAGIC_V1[] = "CXSPL\x01\x00\x00";
 static const uint32_t NODE_HEADER_SIZE = 12;
 static const uint32_t SPELLING_SIZE = 14;  // v2 per-node spelling
 static const uint32_t CHILD_SIZE = 8;
@@ -52,45 +54,28 @@ bool SpellingsIndex::load(const std::string& bin_path) {
         return false;
     }
 
-    // Detect format version
-    if (std::memcmp(data_, SPELLINGS_MAGIC_V2, 8) == 0) {
-        // v2: Patricia trie
-        auto* hdr = (const SpellingsHeader*)data_;
-        node_count_ = hdr->node_count;
-        nodes_ = data_ + hdr->nodes_offset;
-        strings_ = data_ + hdr->strings_offset;
-        nodes_size_ = hdr->strings_offset - hdr->nodes_offset;
-        is_trie_ = true;
-
-        // Build offset table
-        node_offsets_ = std::make_unique<uint32_t[]>(node_count_);
-        const char* p = nodes_;
-        for (uint32_t i = 0; i < node_count_; ++i) {
-            node_offsets_[i] = (uint32_t)(p - nodes_);
-            uint8_t ns = *(const uint8_t*)(p + 8);
-            uint8_t nc = *(const uint8_t*)(p + 9);
-            p += NODE_HEADER_SIZE + ns * SPELLING_SIZE + nc * CHILD_SIZE;
-        }
-
-        CXXIME_LOG(L"SpellingsIndex::load v2 trie nodes=%u", node_count_);
-    } else if (std::memcmp(data_, SPELLINGS_MAGIC_V1, 8) == 0) {
-        // v1: flat sorted array
-        struct V1Header { char magic[8]; uint32_t version, entry_count, string_data_size, entries_offset, strings_offset; };
-        auto* hdr = (const V1Header*)data_;
-        flat_entries_ = (const SpellingEntryV1*)(data_ + hdr->entries_offset);
-        flat_entry_count_ = hdr->entry_count;
-        strings_ = data_ + hdr->strings_offset;
-        node_count_ = flat_entry_count_;  // for has_spellings()
-        is_trie_ = false;
-
-        CXXIME_LOG(L"SpellingsIndex::load v1 flat entries=%u", flat_entry_count_);
-    } else {
-        CXXIME_LOG(L"SpellingsIndex::load bad magic");
+    auto* hdr = (const SpellingsHeader*)data_;
+    if (std::memcmp(hdr->magic, SPELLINGS_MAGIC_V2, 8) != 0 || hdr->version != 2) {
+        CXXIME_LOG(L"SpellingsIndex::load unsupported format");
         unload();
         return false;
     }
 
+    node_count_ = hdr->node_count;
+    nodes_ = data_ + hdr->nodes_offset;
+    strings_ = data_ + hdr->strings_offset;
 
+    // Build offset table
+    node_offsets_ = std::make_unique<uint32_t[]>(node_count_);
+    const char* p = nodes_;
+    for (uint32_t i = 0; i < node_count_; ++i) {
+        node_offsets_[i] = (uint32_t)(p - nodes_);
+        uint8_t ns = *(const uint8_t*)(p + 8);
+        uint8_t nc = *(const uint8_t*)(p + 9);
+        p += NODE_HEADER_SIZE + ns * SPELLING_SIZE + nc * CHILD_SIZE;
+    }
+
+    CXXIME_LOG(L"SpellingsIndex::load v2 trie nodes=%u", node_count_);
     return node_count_ > 0;
 }
 
@@ -100,12 +85,8 @@ void SpellingsIndex::unload() {
     nodes_ = nullptr;
     strings_ = nullptr;
     node_count_ = 0;
-    nodes_size_ = 0;
     data_size_ = 0;
     node_offsets_.reset();
-    flat_entries_ = nullptr;
-    flat_entry_count_ = 0;
-    is_trie_ = false;
 }
 
 // v2 trie prefix search: O(k) walk
@@ -164,47 +145,6 @@ static std::vector<SpellingMatch> trie_prefix_search(
         }
         if (!found)
             break;
-    }
-
-    return results;
-}
-
-// v1 flat array prefix search: binary search + scan
-static std::vector<SpellingMatch> flat_prefix_search(
-    const SpellingEntryV1* entries, uint32_t entry_count,
-    const char* strings, std::string_view prefix) {
-
-    std::vector<SpellingMatch> results;
-    const uint32_t prefix_len = (uint32_t)prefix.size();
-    const char* prefix_data = prefix.data();
-
-    // Find first entry whose key starts with prefix[0]
-    uint32_t lo = 0, hi = entry_count;
-    while (lo < hi) {
-        uint32_t mid = lo + (hi - lo) / 2;
-        const char* key = strings + entries[mid].key_offset;
-        if ((uint8_t)key[0] < (uint8_t)prefix_data[0])
-            lo = mid + 1;
-        else
-            hi = mid;
-    }
-
-    for (uint32_t i = lo; i < entry_count; ++i) {
-        const auto& e = entries[i];
-        const char* key = strings + e.key_offset;
-        if ((uint8_t)key[0] != (uint8_t)prefix_data[0])
-            break;
-        if (e.key_len > prefix_len)
-            continue;
-        if (std::memcmp(key, prefix_data, e.key_len) != 0)
-            continue;
-
-        SpellingMatch m;
-        m.syllable.assign(strings + e.syllable_offset, e.syllable_len);
-        m.type = e.type;
-        m.credibility = e.credibility;
-        m.input_key_len = e.key_len;
-        results.push_back(std::move(m));
     }
 
     return results;
@@ -306,56 +246,12 @@ static std::vector<SpellingMatch> trie_completion_search(
     return results;
 }
 
-static std::vector<SpellingMatch> flat_completion_search(
-    const SpellingEntryV1* entries, uint32_t entry_count,
-    const char* strings, std::string_view prefix) {
-    const uint32_t prefix_length = (uint32_t)prefix.size();
-    uint32_t low = 0;
-    uint32_t high = entry_count;
-    while (low < high) {
-        const uint32_t middle = low + (high - low) / 2;
-        const auto& entry = entries[middle];
-        const char* key = strings + entry.key_offset;
-        const uint32_t compare_length = std::min(entry.key_len, prefix_length);
-        const int comparison = std::memcmp(key, prefix.data(), compare_length);
-        if (comparison < 0 || (comparison == 0 && entry.key_len < prefix_length)) {
-            low = middle + 1;
-        } else {
-            high = middle;
-        }
-    }
-
-    std::vector<SpellingMatch> results;
-    for (uint32_t i = low; i < entry_count; ++i) {
-        const auto& entry = entries[i];
-        const char* key = strings + entry.key_offset;
-        if (entry.key_len < prefix_length ||
-            std::memcmp(key, prefix.data(), prefix_length) != 0) {
-            break;
-        }
-        if (entry.key_len == prefix_length) {
-            continue;
-        }
-
-        SpellingMatch match;
-        match.syllable.assign(strings + entry.syllable_offset, entry.syllable_len);
-        match.type = entry.type;
-        match.credibility = entry.credibility;
-        match.input_key_len = entry.key_len;
-        results.push_back(std::move(match));
-    }
-    return results;
-}
-
 std::vector<SpellingMatch> SpellingsIndex::prefix_search(std::string_view prefix) const {
     if (!data_ || prefix.empty())
         return {};
 
-    std::vector<SpellingMatch> results;
-    if (is_trie_)
-        results = trie_prefix_search(nodes_, strings_, node_offsets_.get(), node_count_, prefix);
-    else
-        results = flat_prefix_search(flat_entries_, flat_entry_count_, strings_, prefix);
+    std::vector<SpellingMatch> results =
+        trie_prefix_search(nodes_, strings_, node_offsets_.get(), node_count_, prefix);
 
     if (!fuzzy_enabled_) {
         results.erase(
@@ -371,11 +267,8 @@ std::vector<SpellingMatch> SpellingsIndex::completion_search(std::string_view pr
     if (!data_ || prefix.empty())
         return {};
 
-    std::vector<SpellingMatch> results;
-    if (is_trie_)
-        results = trie_completion_search(nodes_, strings_, node_offsets_.get(), node_count_, prefix);
-    else
-        results = flat_completion_search(flat_entries_, flat_entry_count_, strings_, prefix);
+    std::vector<SpellingMatch> results =
+        trie_completion_search(nodes_, strings_, node_offsets_.get(), node_count_, prefix);
 
     if (!fuzzy_enabled_) {
         results.erase(

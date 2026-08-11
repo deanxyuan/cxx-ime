@@ -12,7 +12,7 @@
 namespace cxxime {
 
 // dict.bin (Table layer)
-// Magic: "CXDIC\x01\0\0"
+// Magic: "CXDIC\x02\0\0"
 struct DictHeader {
     char magic[8];
     uint32_t version;
