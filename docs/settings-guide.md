@@ -30,6 +30,17 @@
 
 切换输入模式后，点"确定"或"应用"会立即通知服务端切换，无需重启输入法。
 
+### 混输排序
+
+**配置项**：`engine.mixed_candidate_preference`（`auto` / `wubi`，出厂配置 `auto`）
+
+仅在混输模式下生效，控制拼音与五笔候选的混合顺序：
+
+| 选项 | 说明 |
+|------|------|
+| 智能排序 | 拼音与五笔候选按综合评分混合（默认） |
+| 五笔首选 | 混输时优先显示五笔候选 |
+
 ### 内联显示
 
 **配置项**：`style.inline_preedit`（布尔值）
@@ -63,6 +74,12 @@
 | 开 | 编码 | 仅候选列表 | `ni'hao` |
 | 开 | 首选 | 仅候选列表 | `你好` |
 
+### 候选窗显示光标
+
+**配置项**：`style.show_preedit_cursor`（布尔值，出厂配置 `true`）
+
+控制候选窗口中的编码区是否显示光标，指示当前输入位置。
+
 ### 模糊拼音
 
 **配置项**：`engine.fuzzy_pinyin`（布尔值）
@@ -86,6 +103,8 @@
 仅在五笔/混输模式下生效。
 
 **四码自动上屏**：`engine.wubi_auto_commit`（布尔值，出厂配置 `true`）。输入四码且唯一候选时自动上屏，无需按空格。
+
+**第五码首选上屏**：`engine.wubi_commit_first_on_fifth_key`（布尔值，出厂配置 `true`）。输入第五码时，若当前四码存在多个候选，先自动上屏首选候选再继续输入。
 
 **显示最短补码**：`engine.wubi_code_hint`（布尔值，出厂配置 `false`）。输入未满四码时，在候选窗口中显示最短补码提示。
 
@@ -114,7 +133,7 @@
 
 从 `themes.json` 中加载的预设配色方案。下拉框列出所有可用主题，选择后可通过"预览窗口"按钮查看效果。
 
-内置主题包括 `azure`、`aqua`、`luna`、`dark_temple`、`starcraft`、`google` 等，共 13 个预设，每个主题定义以下颜色：
+内置 12 个预设主题（`moon_light`、`moon_dark`、`sky_light`、`sky_dark`、`jade_light`、`jade_dark`、`amber_light`、`amber_dark`、`coral_light`、`coral_dark`、`iris_light`、`iris_dark`，默认 `moon_light`），每个主题定义以下颜色：
 
 - 背景色、文字色、边框色
 - 候选文字色、标签文字色
@@ -274,6 +293,17 @@ CapsLock 键在输入法中的行为模式。下拉框提供 5 个选项：
 
 > **注**：CapsLock 模式仅影响 A-Z 字母键。数字键、标点键在所有模式下行为一致。若直接编辑配置文件设为 `inline_ascii` / `set_ascii_mode` / `unset_ascii_mode`（与 CapsLock 的开关性质不兼容，设置界面不提供这些选项），引擎会自动降级为 `clear`。
 
+### 自定义快捷键
+
+除 Shift / Control / CapsLock 行为外，还可配置两个全局快捷键（出厂均关闭）：
+
+| 配置项 | 说明 |
+|--------|------|
+| `shortcuts.input_mode_switch` | 切换输入模式（拼音 / 五笔 / 混输） |
+| `shortcuts.activate_ime` | 切换到 CxxIME |
+
+每个快捷键包含"启用"复选框与热键输入框。两个快捷键不能设置为相同组合；"切换到 CxxIME"仅接受可注册且未被其他程序占用的组合。
+
 ---
 
 ## 面板五：词库管理
@@ -309,22 +339,23 @@ CapsLock 键在输入法中的行为模式。下拉框提供 5 个选项：
 
 ---
 
-## 面板六：关于
+## 面板六：诊断
+
+- **启用诊断日志**：控制诊断日志开关（对应 `diagnostics.trace_mode`，勾选后从 `off` 切到 `normal`，取消勾选回到 `off`）。注意：诊断日志可能包含输入编码。
+- **打开诊断日志目录**：打开日志目录（`%USERPROFILE%\cxxime\logs\`）。
+- **导出诊断包**：点击后先提示"已开始导出诊断包，完成后会再次提示结果"，随后在后台等待 `collect_diagnostics.ps1` 脚本执行完成，完成后弹出结果对话框：
+  - 脚本返回成功：提示"诊断包导出完成。请检查桌面的 cxxime-diagnostics-*.zip。"
+  - 脚本返回失败：提示"诊断导出已结束，但脚本返回失败。请查看打开的 PowerShell 窗口输出。"
+
+## 面板七：关于
 
 显示 CxxIME 的版本信息和项目链接：
 
-- 版本号：取自仓库根目录的 `VERSION` 文件（如 `0.1.0`）
+- 版本号：取自仓库根目录的 `VERSION` 文件（如 `0.1.0-beta.7`）
 - 许可证：Apache License 2.0
 - 项目地址：
   - Gitee: https://gitee.com/shadowyuan/cxx-ime
   - GitHub: https://github.com/deanxyuan/cxx-ime
-
-### 导出诊断包
-
-点击"导出诊断包"按钮后，先提示"已开始导出诊断包，完成后会再次提示结果"，随后在后台等待 `collect_diagnostics.ps1` 脚本执行完成，完成后弹出结果对话框：
-
-- 脚本返回成功：提示"诊断包导出完成。请检查桌面的 cxxime-diagnostics-*.zip。"
-- 脚本返回失败：提示"诊断导出已结束，但脚本返回失败。请查看打开的 PowerShell 窗口输出。"
 
 ---
 
@@ -336,15 +367,18 @@ CapsLock 键在输入法中的行为模式。下拉框提供 5 个选项：
 {
     "schema": {
         "name": "CxxIME",
-        "version": "1.0"
+        "version": "1.0",
+        "description": "CxxIME default configuration"
     },
     "engine": {
         "page_size": 7,
         "max_pinyin_length": 64,
         "fuzzy_pinyin": true,
         "wubi_auto_commit": true,
+        "wubi_commit_first_on_fifth_key": true,
         "wubi_code_hint": false,
-        "candidate_learning": false
+        "candidate_learning": false,
+        "mixed_candidate_preference": "auto"
     },
     "initial_state": {
         "full_shape": false,
@@ -357,6 +391,7 @@ CapsLock 键在输入法中的行为模式。下拉框提供 5 个选项：
         "render_backend": "d2d",
         "candidate_count": 7,
         "inline_preedit": false,
+        "show_preedit_cursor": true,
         "preedit_type": "composition"
     },
     "layout": {
@@ -385,7 +420,11 @@ CapsLock 键在输入法中的行为模式。下拉框提供 5 个选项：
             "Caps_Lock": "clear"
         }
     },
-    "theme": "azure",
+    "shortcuts": {
+        "input_mode_switch": "disabled",
+        "activate_ime": "disabled"
+    },
+    "theme": "moon_light",
     "status_window": {
         "enable": true,
         "x": -1,
@@ -393,7 +432,7 @@ CapsLock 键在输入法中的行为模式。下拉框提供 5 个选项：
         "show_on_startup": true
     },
     "diagnostics": {
-        "trace_mode": "normal"
+        "trace_mode": "off"
     }
 }
 ```

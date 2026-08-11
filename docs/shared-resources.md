@@ -286,22 +286,22 @@ Engine 持有指针引用外部资源（`pinyin_dict_`, `spellings_`, `syllabifi
 
 ## 6. 测试覆盖
 
-共享资源相关覆盖共 **22 个 C++ 测试可执行文件 + 1 个 Python 测试**（23 个 ctest 条目），合计 **440+ 个测试用例**（`TEST()` 宏计数）；完整测试套件（40 个 ctest 条目、510+ 用例）见项目 README。
+共享资源相关覆盖共 **22 个 C++ 测试可执行文件 + 1 个 Python 测试**（23 个 ctest 条目），合计 **446 个测试用例**（`TEST()` 宏计数）；完整测试套件由 CMake 自动注册（Release 构建当前 44 个 ctest 条目），运行方式见项目 README。
 
 | 文件 | 用例数 | 覆盖内容 |
 |------|--------|---------|
 | `engine_test.cc` | 72 | Engine 核心逻辑 |
 | `output_composer_test.cc` | 45 | 文本输出组合 |
-| `ipc_test.cc` | 32 | IPC 通信协议 |
+| `ipc_test.cc` | 33 | IPC 通信协议 |
 | `dict_test.cc` | 26 | 字典操作 |
 | `wubi_engine_test.cc` | 31 | 五笔 Engine |
 | `engine_source_test.cc` | 22 | 源码级 Engine 行为 |
 | `trace_test.cc` | 22 | 查询追踪 |
 | `session_manager_status_test.cc` | 22 | 全局状态同步（含 CapsLock） |
-| `status_window_test.cc` | 20 | 状态窗口 |
+| `status_window_test.cc` | 21 | 状态窗口 |
 | `benchmark_test.cc` | 16 | 性能基准 |
-| `config_test.cc` | 26 | 配置解析 |
-| `candidate_window_test.cc` | 8 | 候选窗口 |
+| `config_test.cc` | 29 | 配置解析 |
+| `candidate_window_test.cc` | 9 | 候选窗口 |
 | `config_write_coordinator_test.cc` | 7 | 配置写入协调（预检/提交/取消） |
 | `short_cache_test.cc` | 16 | 短输入缓存 |
 | `wubi_test.cc` | 7 | 五笔翻译器 |

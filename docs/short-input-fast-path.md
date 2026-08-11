@@ -261,10 +261,10 @@ live_path_count = 0
 | `engine/src/short_code_cache_format.h` | DAT-16 二进制格式结构体定义（ShortCacheHeader 80B, ShortPostingList 8B, ShortCandidateEntry 16B） |
 | `engine/include/cxxime/short_code_cache.h` | ShortCodeCache 类声明 |
 | `engine/src/short_code_cache.cc` | 加载、校验 DAT-16 header, Darts trie 查找（darts_offset 解码）, create_test_cache |
-| `tools/topn_index/opn_index_format.h` | Top-N 三种布局枚举（kFlat16/kDat16/kDat8）及格式结构体 |
+| `tools/topn_index/topn_index_format.h` | Top-N 三种布局枚举（kFlat16/kDat16/kDat8）及格式结构体 |
 | `tools/topn_index/index_writer.cc` | write_index(): Darts::DoubleArray::build() 构建 trie, 写入 DAT-16 |
 | `tools/topn_index/index_reader.cc` | IndexReader: DAT trie 遍历查找, 候选读取 |
-| `tools/topn_index/legacy_reader.cc` | LegacyReader: 读取 Top-N 中间文件格式 |
+| `tools/topn_index/intermediate_reader.cc` | IntermediateReader: 读取 Top-N 中间文件格式 |
 | `tools/topn_index/main.cc` | topn_builder 入口: 中间文件 → DAT-16 转换 |
 | `tools/topn_index/benchmark.cc` | topn_benchmark 工具: 跨格式延迟/QPS 对比 |
 | `third_party/darts-clone/include/darts.h` | Darts-clone Double Array Trie 库（构建 + 查找） |
@@ -275,7 +275,7 @@ live_path_count = 0
 | `engine/include/cxxime/translator.h` | RecentCandidate 结构体, update_recent(), is_short_key() |
 | `engine/src/pinyin_translator.cc` | 快速路径入口, 合并逻辑, session recent 管理, 用户词版本过滤 |
 | `engine/src/engine.cc` | select/commit 时更新 recent cache |
-| `test/short_cache_test.cc` | ShortCodeCache 单元测试 (12 cases) |
+| `test/short_cache_test.cc` | ShortCodeCache 单元测试 (16 cases) |
 | `test/util/topn_test_data.h` / `.cc` | Top-N 测试数据辅助函数 |
 
 ## 长输入的查询页缓存
