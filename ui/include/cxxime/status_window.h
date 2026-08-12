@@ -70,9 +70,6 @@ public:
     void set_position_callback(StatusPositionChangeCallback callback);
     void set_menu_command_callback(StatusMenuCommandCallback callback);
 
-    // Logo icon (loaded from DLL resources by StatusController)
-    void set_logo_icon(HICON icon);
-
     // Test accessor
     HWND hwnd_for_test() const { return hwnd_; }
 
@@ -96,10 +93,9 @@ private:
     void PaintGdiplus();
 
     // Coordinate helpers
-    RECT GetLogoRect() const;
+    RECT GetInputModeRect() const;
     RECT GetSeparatorRect() const;
     RECT GetPillButtonRect(int index) const;
-    int LogoIconSize(const RECT& logo_rc) const;
     int HitTest(int x, int y) const;
 
     void CreateFonts();
@@ -113,7 +109,7 @@ private:
     void EndTracking();
 
     // Layout constants (base values; actual rendering multiplied by dpi_scale_)
-    static constexpr int BUTTON_COUNT = 4;            // Interactive buttons (excludes logo)
+    static constexpr int BUTTON_COUNT = 4;            // Interactive buttons (excludes input mode)
     static constexpr int BASE_BUTTON_WIDTH = 28;      // Function button width
     static constexpr int BASE_SETTINGS_WIDTH = 24;    // Settings button width
     static constexpr int BASE_BUTTON_HEIGHT = 22;     // Button height
@@ -121,7 +117,7 @@ private:
     static constexpr int BASE_SEPARATOR_GAP = 8;      // Gap on each side of separator
     static constexpr int BASE_SEPARATOR_WIDTH = 1;    // Separator line width
     static constexpr int BASE_WINDOW_PADDING = 6;     // Inner padding
-    static constexpr int BASE_LOGO_WIDTH = 28;        // Logo placeholder width
+    static constexpr int BASE_INPUT_MODE_WIDTH = 28;  // Non-interactive input mode width
 
     // DPI scaling
     float dpi_scale_ = 1.0f;
@@ -166,7 +162,6 @@ private:
     int hovered_button_ = -1;
     bool is_enabled_ = true;
     bool layered_ready_ = false;
-    HICON logo_icon_ = nullptr;  // drawn in logo pill
 
     // ── Drag state ────────────────────────────────────────────
     bool is_tracking_ = false;

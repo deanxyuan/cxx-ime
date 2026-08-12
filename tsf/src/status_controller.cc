@@ -12,7 +12,6 @@
 #include <cxxime/logging.h>
 
 #include "config_coordinator.h"
-#include "resource_loader.h"
 
 namespace cxxime {
 
@@ -31,9 +30,6 @@ bool StatusController::initialize(HWND owner, IpcClient* client, uint32_t sessio
         return false;
     }
 
-    logo_icon_ = cxxime_tsf::load_resource_icon(IDI_CXXIME, 64, 64);
-    if (logo_icon_) window_.set_logo_icon(logo_icon_);
-
     window_.set_click_callback([this](StatusButton btn) { on_button_click(btn); });
     window_.set_position_callback([this](int x, int y) { on_position_change(x, y); });
     window_.set_menu_command_callback([this](ImeMenuCommand command) {
@@ -49,10 +45,6 @@ bool StatusController::initialize(HWND owner, IpcClient* client, uint32_t sessio
 void StatusController::shutdown() {
     if (!initialized_) return;
     window_.destroy();
-    if (logo_icon_) {
-        DestroyIcon(logo_icon_);
-        logo_icon_ = nullptr;
-    }
     initialized_ = false;
     ipc_healthy_ = true;
 }
@@ -72,15 +64,7 @@ void StatusController::sync_status(const ImeStatus& status) {
     if (!status_changed(status)) return;
 
     current_status_ = status;
-
-    ButtonState state;
-    state.chinese_mode = status.chinese_mode();
-    state.caps_lock = status.caps_lock();
-    state.full_shape = status.full_shape();
-    state.chinese_punct = status.chinese_punct();
-    state.input_mode = status.input_mode;
-
-    window_.update_state(state);
+    update_window_state(status);
 }
 
 void StatusController::show() {
@@ -113,11 +97,8 @@ bool StatusController::ensure_window(HWND owner) {
         return true;
     }
 
-    if (logo_icon_) {
-        window_.set_logo_icon(logo_icon_);
-    }
     update_config(*config_);
-    sync_status(current_status_);
+    update_window_state(current_status_);
     return true;
 }
 
@@ -206,6 +187,16 @@ void StatusController::toggle_chinese_punct() {
         window_.set_enabled(false);
         CXXIME_LOG(L"StatusController: IPC toggle_punct failed, status=%d", (int)resp.status);
     }
+}
+
+void StatusController::update_window_state(const ImeStatus& status) {
+    ButtonState state;
+    state.chinese_mode = status.chinese_mode();
+    state.caps_lock = status.caps_lock();
+    state.full_shape = status.full_shape();
+    state.chinese_punct = status.chinese_punct();
+    state.input_mode = status.input_mode;
+    window_.update_state(state);
 }
 
 bool StatusController::status_changed(const ImeStatus& new_status) const {

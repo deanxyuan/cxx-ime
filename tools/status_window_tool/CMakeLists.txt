@@ -8,10 +8,6 @@ target_include_directories(status_window_tool PRIVATE
     ${CMAKE_SOURCE_DIR}/shared/include
 )
 
-target_compile_definitions(status_window_tool PRIVATE
-    CXXIME_PROJECT_DIR="${CMAKE_SOURCE_DIR}/"
-)
-
 target_link_libraries(status_window_tool PRIVATE
     cxxime-ui
     cxxime-engine

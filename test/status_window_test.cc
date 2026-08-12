@@ -139,6 +139,21 @@ TEST(StatusWindow, UpdateStateCapsLock) {
     window.destroy();
 }
 
+TEST(StatusWindow, UpdateInputMode) {
+    cxxime::StatusWindow window;
+    ASSERT_TRUE(create_test_window(window));
+
+    cxxime::ButtonState state;
+    state.input_mode = cxxime::InputMode::PINYIN;
+    window.update_state(state);
+    state.input_mode = cxxime::InputMode::WUBI;
+    window.update_state(state);
+    state.input_mode = cxxime::InputMode::MIXED;
+    window.update_state(state);
+
+    window.destroy();
+}
+
 TEST(StatusWindow, SetEnabled) {
     cxxime::StatusWindow window;
     ASSERT_TRUE(create_test_window(window));
@@ -300,10 +315,10 @@ TEST(StatusWindow, MenuCommandCallback) {
 }
 
 // ============================================================
-// Logo and separator — non-interactive (status_window_redesign)
+// Input mode and separator — non-interactive
 // ============================================================
 
-TEST(StatusWindow, LogoClickIgnored) {
+TEST(StatusWindow, InputModeClickIgnored) {
     cxxime::StatusWindow window;
     ASSERT_TRUE(create_test_window(window));
 
@@ -312,7 +327,7 @@ TEST(StatusWindow, LogoClickIgnored) {
 
     window.show();
 
-    // Logo area: x=6, y=6, w=28, h=22 → center at (20, 17)
+    // Input mode area: x=6, y=6, w=28, h=22 → center at (20, 17)
     SendMessageW(window.hwnd_for_test(), WM_LBUTTONDOWN, 0, MAKELPARAM(20, 17));
     SendMessageW(window.hwnd_for_test(), WM_LBUTTONUP, 0, MAKELPARAM(20, 17));
 

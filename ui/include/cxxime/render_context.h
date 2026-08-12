@@ -38,8 +38,10 @@ struct StatusTheme {
     Color border{200, 200, 200, 255};
     Color inactive_back{232, 232, 232, 200};
     Color inactive_text{72, 72, 72, 255};
+    Color pinyin_mode_text{42, 102, 173, 255};
+    Color wubi_mode_text{179, 68, 63, 255};
+    Color mixed_mode_text{15, 118, 110, 255};
     Color separator{212, 212, 212, 255};
-    Color logo_back{232, 232, 232, 120};
 };
 
 struct CandidateRect {
