@@ -336,11 +336,6 @@ void StatusWindow::set_menu_command_callback(StatusMenuCommandCallback callback)
     menu_command_callback_ = std::move(callback);
 }
 
-void StatusWindow::set_logo_icon(HICON icon) {
-    logo_icon_ = icon;
-    RedrawLayered();
-}
-
 // ============================================================
 // WndProc
 // ============================================================
@@ -463,7 +458,7 @@ void StatusWindow::CreateFonts() {
                            CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_SWISS, name);
     };
 
-    font_cn_    = make_font(L"Microsoft YaHei UI", 11, FW_BOLD);
+    font_cn_    = make_font(L"Microsoft YaHei UI", 12, FW_SEMIBOLD);
     font_en_    = make_font(L"Segoe UI",           10, FW_BOLD);
     font_icon_  = make_font(L"Segoe MDL2 Assets",  11, FW_NORMAL);
 }
@@ -535,7 +530,7 @@ void StatusWindow::InitD2D() {
         return fmt;
     };
 
-    d2d_font_cn_   = mkfmt(L"Microsoft YaHei UI", 11, DWRITE_FONT_WEIGHT_BOLD);
+    d2d_font_cn_   = mkfmt(L"Microsoft YaHei UI", 12, DWRITE_FONT_WEIGHT_SEMI_BOLD);
     d2d_font_en_   = mkfmt(L"Segoe UI",           10, DWRITE_FONT_WEIGHT_BOLD);
     d2d_font_icon_ = mkfmt(L"Segoe MDL2 Assets",  11, DWRITE_FONT_WEIGHT_NORMAL);
 
@@ -564,6 +559,34 @@ static Color blend(Color base, Color overlay, float alpha) {
     };
 }
 
+static const wchar_t* input_mode_text(InputMode mode) {
+    switch (mode) {
+    case InputMode::PINYIN:
+        return L"拼";
+    case InputMode::WUBI:
+        return L"五";
+    case InputMode::MIXED:
+        return L"混";
+    }
+    return L"拼";
+}
+
+static Color input_mode_color(const StatusTheme& theme, InputMode mode, bool enabled) {
+    Color color = theme.pinyin_mode_text;
+    switch (mode) {
+    case InputMode::PINYIN:
+        color = theme.pinyin_mode_text;
+        break;
+    case InputMode::WUBI:
+        color = theme.wubi_mode_text;
+        break;
+    case InputMode::MIXED:
+        color = theme.mixed_mode_text;
+        break;
+    }
+    return enabled ? color : blend(color, theme.back, 0.6f);
+}
+
 // ============================================================
 // Shared button draw info (computed once, used by both D2D and GDI+)
 // ============================================================
@@ -584,8 +607,8 @@ void StatusWindow::ComputeButtonDrawInfo(std::vector<ButtonDrawInfo>& out) {
     int x = Scaled(BASE_WINDOW_PADDING);
     int y = Scaled(BASE_WINDOW_PADDING);
 
-    // Logo (index -1, not a button)
-    x += Scaled(BASE_LOGO_WIDTH + BASE_BUTTON_GAP);
+    // Input mode (index -1, not a button)
+    x += Scaled(BASE_INPUT_MODE_WIDTH + BASE_BUTTON_GAP);
 
     // Three function buttons
     bool show_chinese_punct = effective_chinese_punct(state_);
@@ -713,17 +736,9 @@ void StatusWindow::PaintD2D() {
     bg_brush->Release();
     border_brush->Release();
 
-    // 2. Logo placeholder
-    {
-        RECT logo_rc = GetLogoRect();
-        float lr = (float)(logo_rc.bottom - logo_rc.top) / 2.0f;
-        fill_pill(logo_rc, theme_.logo_back);
-        ID2D1SolidColorBrush* lb = make_brush(theme_.border);
-        D2D1_ROUNDED_RECT lrr = {D2D1::RectF((float)logo_rc.left, (float)logo_rc.top,
-                                               (float)logo_rc.right, (float)logo_rc.bottom), lr, lr};
-        d2d_rt_->DrawRoundedRectangle(lrr, lb, 1.0f);
-        lb->Release();
-    }
+    // 2. Input mode label integrated into the window background
+    const Color mode_text_color = input_mode_color(theme_, state_.input_mode, is_enabled_);
+    draw_text(GetInputModeRect(), input_mode_text(state_.input_mode), d2d_font_cn_, mode_text_color);
 
     // 3. Buttons (shared draw info)
     std::vector<ButtonDrawInfo> buttons;
@@ -731,7 +746,7 @@ void StatusWindow::PaintD2D() {
 
     for (const auto& btn : buttons) {
         fill_pill(btn.rect, btn.bg_color);
-        // Button border (always visible, like logo)
+        // Button border remains visible outside hover state.
         {
             float r = (float)(btn.rect.bottom - btn.rect.top) / 2.0f;
             D2D1_ROUNDED_RECT brr = {D2D1::RectF((float)btn.rect.left, (float)btn.rect.top,
@@ -759,15 +774,6 @@ void StatusWindow::PaintD2D() {
     }
 
     d2d_rt_->EndDraw();
-
-    // Draw logo icon on top (via GDI, since D2D has ended)
-    if (logo_icon_) {
-        RECT logo_rc = GetLogoRect();
-        int icon_sz = LogoIconSize(logo_rc);
-        int ix = logo_rc.left + ((logo_rc.right - logo_rc.left) - icon_sz) / 2;
-        int iy = logo_rc.top + ((logo_rc.bottom - logo_rc.top) - icon_sz) / 2;
-        DrawIconEx(layered_dc_, ix, iy, logo_icon_, icon_sz, icon_sz, 0, nullptr, DI_NORMAL);
-    }
 }
 
 // ============================================================
@@ -809,32 +815,15 @@ void StatusWindow::PaintGdiplus() {
         g.DrawPath(&pen, &path);
     }
 
-    // Logo placeholder
+    // Input mode label integrated into the window background
     {
-        RECT logo_rc = GetLogoRect();
-        float lr = (float)(logo_rc.bottom - logo_rc.top) / 2.0f;
-        {
-            Gdiplus::Graphics g(layered_dc_);
-            g.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
-            Gdiplus::GraphicsPath path;
-            path.AddArc((float)logo_rc.left, (float)logo_rc.top, 2.0f*lr, 2.0f*lr, 180, 90);
-            path.AddArc((float)logo_rc.right - 2.0f*lr, (float)logo_rc.top, 2.0f*lr, 2.0f*lr, 270, 90);
-            path.AddArc((float)logo_rc.right - 2.0f*lr, (float)logo_rc.bottom - 2.0f*lr, 2.0f*lr, 2.0f*lr, 0, 90);
-            path.AddArc((float)logo_rc.left, (float)logo_rc.bottom - 2.0f*lr, 2.0f*lr, 2.0f*lr, 90, 90);
-            path.CloseFigure();
-            Gdiplus::SolidBrush brush(Gdiplus::Color(theme_.logo_back.a,
-                theme_.logo_back.r, theme_.logo_back.g, theme_.logo_back.b));
-            g.FillPath(&brush, &path);
-            Gdiplus::Pen pen(Gdiplus::Color(theme_.border.a,
-                theme_.border.r, theme_.border.g, theme_.border.b), 1.0f);
-            g.DrawPath(&pen, &path);
-        }
-        if (logo_icon_) {
-            int icon_sz = LogoIconSize(logo_rc);
-            int ix = logo_rc.left + ((logo_rc.right - logo_rc.left) - icon_sz) / 2;
-            int iy = logo_rc.top + ((logo_rc.bottom - logo_rc.top) - icon_sz) / 2;
-            DrawIconEx(layered_dc_, ix, iy, logo_icon_, icon_sz, icon_sz, 0, nullptr, DI_NORMAL);
-        }
+        const Color mode_text_color = input_mode_color(theme_, state_.input_mode, is_enabled_);
+        SetBkMode(layered_dc_, TRANSPARENT);
+        SetTextColor(layered_dc_, RGB(mode_text_color.r, mode_text_color.g, mode_text_color.b));
+        SelectObject(layered_dc_, font_cn_);
+        RECT mode_rect = GetInputModeRect();
+        DrawTextW(layered_dc_, input_mode_text(state_.input_mode), -1, &mode_rect,
+                  DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     }
 
     // Buttons (shared draw info)
@@ -855,7 +844,7 @@ void StatusWindow::PaintGdiplus() {
             path.CloseFigure();
             Gdiplus::SolidBrush brush(Gdiplus::Color(btn.bg_color.a, btn.bg_color.r, btn.bg_color.g, btn.bg_color.b));
             g.FillPath(&brush, &path);
-            // Button border (always visible, like logo)
+            // Button border remains visible outside hover state.
             Gdiplus::Pen pen(Gdiplus::Color(theme_.border.a, theme_.border.r,
                                             theme_.border.g, theme_.border.b), 1.0f);
             g.DrawPath(&pen, &path);
@@ -908,17 +897,10 @@ void StatusWindow::RedrawLayered() {
 // ============================================================
 // Coordinate helpers
 // ============================================================
-RECT StatusWindow::GetLogoRect() const {
+RECT StatusWindow::GetInputModeRect() const {
     int x = Scaled(BASE_WINDOW_PADDING);
     int y = Scaled(BASE_WINDOW_PADDING);
-    return {x, y, x + Scaled(BASE_LOGO_WIDTH), y + Scaled(BASE_BUTTON_HEIGHT)};
-}
-
-int StatusWindow::LogoIconSize(const RECT& logo_rc) const {
-    int width = logo_rc.right - logo_rc.left;
-    int height = logo_rc.bottom - logo_rc.top;
-    int max_icon = std::min(width, height) - Scaled(4);
-    return std::max(1, std::min(Scaled(16), max_icon));
+    return {x, y, x + Scaled(BASE_INPUT_MODE_WIDTH), y + Scaled(BASE_BUTTON_HEIGHT)};
 }
 
 RECT StatusWindow::GetSeparatorRect() const {
@@ -931,7 +913,7 @@ RECT StatusWindow::GetSeparatorRect() const {
 
 RECT StatusWindow::GetPillButtonRect(int index) const {
     // Anchor accumulation: each button's x starts at previous button's right edge
-    int x = Scaled(BASE_WINDOW_PADDING) + Scaled(BASE_LOGO_WIDTH) + Scaled(BASE_BUTTON_GAP);
+    int x = Scaled(BASE_WINDOW_PADDING) + Scaled(BASE_INPUT_MODE_WIDTH) + Scaled(BASE_BUTTON_GAP);
     int y = Scaled(BASE_WINDOW_PADDING);
     for (int i = 0; i < index; ++i) {
         x += Scaled(i < 3 ? BASE_BUTTON_WIDTH : BASE_SETTINGS_WIDTH);
@@ -946,9 +928,9 @@ RECT StatusWindow::GetPillButtonRect(int index) const {
 // Hit test
 // ============================================================
 int StatusWindow::HitTest(int x, int y) const {
-    RECT logo_rc = GetLogoRect();
-    if (x >= logo_rc.left && x < logo_rc.right &&
-        y >= logo_rc.top && y < logo_rc.bottom)
+    RECT input_mode_rect = GetInputModeRect();
+    if (x >= input_mode_rect.left && x < input_mode_rect.right &&
+        y >= input_mode_rect.top && y < input_mode_rect.bottom)
         return -1;
 
     RECT sep_rc = GetSeparatorRect();

@@ -45,6 +45,7 @@ private:
     void toggle_chinese_mode();
     void toggle_full_shape();
     void toggle_chinese_punct();
+    void update_window_state(const ImeStatus& status);
     bool status_changed(const ImeStatus& new_status) const;
 
     StatusWindow window_;
@@ -52,7 +53,6 @@ private:
     Config* config_ = nullptr;
     uint32_t session_id_ = 0;
     ImeStatus current_status_;
-    HICON logo_icon_ = nullptr;
     StatusMenuCommandCallback menu_command_callback_;
     bool initialized_ = false;
     bool ipc_healthy_ = true;

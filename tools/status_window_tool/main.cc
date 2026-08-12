@@ -4,6 +4,7 @@
 #include <windows.h>
 #include <cstdlib>
 #include <cstdio>
+#include <cwchar>
 #include <string>
 #include <cxxime/status_window.h>
 #include <cxxime/render_context.h>
@@ -17,13 +18,40 @@ static bool g_enabled = true;
 static HWND g_parent = nullptr;
 
 // ── Helpers ──────────────────────────────────────────────────
+static const wchar_t* input_mode_text() {
+    switch (g_state.input_mode) {
+    case cxxime::InputMode::PINYIN:
+        return L"拼";
+    case cxxime::InputMode::WUBI:
+        return L"五";
+    case cxxime::InputMode::MIXED:
+        return L"混";
+    }
+    return L"拼";
+}
+
+static void cycle_input_mode() {
+    switch (g_state.input_mode) {
+    case cxxime::InputMode::PINYIN:
+        g_state.input_mode = cxxime::InputMode::WUBI;
+        break;
+    case cxxime::InputMode::WUBI:
+        g_state.input_mode = cxxime::InputMode::MIXED;
+        break;
+    case cxxime::InputMode::MIXED:
+        g_state.input_mode = cxxime::InputMode::PINYIN;
+        break;
+    }
+}
+
 static void update_display() {
     g_window.update_state(g_state);
     g_window.show();
 
     wchar_t title[256];
     swprintf(title, 256,
-        L"中:%s 全:%s 。:%s %s",
+        L"模式:%ls 中:%ls 全:%ls 。:%ls %ls",
+        input_mode_text(),
         g_state.chinese_mode  ? L"中" : L"英",
         g_state.full_shape    ? L"全" : L"半",
         g_state.chinese_punct ? L"。": L".",
@@ -32,11 +60,12 @@ static void update_display() {
 }
 
 static void print_state() {
-    printf("状态: 中=%s  全=%s  。=%s  %s\n",
-           g_state.chinese_mode  ? "中" : "英",
-           g_state.full_shape    ? "全" : "半",
-           g_state.chinese_punct ? "。" : ".",
-           g_enabled ? "" : "[IPC断开]");
+    wprintf(L"状态: 模式=%ls  中=%ls  全=%ls  。=%ls  %ls\n",
+            input_mode_text(),
+            g_state.chinese_mode ? L"中" : L"英",
+            g_state.full_shape ? L"全" : L"半",
+            g_state.chinese_punct ? L"。" : L".",
+            g_enabled ? L"" : L"[IPC断开]");
 }
 
 // ── Click callback ───────────────────────────────────────────
@@ -44,18 +73,18 @@ static void on_button_click(cxxime::StatusButton btn) {
     switch (btn) {
     case cxxime::StatusButton::CHINESE_MODE:
         g_state.chinese_mode = !g_state.chinese_mode;
-        printf("→ 切换: %s\n", g_state.chinese_mode ? "中文模式" : "英文模式");
+        wprintf(L"→ 切换: %ls\n", g_state.chinese_mode ? L"中文模式" : L"英文模式");
         break;
     case cxxime::StatusButton::FULL_SHAPE:
         g_state.full_shape = !g_state.full_shape;
-        printf("→ 切换: %s\n", g_state.full_shape ? "全角" : "半角");
+        wprintf(L"→ 切换: %ls\n", g_state.full_shape ? L"全角" : L"半角");
         break;
     case cxxime::StatusButton::CHINESE_PUNCT:
         g_state.chinese_punct = !g_state.chinese_punct;
-        printf("→ 切换: %s\n", g_state.chinese_punct ? "中文标点" : "英文标点");
+        wprintf(L"→ 切换: %ls\n", g_state.chinese_punct ? L"中文标点" : L"英文标点");
         break;
     case cxxime::StatusButton::SETTINGS:
-        printf("→ 设置按键被点击 (在正式版本中会启动设置程序)\n");
+        wprintf(L"→ 设置按键被点击 (在正式版本中会启动设置程序)\n");
         break;
     }
     update_display();
@@ -76,33 +105,36 @@ static LRESULT CALLBACK ParentWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         case '3':
             g_state.chinese_punct = !g_state.chinese_punct;
             print_state(); update_display(); break;
+        case 'M':
+            cycle_input_mode();
+            print_state(); update_display(); break;
         case 'E':
             g_enabled = !g_enabled;
             g_window.set_enabled(g_enabled);
-            printf("→ IPC状态: %s\n", g_enabled ? "已连接" : "已断开");
+            wprintf(L"→ IPC状态: %ls\n", g_enabled ? L"已连接" : L"已断开");
             print_state(); update_display(); break;
         case VK_LEFT: {
             int x, y; g_window.get_position(x, y);
             g_window.set_position(x - 10, y);
-            printf("→ 位置: (%d, %d)\n", x - 10, y); break;
+            wprintf(L"→ 位置: (%d, %d)\n", x - 10, y); break;
         }
         case VK_RIGHT: {
             int x, y; g_window.get_position(x, y);
             g_window.set_position(x + 10, y);
-            printf("→ 位置: (%d, %d)\n", x + 10, y); break;
+            wprintf(L"→ 位置: (%d, %d)\n", x + 10, y); break;
         }
         case VK_UP: {
             int x, y; g_window.get_position(x, y);
             g_window.set_position(x, y - 10);
-            printf("→ 位置: (%d, %d)\n", x, y - 10); break;
+            wprintf(L"→ 位置: (%d, %d)\n", x, y - 10); break;
         }
         case VK_DOWN: {
             int x, y; g_window.get_position(x, y);
             g_window.set_position(x, y + 10);
-            printf("→ 位置: (%d, %d)\n", x, y + 10); break;
+            wprintf(L"→ 位置: (%d, %d)\n", x, y + 10); break;
         }
         case VK_ESCAPE:
-            printf("退出\n");
+            wprintf(L"退出\n");
             PostQuitMessage(0); break;
         default:
             return DefWindowProcW(hwnd, msg, wp, lp);
@@ -118,20 +150,15 @@ static LRESULT CALLBACK ParentWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 
 // ── Entry point ──────────────────────────────────────────────
 int main() {
-    SetConsoleOutputCP(CP_UTF8);
-    printf("=== CxxIME Status Window Tool ===\n");
-    printf("Keys:  1     = Toggle 中/英\n");
-    printf("       2     = Toggle 全/半\n");
-    printf("       3     = Toggle 。/.\n");
-    printf("       E     = Toggle IPC connected/disconnected\n");
-    printf("       Arrow = Move window\n");
-    printf("       Esc   = Exit\n\n");
-    printf("Click on buttons to toggle state.\n\n");
-
-    // Load logo icon
-    HICON logo_icon = (HICON)LoadImageW(nullptr,
-        CXXIME_PROJECT_DIR L"resource/cxxime.ico",
-        IMAGE_ICON, 64, 64, LR_LOADFROMFILE | LR_DEFAULTCOLOR);
+    wprintf(L"=== CxxIME Status Window Tool ===\n");
+    wprintf(L"Keys:  1     = Toggle 中/英\n");
+    wprintf(L"       2     = Toggle 全/半\n");
+    wprintf(L"       3     = Toggle 。/.\n");
+    wprintf(L"       M     = Cycle 拼/五/混\n");
+    wprintf(L"       E     = Toggle IPC connected/disconnected\n");
+    wprintf(L"       Arrow = Move window\n");
+    wprintf(L"       Esc   = Exit\n\n");
+    wprintf(L"Click on buttons to toggle state.\n\n");
 
     // Create parent window (keyboard focus)
     WNDCLASSEXW wc = {};
@@ -147,9 +174,8 @@ int main() {
         CW_USEDEFAULT, CW_USEDEFAULT, 500, 120,
         nullptr, nullptr, GetModuleHandle(nullptr), nullptr);
 
-    // Create status window with logo icon
+    // Create status window
     g_window.create(nullptr, g_theme);
-    if (logo_icon) g_window.set_logo_icon(logo_icon);
     g_window.set_click_callback(on_button_click);
 
     // Initial display
@@ -164,6 +190,5 @@ int main() {
     }
 
     g_window.destroy();
-    if (logo_icon) DestroyIcon(logo_icon);
     return 0;
 }
