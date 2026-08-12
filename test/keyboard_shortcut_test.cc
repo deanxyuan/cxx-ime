@@ -32,6 +32,14 @@ TEST(KeyboardShortcut, parses_and_formats_supported_keys) {
         {"Ctrl+Alt+Shift+Space", "Ctrl+Alt+Shift+Space",
          cxxime::kKeyModifierControl | cxxime::kKeyModifierAlt | cxxime::kKeyModifierShift,
          VK_SPACE},
+        {"Ctrl+/", "Ctrl+/", cxxime::kKeyModifierControl, VK_OEM_2},
+        {"Ctrl+Shift+/", "Ctrl+Shift+/",
+         cxxime::kKeyModifierControl | cxxime::kKeyModifierShift,
+         VK_OEM_2},
+        {"Alt+;", "Alt+;", cxxime::kKeyModifierAlt, VK_OEM_1},
+        {"Ctrl+Shift+=", "Ctrl+Shift+=",
+         cxxime::kKeyModifierControl | cxxime::kKeyModifierShift,
+         VK_OEM_PLUS},
     };
     for (const TestCase& test_case : test_cases) {
         cxxime::KeyboardShortcut shortcut;
@@ -74,7 +82,19 @@ TEST(KeyboardShortcut, validators_apply_context_specific_rules) {
 
     ASSERT_TRUE(cxxime::parse_keyboard_shortcut("Ctrl+C", &shortcut));
     ASSERT_TRUE(cxxime::is_valid_input_mode_shortcut(shortcut));
+    ASSERT_TRUE(cxxime::is_valid_activate_ime_shortcut(shortcut));
+
+    ASSERT_TRUE(cxxime::parse_keyboard_shortcut("Ctrl+/", &shortcut));
+    ASSERT_TRUE(cxxime::is_valid_input_mode_shortcut(shortcut));
+    ASSERT_TRUE(cxxime::is_valid_activate_ime_shortcut(shortcut));
+
+    ASSERT_TRUE(cxxime::parse_keyboard_shortcut("Shift+/", &shortcut));
+    ASSERT_TRUE(!cxxime::is_valid_input_mode_shortcut(shortcut));
     ASSERT_TRUE(!cxxime::is_valid_activate_ime_shortcut(shortcut));
+
+    ASSERT_TRUE(cxxime::parse_keyboard_shortcut("Alt+;", &shortcut));
+    ASSERT_TRUE(cxxime::is_valid_input_mode_shortcut(shortcut));
+    ASSERT_TRUE(cxxime::is_valid_activate_ime_shortcut(shortcut));
 
     ASSERT_TRUE(cxxime::parse_keyboard_shortcut("Ctrl+Alt+C", &shortcut));
     ASSERT_TRUE(cxxime::is_valid_input_mode_shortcut(shortcut));

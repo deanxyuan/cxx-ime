@@ -191,8 +191,8 @@ bool EditorApp::read_shortcut_controls() {
         input_mode_shortcut = shortcut_from_control(hInputModeSwitchKey_);
         if (!input_mode_shortcut.enabled() || !is_valid_input_mode_shortcut(input_mode_shortcut)) {
             MessageBoxW(hwnd_,
-                        L"输入模式快捷键可使用 F1-F11，或使用带 Ctrl/Alt 的字母、数字和 "
-                        L"Space 组合。",
+                        L"输入模式快捷键可使用 F1-F11，或使用 Ctrl/Alt（可同时搭配 "
+                        L"Shift）与字母、数字、常用标点或 Space 组合。",
                         L"CxxIME 设置", MB_OK | MB_ICONERROR);
             return false;
         }
@@ -204,8 +204,8 @@ bool EditorApp::read_shortcut_controls() {
         if (!activate_ime_shortcut.enabled() ||
             !is_valid_activate_ime_shortcut(activate_ime_shortcut)) {
             MessageBoxW(hwnd_,
-                        L"全局快捷键可使用 F1-F11，或使用 Ctrl+Alt、Ctrl+Shift 并搭配"
-                        L"字母、数字、F1-F11 或 Space。",
+                        L"全局快捷键可使用 F1-F11，或使用 Ctrl/Alt（可同时搭配 "
+                        L"Shift）与字母、数字、常用标点或 Space 组合。",
                         L"CxxIME 设置", MB_OK | MB_ICONERROR);
             return false;
         }

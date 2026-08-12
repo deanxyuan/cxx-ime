@@ -4,6 +4,8 @@
 #include <cstdio>
 #include <fstream>
 
+#include <windows.h>
+
 #include <json.hpp>
 
 #include <cxxime/config.h>
@@ -137,8 +139,16 @@ TEST(Config, invalid_input_mode_shortcut_falls_back_to_disabled) {
 
 TEST(Config, invalid_activate_ime_shortcut_falls_back_to_disabled) {
     cxxime::Config config;
-    ASSERT_TRUE(config.load_json(R"({"shortcuts":{"activate_ime":"Ctrl+C"}})"));
+    ASSERT_TRUE(config.load_json(R"({"shortcuts":{"activate_ime":"Shift+C"}})"));
     ASSERT_TRUE(!config.activate_ime_shortcut.enabled());
+}
+
+TEST(Config, activate_ime_shortcut_accepts_ctrl_slash) {
+    cxxime::Config config;
+    ASSERT_TRUE(config.load_json(R"({"shortcuts":{"activate_ime":"Ctrl+/"}})"));
+    ASSERT_EQ(config.activate_ime_shortcut.modifiers, cxxime::kKeyModifierControl);
+    ASSERT_EQ(config.activate_ime_shortcut.virtual_key, static_cast<uint32_t>(VK_OEM_2));
+    ASSERT_TRUE(cxxime::keyboard_shortcut_string(config.activate_ime_shortcut) == "Ctrl+/");
 }
 
 TEST(Config, activate_ime_shortcut_accepts_standalone_function_key) {
