@@ -69,10 +69,14 @@ void EditorApp::create_diagnostics_panel(HWND panel) {
     SendMessageW(open_directory_button, WM_SETFONT, reinterpret_cast<WPARAM>(get_font()), TRUE);
 
     const int packaged_app_y = directory_y + kRowH;
+    RECT panel_rect = {};
+    GetClientRect(panel, &panel_rect);
+    const int packaged_app_width = panel_rect.right - content_x - S(8);
     HWND packaged_app_path =
         CreateWindowExW(0, L"STATIC", L"PackagedApp 日志目录: LocalState\\cxxime\\logs",
-                        WS_CHILD | WS_VISIBLE | SS_LEFT, content_x, packaged_app_y, S(320), kCtrlH,
-                        panel, nullptr, GetModuleHandle(nullptr), nullptr);
+                        WS_CHILD | WS_VISIBLE | SS_LEFT | SS_ENDELLIPSIS, content_x,
+                        packaged_app_y, packaged_app_width, kCtrlH, panel, nullptr,
+                        GetModuleHandle(nullptr), nullptr);
     SendMessageW(packaged_app_path, WM_SETFONT, reinterpret_cast<WPARAM>(get_font()), TRUE);
 
     HWND export_button = CreateWindowExW(
