@@ -9,12 +9,39 @@
 namespace cxxime {
 namespace {
 
+struct NamedVirtualKey {
+    const char* name;
+    uint32_t virtual_key;
+};
+
+// Persist the unshifted key label; for example, '?' is represented as Shift+/.
+constexpr NamedVirtualKey kOemVirtualKeys[] = {
+    {";", VK_OEM_1},
+    {"=", VK_OEM_PLUS},
+    {",", VK_OEM_COMMA},
+    {"-", VK_OEM_MINUS},
+    {".", VK_OEM_PERIOD},
+    {"/", VK_OEM_2},
+    {"`", VK_OEM_3},
+    {"[", VK_OEM_4},
+    {"\\", VK_OEM_5},
+    {"]", VK_OEM_6},
+    {"'", VK_OEM_7},
+};
+
 bool is_supported_virtual_key(uint32_t virtual_key) {
     // Windows reserves F12 for debugger use, so shortcut handling stops at F11.
-    return (virtual_key >= 'A' && virtual_key <= 'Z') ||
-           (virtual_key >= '0' && virtual_key <= '9') ||
-           (virtual_key >= VK_F1 && virtual_key <= VK_F11) ||
-           virtual_key == VK_SPACE;
+    if ((virtual_key >= 'A' && virtual_key <= 'Z') ||
+        (virtual_key >= '0' && virtual_key <= '9') ||
+        (virtual_key >= VK_F1 && virtual_key <= VK_F11) || virtual_key == VK_SPACE) {
+        return true;
+    }
+    for (const auto& key : kOemVirtualKeys) {
+        if (key.virtual_key == virtual_key) {
+            return true;
+        }
+    }
+    return false;
 }
 
 std::string normalize_token(const std::string& token) {
@@ -44,6 +71,12 @@ bool parse_virtual_key(const std::string& token, uint32_t* virtual_key) {
         *virtual_key = VK_SPACE;
         return true;
     }
+    for (const auto& key : kOemVirtualKeys) {
+        if (token == key.name) {
+            *virtual_key = key.virtual_key;
+            return true;
+        }
+    }
     if (token.size() >= 2 && token.size() <= 3 && token[0] == 'F') {
         uint32_t number = 0;
         for (size_t i = 1; i < token.size(); ++i) {
@@ -70,6 +103,11 @@ std::string virtual_key_name(uint32_t virtual_key) {
     }
     if (virtual_key >= VK_F1 && virtual_key <= VK_F11) {
         return "F" + std::to_string(virtual_key - VK_F1 + 1);
+    }
+    for (const auto& key : kOemVirtualKeys) {
+        if (key.virtual_key == virtual_key) {
+            return key.name;
+        }
     }
     return {};
 }
@@ -178,8 +216,7 @@ bool is_valid_activate_ime_shortcut(const KeyboardShortcut& shortcut) {
         shortcut.virtual_key >= VK_F1 && shortcut.virtual_key <= VK_F11) {
         return true;
     }
-    return (shortcut.modifiers & kKeyModifierControl) != 0 &&
-           (shortcut.modifiers & (kKeyModifierAlt | kKeyModifierShift)) != 0;
+    return (shortcut.modifiers & (kKeyModifierControl | kKeyModifierAlt)) != 0;
 }
 
 uint32_t keyboard_shortcut_win32_modifiers(const KeyboardShortcut& shortcut) {
