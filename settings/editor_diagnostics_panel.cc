@@ -113,8 +113,8 @@ void EditorApp::create_diagnostics_panel(HWND panel) {
         0, L"STATIC",
         L"清理常规和 PackagedApp 历史日志；正在使用的文件会被跳过，启用诊断时仍会生成新日志。",
         WS_CHILD | WS_VISIBLE | SS_LEFT, kPanelPadLeft, top + kRowH * 7,
-        panel_rect.right - kPanelPadLeft - S(8), kCtrlH, panel, nullptr, GetModuleHandle(nullptr),
-        nullptr);
+        panel_rect.right - kPanelPadLeft - S(8), kCtrlH * 2, panel, nullptr,
+        GetModuleHandle(nullptr), nullptr);
     SendMessageW(cleanup_notice, WM_SETFONT, reinterpret_cast<WPARAM>(get_font()), TRUE);
 }
 
