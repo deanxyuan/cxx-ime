@@ -76,6 +76,9 @@ struct QueryTrace {
     // Shutdown writer thread (call at process exit)
     static void shutdown();
 
+    // Enable lazy writer startup or request an asynchronous writer stop.
+    static void set_enabled(bool enabled);
+
     // Number of trace entries dropped due to queue pressure
     static uint64_t dropped_count();
 };

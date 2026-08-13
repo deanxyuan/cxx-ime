@@ -23,6 +23,7 @@ struct ConfigSnapshot {
 std::uint32_t allocate_config_subscription_id();
 ConfigSnapshot subscribe_config_updates(HWND window, std::uint32_t subscription_id);
 void unsubscribe_config_updates(HWND window, std::uint32_t subscription_id);
+void shutdown_tsf_log_writer_if_no_config_subscribers();
 ConfigSnapshot current_config_snapshot();
 void set_status_window_enabled(bool enabled);
 void set_status_window_position(int x, int y);

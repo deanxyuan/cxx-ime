@@ -73,6 +73,8 @@ private:
     void read_diagnostics_controls();
     void open_diagnostics_log_directory();
     void export_diagnostics();
+    void cleanup_diagnostics();
+    void handle_diagnostics_cleanup_complete(LPARAM completion);
     void apply_candidate_control(int control_id);
     void apply_candidate_layout_to_edits(const cxxime::LayoutConfig& layout);
     void apply_default_candidate_settings();
@@ -130,6 +132,7 @@ private:
 
     // Diagnostics panel
     HWND hDiagnosticsLogging_ = nullptr;
+    HWND hDiagnosticsCleanup_ = nullptr;
 
     // Candidate panel
     HWND hCandDensity_ = nullptr;

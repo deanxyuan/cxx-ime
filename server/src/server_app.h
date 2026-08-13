@@ -14,6 +14,7 @@
 
 #include "config_store.h"
 #include "config_write_coordinator.h"
+#include "diagnostic_log_maintenance_worker.h"
 #include "input_method_hotkey.h"
 #include "session_manager.h"
 
@@ -33,6 +34,7 @@ private:
     cxxime::IpcServer ipc_server_;
     cxxime::ControlServer control_server_;
     cxxime::DictionaryMonitor dictionary_monitor_;
+    DiagnosticLogMaintenanceWorker diagnostic_log_maintenance_;
     InputMethodHotkey input_method_hotkey_;
     HWND hwnd_ = nullptr;
     std::string config_path_;

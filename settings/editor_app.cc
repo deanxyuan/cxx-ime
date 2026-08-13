@@ -398,6 +398,9 @@ LRESULT CALLBACK EditorApp::wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                         L"CxxIME", MB_OK | MB_ICONERROR);
         }
         return 0;
+    case kDiagnosticsCleanupCompleteMessage:
+        a->handle_diagnostics_cleanup_complete(lp);
+        return 0;
     case kUserDictQueryCompleteMessage:
         a->handle_user_dict_query_complete(wp, lp);
         return 0;

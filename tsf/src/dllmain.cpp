@@ -5,6 +5,7 @@
 #include "class_factory.h"
 #include "register.h"
 #include "text_service.h"
+#include "tsf_log_writer.h"
 
 #include <cxxime/data_path.h>
 #include <cxxime/status_window.h>
@@ -24,7 +25,8 @@ BOOL WINAPI DllMain(HINSTANCE hInst, DWORD dwReason, LPVOID) {
         // Destroy all lingering status windows BEFORE other cleanup.
         cxxime::StatusWindow::cleanup_all();
 
-        TextService::shutdown_trace(); // Flush and close trace writer thread
+        // Normal teardown joins outside the loader lock when the last service unsubscribes.
+        cxxime_tsf::request_tsf_log_writer_stop();
         DeleteCriticalSection(&g_cs);
         break;
     }
@@ -46,7 +48,9 @@ STDAPI DllGetClassObject(REFCLSID rclsid, REFIID riid, void** ppv) {
     return hr;
 }
 
-STDAPI DllCanUnloadNow() { return g_cRefDll >= 0 ? S_FALSE : S_OK; }
+STDAPI DllCanUnloadNow() {
+    return g_cRefDll >= 0 || cxxime_tsf::tsf_log_writer_has_thread() ? S_FALSE : S_OK;
+}
 
 STDAPI DllRegisterServer() {
     HRESULT hr;

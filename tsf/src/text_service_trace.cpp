@@ -2,54 +2,14 @@
 
 #include "text_service.h"
 
-#include <atomic>
-#include <condition_variable>
 #include <cstdio>
-#include <mutex>
-#include <string>
-#include <thread>
 
-#include <cxxime/diagnostic_log_path.h>
 #include <cxxime/diagnostics_config.h>
 
+#include "tsf_log_writer.h"
 #include "tsf_trace.h"
 
 namespace {
-
-// Async queue configuration
-constexpr int kTsfQueueCapacity = 128;
-constexpr int kTsfBatchSize = 16;
-constexpr auto kTsfFlushInterval = std::chrono::milliseconds(200);
-
-// Async trace queue (bounded, single writer thread)
-
-struct TsfTraceEntry {
-    char json[512];
-    int len = 0;
-};
-
-TsfTraceEntry g_tsf_queue[kTsfQueueCapacity];
-std::atomic<int> g_tsf_head{0};
-std::atomic<int> g_tsf_tail{0};
-std::atomic<int> g_tsf_dropped{0};
-
-std::thread g_tsf_writer_thread;
-std::mutex g_tsf_shutdown_mutex;
-std::condition_variable g_tsf_shutdown_cv;
-std::atomic<bool> g_tsf_shutdown{false};
-std::atomic<bool> g_tsf_writer_started{false};
-
-bool tsf_queue_try_push(const TsfTraceEntry& entry) {
-    int head = g_tsf_head.load(std::memory_order_relaxed);
-    int next = (head + 1) % kTsfQueueCapacity;
-    if (next == g_tsf_tail.load(std::memory_order_acquire)) {
-        g_tsf_dropped.fetch_add(1, std::memory_order_relaxed);
-        return false;
-    }
-    g_tsf_queue[head] = entry;
-    g_tsf_head.store(next, std::memory_order_release);
-    return true;
-}
 
 const char* bool_json(bool value) {
     return value ? "true" : "false";
@@ -96,137 +56,6 @@ void current_process_utf8(char* out, int out_size) {
     out[out_size - 1] = '\0';
 }
 
-int tsf_queue_pop_batch(TsfTraceEntry* batch, int max) {
-    int count = 0;
-    while (count < max) {
-        int tail = g_tsf_tail.load(std::memory_order_relaxed);
-        if (tail == g_tsf_head.load(std::memory_order_acquire))
-            break;
-        batch[count++] = g_tsf_queue[tail];
-        g_tsf_tail.store((tail + 1) % kTsfQueueCapacity, std::memory_order_release);
-    }
-    return count;
-}
-
-std::string tsf_get_log_dir() {
-    const std::wstring directory = cxxime::diagnostic_log_directory();
-    if (directory.empty()) {
-        return {};
-    }
-
-    const int required =
-        WideCharToMultiByte(CP_UTF8, 0, directory.c_str(), -1, nullptr, 0, nullptr, nullptr);
-    if (required <= 1) {
-        return {};
-    }
-    std::string utf8(static_cast<size_t>(required), '\0');
-    WideCharToMultiByte(CP_UTF8, 0, directory.c_str(), -1, &utf8[0], required, nullptr, nullptr);
-    utf8.pop_back();
-    return utf8;
-}
-
-void tsf_rotate_log(FILE*& file, size_t& file_size, const std::string& path,
-                           const cxxime::DiagnosticsConfig& config) {
-    if (file) { fclose(file); file = nullptr; }
-    DeleteFileA((path + "." + std::to_string(config.log_max_files)).c_str());
-    for (int i = config.log_max_files - 1; i >= 1; --i) {
-        MoveFileA((path + "." + std::to_string(i)).c_str(),
-                  (path + "." + std::to_string(i + 1)).c_str());
-    }
-    MoveFileA(path.c_str(), (path + ".1").c_str());
-    file_size = 0;
-}
-
-void tsf_writer_thread_func(std::string dir) {
-    if (dir.empty()) return;
-
-    char pid_str[32];
-    snprintf(pid_str, sizeof(pid_str), "tsf-%d-trace.jsonl", (int)GetCurrentProcessId());
-    std::string path = dir + "\\" + pid_str;
-
-    FILE* file = nullptr;
-    size_t file_size = 0;
-
-    file = fopen(path.c_str(), "a");
-    if (file) {
-        fseek(file, 0, SEEK_END);
-        file_size = ftell(file);
-    }
-
-    TsfTraceEntry batch[kTsfBatchSize];
-    auto last_flush = std::chrono::steady_clock::now();
-
-    while (!g_tsf_shutdown.load(std::memory_order_relaxed)) {
-        {
-            std::unique_lock<std::mutex> lock(g_tsf_shutdown_mutex);
-            g_tsf_shutdown_cv.wait_for(lock, kTsfFlushInterval, [] {
-                return g_tsf_shutdown.load(std::memory_order_relaxed);
-            });
-        }
-
-        int count = tsf_queue_pop_batch(batch, kTsfBatchSize);
-        if (count == 0) {
-            auto now = std::chrono::steady_clock::now();
-            if (file && (now - last_flush) >= kTsfFlushInterval) {
-                fflush(file);
-                last_flush = now;
-            }
-            continue;
-        }
-
-        if (!file) {
-            file = fopen(path.c_str(), "a");
-            if (!file) continue;
-            fseek(file, 0, SEEK_END);
-            file_size = ftell(file);
-        }
-
-        for (int i = 0; i < count; ++i) {
-            cxxime::DiagnosticsConfig config = cxxime::diagnostics_config();
-            if (file_size + batch[i].len + 1 > config.log_max_size) {
-                tsf_rotate_log(file, file_size, path, config);
-                file = fopen(path.c_str(), "a");
-                if (!file) break;
-            }
-            fwrite(batch[i].json, 1, batch[i].len, file);
-            fputc('\n', file);
-            file_size += batch[i].len + 1;
-        }
-
-        if (file) {
-            fflush(file);
-            last_flush = std::chrono::steady_clock::now();
-        }
-    }
-
-    // Final drain on shutdown
-    if (file) {
-        TsfTraceEntry entry;
-        while (tsf_queue_pop_batch(&entry, 1) == 1) {
-            cxxime::DiagnosticsConfig config = cxxime::diagnostics_config();
-            if (file_size + entry.len + 1 > config.log_max_size) {
-                tsf_rotate_log(file, file_size, path, config);
-                file = fopen(path.c_str(), "a");
-                if (!file) break;
-            }
-            fwrite(entry.json, 1, entry.len, file);
-            fputc('\n', file);
-            file_size += entry.len + 1;
-        }
-        fclose(file);
-    }
-}
-
-void tsf_ensure_writer_started() {
-    if (g_tsf_writer_started.exchange(true)) return;
-    std::string log_dir = tsf_get_log_dir();
-    if (log_dir.empty()) {
-        g_tsf_writer_started.store(false);
-        return;
-    }
-    g_tsf_writer_thread = std::thread(tsf_writer_thread_func, log_dir);
-}
-
 }  // namespace
 
 const char* TextService::TsfTrace::result_string() const {
@@ -268,12 +97,9 @@ bool TextService::TsfTrace::should_log() const {
 void TextService::_enqueue_trace(const TsfTrace& trace) {
     if (!trace.should_log()) return;
 
-    TsfTraceEntry entry;
-    entry.len = trace.to_json(entry.json, sizeof(entry.json));
-    if (entry.len <= 0) return;
-
-    tsf_ensure_writer_started();
-    tsf_queue_try_push(entry);  // Drop if full; never block hot path.
+    char json[512] = {};
+    const int length = trace.to_json(json, sizeof(json));
+    cxxime_tsf::enqueue_tsf_log_line(json, length);
 }
 
 void TextService::_enqueue_event_trace(const char* event, const char* detail, bool important) {
@@ -285,29 +111,17 @@ void TextService::_enqueue_event_trace(const char* event, const char* detail, bo
     char process_name[MAX_PATH] = {};
     current_process_utf8(process_name, sizeof(process_name));
 
-    TsfTraceEntry entry;
-    entry.len = snprintf(entry.json, sizeof(entry.json),
-                         "{\"event\":\"%s\",\"detail\":\"%s\",\"session\":%u,"
-                         "\"focused\":%s,\"chinese\":%s,\"caps\":%s,"
-                         "\"proc\":\"%s\",\"fg\":\"%s\"}",
-                         event ? event : "", detail ? detail : "", _sessionId,
-                         bool_json(_inputFocused), bool_json(_chinese_mode),
-                         bool_json(_caps_lock), process_name, foreground_class);
-    if (entry.len <= 0 || entry.len >= static_cast<int>(sizeof(entry.json)))
+    char json[512] = {};
+    const int length = snprintf(json, sizeof(json),
+                                "{\"event\":\"%s\",\"detail\":\"%s\",\"session\":%u,"
+                                "\"focused\":%s,\"chinese\":%s,\"caps\":%s,"
+                                "\"proc\":\"%s\",\"fg\":\"%s\"}",
+                                event ? event : "", detail ? detail : "", _sessionId,
+                                bool_json(_inputFocused), bool_json(_chinese_mode),
+                                bool_json(_caps_lock), process_name, foreground_class);
+    if (length <= 0 || length >= static_cast<int>(sizeof(json)))
         return;
-
-    tsf_ensure_writer_started();
-    tsf_queue_try_push(entry);
-}
-
-// Called from DllMain(DLL_PROCESS_DETACH) via globals.cpp
-void TextService::shutdown_trace() {
-    if (!g_tsf_writer_started.exchange(false))
-        return;
-    g_tsf_shutdown.store(true, std::memory_order_relaxed);
-    g_tsf_shutdown_cv.notify_all();
-    if (g_tsf_writer_thread.joinable())
-        g_tsf_writer_thread.join();
+    cxxime_tsf::enqueue_tsf_log_line(json, length);
 }
 
 void TextService::_trace_input_decision(const char* block_reason) {

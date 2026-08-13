@@ -15,6 +15,7 @@ inline constexpr int kFontPt = 14;
 inline constexpr int kNavFontPt = kFontPt + 1;
 inline constexpr UINT kDiagnosticsCompleteMessage = WM_APP + 101;
 inline constexpr UINT kUserDictQueryCompleteMessage = WM_APP + 102;
+inline constexpr UINT kDiagnosticsCleanupCompleteMessage = WM_APP + 103;
 
 extern float g_dpi;
 extern HFONT g_hFont;

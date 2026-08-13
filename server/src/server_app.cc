@@ -183,6 +183,8 @@ bool ServerApp::initialize(const std::string& dict_path, const std::string& conf
         CXXIME_LOG(L"%s", L"DictionaryMonitor: start failed");
     }
 
+    diagnostic_log_maintenance_.start();
+
     return true;
 }
 
@@ -195,6 +197,7 @@ void ServerApp::run() {
 }
 
 void ServerApp::finalize() {
+    diagnostic_log_maintenance_.stop();
     dictionary_monitor_.stop();
     ipc_server_.stop();
     session_mgr_.set_config_patch_handler({});
