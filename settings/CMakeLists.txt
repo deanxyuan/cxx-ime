@@ -1,6 +1,8 @@
 project(cxxime-settings CXX)
 
 add_executable(cxxime-settings WIN32
+    diagnostic_log_cleanup.cc
+    diagnostic_log_cleanup.h
     main.cc
     editor_about_panel.cc
     editor_advanced_panel.cc

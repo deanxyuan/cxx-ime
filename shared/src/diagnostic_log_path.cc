@@ -82,11 +82,20 @@ std::wstring resolve_diagnostic_log_directory() {
     return create_directory(root) ? root : std::wstring();
 }
 
+bool resolve_diagnostic_log_directory_is_packaged() {
+    return !current_package_family_name().empty();
+}
+
 } // namespace
 
 std::wstring diagnostic_log_directory() {
     static const std::wstring directory = resolve_diagnostic_log_directory();
     return directory;
+}
+
+bool diagnostic_log_directory_is_packaged() {
+    static const bool packaged = resolve_diagnostic_log_directory_is_packaged();
+    return packaged;
 }
 
 } // namespace cxxime

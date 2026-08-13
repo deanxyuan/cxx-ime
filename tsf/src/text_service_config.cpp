@@ -55,6 +55,7 @@ bool TextService::_start_config_updates() {
 
 void TextService::_stop_config_updates() {
     if (!_configWindow) {
+        cxxime_tsf::shutdown_tsf_log_writer_if_no_config_subscribers();
         return;
     }
 

@@ -166,8 +166,6 @@ public:
         bool should_log() const;
     };
 
-    static void shutdown_trace();  // Call on DLL_PROCESS_DETACH
-
 private:
     HRESULT _initialize_required_activation_sinks();
     void _initialize_optional_activation_services();

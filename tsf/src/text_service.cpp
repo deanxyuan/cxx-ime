@@ -11,6 +11,7 @@
 #include <cxxime/logging.h>
 
 #include "candidate_ui_element.h"
+#include "config_coordinator.h"
 #include "globals.h"
 #include "language_bar.h"
 #include "reading_ui_element.h"
@@ -92,6 +93,7 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
 
     const HRESULT activation_sinks_hr = _initialize_required_activation_sinks();
     if (FAILED(activation_sinks_hr)) {
+        cxxime_tsf::shutdown_tsf_log_writer_if_no_config_subscribers();
         return activation_sinks_hr;
     }
 

@@ -12,6 +12,7 @@
 #include <cxxime/diagnostics_config.h>
 #include <cxxime/dictionary_manifest.h>
 #include <cxxime/logging.h>
+#include <cxxime/query_trace.h>
 
 namespace {
 
@@ -298,6 +299,8 @@ bool SessionManager::initialize(const std::string& dict_path,
         return false;
     }
     cxxime::set_diagnostics_config(config->diagnostics);
+    cxxime::QueryTrace::set_enabled(config->diagnostics.trace_mode !=
+                                    cxxime::DiagnosticTraceMode::kOff);
     reset_global_state(shared_.snapshot());
     return true;
 }
@@ -539,6 +542,8 @@ void SessionManager::apply_config(const std::shared_ptr<const cxxime::Config>& c
         previous_resources.config->input_mode != config->input_mode;
     shared_.replace_config(config);
     cxxime::set_diagnostics_config(config->diagnostics);
+    cxxime::QueryTrace::set_enabled(config->diagnostics.trace_mode !=
+                                    cxxime::DiagnosticTraceMode::kOff);
     auto resources = shared_.snapshot();
 
     std::vector<std::shared_ptr<SessionEntry>> entries;

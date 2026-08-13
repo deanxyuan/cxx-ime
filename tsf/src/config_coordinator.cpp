@@ -15,6 +15,8 @@
 #include <cxxime/diagnostics_config.h>
 #include <cxxime/logging.h>
 
+#include "tsf_log_writer.h"
+
 namespace cxxime_tsf {
 namespace {
 
@@ -89,6 +91,8 @@ private:
         }
 
         cxxime::set_diagnostics_config(config->diagnostics);
+        set_tsf_log_writer_enabled(config->diagnostics.trace_mode !=
+                                   cxxime::DiagnosticTraceMode::kOff);
         CXXIME_LOG(L"control event=apply epoch=%llu revision=%llu subscribers=%zu",
                    static_cast<unsigned long long>(generation.server_epoch),
                    static_cast<unsigned long long>(generation.revision), subscribers.size());
@@ -133,6 +137,17 @@ void unsubscribe_config_updates(HWND window, std::uint32_t subscription_id) {
             retired.reset(g_coordinator);
             g_coordinator = nullptr;
         }
+    }
+    if (retired) {
+        retired.reset();
+        shutdown_tsf_log_writer_if_no_config_subscribers();
+    }
+}
+
+void shutdown_tsf_log_writer_if_no_config_subscribers() {
+    std::lock_guard<std::mutex> lock(g_coordinator_mutex);
+    if (!g_coordinator) {
+        shutdown_tsf_log_writer();
     }
 }
 

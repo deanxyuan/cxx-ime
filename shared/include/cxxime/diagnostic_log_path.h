@@ -11,6 +11,7 @@ namespace cxxime {
 // Packaged hosts use their package LocalState; other hosts keep the
 // historical %USERPROFILE%\cxxime\logs location.
 std::wstring diagnostic_log_directory();
+bool diagnostic_log_directory_is_packaged();
 
 } // namespace cxxime
 

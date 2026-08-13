@@ -1,21 +1,25 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
 #include <cxxime/query_trace.h>
-#include <cxxime/mpscq.h>
-#include <cxxime/logging.h>
-#include <cxxime/diagnostics_config.h>
-#include <windows.h>
-#include <shlobj.h>
+
 #include <cstdio>
 #include <cstring>
-#include <mutex>
-#include <condition_variable>
-#include <thread>
-#include <string>
-#include <chrono>
-#include <vector>
+
 #include <algorithm>
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
+#include <mutex>
+#include <string>
+#include <thread>
+#include <vector>
+
+#include <windows.h>
+
+#include <cxxime/diagnostic_log_path.h>
+#include <cxxime/diagnostics_config.h>
+#include <cxxime/logging.h>
+#include <cxxime/mpscq.h>
 
 namespace cxxime {
 
@@ -136,27 +140,35 @@ private:
 static TraceQueue g_queue;
 static std::thread g_writer_thread;
 static std::atomic<bool> g_shutdown{false};
-static std::atomic<bool> g_writer_started{false};
+static std::atomic<bool> g_accepting{true};
+static std::mutex g_writer_mutex;
+
+enum class WriterState {
+    kStopped,
+    kStarting,
+    kRunning,
+    kStopping,
+};
+
+static std::atomic<WriterState> g_writer_state{WriterState::kStopped};
+static std::once_flag g_atexit_once;
 
 static std::string get_log_dir() {
-    wchar_t profile[MAX_PATH];
-    if (FAILED(SHGetFolderPathW(nullptr, CSIDL_PROFILE, nullptr, 0, profile)))
+    const std::wstring directory = diagnostic_log_directory();
+    if (directory.empty())
         return {};
-    char utf8[MAX_PATH * 3] = {};
-    WideCharToMultiByte(CP_UTF8, 0, profile, -1, utf8, sizeof(utf8), nullptr, nullptr);
-    return std::string(utf8) + "\\cxxime\\logs";
+    const int required =
+        WideCharToMultiByte(CP_UTF8, 0, directory.c_str(), -1, nullptr, 0, nullptr, nullptr);
+    if (required <= 1)
+        return {};
+    std::string utf8(static_cast<size_t>(required), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, directory.c_str(), -1, &utf8[0], required, nullptr, nullptr);
+    utf8.pop_back();
+    return utf8;
 }
 
 static std::string get_trace_path() {
     return get_log_dir() + "\\server-trace.jsonl";
-}
-
-static void ensure_log_dir() {
-    std::string dir = get_log_dir();
-    if (!dir.empty()) {
-        CreateDirectoryA((get_log_dir().substr(0, get_log_dir().rfind('\\'))).c_str(), nullptr);
-        CreateDirectoryA(dir.c_str(), nullptr);
-    }
 }
 
 static void rotate_log_file(FILE*& file, size_t& file_size, const DiagnosticsConfig& config) {
@@ -182,100 +194,18 @@ static void rotate_log_file(FILE*& file, size_t& file_size, const DiagnosticsCon
     file_size = 0;
 }
 
-static void cleanup_old_tsf_logs() {
-    std::string dir = get_log_dir();
-    if (dir.empty()) return;
-
-    WIN32_FIND_DATAA find_data;
-    HANDLE hFind = FindFirstFileA((dir + "\\tsf-*").c_str(), &find_data);
-    if (hFind == INVALID_HANDLE_VALUE) return;
-
-    auto now = std::chrono::system_clock::now();
-    auto seven_days = std::chrono::hours(24 * 7);
-
-    do {
-        std::string filename = dir + "\\" + find_data.cFileName;
-        FILETIME ft = find_data.ftLastWriteTime;
-        ULARGE_INTEGER ull;
-        ull.LowPart = ft.dwLowDateTime;
-        ull.HighPart = ft.dwHighDateTime;
-        auto file_time = std::chrono::system_clock::from_time_t(
-            static_cast<time_t>((ull.QuadPart - 116444736000000000ULL) / 10000000ULL));
-
-        if (now - file_time > seven_days) {
-            DeleteFileA(filename.c_str());
-        }
-    } while (FindNextFileA(hFind, &find_data));
-    FindClose(hFind);
-}
-
-static void cleanup_oversized_logs(const DiagnosticsConfig& config) {
-    std::string dir = get_log_dir();
-    if (dir.empty()) return;
-
-    WIN32_FIND_DATAA find_data;
-    HANDLE hFind = FindFirstFileA((dir + "\\*").c_str(), &find_data);
-    if (hFind == INVALID_HANDLE_VALUE) return;
-
-    struct FileInfo {
-        std::string path;
-        FILETIME last_write;
-        ULONGLONG size;
-    };
-    std::vector<FileInfo> files;
-    ULONGLONG total_size = 0;
-
-    do {
-        if (!(find_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
-            std::string filename = find_data.cFileName;
-            if (filename.find(".log") != std::string::npos ||
-                filename.find(".jsonl") != std::string::npos) {
-                ULARGE_INTEGER size;
-                size.LowPart = find_data.nFileSizeLow;
-                size.HighPart = find_data.nFileSizeHigh;
-                total_size += size.QuadPart;
-                files.push_back({
-                    dir + "\\" + filename,
-                    find_data.ftLastWriteTime,
-                    size.QuadPart
-                });
-            }
-        }
-    } while (FindNextFileA(hFind, &find_data));
-    FindClose(hFind);
-
-    ULONGLONG max_total = static_cast<ULONGLONG>(config.log_max_size) *
-                          static_cast<ULONGLONG>(config.log_max_files + 1) * 2ULL;
-    ULONGLONG target_total = max_total * 3ULL / 4ULL;
-
-    if (total_size > max_total) {
-        std::sort(files.begin(), files.end(),
-            [](const FileInfo& a, const FileInfo& b) {
-                ULARGE_INTEGER a_time, b_time;
-                a_time.LowPart = a.last_write.dwLowDateTime;
-                a_time.HighPart = a.last_write.dwHighDateTime;
-                b_time.LowPart = b.last_write.dwLowDateTime;
-                b_time.HighPart = b.last_write.dwHighDateTime;
-                return a_time.QuadPart < b_time.QuadPart;
-            });
-
-        for (const auto& file : files) {
-            if (total_size <= target_total) break;
-            DeleteFileA(file.path.c_str());
-            total_size -= file.size;
-        }
-    }
-}
-
 // ─── Writer thread ───────────────────────────────────────────
 
 static void writer_thread_func() {
-    ensure_log_dir();
-    cleanup_old_tsf_logs();
+    {
+        std::lock_guard<std::mutex> lock(g_writer_mutex);
+        if (g_writer_state.load(std::memory_order_relaxed) == WriterState::kStarting) {
+            g_writer_state.store(WriterState::kRunning, std::memory_order_release);
+        }
+    }
 
     FILE* file = nullptr;
     size_t file_size = 0;
-    int write_count = 0;
 
     // Open initial file
     std::string path = get_trace_path();
@@ -339,19 +269,13 @@ static void writer_thread_func() {
             last_flush = std::chrono::steady_clock::now();
         }
 
-        // Periodic cleanup
-        write_count += count;
-        if (write_count >= 1000) {
-            cleanup_oversized_logs(diagnostics_config());
-            write_count = 0;
-        }
     }
 
     // Final flush on shutdown
-    if (file) {
-        // Drain remaining entries
-        int count = g_queue.pop_batch(batch, kBatchSize);
-        while (count > 0) {
+    // Drain remaining entries even when the log file could not be opened.
+    int count = g_queue.pop_batch(batch, kBatchSize);
+    while (count > 0) {
+        if (file) {
             for (int i = 0; i < count; ++i) {
                 const auto& entry = batch[i];
                 DiagnosticsConfig config = diagnostics_config();
@@ -365,19 +289,40 @@ static void writer_thread_func() {
                 fputc('\n', file);
                 file_size += entry.len + 1;
             }
-            count = g_queue.pop_batch(batch, kBatchSize);
         }
+        count = g_queue.pop_batch(batch, kBatchSize);
+    }
+    if (file) {
         fclose(file);
     }
+
+    g_writer_state.store(WriterState::kStopped, std::memory_order_release);
 }
 
-static void ensure_writer_started() {
-    if (g_writer_started.exchange(true)) return;
-    g_writer_thread = std::thread(writer_thread_func);
+static bool ensure_writer_started_locked() {
+    WriterState state = g_writer_state.load(std::memory_order_acquire);
+    if (state == WriterState::kRunning || state == WriterState::kStarting)
+        return true;
+    if (state == WriterState::kStopping)
+        return false;
+    if (!g_accepting.load(std::memory_order_relaxed))
+        return false;
+    if (g_writer_thread.joinable())
+        g_writer_thread.join();
+
+    g_shutdown.store(false, std::memory_order_relaxed);
+    g_writer_state.store(WriterState::kStarting, std::memory_order_release);
+    try {
+        g_writer_thread = std::thread(writer_thread_func);
+    } catch (...) {
+        g_writer_state.store(WriterState::kStopped, std::memory_order_release);
+        return false;
+    }
     // Ensure graceful shutdown even if caller forgets to call QueryTrace::shutdown().
     // atexit handlers run before global destructors, so the thread is joined
     // before its std::thread destructor runs (which would call std::terminate).
-    std::atexit(QueryTrace::shutdown);
+    std::call_once(g_atexit_once, [] { std::atexit(QueryTrace::shutdown); });
+    return true;
 }
 
 // ─── Public API ──────────────────────────────────────────────
@@ -508,28 +453,46 @@ void QueryTrace::log_unchecked() const {
     }
 #endif
 
-    // Async: enqueue to bounded queue (non-blocking, drop if full)
-    ensure_writer_started();
-
     TraceEntry entry;
     std::memcpy(entry.json, json_buf, len);
     entry.json[len] = '\0';
     entry.len = len;
 
-    g_queue.try_push(entry);  // Drop if queue full - never block hot path
+    // Admission and enqueue share the lifecycle lock so shutdown cannot finish its final drain
+    // while a producer that already observed the enabled state is still pending.
+    std::lock_guard<std::mutex> lock(g_writer_mutex);
+    if (!g_accepting.load(std::memory_order_relaxed) || !ensure_writer_started_locked())
+        return;
+    g_queue.try_push(entry);  // Drop if queue full - never block input processing.
 }
 
 // ─── Shutdown (call at process exit) ─────────────────────────
 
 void QueryTrace::shutdown() {
-    if (!g_writer_started.exchange(false))
+    set_enabled(false);
+    std::thread writer;
+    {
+        std::lock_guard<std::mutex> lock(g_writer_mutex);
+        if (g_writer_thread.joinable()) {
+            writer = std::move(g_writer_thread);
+        }
+    }
+    if (writer.joinable()) {
+        writer.join();
+    }
+}
+
+void QueryTrace::set_enabled(bool enabled) {
+    std::lock_guard<std::mutex> lock(g_writer_mutex);
+    g_accepting.store(enabled, std::memory_order_release);
+    if (enabled)
         return;
 
-    g_shutdown.store(true, std::memory_order_relaxed);
-    g_queue.notify();  // Wake up writer thread
-
-    if (g_writer_thread.joinable()) {
-        g_writer_thread.join();
+    const WriterState state = g_writer_state.load(std::memory_order_relaxed);
+    if (state == WriterState::kRunning || state == WriterState::kStarting) {
+        g_writer_state.store(WriterState::kStopping, std::memory_order_release);
+        g_shutdown.store(true, std::memory_order_relaxed);
+        g_queue.notify();
     }
 }
 
