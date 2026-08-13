@@ -47,6 +47,8 @@ public:
     bool owner_matches(HWND owner) const;
     int visible_candidate_count() const;
     SIZE window_size() const;
+    SIZE layout_size() const;
+    UINT dpi() const;
 
 private:
     void rebuild_render_context(const LayoutConfig& cfg, int window_width);

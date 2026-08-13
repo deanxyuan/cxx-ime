@@ -161,20 +161,26 @@ void TextService::trace_caret_event(const char* action,
                                     const RECT* rect,
                                     HRESULT hr,
                                     bool important) {
-    char detail[192] = {};
+    const SIZE candidate_size = _candidateWindow.layout_size();
+    const UINT candidate_dpi = _candidateWindow.dpi();
+    char detail[256] = {};
     if (rect) {
         snprintf(detail, sizeof(detail),
-                 "action=%s source=%s resolved=%d rc=%ld,%ld,%ld,%ld hr=0x%08lx composing=%d visible=%d",
+                 "action=%s source=%s resolved=%d rc=%ld,%ld,%ld,%ld hr=0x%08lx "
+                 "composing=%d visible=%d dpi=%u layout_size=%ld,%ld",
                  action ? action : "unknown", source ? source : "unknown",
                  resolved ? 1 : 0, rect->left, rect->top, rect->right, rect->bottom,
                  static_cast<unsigned long>(hr), _composing ? 1 : 0,
-                 _candidateWindow.is_visible() ? 1 : 0);
+                 _candidateWindow.is_visible() ? 1 : 0, candidate_dpi,
+                 candidate_size.cx, candidate_size.cy);
     } else {
         snprintf(detail, sizeof(detail),
-                 "action=%s source=%s resolved=%d hr=0x%08lx composing=%d visible=%d",
+                 "action=%s source=%s resolved=%d hr=0x%08lx composing=%d visible=%d "
+                 "dpi=%u layout_size=%ld,%ld",
                  action ? action : "unknown", source ? source : "unknown",
                  resolved ? 1 : 0, static_cast<unsigned long>(hr),
-                 _composing ? 1 : 0, _candidateWindow.is_visible() ? 1 : 0);
+                 _composing ? 1 : 0, _candidateWindow.is_visible() ? 1 : 0,
+                 candidate_dpi, candidate_size.cx, candidate_size.cy);
     }
     _enqueue_event_trace("caret_position", detail, important);
 }

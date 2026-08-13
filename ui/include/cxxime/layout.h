@@ -30,12 +30,12 @@ int calculate_auto_candidate_window_max_width(int work_area_width, float dpi_sca
 LayoutResult calculate_horizontal_layout(HDC hdc,
     const std::vector<Candidate>& candidates,
     const std::string& font_name, int font_size,
-    const LayoutConfig& cfg, int page_total = 1);
+    const LayoutConfig& cfg, int page_total = 1, UINT dpi = USER_DEFAULT_SCREEN_DPI);
 
 LayoutResult calculate_vertical_layout(HDC hdc,
     const std::vector<Candidate>& candidates,
     const std::string& font_name, int font_size,
-    const LayoutConfig& cfg);
+    const LayoutConfig& cfg, UINT dpi = USER_DEFAULT_SCREEN_DPI);
 
 } // namespace cxxime
 #endif

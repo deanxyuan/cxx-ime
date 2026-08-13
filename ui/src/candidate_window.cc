@@ -24,6 +24,21 @@ static int system_caret_width() {
     return static_cast<int>(width);
 }
 
+class ScopedDpiAwarenessContext {
+public:
+    explicit ScopedDpiAwarenessContext(DPI_AWARENESS_CONTEXT context)
+        : previous_(SetThreadDpiAwarenessContext(context)) {}
+
+    ~ScopedDpiAwarenessContext() {
+        if (previous_) {
+            SetThreadDpiAwarenessContext(previous_);
+        }
+    }
+
+private:
+    DPI_AWARENESS_CONTEXT previous_ = nullptr;
+};
+
 bool CandidateWindow::create(HWND owner, const Config& config) {
     if (hwnd_ && IsWindow(hwnd_)) {
         config_ = &config;
@@ -41,6 +56,7 @@ bool CandidateWindow::create(HWND owner, const Config& config) {
     wc.lpszClassName = L"CxxIMECandidateWindow";
     wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
     RegisterClassExW(&wc);
+    ScopedDpiAwarenessContext dpi_context(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     hwnd_ = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
                             L"CxxIMECandidateWindow", L"", WS_POPUP, 0, 0, 300, 30,
                             owner, nullptr, GetModuleHandle(nullptr), this);
@@ -48,10 +64,10 @@ bool CandidateWindow::create(HWND owner, const Config& config) {
         SetWindowLongPtrW(hwnd_, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(this));
         theme_ = build_theme_from_config(config);
         if (config.render_backend != "gdi") set_render_backend(RenderBackend::D2D);
-        // DPI scale (like Weasel's dpiScaleLayout = dpi / 96)
-        HDC dc = GetDC(hwnd_);
-        dpi_scale_ = GetDeviceCaps(dc, LOGPIXELSX) / 96.0f;
-        ReleaseDC(hwnd_, dc);
+        dpi_scale_ = GetDpiForWindow(hwnd_) / 96.0f;
+        if (dpi_scale_ <= 0.0f) {
+            dpi_scale_ = 1.0f;
+        }
         preedit_cursor_width_ = system_caret_width();
         init_gdi_renderer();
     }
@@ -83,11 +99,14 @@ bool CandidateWindow::ensure_created(HWND owner) {
 }
 
 void CandidateWindow::init_gdi_renderer() {
-    gdi_renderer_ = new GdiRenderer(); gdi_renderer_->initialize(hwnd_, theme_);
+    ScopedDpiAwarenessContext dpi_context(GetWindowDpiAwarenessContext(hwnd_));
+    gdi_renderer_ = new GdiRenderer();
+    gdi_renderer_->initialize(hwnd_, theme_, GetDpiForWindow(hwnd_));
 }
 void CandidateWindow::init_d2d_renderer() {
+    ScopedDpiAwarenessContext dpi_context(GetWindowDpiAwarenessContext(hwnd_));
     d2d_renderer_ = new D2DRenderer();
-    if (!d2d_renderer_->initialize(hwnd_, theme_)) {
+    if (!d2d_renderer_->initialize(hwnd_, theme_, GetDpiForWindow(hwnd_))) {
         delete d2d_renderer_; d2d_renderer_ = nullptr; backend_ = RenderBackend::GDI;
     }
 }
@@ -96,12 +115,7 @@ bool CandidateWindow::refresh_dpi_scale() {
     if (!hwnd_)
         return false;
 
-    HDC dc = GetDC(hwnd_);
-    if (!dc)
-        return false;
-    float next_scale = GetDeviceCaps(dc, LOGPIXELSX) / 96.0f;
-    ReleaseDC(hwnd_, dc);
-
+    float next_scale = GetDpiForWindow(hwnd_) / 96.0f;
     if (next_scale <= 0.0f)
         next_scale = 1.0f;
     if (std::fabs(next_scale - dpi_scale_) < 0.01f)
@@ -121,10 +135,11 @@ bool CandidateWindow::refresh_preedit_cursor_width() {
 }
 
 void CandidateWindow::recreate_renderers_for_dpi() {
+    ScopedDpiAwarenessContext dpi_context(GetWindowDpiAwarenessContext(hwnd_));
     refresh_preedit_cursor_width();
     if (gdi_renderer_) {
         gdi_renderer_->finalize();
-        gdi_renderer_->initialize(hwnd_, theme_);
+        gdi_renderer_->initialize(hwnd_, theme_, GetDpiForWindow(hwnd_));
     }
     if (d2d_renderer_) {
         d2d_renderer_->finalize();
@@ -224,6 +239,12 @@ SIZE CandidateWindow::window_size() const {
     }
     return {rect.right - rect.left, rect.bottom - rect.top};
 }
+SIZE CandidateWindow::layout_size() const {
+    return {window_width_, window_height_};
+}
+UINT CandidateWindow::dpi() const {
+    return hwnd_ ? GetDpiForWindow(hwnd_) : 0;
+}
 void CandidateWindow::set_config(const Config& config) {
     config_ = &config;
     refresh_preedit_cursor_width();
@@ -237,10 +258,11 @@ void CandidateWindow::set_config(const Config& config) {
     set_render_backend(next_backend);
 }
 void CandidateWindow::set_theme(const Theme& t) {
+    ScopedDpiAwarenessContext dpi_context(GetWindowDpiAwarenessContext(hwnd_));
     theme_ = t;
     if (gdi_renderer_) {
         gdi_renderer_->finalize();
-        gdi_renderer_->initialize(hwnd_, t);
+        gdi_renderer_->initialize(hwnd_, t, GetDpiForWindow(hwnd_));
     }
     if (hwnd_)
         RedrawWindow(hwnd_, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW | RDW_ALLCHILDREN);
@@ -347,6 +369,10 @@ void CandidateWindow::move_to_caret(const RECT& caretRect) {
         return;
 
     move_window_now(target.x, target.y);
+    if (refresh_dpi_scale()) {
+        recreate_renderers_for_dpi();
+        update(page_);
+    }
 }
 
 void CandidateWindow::move_to_screen_position(int x, int y) {
@@ -354,6 +380,10 @@ void CandidateWindow::move_to_screen_position(int x, int y) {
         return;
     }
     move_window_now(x, y);
+    if (refresh_dpi_scale()) {
+        recreate_renderers_for_dpi();
+        update(page_);
+    }
 }
 
 void CandidateWindow::rebuild_render_context(const LayoutConfig& cfg, int window_width) {
@@ -396,6 +426,7 @@ void CandidateWindow::rebuild_render_context(const LayoutConfig& cfg, int window
 
 void CandidateWindow::update(const CandidatePage& page) {
     if (!hwnd_) return;
+    ScopedDpiAwarenessContext dpi_context(GetWindowDpiAwarenessContext(hwnd_));
     if (refresh_dpi_scale())
         recreate_renderers_for_dpi();
 
@@ -434,13 +465,15 @@ void CandidateWindow::update(const CandidatePage& page) {
     }
     auto& cfg = scaled_cfg_;
     HDC hdc = GetDC(hwnd_);
+    const UINT window_dpi = GetDpiForWindow(hwnd_);
     auto calculate_layout = [&]() {
         if (layout_orientation_ == "horizontal") {
             return calculate_horizontal_layout(
-                hdc, page.candidates, config_->font_name, config_->font_size, cfg, page_total_);
+                hdc, page.candidates, config_->font_name, config_->font_size, cfg, page_total_,
+                window_dpi);
         }
         return calculate_vertical_layout(
-            hdc, page.candidates, config_->font_name, config_->font_size, cfg);
+            hdc, page.candidates, config_->font_name, config_->font_size, cfg, window_dpi);
     };
     LayoutResult lr = calculate_layout();
     if (page.total_count > 0) {
@@ -461,7 +494,7 @@ void CandidateWindow::update(const CandidatePage& page) {
         std::wstring wpreedit(wlen > 0 ? wlen - 1 : 0, L'\0');
         if (wlen > 0) MultiByteToWideChar(CP_UTF8, 0, preedit_text_.c_str(), -1, &wpreedit[0], wlen);
         HFONT hf = CreateFontW(-MulDiv(theme_.preedit_font_size,
-                                      GetDeviceCaps(hdc, LOGPIXELSY), 72),
+                                      window_dpi, 72),
                                0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                                OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
                                DEFAULT_PITCH | FF_DONTCARE, theme_.font_name.c_str());
@@ -604,7 +637,13 @@ LRESULT CALLBACK CandidateWindow::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM
             float next_scale = HIWORD(wp) / 96.0f;
             if (next_scale > 0.0f && std::fabs(next_scale - self->dpi_scale_) >= 0.01f) {
                 self->dpi_scale_ = next_scale;
+                RECT* suggested = reinterpret_cast<RECT*>(lp);
+                SetWindowPos(hwnd, nullptr, suggested->left, suggested->top,
+                             suggested->right - suggested->left,
+                             suggested->bottom - suggested->top,
+                             SWP_NOZORDER | SWP_NOACTIVATE);
                 self->recreate_renderers_for_dpi();
+                self->update(self->page_);
             }
         }
         return 0;
