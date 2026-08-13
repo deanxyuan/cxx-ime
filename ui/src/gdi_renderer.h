@@ -11,7 +11,7 @@ namespace cxxime {
 
 class GdiRenderer {
 public:
-    void initialize(HWND hwnd, const Theme& theme);
+    void initialize(HWND hwnd, const Theme& theme, UINT dpi);
     void render(HDC hdc, const RECT& clip, const RenderContext& ctx);
     void finalize();
 

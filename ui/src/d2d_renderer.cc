@@ -44,7 +44,7 @@ static IDWriteTextFormat* mkfmt(IDWriteFactory* f, const wchar_t* name, float sz
     return fmt;
 }
 
-bool D2DRenderer::initialize(HWND hwnd, const Theme& theme) {
+bool D2DRenderer::initialize(HWND hwnd, const Theme& theme, UINT dpi) {
     HRESULT hr = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &d2d_factory_);
     if (FAILED(hr)) return false;
     RECT rc; GetClientRect(hwnd, &rc);
@@ -70,9 +70,6 @@ bool D2DRenderer::initialize(HWND hwnd, const Theme& theme) {
     render_target_->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Gray), &border_brush_);
     hr = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), reinterpret_cast<IUnknown**>(&dwrite_factory_));
     if (FAILED(hr)) return false;
-    HDC dc = GetDC(hwnd);
-    float dpi = (float)GetDeviceCaps(dc, LOGPIXELSY);
-    ReleaseDC(hwnd, dc);
     float fsize = (float)theme.font_size * dpi / 72.0f;
     float psize = (float)theme.preedit_font_size * dpi / 72.0f;
     fmt_left_ = mkfmt(dwrite_factory_, theme.font_name.c_str(), fsize,

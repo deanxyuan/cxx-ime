@@ -98,7 +98,7 @@ static void draw_preedit(HDC dc, const RenderContext& ctx, HFONT font, COLORREF 
     SelectObject(dc, old_font);
 }
 
-void GdiRenderer::initialize(HWND hwnd, const Theme& theme) {
+void GdiRenderer::initialize(HWND hwnd, const Theme& theme, UINT dpi) {
     hwnd_ = hwnd;
     bg_brush_      = CreateSolidBrush(clr(theme.background));
     hl_brush_      = CreateSolidBrush(clr(theme.hilited_back));
@@ -115,8 +115,6 @@ void GdiRenderer::initialize(HWND hwnd, const Theme& theme) {
     BYTE hb = (BYTE)((theme.hilited_back.b + theme.background.b) / 2);
     hover_brush_ = CreateSolidBrush(RGB(hr, hg, hb));
 
-    HDC dc = GetDC(hwnd_);
-    int dpi = GetDeviceCaps(dc, LOGPIXELSY);
     hfont_ = CreateFontW(-MulDiv(theme.font_size, dpi, 72),
                          0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                          OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
@@ -129,7 +127,6 @@ void GdiRenderer::initialize(HWND hwnd, const Theme& theme) {
                             0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                             OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
                             DEFAULT_PITCH | FF_DONTCARE, theme.font_name.c_str());
-    ReleaseDC(hwnd_, dc);
 }
 
 void GdiRenderer::render(HDC hdc, const RECT& clip, const RenderContext& ctx) {

@@ -31,10 +31,10 @@ static std::wstring to_wstr(const std::string& s) {
     return ws;
 }
 
-static int get_font_height(HDC hdc, const std::string& font_name, int font_size) {
+static int get_font_height(HDC hdc, const std::string& font_name, int font_size, UINT dpi) {
     std::wstring wfont = to_wstr(font_name);
     HFONT hf = CreateFontW(
-        -MulDiv(font_size, GetDeviceCaps(hdc, LOGPIXELSY), 72),
+        -MulDiv(font_size, dpi, 72),
         0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
         OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
         DEFAULT_PITCH | FF_DONTCARE,
@@ -45,11 +45,11 @@ static int get_font_height(HDC hdc, const std::string& font_name, int font_size)
 }
 
 static SIZE measure_wstr(HDC hdc, const std::wstring& text,
-                         const std::string& font_name, int font_size) {
+                         const std::string& font_name, int font_size, UINT dpi) {
     SIZE sz = {};
     std::wstring wfont = to_wstr(font_name);
     HFONT hf = CreateFontW(
-        -MulDiv(font_size, GetDeviceCaps(hdc, LOGPIXELSY), 72),
+        -MulDiv(font_size, dpi, 72),
         0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
         OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
         DEFAULT_PITCH | FF_DONTCARE,
@@ -89,14 +89,15 @@ static int candidate_content_right(const CandidateRect& rect) {
 }
 
 static std::string truncate_middle(HDC hdc, const std::string& text, const std::string& font_name,
-                                   int font_size, int available_width) {
+                                   int font_size, int available_width, UINT dpi) {
     std::wstring wide_text = to_wstr(text);
-    if (measure_wstr(hdc, wide_text, font_name, font_size).cx <= available_width) {
+    if (measure_wstr(hdc, wide_text, font_name, font_size, dpi).cx <= available_width) {
         return text;
     }
 
     const std::wstring ellipsis = L"…";  // \x2026
-    int ellipsis_width = static_cast<int>(measure_wstr(hdc, ellipsis, font_name, font_size).cx);
+    int ellipsis_width =
+        static_cast<int>(measure_wstr(hdc, ellipsis, font_name, font_size, dpi).cx);
     int target_width = (std::max)(0, available_width - ellipsis_width);
     int prefix_target = target_width * 7 / 10;
     int suffix_target = target_width - prefix_target;
@@ -106,7 +107,7 @@ static std::string truncate_middle(HDC hdc, const std::string& text, const std::
     int best_prefix = 0;
     while (lo <= hi) {
         int middle = (lo + hi) / 2;
-        if (measure_wstr(hdc, wide_text.substr(0, middle), font_name, font_size).cx <=
+        if (measure_wstr(hdc, wide_text.substr(0, middle), font_name, font_size, dpi).cx <=
             prefix_target) {
             best_prefix = middle;
             lo = middle + 1;
@@ -121,7 +122,8 @@ static std::string truncate_middle(HDC hdc, const std::string& text, const std::
     int best_suffix = 0;
     while (lo <= hi) {
         int middle = (lo + hi) / 2;
-        if (measure_wstr(hdc, wide_text.substr(text_length - middle, middle), font_name, font_size)
+        if (measure_wstr(hdc, wide_text.substr(text_length - middle, middle), font_name, font_size,
+                         dpi)
                 .cx <= suffix_target) {
             best_suffix = middle;
             lo = middle + 1;
@@ -142,16 +144,16 @@ static std::string truncate_middle(HDC hdc, const std::string& text, const std::
 LayoutResult calculate_horizontal_layout(HDC hdc,
     const std::vector<Candidate>& candidates,
     const std::string& font_name, int font_size,
-    const LayoutConfig& cfg, int page_total) {
+    const LayoutConfig& cfg, int page_total, UINT dpi) {
     LayoutResult result;
     if (candidates.empty()) {
         result.width = cfg.min_width;
-        result.row_height = get_font_height(hdc, font_name, font_size);
+        result.row_height = get_font_height(hdc, font_name, font_size, dpi);
         result.height = result.row_height + cfg.margin_y * 2;
         return result;
     }
 
-    int rh = get_font_height(hdc, font_name, font_size);
+    int rh = get_font_height(hdc, font_name, font_size, dpi);
     result.row_height = rh;
     int text_slack = text_render_slack(rh);
 
@@ -172,10 +174,11 @@ LayoutResult calculate_horizontal_layout(HDC hdc,
 
     for (int i = 0; i < (int)candidates.size(); ++i) {
         std::wstring label = std::to_wstring(i + 1) + L".";
-        SIZE lsz = measure_wstr(hdc, label, font_name, font_size);
+        SIZE lsz = measure_wstr(hdc, label, font_name, font_size, dpi);
         std::string comment = format_comment(candidates[i]);
-        SIZE text_size = measure_wstr(hdc, to_wstr(candidates[i].text), font_name, font_size);
-        SIZE comment_size = measure_wstr(hdc, to_wstr(comment), font_name, font_size);
+        SIZE text_size =
+            measure_wstr(hdc, to_wstr(candidates[i].text), font_name, font_size, dpi);
+        SIZE comment_size = measure_wstr(hdc, to_wstr(comment), font_name, font_size, dpi);
 
         int label_w = lsz.cx, text_w = text_size.cx + comment_size.cx + text_slack;
         int total_w = label_w + cfg.hilite_spacing + text_w;
@@ -212,13 +215,13 @@ LayoutResult calculate_horizontal_layout(HDC hdc,
                          - (cr.text_rect.left - cr.label_rect.left) - cfg.candidate_spacing;
         int comment_width = cr.comment.empty()
                                 ? 0
-                                : measure_wstr(hdc, to_wstr(cr.comment), font_name, font_size).cx;
+                                : measure_wstr(hdc, to_wstr(cr.comment), font_name, font_size, dpi).cx;
         int main_text_width = (std::max)(0, text_avail - comment_width - text_slack);
-        std::string truncated = truncate_middle(hdc, cr.text, font_name, font_size,
-                                                main_text_width);
+        std::string truncated =
+            truncate_middle(hdc, cr.text, font_name, font_size, main_text_width, dpi);
         if (truncated != cr.text) {
             cr.text = std::move(truncated);
-            int width = measure_wstr(hdc, to_wstr(cr.text), font_name, font_size).cx;
+            int width = measure_wstr(hdc, to_wstr(cr.text), font_name, font_size, dpi).cx;
             cr.text_rect.right = cr.text_rect.left + width + text_slack;
             if (!cr.comment.empty()) {
                 cr.comment_rect.left = cr.text_rect.left + width;
@@ -246,18 +249,18 @@ LayoutResult calculate_horizontal_layout(HDC hdc,
 LayoutResult calculate_vertical_layout(HDC hdc,
     const std::vector<Candidate>& candidates,
     const std::string& font_name, int font_size,
-    const LayoutConfig& cfg) {
+    const LayoutConfig& cfg, UINT dpi) {
     LayoutResult result;
     if (candidates.empty()) {
         result.width = cfg.min_width;
-        result.row_height = get_font_height(hdc, font_name, font_size);
+        result.row_height = get_font_height(hdc, font_name, font_size, dpi);
         result.height = result.row_height + cfg.margin_y * 2;
         return result;
     }
 
-    int rh = get_font_height(hdc, font_name, font_size);
+    int rh = get_font_height(hdc, font_name, font_size, dpi);
     result.row_height = rh;
-int text_slack = text_render_slack(rh);
+    int text_slack = text_render_slack(rh);
 
     int max_w = cfg.max_width > 0 ? cfg.max_width : 600;
     int max_h = cfg.max_height > 0 ? cfg.max_height : 0;  // 0 = no limit
@@ -266,10 +269,10 @@ int text_slack = text_render_slack(rh);
     int widest_label = 0, widest_text = 0;
     for (int i = 0; i < (int)candidates.size(); ++i) {
         std::wstring label = std::to_wstring(i + 1) + L".";
-        int lw = measure_wstr(hdc, label, font_name, font_size).cx;
+        int lw = measure_wstr(hdc, label, font_name, font_size, dpi).cx;
         std::string comment = format_comment(candidates[i]);
-        int tw = measure_wstr(hdc, to_wstr(candidates[i].text), font_name, font_size).cx +
-                 measure_wstr(hdc, to_wstr(comment), font_name, font_size).cx + text_slack;
+        int tw = measure_wstr(hdc, to_wstr(candidates[i].text), font_name, font_size, dpi).cx +
+                 measure_wstr(hdc, to_wstr(comment), font_name, font_size, dpi).cx + text_slack;
         if (lw > widest_label) widest_label = lw;
         if (tw > widest_text) widest_text = tw;
     }
@@ -292,12 +295,13 @@ int text_slack = text_render_slack(rh);
         cr.text = candidates[i].text;
         cr.comment = format_comment(candidates[i]);
         cr.label_rect = {cfg.margin_x, y, cfg.margin_x + widest_label, y + rh};
-        int text_width = measure_wstr(hdc, to_wstr(cr.text), font_name, font_size).cx;
+        int text_width = measure_wstr(hdc, to_wstr(cr.text), font_name, font_size, dpi).cx;
         int text_right = cr.comment.empty() ? text_x + widest_text
                                             : text_x + text_width + text_slack;
         cr.text_rect = {text_x, y, text_right, y + rh};
         if (!cr.comment.empty()) {
-            int comment_width = measure_wstr(hdc, to_wstr(cr.comment), font_name, font_size).cx;
+            int comment_width =
+                measure_wstr(hdc, to_wstr(cr.comment), font_name, font_size, dpi).cx;
             cr.comment_rect = {text_x + text_width, y,
                                text_x + text_width + comment_width + text_slack, y + rh};
         }
@@ -315,13 +319,13 @@ int text_slack = text_render_slack(rh);
         auto& cr = result.rects[0];
         int comment_width = cr.comment.empty()
                                 ? 0
-                                : measure_wstr(hdc, to_wstr(cr.comment), font_name, font_size).cx;
+                                : measure_wstr(hdc, to_wstr(cr.comment), font_name, font_size, dpi).cx;
         int main_text_width = (std::max)(0, widest_text - comment_width - text_slack);
-        std::string truncated = truncate_middle(hdc, cr.text, font_name, font_size,
-                                                main_text_width);
+        std::string truncated =
+            truncate_middle(hdc, cr.text, font_name, font_size, main_text_width, dpi);
         if (truncated != cr.text) {
             cr.text = std::move(truncated);
-            int width = measure_wstr(hdc, to_wstr(cr.text), font_name, font_size).cx;
+            int width = measure_wstr(hdc, to_wstr(cr.text), font_name, font_size, dpi).cx;
             cr.text_rect.right = cr.text_rect.left + width + text_slack;
             if (!cr.comment.empty()) {
                 cr.comment_rect.left = cr.text_rect.left + width;

@@ -13,7 +13,7 @@ namespace cxxime {
 
 class D2DRenderer {
 public:
-    bool initialize(HWND hwnd, const Theme& theme);
+    bool initialize(HWND hwnd, const Theme& theme, UINT dpi);
     void finalize();
     void render(const RenderContext& ctx);
     void resize(int width, int height);

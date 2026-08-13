@@ -48,6 +48,23 @@ TEST(Layout, automatic_candidate_window_width_adapts_to_dpi_and_work_area) {
     ASSERT_EQ(cxxime::calculate_auto_candidate_window_max_width(2560, 1.5f), 1440);
 }
 
+TEST(Layout, font_measurement_uses_explicit_window_dpi) {
+    HDC hdc = GetDC(nullptr);
+    auto cfg = make_cfg();
+    cfg.min_width = 0;
+    std::vector<cxxime::Candidate> candidates = {make_cand("candidate")};
+
+    auto dpi_96 =
+        cxxime::calculate_horizontal_layout(hdc, candidates, "Arial", 14, cfg, 1, 96);
+    auto dpi_120 =
+        cxxime::calculate_horizontal_layout(hdc, candidates, "Arial", 14, cfg, 1, 120);
+
+    ASSERT_GT(dpi_120.width, dpi_96.width);
+    ASSERT_GT(dpi_120.height, dpi_96.height);
+
+    ReleaseDC(nullptr, hdc);
+}
+
 TEST(Layout, horizontal_single_row) {
     HDC hdc = GetDC(nullptr);
     std::vector<cxxime::Candidate> cands = {make_cand("abc"), make_cand("def"), make_cand("ghi")};
