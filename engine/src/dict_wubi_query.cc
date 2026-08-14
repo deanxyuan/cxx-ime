@@ -18,25 +18,25 @@ namespace cxxime {
 
 namespace {
 
-bool candidate_better(const Candidate& left, const Candidate& right, size_t prefix_length) {
-    if (left.origin != CandidateOrigin::kSystem || right.origin != CandidateOrigin::kSystem) {
-        if (left.frequency != right.frequency) {
-            return left.frequency > right.frequency;
-        }
-    } else if (prefix_length > 0) {
-        const bool left_exact = left.code.size() == prefix_length;
-        const bool right_exact = right.code.size() == prefix_length;
-        if (left_exact != right_exact) {
-            return left_exact;
-        }
-        if (left.code.size() != right.code.size()) {
-            return left.code.size() < right.code.size();
+bool candidate_better(const Candidate& left, const Candidate& right, size_t prefix_length,
+                      bool use_prefix_index) {
+    if (!use_prefix_index && left.origin == CandidateOrigin::kSystem &&
+        right.origin == CandidateOrigin::kSystem) {
+        if (prefix_length > 0) {
+            const bool left_exact = left.code.size() == prefix_length;
+            const bool right_exact = right.code.size() == prefix_length;
+            if (left_exact != right_exact) {
+                return left_exact;
+            }
+            if (left.code.size() != right.code.size()) {
+                return left.code.size() < right.code.size();
+            }
         }
         if (left.source_frequency != right.source_frequency) {
             return left.source_frequency > right.source_frequency;
         }
-    } else if (left.source_frequency != right.source_frequency) {
-        return left.source_frequency > right.source_frequency;
+    } else if (left.frequency != right.frequency) {
+        return left.frequency > right.frequency;
     }
 
     if (left.code != right.code) {
@@ -49,10 +49,10 @@ bool candidate_better(const Candidate& left, const Candidate& right, size_t pref
 }
 
 void merge_candidate(std::vector<Candidate>& candidates, Candidate candidate,
-                     size_t prefix_length) {
+                     size_t prefix_length, bool use_prefix_index) {
     for (auto& existing : candidates) {
         if (existing.text == candidate.text) {
-            if (candidate_better(candidate, existing, prefix_length)) {
+            if (candidate_better(candidate, existing, prefix_length, use_prefix_index)) {
                 existing = std::move(candidate);
             }
             return;
@@ -187,14 +187,21 @@ std::vector<Candidate> Dict::lookup(const std::string& code_prefix, int limit, Q
     }
 
     results.reserve(best_entries.size() + static_cast<size_t>(limit));
-    for (uint32_t index : best_entries) {
+    // Preserve the offline index order while keeping learned exact entries dominant.
+    static constexpr int kSystemRankBase = 100000;
+    for (size_t rank = 0; rank < best_entries.size(); ++rank) {
+        const uint32_t index = best_entries[rank];
         const auto& entry = dict_entries_[index];
         Candidate candidate;
         fill_system_candidate(index, candidate, 0);
         candidate.source_frequency = entry.frequency;
-        candidate.frequency = (entry.syllable_ids_len == prefix_length ? 100000 : 0) +
-                              (100 - static_cast<int>(entry.syllable_ids_len)) * 100 +
-                              entry.frequency;
+        if (use_prefix_index) {
+            candidate.frequency = kSystemRankBase - static_cast<int>(rank);
+        } else {
+            candidate.frequency = (entry.syllable_ids_len == prefix_length ? 100000 : 0) +
+                                  (100 - static_cast<int>(entry.syllable_ids_len)) * 100 +
+                                  entry.frequency;
+        }
         results.push_back(std::move(candidate));
     }
 
@@ -202,11 +209,11 @@ std::vector<Candidate> Dict::lookup(const std::string& code_prefix, int limit, Q
     UserLookupStats user_stats;
     auto user_results = lookup_user_prefix(code_prefix, limit, user_budget, trace, &user_stats);
     for (auto& candidate : user_results) {
-        merge_candidate(results, std::move(candidate), prefix_length);
+        merge_candidate(results, std::move(candidate), prefix_length, use_prefix_index);
     }
 
     std::sort(results.begin(), results.end(), [&](const Candidate& left, const Candidate& right) {
-        return candidate_better(left, right, prefix_length);
+        return candidate_better(left, right, prefix_length, use_prefix_index);
     });
     if (results.size() > static_cast<size_t>(limit)) {
         results.resize(static_cast<size_t>(limit));

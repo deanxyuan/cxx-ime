@@ -18,6 +18,7 @@ BUILD_TOOL = TOOLS_DIR / "build_runtime_dictionary.py"
 sys.path.insert(0, str(TOOLS_DIR))
 from dict_builder import runtime_dictionary as RUNTIME_DICTIONARY
 from dict_builder import wubi_prefix_index as WUBI_INDEX
+from dict_builder import wubi_ranking as WUBI_RANKING
 
 
 def read_dictionary(path: Path):
@@ -62,6 +63,7 @@ def test_complete_ranked_prefix_index():
         root = Path(temp_dir)
         database_path = root / "wubi.db"
         archive_path = root / "wubi.dict.db.zip"
+        ranking_path = root / "pinyin.db"
         output_prefix = root / "wubi"
         dictionary_path = root / "wubi.dict.bin"
         index_path = root / "wubi.dict.idx"
@@ -86,6 +88,21 @@ def test_complete_ranked_prefix_index():
         connection.commit()
         connection.close()
 
+        connection = sqlite3.connect(ranking_path)
+        connection.execute("create table dict(text text, frequency integer)")
+        connection.executemany(
+            "insert into dict values(?, ?)",
+            [
+                ("exact-primary", 1000),
+                ("exact-secondary", 500),
+                ("left", 100),
+                ("care", 90),
+                ("friend", 80),
+            ],
+        )
+        connection.commit()
+        connection.close()
+
         with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as archive:
             archive.write(database_path, "wubi.dict.db")
         subprocess.run(
@@ -98,6 +115,8 @@ def test_complete_ranked_prefix_index():
                 str(output_prefix),
                 "--dict-only",
                 "--wubi-prefix-index",
+                "--wubi-ranking-source",
+                str(ranking_path),
             ],
             check=True,
         )
@@ -116,5 +135,211 @@ def test_complete_ranked_prefix_index():
         assert read_postings(index_path, WUBI_INDEX.pack_code(b"a")) == []
 
 
+def test_visible_ranking_guards_short_codes_and_improves_known_completions():
+    entries = [
+        (b"qdr", "厃".encode("utf-8"), 10),
+        (b"qdrg", "然后".encode("utf-8"), 10),
+        (b"qdrp", "危迫".encode("utf-8"), 10),
+        (b"qdrt", "多面手".encode("utf-8"), 10),
+        (b"utqt", "单身狗".encode("utf-8"), 20),
+        (b"utqa", "产钳".encode("utf-8"), 10),
+        (b"utqc", "颜色".encode("utf-8"), 10),
+        (b"utqd", "痴然".encode("utf-8"), 10),
+    ]
+    frequencies = {
+        "然后".encode("utf-8"): 501658,
+        "危迫".encode("utf-8"): 225,
+        "多面手".encode("utf-8"): 5690,
+        "单身狗".encode("utf-8"): 100,
+        "产钳".encode("utf-8"): 1,
+        "颜色".encode("utf-8"): 500699,
+    }
+
+    qdr_source = WUBI_RANKING.unique_source_ranking([0, 1, 2, 3], entries, 3)
+    qdr_ranked = WUBI_RANKING.rerank_visible_candidates(
+        qdr_source, entries, 3, frequencies
+    )
+    assert [entries[index][1].decode("utf-8") for index in qdr_ranked] == [
+        "然后",
+        "厃",
+        "危迫",
+        "多面手",
+    ]
+    assert set(qdr_source[:10]) == set(qdr_ranked[:10])
+
+    utq_source = WUBI_RANKING.unique_source_ranking([4, 5, 6, 7], entries, 3)
+    utq_ranked = WUBI_RANKING.rerank_visible_candidates(
+        utq_source, entries, 3, frequencies
+    )
+    assert [entries[index][1].decode("utf-8") for index in utq_ranked] == [
+        "颜色",
+        "单身狗",
+        "产钳",
+        "痴然",
+    ]
+
+    short_source = WUBI_RANKING.unique_source_ranking([0, 1, 2, 3], entries, 2)
+    assert WUBI_RANKING.rerank_visible_candidates(
+        short_source, entries, 2, frequencies
+    ) == short_source
+
+
+def test_visible_ranking_preserves_exact_and_unproven_candidates():
+    entries = [
+        (b"goi", b"known-exact", 10),
+        (b"goiu", b"very-common-completion", 10),
+        (b"abc", b"unknown-exact", 10),
+        (b"abca", b"unknown-completion", 10),
+        (b"def", b"another-unknown-exact", 10),
+        (b"defa", b"weak-completion", 10),
+        (b"ghi", b"first-exact", 20),
+        (b"ghi", b"second-exact", 10),
+        (b"jkl", "罕".encode("utf-8"), 10),
+        (b"jkla", "常用".encode("utf-8"), 10),
+        (b"jklb", "可靠".encode("utf-8"), 10),
+        (b"mno", "僻".encode("utf-8"), 20),
+        (b"mno", "次".encode("utf-8"), 10),
+        (b"mnoa", "高频".encode("utf-8"), 10),
+        (b"pqr", b"ASCII-exact", 10),
+        (b"pqra", "常用词".encode("utf-8"), 10),
+        (b"stu", "罕".encode("utf-8"), 10),
+        (b"stua", "非常常用长词".encode("utf-8"), 10),
+    ]
+    frequencies = {
+        b"known-exact": 100,
+        b"very-common-completion": 1000000,
+        b"weak-completion": WUBI_RANKING.MIN_RELIABLE_GENERAL_FREQUENCY - 1,
+        b"second-exact": 1000,
+        "常用".encode("utf-8"): 1000000,
+        "可靠".encode("utf-8"): 500000,
+        "次".encode("utf-8"): 10,
+        "高频".encode("utf-8"): 1000000,
+        "常用词".encode("utf-8"): 1000000,
+        "非常常用长词".encode("utf-8"): 1000000,
+    }
+
+    assert WUBI_RANKING.rerank_visible_candidates(
+        [0, 1], entries, 3, frequencies
+    ) == [0, 1]
+    assert WUBI_RANKING.rerank_visible_candidates(
+        [2, 3], entries, 3, frequencies
+    ) == [2, 3]
+    assert WUBI_RANKING.rerank_visible_candidates(
+        [4, 5], entries, 3, frequencies
+    ) == [4, 5]
+    assert WUBI_RANKING.rerank_visible_candidates(
+        [6, 7], entries, 3, frequencies
+    ) == [6, 7]
+    assert WUBI_RANKING.rerank_visible_candidates(
+        [8, 9, 10], entries, 3, frequencies
+    ) == [9, 8, 10]
+    assert WUBI_RANKING.rerank_visible_candidates(
+        [11, 12, 13], entries, 3, frequencies
+    ) == [11, 12, 13]
+    assert WUBI_RANKING.rerank_visible_candidates(
+        [14, 15], entries, 3, frequencies
+    ) == [14, 15]
+    assert WUBI_RANKING.rerank_visible_candidates(
+        [16, 17], entries, 3, frequencies
+    ) == [16, 17]
+
+
+def test_visible_ranking_does_not_import_deeper_candidates():
+    entries = [
+        (f"abc{index:02d}".encode("ascii"), f"candidate-{index:02d}".encode("ascii"), 10)
+        for index in range(12)
+    ]
+    source = list(range(len(entries)))
+    frequencies = {
+        entries[index][1]: 1000 - index
+        for index in range(len(entries))
+    }
+
+    ranked = WUBI_RANKING.rerank_visible_candidates(
+        source, entries, 3, frequencies
+    )
+    assert set(ranked[:10]) == set(source[:10])
+    assert ranked[10:] == source[10:]
+
+
+def test_visible_ranking_preserves_four_code_order():
+    entries = [
+        (b"abcd", "原首选".encode("utf-8"), 20),
+        (b"abcd", "高频".encode("utf-8"), 10),
+    ]
+    frequencies = {
+        "原首选".encode("utf-8"): 0,
+        "高频".encode("utf-8"): 1000000,
+    }
+    assert WUBI_RANKING.rerank_visible_candidates(
+        [0, 1], entries, 4, frequencies
+    ) == [0, 1]
+
+
+def test_visible_ranking_does_not_replace_short_completion_with_longer_text():
+    entries = [
+        (b"xyza", "短".encode("utf-8"), 10),
+        (b"xyzb", "常用长词".encode("utf-8"), 10),
+    ]
+    frequencies = {
+        "常用长词".encode("utf-8"): 1000000,
+    }
+    assert WUBI_RANKING.rerank_visible_candidates(
+        [0, 1], entries, 3, frequencies
+    ) == [0, 1]
+
+
+def test_visible_ranking_does_not_reduce_general_frequency():
+    entries = [
+        (b"xyza", "原首选".encode("utf-8"), 10),
+        (b"xyzb", "新候选".encode("utf-8"), 10),
+    ]
+    frequencies = {
+        "原首选".encode("utf-8"): 500000,
+        "新候选".encode("utf-8"): 200000,
+    }
+    assert WUBI_RANKING.rerank_visible_candidates(
+        [0, 1], entries, 3, frequencies
+    ) == [0, 1]
+
+
+def test_visible_ranking_does_not_promote_non_han_completion():
+    entries = [
+        (b"vux", "甲".encode("utf-8"), 10),
+        (b"vuxa", b"ASCII", 10),
+    ]
+    frequencies = {b"ASCII": 1000000}
+    assert WUBI_RANKING.rerank_visible_candidates(
+        [0, 1], entries, 3, frequencies
+    ) == [0, 1]
+
+
+def test_ranking_audit_rejects_visible_set_changes_without_key_error():
+    entries = [
+        (b"abc", "甲".encode("utf-8"), 10),
+        (b"abca", "乙".encode("utf-8"), 10),
+        (b"abcb", "丙".encode("utf-8"), 10),
+    ]
+    audit = WUBI_RANKING.RankingAudit()
+    WUBI_RANKING.audit_ranking_change(
+        [0, 1], [1, 2], entries, 3, {}, audit
+    )
+    assert audit.visible_set_changes == 1
+    try:
+        audit.validate()
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("visible set drift must fail the ranking audit")
+
+
 if __name__ == "__main__":
     test_complete_ranked_prefix_index()
+    test_visible_ranking_guards_short_codes_and_improves_known_completions()
+    test_visible_ranking_preserves_exact_and_unproven_candidates()
+    test_visible_ranking_does_not_import_deeper_candidates()
+    test_visible_ranking_preserves_four_code_order()
+    test_visible_ranking_does_not_replace_short_completion_with_longer_text()
+    test_visible_ranking_does_not_reduce_general_frequency()
+    test_visible_ranking_does_not_promote_non_han_completion()
+    test_ranking_audit_rejects_visible_set_changes_without_key_error()

@@ -26,6 +26,9 @@ import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_TOOLS = os.path.join(ROOT, "data", "tools")
+WUBI_RANKING_BASELINE = os.path.join(
+    DATA_TOOLS, "dict_builder", "wubi_ranking_baseline.json"
+)
 SCHEMAS = os.path.join(ROOT, "data", "schemas")
 SCRIPTS = os.path.join(ROOT, "scripts")
 sys.path.insert(0, DATA_TOOLS)
@@ -91,6 +94,8 @@ def run_build_runtime_dictionary(
     skip_idx: bool = False,
     dict_only: bool = False,
     wubi_prefix_index: bool = False,
+    wubi_ranking_source: str | None = None,
+    wubi_ranking_baseline: str | None = None,
 ) -> None:
     """Convert a SQLite dictionary to runtime files."""
     script = os.path.join(DATA_TOOLS, "build_runtime_dictionary.py")
@@ -101,6 +106,11 @@ def run_build_runtime_dictionary(
         cmd.append("--skip-idx")
     if wubi_prefix_index:
         cmd.append("--wubi-prefix-index")
+        if not wubi_ranking_source:
+            raise RuntimeError("Wubi prefix index requires a ranking source")
+        cmd.extend(["--wubi-ranking-source", wubi_ranking_source])
+        if wubi_ranking_baseline:
+            cmd.extend(["--wubi-ranking-baseline", wubi_ranking_baseline])
     print(f"  Building binary dicts: {os.path.basename(output_prefix)}.*")
     subprocess.run(cmd, check=True, capture_output=False)
 
@@ -277,6 +287,9 @@ def prepare_wubi_dictionary(data_dir: str, output_dir: str) -> list[str]:
     src = find_source(data_dir, "wubi86")
     if src is None:
         raise RuntimeError("wubi86.dict.db(.zip) not found")
+    ranking_source = find_source(data_dir, "pinyin")
+    if ranking_source is None:
+        raise RuntimeError("pinyin.dict.db(.zip) is required for Wubi ranking")
 
     generated = []
     with tempfile.TemporaryDirectory(prefix="cxxime_prep_wubi86_") as tmpdir:
@@ -293,6 +306,8 @@ def prepare_wubi_dictionary(data_dir: str, output_dir: str) -> list[str]:
             output_prefix,
             dict_only=True,
             wubi_prefix_index=True,
+            wubi_ranking_source=ranking_source,
+            wubi_ranking_baseline=WUBI_RANKING_BASELINE,
         )
         generated.extend([
             symbols_output,

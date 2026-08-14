@@ -307,6 +307,36 @@
       }
     },
     {
+      "id": "wubi-three-code-prefers-common-completion-over-unknown-exact",
+      "mode": "wubi",
+      "input": "qdr",
+      "contains": [
+        { "text": "然后", "max_rank": 1 }
+      ],
+      "forbid_top1": [
+        "厃"
+      ],
+      "expect_sources": {
+        "然后": "wubi"
+      }
+    },
+    {
+      "id": "wubi-three-code-ranks-common-same-length-completion-first",
+      "mode": "wubi",
+      "input": "utq",
+      "contains": [
+        { "text": "颜色", "max_rank": 1 }
+      ],
+      "forbid_top1": [
+        "单身狗",
+        "产钳",
+        "痴然"
+      ],
+      "expect_sources": {
+        "颜色": "wubi"
+      }
+    },
+    {
       "id": "wubi-two-code-protects-system-order",
       "mode": "wubi",
       "input": "aa",
@@ -420,6 +450,28 @@
         "你好": "pinyin"
       },
       "require_cache_hit": true
+    },
+    {
+      "id": "mixed-three-code-exposes-improved-wubi-qdr",
+      "mode": "mixed",
+      "input": "qdr",
+      "contains": [
+        { "text": "然后", "max_rank": 5 }
+      ],
+      "expect_sources": {
+        "然后": "wubi"
+      }
+    },
+    {
+      "id": "mixed-three-code-exposes-improved-wubi-utq",
+      "mode": "mixed",
+      "input": "utq",
+      "contains": [
+        { "text": "颜色", "max_rank": 5 }
+      ],
+      "expect_sources": {
+        "颜色": "wubi"
+      }
     },
     {
       "id": "mixed-obvious-pinyin-wubi-word",
