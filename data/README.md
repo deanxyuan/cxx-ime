@@ -9,6 +9,7 @@
 |------|------|---------|------|
 | 词典源数据 | `pinyin.dict.db.zip` | 是 | 拼音 SQLite 词典的压缩分发副本 |
 | 词典源数据 | `wubi86.dict.db.zip` | 是 | 未修改的五笔 86 词典源数据 |
+| 授权材料 | `licenses/rime-ice-GPL-3.0.txt` | 是 | 雾凇拼音 GPL-3.0-only 完整许可证 |
 | 可审查派生数据 | `symbols.json` | 是 | 从五笔源词典拆出的独立符号分类 |
 | 默认配置 | `default.json`、`themes.json` 等 | 是 | 安装包使用的出厂配置 |
 | 临时源数据 | `*.dict.db` | 否 | 从压缩源解包或下载得到的 SQLite 文件 |
@@ -41,7 +42,9 @@ python data\tools\build_runtime_dictionary.py ^
 ```bat
 python data\tools\build_runtime_dictionary.py ^
     --input <filtered-wubi-db> --output data\wubi86 ^
-    --dict-only --wubi-prefix-index
+    --dict-only --wubi-prefix-index ^
+    --wubi-ranking-source data\pinyin.dict.db.zip ^
+    --wubi-ranking-baseline data\tools\dict_builder\wubi_ranking_baseline.json
 ```
 
 ## 工具职责
@@ -66,6 +69,7 @@ python data\tools\build_runtime_dictionary.py ^
 | `pinyin_spellings.py` | 拼音 `.spellings.bin` |
 | `pinyin_syllable_index.py` | 拼音 `.dict.idx` |
 | `wubi_prefix_index.py` | 五笔完整前缀候选 `.dict.idx` |
+| `wubi_ranking.py` | 五笔可见候选的离线语料排序与全量验收 |
 | `source_archive.py` | 安全解析 `.dict.db` 与 `.dict.db.zip` 输入 |
 
 ## 数据流水线
@@ -85,6 +89,7 @@ pinyin.dict.db.zip
 wubi86.dict.db.zip
   -> 临时 SQLite
   -> symbols.json + 过滤后的临时 SQLite
+  -> 读取 pinyin.dict.db.zip 的通用词频
   -> dict.bin + 完整前缀候选 idx
 ```
 

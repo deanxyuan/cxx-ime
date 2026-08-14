@@ -3,15 +3,27 @@
 
 from __future__ import annotations
 
+import json
 import os
 import struct
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from .runtime_dictionary import ENTRY_FORMAT as DICT_ENTRY_FORMAT
 from .runtime_dictionary import ENTRY_SIZE as DICT_ENTRY_SIZE
 from .runtime_dictionary import HEADER_FORMAT as DICT_HEADER_FORMAT
 from .runtime_dictionary import HEADER_SIZE as DICT_HEADER_SIZE
 from .runtime_dictionary import MAGIC as DICT_MAGIC
+from .wubi_ranking import (
+    RankingAudit,
+    audit_ranking_change,
+    load_general_frequencies,
+    dictionary_fingerprint,
+    frequency_fingerprint,
+    ranking_rules,
+    ranking_fingerprint,
+    rerank_visible_candidates,
+    unique_source_ranking,
+)
 
 
 MAGIC = b"CXWIDX\x01\x00"
@@ -74,9 +86,68 @@ def _read_dictionary(path: str):
     return entries
 
 
-def build(dict_path: str, output_path: str) -> int:
+def _load_baseline(path: Optional[str]) -> Optional[dict]:
+    if path is None:
+        return None
+    with open(path, "r", encoding="utf-8") as source:
+        baseline = json.load(source)
+    if baseline.get("schema") != 1:
+        raise ValueError(f"unsupported Wubi ranking baseline: {path}")
+    return baseline
+
+
+def _validate_baseline(
+    baseline: Optional[dict],
+    entries,
+    general_frequencies,
+    source_records,
+    ranked_records,
+    audit: RankingAudit,
+) -> None:
+    if baseline is None:
+        return
+    if baseline.get("rules") != ranking_rules():
+        raise ValueError(
+            "Wubi ranking baseline rule mismatch: "
+            f"expected {baseline.get('rules')}, got {ranking_rules()}"
+        )
+    expected = baseline["fingerprints"]
+    actual = {
+        "dictionary": dictionary_fingerprint(entries),
+        "general_frequency": frequency_fingerprint(general_frequencies),
+        "source_ranking": ranking_fingerprint(source_records),
+        "ranked": ranking_fingerprint(ranked_records),
+    }
+    for name, value in actual.items():
+        if expected.get(name) != value:
+            raise ValueError(
+                "Wubi ranking baseline mismatch for "
+                f"{name}: expected {expected.get(name)}, got {value}"
+            )
+    expected_audit = baseline["audit"]
+    actual_audit = {
+        name: getattr(audit, name)
+        for name in expected_audit
+    }
+    if actual_audit != expected_audit:
+        raise ValueError(
+            "Wubi ranking baseline audit mismatch: "
+            f"expected {expected_audit}, got {actual_audit}"
+        )
+
+
+def build(
+    dict_path: str,
+    output_path: str,
+    ranking_source_path: str,
+    baseline_path: Optional[str] = None,
+) -> int:
     """Build complete ranked postings for every reachable dictionary prefix."""
     entries = _read_dictionary(dict_path)
+    general_frequencies = load_general_frequencies(
+        ranking_source_path, {text for _, text, _ in entries}
+    )
+    baseline = _load_baseline(baseline_path)
     prefixes: Dict[bytes, List[int]] = {}
     skipped_codes = 0
     for entry_index, (code, _, _) in enumerate(entries):
@@ -90,30 +161,39 @@ def build(dict_path: str, output_path: str) -> int:
 
     key_records = []
     postings = []
+    source_records = []
+    ranked_records = []
+    audit = RankingAudit()
     for prefix in sorted(prefixes, key=pack_code):
-        ranked = sorted(
-            prefixes[prefix],
-            key=lambda index: (
-                0 if len(entries[index][0]) == len(prefix) else 1,
-                len(entries[index][0]),
-                -entries[index][2],
-                entries[index][0],
-                len(entries[index][1]),
-                entries[index][1],
-                index,
-            ),
+        source_ranking = unique_source_ranking(
+            prefixes[prefix], entries, len(prefix)
         )
-        unique = []
-        seen_text = set()
-        for entry_index in ranked:
-            text = entries[entry_index][1]
-            if text in seen_text:
-                continue
-            seen_text.add(text)
-            unique.append(entry_index)
+        ranked = rerank_visible_candidates(
+            source_ranking, entries, len(prefix), general_frequencies
+        )
+        audit_ranking_change(
+            source_ranking,
+            ranked,
+            entries,
+            len(prefix),
+            general_frequencies,
+            audit,
+        )
+        source_records.append((prefix, source_ranking))
+        ranked_records.append((prefix, ranked))
 
-        key_records.append((pack_code(prefix), len(postings), len(unique)))
-        postings.extend(unique)
+        key_records.append((pack_code(prefix), len(postings), len(ranked)))
+        postings.extend(ranked)
+
+    audit.validate()
+    _validate_baseline(
+        baseline,
+        entries,
+        general_frequencies,
+        source_records,
+        ranked_records,
+        audit,
+    )
 
     keys_offset = HEADER_SIZE
     postings_offset = keys_offset + len(key_records) * KEY_SIZE
@@ -146,5 +226,20 @@ def build(dict_path: str, output_path: str) -> int:
     print(
         f"  wubi dict.idx: {len(key_records)} prefixes, {len(postings)} postings, "
         f"{size_mb:.1f} MB, skipped {skipped_codes} unreachable codes"
+    )
+    print(
+        "  ranking audit: "
+        f"prefixes={audit.prefix_count}, "
+        f"short changes={audit.short_prefix_changes}, "
+        f"visible set changes={audit.visible_set_changes}, "
+        f"unsafe top changes={audit.unsafe_top_changes}, "
+        f"three-code top changes={audit.three_code_top_changes}/"
+        f"{audit.three_code_prefixes}, "
+        f"four-code top changes={audit.four_code_top_changes}/"
+        f"{audit.four_code_prefixes}, "
+        f"unknown exact demotions={audit.unknown_exact_demotions}, "
+        f"visible order changes={audit.visible_order_changes}, "
+        f"position moves={audit.visible_position_moves}, "
+        f"internal frequency regressions={audit.internal_frequency_regressions}"
     )
     return len(postings)

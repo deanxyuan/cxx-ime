@@ -1,0 +1,28 @@
+{
+    "schema": 1,
+    "rules": {
+        "visible_candidate_capacity": 10,
+        "min_reliable_general_frequency": 100000,
+        "max_promoted_completion_length": 3
+    },
+    "fingerprints": {
+        "dictionary": "4a766e4cf9e1c2e32420ab464024ef717f649221ce1703fef3101ea6e8b87629",
+        "general_frequency": "8ab17a1eb5d0b14f83a9ed9d6a228ca5ac52a6c5e2e6bc74efc9bde6c44d5eb9",
+        "source_ranking": "5f8912a4c6846c5dfaf015c65a64ac7a890e2cca0c8278a587f65b4de50e0a22",
+        "ranked": "21bf400b549bd2cf2167bbc97070679fcc0ff1e15923fbcf7b7f5aab05ea12c6"
+    },
+    "audit": {
+        "prefix_count": 87381,
+        "three_code_prefixes": 13954,
+        "four_code_prefixes": 72777,
+        "short_prefix_changes": 0,
+        "visible_set_changes": 0,
+        "unsafe_top_changes": 0,
+        "three_code_top_changes": 1809,
+        "four_code_top_changes": 0,
+        "unknown_exact_demotions": 117,
+        "visible_order_changes": 3171,
+        "visible_position_moves": 24678,
+        "internal_frequency_regressions": 0
+    }
+}
