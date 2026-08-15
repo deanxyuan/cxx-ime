@@ -292,6 +292,8 @@ void AsciiComposer::toggle_mode(uint32_t key_code, Context& ctx) {
         if (composing) {
             if (!ctx.candidates.candidates.empty()) {
                 ctx.committed_text = ctx.candidates.candidates[0].text;
+                // Mode switching commits the first candidate for output semantics only. It is
+                // not an explicit user selection, so no candidate snapshot is recorded.
                 ctx.set_commit_source(CommitSource::kCandidate);
             }
             ctx.clear_preedit();

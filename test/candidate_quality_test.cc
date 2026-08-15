@@ -39,7 +39,6 @@ struct UserEntrySetup {
     std::string text;
     std::string code;
     std::string syllables;
-    int repeat = 1;
 };
 
 struct QualityCase {
@@ -86,6 +85,8 @@ std::string origin_name(cxxime::CandidateOrigin origin) {
     switch (origin) {
     case cxxime::CandidateOrigin::kUser:
         return "user";
+    case cxxime::CandidateOrigin::kLearned:
+        return "learned";
     case cxxime::CandidateOrigin::kCache:
         return "cache";
     case cxxime::CandidateOrigin::kComposed:
@@ -150,9 +151,6 @@ UserEntrySetup parse_user_entry_setup(const json& value, const std::string& defa
     setup.text = value.at("text").get<std::string>();
     setup.code = value.at("code").get<std::string>();
     setup.syllables = value.value("syllables", std::string{});
-    setup.repeat = value.value("repeat", 1);
-    if (setup.repeat < 1)
-        setup.repeat = 1;
     return setup;
 }
 
@@ -298,8 +296,7 @@ public:
         for (const auto& setup : q.setup_user_entries) {
             auto* dict = dict_for_mode(setup.mode);
             ASSERT_TRUE(dict != nullptr) << "unknown setup mode: " << setup.mode;
-            for (int i = 0; i < setup.repeat; ++i)
-                dict->update_frequency(setup.text, setup.code, setup.syllables);
+            ASSERT_TRUE(dict->add_user_entry(setup.text, setup.code, setup.syllables));
         }
     }
 
@@ -309,9 +306,6 @@ public:
             if (dict)
                 dict->delete_user_entry(setup.text, setup.code);
         }
-        pinyin_.clear_recent();
-        wubi_.clear_recent();
-        mixed_.clear_recent();
     }
 
 private:

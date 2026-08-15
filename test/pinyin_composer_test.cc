@@ -323,7 +323,7 @@ TEST(PinyinComposer, rejects_single_tail_and_mixed_abbreviation_paths) {
     ASSERT_TRUE(translator.translate("srf", 0, 10).candidates.empty());
 }
 
-TEST(PinyinComposer, composed_candidates_do_not_enter_recent_cache) {
+TEST(PinyinComposer, composed_candidates_do_not_enter_learning_preferences) {
     ComposerFixture fixture;
     ASSERT_TRUE(fixture.initialize(
         {
@@ -341,9 +341,8 @@ TEST(PinyinComposer, composed_candidates_do_not_enter_recent_cache) {
     const auto* composed = find_candidate(page, "啊啊啊啊啊啊啊");
     ASSERT_TRUE(composed != nullptr);
 
-    translator.update_recent("zzzz", *composed);
-    translator.set_sentence_composition_enabled(false);
-    ASSERT_TRUE(translator.translate("zzzz", 0, 10).candidates.empty());
+    ASSERT_TRUE(!fixture.dictionary.record_candidate_preference(*composed, "aaaaaaa"));
+    ASSERT_EQ(fixture.dictionary.candidate_preference_count(), static_cast<size_t>(0));
 }
 
 RUN_ALL_TESTS()

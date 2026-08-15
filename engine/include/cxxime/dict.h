@@ -3,11 +3,10 @@
 #ifndef CXXIME_DICT_H_
 #define CXXIME_DICT_H_
 
-#include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
-#include <shared_mutex>
 #include <string>
 #include <tuple>
 #include <unordered_map>
@@ -24,6 +23,8 @@ struct QueryTrace;
 struct QueryBudget;
 struct QueryDeadline;
 struct UserLookupStats;
+class CandidatePreference;
+class UserLexicon;
 class WubiPrefixIndex;
 
 struct SpanCandidate {
@@ -51,11 +52,6 @@ struct UserLookupStats {
     bool truncated = false;
     bool scan_budget_truncated = false;
     bool deadline_exceeded = false;
-};
-
-enum class UserScoringProfile {
-    kPinyin,
-    kWubi,
 };
 
 class Dict {
@@ -107,8 +103,8 @@ public:
     bool has_prefix(const std::vector<uint32_t>& ids, QueryTrace* trace = nullptr) const;
     int count(const std::string& code_prefix, QueryTrace* trace = nullptr);
     std::string reverse_lookup(const std::string& text);
-    void update_frequency(const std::string& text, const std::string& code);
-    void update_frequency(const std::string& text, const std::string& code, const std::string& syllables);
+    bool add_user_entry(const std::string& text, const std::string& code,
+                        const std::string& syllables = {});
     std::vector<UserDictEntryInfo> query_user_entries(const std::string& query,
                                                       size_t offset,
                                                       size_t limit,
@@ -120,6 +116,20 @@ public:
     // User dictionary persistence
     bool load_user_dict(const std::string& path);
     bool save_user_dict();
+    bool load_candidate_preferences(const std::string& path);
+    bool save_candidate_preferences();
+    bool save_candidate_preferences_if_due(std::chrono::milliseconds delay);
+    void freeze_candidate_preferences();
+    bool record_candidate_preference(const Candidate& candidate, const std::string& code);
+    void apply_candidate_preferences(const std::string& code, CandidateSource source,
+                                     std::vector<Candidate>& candidates, int limit) const;
+    std::vector<UserDictEntryInfo> query_candidate_preferences(
+        const std::string& query, size_t offset, size_t limit,
+        size_t* match_total = nullptr) const;
+    bool delete_candidate_preference(const std::string& text, const std::string& code);
+    bool clear_candidate_preferences();
+    size_t candidate_preference_count() const;
+    uint64_t candidate_preference_version() const;
 
     // Short-code cache fast path
     const ShortCodeCache& short_cache() const { return short_cache_; }
@@ -127,7 +137,7 @@ public:
     bool has_wubi_prefix_index() const;
 
     // User dictionary version for cache invalidation
-    uint64_t user_dict_version() const { return user_dict_version_; }
+    uint64_t user_dict_version() const;
     bool has_user_entry(const std::string& text) const;
     size_t user_entry_count() const;
 
@@ -160,6 +170,8 @@ private:
     void unload_id_index();
     void fill_system_candidate(uint32_t entry_index, Candidate& candidate,
                                int frequency_boost) const;
+    bool preference_candidate_available(const Candidate& candidate,
+                                        CandidateSource source) const;
 
     char* dict_data_ = nullptr;         // heap-allocated buffer
     size_t dict_data_size_ = 0;
@@ -182,50 +194,8 @@ private:
     std::vector<IdEntry> id_index_;
     std::vector<std::vector<uint32_t>> runtime_ids_;  // backing for build_id_index
 
-    // User dictionary: in-memory structure with TSV persistence.
-    // Replaces SQLite — user dict is small (< 1MB), this is simpler and avoids
-    // all SQLite concurrency issues. shared_mutex for concurrent reads.
-    using UserEntryId = uint32_t;
-
-    struct UserEntry {
-        std::string text;
-        std::string code;       // raw committed key, e.g. "shurufa" or "srf"
-        std::string syllables;  // optional colon form, e.g. "shu:ru:fa"
-        std::string abbr_code;  // e.g. "srf"
-        std::vector<std::string> mixed_keys;  // cached mixed keys for bucket re-sort
-        int frequency = 1;
-        uint64_t sequence = 0;
-        bool deleted = false;
-    };
-
-    struct UserBucket {
-        std::vector<UserEntryId> ids;
-    };
-
-    std::vector<UserEntry> user_entries_;
-    std::unordered_map<std::string, size_t> user_text_index_; // text → entries_ index
-
-    // User dictionary indexes
-    std::unordered_map<std::string, UserBucket> user_exact_index_;
-    std::unordered_map<std::string, UserBucket> user_prefix_index_;
-    std::unordered_map<std::string, UserBucket> user_abbr_index_;
-    std::unordered_map<std::string, UserBucket> user_mixed_index_;
-    std::vector<UserEntryId> user_code_sorted_;
-    uint64_t user_dict_version_ = 0;
-    uint64_t user_sequence_ = 0;
-    UserScoringProfile user_scoring_profile_ = UserScoringProfile::kPinyin;
-
-    mutable std::shared_mutex user_mutex_;
-    std::atomic<bool> user_dirty_{false};
-    std::string user_dict_path_;
-
-    // User dictionary index maintenance helpers
-    void rebuild_user_indexes_locked();
-    void insert_user_into_indexes(UserEntryId id);
-    void remove_user_from_indexes(UserEntryId id);
-    void bucket_insert_sorted_(UserBucket& bucket, UserEntryId id);
-    void sort_bucket_(UserBucket& bucket);
-    void re_sort_user_buckets_(UserEntryId id);
+    std::unique_ptr<UserLexicon> user_lexicon_;
+    std::unique_ptr<CandidatePreference> candidate_preference_;
 
 };
 

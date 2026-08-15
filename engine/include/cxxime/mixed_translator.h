@@ -24,10 +24,9 @@ public:
                             QueryTrace* trace = nullptr, const QueryBudget* budget = nullptr,
                             QueryScratch* scratch = nullptr,
                             int candidate_offset = -1) override;
-    void update_recent(const std::string& key, const Candidate& candidate) override;
-    void clear_recent() override;
     void clear_query_cache() override;
     void set_sentence_composition_enabled(bool enabled) override;
+    void set_candidate_learning_enabled(bool enabled) override;
 
 private:
     PinyinTranslator pinyin_translator_;

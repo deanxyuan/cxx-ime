@@ -15,6 +15,11 @@ enum class UserDictKind : std::uint32_t {
     WUBI = 1,
 };
 
+enum class LexiconResource : std::uint32_t {
+    kUserLexicon = 0,
+    kCandidatePreference = 1,
+};
+
 struct UserDictEntryInfo {
     std::string text;
     std::string code;
@@ -23,7 +28,7 @@ struct UserDictEntryInfo {
 };
 
 struct UserDictQueryResult {
-    std::size_t dictionary_total = 0;
+    std::size_t resource_total = 0;
     std::size_t match_total = 0;
     std::size_t offset = 0;
     bool has_more = false;

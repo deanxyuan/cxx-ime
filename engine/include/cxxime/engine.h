@@ -59,7 +59,7 @@ public:
     std::pair<std::string, CommitSource> commit_composition_with_source();
     std::string commit_raw_composition();
     void clear();
-    void clear_composition();  // clear composing state only, preserve session recent cache
+    void clear_composition();  // Clear composing state without clearing query results.
 
     const AsciiComposer& ascii_composer() const { return ascii_composer_; }
     AsciiComposer& ascii_composer() { return ascii_composer_; }

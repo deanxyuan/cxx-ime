@@ -4,11 +4,20 @@ Function StopServer
     Pop $0
     StrCmp $0 "0" 0 +2
         StrCpy $ServerWasRunning 1
-    Sleep 500
-    nsExec::Exec 'taskkill /f /im cxxime-server.exe'
-    Pop $0
-    StrCmp $0 "0" 0 +2
-        StrCpy $ServerWasRunning 1
+    StrCpy $1 0
+    stop_server_wait:
+        Sleep 100
+        nsExec::Exec 'taskkill /im cxxime-server.exe'
+        Pop $0
+        StrCmp $0 "0" 0 stop_server_done
+        IntOp $1 $1 + 1
+        IntCmp $1 30 stop_server_force stop_server_wait stop_server_force
+    stop_server_force:
+        nsExec::Exec 'taskkill /f /im cxxime-server.exe'
+        Pop $0
+        StrCmp $0 "0" 0 +2
+            StrCpy $ServerWasRunning 1
+    stop_server_done:
 FunctionEnd
 
 Function RestartInstalledServer

@@ -102,6 +102,14 @@ void PinyinTranslator::set_sentence_composition_enabled(bool enabled) {
     query_cache_.clear();
 }
 
+void PinyinTranslator::set_candidate_learning_enabled(bool enabled) {
+    if (candidate_learning_enabled_ == enabled) {
+        return;
+    }
+    candidate_learning_enabled_ = enabled;
+    query_cache_.clear();
+}
+
 bool PinyinTranslator::is_indexable_key(const std::string& pinyin) {
     if (pinyin.empty())
         return false;
@@ -112,92 +120,13 @@ bool PinyinTranslator::is_indexable_key(const std::string& pinyin) {
     return true;
 }
 
-void PinyinTranslator::update_recent(const std::string& key, const Candidate& candidate) {
-    if (candidate.origin == CandidateOrigin::kComposed) {
-        return;
-    }
-    if (!is_indexable_key(key))
-        return;
-
-    query_cache_.erase(
-        std::remove_if(query_cache_.begin(), query_cache_.end(),
-            [&key](const QueryCacheEntry& entry) { return entry.input == key; }),
-        query_cache_.end());
-
-    // Check if already exists — update sequence if so
-    for (auto& rc : recent_cache_) {
-        if (rc.key == key && rc.candidate.text == candidate.text) {
-            rc.sequence = ++recent_sequence_;
-            rc.candidate.frequency = candidate.frequency;
-            return;
-        }
-    }
-
-    // Enforce per-key limit (kMaxRecentPerKey): count entries for this key,
-    // evict the oldest one if at limit.
-    {
-        size_t count = 0;
-        size_t oldest_idx = SIZE_MAX;
-        uint64_t oldest_seq = UINT64_MAX;
-        for (size_t i = 0; i < recent_cache_.size(); ++i) {
-            if (recent_cache_[i].key == key) {
-                ++count;
-                if (recent_cache_[i].sequence < oldest_seq) {
-                    oldest_seq = recent_cache_[i].sequence;
-                    oldest_idx = i;
-                }
-            }
-        }
-        if (count >= kMaxRecentPerKey && oldest_idx != SIZE_MAX) {
-            recent_cache_.erase(recent_cache_.begin() + oldest_idx);
-        }
-    }
-
-    // Evict oldest entry globally if total limit reached
-    if (recent_cache_.size() >= kMaxRecentKeys) {
-        size_t oldest = 0;
-        for (size_t i = 1; i < recent_cache_.size(); ++i) {
-            if (recent_cache_[i].sequence < recent_cache_[oldest].sequence)
-                oldest = i;
-        }
-        recent_cache_.erase(recent_cache_.begin() + oldest);
-    }
-
-    RecentCandidate rc;
-    rc.key = key;
-    rc.candidate = candidate;
-    rc.sequence = ++recent_sequence_;
-    recent_cache_.push_back(std::move(rc));
-}
-
 PinyinTranslator::IndexedFastResult PinyinTranslator::lookup_indexed_fast(
     const std::string& key, int limit, QueryTrace* trace) const {
     IndexedFastResult result;
     if (limit <= 0)
         return result;
 
-    // 1. Session recent cache (highest priority)
-    // Filter entries whose user dictionary entry has been deleted.
-    uint64_t current_version = dict_ ? dict_->user_dict_version() : 0;
-    bool version_changed = (current_version != cached_user_dict_version_);
-    for (auto& rc : recent_cache_) {
-        if (rc.key == key) {
-            // Skip if user dict entry was deleted since this was cached
-            if (version_changed && dict_ && !dict_->has_user_entry(rc.candidate.text))
-                continue;
-        Candidate candidate = rc.candidate;
-        uint64_t delta = recent_sequence_ >= rc.sequence ? recent_sequence_ - rc.sequence : 0;
-        int recent_bonus = delta <= 1000 ? (int)(1000 - delta) : 0;
-        candidate.frequency = std::max(
-            candidate.frequency,
-            210000000 + recent_bonus);
-        merge_candidate_by_score(result.candidates, std::move(candidate));
-        }
-    }
-    if (version_changed)
-        cached_user_dict_version_ = current_version;
-
-    // 2. User dictionary indexes
+    // 1. User dictionary indexes
     if (dict_) {
         QueryBudget ub;
         ub.max_user_scan = 64;  // tight budget for fast path
@@ -208,7 +137,7 @@ PinyinTranslator::IndexedFastResult PinyinTranslator::lookup_indexed_fast(
         }
     }
 
-    // 3. Pre-built Top-N index
+    // 2. Pre-built Top-N index
     if (short_cache_ && short_cache_->is_loaded()) {
         bool prefix_complete = false;
         auto cached = short_cache_->lookup(key, limit, trace, &prefix_complete);
@@ -218,6 +147,10 @@ PinyinTranslator::IndexedFastResult PinyinTranslator::lookup_indexed_fast(
         }
     }
 
+    if (candidate_learning_enabled_ && dict_) {
+        dict_->apply_candidate_preferences(key, CandidateSource::kPinyin, result.candidates,
+                                           limit);
+    }
     sort_candidates_by_score(result.candidates);
     if ((int)result.candidates.size() > limit)
         result.candidates.resize(limit);
@@ -232,12 +165,16 @@ bool PinyinTranslator::lookup_query_cache(const std::string& input, int page_ind
         return false;
 
     uint64_t user_version = dict_->user_dict_version();
+    uint64_t preference_version = candidate_learning_enabled_
+        ? dict_->candidate_preference_version()
+        : 0;
     for (auto& entry : query_cache_) {
         if (entry.input == input &&
             entry.page_index == page_index &&
             entry.candidate_offset == candidate_offset &&
             entry.page_size == page_size &&
-            entry.user_dict_version == user_version) {
+            entry.user_dict_version == user_version &&
+            entry.candidate_preference_version == preference_version) {
             entry.sequence = ++query_cache_sequence_;
             page = entry.page;
             if (trace) {
@@ -270,12 +207,16 @@ void PinyinTranslator::store_query_cache(const std::string& input, int page_inde
         return;
 
     uint64_t user_version = dict_->user_dict_version();
+    uint64_t preference_version = candidate_learning_enabled_
+                                      ? dict_->candidate_preference_version()
+                                      : 0;
     for (auto& entry : query_cache_) {
         if (entry.input == input &&
             entry.page_index == page_index &&
             entry.candidate_offset == candidate_offset &&
             entry.page_size == page_size &&
-            entry.user_dict_version == user_version) {
+            entry.user_dict_version == user_version &&
+            entry.candidate_preference_version == preference_version) {
             entry.page = page;
             entry.sequence = ++query_cache_sequence_;
             return;
@@ -297,6 +238,7 @@ void PinyinTranslator::store_query_cache(const std::string& input, int page_inde
     entry.candidate_offset = candidate_offset;
     entry.page_size = page_size;
     entry.user_dict_version = user_version;
+    entry.candidate_preference_version = preference_version;
     entry.sequence = ++query_cache_sequence_;
     entry.page = page;
     query_cache_.push_back(std::move(entry));
@@ -321,7 +263,7 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
         return page;
 
     // Try the indexed path before syllabification for every valid pinyin key.
-    // Only a static Top-N hit is authoritative; recent/user-only results seed fallback.
+    // Only a static Top-N hit is authoritative; user-only results seed fallback.
     IndexedFastResult fast;
     if (is_indexable_key(pinyin)) {
         fast = lookup_indexed_fast(pinyin, need, trace);
@@ -515,7 +457,7 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
     size_t topk_cap = (size_t)(offset + fetch_limit + 1);
     TopKCollector merged(topk_cap);
 
-    // Seed the collector with recent and indexed candidates before fallback.
+    // Seed the collector with fast-path candidates before fallback.
     if (fast.hit) {
         for (auto& c : fast.candidates) {
             if (!contains_text(merged.items(), c.text)) {
@@ -632,6 +574,10 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
     }
 
     remove_oversized_candidates(sorted);
+
+    if (candidate_learning_enabled_) {
+        dict_->apply_candidate_preferences(pinyin, CandidateSource::kPinyin, sorted, need);
+    }
 
     // total_count before pagination (includes extra one for next-page detection)
     page.total_count = (int)sorted.size();

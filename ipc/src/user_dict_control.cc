@@ -31,6 +31,8 @@ const char* operation_name(UserDictOperation operation) {
             return "reload";
         case UserDictOperation::kSave:
             return "save";
+        case UserDictOperation::kClear:
+            return "clear";
         default:
             return "unknown";
     }
@@ -55,6 +57,9 @@ UserDictOperation parse_operation(const std::string& operation) {
     if (operation == "save") {
         return UserDictOperation::kSave;
     }
+    if (operation == "clear") {
+        return UserDictOperation::kClear;
+    }
     return UserDictOperation::kUnknown;
 }
 
@@ -70,6 +75,26 @@ bool parse_kind(const std::string& value, UserDictKind* kind) {
     }
     if (value == "wubi") {
         *kind = UserDictKind::WUBI;
+        return true;
+    }
+    return false;
+}
+
+const char* resource_name(LexiconResource resource) {
+    return resource == LexiconResource::kCandidatePreference ? "candidate_preference"
+                                                             : "user_lexicon";
+}
+
+bool parse_resource(const std::string& value, LexiconResource* resource) {
+    if (!resource) {
+        return false;
+    }
+    if (value == "user_lexicon") {
+        *resource = LexiconResource::kUserLexicon;
+        return true;
+    }
+    if (value == "candidate_preference") {
+        *resource = LexiconResource::kCandidatePreference;
         return true;
     }
     return false;
@@ -95,7 +120,8 @@ bool encode_user_dict_request(const UserDictControlRequest& request, std::string
     }
 
     json object = {{"operation", operation_name(request.operation)},
-                   {"kind", kind_name(request.kind)}};
+                   {"kind", kind_name(request.kind)},
+                   {"resource", resource_name(request.resource)}};
     switch (request.operation) {
         case UserDictOperation::kQuery:
             object["query"] = request.query;
@@ -115,6 +141,7 @@ bool encode_user_dict_request(const UserDictControlRequest& request, std::string
             break;
         case UserDictOperation::kReload:
         case UserDictOperation::kSave:
+        case UserDictOperation::kClear:
             break;
         default:
             return false;
@@ -131,14 +158,16 @@ bool decode_user_dict_request(const std::string& payload, UserDictControlRequest
         const json object = json::parse(payload);
         if (!object.is_object() || !object.contains("operation") ||
             !object["operation"].is_string() || !object.contains("kind") ||
-            !object["kind"].is_string()) {
+            !object["kind"].is_string() || !object.contains("resource") ||
+            !object["resource"].is_string()) {
             return false;
         }
 
         UserDictControlRequest parsed;
         parsed.operation = parse_operation(object["operation"].get<std::string>());
         if (parsed.operation == UserDictOperation::kUnknown ||
-            !parse_kind(object["kind"].get<std::string>(), &parsed.kind)) {
+            !parse_kind(object["kind"].get<std::string>(), &parsed.kind) ||
+            !parse_resource(object["resource"].get<std::string>(), &parsed.resource)) {
             return false;
         }
 
@@ -175,6 +204,7 @@ bool decode_user_dict_request(const std::string& payload, UserDictControlRequest
                 break;
             case UserDictOperation::kReload:
             case UserDictOperation::kSave:
+            case UserDictOperation::kClear:
                 break;
             default:
                 return false;
@@ -196,14 +226,17 @@ bool encode_user_dict_result(const UserDictControlResult& result, std::string* p
                    {"succeeded", result.succeeded},
                    {"error_code", result.error_code}};
     if (result.operation == UserDictOperation::kQuery) {
-        object["dictionary_total"] = result.query.dictionary_total;
+        object["resource_total"] = result.query.resource_total;
         object["match_total"] = result.query.match_total;
         object["offset"] = result.query.offset;
         object["has_more"] = result.query.has_more;
         object["entries"] = json::array();
         for (const auto& entry : result.query.entries) {
             object["entries"].push_back(
-                {{"text", entry.text}, {"code", entry.code}, {"frequency", entry.frequency}});
+                {{"text", entry.text},
+                 {"code", entry.code},
+                 {"frequency", entry.frequency},
+                 {"sequence", entry.sequence}});
         }
     }
     *payload = object.dump();
@@ -231,7 +264,7 @@ bool decode_user_dict_result(const std::string& payload, UserDictControlResult* 
         parsed.succeeded = object["succeeded"].get<bool>();
         parsed.error_code = object["error_code"].get<std::uint32_t>();
         if (parsed.operation == UserDictOperation::kQuery) {
-            if (!read_size(object, "dictionary_total", &parsed.query.dictionary_total) ||
+            if (!read_size(object, "resource_total", &parsed.query.resource_total) ||
                 !read_size(object, "match_total", &parsed.query.match_total) ||
                 !read_size(object, "offset", &parsed.query.offset) ||
                 !object.contains("has_more") || !object["has_more"].is_boolean() ||
@@ -242,13 +275,15 @@ bool decode_user_dict_result(const std::string& payload, UserDictControlResult* 
             for (const auto& item : object["entries"]) {
                 if (!item.is_object() || !item.contains("text") || !item["text"].is_string() ||
                     !item.contains("code") || !item["code"].is_string() ||
-                    !item.contains("frequency") || !item["frequency"].is_number_integer()) {
+                    !item.contains("frequency") || !item["frequency"].is_number_integer() ||
+                    !item.contains("sequence") || !item["sequence"].is_number_unsigned()) {
                     return false;
                 }
                 UserDictEntryInfo entry;
                 entry.text = item["text"].get<std::string>();
                 entry.code = item["code"].get<std::string>();
                 entry.frequency = item["frequency"].get<int>();
+                entry.sequence = item["sequence"].get<std::uint64_t>();
                 parsed.query.entries.push_back(std::move(entry));
             }
         }
@@ -295,9 +330,16 @@ bool UserDictControlClient::execute(const UserDictControlRequest& request,
 
 bool UserDictControlClient::query(UserDictKind kind, const std::string& query, std::size_t offset,
                                   std::size_t limit, UserDictControlResult* result) const {
+    return this->query(LexiconResource::kUserLexicon, kind, query, offset, limit, result);
+}
+
+bool UserDictControlClient::query(LexiconResource resource, UserDictKind kind,
+                                  const std::string& query, std::size_t offset,
+                                  std::size_t limit, UserDictControlResult* result) const {
     UserDictControlRequest request;
     request.operation = UserDictOperation::kQuery;
     request.kind = kind;
+    request.resource = resource;
     request.query = query;
     request.offset = offset;
     request.limit = limit;
@@ -351,6 +393,36 @@ bool UserDictControlClient::save(UserDictKind kind, UserDictControlResult* resul
     UserDictControlRequest request;
     request.operation = UserDictOperation::kSave;
     request.kind = kind;
+    return execute(request, result);
+}
+
+bool UserDictControlClient::save_preferences(UserDictKind kind,
+                                             UserDictControlResult* result) const {
+    UserDictControlRequest request;
+    request.operation = UserDictOperation::kSave;
+    request.kind = kind;
+    request.resource = LexiconResource::kCandidatePreference;
+    return execute(request, result);
+}
+
+bool UserDictControlClient::delete_preference(UserDictKind kind, const std::string& text,
+                                              const std::string& code,
+                                              UserDictControlResult* result) const {
+    UserDictControlRequest request;
+    request.operation = UserDictOperation::kDelete;
+    request.kind = kind;
+    request.resource = LexiconResource::kCandidatePreference;
+    request.text = text;
+    request.code = code;
+    return execute(request, result);
+}
+
+bool UserDictControlClient::clear_preferences(UserDictKind kind,
+                                              UserDictControlResult* result) const {
+    UserDictControlRequest request;
+    request.operation = UserDictOperation::kClear;
+    request.kind = kind;
+    request.resource = LexiconResource::kCandidatePreference;
     return execute(request, result);
 }
 

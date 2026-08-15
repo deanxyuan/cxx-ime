@@ -863,9 +863,23 @@ TEST(SessionIntegration, user_dict_control_mutations_and_pagination) {
     ASSERT_TRUE(execute(request, &result));
     ASSERT_TRUE(result.succeeded);
 
-    request.operation = cxxime::UserDictOperation::kReload;
+    request.resource = cxxime::LexiconResource::kCandidatePreference;
     ASSERT_TRUE(execute(request, &result));
     ASSERT_TRUE(result.succeeded);
+
+    request.operation = cxxime::UserDictOperation::kReload;
+    request.resource = cxxime::LexiconResource::kUserLexicon;
+    ASSERT_TRUE(execute(request, &result));
+    ASSERT_TRUE(result.succeeded);
+
+    request = {};
+    request.operation = cxxime::UserDictOperation::kAdd;
+    request.resource = cxxime::LexiconResource::kCandidatePreference;
+    request.text = "unsupported";
+    request.code = "unsupported";
+    ASSERT_TRUE(execute(request, &result));
+    ASSERT_TRUE(!result.succeeded);
+    ASSERT_EQ(result.error_code, static_cast<uint32_t>(ERROR_NOT_SUPPORTED));
 }
 
 // ============================================================

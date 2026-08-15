@@ -29,8 +29,7 @@ ProcessResult WubiProcessor::process_key(const KeyEvent& event, Context& context
             int index = context.candidates.highlighted >= 0
                 ? context.candidates.highlighted : 0;
             if (index < (int)context.candidates.candidates.size()) {
-                context.candidates.highlighted = index;
-                context.committed_text = context.candidates.candidates[index].text;
+                context.commit_candidate(index);
                 return ProcessResult::COMMITTED;
             }
         }
@@ -71,8 +70,7 @@ ProcessResult WubiProcessor::process_key(const KeyEvent& event, Context& context
         if (context.is_composing() && !context.candidates.candidates.empty()) {
             int index = vk - '1';
             if (index < context.selectable_candidate_count()) {
-                context.candidates.highlighted = index;
-                context.committed_text = context.candidates.candidates[index].text;
+                context.commit_candidate(index);
                 return ProcessResult::COMMITTED;
             }
             return ProcessResult::ACCEPTED;

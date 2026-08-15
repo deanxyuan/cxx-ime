@@ -166,7 +166,7 @@
       "mode": "pinyin",
       "input": "ddd",
       "setup_user_entries": [
-        { "text": "淡淡的", "code": "ddd", "repeat": 3 }
+        { "text": "淡淡的", "code": "ddd" }
       ],
       "contains": [
         { "text": "淡淡的", "max_rank": 1 }
@@ -181,7 +181,7 @@
       "mode": "pinyin",
       "input": "d",
       "setup_user_entries": [
-        { "text": "淡淡的", "code": "ddd", "repeat": 3 }
+        { "text": "淡淡的", "code": "ddd" }
       ],
       "min_candidates": 1,
       "forbid_top1": [
@@ -194,7 +194,7 @@
       "mode": "pinyin",
       "input": "dd",
       "setup_user_entries": [
-        { "text": "淡淡的", "code": "ddd", "repeat": 3 }
+        { "text": "淡淡的", "code": "ddd" }
       ],
       "min_candidates": 1,
       "forbid_top1": [
@@ -210,8 +210,7 @@
         {
           "text": "输入法专题",
           "code": "shurufa",
-          "syllables": "shu:ru:fa",
-          "repeat": 3
+          "syllables": "shu:ru:fa"
         }
       ],
       "contains": [
@@ -233,8 +232,7 @@
         {
           "text": "输入法专题",
           "code": "shurufa",
-          "syllables": "shu:ru:fa",
-          "repeat": 3
+          "syllables": "shu:ru:fa"
         }
       ],
       "contains": [
@@ -341,7 +339,7 @@
       "mode": "wubi",
       "input": "aa",
       "setup_user_entries": [
-        { "mode": "wubi", "text": "自定义词", "code": "aaaa", "repeat": 3 }
+        { "mode": "wubi", "text": "自定义词", "code": "aaaa" }
       ],
       "contains": [
         { "text": "式", "max_rank": 1 }
@@ -358,7 +356,7 @@
       "mode": "wubi",
       "input": "aaaa",
       "setup_user_entries": [
-        { "mode": "wubi", "text": "自定义词", "code": "aaaa", "repeat": 3 }
+        { "mode": "wubi", "text": "自定义词", "code": "aaaa" }
       ],
       "contains": [
         { "text": "自定义词", "max_rank": 1 }
@@ -372,7 +370,7 @@
       "mode": "wubi",
       "input": "a",
       "setup_user_entries": [
-        { "mode": "wubi", "text": "自定义词", "code": "aaaa", "repeat": 3 }
+        { "mode": "wubi", "text": "自定义词", "code": "aaaa" }
       ],
       "contains": [
         { "text": "工", "max_rank": 1 }
@@ -389,7 +387,7 @@
       "mode": "wubi",
       "input": "aaa",
       "setup_user_entries": [
-        { "mode": "wubi", "text": "自定义词", "code": "aaaa", "repeat": 3 }
+        { "mode": "wubi", "text": "自定义词", "code": "aaaa" }
       ],
       "contains": [
         { "text": "工", "max_rank": 1 }
@@ -406,7 +404,7 @@
       "mode": "pinyin",
       "input": "nihao",
       "setup_user_entries": [
-        { "mode": "wubi", "text": "五笔污染", "code": "nihao", "repeat": 3 }
+        { "mode": "wubi", "text": "五笔污染", "code": "nihao" }
       ],
       "contains": [
         { "text": "你好", "max_rank": 1 }
@@ -424,7 +422,7 @@
       "mode": "wubi",
       "input": "a",
       "setup_user_entries": [
-        { "mode": "pinyin", "text": "拼音污染", "code": "a", "repeat": 3 }
+        { "mode": "pinyin", "text": "拼音污染", "code": "a" }
       ],
       "contains": [
         { "text": "工", "max_rank": 1 }
@@ -521,7 +519,7 @@
       "mode": "mixed",
       "input": "aaaa",
       "setup_user_entries": [
-        { "mode": "wubi", "text": "自定义词", "code": "aaaa", "repeat": 3 }
+        { "mode": "wubi", "text": "自定义词", "code": "aaaa" }
       ],
       "contains": [
         { "text": "自定义词", "max_rank": 1 }
@@ -542,8 +540,7 @@
           "mode": "pinyin",
           "text": "输入法专题",
           "code": "shurufa",
-          "syllables": "shu:ru:fa",
-          "repeat": 3
+          "syllables": "shu:ru:fa"
         }
       ],
       "contains": [
@@ -561,7 +558,7 @@
       "mode": "mixed",
       "input": "nihao",
       "setup_user_entries": [
-        { "mode": "wubi", "text": "五笔污染", "code": "nihao", "repeat": 3 }
+        { "mode": "wubi", "text": "五笔污染", "code": "nihao" }
       ],
       "contains": [
         { "text": "你好", "max_rank": 1 }
@@ -579,7 +576,7 @@
       "mode": "mixed",
       "input": "aaaa",
       "setup_user_entries": [
-        { "mode": "pinyin", "text": "拼音污染", "code": "aaaa", "repeat": 3 }
+        { "mode": "pinyin", "text": "拼音污染", "code": "aaaa" }
       ],
       "contains": [
         { "text": "工", "max_rank": 1 }
@@ -596,8 +593,8 @@
       "mode": "mixed",
       "input": "aa",
       "setup_user_entries": [
-        { "mode": "pinyin", "text": "共享词", "code": "aa", "repeat": 3 },
-        { "mode": "wubi", "text": "共享词", "code": "aa", "repeat": 3 }
+        { "mode": "pinyin", "text": "共享词", "code": "aa" },
+        { "mode": "wubi", "text": "共享词", "code": "aa" }
       ],
       "contains": [
         { "text": "共享词", "max_rank": 1 }

@@ -61,6 +61,9 @@ struct SharedResources {
     cxxime::UserDictQueryResult query_user_entries(const std::string& query,
                                                    cxxime::UserDictKind kind,
                                                    size_t offset, size_t limit);
+    cxxime::UserDictQueryResult query_lexicon_entries(
+        cxxime::LexiconResource resource, const std::string& query,
+        cxxime::UserDictKind kind, size_t offset, size_t limit);
     cxxime::IPCStatus delete_user_entry(cxxime::UserDictKind kind,
                                         const std::string& text,
                                         const std::string& code);
@@ -71,6 +74,12 @@ struct SharedResources {
                                          const std::string& new_code);
     bool reload_user_dict(cxxime::UserDictKind kind);
     cxxime::IPCStatus save_user_dict(cxxime::UserDictKind kind);
+    cxxime::IPCStatus delete_candidate_preference(cxxime::UserDictKind kind,
+                                                  const std::string& text,
+                                                  const std::string& code);
+    cxxime::IPCStatus clear_candidate_preferences(cxxime::UserDictKind kind);
+    cxxime::IPCStatus save_candidate_preferences(cxxime::UserDictKind kind);
+    bool save_candidate_preferences(bool force);
 };
 
 struct SessionEntry {
@@ -80,6 +89,7 @@ struct SessionEntry {
     bool base_chinese_mode = true;
     bool full_shape = false;
     bool chinese_punct = true;
+    bool closing = false;
     SharedResourceSnapshot resources;
     std::mutex mutex;  // per-session concurrency protection
 };
@@ -133,6 +143,9 @@ public:
     cxxime::UserDictQueryResult query_user_entries(const std::string& query,
                                                    cxxime::UserDictKind kind,
                                                    size_t offset, size_t limit);
+    cxxime::UserDictQueryResult query_lexicon_entries(
+        cxxime::LexiconResource resource, const std::string& query,
+        cxxime::UserDictKind kind, size_t offset, size_t limit);
     cxxime::IPCStatus delete_user_entry(cxxime::UserDictKind kind,
                                         const std::string& text, const std::string& code);
     cxxime::IPCStatus replace_user_entry(cxxime::UserDictKind kind,
@@ -140,6 +153,13 @@ public:
                                          const std::string& new_text, const std::string& new_code);
     cxxime::IPCStatus reload_user_dict(cxxime::UserDictKind kind);
     cxxime::IPCStatus save_user_dict(cxxime::UserDictKind kind);
+    cxxime::IPCStatus delete_candidate_preference(cxxime::UserDictKind kind,
+                                                  const std::string& text,
+                                                  const std::string& code);
+    cxxime::IPCStatus clear_candidate_preferences(cxxime::UserDictKind kind);
+    cxxime::IPCStatus save_candidate_preferences(cxxime::UserDictKind kind);
+    bool save_candidate_preferences(bool force);
+    bool freeze_and_save_candidate_preferences();
 
 private:
     struct GlobalVisibleState {

@@ -32,6 +32,7 @@ add_cxxime_test(segmentor_test)
 add_cxxime_test(syllabifier_completion_test)
 add_cxxime_test(pinyin_composer_test)
 add_cxxime_test(dict_test)
+add_cxxime_test(user_data_separation_test)
 add_cxxime_test(dictionary_format_test)
 target_link_libraries(dictionary_format_test PRIVATE cxxime-test-topn-data)
 add_cxxime_test(config_test)
@@ -96,6 +97,22 @@ target_link_libraries(tsf_factory_test PRIVATE ole32 uuid)
 
 add_cxxime_test(installer_lock_test)
 target_link_libraries(installer_lock_test PRIVATE cxxime-installer-lock)
+
+add_executable(candidate_preference_save_worker_test
+    candidate_preference_save_worker_test.cc
+    ${TEST_COMMON_SOURCES}
+    ${CMAKE_SOURCE_DIR}/server/src/candidate_preference_save_worker.cc
+)
+target_include_directories(candidate_preference_save_worker_test PRIVATE
+    ${TEST_INCLUDE_DIRS}
+    ${CMAKE_SOURCE_DIR}/server/src
+)
+target_compile_definitions(candidate_preference_save_worker_test PRIVATE
+    CXXIME_PROJECT_DIR="${CMAKE_SOURCE_DIR}/"
+    CXXIME_DATA_DIR="${CMAKE_SOURCE_DIR}/data/"
+)
+target_link_libraries(candidate_preference_save_worker_test PRIVATE ${TEST_COMMON_DEPS})
+add_test(NAME candidate_preference_save_worker_test COMMAND candidate_preference_save_worker_test)
 
 add_executable(session_manager_status_test
     session_manager_status_test.cc

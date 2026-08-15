@@ -19,6 +19,7 @@ enum class CandidateSource {
 enum class CandidateOrigin {
     kSystem,
     kUser,
+    kLearned,
     kCache,
     kComposed,
 };

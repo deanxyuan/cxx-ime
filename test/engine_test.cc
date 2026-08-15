@@ -180,7 +180,7 @@ TEST(Engine, translate_dd_has_candidates) {
     DeleteFileA(spellings_path.c_str());
 }
 
-TEST(Engine, selected_pinyin_candidate_learns_syllable_keys) {
+TEST(Engine, selected_pinyin_candidate_records_typed_code_as_preference) {
     std::string dict_path = make_temp_path("test_engine_learn_syllables.bin");
     std::string user_path = make_temp_path("test_engine_learn_syllables.tsv");
     DeleteFileA(user_path.c_str());
@@ -210,16 +210,10 @@ TEST(Engine, selected_pinyin_candidate_learns_syllable_keys) {
     ASSERT_EQ(candidates[0].text, "测试系统词");
     ASSERT_TRUE(engine.select_candidate(0));
 
-    cxxime::QueryBudget budget;
-    cxxime::QueryTrace trace = {};
-    cxxime::UserLookupStats stats;
-    auto learned = dict.lookup_user_indexed("srf", 10, budget, &trace, &stats);
-    bool found = false;
-    for (const auto& c : learned) {
-        if (c.text == "测试系统词")
-            found = true;
-    }
-    ASSERT_TRUE(found);
+    auto learned = dict.query_candidate_preferences("测试系统词", 0, 10);
+    ASSERT_EQ(learned.size(), static_cast<size_t>(1));
+    ASSERT_EQ(learned[0].code, "shurufa");
+    ASSERT_EQ(dict.user_entry_count(), static_cast<size_t>(0));
 
     engine.finalize();
     dict.close();
@@ -251,6 +245,7 @@ TEST(Engine, candidate_order_stays_stable_when_candidate_learning_is_disabled) {
     ASSERT_TRUE(engine.select_candidate(1));
     ASSERT_EQ(engine.get_commit_text(), "第二候选");
     ASSERT_TRUE(!dict.has_user_entry("第二候选"));
+    ASSERT_EQ(dict.candidate_preference_count(), static_cast<size_t>(0));
 
     type_code(engine, "nihao");
     ASSERT_GE(engine.context().candidates.candidates.size(), 2u);
@@ -262,6 +257,7 @@ TEST(Engine, candidate_order_stays_stable_when_candidate_learning_is_disabled) {
     ASSERT_EQ(engine.process_key(space), cxxime::ProcessResult::COMMITTED);
     ASSERT_EQ(engine.get_commit_text(), "默认候选");
     ASSERT_TRUE(!dict.has_user_entry("默认候选"));
+    ASSERT_EQ(dict.candidate_preference_count(), static_cast<size_t>(0));
 
     engine.finalize();
     dict.close();
@@ -293,6 +289,8 @@ TEST(Engine, candidate_learning_promotes_selected_candidate_when_enabled) {
     ASSERT_EQ(engine.context().candidates.candidates[1].text, "第二候选");
     ASSERT_TRUE(engine.select_candidate(1));
     ASSERT_EQ(engine.get_commit_text(), "第二候选");
+    ASSERT_EQ(dict.user_entry_count(), static_cast<size_t>(0));
+    ASSERT_EQ(dict.candidate_preference_count(), static_cast<size_t>(1));
 
     type_code(engine, "nihao");
     ASSERT_GE(engine.context().candidates.candidates.size(), 1u);
@@ -333,8 +331,10 @@ TEST(Engine, candidate_learning_uses_candidate_text_for_punctuation_commit) {
     period.keycode = VK_OEM_PERIOD;
     ASSERT_EQ(engine.process_key(period, options), cxxime::ProcessResult::COMMITTED);
     ASSERT_EQ(engine.get_commit_text(), "你好。");
-    ASSERT_TRUE(dict.has_user_entry("你好"));
-    ASSERT_TRUE(!dict.has_user_entry("你好。"));
+    ASSERT_TRUE(!dict.has_user_entry("你好"));
+    auto preferences = dict.query_candidate_preferences("你好", 0, 10);
+    ASSERT_EQ(preferences.size(), static_cast<size_t>(1));
+    ASSERT_EQ(preferences[0].text, "你好");
 
     engine.finalize();
     dict.close();
@@ -500,6 +500,7 @@ TEST(Engine, composed_pinyin_candidate_is_not_learned) {
     ASSERT_TRUE(engine.select_candidate(static_cast<int>(candidate - candidates.begin())));
     ASSERT_EQ(engine.get_commit_text(), "无输出");
     ASSERT_TRUE(!dict.has_user_entry("无输出"));
+    ASSERT_EQ(dict.candidate_preference_count(), static_cast<size_t>(0));
 
     engine.finalize();
     dict.close();
@@ -1247,6 +1248,7 @@ TEST(AsciiComposer, capslock_candidate_commits_first_candidate) {
 
     ASSERT_TRUE(ac.is_ascii_mode());
     ASSERT_EQ(ctx.committed_text, "你好");
+    ASSERT_TRUE(ctx.committed_candidate() == nullptr);
     ASSERT_TRUE(ctx.pinyin_buffer.empty());
 }
 

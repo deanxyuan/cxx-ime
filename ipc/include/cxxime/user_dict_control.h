@@ -23,11 +23,13 @@ enum class UserDictOperation {
     kDelete,
     kReload,
     kSave,
+    kClear,
 };
 
 struct UserDictControlRequest {
     UserDictOperation operation = UserDictOperation::kUnknown;
     UserDictKind kind = UserDictKind::PINYIN;
+    LexiconResource resource = LexiconResource::kUserLexicon;
     std::string query;
     std::size_t offset = 0;
     std::size_t limit = USER_DICT_CONTROL_DEFAULT_LIMIT;
@@ -55,6 +57,8 @@ public:
 
     bool query(UserDictKind kind, const std::string& query, std::size_t offset, std::size_t limit,
                UserDictControlResult* result) const;
+    bool query(LexiconResource resource, UserDictKind kind, const std::string& query,
+               std::size_t offset, std::size_t limit, UserDictControlResult* result) const;
     bool add_entry(UserDictKind kind, const std::string& text, const std::string& code,
                    UserDictControlResult* result) const;
     bool replace_entry(UserDictKind kind, const std::string& old_text, const std::string& old_code,
@@ -64,6 +68,10 @@ public:
                       UserDictControlResult* result) const;
     bool reload(UserDictKind kind, UserDictControlResult* result) const;
     bool save(UserDictKind kind, UserDictControlResult* result) const;
+    bool save_preferences(UserDictKind kind, UserDictControlResult* result) const;
+    bool delete_preference(UserDictKind kind, const std::string& text, const std::string& code,
+                           UserDictControlResult* result) const;
+    bool clear_preferences(UserDictKind kind, UserDictControlResult* result) const;
 
 private:
     bool execute(const UserDictControlRequest& request, UserDictControlResult* result) const;

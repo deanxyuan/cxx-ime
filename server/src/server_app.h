@@ -14,6 +14,7 @@
 
 #include "config_store.h"
 #include "config_write_coordinator.h"
+#include "candidate_preference_save_worker.h"
 #include "diagnostic_log_maintenance_worker.h"
 #include "input_method_hotkey.h"
 #include "session_manager.h"
@@ -26,17 +27,20 @@ public:
 
 private:
     cxxime::IPCResponse handle_request(const cxxime::IPCRequest& request);
+    void prepare_user_data_shutdown();
     static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
 
     SessionManager session_mgr_;
     ConfigStore config_store_;
     ConfigWriteCoordinator config_writer_;
+    CandidatePreferenceSaveWorker candidate_preference_saver_;
     cxxime::IpcServer ipc_server_;
     cxxime::ControlServer control_server_;
     cxxime::DictionaryMonitor dictionary_monitor_;
     DiagnosticLogMaintenanceWorker diagnostic_log_maintenance_;
     InputMethodHotkey input_method_hotkey_;
     HWND hwnd_ = nullptr;
+    bool user_data_shutdown_prepared_ = false;
     std::string config_path_;
 };
 

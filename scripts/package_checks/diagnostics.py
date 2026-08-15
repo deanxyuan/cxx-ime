@@ -28,6 +28,9 @@ def check_diagnostics_script(
     require_text(errors, text, "registry-clsid-64.txt", label)
     require_text(errors, text, "registry-tip-64.txt", label)
     require_text(errors, text, "registry-keyboard-layouts-cxxime.txt", label)
+    require_text(errors, text, "learning_pinyin.tsv", label)
+    require_text(errors, text, "learning_wubi.tsv", label)
+    require_text(errors, text, "IncludeCandidatePreferences", label)
     for name in ["dictionary_manifest.json"] + manifest_files:
         require_text(errors, text, f'"{name}"', label)
     if require_x86:
