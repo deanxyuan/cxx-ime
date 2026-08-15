@@ -28,7 +28,10 @@ C:\Program Files\CxxIME\
 C:\Users\<username>\cxxime\
 ├── default.json              用户配置覆盖（可选）
 ├── themes.json               用户主题覆盖（可选）
-└── user.tsv                  用户词典
+├── user_pinyin.tsv           用户词库（拼音）
+├── user_wubi.tsv             用户词库（五笔）
+├── learning_pinyin.tsv       选词偏好（拼音）
+└── learning_wubi.tsv         选词偏好（五笔）
 ```
 
 由 `user_data_dir()` 首次调用时自动创建。
@@ -63,7 +66,7 @@ NSIS 安装到 Program Files  →  优先级 3
 
 ```cpp
 cxxime::data_path("pinyin.dict.bin")       // → data_dir() + "pinyin.dict.bin"
-cxxime::user_data_path("user.tsv")         // → user_data_dir() + "user.tsv"
+cxxime::user_data_path("user_pinyin.tsv")  // → user_data_dir() + "user_pinyin.tsv"
 ```
 
 ### set_data_dir()

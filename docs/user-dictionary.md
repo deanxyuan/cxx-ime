@@ -1,18 +1,23 @@
-# 用户词典：内存多路索引
+# 用户词库与候选偏好
 
 ## 概述
 
-用户词典存储用户选词频率记录，用于个性化候选排序。数据量极小（几百到几千条，< 1MB），全部驻留内存，通过 TSV 文件持久化。
+用户个性化数据拆分为两个独立资源，分别由 `UserLexicon` 与 `CandidatePreference` 维护：
 
-查询路径：用户词按 `code` 建立 `exact`、`prefix`、`abbr`、`mixed` 四路查询索引，另有 `text` 反查表和按 code 排序的二分数组，消除全表线性扫描。索引只保存 entry id（`uint32_t`），避免 `vector` 扩容导致指针失效。
+- **用户词库（user lexicon）**：手工添加的词条（文本、编码、音节），用于精确命中与个性化候选排序。持久化为 `user_pinyin.tsv` / `user_wubi.tsv`。
+- **候选偏好（candidate preference）**：候选学习记录（选中的候选及其输入码），用于在翻译结果上做本地排序提升。持久化为 `learning_pinyin.tsv` / `learning_wubi.tsv`。
 
-## 数据结构
+两者数据量都极小（几百到几千条，< 1MB），全部驻留内存，通过 TSV 文件持久化。服务端启动时加载，运行中按需合并保存，关闭时冻结并强制落盘。
+
+## 用户词库：内存多路索引
+
+用户词按 `code` 建立 `exact`、`prefix`、`abbr`、`mixed` 四路查询索引，另有 `text` 反查表和按 code 排序的二分数组，消除全表线性扫描。索引只保存 entry id（`uint32_t`），避免 `vector` 扩容导致指针失效。
+
+### 数据结构
 
 ```cpp
-// engine/include/cxxime/dict.h
-using UserEntryId = uint32_t;
-
-struct UserEntry {
+// engine/include/cxxime/user_lexicon.h
+struct Entry {
     std::string text;       // 候选文本，如 "输入法"
     std::string code;       // 原始输入码，如 "shurufa" 或 "srf"
     std::string syllables;  // 可选冒号形式，如 "shu:ru:fa"
@@ -22,31 +27,28 @@ struct UserEntry {
     uint64_t sequence = 0;  // 递增序号，用于调频排序
     bool deleted = false;   // 软删除标记
 };
-
-struct UserBucket {
-    std::vector<UserEntryId> ids;
-};
 ```
 
 ### 索引结构
 
 | 索引 | 类型 | 用途 |
 |------|------|------|
-| `user_exact_index_` | `unordered_map<string, UserBucket>` | 精确匹配（完整 code） |
-| `user_prefix_index_` | `unordered_map<string, UserBucket>` | 前缀匹配（长度 1..6） |
-| `user_abbr_index_` | `unordered_map<string, UserBucket>` | 缩写匹配（首字母组合） |
-| `user_mixed_index_` | `unordered_map<string, UserBucket>` | 混合匹配（声母增强简拼 / 首音节展开 / 前两音节展开 / 长词首字母码） |
-| `user_text_index_` | `unordered_map<string, size_t>` | 文本反查（O(1)） |
-| `user_code_sorted_` | `vector<UserEntryId>` | 按 code 字节序排序，用于长前缀二分查找 |
+| `exact_index_` | `unordered_map<string, Bucket>` | 精确匹配（完整 code） |
+| `prefix_index_` | `unordered_map<string, Bucket>` | 前缀匹配（长度 1..6） |
+| `abbr_index_` | `unordered_map<string, Bucket>` | 缩写匹配（首字母组合） |
+| `mixed_index_` | `unordered_map<string, Bucket>` | 混合匹配（声母增强简拼 / 首音节展开 / 前两音节展开 / 长词首字母码） |
+| `text_index_` | `unordered_map<string, vector<EntryId>>` | 文本反查 |
+| `entry_index_` | `unordered_map<string, EntryId>` | code+text 定位条目 |
+| `code_sorted_` | `vector<EntryId>` | 按 code 字节序排序，用于长前缀二分查找 |
 
 版本追踪：
 
 ```cpp
-uint64_t user_dict_version_ = 0;  // 每次更新递增，用于 cache 失效
-uint64_t user_sequence_ = 0;      // 全局递增序号
+uint64_t version_ = 0;   // 每次更新递增，用于 cache 失效
+uint64_t sequence_ = 0;  // 全局递增序号
 ```
 
-## 索引 Key 生成
+### 索引 Key 生成
 
 用户词插入或加载时生成以下 key：
 
@@ -55,7 +57,7 @@ uint64_t user_sequence_ = 0;      // 全局递增序号
 | `exact` | 原始 code | `shurufa`、`srf` |
 | `prefix` | exact 的长度 1..6 前缀 | `s`、`sh`、`shu` |
 | `abbr` | 每个音节首字母（需 syllables） | `shu:ru:fa` → `srf` |
-| `mixed` | `generate_mixed_keys()` 统一生成（需 syllables） | 见下表 |
+| `mixed` | 统一生成（需 syllables） | 见下表 |
 
 Mixed code 码型（每词最多 8 个，去重后截断）：
 
@@ -70,71 +72,54 @@ Mixed code 码型（每词最多 8 个，去重后截断）：
 
 mixed bucket 裁剪到 `kMaxUserBucketSize = 64`，按 (frequency desc, sequence desc, id asc) 排序。
 
-`prefix` 只保存长度 1..6 的短前缀，服务短输入快速路径。更长的前缀使用 `user_code_sorted_` 二分范围查询。
+`prefix` 只保存长度 1..6 的短前缀，服务短输入快速路径。更长的前缀使用 `code_sorted_` 二分范围查询。
 
-## 操作映射
+### 操作映射
 
 | 操作 | 实现 | 复杂度 |
 |------|------|--------|
-| 精确匹配（`lookup_by_syllables`） | `user_exact_index_[code]` → 扫描 bucket | O(bucket_size) |
-| 前缀匹配（`lookup`） | `user_prefix_index_[prefix]` 或 `user_code_sorted_` 二分 | O(bucket_size) 或 O(log n) |
-| 缩写/混合匹配（短输入快速路径） | `user_abbr_index_` + `user_mixed_index_` | O(bucket_size) |
-| 文本反查（`reverse_lookup`） | `user_text_index_.find(text)` | O(1) |
+| 精确匹配（`lookup_by_syllables`） | `exact_index_[code]` → 扫描 bucket | O(bucket_size) |
+| 前缀匹配（`lookup`） | `prefix_index_[prefix]` 或 `code_sorted_` 二分 | O(bucket_size) 或 O(log n) |
+| 缩写/混合匹配（短输入快速路径） | `abbr_index_` + `mixed_index_` | O(bucket_size) |
+| 文本反查（`reverse_lookup`） | `text_index_.find(text)` | O(1) |
 | 计数（`count`） | 索引 bucket 大小求和或二分范围计数 | O(1) 或 O(log n) |
-| 更新频率（`update_frequency`） | 查找 → 更新/插入 → 维护索引 | O(1) + 索引维护 |
+| 添加（`add_user_entry`） | 查重 → 插入 entry → 维护索引；重复词条返回 false | O(1) + 索引维护 |
 
-## 查询 API
+旧的 `update_frequency` 已移除：手工词条改由 `add_user_entry` 管理，学习记录移入候选偏好模块。
 
-### 内部索引查询方法
+### 查询 API
 
 ```cpp
-struct UserLookupStats {
-    uint32_t scan_count = 0;       // 实际检查的索引项数
-    bool truncated = false;        // 达到 max_user_scan 上限
-    bool scan_budget_truncated = false; // scan 预算耗尽
-    bool deadline_exceeded = false;
-};
-
-std::vector<Candidate> lookup_user_exact(const std::string& code, int limit,
+std::vector<Candidate> lookup_exact(const std::string& code, int limit,
     const QueryBudget& budget, QueryTrace* trace, UserLookupStats* stats) const;
-
-std::vector<Candidate> lookup_user_prefix(const std::string& prefix, int limit,
+std::vector<Candidate> lookup_prefix(const std::string& prefix, int limit,
     const QueryBudget& budget, QueryTrace* trace, UserLookupStats* stats) const;
-
-std::vector<Candidate> lookup_user_short(const std::string& key, int limit,
+std::vector<Candidate> lookup_indexed(const std::string& key, int limit,
     const QueryBudget& budget, QueryTrace* trace, UserLookupStats* stats) const;
 ```
 
-### 公共查询集成
-
-| 方法 | 用户词查询方式 |
-|------|--------------|
-| `lookup_by_syllables()` | `lookup_user_exact(concat_code)` 补充用户词 |
-| `lookup()` | `lookup_user_prefix(code_prefix)` 补充用户词 |
-| `count()` | 索引 bucket 大小求和或二分范围计数 |
-| `reverse_lookup()` | `user_text_index_` O(1) 反查 |
-| 短输入快速路径 | `lookup_user_short()` 查询 exact/prefix/abbr/mixed |
+公共集成：`lookup_by_syllables()` 用 `lookup_exact(concat_code)` 补充用户词；`lookup()` 用 `lookup_prefix(code_prefix)` 补充；短输入快速路径走 `lookup_indexed()`。
 
 ### 扫描预算
 
 用户词查询遵守 `QueryBudget::max_user_scan`（默认 256）。达到上限时设置 `truncated=true`，不再扫描更多索引项。`user_scan_count` 只反映命中 bucket 或二分范围内的实际检查次数，不随用户词总量增长。
 
-## 评分公式
+### 评分公式
 
-用户词得分由 `score_user_match()`（`dict.cc`）计算：
+用户词得分由 `score_user_match()`（`engine/src/user_lexicon_query.cc`）计算：
 
 ```
 score = base + bounded_frequency + recent_bonus
 
 bounded_frequency = clamp(frequency, 1, 50000)
-recent_bonus      = (delta <= 1000) ? 1000 - delta : 0，delta = user_sequence_ - entry.sequence
+recent_bonus      = (delta <= 1000) ? 1000 - delta : 0，delta = sequence_ - entry.sequence
 ```
 
 `base` 按匹配类型与评分档位（`UserScoringProfile::kPinyin` / `kWubi`）分层：
 
 | 匹配情形 | base | 说明 |
 |---------|------|------|
-| 精确匹配（或 key 长度 == 码长） | `kExactBase = 200000000` | 学过的全码词强力置顶 |
+| 精确匹配（或 key 长度 == 码长） | `kExactBase = 200000000` | 全码词强力置顶 |
 | 缩写 / 混合键匹配 | `kPatternBase = 120000000` | 简拼、首字母混合键命中 |
 | 前缀匹配，key ≤ 2 字符 | `kWeakPrefixBase = 4000` | 短前缀不干扰系统词序 |
 | 前缀匹配，key + 1 ≥ 码长 | `kNearPrefixBase = 800000` | 接近完整的前缀显著提升 |
@@ -142,55 +127,13 @@ recent_bonus      = (delta <= 1000) ? 1000 - delta : 0，delta = user_sequence_ 
 | 其余前缀匹配 | `kWeakPrefixBase = 4000` | — |
 | 五笔档（kWubi）前缀匹配 | `kWeakPrefixBase = 4000` | 五笔前缀一律弱加分，保护系统简码词序 |
 
-`recent_bonus` 奖励最近使用的词条：最近使用的 entry bonus 接近 1000，超过 1000 次更新前的 entry bonus 为 0。
+### 更新流程
 
-## 更新流程
+`load_user_dict`：写锁下清空条目与索引 → 读取 TSV（3/4 列）→ 规范化 → 逐条插入 → 重建索引 → `version_++`。
 
-### load_user_dict
+`add_user_entry`：写锁下按 code+text 查重，已存在返回 false；新条目插入全部索引并递增 version。
 
-在写锁下执行：
-
-1. 清空 `user_entries_` 和全部索引
-2. 读取 TSV（支持 3 列和 4 列格式）
-3. 规范化 code、frequency、syllables
-4. 逐条 append `UserEntry`
-5. 调用 `rebuild_user_indexes_locked()`
-6. `user_dict_version_++`
-
-### update_frequency
-
-`update_frequency(text, code, syllables)` 在写锁下执行：
-
-1. 通过 `user_text_index_` 查找文本
-2. 已存在且 code 不变：增加 frequency，更新 sequence，`re_sort_user_buckets_()` 重排受影响 bucket
-3. 已存在但 code 变化：从旧索引移除，更新 entry，插入新索引
-4. 已存在但 syllables 新增：从旧索引移除，更新 entry，插入新索引（生成 abbr/mixed keys）
-5. 不存在：append 新 entry，插入全部索引
-6. 对 `user_code_sorted_` 重排序
-7. `user_dirty_ = true`，`user_dict_version_++`
-
-旧签名 `update_frequency(text, code)` 委托新签名（syllables 为空）。
-
-## Cache 失效
-
-包含用户词候选的缓存均以 `user_dict_version_` 判定新鲜度：
-
-- **长拼音查询页缓存**（`PinyinTranslator` 的 `QueryCacheEntry`）：缓存键包含 `user_dict_version`，版本不一致的条目不会命中，由 LRU 自然淘汰
-- **Session recent cache**：同 session 内保留，但版本变化后扫描时过滤——候选 text 已不存在或被标记 `deleted`（`has_user_entry()` 返回 false）时跳过
-- 系统短码缓存 `pinyin.topn.bin` 只含系统词，不受用户词版本影响
-
-## 并发策略
-
-继续使用 `std::shared_mutex user_mutex_`：
-
-- 查询持有 `shared_lock`
-- 加载、调频、插入、保存持有 `unique_lock`
-- 索引保存 entry id，不保存指针
-- 不从 `user_entries_` 中物理删除元素；删除使用 `deleted=true` 标记
-
-该策略保证同步查询不需要跨线程协调，也不会因 `vector` reallocation 破坏索引。
-
-## 文件格式
+### 文件格式（用户词库）
 
 TSV（Tab-Separated Values），支持 3 列（向后兼容）和 4 列格式：
 
@@ -199,4 +142,57 @@ text<TAB>code<TAB>frequency                   （3 列，旧格式）
 text<TAB>code<TAB>frequency<TAB>syllables     （4 列，新格式）
 ```
 
-读取时同时接受两种格式。保存时使用 4 列格式，无 syllables 时省略第 4 列。
+文件：`%USERPROFILE%\cxxime\user_pinyin.tsv`、`%USERPROFILE%\cxxime\user_wubi.tsv`。
+
+## 候选偏好
+
+### 数据结构
+
+```cpp
+// engine/include/cxxime/candidate_preference.h
+struct Entry {
+    std::string text;           // 候选文本
+    std::string code;           // 输入码（记录时的参数）
+    std::string candidate_code; // 候选自身的编码
+    std::string syllables;      // 冒号分隔音节
+    int frequency = 1;
+    uint64_t sequence = 0;
+    bool deleted = false;       // 软删除标记
+};
+```
+
+按 `code + text` 作为条目键（`entry_index_`），另按 code 建立 `code_index_` 便于查询与清理。
+
+### 记录与查询
+
+- `record_candidate_preference(candidate, code)`：记录选中的候选。符号（`kSymbol`）与组合（`kComposed`）候选不记录；相同 text+code 递增频率。冻结后拒绝记录。
+- `apply_candidate_preferences(code, source, candidates, limit)`：翻译结果排序前应用偏好，命中项按偏好得分提升并标记 `origin = kLearned`，不产生重复项。
+- `query_candidate_preferences` / `delete_candidate_preference` / `clear_candidate_preferences`：管理接口，供设置页与 IPC 使用。
+
+### 评分
+
+偏好得分远高于普通用户词，用于把“学过的候选”稳定排在系统词之前：
+
+```
+score = kPreferenceBaseScore(210000000) + min(frequency, 50000) + recency
+recency = (当前序号 - 条目序号 <= 1000) ? 1000 - 差值 : 0
+```
+
+### 持久化
+
+- TSV 6 列：`text<TAB>code<TAB>candidate_code<TAB>frequency<TAB>sequence<TAB>syllables`
+- `save_if_due(delay)` 按最近更新时间合并落盘（服务端默认 1500ms）；`save()` 立即写盘
+- `freeze()` 后拒绝记录/删除/清空，但允许保存既有数据
+- 文件：`%USERPROFILE%\cxxime\learning_pinyin.tsv`、`%USERPROFILE%\cxxime\learning_wubi.tsv`
+
+## Cache 失效
+
+- **用户词库**：以 `UserLexicon::version()` 判定新鲜度。长拼音查询页缓存键包含该版本，版本不一致的条目不会命中，由 LRU 自然淘汰；Session recent cache 在版本变化后扫描时过滤已删除或已不存在的词条。
+- **候选偏好**：偏好只影响候选排序，不进入查询索引；`apply_candidate_preferences` 在每次翻译时应用。其版本（`CandidatePreference::version()`）用于设置页等服务端查询的数据新鲜度判断。
+- 系统短码缓存 `pinyin.topn.bin` 只含系统词，不受用户数据影响。
+
+## 并发策略
+
+- 用户词库：`shared_mutex`（查询持有 shared 锁，加载/添加/删除/保存持有 unique 锁）+ `save_mutex` 串行化落盘；删除使用 `deleted` 软标记，不从容器物理移除。
+- 候选偏好：`shared_mutex` + `save_mutex`；`save_if_due` 按最后更新时间合并；`freeze` 后拒绝变更。
+- 服务端以 `reload_mutex_` 串行化词典重载与会话生命周期（创建/销毁/清理），关闭流程先冻结偏好再强制保存，避免运行中操作与落盘相互冲突。

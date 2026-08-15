@@ -210,7 +210,7 @@ bool is_indexable_key(const std::string& pinyin) {
 ### 合并规则
 
 1. Session recent 候选优先
-2. User dict short index 候选（按 `score_user_match()` 分层评分：精确/缩写/混合键高基数，前缀按接近程度分档，详见 [用户词典设计](user-dictionary.md)）
+2. User dict short index 候选（按 `score_user_match()` 分层评分：精确/缩写/混合键高基数，前缀按接近程度分档，详见 [用户词库与候选偏好](user-dictionary.md)）
 3. ShortCodeCache 候选按构建时 score 排序
 4. 标准管道 (bounded dict lookup) 只用于补足缺失候选
 5. 按 `Candidate.text` 去重
@@ -219,8 +219,8 @@ bool is_indexable_key(const std::string& pinyin) {
 ### 用户词版本过滤
 
 Session recent cache 中的用户词候选在以下情况被过滤：
-- `user_dict_version` 发生变化（用户词典被重新加载或更新）
-- 候选 text 在当前用户词典中已不存在或被标记 `deleted`（`has_user_entry()` 返回 false）
+- `user_dict_version` 发生变化（用户词库被重新加载或更新）
+- 候选 text 在当前用户词库中已不存在或被标记 `deleted`（`has_user_entry()` 返回 false）
 
 过滤在 `lookup_indexed_fast()` 扫描 recent 缓存时执行，确保 stale 用户词不会出现在候选列表中。
 

@@ -46,9 +46,12 @@
 | `dict_for_kind(kind)` | 根据 UserDictKind 返回 pinyin 或 wubi 字典 |
 | `load_punctuation(path)` | 重新加载标点映射 |
 | `reload_config()` | 重新加载配置（保留旧指针直到替换完成） |
-| `reload_dictionaries()` | 重新加载字典（先保存用户词典，再加载新版本） |
-| `add_user_entry` / `query_user_entries` / `delete_user_entry` / `replace_user_entry` | 用户词典 CRUD |
-| `reload_user_dict` / `save_user_dict` | 用户词典持久化 |
+| `reload_dictionaries()` | 重新加载字典（先保存用户词库与候选偏好，再加载新版本） |
+| `add_user_entry` / `query_user_entries` / `delete_user_entry` / `replace_user_entry` | 用户词库 CRUD |
+| `reload_user_dict` / `save_user_dict` | 用户词库持久化 |
+| `query_lexicon_entries` | 按资源（用户词库 / 候选偏好）查询条目 |
+| `delete_candidate_preference` / `clear_candidate_preferences` / `save_candidate_preferences` | 候选偏好管理 |
+| `save_candidate_preferences(force)` / `freeze_and_save_candidate_preferences` | 偏好合并落盘与关闭前冻结保存 |
 
 ### SharedResourceSnapshot
 
@@ -188,8 +191,9 @@ struct ProcessKeyResult {
 **热重载：**
 - `reload_config()` / `reload_dictionaries()` / `reload_punctuation(path)`
 
-**用户词典管理（6 个方法）：**
-- `add_user_entry` / `query_user_entries` / `delete_user_entry` / `replace_user_entry` / `reload_user_dict` / `save_user_dict`
+**用户数据管理：**
+- 用户词库：`add_user_entry` / `query_user_entries` / `delete_user_entry` / `replace_user_entry` / `reload_user_dict` / `save_user_dict`
+- 候选偏好：`query_lexicon_entries`（资源化查询）/ `delete_candidate_preference` / `clear_candidate_preferences` / `save_candidate_preferences`
 
 ---
 
@@ -245,12 +249,14 @@ SessionManager::reload_config()
 SessionManager::reload_dictionaries()
   1. 加 reload_mutex_
   2. 遍历所有 session 加 per-session mutex
-  3. 保存旧字典的用户词典
+  3. 保存旧字典的用户词库与候选偏好（任一失败则中止重载）
   4. shared_.reload_dictionaries()
      → 重新加载字典文件
   5. 遍历 session 调用 apply_resource_snapshot()
      → engine->rebind_shared_resources() 替换指针
 ```
+
+会话生命周期（创建、销毁、空闲清理）与所有用户数据变更均持有 `reload_mutex_`，与重载互斥；被标记为 `closing` 的会话会拒绝后续按键与候选选择，避免关闭过程中继续写入。
 
 ---
 
