@@ -147,6 +147,34 @@ void Context::reset() {
     reset_pagination();
     temporary_ascii_composition = false;
     commit_source_ = CommitSource::kRawCode;
+    clear_commit_evidence();
+}
+
+bool Context::commit_candidate(int index) {
+    if (index < 0 || index >= static_cast<int>(candidates.candidates.size())) {
+        return false;
+    }
+    candidates.highlighted = index;
+    committed_candidate_ = candidates.candidates[static_cast<std::size_t>(index)];
+    committed_candidate_code_ = pinyin_buffer;
+    has_committed_candidate_ = true;
+    committed_text = committed_candidate_.text;
+    commit_source_ = CommitSource::kCandidate;
+    return true;
+}
+
+const Candidate* Context::committed_candidate() const {
+    return has_committed_candidate_ ? &committed_candidate_ : nullptr;
+}
+
+const std::string& Context::committed_candidate_code() const {
+    return committed_candidate_code_;
+}
+
+void Context::clear_commit_evidence() {
+    committed_candidate_ = {};
+    committed_candidate_code_.clear();
+    has_committed_candidate_ = false;
 }
 
 std::string Context::commit() {
@@ -165,6 +193,7 @@ std::string Context::commit() {
     reset_pagination();
     temporary_ascii_composition = false;
     commit_source_ = CommitSource::kRawCode;
+    clear_commit_evidence();
     return text;
 }
 
@@ -190,6 +219,7 @@ std::pair<std::string, CommitSource> Context::commit_with_source() {
     reset_pagination();
     temporary_ascii_composition = false;
     commit_source_ = CommitSource::kRawCode;
+    clear_commit_evidence();
     return {std::move(text), source};
 }
 

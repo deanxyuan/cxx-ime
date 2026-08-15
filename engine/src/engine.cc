@@ -24,23 +24,6 @@ static inline void record_total_us(QueryTrace& trace,
     }
 }
 
-static const Candidate* committed_candidate_from_context(const Context& context) {
-    const auto& candidates = context.candidates.candidates;
-    int highlighted = context.candidates.highlighted;
-    if (highlighted >= 0 && highlighted < (int)candidates.size() &&
-        candidates[highlighted].text == context.committed_text) {
-        return &candidates[highlighted];
-    }
-    auto it = std::find_if(candidates.begin(), candidates.end(),
-        [&](const Candidate& c) { return c.text == context.committed_text; });
-    return it != candidates.end() ? &(*it) : nullptr;
-}
-
-static bool alpha_code_is_probably_wubi(const std::string& code) {
-    return code.size() == 4 && std::all_of(code.begin(), code.end(),
-        [](char c) { return std::isalpha(static_cast<unsigned char>(c)); });
-}
-
 static void add_wubi_code_hints(const std::string& input, CandidatePage& page) {
     for (auto& candidate : page.candidates) {
         if (candidate.source != CandidateSource::kWubi || candidate.code.size() <= input.size() ||
@@ -61,26 +44,10 @@ static void add_wubi_code_hints(const std::string& input, CandidatePage& page) {
     }
 }
 
-static void update_learning_entry(Dict* dict, const std::string& text,
-                                  const std::string& fallback_code,
-                                  const Candidate* candidate,
-                                  bool allow_syllables) {
-    if (!dict || text.empty() ||
-        (candidate && candidate->origin == CandidateOrigin::kComposed))
-        return;
-
-    std::string code = fallback_code;
-    if (candidate && !candidate->code.empty())
-        code = candidate->code;
-    if (code.empty())
-        code = dict->reverse_lookup(text);
-    if (code.empty())
-        return;
-
-    if (allow_syllables && candidate && !candidate->syllables.empty())
-        dict->update_frequency(text, code, candidate->syllables);
-    else
-        dict->update_frequency(text, code);
+static bool record_candidate_preference(Dict* dict, const Candidate* candidate,
+                                        const std::string& typed_code) {
+    return dict && candidate && !typed_code.empty() &&
+           dict->record_candidate_preference(*candidate, typed_code);
 }
 
 // Static member for global query ID generation
@@ -141,8 +108,8 @@ void Engine::reload_config(const Config& config) {
         static_cast<MixedTranslator*>(translator_.get())
             ->set_candidate_preference(config.mixed_candidate_preference);
     }
-    if (!config.candidate_learning && translator_) {
-        translator_->clear_recent();
+    if (translator_) {
+        translator_->set_candidate_learning_enabled(config.candidate_learning);
     }
 }
 
@@ -164,6 +131,7 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
     CXXIME_LOG(L"Engine::process_key: vk=%u, is_key_up=%d, composing=%d",
                event.keycode, event.is_key_up, context_.is_composing());
     commit_continues_composition_ = false;
+    context_.clear_commit_evidence();
 
     const uint64_t input_revision_before = context_.preedit_revision();
     const int page_index_before = context_.page_index;
@@ -506,8 +474,7 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
                 committed_code_override = context_.pinyin_buffer;
                 committed_candidate_override = context_.candidates.candidates[0];
                 has_committed_candidate_override = true;
-                context_.committed_text = context_.candidates.candidates[0].text;
-                context_.set_commit_source(CommitSource::kCandidate);
+                context_.commit_candidate(0);
                 context_.clear_preedit();
                 context_.candidates = {};
                 result = ProcessResult::COMMITTED;
@@ -534,42 +501,20 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
     CXXIME_LOG(L"Engine::process_key: result=%d, buf='%S'",
                (int)result, context_.pinyin_buffer.c_str());
 
-    // Update user frequency and the recent cache after committing a candidate.
+    // Record an explicit candidate selection; raw text and composed candidates are excluded.
     if (config_->candidate_learning &&
         result == ProcessResult::COMMITTED && !context_.committed_text.empty() &&
         context_.commit_source() == CommitSource::kCandidate) {
-        std::string typed_code = has_committed_candidate_override
+        const std::string typed_code = has_committed_candidate_override
             ? committed_code_override
-            : context_.pinyin_buffer;
+            : context_.committed_candidate_code();
         const Candidate* committed_candidate = has_committed_candidate_override
             ? &committed_candidate_override
-            : committed_candidate_from_context(context_);
-
-        if (!committed_candidate || committed_candidate->source != CandidateSource::kSymbol) {
-            bool is_wubi = false;
-            if (mode_ == InputMode::WUBI) {
-                is_wubi = true;
-            } else if (mode_ == InputMode::MIXED) {
-                is_wubi = committed_candidate
-                    ? (committed_candidate->source == CandidateSource::kWubi)
-                    : alpha_code_is_probably_wubi(typed_code);
-            }
-
-            Dict* active_dict = is_wubi ? wubi_dict_ : pinyin_dict_;
-            const std::string& learned_text = committed_candidate
-                ? committed_candidate->text
-                : context_.committed_text;
-            update_learning_entry(active_dict, learned_text, typed_code,
-                                  committed_candidate, !is_wubi);
-
-            if (!typed_code.empty()) {
-                Candidate recent;
-                if (committed_candidate) {
-                    recent = *committed_candidate;
-                }
-                recent.text = learned_text;
-                translator_->update_recent(typed_code, recent);
-            }
+            : context_.committed_candidate();
+        if (committed_candidate) {
+            const bool is_wubi = committed_candidate->source == CandidateSource::kWubi;
+            record_candidate_preference(is_wubi ? wubi_dict_ : pinyin_dict_,
+                                        committed_candidate, typed_code);
         }
     }
 
@@ -587,7 +532,8 @@ void Engine::commit_with_punctuation(Context& context, const std::string& output
     if (context.is_composing() && !context.candidates.candidates.empty() &&
         context.candidates.highlighted >= 0 &&
         context.candidates.highlighted < (int)context.candidates.candidates.size()) {
-        context.committed_text = context.candidates.candidates[context.candidates.highlighted].text + output;
+        context.commit_candidate(context.candidates.highlighted);
+        context.committed_text += output;
     } else {
         context.committed_text = output;
     }
@@ -725,24 +671,16 @@ bool Engine::select_candidate(int index) {
     if (index < 0 || index >= (int)context_.candidates.candidates.size())
         return false;
 
-    context_.candidates.highlighted = index;
-    context_.committed_text = context_.candidates.candidates[index].text;
-    context_.set_commit_source(CommitSource::kCandidate);
+    context_.commit_candidate(index);
 
     if (config_->candidate_learning &&
         context_.candidates.candidates[index].source != CandidateSource::kSymbol) {
         auto& cand = context_.candidates.candidates[index];
-        std::string code = context_.pinyin_buffer;
+        const std::string code = context_.committed_candidate_code();
         bool is_wubi = mode_ == InputMode::WUBI ||
-            (mode_ == InputMode::MIXED && cand.source == CandidateSource::kWubi);
+                       (mode_ == InputMode::MIXED && cand.source == CandidateSource::kWubi);
         Dict* active_dict = is_wubi ? wubi_dict_ : pinyin_dict_;
-        update_learning_entry(active_dict, context_.committed_text, code, &cand, !is_wubi);
-
-        // Update the session recent cache only when adaptive ordering is enabled.
-        if (!context_.pinyin_buffer.empty()) {
-            translator_->update_recent(context_.pinyin_buffer,
-                                    context_.candidates.candidates[index]);
-        }
+        record_candidate_preference(active_dict, &cand, code);
     }
 
     return true;
@@ -784,14 +722,12 @@ void Engine::clear() {
     context_.reset();
     commit_continues_composition_ = false;
     handled_shortcut_key_ = 0;
-    translator_->clear_recent();
 }
 
 void Engine::clear_composition() {
     context_.reset();
     commit_continues_composition_ = false;
     handled_shortcut_key_ = 0;
-    // Preserve session recent cache; do not call translator_->clear_recent().
 }
 
 void Engine::set_sentence_composition_enabled(bool enabled) {
@@ -864,6 +800,7 @@ void Engine::rebuild_pipeline(InputMode mode, bool force) {
         translator_ = std::move(pinyin_trans);
     }
     translator_->set_sentence_composition_enabled(sentence_composition_enabled_);
+    translator_->set_candidate_learning_enabled(config_->candidate_learning);
 }
 
 std::string Engine::derive_spellings_path(const std::string& dict_path) {

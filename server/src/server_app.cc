@@ -114,8 +114,10 @@ bool ServerApp::initialize(const std::string& dict_path, const std::string& conf
     wc.lpszClassName = L"CxxIMEServerClass";
     RegisterClassExW(&wc);
 
-    hwnd_ = CreateWindowExW(0, L"CxxIMEServerClass", L"CxxIME Server", 0, 0, 0, 0, 0,
-                            HWND_MESSAGE, nullptr, GetModuleHandle(nullptr), this);
+    // A hidden top-level window receives session shutdown broadcasts; HWND_MESSAGE does not.
+    hwnd_ = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, L"CxxIMEServerClass",
+                            L"CxxIME Server", WS_POPUP, 0, 0, 0, 0, nullptr, nullptr,
+                            GetModuleHandle(nullptr), this);
     if (!hwnd_)
         return false;
 
@@ -184,6 +186,11 @@ bool ServerApp::initialize(const std::string& dict_path, const std::string& conf
     }
 
     diagnostic_log_maintenance_.start();
+    if (!candidate_preference_saver_.start(
+            [this](bool force) { return session_mgr_.save_candidate_preferences(force); })) {
+        CXXIME_LOG(L"%s", L"candidate_preference save worker start failed");
+        return false;
+    }
 
     return true;
 }
@@ -196,13 +203,26 @@ void ServerApp::run() {
     }
 }
 
+void ServerApp::prepare_user_data_shutdown() {
+    if (user_data_shutdown_prepared_) {
+        return;
+    }
+    dictionary_monitor_.stop();
+    if (!session_mgr_.freeze_and_save_candidate_preferences()) {
+        CXXIME_LOG(L"%s", L"candidate_preference shutdown flush failed");
+    }
+    candidate_preference_saver_.stop();
+    user_data_shutdown_prepared_ = true;
+}
+
 void ServerApp::finalize() {
     diagnostic_log_maintenance_.stop();
     dictionary_monitor_.stop();
     ipc_server_.stop();
+    control_server_.stop();
+    prepare_user_data_shutdown();
     session_mgr_.set_config_patch_handler({});
     config_writer_.stop();
-    control_server_.stop();
     input_method_hotkey_.shutdown();
 
     if (hwnd_) {
@@ -490,6 +510,20 @@ LRESULT CALLBACK ServerApp::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     }
     if (msg == WM_HOTKEY && app && app->input_method_hotkey_.handle(wp)) {
+        return 0;
+    }
+    if (msg == WM_QUERYENDSESSION) {
+        return TRUE;
+    }
+    if (msg == WM_ENDSESSION && wp && app) {
+        app->prepare_user_data_shutdown();
+        return 0;
+    }
+    if (msg == WM_CLOSE) {
+        if (app) {
+            app->prepare_user_data_shutdown();
+        }
+        DestroyWindow(hwnd);
         return 0;
     }
     if (msg == WM_DESTROY) {

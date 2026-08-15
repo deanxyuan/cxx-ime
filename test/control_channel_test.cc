@@ -362,7 +362,7 @@ TEST(ControlChannel, user_dict_client_supports_all_operations) {
                 ASSERT_TRUE(request.query == "ni");
                 ASSERT_EQ(request.offset, static_cast<std::size_t>(2));
                 ASSERT_EQ(request.limit, static_cast<std::size_t>(3));
-                result.query.dictionary_total = 9;
+                result.query.resource_total = 9;
                 result.query.match_total = 4;
                 result.query.offset = request.offset;
                 result.query.has_more = true;
@@ -375,7 +375,7 @@ TEST(ControlChannel, user_dict_client_supports_all_operations) {
     cxxime::UserDictControlClient client(3000, pipe_name);
     cxxime::UserDictControlResult result;
     ASSERT_TRUE(client.query(cxxime::UserDictKind::WUBI, "ni", 2, 3, &result));
-    ASSERT_EQ(result.query.dictionary_total, static_cast<std::size_t>(9));
+    ASSERT_EQ(result.query.resource_total, static_cast<std::size_t>(9));
     ASSERT_EQ(result.query.match_total, static_cast<std::size_t>(4));
     ASSERT_TRUE(result.query.has_more);
     ASSERT_EQ(result.query.entries.size(), static_cast<std::size_t>(1));
@@ -387,7 +387,13 @@ TEST(ControlChannel, user_dict_client_supports_all_operations) {
     ASSERT_TRUE(client.delete_entry(cxxime::UserDictKind::PINYIN, "您好", "ninhao", &result));
     ASSERT_TRUE(client.reload(cxxime::UserDictKind::PINYIN, &result));
     ASSERT_TRUE(client.save(cxxime::UserDictKind::PINYIN, &result));
-    ASSERT_EQ(request_count.load(), 6);
+    ASSERT_TRUE(client.query(cxxime::LexiconResource::kCandidatePreference,
+                             cxxime::UserDictKind::WUBI, "ni", 2, 3, &result));
+    ASSERT_TRUE(client.delete_preference(cxxime::UserDictKind::PINYIN, "你好", "nihao",
+                                         &result));
+    ASSERT_TRUE(client.clear_preferences(cxxime::UserDictKind::PINYIN, &result));
+    ASSERT_TRUE(client.save_preferences(cxxime::UserDictKind::PINYIN, &result));
+    ASSERT_EQ(request_count.load(), 10);
     server.stop();
 }
 

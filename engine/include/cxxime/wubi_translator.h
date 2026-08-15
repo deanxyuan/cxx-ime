@@ -19,8 +19,7 @@ public:
                             QueryScratch* scratch = nullptr,
                             int candidate_offset = -1) override;
 
-    void update_recent(const std::string& key, const Candidate& candidate) override;
-    void clear_recent() override;
+    void set_candidate_learning_enabled(bool enabled) override;
 
 private:
     void reset_query_snapshot();
@@ -28,15 +27,13 @@ private:
                                              QueryTrace* trace, const QueryBudget* budget);
 
     Dict* dict_ = nullptr;
-    std::vector<RecentCandidate> recent_cache_;
-    uint64_t recent_sequence_ = 0;
     std::string snapshot_code_;
     std::vector<Candidate> snapshot_candidates_;
     uint64_t snapshot_user_dict_version_ = 0;
+    uint64_t snapshot_candidate_preference_version_ = 0;
     int snapshot_query_limit_ = 0;
     bool snapshot_exhausted_ = false;
-    static constexpr size_t kMaxRecentKeys = 128;
-    static constexpr size_t kMaxRecentPerKey = 8;
+    bool candidate_learning_enabled_ = false;
 };
 
 } // namespace cxxime

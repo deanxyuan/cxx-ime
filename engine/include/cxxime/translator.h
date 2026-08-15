@@ -18,13 +18,6 @@ struct QueryTrace;
 struct QueryBudget;
 struct QueryScratch;
 
-// Per-session selected candidate for the indexed fast path.
-struct RecentCandidate {
-    std::string key;
-    Candidate candidate;
-    uint64_t sequence = 0;
-};
-
 // Abstract translator interface
 class ITranslator {
 public:
@@ -33,10 +26,9 @@ public:
                                     QueryTrace* trace = nullptr, const QueryBudget* budget = nullptr,
                                     QueryScratch* scratch = nullptr,
                                     int candidate_offset = -1) = 0;
-    virtual void update_recent(const std::string& key, const Candidate& candidate) {}
-    virtual void clear_recent() {}
     virtual void clear_query_cache() {}
     virtual void set_sentence_composition_enabled(bool enabled) {}
+    virtual void set_candidate_learning_enabled(bool enabled) {}
 };
 
 // Pinyin translator implementation
@@ -46,11 +38,9 @@ public:
     void set_syllabifier(Syllabifier* syllabifier);
     void set_short_cache(const ShortCodeCache* cache) { short_cache_ = cache; }
 
-    // Per-session recent candidate cache management.
-    void update_recent(const std::string& key, const Candidate& candidate) override;
-    void clear_recent() override { recent_cache_.clear(); }
     void clear_query_cache() override { query_cache_.clear(); }
     void set_sentence_composition_enabled(bool enabled) override;
+    void set_candidate_learning_enabled(bool enabled) override;
 
     CandidatePage translate(const std::string& pinyin, int page_index = 0, int page_size = 9,
                             QueryTrace* trace = nullptr, const QueryBudget* budget = nullptr,
@@ -70,6 +60,7 @@ private:
         int candidate_offset = 0;
         int page_size = 0;
         uint64_t user_dict_version = 0;
+        uint64_t candidate_preference_version = 0;
         uint64_t sequence = 0;
         CandidatePage page;
     };
@@ -87,15 +78,10 @@ private:
     const ShortCodeCache* short_cache_ = nullptr;
     PinyinSegmentor segmentor_;
 
-    // Per-session recent candidate cache
-    std::vector<RecentCandidate> recent_cache_;
     std::vector<QueryCacheEntry> query_cache_;
-    uint64_t recent_sequence_ = 0;
     uint64_t query_cache_sequence_ = 0;
-    mutable uint64_t cached_user_dict_version_ = 0;  // Used for cache invalidation
     bool sentence_composition_enabled_ = true;
-    static constexpr size_t kMaxRecentKeys = 128;
-    static constexpr size_t kMaxRecentPerKey = 8;
+    bool candidate_learning_enabled_ = false;
     static constexpr size_t kMaxQueryCacheEntries = 64;
 };
 

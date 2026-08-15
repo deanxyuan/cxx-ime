@@ -46,6 +46,10 @@ public:
     bool move_preedit_cursor_end();
     bool edit_preedit(const KeyEvent& event);
     void reset();
+    bool commit_candidate(int index);
+    const Candidate* committed_candidate() const;
+    const std::string& committed_candidate_code() const;
+    void clear_commit_evidence();
     std::string commit();
     void update_candidates(CandidatePage&& page);
     void reset_pagination();
@@ -72,6 +76,9 @@ private:
     std::vector<int> previous_page_offsets_;
     bool highlight_last_after_page_change_ = false;
     CommitSource commit_source_ = CommitSource::kRawCode;
+    Candidate committed_candidate_;
+    std::string committed_candidate_code_;
+    bool has_committed_candidate_ = false;
 };
 
 } // namespace cxxime

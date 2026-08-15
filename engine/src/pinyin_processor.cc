@@ -34,7 +34,7 @@ ProcessResult PinyinProcessor::process_key(const KeyEvent& event, Context& conte
         }
         if (context.is_composing() && !context.candidates.candidates.empty()) {
             if (context.candidates.highlighted >= 0 && context.candidates.highlighted < (int)context.candidates.candidates.size()) {
-                context.committed_text = context.candidates.candidates[context.candidates.highlighted].text;
+                context.commit_candidate(context.candidates.highlighted);
                 return ProcessResult::COMMITTED;
             }
         }
@@ -86,8 +86,7 @@ ProcessResult PinyinProcessor::process_key(const KeyEvent& event, Context& conte
         if (context.is_composing() && !context.candidates.candidates.empty()) {
             int index = vk - '1';
             if (index < context.selectable_candidate_count()) {
-                context.candidates.highlighted = index;
-                context.committed_text = context.candidates.candidates[index].text;
+                context.commit_candidate(index);
                 return ProcessResult::COMMITTED;
             }
             return ProcessResult::ACCEPTED;

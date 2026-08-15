@@ -61,6 +61,7 @@ private:
     void add_user_entry();
     void save_user_entry();
     void delete_user_entry();
+    void clear_candidate_preferences();
     void import_user_dict();
     void export_user_dict();
     void open_user_dict_dir();
@@ -158,22 +159,31 @@ private:
 
     // Dictionary panel
     HWND hDictStatus_ = nullptr;
+    HWND hDictResource_ = nullptr;
     HWND hDictKind_ = nullptr;
     HWND hDictQuery_ = nullptr;
     HWND hDictList_ = nullptr;
     HWND hDictText_ = nullptr;
     HWND hDictCode_ = nullptr;
+    HWND hDictTextLabel_ = nullptr;
+    HWND hDictCodeLabel_ = nullptr;
     HWND hDictUserPath_ = nullptr;
     HWND hDictAdd_ = nullptr;
     HWND hDictSave_ = nullptr;
     HWND hDictDelete_ = nullptr;
     HWND hDictClear_ = nullptr;
+    HWND hDictPreferenceClear_ = nullptr;
+    HWND hDictImport_ = nullptr;
+    HWND hDictExport_ = nullptr;
+    HWND hDictOpenDirectory_ = nullptr;
+    HWND hDictLearningNotice_ = nullptr;
     HWND hDictTooltip_ = nullptr;
     std::wstring dictPathTooltip_;
     std::wstring selectedDictText_;
     std::wstring selectedDictCode_;
     WPARAM dictQueryGeneration_ = 0;
     cxxime::UserDictKind current_user_dict_kind() const;
+    cxxime::LexiconResource current_lexicon_resource() const;
     std::string current_user_dict_path() const;
 
     // Preview

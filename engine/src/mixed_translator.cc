@@ -183,23 +183,15 @@ CandidatePage MixedTranslator::translate(const std::string& input, int page_inde
     return result;
 }
 
-void MixedTranslator::update_recent(const std::string& key, const Candidate& candidate) {
-    // Forward to the translator that produced this candidate
-    if (candidate.source == CandidateSource::kWubi)
-        wubi_translator_.update_recent(key, candidate);
-    else
-        pinyin_translator_.update_recent(key, candidate);
-}
-
-void MixedTranslator::clear_recent() {
-    pinyin_translator_.clear_recent();
-    wubi_translator_.clear_recent();
-}
-
 void MixedTranslator::clear_query_cache() { pinyin_translator_.clear_query_cache(); }
 
 void MixedTranslator::set_sentence_composition_enabled(bool enabled) {
     pinyin_translator_.set_sentence_composition_enabled(enabled);
+}
+
+void MixedTranslator::set_candidate_learning_enabled(bool enabled) {
+    pinyin_translator_.set_candidate_learning_enabled(enabled);
+    wubi_translator_.set_candidate_learning_enabled(enabled);
 }
 
 } // namespace cxxime

@@ -16,70 +16,16 @@ void WubiTranslator::reset_query_snapshot() {
     snapshot_code_.clear();
     snapshot_candidates_.clear();
     snapshot_user_dict_version_ = 0;
+    snapshot_candidate_preference_version_ = 0;
     snapshot_query_limit_ = 0;
     snapshot_exhausted_ = false;
 }
 
-void WubiTranslator::clear_recent() {
-    recent_cache_.clear();
-    reset_query_snapshot();
-}
-
-void WubiTranslator::update_recent(const std::string& key, const Candidate& candidate) {
-    // Only cache short codes (1-3 chars)
-    if (key.empty() || key.size() > 3)
+void WubiTranslator::set_candidate_learning_enabled(bool enabled) {
+    if (candidate_learning_enabled_ == enabled) {
         return;
-    if (!candidate.code.empty() && candidate.code != key)
-        return;
-
-    // Check if already exists — update sequence if so
-    for (auto& rc : recent_cache_) {
-        if (rc.key == key && rc.candidate.text == candidate.text) {
-            rc.sequence = ++recent_sequence_;
-            rc.candidate.frequency = candidate.frequency;
-            reset_query_snapshot();
-            return;
-        }
     }
-
-    // Enforce per-key limit: evict the oldest entry for this key if at limit
-    {
-        size_t count = 0;
-        size_t oldest_idx = SIZE_MAX;
-        uint64_t oldest_seq = UINT64_MAX;
-        for (size_t i = 0; i < recent_cache_.size(); ++i) {
-            if (recent_cache_[i].key == key) {
-                ++count;
-                if (recent_cache_[i].sequence < oldest_seq) {
-                    oldest_seq = recent_cache_[i].sequence;
-                    oldest_idx = i;
-                }
-            }
-        }
-        if (count >= kMaxRecentPerKey && oldest_idx != SIZE_MAX) {
-            recent_cache_.erase(recent_cache_.begin() + oldest_idx);
-        }
-    }
-
-    // Enforce total limit
-    if (recent_cache_.size() >= kMaxRecentKeys) {
-        // Evict oldest overall
-        size_t oldest_idx = 0;
-        uint64_t oldest_seq = recent_cache_[0].sequence;
-        for (size_t i = 1; i < recent_cache_.size(); ++i) {
-            if (recent_cache_[i].sequence < oldest_seq) {
-                oldest_seq = recent_cache_[i].sequence;
-                oldest_idx = i;
-            }
-        }
-        recent_cache_.erase(recent_cache_.begin() + oldest_idx);
-    }
-
-    RecentCandidate rc;
-    rc.key = key;
-    rc.candidate = candidate;
-    rc.sequence = ++recent_sequence_;
-    recent_cache_.push_back(std::move(rc));
+    candidate_learning_enabled_ = enabled;
     reset_query_snapshot();
 }
 
@@ -88,21 +34,11 @@ std::vector<Candidate> WubiTranslator::lookup_candidates(const std::string& code
                                                         const QueryBudget* budget) {
     std::vector<Candidate> results;
 
-    if (code.size() <= 3) {
-        for (auto& recent : recent_cache_) {
-            if (recent.key == code && candidate_text_fits(recent.candidate.text) &&
-                (int)results.size() < limit) {
-                if (std::none_of(results.begin(), results.end(), [&](const Candidate& candidate) {
-                    return candidate.text == recent.candidate.text;
-                })) {
-                    results.push_back(recent.candidate);
-                }
-            }
-        }
-    }
-
     auto dict_results =
         budget ? dict_->lookup(code, limit, *budget, trace) : dict_->lookup(code, limit);
+    if (candidate_learning_enabled_) {
+        dict_->apply_candidate_preferences(code, CandidateSource::kWubi, dict_results, limit);
+    }
     for (auto& candidate : dict_results) {
         if ((int)results.size() >= limit) {
             break;
@@ -134,10 +70,15 @@ CandidatePage WubiTranslator::translate(const std::string& code, int page_index,
     int offset = candidate_offset >= 0 ? candidate_offset : page_index * page_size;
     int required_count = offset + page_size + 1;
     uint64_t user_dict_version = dict_->user_dict_version();
-    if (snapshot_code_ != code || snapshot_user_dict_version_ != user_dict_version) {
+    uint64_t preference_version = candidate_learning_enabled_
+                                      ? dict_->candidate_preference_version()
+                                      : 0;
+    if (snapshot_code_ != code || snapshot_user_dict_version_ != user_dict_version ||
+        snapshot_candidate_preference_version_ != preference_version) {
         reset_query_snapshot();
         snapshot_code_ = code;
         snapshot_user_dict_version_ = user_dict_version;
+        snapshot_candidate_preference_version_ = preference_version;
     }
 
     while ((int)snapshot_candidates_.size() < required_count && !snapshot_exhausted_) {

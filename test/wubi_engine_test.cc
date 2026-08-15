@@ -897,34 +897,6 @@ TEST(WubiEngine, engine_wubi_candidate_source) {
     DeleteFileA(wubi_path.c_str());
 }
 
-TEST(WubiEngine, translator_recent_does_not_override_prefix_protection) {
-    std::string wubi_path = make_temp_path("test_wubi_recent_prefix.bin");
-    cxxime::Dict::create_test_dict(wubi_path, {
-        {"aaa", "工", 300},
-        {"aaaa", "自定义词", 10},
-    });
-
-    cxxime::Dict dict;
-    ASSERT_TRUE(dict.open(wubi_path));
-
-    cxxime::WubiTranslator translator;
-    translator.set_dict(&dict);
-
-    cxxime::Candidate long_word;
-    long_word.text = "自定义词";
-    long_word.code = "aaaa";
-    long_word.frequency = 999999;
-    long_word.source = cxxime::CandidateSource::kWubi;
-    translator.update_recent("aaa", long_word);
-
-    auto page = translator.translate("aaa", 0, 9);
-    ASSERT_GE(page.candidates.size(), 1u);
-    ASSERT_EQ(page.candidates[0].text, "工");
-
-    dict.close();
-    DeleteFileA(wubi_path.c_str());
-}
-
 TEST(WubiEngine, engine_wubi_auto_commit_disabled) {
     std::string pinyin_path = make_temp_path("test_wubi_nocommit_pinyin.bin");
     std::string wubi_path = make_temp_path("test_wubi_nocommit_wubi.bin");

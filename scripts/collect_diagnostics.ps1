@@ -13,6 +13,7 @@ param(
     [switch]$IncludeLogs,
     [switch]$IncludeUserConfig,
     [switch]$IncludeUserDict,
+    [switch]$IncludeCandidatePreferences,
     [switch]$NoZip
 )
 
@@ -312,9 +313,10 @@ $dataFiles = @(
 )
 $userFiles = @(
     "default.json",
-    "user.tsv",
     "user_pinyin.tsv",
-    "user_wubi.tsv"
+    "user_wubi.tsv",
+    "learning_pinyin.tsv",
+    "learning_wubi.tsv"
 )
 
 $report.program_files = @()
@@ -406,6 +408,7 @@ Optional:
 - Use -IncludeLogs to copy %USERPROFILE%\cxxime\logs. Trace logs may contain raw input codes.
 - Use -IncludeUserConfig to copy user configuration files.
 - Use -IncludeUserDict to copy user dictionary files. User dictionaries contain personal phrases.
+- Use -IncludeCandidatePreferences to copy candidate preference files. These files reflect input habits.
 "@
 $readme | Out-File -Encoding UTF8 -FilePath (Join-Path $root "README.txt")
 
@@ -424,9 +427,14 @@ if ($IncludeUserConfig) {
 
 if ($IncludeUserDict) {
     $dst = Join-Path $root "user-dict"
-    Copy-IfExists (Join-Path $userDir "user.tsv") $dst
     Copy-IfExists (Join-Path $userDir "user_pinyin.tsv") $dst
     Copy-IfExists (Join-Path $userDir "user_wubi.tsv") $dst
+}
+
+if ($IncludeCandidatePreferences) {
+    $dst = Join-Path $root "candidate-preferences"
+    Copy-IfExists (Join-Path $userDir "learning_pinyin.tsv") $dst
+    Copy-IfExists (Join-Path $userDir "learning_wubi.tsv") $dst
 }
 
 if (-not $NoZip) {

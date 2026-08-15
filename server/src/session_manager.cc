@@ -32,6 +32,12 @@ std::string user_dict_path_for(cxxime::UserDictKind kind) {
                                   : "user_pinyin.tsv");
 }
 
+std::string candidate_preference_path_for(cxxime::UserDictKind kind) {
+    return cxxime::user_data_path(kind == cxxime::UserDictKind::WUBI
+                                  ? "learning_wubi.tsv"
+                                  : "learning_pinyin.tsv");
+}
+
 std::shared_ptr<cxxime::Dict>& dict_slot_for(SharedResources& shared,
                                              cxxime::UserDictKind kind) {
     return kind == cxxime::UserDictKind::WUBI ? shared.wubi_dict : shared.dict;
@@ -122,6 +128,11 @@ bool load_dictionary_resources(const std::string& manifest_path, DictionaryResou
         CXXIME_LOG(L"SharedResources: dict.open FAILED");
         return false;
     }
+    if (!loaded_dict->load_candidate_preferences(
+            candidate_preference_path_for(cxxime::UserDictKind::PINYIN))) {
+        CXXIME_LOG(L"SharedResources: pinyin candidate preferences load FAILED");
+        return false;
+    }
 
     auto loaded_spellings = std::make_shared<cxxime::SpellingsIndex>();
     std::shared_ptr<cxxime::Syllabifier> loaded_syllabifier;
@@ -138,6 +149,11 @@ bool load_dictionary_resources(const std::string& manifest_path, DictionaryResou
             wubi_dict_path, user_dict_path_for(cxxime::UserDictKind::WUBI),
             wubi_prefix_index_path)) {
         CXXIME_LOG(L"SharedResources: required Wubi resources load FAILED");
+        return false;
+    }
+    if (!loaded_wubi_dict->load_candidate_preferences(
+            candidate_preference_path_for(cxxime::UserDictKind::WUBI))) {
+        CXXIME_LOG(L"SharedResources: Wubi candidate preferences load FAILED");
         return false;
     }
     CXXIME_LOG(L"SharedResources: wubi dict loaded");
@@ -268,10 +284,13 @@ bool SharedResources::reload_dictionaries() {
     if (current_manifest_path.empty())
         return false;
 
-    if (old_dict)
-        old_dict->save_user_dict();
-    if (old_wubi_dict)
-        old_wubi_dict->save_user_dict();
+    if ((old_dict && (!old_dict->save_user_dict() ||
+                      !old_dict->save_candidate_preferences())) ||
+        (old_wubi_dict && (!old_wubi_dict->save_user_dict() ||
+                           !old_wubi_dict->save_candidate_preferences()))) {
+        CXXIME_LOG(L"%s", L"SharedResources: user data flush before reload FAILED");
+        return false;
+    }
 
     DictionaryResources dictionaries;
     if (!load_dictionary_resources(current_manifest_path, dictionaries))
@@ -334,10 +353,10 @@ void SessionManager::align_session_to_global(SessionEntry& entry) {
     entry.engine->ascii_composer().set_ascii_mode(!entry.base_chinese_mode);
     entry.engine->ascii_composer().sync_caps_lock(state.caps_lock,
                                                   entry.engine->context());
-entry.ime_status.set_chinese_mode(state.caps_lock ? false : entry.base_chinese_mode);
-entry.ime_status.set_caps_lock(state.caps_lock);
-entry.ime_status.set_full_shape(entry.full_shape);
-entry.ime_status.set_chinese_punct(entry.chinese_punct);
+    entry.ime_status.set_chinese_mode(state.caps_lock ? false : entry.base_chinese_mode);
+    entry.ime_status.set_caps_lock(state.caps_lock);
+    entry.ime_status.set_full_shape(entry.full_shape);
+    entry.ime_status.set_chinese_punct(entry.chinese_punct);
     entry.ime_status.input_mode = entry.engine->mode();
     entry.ime_status.revision = same_visible_status(previous, entry.ime_status)
         ? previous.revision
@@ -349,14 +368,15 @@ entry.ime_status.set_chinese_punct(entry.chinese_punct);
 }
 
 uint32_t SessionManager::create_session() {
+    std::lock_guard<std::mutex> reload_lock(reload_mutex_);
     auto engine = std::make_unique<cxxime::Engine>();
     auto resources = shared_.snapshot();
     if (!resources.config || !resources.dict || !resources.spellings)
         return 0;
 
     if (!engine->initialize(*resources.dict, *resources.spellings,
-            resources.syllabifier.get(), *resources.config,
-            resources.symbol_table.get()))
+                            resources.syllabifier.get(), *resources.config,
+                            resources.symbol_table.get()))
         return 0;
     if (resources.wubi_dict && resources.wubi_dict->is_open()) {
         engine->set_wubi_dict(resources.wubi_dict.get());
@@ -379,6 +399,20 @@ uint32_t SessionManager::create_session() {
 }
 
 void SessionManager::destroy_session(uint32_t id) {
+    std::lock_guard<std::mutex> reload_lock(reload_mutex_);
+    std::shared_ptr<SessionEntry> entry;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto found = sessions_.find(id);
+        if (found == sessions_.end()) {
+            return;
+        }
+        entry = found->second;
+    }
+    {
+        std::lock_guard<std::mutex> lock(entry->mutex);
+        entry->closing = true;
+    }
     std::lock_guard<std::mutex> lock(mutex_);
     sessions_.erase(id);
 }
@@ -414,6 +448,8 @@ size_t SessionManager::cleanup_idle_sessions(uint32_t timeout_ms) {
         auto idle = std::chrono::duration_cast<std::chrono::milliseconds>(
             now - it->second->last_activity).count();
         if (static_cast<uint32_t>(idle) > timeout_ms) {
+            std::lock_guard<std::mutex> entry_lock(it->second->mutex);
+            it->second->closing = true;
             it = sessions_.erase(it);
             ++count;
         } else {
@@ -436,8 +472,8 @@ static void apply_resource_snapshot(SessionEntry& entry, const SharedResourceSna
          resources.wubi_dict.get() != entry.resources.wubi_dict.get())) {
         auto old_mode = entry.ime_status.input_mode;
         entry.engine->rebind_shared_resources(*resources.dict, *resources.spellings,
-            resources.syllabifier.get(),
-            resources.wubi_dict ? resources.wubi_dict.get() : nullptr);
+                                              resources.syllabifier.get(),
+                                              resources.wubi_dict ? resources.wubi_dict.get() : nullptr);
         entry.resources.dict = resources.dict;
         entry.resources.spellings = resources.spellings;
         entry.resources.syllabifier = resources.syllabifier;
@@ -453,21 +489,20 @@ static void apply_resource_snapshot(SessionEntry& entry, const SharedResourceSna
 }
 
 bool SharedResources::reload_user_dict(cxxime::UserDictKind kind) {
-    std::lock_guard<std::mutex> lock(mutex);
-    auto dict = dict_slot_for(*this, kind);
+    auto dict = dict_for_kind(kind);
     return dict && dict->load_user_dict(user_dict_path_for(kind));
 }
 
 cxxime::IPCStatus SharedResources::add_user_entry(cxxime::UserDictKind kind,
-        const std::string& text,
-        const std::string& code) {
+                                                  const std::string& text,
+                                                  const std::string& code) {
     if (text.empty() || code.empty())
         return cxxime::IPCStatus::ERR_UNKNOWN_COMMAND;
-    std::lock_guard<std::mutex> lock(mutex);
-    auto dict = dict_slot_for(*this, kind);
+    auto dict = dict_for_kind(kind);
     if (!dict || !dict->is_open())
         return cxxime::IPCStatus::ERR_ENGINE_NOT_INITIALIZED;
-    dict->update_frequency(text, code);
+    if (!dict->add_user_entry(text, code))
+        return cxxime::IPCStatus::ERR_UNKNOWN_COMMAND;
     if (!dict->save_user_dict())
         return cxxime::IPCStatus::ERR_UNKNOWN_COMMAND;
     return cxxime::IPCStatus::OK;
@@ -475,26 +510,71 @@ cxxime::IPCStatus SharedResources::add_user_entry(cxxime::UserDictKind kind,
 
 cxxime::UserDictQueryResult SharedResources::query_user_entries(
     const std::string& query, cxxime::UserDictKind kind, size_t offset, size_t limit) {
-    std::lock_guard<std::mutex> lock(mutex);
-    auto dict = dict_slot_for(*this, kind);
+    return query_lexicon_entries(cxxime::LexiconResource::kUserLexicon, query, kind, offset,
+                                 limit);
+}
+
+cxxime::UserDictQueryResult SharedResources::query_lexicon_entries(
+    cxxime::LexiconResource resource, const std::string& query, cxxime::UserDictKind kind,
+    size_t offset, size_t limit) {
+    auto dict = dict_for_kind(kind);
     cxxime::UserDictQueryResult result;
     result.offset = offset;
     if (dict && dict->is_open()) {
-        result.dictionary_total = dict->user_entry_count();
-        result.entries = dict->query_user_entries(query, offset, limit, &result.match_total);
+        if (resource == cxxime::LexiconResource::kCandidatePreference) {
+            result.resource_total = dict->candidate_preference_count();
+            result.entries =
+                dict->query_candidate_preferences(query, offset, limit, &result.match_total);
+        } else {
+            result.resource_total = dict->user_entry_count();
+            result.entries = dict->query_user_entries(query, offset, limit, &result.match_total);
+        }
         result.has_more = offset < result.match_total &&
                           result.entries.size() < result.match_total - offset;
     }
     return result;
 }
 
+cxxime::IPCStatus SharedResources::delete_candidate_preference(
+    cxxime::UserDictKind kind, const std::string& text, const std::string& code) {
+    if (text.empty() || code.empty())
+        return cxxime::IPCStatus::ERR_UNKNOWN_COMMAND;
+    auto dict = dict_for_kind(kind);
+    if (!dict || !dict->is_open())
+        return cxxime::IPCStatus::ERR_ENGINE_NOT_INITIALIZED;
+    if (!dict->delete_candidate_preference(text, code))
+        return cxxime::IPCStatus::ERR_UNKNOWN_COMMAND;
+    return dict->save_candidate_preferences()
+        ? cxxime::IPCStatus::OK
+        : cxxime::IPCStatus::ERR_UNKNOWN_COMMAND;
+}
+
+cxxime::IPCStatus SharedResources::clear_candidate_preferences(cxxime::UserDictKind kind) {
+    auto dict = dict_for_kind(kind);
+    if (!dict || !dict->is_open())
+        return cxxime::IPCStatus::ERR_ENGINE_NOT_INITIALIZED;
+    if (!dict->clear_candidate_preferences())
+        return cxxime::IPCStatus::ERR_UNKNOWN_COMMAND;
+    return dict->save_candidate_preferences()
+        ? cxxime::IPCStatus::OK
+        : cxxime::IPCStatus::ERR_UNKNOWN_COMMAND;
+}
+
+cxxime::IPCStatus SharedResources::save_candidate_preferences(cxxime::UserDictKind kind) {
+    auto dict = dict_for_kind(kind);
+    if (!dict || !dict->is_open())
+        return cxxime::IPCStatus::ERR_ENGINE_NOT_INITIALIZED;
+    return dict->save_candidate_preferences()
+        ? cxxime::IPCStatus::OK
+        : cxxime::IPCStatus::ERR_UNKNOWN_COMMAND;
+}
+
 cxxime::IPCStatus SharedResources::delete_user_entry(cxxime::UserDictKind kind,
-        const std::string& text,
-        const std::string& code) {
+                                                     const std::string& text,
+                                                     const std::string& code) {
     if (text.empty())
         return cxxime::IPCStatus::ERR_UNKNOWN_COMMAND;
-    std::lock_guard<std::mutex> lock(mutex);
-    auto dict = dict_slot_for(*this, kind);
+    auto dict = dict_for_kind(kind);
     if (!dict || !dict->is_open())
         return cxxime::IPCStatus::ERR_ENGINE_NOT_INITIALIZED;
     if (!dict->delete_user_entry(text, code))
@@ -505,14 +585,13 @@ cxxime::IPCStatus SharedResources::delete_user_entry(cxxime::UserDictKind kind,
 }
 
 cxxime::IPCStatus SharedResources::replace_user_entry(cxxime::UserDictKind kind,
-        const std::string& old_text,
-        const std::string& old_code,
-        const std::string& new_text,
-        const std::string& new_code) {
+                                                      const std::string& old_text,
+                                                      const std::string& old_code,
+                                                      const std::string& new_text,
+                                                      const std::string& new_code) {
     if (old_text.empty() || new_text.empty() || new_code.empty())
         return cxxime::IPCStatus::ERR_UNKNOWN_COMMAND;
-    std::lock_guard<std::mutex> lock(mutex);
-    auto dict = dict_slot_for(*this, kind);
+    auto dict = dict_for_kind(kind);
     if (!dict || !dict->is_open())
         return cxxime::IPCStatus::ERR_ENGINE_NOT_INITIALIZED;
     if (!dict->replace_user_entry(old_text, old_code, new_text, new_code))
@@ -523,13 +602,30 @@ cxxime::IPCStatus SharedResources::replace_user_entry(cxxime::UserDictKind kind,
 }
 
 cxxime::IPCStatus SharedResources::save_user_dict(cxxime::UserDictKind kind) {
-    std::lock_guard<std::mutex> lock(mutex);
-    auto dict = dict_slot_for(*this, kind);
+    auto dict = dict_for_kind(kind);
     if (!dict || !dict->is_open())
         return cxxime::IPCStatus::ERR_ENGINE_NOT_INITIALIZED;
     if (!dict->save_user_dict())
         return cxxime::IPCStatus::ERR_UNKNOWN_COMMAND;
     return cxxime::IPCStatus::OK;
+}
+
+bool SharedResources::save_candidate_preferences(bool force) {
+    std::shared_ptr<cxxime::Dict> pinyin;
+    std::shared_ptr<cxxime::Dict> wubi;
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        pinyin = dict;
+        wubi = wubi_dict;
+    }
+    constexpr auto kSaveDelay = std::chrono::milliseconds(1500);
+    const bool pinyin_saved = !pinyin || (force ? pinyin->save_candidate_preferences()
+                                                : pinyin->save_candidate_preferences_if_due(
+                                                      kSaveDelay));
+    const bool wubi_saved = !wubi || (force ? wubi->save_candidate_preferences()
+                                            : wubi->save_candidate_preferences_if_due(
+                                                  kSaveDelay));
+    return pinyin_saved && wubi_saved;
 }
 
 void SessionManager::apply_config(const std::shared_ptr<const cxxime::Config>& config) {
@@ -539,7 +635,7 @@ void SessionManager::apply_config(const std::shared_ptr<const cxxime::Config>& c
     std::lock_guard<std::mutex> reload_lock(reload_mutex_);
     auto previous_resources = shared_.snapshot();
     bool input_mode_changed = !previous_resources.config ||
-        previous_resources.config->input_mode != config->input_mode;
+                              previous_resources.config->input_mode != config->input_mode;
     shared_.replace_config(config);
     cxxime::set_diagnostics_config(config->diagnostics);
     cxxime::QueryTrace::set_enabled(config->diagnostics.trace_mode !=
@@ -727,6 +823,11 @@ ProcessKeyResult SessionManager::process_key(uint32_t id, const cxxime::KeyEvent
         entry = it->second;
     }
     std::lock_guard<std::mutex> lock(entry->mutex);
+    if (entry->closing) {
+        ProcessKeyResult err;
+        err.status = cxxime::IPCStatus::ERR_INVALID_SESSION;
+        return err;
+    }
     auto& s = *entry;
     auto& engine = *s.engine;
     auto resources = shared_.snapshot();
@@ -854,6 +955,11 @@ ProcessKeyResult SessionManager::select_candidate(uint32_t id, int index) {
         entry = it->second;
     }
     std::lock_guard<std::mutex> lock(entry->mutex);
+    if (entry->closing) {
+        ProcessKeyResult err;
+        err.status = cxxime::IPCStatus::ERR_INVALID_SESSION;
+        return err;
+    }
     auto& s = *entry;
     align_session_to_global(s);
     auto opts = cxxime::OutputOptions::from(s.ime_status);
@@ -922,17 +1028,27 @@ cxxime::IPCStatus SessionManager::focus_out(uint32_t id) {
 cxxime::IPCStatus SessionManager::add_user_entry(cxxime::UserDictKind kind,
                                                  const std::string& text,
                                                  const std::string& code) {
+    std::lock_guard<std::mutex> reload_lock(reload_mutex_);
     return shared_.add_user_entry(kind, text, code);
 }
 
 cxxime::UserDictQueryResult SessionManager::query_user_entries(
     const std::string& query, cxxime::UserDictKind kind, size_t offset, size_t limit) {
+    std::lock_guard<std::mutex> reload_lock(reload_mutex_);
     return shared_.query_user_entries(query, kind, offset, limit);
+}
+
+cxxime::UserDictQueryResult SessionManager::query_lexicon_entries(
+    cxxime::LexiconResource resource, const std::string& query, cxxime::UserDictKind kind,
+    size_t offset, size_t limit) {
+    std::lock_guard<std::mutex> reload_lock(reload_mutex_);
+    return shared_.query_lexicon_entries(resource, query, kind, offset, limit);
 }
 
 cxxime::IPCStatus SessionManager::delete_user_entry(cxxime::UserDictKind kind,
                                                     const std::string& text,
                                                     const std::string& code) {
+    std::lock_guard<std::mutex> reload_lock(reload_mutex_);
     return shared_.delete_user_entry(kind, text, code);
 }
 
@@ -941,19 +1057,54 @@ cxxime::IPCStatus SessionManager::replace_user_entry(cxxime::UserDictKind kind,
                                                      const std::string& old_code,
                                                      const std::string& new_text,
                                                      const std::string& new_code) {
+    std::lock_guard<std::mutex> reload_lock(reload_mutex_);
     return shared_.replace_user_entry(kind, old_text, old_code, new_text, new_code);
 }
 
 cxxime::IPCStatus SessionManager::reload_user_dict(cxxime::UserDictKind kind) {
+    std::lock_guard<std::mutex> reload_lock(reload_mutex_);
     return shared_.reload_user_dict(kind)
         ? cxxime::IPCStatus::OK
         : cxxime::IPCStatus::ERR_ENGINE_NOT_INITIALIZED;
 }
 
 cxxime::IPCStatus SessionManager::save_user_dict(cxxime::UserDictKind kind) {
+    std::lock_guard<std::mutex> reload_lock(reload_mutex_);
     return shared_.save_user_dict(kind);
 }
 
+cxxime::IPCStatus SessionManager::delete_candidate_preference(
+    cxxime::UserDictKind kind, const std::string& text, const std::string& code) {
+    std::lock_guard<std::mutex> reload_lock(reload_mutex_);
+    return shared_.delete_candidate_preference(kind, text, code);
+}
+
+cxxime::IPCStatus SessionManager::clear_candidate_preferences(cxxime::UserDictKind kind) {
+    std::lock_guard<std::mutex> reload_lock(reload_mutex_);
+    return shared_.clear_candidate_preferences(kind);
+}
+
+cxxime::IPCStatus SessionManager::save_candidate_preferences(cxxime::UserDictKind kind) {
+    std::lock_guard<std::mutex> reload_lock(reload_mutex_);
+    return shared_.save_candidate_preferences(kind);
+}
+
+bool SessionManager::save_candidate_preferences(bool force) {
+    std::lock_guard<std::mutex> reload_lock(reload_mutex_);
+    return shared_.save_candidate_preferences(force);
+}
+
+bool SessionManager::freeze_and_save_candidate_preferences() {
+    std::lock_guard<std::mutex> reload_lock(reload_mutex_);
+    auto resources = shared_.snapshot();
+    if (resources.dict) {
+        resources.dict->freeze_candidate_preferences();
+    }
+    if (resources.wubi_dict) {
+        resources.wubi_dict->freeze_candidate_preferences();
+    }
+    return shared_.save_candidate_preferences(true);
+}
 void SessionManager::persist_input_mode(cxxime::InputMode mode) {
     if (config_patch_handler_) {
         nlohmann::json patch;

@@ -111,20 +111,29 @@ TEST(Dict, reverse_lookup) {
     DeleteFileA(path.c_str());
 }
 
-TEST(Dict, user_dict_frequency) {
+TEST(Dict, candidate_preference_frequency) {
     std::string path = make_temp_path("test_dict_freq.bin");
     cxxime::Dict::create_test_dict(path, {
         {"de", "的", 1000},
+        {"de", "得", 100},
     });
 
     cxxime::Dict dict;
     ASSERT_TRUE(dict.open_dict(path));
 
-    dict.update_frequency("的", "de");
-    dict.update_frequency("的", "de");
+    cxxime::Candidate candidate;
+    candidate.text = "得";
+    candidate.code = "de";
+    candidate.frequency = 100;
+    candidate.source = cxxime::CandidateSource::kPinyin;
+    ASSERT_TRUE(dict.record_candidate_preference(candidate, "de"));
+    ASSERT_TRUE(dict.record_candidate_preference(candidate, "de"));
 
     auto results = dict.lookup("de", 10);
-    ASSERT_GE(results.size(), 1u);
+    dict.apply_candidate_preferences("de", cxxime::CandidateSource::kPinyin, results, 10);
+    ASSERT_GE(results.size(), 2u);
+    ASSERT_EQ(results[0].text, "得");
+    ASSERT_EQ(dict.candidate_preference_count(), static_cast<size_t>(1));
 
     dict.close();
     DeleteFileA(path.c_str());
@@ -417,8 +426,8 @@ TEST(Dict, user_dict_exact_index) {
     ASSERT_TRUE(dict.open_dict(path));
 
     // Insert user words
-    dict.update_frequency("输入法", "shurufa", "shu:ru:fa");
-    dict.update_frequency("社会", "shehui", "she:hui");
+    ASSERT_TRUE(dict.add_user_entry("输入法", "shurufa", "shu:ru:fa"));
+    ASSERT_TRUE(dict.add_user_entry("社会", "shehui", "she:hui"));
 
     cxxime::QueryTrace trace = {};
     std::vector<std::string> syllables = {"shu", "ru", "fa"};
@@ -443,9 +452,9 @@ TEST(Dict, user_dict_prefix_index) {
     cxxime::Dict dict;
     ASSERT_TRUE(dict.open_dict(path));
 
-    dict.update_frequency("输入法", "shurufa");
-    dict.update_frequency("社会", "shehui");
-    dict.update_frequency("数据", "shuju");
+    ASSERT_TRUE(dict.add_user_entry("输入法", "shurufa"));
+    ASSERT_TRUE(dict.add_user_entry("社会", "shehui"));
+    ASSERT_TRUE(dict.add_user_entry("数据", "shuju"));
 
     cxxime::QueryTrace trace = {};
     auto results = dict.lookup("shu", 10, &trace);
@@ -471,9 +480,9 @@ TEST(Dict, user_dict_count_indexed) {
     cxxime::Dict dict;
     ASSERT_TRUE(dict.open_dict(path));
 
-    dict.update_frequency("输入法", "shurufa");
-    dict.update_frequency("社会", "shehui");
-    dict.update_frequency("数据", "shuju");
+    ASSERT_TRUE(dict.add_user_entry("输入法", "shurufa"));
+    ASSERT_TRUE(dict.add_user_entry("社会", "shehui"));
+    ASSERT_TRUE(dict.add_user_entry("数据", "shuju"));
 
     cxxime::QueryTrace trace = {};
     int cnt = dict.count("shu", &trace);
@@ -487,14 +496,14 @@ TEST(Dict, user_dict_count_indexed) {
     DeleteFileA(path.c_str());
 }
 
-TEST(Dict, user_dict_update_frequency_new_word) {
+TEST(Dict, user_dict_add_new_word) {
     std::string path = make_temp_path("test_dict_uf_new.bin");
     cxxime::Dict::create_test_dict(path, {{"de", "的", 1000}});
 
     cxxime::Dict dict;
     ASSERT_TRUE(dict.open_dict(path));
 
-    dict.update_frequency("输入法", "shurufa", "shu:ru:fa");
+    ASSERT_TRUE(dict.add_user_entry("输入法", "shurufa", "shu:ru:fa"));
 
     // Should be findable via exact index
     cxxime::QueryTrace trace = {};
@@ -522,15 +531,14 @@ TEST(Dict, user_dict_update_frequency_new_word) {
     DeleteFileA(path.c_str());
 }
 
-TEST(Dict, user_dict_update_frequency_code_change) {
+TEST(Dict, user_dict_same_text_keeps_distinct_codes) {
     std::string path = make_temp_path("test_dict_uf_chg.bin");
     cxxime::Dict::create_test_dict(path, {{"de", "的", 1000}});
 
     cxxime::Dict dict;
     ASSERT_TRUE(dict.open_dict(path));
 
-    // Insert with code "abc"
-    dict.update_frequency("测试", "abc");
+    ASSERT_TRUE(dict.add_user_entry("测试", "abc"));
     auto r1 = dict.lookup("abc", 10);
     bool found_abc = false;
     for (auto& c : r1) {
@@ -538,8 +546,7 @@ TEST(Dict, user_dict_update_frequency_code_change) {
     }
     ASSERT_TRUE(found_abc);
 
-    // Change code to "xyz"
-    dict.update_frequency("测试", "xyz");
+    ASSERT_TRUE(dict.add_user_entry("测试", "xyz"));
     auto r2 = dict.lookup("xyz", 10);
     bool found_xyz = false;
     for (auto& c : r2) {
@@ -547,13 +554,18 @@ TEST(Dict, user_dict_update_frequency_code_change) {
     }
     ASSERT_TRUE(found_xyz);
 
-    // Old code should no longer find it
+    // Adding another code for the same text must not overwrite the first pair.
     auto r3 = dict.lookup("abc", 10);
     bool still_abc = false;
     for (auto& c : r3) {
         if (c.text == "测试") still_abc = true;
     }
-    ASSERT_TRUE(!still_abc);
+    ASSERT_TRUE(still_abc);
+    ASSERT_EQ(dict.user_entry_count(), static_cast<size_t>(2));
+
+    ASSERT_TRUE(dict.delete_user_entry("测试", "abc"));
+    ASSERT_TRUE(dict.lookup("abc", 10).empty());
+    ASSERT_TRUE(!dict.lookup("xyz", 10).empty());
 
     dict.close();
     DeleteFileA(path.c_str());
@@ -567,10 +579,10 @@ TEST(Dict, user_dict_management_query_replace_delete) {
     cxxime::Dict dict;
     ASSERT_TRUE(dict.open(path, user_path));
 
-    dict.update_frequency("hello", "nihao");
-    dict.update_frequency("hello", "nihao");
-    dict.update_frequency("alt", "nihao");
-    dict.update_frequency("input", "shurufa");
+    ASSERT_TRUE(dict.add_user_entry("hello", "nihao"));
+    ASSERT_TRUE(!dict.add_user_entry("hello", "nihao"));
+    ASSERT_TRUE(dict.add_user_entry("alt", "nihao"));
+    ASSERT_TRUE(dict.add_user_entry("input", "shurufa"));
     ASSERT_EQ(dict.user_entry_count(), static_cast<size_t>(3));
 
     size_t match_total = 0;
@@ -611,7 +623,7 @@ TEST(Dict, user_dict_scan_count_bounded) {
     for (int i = 0; i < 100; ++i) {
         char code[16];
         snprintf(code, sizeof(code), "abc%03d", i);
-        dict.update_frequency("test", code);
+        ASSERT_TRUE(dict.add_user_entry("test", code));
     }
 
     // Query for "abc050" — should scan 1 entry, not 100
@@ -632,9 +644,9 @@ TEST(Dict, user_dict_max_user_scan_truncated) {
     ASSERT_TRUE(dict.open_dict(path));
 
     // Insert several user words with same prefix
-    dict.update_frequency("a", "abc");
-    dict.update_frequency("b", "abd");
-    dict.update_frequency("c", "abe");
+    ASSERT_TRUE(dict.add_user_entry("a", "abc"));
+    ASSERT_TRUE(dict.add_user_entry("b", "abd"));
+    ASSERT_TRUE(dict.add_user_entry("c", "abe"));
 
     // Query with tight budget
     cxxime::QueryBudget budget;
@@ -657,7 +669,7 @@ TEST(Dict, user_dict_deadline_exceeded) {
     cxxime::Dict dict;
     ASSERT_TRUE(dict.open_dict(path));
 
-    dict.update_frequency("输入法", "shurufa", "shu:ru:fa");
+ASSERT_TRUE(dict.add_user_entry("输入法", "shurufa", "shu:ru:fa"));
 
     // Create a budget with an already-expired deadline
     cxxime::QueryBudget budget;
@@ -686,7 +698,7 @@ TEST(Dict, user_dict_mixed_index) {
     ASSERT_TRUE(dict.open_dict(path));
 
     // Insert user word with syllables — generates abbr "srf" and mixed "shurf"
-    dict.update_frequency("输入法", "shurufa", "shu:ru:fa");
+    ASSERT_TRUE(dict.add_user_entry("输入法", "shurufa", "shu:ru:fa"));
 
     // Query via abbreviation "srf"
     cxxime::QueryBudget budget;
@@ -717,7 +729,7 @@ TEST(Dict, user_dict_mixed_index) {
     }
     ASSERT_TRUE(found_enhanced);
 
-    dict.update_frequency("输入法测试", "shurufaceshi", "shu:ru:fa:ce:shi");
+    ASSERT_TRUE(dict.add_user_entry("输入法测试", "shurufaceshi", "shu:ru:fa:ce:shi"));
     cxxime::UserLookupStats stats4;
     auto r4 = dict.lookup_user_indexed("shurufac", 10, budget, &trace, &stats4);
     bool found_long_prefix = false;
@@ -732,24 +744,22 @@ TEST(Dict, user_dict_mixed_index) {
 
 TEST(Dict, user_dict_high_freq_in_scan_budget) {
     std::string path = make_temp_path("test_dict_hf.bin");
+    std::string user_path = make_temp_path("test_dict_hf.tsv");
     cxxime::Dict::create_test_dict(path, {{"de", "的", 1000}});
 
     cxxime::Dict dict;
     ASSERT_TRUE(dict.open_dict(path));
 
-    // Insert 20 low-frequency user words with same prefix "abc"
+    FILE* file = fopen(user_path.c_str(), "w");
+    ASSERT_TRUE(file != nullptr);
     for (int i = 0; i < 20; ++i) {
         char text[16];
         snprintf(text, sizeof(text), "word%02d", i);
-        dict.update_frequency(text, "abc");
+        fprintf(file, "%s\tabc\t1\n", text);
     }
-
-    // Insert a high-frequency word with same prefix "abc"
-    // It gets frequency=1 initially, then we boost it
-    dict.update_frequency("popular", "abc");
-    for (int i = 0; i < 100; ++i) {
-        dict.update_frequency("popular", "abc");
-    }
+    fprintf(file, "popular\tabc\t101\n");
+    fclose(file);
+    ASSERT_TRUE(dict.load_user_dict(user_path));
 
     // Query with tight scan budget — should still find "popular"
     cxxime::QueryBudget budget;
@@ -766,6 +776,7 @@ TEST(Dict, user_dict_high_freq_in_scan_budget) {
 
     dict.close();
     DeleteFileA(path.c_str());
+    DeleteFileA(user_path.c_str());
 }
 
 TEST(Dict, user_dict_stress_10k) {

@@ -61,12 +61,16 @@ bool handle_user_dict_control_request(SessionManager& session_manager,
     result.operation = request.operation;
     switch (request.operation) {
         case cxxime::UserDictOperation::kQuery:
-            result.query = session_manager.query_user_entries(request.query, request.kind,
-                                                              request.offset, request.limit);
+            result.query = session_manager.query_lexicon_entries(
+                request.resource, request.query, request.kind, request.offset, request.limit);
             result.succeeded = true;
             result.error_code = ERROR_SUCCESS;
             break;
         case cxxime::UserDictOperation::kAdd:
+            if (request.resource != cxxime::LexiconResource::kUserLexicon) {
+                result.error_code = ERROR_NOT_SUPPORTED;
+                break;
+            }
             result.error_code = validate_user_entry(request.text, request.code);
             if (result.error_code == ERROR_SUCCESS) {
                 apply_status(session_manager.add_user_entry(request.kind, request.text, request.code),
@@ -74,6 +78,10 @@ bool handle_user_dict_control_request(SessionManager& session_manager,
             }
             break;
         case cxxime::UserDictOperation::kReplace:
+            if (request.resource != cxxime::LexiconResource::kUserLexicon) {
+                result.error_code = ERROR_NOT_SUPPORTED;
+                break;
+            }
             result.error_code = validate_user_entry(request.text, request.code);
             if (result.error_code == ERROR_SUCCESS) {
                 apply_status(session_manager.replace_user_entry(request.kind, request.old_text,
@@ -83,14 +91,36 @@ bool handle_user_dict_control_request(SessionManager& session_manager,
             }
             break;
         case cxxime::UserDictOperation::kDelete:
-            apply_status(session_manager.delete_user_entry(request.kind, request.text, request.code),
-                         &result);
+            if (request.resource == cxxime::LexiconResource::kCandidatePreference) {
+                apply_status(session_manager.delete_candidate_preference(
+                                 request.kind, request.text, request.code),
+                             &result);
+            } else {
+                apply_status(session_manager.delete_user_entry(request.kind, request.text,
+                                                               request.code),
+                             &result);
+            }
             break;
         case cxxime::UserDictOperation::kReload:
+            if (request.resource != cxxime::LexiconResource::kUserLexicon) {
+                result.error_code = ERROR_NOT_SUPPORTED;
+                break;
+            }
             apply_status(session_manager.reload_user_dict(request.kind), &result);
             break;
         case cxxime::UserDictOperation::kSave:
-            apply_status(session_manager.save_user_dict(request.kind), &result);
+            if (request.resource == cxxime::LexiconResource::kCandidatePreference) {
+                apply_status(session_manager.save_candidate_preferences(request.kind), &result);
+            } else {
+                apply_status(session_manager.save_user_dict(request.kind), &result);
+            }
+            break;
+        case cxxime::UserDictOperation::kClear:
+            if (request.resource != cxxime::LexiconResource::kCandidatePreference) {
+                result.error_code = ERROR_NOT_SUPPORTED;
+                break;
+            }
+            apply_status(session_manager.clear_candidate_preferences(request.kind), &result);
             break;
         default:
             return false;
