@@ -64,7 +64,7 @@ python scripts\package.py --generator "Visual Studio 17 2022" --platform x64
 再恢复未提交的安装或清理已经提交的备份。恢复未完成时不会继续覆盖文件。
 
 覆盖安装会沿用注册表记录的安装目录。安装程序不会覆盖
-`%USERPROFILE%\cxxime\default.json` 和用户词典。
+`%USERPROFILE%\cxxime\default.json` 和用户数据（用户词库与选词偏好）。
 
 如果有应用正在使用 CxxIME，安装器会列出 Restart Manager 检测到的进程，要求关闭后
 重试。仅切换到其他输入法不能保证 TSF DLL 已从宿主进程卸载；Windows 系统进程仍占用文件时，
@@ -81,7 +81,7 @@ python scripts\package.py --generator "Visual Studio 17 2022" --platform x64
 删除系统 IMM 模块 → 暂存并删除程序文件 → 移除自启动和注册表。
 
 默认卸载只删除程序文件、开始菜单快捷方式、TSF 注册项、自启动项和卸载项。用户目录
-`%USERPROFILE%\cxxime\` 下的配置和用户词典会保留，便于重新安装或升级后继续使用。
+`%USERPROFILE%\cxxime\` 下的配置、用户词库与选词偏好会保留，便于重新安装或升级后继续使用。
 
 卸载器只删除安装器拥有的文件；安装目录中无法识别的文件会保留。删除程序文件成功前
 控制面板卸载项和 `uninstall.exe` 保持可用。卸载中断后可再次运行卸载器继续处理；删除程序文件
@@ -105,14 +105,14 @@ python scripts\package.py --generator "Visual Studio 17 2022" --platform x64
 - CxxIME注册表卸载项、TIP注册项、键盘预加载状态
 - `cxxime-server.exe`、`cxxime-settings.exe` 和加载 `cxxime tsf.dll` 的进程信息
 
-默认不会复制日志、用户配置或用户词典。需要进一步排查时,可在安装目录运行:
+默认不会复制日志、用户配置或用户数据（词库与偏好）。需要进一步排查时,可在安装目录运行:
 
 ```cmd
 powershell -NoProfile -ExecutionPolicy Bypass -File collect_diagnostics.ps1 -IncludeLogs
-powershell -NoProfile -ExecutionPolicy Bypass -File collect_diagnostics.ps1 -IncludeUserConfig -IncludeUserDict
+powershell -NoProfile -ExecutionPolicy Bypass -File collect_diagnostics.ps1 -IncludeUserConfig -IncludeUserDict -IncludeCandidatePreferences
 ```
 
-注意:日志可能包含输入编码,用户词典包含个人词条。对外反馈问题前应确认是否可以附带这些内容。
+注意:日志可能包含输入编码,用户数据包含个人词条与选词记录。对外反馈问题前应确认是否可以附带这些内容。
 
 ## 安装模式
 
@@ -122,7 +122,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File collect_diagnostics.ps1 -Inc
 |---|---|---|
 | 程序文件 | `C:\Program Files\CxxIME\`，可在安装向导中修改 | `cxxime-server.exe`、`cxxime-settings.exe`、`cxxime_tsf_x64.dll`、`cxxime_tsf_x86.dll`、`cxxime-resources.dll` |
 | 出厂数据 | `<安装目录>\data\` | 出厂配置、主题、标点、二进制词典及清单 |
-| 用户数据 | `%USERPROFILE%\cxxime\` | 用户配置、主题覆盖、标点覆盖和用户词典 |
+| 用户数据 | `%USERPROFILE%\cxxime\` | 用户配置、主题覆盖、标点覆盖、用户词库与选词偏好 |
 
 用户数据目录由安装器初始化，后续覆盖安装不会覆盖已有用户配置。
 
@@ -164,7 +164,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File collect_diagnostics.ps1 -Inc
 ├── default.json
 ├── themes.json
 ├── punctuation.json
-└── user.tsv                 (自动生成)
+├── user_pinyin.tsv           (自动生成)
+├── user_wubi.tsv             (自动生成)
+├── learning_pinyin.tsv       (自动生成)
+└── learning_wubi.tsv         (自动生成)
 ```
 
 ## 命令行参数
@@ -211,4 +214,4 @@ cxxime-server.exe --config "D:\config.json"          # 指定配置文件
 
 ### 覆盖安装后配置丢失
 
-覆盖安装不会删除 `user.tsv`（用户词典）。若 `default.json` 被覆盖，可通过配置编辑器重新修改。
+覆盖安装不会删除用户词库与选词偏好文件。若 `default.json` 被覆盖，可通过配置编辑器重新修改。

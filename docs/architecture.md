@@ -46,7 +46,7 @@
           │ 共享内存 + Event（配置变更通知）                    ▲
 ┌──────────────────────┐                                     │
 │ cxxime-settings.exe  │─────────────────────────────────────┘
-│ 配置编辑 / 用户词典管理 │              IPC（用户词典 CRUD、重载）
+│ 配置编辑 / 用户数据管理 │              IPC（用户词库与偏好 CRUD、重载）
 └──────────────────────┘
 ```
 
@@ -72,12 +72,12 @@
 | **AsciiComposer** | 可配置中英文切换，CapsLock overlay | `AsciiComposer` |
 | **OutputComposer** | 输出合成（全角/CapsLock/按键拦截） | `OutputComposer` |
 | **ShortCodeCache** | 短码候选缓存（DAT-16 Top-N 索引，Darts trie 查找，短输入快速路径） | `ShortCodeCache` |
-| **Dict** | 词典加载与查询 | 二进制加载主词典 + 内存用户词典（多路索引） |
+| **Dict** | 词典加载与查询 | 二进制加载主词典 + 内存用户词库与候选偏好 |
 | **Config** | 配置加载 | JSON（nlohmann/json） |
 
 **数据存储：**
 - **主词典：** 二进制堆加载词典 + Patricia trie 拼写索引（一次性读入），详见 [词典系统设计](dictionary.md)
-- **用户词典：** 内存多路索引（exact/prefix/abbr/mixed），TSV 文件持久化，详见 [用户词典设计](user-dictionary.md)
+- **用户数据：** 用户词库（手工词条，多路索引）与候选偏好（学习记录），TSV 文件持久化，详见 [用户词库与候选偏好](user-dictionary.md)
 
 ### 3.2 TSF DLL（输入法前端）
 
@@ -215,7 +215,7 @@ cxx-ime/
 - [查询预算与候选收集](query-control.md) — QueryBudget、TopKCollector、扫描限制、超时检查点
 - [中英文切换机制](ascii-composer.md) — AsciiComposer 配置与状态同步链路
 - [词典系统设计](dictionary.md) — 三层架构、二进制格式、查询流程
-- [用户词典设计](user-dictionary.md) — 内存多路索引与 TSV 持久化
+- [用户词库与候选偏好](user-dictionary.md) — 手工词条与学习记录的独立存储与索引
 - [IPC 架构设计](ipc-architecture.md) — IOCP 事件循环、管道安全、测试与性能基准
 - [共享资源预加载](shared-resources.md) — 共享资源、全局状态与热重载
 - [短输入快速路径](short-input-fast-path.md) — ShortCodeCache 与 topn.bin 缓存

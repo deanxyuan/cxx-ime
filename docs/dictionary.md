@@ -20,7 +20,7 @@ CxxIME 采用三层架构处理拼音到汉字的转换：
 └──────┬──────┘
        │
        ▼
-┌─────────────┐   dict.bin (排序数组) + user.tsv (内存 vector+map)
+┌─────────────┐   dict.bin (排序数组) + 用户数据 (TSV 多路索引)
 │    Dict      │ ─── lookup("ni:hao") → [你好(100), 你号(50), ...]
 │  (Table 层)   │
 └─────────────┘
@@ -71,7 +71,7 @@ Engine
   │     ├── Dict*            词典指针
   │     ├── Syllabifier*     主分词路径（BFS+DFS 音节图）
   │     └── PinyinSegmentor  简版分词器（Syllabifier 不可用时回退）
-  ├── Dict                   主词典（二进制加载）+ 用户词典（内存+TSV，多路索引）
+  ├── Dict                   主词典（二进制加载）+ 用户词库/候选偏好（内存+TSV）
   ├── SpellingsIndex         拼写索引（二进制加载），供 Syllabifier 使用
   ├── Context                输入状态（拼音缓冲、候选列表、已提交文本）
   └── Config                 配置（字体、布局、主题）
@@ -347,7 +347,7 @@ Python 格式: `"<IIIIi"`
 |------|------|------|
 | 主词典 (dict.bin) | 堆内存二进制加载 | 只读，一次性读入，O(log n) 二分查找 |
 | 拼写索引 (spellings.bin) | 堆内存二进制加载 | 只读，一次性读入，O(k) trie 遍历 |
-| 用户词典 (user.tsv) | 内存 vector + map | 运行时 UPSERT，TSV 持久化 |
+| 用户数据 (user_/learning_*.tsv) | 内存多路索引 | 手工词库 + 候选偏好，TSV 持久化 |
 
 ### 4.2 文件大小对比
 
@@ -485,22 +485,16 @@ SQLite spellings 表          Patricia Trie              spellings.bin
 └─────────────────┘         a  e  i
 ```
 
-## 6. 用户词典 (user_dict)
+## 6. 用户数据（用户词库与候选偏好）
 
-采用多路内存索引 + TSV 持久化。每条词条存储 `text`、`code`、`syllables`（冒号分隔音节键）、`abbr_code`、`mixed_keys`，支持 `frequency`、`sequence`（版本计数）、`deleted`（软删除）。
+用户个性化数据分为两个独立资源：
 
-索引分四路：
+- **用户词库（user lexicon）**：手工添加的词条，采用多路内存索引（exact / prefix / abbr / mixed）+ TSV 持久化（`user_pinyin.tsv` / `user_wubi.tsv`）。词条存储 `text`、`code`、`syllables`（冒号分隔音节键）、`abbr_code`、`mixed_keys`，支持 `frequency`、`sequence`（版本计数）、`deleted`（软删除）。
+- **候选偏好（candidate preference）**：候选学习记录，按 code 索引 + 6 列 TSV 持久化（`learning_pinyin.tsv` / `learning_wubi.tsv`），在翻译结果上应用以提升命中候选（`origin = kLearned`）。
 
-| 索引 | 用途 |
-|------|------|
-| `user_exact_index_` | 完整 code 精确匹配 |
-| `user_prefix_index_` | 短前缀匹配（长度 1..6） |
-| `user_abbr_index_` | 缩写匹配（首字母组合） |
-| `user_mixed_index_` | 混合匹配（声母增强 / 首音节展开 / 前两音节展开 / 长词首字母码） |
+用户词评分分双档：`kPinyin` 和 `kWubi`，通过 `set_user_scoring_profile()` 设置；候选偏好得分（`kPreferenceBaseScore`）高于普通用户词，用于把学过的候选稳定置前。
 
-用户词评分分双档：`kPinyin` 和 `kWubi`，通过 `set_user_scoring_profile()` 设置。
-
-详见 [用户词典设计](user-dictionary.md)。
+详见 [用户词库与候选偏好](user-dictionary.md)。
 
 ## 7. 二进制加载
 

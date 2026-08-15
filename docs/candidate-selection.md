@@ -79,7 +79,7 @@ id_index_ 前缀匹配: "shui:dian" → entries[...]
   扫出: 水电(freq=150000), 水点(freq=90000), ...
 ```
 
-同时查询用户词典索引（`lookup_user_exact` / `lookup_user_prefix`），补充个性化候选。用户词候选按 `score_user_match()` 分层评分（精确/缩写高基数，前缀按接近程度分档，详见 [用户词典设计](user-dictionary.md)），插入到结果中。
+同时查询用户词库索引（`lookup_user_exact` / `lookup_user_prefix`），补充个性化候选。用户词候选按 `score_user_match()` 分层评分（精确/缩写高基数，前缀按接近程度分档，详见 [用户词库与候选偏好](user-dictionary.md)），插入到结果中。
 
 所有路径的结果合并去重，按频率降序排列，分页返回。
 
@@ -152,7 +152,11 @@ score = base + bounded_frequency + recent_bonus
 
 用户词查询遵守 `QueryBudget::max_user_scan`（默认 256）。`user_scan_count` 只反映命中 bucket 或二分范围内的实际检查次数，不随用户词总量增长。
 
-详见 [用户词典设计](user-dictionary.md)。
+### 候选偏好应用
+
+启用候选学习后，选中的候选会记录为候选偏好（`origin = kLearned`）。翻译结果合并后，`apply_candidate_preferences()` 按输入码应用偏好：命中项获得 `kPreferenceBaseScore` 级别的超高加分（高于普通用户词），并在分页前完成排序，保证学过的候选稳定置前且不产生重复项。候选偏好独立于用户词库，清空偏好即恢复系统排序。
+
+详见 [用户词库与候选偏好](user-dictionary.md)。
 
 ## Candidate 结构
 
@@ -165,7 +169,7 @@ struct Candidate {
     CandidateSource source = kPinyin;           // 词典来源：kPinyin / kWubi
     std::string code;                          // 码表编码（如 "shurufa"）
     std::string syllables;                     // 音节序列（如 "shu:ru:fa"）
-    CandidateOrigin origin = kSystem;           // 候选来源：kSystem / kUser / kCache
+    CandidateOrigin origin = kSystem;           // 候选来源：kSystem / kUser / kLearned / kCache / kComposed
 };
 ```
 
@@ -173,7 +177,7 @@ struct Candidate {
 |------|------|
 | `code` | 紧凑码表编码，系统词来自 `syllable_ids → compact_syllable_code()`，用户词存 `user_entry.code` |
 | `syllables` | 冒号分隔的音节字符串（如 `"shu:ru:fa"`），系统词从二进制词典字符串表读取，用户词存 `user_entry.syllables` |
-| `origin` | `kSystem`（系统词典）、`kUser`（用户词典）、`kCache`（查询页缓存命中） |
+| `origin` | `kSystem`（系统词典）、`kUser`（用户词库）、`kLearned`（候选偏好命中）、`kCache`（查询页缓存命中）、`kComposed`（组合候选） |
 | `source` | `kPinyin`（拼音模式查询）、`kWubi`（五笔模式查询） |
 
 `origin` 和 `source` 用于日志追踪和调试，不影响排序逻辑（排序仅依赖 `frequency`）。
