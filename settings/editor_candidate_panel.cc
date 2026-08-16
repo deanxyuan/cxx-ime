@@ -20,7 +20,6 @@ void EditorApp::create_candidate_panel(HWND panel) {
     const int column_two = kPanelPadLeft + S(250);
     const int label_width = S(90);
     const int control_width = S(125);
-    const int action_x = column_one + label_width + S(8);
     SetWindowSubclass(panel, PanelForwardProc, 1000, reinterpret_cast<DWORD_PTR>(hwnd_));
 
     int control_x = make_aligned_label(L"主题:", column_one, label_width, top, panel);
@@ -85,15 +84,17 @@ void EditorApp::create_candidate_panel(HWND panel) {
     combo_add(hCandWidth_, L"自动");
     combo_add(hCandWidth_, L"限制");
 
-    hCandRecommendBtn_ = CreateWindowExW(
-        0, L"BUTTON", L"推荐布局", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON, action_x,
-        top + kRowH * 8, S(80), kCtrlH, panel, reinterpret_cast<HMENU>(static_cast<INT_PTR>(1220)),
-        GetModuleHandle(nullptr), nullptr);
-    SendMessageW(hCandRecommendBtn_, WM_SETFONT, reinterpret_cast<WPARAM>(get_font()), TRUE);
+    const int render_y = top + kRowH * 7;
+    control_x = make_aligned_label(L"渲染方式:", column_one, label_width, render_y, panel);
+    hRenderD2D_ = make_radio(1105, L"默认渲染 (D2D)", control_x, render_y, S(125), panel, true);
+    hRenderGDI_ =
+        make_radio(1106, L"兼容渲染 (GDI)", control_x + S(132), render_y, S(125), panel, false);
 
+    const int default_y = top + kRowH * 8;
+    control_x = make_aligned_label(L"默认设置:", column_one, label_width, default_y, panel);
     hCandDefaultBtn_ = CreateWindowExW(
         0, L"BUTTON", L"恢复默认", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
-        action_x + S(90), top + kRowH * 8, S(80), kCtrlH, panel,
+        control_x, default_y, S(80), kCtrlH, panel,
         reinterpret_cast<HMENU>(static_cast<INT_PTR>(1221)), GetModuleHandle(nullptr), nullptr);
     SendMessageW(hCandDefaultBtn_, WM_SETFONT, reinterpret_cast<WPARAM>(get_font()), TRUE);
 }
@@ -134,8 +135,12 @@ bool EditorApp::handle_candidate_command(int control_id, int notification) {
         return true;
     }
 
-    if ((control_id == 1220 || control_id == 1221) && notification == BN_CLICKED) {
+    if (control_id == 1221 && notification == BN_CLICKED) {
         apply_candidate_control(control_id);
+        return true;
+    }
+    if (notification == BN_CLICKED && (control_id == 1105 || control_id == 1106)) {
+        update_preview();
         return true;
     }
     if (control_id == 1222 && notification == BN_CLICKED) {
