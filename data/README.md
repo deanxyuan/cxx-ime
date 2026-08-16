@@ -95,3 +95,56 @@ wubi86.dict.db.zip
 ```
 
 生成文件必须从源数据重建，不应手工编辑或提交。
+
+## 下载与转换示例
+
+拼音、五笔源词典的下载与转换（在 `data/` 目录下执行）：
+
+```bat
+python tools\fetch_pinyin_dictionary.py      :: 下载并生成 pinyin.dict.db（约 90 MB）
+python tools\fetch_wubi_dictionary.py        :: 下载并生成 wubi86.dict.db
+python tools\convert_rime_dictionary.py input.yaml output.db   :: 转换其他 RIME 词典
+```
+
+下载得到的 `.dict.db` 为临时源数据，不提交到仓库；仅重新打包后的 `.dict.db.zip` 提交。
+
+## 维护流程
+
+完整数据链路：**zip → db → 拼写规则展开 → bin/idx/spellings + Top-N 中间文件 → DAT-16 → manifest**
+
+```bat
+:: 0. 首次拉取后解压（仅一次）
+cd data && python -c "import zipfile; zf = zipfile.ZipFile('pinyin.dict.db.zip'); zf.extractall()"
+
+:: 1. 生成拼写表（spellings，应用 schema 拼写代数规则）
+python data\tools\generate_pinyin_spellings.py data\pinyin.dict.db
+
+:: 2. 生成全部二进制文件（.bin + .idx + .spellings.bin）
+python data\tools\build_runtime_dictionary.py --input data\pinyin.dict.db --output data\pinyin
+
+:: 3. 生成 Top-N 中间文件并转换为 DAT-16（需要 topn_builder）
+python scripts\build_pinyin_topn.py --input data\pinyin.dict.db --output data\pinyin.topn.bin
+build\tools\topn_index\Release\topn_builder.exe ^
+    --input data\pinyin.topn.bin --output data\pinyin.topn.bin --format dat16
+```
+
+以上步骤也可以用 `scripts\prepare_dictionary_bundle.py` 一键完成（并行处理拼音和五笔，自动生成 manifest）：
+
+```bat
+python scripts\prepare_dictionary_bundle.py ^
+    --data-dir data --output-dir data ^
+    --topn-builder build\tools\topn_index\Release\topn_builder.exe
+```
+
+五笔链路：`wubi86.dict.db.zip` → 解包 → `split_wubi_symbols.py` 拆出 `symbols.json` 和过滤后的临时词典 → `build_runtime_dictionary.py --dict-only --wubi-prefix-index` 生成 `wubi86.dict.bin` + `wubi86.dict.idx`（完整前缀索引）。
+
+如果修改了 `.db`（修复脏数据等），需要重新打包 zip：
+
+```bat
+cd data && del pinyin.dict.db.zip && python -c "
+import zipfile; zf = zipfile.ZipFile('pinyin.dict.db.zip', 'w', zipfile.ZIP_DEFLATED)
+zf.write('pinyin.dict.db'); zf.close()
+"
+```
+
+> **注意：** `.db`、`.bin`、`.idx`、`.spellings.bin` 均不入库，仅 `.db.zip` 提交。其他开发者拉取后从步骤 0 开始。
