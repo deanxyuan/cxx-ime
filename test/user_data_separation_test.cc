@@ -171,6 +171,48 @@ TEST(UserDataSeparation, user_lexicon_rejects_non_current_column_counts) {
     DeleteFileA(user_path.c_str());
 }
 
+TEST(UserDataSeparation, replacing_code_removes_stale_syllable_indexes) {
+    const std::string user_path = make_temp_path("udr");
+    cxxime::Dict dictionary;
+    ASSERT_TRUE(dictionary.load_user_dict(user_path));
+    ASSERT_TRUE(dictionary.add_user_entry("manual-entry", "shurufa", "shu:ru:fa"));
+
+    cxxime::QueryBudget budget;
+    cxxime::UserLookupStats stats;
+    ASSERT_EQ(dictionary.lookup_user_indexed("srf", 10, budget, nullptr, &stats).size(),
+              static_cast<std::size_t>(1));
+    ASSERT_TRUE(
+        dictionary.replace_user_entry("manual-entry", "shurufa", "manual-entry", "xinbianma"));
+    ASSERT_TRUE(!dictionary.delete_user_entry("manual-entry", "shurufa"));
+    ASSERT_EQ(dictionary.lookup_user_indexed("srf", 10, budget, nullptr, &stats).size(),
+              static_cast<std::size_t>(0));
+    const auto exact = dictionary.lookup_user_exact("xinbianma", 10, budget, nullptr, &stats);
+    ASSERT_EQ(exact.size(), static_cast<std::size_t>(1));
+    ASSERT_EQ(exact[0].text, "manual-entry");
+
+    ASSERT_TRUE(dictionary.save_user_dict());
+    ASSERT_TRUE(read_file(user_path).find("\tshu:ru:fa") == std::string::npos);
+    dictionary.close();
+    DeleteFileA(user_path.c_str());
+}
+
+TEST(UserDataSeparation, user_lexicon_rejects_invalid_text_codes_and_syllables) {
+    const std::string user_path = make_temp_path("udv");
+    cxxime::Dict dictionary;
+    ASSERT_TRUE(dictionary.load_user_dict(user_path));
+
+    ASSERT_TRUE(!dictionary.add_user_entry(std::string("\xc3\x28", 2), "valid"));
+    ASSERT_TRUE(!dictionary.add_user_entry("uppercase", "ABC"));
+    ASSERT_TRUE(!dictionary.add_user_entry("numeric", "abc1"));
+    ASSERT_TRUE(!dictionary.add_user_entry("space", "ab c"));
+    ASSERT_TRUE(!dictionary.add_user_entry("bad-syllables", "abc", "a::bc"));
+    ASSERT_TRUE(dictionary.add_user_entry("valid-entry", "abc", "a:bc"));
+    ASSERT_EQ(dictionary.user_entry_count(), static_cast<std::size_t>(1));
+
+    dictionary.close();
+    DeleteFileA(user_path.c_str());
+}
+
 TEST(UserDataSeparation, candidate_preference_rejects_non_current_column_counts) {
     const std::string preference_path = make_temp_path("udp");
     {
@@ -234,6 +276,31 @@ TEST(UserDataSeparation, preference_reorders_without_duplicating_and_clear_resto
     dictionary.apply_candidate_preferences("ni", cxxime::CandidateSource::kPinyin, candidates, 10);
     ASSERT_EQ(candidates[0].text, "默认");
     ASSERT_EQ(dictionary.candidate_preference_count(), static_cast<std::size_t>(0));
+}
+
+TEST(UserDataSeparation, failed_preference_transaction_preserves_live_state) {
+    const std::string preference_path = make_temp_path("udt");
+    cxxime::Dict dictionary;
+    ASSERT_TRUE(dictionary.load_candidate_preferences(preference_path));
+    ASSERT_TRUE(dictionary.record_candidate_preference(make_candidate("保留", "baoliu"), "baoliu"));
+    ASSERT_TRUE(dictionary.save_candidate_preferences());
+    ASSERT_TRUE(DeleteFileA(preference_path.c_str()) != FALSE);
+    ASSERT_TRUE(CreateDirectoryA(preference_path.c_str(), nullptr) != FALSE);
+
+    ASSERT_TRUE(!dictionary.delete_candidate_preference_and_save("保留", "baoliu"));
+    ASSERT_EQ(dictionary.query_candidate_preferences("保留", 0, 10).size(),
+              static_cast<std::size_t>(1));
+    ASSERT_TRUE(!dictionary.clear_candidate_preferences_and_save());
+    ASSERT_EQ(dictionary.candidate_preference_count(), static_cast<std::size_t>(1));
+
+    ASSERT_TRUE(RemoveDirectoryA(preference_path.c_str()) != FALSE);
+    ASSERT_TRUE(dictionary.delete_candidate_preference_and_save("保留", "baoliu"));
+    ASSERT_TRUE(dictionary.query_candidate_preferences("保留", 0, 10).empty());
+    ASSERT_TRUE(
+        dictionary.record_candidate_preference(make_candidate("清空", "qingkong"), "qingkong"));
+    ASSERT_TRUE(dictionary.clear_candidate_preferences_and_save());
+    ASSERT_EQ(dictionary.candidate_preference_count(), static_cast<std::size_t>(0));
+    DeleteFileA(preference_path.c_str());
 }
 
 TEST(UserDataSeparation, missing_preference_is_only_a_low_priority_fallback) {

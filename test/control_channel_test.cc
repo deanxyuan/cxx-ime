@@ -16,7 +16,7 @@
 #include <cxxime/control_protocol.h>
 #include <cxxime/control_server.h>
 #include <cxxime/ipc_protocol.h>
-#include <cxxime/user_dict_control.h>
+#include <cxxime/lexicon_control.h>
 
 #include "util/testutil.h"
 
@@ -324,24 +324,30 @@ TEST(ControlChannel, server_restart_changes_epoch) {
     ASSERT_EQ(latest_generation.revision, 1ULL);
 }
 
-TEST(ControlChannel, user_dict_codec_rejects_invalid_requests) {
-    cxxime::UserDictControlRequest request;
-    ASSERT_TRUE(!cxxime::decode_user_dict_request("not-json", &request));
-    ASSERT_TRUE(!cxxime::decode_user_dict_request(
+TEST(ControlChannel, lexicon_codec_rejects_invalid_requests) {
+    cxxime::LexiconControlRequest request;
+    ASSERT_TRUE(!cxxime::decode_lexicon_request("not-json", &request));
+    ASSERT_TRUE(!cxxime::decode_lexicon_request(
         R"({"operation":"query","kind":"pinyin","query":"ni","offset":0,"limit":0})",
         &request));
-    ASSERT_TRUE(!cxxime::decode_user_dict_request(
+    ASSERT_TRUE(!cxxime::decode_lexicon_request(
         R"({"operation":"query","kind":"unknown","query":"ni","offset":0,"limit":32})",
         &request));
 
-    request.operation = cxxime::UserDictOperation::kAdd;
+    request.operation = cxxime::LexiconOperation::kAdd;
     request.text.assign(cxxime::CONTROL_MAX_PAYLOAD, 'x');
     request.code = "x";
     std::string payload;
-    ASSERT_TRUE(!cxxime::encode_user_dict_request(request, &payload));
+    ASSERT_TRUE(!cxxime::encode_lexicon_request(request, &payload));
+
+    request.text = std::string("\xc3\x28", 2);
+    request.code = "valid";
+    payload = "stale";
+    ASSERT_TRUE(!cxxime::encode_lexicon_request(request, &payload));
+    ASSERT_TRUE(payload.empty());
 }
 
-TEST(ControlChannel, user_dict_client_supports_all_operations) {
+TEST(ControlChannel, lexicon_client_supports_all_operations) {
     const std::wstring pipe_name = test_pipe_name();
     std::atomic<int> request_count{0};
 
@@ -349,15 +355,15 @@ TEST(ControlChannel, user_dict_client_supports_all_operations) {
     ASSERT_TRUE(server.start(
         R"({"theme":"azure"})", {},
         [&](const std::string& payload, std::string* response_payload) {
-            cxxime::UserDictControlRequest request;
-            ASSERT_TRUE(cxxime::decode_user_dict_request(payload, &request));
+            cxxime::LexiconControlRequest request;
+            ASSERT_TRUE(cxxime::decode_lexicon_request(payload, &request));
             request_count.fetch_add(1);
 
-            cxxime::UserDictControlResult result;
+            cxxime::LexiconControlResult result;
             result.operation = request.operation;
             result.succeeded = true;
             result.error_code = ERROR_SUCCESS;
-            if (request.operation == cxxime::UserDictOperation::kQuery) {
+            if (request.operation == cxxime::LexiconOperation::kQuery) {
                 ASSERT_EQ(request.kind, cxxime::UserDictKind::WUBI);
                 ASSERT_TRUE(request.query == "ni");
                 ASSERT_EQ(request.offset, static_cast<std::size_t>(2));
@@ -367,13 +373,21 @@ TEST(ControlChannel, user_dict_client_supports_all_operations) {
                 result.query.offset = request.offset;
                 result.query.has_more = true;
                 result.query.entries.push_back({"你好", "wq", 7, 0});
+            } else if (request.operation ==
+                       cxxime::LexiconOperation::kQuerySystemEntryStatus) {
+                ASSERT_EQ(request.texts.size(), static_cast<std::size_t>(2));
+                result.query.resource_total = 1;
+                result.query.match_total = 1;
+                result.query.entries.push_back({request.texts[0], "", 1, 0});
+            } else if (request.operation == cxxime::LexiconOperation::kImport) {
+                ASSERT_EQ(request.source_path, "C:\\temp\\user_pinyin.tsv");
             }
-            return cxxime::encode_user_dict_result(result, response_payload);
+            return cxxime::encode_lexicon_result(result, response_payload);
         },
         pipe_name));
 
-    cxxime::UserDictControlClient client(3000, pipe_name);
-    cxxime::UserDictControlResult result;
+    cxxime::LexiconControlClient client(3000, pipe_name);
+    cxxime::LexiconControlResult result;
     ASSERT_TRUE(client.query(cxxime::UserDictKind::WUBI, "ni", 2, 3, &result));
     ASSERT_EQ(result.query.resource_total, static_cast<std::size_t>(9));
     ASSERT_EQ(result.query.match_total, static_cast<std::size_t>(4));
@@ -385,15 +399,24 @@ TEST(ControlChannel, user_dict_client_supports_all_operations) {
     ASSERT_TRUE(client.replace_entry(cxxime::UserDictKind::PINYIN, "你好", "nihao", "您好",
                                      "ninhao", &result));
     ASSERT_TRUE(client.delete_entry(cxxime::UserDictKind::PINYIN, "您好", "ninhao", &result));
-    ASSERT_TRUE(client.reload(cxxime::UserDictKind::PINYIN, &result));
+    ASSERT_TRUE(client.import_entries(cxxime::UserDictKind::PINYIN,
+                                      "C:\\temp\\user_pinyin.tsv", &result));
     ASSERT_TRUE(client.save(cxxime::UserDictKind::PINYIN, &result));
     ASSERT_TRUE(client.query(cxxime::LexiconResource::kCandidatePreference,
+                             cxxime::UserDictKind::WUBI, "ni", 2, 3, &result));
+    ASSERT_TRUE(client.query(cxxime::LexiconResource::kDisabledSystemLexicon,
                              cxxime::UserDictKind::WUBI, "ni", 2, 3, &result));
     ASSERT_TRUE(client.delete_preference(cxxime::UserDictKind::PINYIN, "你好", "nihao",
                                          &result));
     ASSERT_TRUE(client.clear_preferences(cxxime::UserDictKind::PINYIN, &result));
     ASSERT_TRUE(client.save_preferences(cxxime::UserDictKind::PINYIN, &result));
-    ASSERT_EQ(request_count.load(), 10);
+    ASSERT_TRUE(client.query_system_entry_status(cxxime::UserDictKind::PINYIN,
+                                                 {"你好", "世界"}, &result));
+    ASSERT_EQ(result.query.entries.size(), static_cast<std::size_t>(1));
+    ASSERT_EQ(result.query.entries[0].text, "你好");
+    ASSERT_TRUE(client.disable_system_entry(cxxime::UserDictKind::PINYIN, "你好", &result));
+    ASSERT_TRUE(client.restore_system_entry(cxxime::UserDictKind::PINYIN, "你好", &result));
+    ASSERT_EQ(request_count.load(), 14);
     server.stop();
 }
 

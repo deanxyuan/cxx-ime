@@ -24,6 +24,7 @@ struct QueryBudget;
 struct QueryDeadline;
 struct UserLookupStats;
 class CandidatePreference;
+class DisabledSystemLexicon;
 class UserLexicon;
 class WubiPrefixIndex;
 
@@ -112,6 +113,13 @@ public:
     bool delete_user_entry(const std::string& text, const std::string& code = "");
     bool replace_user_entry(const std::string& old_text, const std::string& old_code,
                             const std::string& new_text, const std::string& new_code);
+    bool add_user_entry_and_save(const std::string& text, const std::string& code,
+                                 const std::string& syllables = {});
+    bool delete_user_entry_and_save(const std::string& text, const std::string& code = {});
+    bool replace_user_entry_and_save(const std::string& old_text, const std::string& old_code,
+                                     const std::string& new_text,
+                                     const std::string& new_code);
+    bool import_user_dict(const std::string& source_path);
 
     // User dictionary persistence
     bool load_user_dict(const std::string& path);
@@ -128,8 +136,23 @@ public:
         size_t* match_total = nullptr) const;
     bool delete_candidate_preference(const std::string& text, const std::string& code);
     bool clear_candidate_preferences();
+    bool delete_candidate_preference_and_save(const std::string& text, const std::string& code);
+    bool clear_candidate_preferences_and_save();
     size_t candidate_preference_count() const;
     uint64_t candidate_preference_version() const;
+    bool load_disabled_system_entries(const std::string& path);
+    bool save_disabled_system_entries();
+    bool disable_system_entry(const std::string& text);
+    bool restore_system_entry(const std::string& text);
+    bool disable_system_entry_and_save(const std::string& text);
+    bool restore_system_entry_and_save(const std::string& text);
+    bool is_system_entry_disabled(const std::string& text) const;
+    void filter_disabled_system_candidates(std::vector<Candidate>& candidates) const;
+    std::vector<UserDictEntryInfo> query_disabled_system_entries(
+        const std::string& query, size_t offset, size_t limit,
+        size_t* match_total = nullptr) const;
+    size_t disabled_system_entry_count() const;
+    uint64_t disabled_system_entry_version() const;
 
     // Short-code cache fast path
     const ShortCodeCache& short_cache() const { return short_cache_; }
@@ -196,6 +219,7 @@ private:
 
     std::unique_ptr<UserLexicon> user_lexicon_;
     std::unique_ptr<CandidatePreference> candidate_preference_;
+    std::unique_ptr<DisabledSystemLexicon> disabled_system_lexicon_;
 
 };
 

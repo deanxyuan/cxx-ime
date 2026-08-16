@@ -10,6 +10,7 @@
 #include <shlobj.h>
 
 #include <cxxime/candidate_preference.h>
+#include <cxxime/disabled_system_lexicon.h>
 #include <cxxime/user_lexicon.h>
 
 #include "binary_format.h"
@@ -60,6 +61,24 @@ bool Dict::delete_user_entry(const std::string& text, const std::string& code) {
 bool Dict::replace_user_entry(const std::string& old_text, const std::string& old_code,
                               const std::string& new_text, const std::string& new_code) {
     return user_lexicon_->replace_entry(old_text, old_code, new_text, new_code);
+}
+
+bool Dict::add_user_entry_and_save(const std::string& text, const std::string& code,
+                                   const std::string& syllables) {
+    return user_lexicon_->add_entry_and_save(text, code, syllables);
+}
+
+bool Dict::delete_user_entry_and_save(const std::string& text, const std::string& code) {
+    return user_lexicon_->delete_entry_and_save(text, code);
+}
+
+bool Dict::replace_user_entry_and_save(const std::string& old_text, const std::string& old_code,
+                                       const std::string& new_text, const std::string& new_code) {
+    return user_lexicon_->replace_entry_and_save(old_text, old_code, new_text, new_code);
+}
+
+bool Dict::import_user_dict(const std::string& source_path) {
+    return user_lexicon_->import_file(source_path);
 }
 
 std::string Dict::reverse_lookup(const std::string& text) {
@@ -128,7 +147,12 @@ void Dict::apply_candidate_preferences(const std::string& code, CandidateSource 
         return;
     }
     auto preferences = candidate_preference_->preferred_candidates(code, source);
+    const bool filter_disabled = disabled_system_entry_count() != 0;
     for (auto& preference : preferences) {
+        if (filter_disabled && is_system_entry_disabled(preference.text) &&
+            preference.origin != CandidateOrigin::kUser) {
+            continue;
+        }
         auto existing =
             std::find_if(candidates.begin(), candidates.end(), [&](const Candidate& candidate) {
                 return candidate.text == preference.text;
@@ -212,8 +236,59 @@ bool Dict::delete_candidate_preference(const std::string& text, const std::strin
 
 bool Dict::clear_candidate_preferences() { return candidate_preference_->clear(); }
 
+bool Dict::delete_candidate_preference_and_save(const std::string& text, const std::string& code) {
+    return candidate_preference_->erase_and_save(text, code);
+}
+
+bool Dict::clear_candidate_preferences_and_save() {
+    return candidate_preference_->clear_and_save();
+}
+
 size_t Dict::candidate_preference_count() const { return candidate_preference_->entry_count(); }
 
 uint64_t Dict::candidate_preference_version() const { return candidate_preference_->version(); }
+
+bool Dict::load_disabled_system_entries(const std::string& path) {
+    return disabled_system_lexicon_->load(path);
+}
+
+bool Dict::save_disabled_system_entries() { return disabled_system_lexicon_->save(); }
+
+bool Dict::disable_system_entry(const std::string& text) {
+    return disabled_system_lexicon_->disable(text);
+}
+
+bool Dict::restore_system_entry(const std::string& text) {
+    return disabled_system_lexicon_->restore(text);
+}
+
+bool Dict::disable_system_entry_and_save(const std::string& text) {
+    return disabled_system_lexicon_->disable_and_save(text);
+}
+
+bool Dict::restore_system_entry_and_save(const std::string& text) {
+    return disabled_system_lexicon_->restore_and_save(text);
+}
+
+bool Dict::is_system_entry_disabled(const std::string& text) const {
+    return disabled_system_lexicon_->contains(text);
+}
+
+void Dict::filter_disabled_system_candidates(std::vector<Candidate>& candidates) const {
+    disabled_system_lexicon_->filter(candidates);
+}
+
+std::vector<UserDictEntryInfo> Dict::query_disabled_system_entries(
+    const std::string& query, size_t offset, size_t limit, size_t* match_total) const {
+    return disabled_system_lexicon_->query(query, offset, limit, match_total);
+}
+
+size_t Dict::disabled_system_entry_count() const {
+    return disabled_system_lexicon_->entry_count();
+}
+
+uint64_t Dict::disabled_system_entry_version() const {
+    return disabled_system_lexicon_->version();
+}
 
 } // namespace cxxime

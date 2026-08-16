@@ -5,107 +5,15 @@
 #include <algorithm>
 #include <climits>
 #include <cstdlib>
-#include <set>
 #include <sstream>
 #include <utility>
+
+#include <cxxime/user_dict_validation.h>
 
 #include "user_data_file.h"
 
 namespace cxxime {
 namespace {
-
-constexpr std::size_t kMaxMaterializedPrefixLength = 6;
-constexpr std::size_t kMaxMixedBucketSize = 64;
-
-std::string make_abbreviation(const std::string& syllables) {
-    std::string abbreviation;
-    for (std::size_t i = 0; i < syllables.size(); ++i) {
-        if (i == 0 || syllables[i - 1] == ':') {
-            abbreviation.push_back(syllables[i]);
-        }
-    }
-    return abbreviation;
-}
-
-std::vector<std::string> split_syllables(const std::string& syllables) {
-    std::vector<std::string> result;
-    std::string current;
-    for (char ch : syllables) {
-        if (ch == ':') {
-            if (!current.empty()) {
-                result.push_back(std::move(current));
-                current.clear();
-            }
-        } else {
-            current.push_back(ch);
-        }
-    }
-    if (!current.empty()) {
-        result.push_back(std::move(current));
-    }
-    return result;
-}
-
-std::vector<std::string> generate_mixed_keys(const std::string& syllables,
-                                             std::size_t max_keys = 8) {
-    const std::vector<std::string> parts = split_syllables(syllables);
-    if (parts.size() < 2) {
-        return {};
-    }
-
-    std::set<std::string> keys;
-    std::string enhanced;
-    for (const auto& part : parts) {
-        if (part.size() >= 2 && part[1] == 'h' &&
-            (part[0] == 'z' || part[0] == 'c' || part[0] == 's')) {
-            enhanced.append(part, 0, 2);
-        } else {
-            enhanced.push_back(part[0]);
-        }
-    }
-    keys.insert(std::move(enhanced));
-
-    if (parts.size() >= 5) {
-        std::string initials;
-        for (const auto& part : parts) {
-            initials.push_back(part[0]);
-        }
-        keys.insert(std::move(initials));
-    }
-
-    std::string trailing_initials;
-    for (std::size_t i = 1; i < parts.size(); ++i) {
-        trailing_initials.push_back(parts[i][0]);
-    }
-    keys.insert(parts[0] + trailing_initials);
-
-    if (parts.size() >= 3) {
-        std::string remaining_initials;
-        for (std::size_t i = 2; i < parts.size(); ++i) {
-            remaining_initials.push_back(parts[i][0]);
-        }
-        keys.insert(parts[0] + parts[1] + remaining_initials);
-        keys.insert(std::string(1, parts[0][0]) + parts[1] + remaining_initials);
-    }
-    if (parts[0].size() >= 2) {
-        keys.insert(parts[0].substr(0, 2) + trailing_initials);
-    }
-
-    std::string exact;
-    for (char ch : syllables) {
-        if (ch != ':') {
-            exact.push_back(ch);
-        }
-    }
-    keys.erase(exact);
-    keys.erase("");
-
-    std::vector<std::string> result(keys.begin(), keys.end());
-    if (result.size() > max_keys) {
-        result.resize(max_keys);
-    }
-    return result;
-}
 
 std::vector<std::string> split_tsv_line(const std::string& line) {
     std::vector<std::string> fields;
@@ -120,16 +28,17 @@ std::vector<std::string> split_tsv_line(const std::string& line) {
     }
 }
 
-int parse_frequency(const std::string& value) {
-    if (value.empty()) {
-        return 1;
+bool parse_frequency(const std::string& value, int* frequency) {
+    if (!frequency || value.empty()) {
+        return false;
     }
     char* end = nullptr;
     const long parsed = std::strtol(value.c_str(), &end, 10);
     if (!end || *end != '\0' || parsed < 1) {
-        return 1;
+        return false;
     }
-    return parsed > INT_MAX ? INT_MAX : static_cast<int>(parsed);
+    *frequency = parsed > INT_MAX ? INT_MAX : static_cast<int>(parsed);
+    return true;
 }
 
 void trim_trailing_space(std::string& value) {
@@ -150,8 +59,143 @@ std::string UserLexicon::entry_key(const std::string& text, const std::string& c
     return key;
 }
 
+bool UserLexicon::parse_entries(const std::string& contents, bool reject_invalid_lines,
+                                std::vector<Entry>* entries, std::uint64_t* sequence) {
+    if (!entries || !sequence) {
+        return false;
+    }
+    entries->clear();
+    *sequence = 0;
+    std::unordered_map<std::string, std::size_t> entry_positions;
+    std::istringstream input(contents);
+    std::string line;
+    while (std::getline(input, line)) {
+        if (!line.empty() && line.back() == '\r') {
+            line.pop_back();
+        }
+        if (line.empty()) {
+            continue;
+        }
+        const std::vector<std::string> fields = split_tsv_line(line);
+        int frequency = 1;
+        std::string syllables;
+        bool valid = fields.size() == 3 || fields.size() == 4;
+        if (valid) {
+            syllables = fields.size() == 4 ? fields[3] : std::string{};
+            trim_trailing_space(syllables);
+            valid = parse_frequency(fields[2], &frequency) &&
+                    is_valid_user_dict_entry(fields[0], fields[1], syllables);
+        }
+        if (!valid) {
+            if (reject_invalid_lines) {
+                entries->clear();
+                *sequence = 0;
+                return false;
+            }
+            continue;
+        }
+
+        Entry entry;
+        entry.text = fields[0];
+        entry.code = fields[1];
+        entry.frequency = frequency;
+        entry.syllables = std::move(syllables);
+        entry.sequence = ++(*sequence);
+        const std::string key = entry_key(entry.text, entry.code);
+        const auto duplicate = entry_positions.find(key);
+        if (duplicate != entry_positions.end()) {
+            Entry& existing = (*entries)[duplicate->second];
+            existing.frequency = (std::max)(existing.frequency, entry.frequency);
+            continue;
+        }
+        entry_positions.emplace(key, entries->size());
+        entries->push_back(std::move(entry));
+    }
+    return true;
+}
+
+std::string UserLexicon::serialize_entries(const std::vector<Entry>& entries) {
+    std::ostringstream output;
+    for (const auto& entry : entries) {
+        if (entry.deleted) {
+            continue;
+        }
+        output << entry.text << '\t' << entry.code << '\t' << entry.frequency;
+        if (!entry.syllables.empty()) {
+            output << '\t' << entry.syllables;
+        }
+        output << '\n';
+    }
+    return output.str();
+}
+
+bool UserLexicon::add_to_snapshot(Snapshot* snapshot, const std::string& text,
+                                  const std::string& code, const std::string& syllables) {
+    if (!snapshot || !is_valid_user_dict_entry(text, code, syllables)) {
+        return false;
+    }
+    const std::string key = entry_key(text, code);
+    if (std::any_of(snapshot->entries.begin(), snapshot->entries.end(), [&](const Entry& entry) {
+            return !entry.deleted && entry_key(entry.text, entry.code) == key;
+        })) {
+        return false;
+    }
+    Entry entry;
+    entry.text = text;
+    entry.code = code;
+    entry.syllables = syllables;
+    entry.sequence = ++snapshot->sequence;
+    snapshot->entries.push_back(std::move(entry));
+    return true;
+}
+
+bool UserLexicon::delete_from_snapshot(Snapshot* snapshot, const std::string& text,
+                                       const std::string& code) {
+    if (!snapshot) {
+        return false;
+    }
+    for (auto& entry : snapshot->entries) {
+        if (!entry.deleted && entry.text == text && (code.empty() || entry.code == code)) {
+            entry.deleted = true;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool UserLexicon::replace_in_snapshot(Snapshot* snapshot, const std::string& old_text,
+                                      const std::string& old_code, const std::string& new_text,
+                                      const std::string& new_code) {
+    if (!snapshot || !is_valid_user_dict_entry(new_text, new_code)) {
+        return false;
+    }
+    Entry* target = nullptr;
+    for (auto& entry : snapshot->entries) {
+        if (entry.deleted) {
+            continue;
+        }
+        if (entry.text == old_text && entry.code == old_code) {
+            target = &entry;
+        } else if (entry.text == new_text && entry.code == new_code) {
+            return false;
+        }
+    }
+    if (!target) {
+        return false;
+    }
+    target->text = new_text;
+    if (target->code != new_code) {
+        target->syllables.clear();
+    }
+    target->code = new_code;
+    target->sequence = ++snapshot->sequence;
+    target->abbr_code.clear();
+    target->mixed_keys.clear();
+    return true;
+}
+
 bool UserLexicon::load(const std::string& path) {
-    std::lock_guard<std::mutex> save_lock(save_mutex_);
+    std::lock_guard<std::mutex> transaction_lock(transaction_mutex_);
     std::string contents;
     if (!read_user_data_file(path, &contents)) {
         return false;
@@ -159,40 +203,24 @@ bool UserLexicon::load(const std::string& path) {
 
     std::vector<Entry> entries;
     std::uint64_t sequence = 0;
-    std::istringstream input(contents);
-    std::string line;
-    while (std::getline(input, line)) {
-        if (!line.empty() && line.back() == '\r') {
-            line.pop_back();
-        }
-        const std::vector<std::string> fields = split_tsv_line(line);
-        if ((fields.size() != 3 && fields.size() != 4) || fields[0].empty() ||
-            fields[1].empty()) {
-            continue;
-        }
-
-        Entry entry;
-        entry.text = fields[0];
-        entry.code = fields[1];
-        entry.frequency = parse_frequency(fields[2]);
-        entry.syllables = fields.size() >= 4 ? fields[3] : std::string{};
-        trim_trailing_space(entry.syllables);
-        entry.sequence = ++sequence;
-        entries.push_back(std::move(entry));
+    if (!parse_entries(contents, false, &entries, &sequence)) {
+        return false;
     }
 
-    std::unique_lock<std::shared_mutex> lock(mutex_);
-    entries_ = std::move(entries);
-    path_ = path;
-    sequence_ = sequence;
-    rebuild_indexes_locked();
-    dirty_.store(false, std::memory_order_release);
-    version_.fetch_add(1, std::memory_order_acq_rel);
+    Snapshot next;
+    next.entries = std::move(entries);
+    next.sequence = sequence;
+    next.path = path;
+    {
+        std::shared_lock<std::shared_mutex> lock(mutex_);
+        next.scoring_profile = scoring_profile_;
+    }
+    publish_snapshot(prepare_snapshot(std::move(next)), false);
     return true;
 }
 
 bool UserLexicon::save() {
-    std::lock_guard<std::mutex> save_lock(save_mutex_);
+    std::lock_guard<std::mutex> transaction_lock(transaction_mutex_);
     std::string path;
     std::string contents;
     std::uint64_t saved_version = 0;
@@ -201,19 +229,8 @@ bool UserLexicon::save() {
         if (!dirty_.load(std::memory_order_acquire) || path_.empty()) {
             return true;
         }
-        std::ostringstream output;
-        for (const auto& entry : entries_) {
-            if (entry.deleted) {
-                continue;
-            }
-            output << entry.text << '\t' << entry.code << '\t' << entry.frequency;
-            if (!entry.syllables.empty()) {
-                output << '\t' << entry.syllables;
-            }
-            output << '\n';
-        }
         path = path_;
-        contents = output.str();
+        contents = serialize_entries(entries_);
         saved_version = version_.load(std::memory_order_acquire);
     }
     if (!write_user_data_file_atomically(path, contents)) {
@@ -227,108 +244,129 @@ bool UserLexicon::save() {
 }
 
 void UserLexicon::set_scoring_profile(UserScoringProfile profile) {
+    std::lock_guard<std::mutex> transaction_lock(transaction_mutex_);
     std::unique_lock<std::shared_mutex> lock(mutex_);
     scoring_profile_ = profile;
 }
 
 bool UserLexicon::add_entry(const std::string& text, const std::string& code,
                             const std::string& syllables) {
-    if (text.empty() || code.empty()) {
+    std::lock_guard<std::mutex> transaction_lock(transaction_mutex_);
+    Snapshot next = snapshot();
+    if (!add_to_snapshot(&next, text, code, syllables)) {
         return false;
     }
-    std::unique_lock<std::shared_mutex> lock(mutex_);
-    const std::string key = entry_key(text, code);
-    if (entry_index_.find(key) != entry_index_.end()) {
-        return false;
-    }
-
-    Entry entry;
-    entry.text = text;
-    entry.code = code;
-    entry.syllables = syllables;
-    entry.sequence = ++sequence_;
-    const EntryId id = static_cast<EntryId>(entries_.size());
-    entries_.push_back(std::move(entry));
-    entry_index_[key] = id;
-    text_index_[text].push_back(id);
-    insert_into_indexes(id);
-    std::sort(code_sorted_.begin(), code_sorted_.end(), [this](EntryId left, EntryId right) {
-        return entries_[left].code < entries_[right].code;
-    });
-    dirty_.store(true, std::memory_order_release);
-    version_.fetch_add(1, std::memory_order_acq_rel);
+    publish_snapshot(prepare_snapshot(std::move(next)), true);
     return true;
 }
 
 bool UserLexicon::delete_entry(const std::string& text, const std::string& code) {
-    std::unique_lock<std::shared_mutex> lock(mutex_);
-    EntryId id = 0;
-    if (!code.empty()) {
-        const auto found = entry_index_.find(entry_key(text, code));
-        if (found == entry_index_.end()) {
-            return false;
-        }
-        id = found->second;
-    } else {
-        const auto found = text_index_.find(text);
-        if (found == text_index_.end() || found->second.empty()) {
-            return false;
-        }
-        id = found->second.front();
-    }
-    if (id >= entries_.size() || entries_[id].deleted) {
+    std::lock_guard<std::mutex> transaction_lock(transaction_mutex_);
+    Snapshot next = snapshot();
+    if (!delete_from_snapshot(&next, text, code)) {
         return false;
     }
-
-    remove_from_indexes(id);
-    entry_index_.erase(entry_key(entries_[id].text, entries_[id].code));
-    auto text_found = text_index_.find(entries_[id].text);
-    if (text_found != text_index_.end()) {
-        auto& ids = text_found->second;
-        ids.erase(std::remove(ids.begin(), ids.end(), id), ids.end());
-        if (ids.empty()) {
-            text_index_.erase(text_found);
-        }
-    }
-    dirty_.store(true, std::memory_order_release);
-    version_.fetch_add(1, std::memory_order_acq_rel);
+    publish_snapshot(prepare_snapshot(std::move(next)), true);
     return true;
 }
 
 bool UserLexicon::replace_entry(const std::string& old_text, const std::string& old_code,
                                 const std::string& new_text, const std::string& new_code) {
-    if (new_text.empty() || new_code.empty()) {
+    std::lock_guard<std::mutex> transaction_lock(transaction_mutex_);
+    Snapshot next = snapshot();
+    if (!replace_in_snapshot(&next, old_text, old_code, new_text, new_code)) {
         return false;
     }
-    std::unique_lock<std::shared_mutex> lock(mutex_);
-    const auto found = entry_index_.find(entry_key(old_text, old_code));
-    if (found == entry_index_.end() || found->second >= entries_.size()) {
+    publish_snapshot(prepare_snapshot(std::move(next)), true);
+    return true;
+}
+
+UserLexicon::Snapshot UserLexicon::snapshot() const {
+    std::shared_lock<std::shared_mutex> lock(mutex_);
+    Snapshot result;
+    result.entries = entries_;
+    result.sequence = sequence_;
+    result.scoring_profile = scoring_profile_;
+    result.path = path_;
+    return result;
+}
+
+void UserLexicon::publish_snapshot(Snapshot snapshot, bool dirty) {
+    {
+        std::unique_lock<std::shared_mutex> lock(mutex_);
+        entries_.swap(snapshot.entries);
+        text_index_.swap(snapshot.text_index);
+        entry_index_.swap(snapshot.entry_index);
+        exact_index_.swap(snapshot.exact_index);
+        prefix_index_.swap(snapshot.prefix_index);
+        abbr_index_.swap(snapshot.abbr_index);
+        mixed_index_.swap(snapshot.mixed_index);
+        code_sorted_.swap(snapshot.code_sorted);
+        sequence_ = snapshot.sequence;
+        scoring_profile_ = snapshot.scoring_profile;
+        path_.swap(snapshot.path);
+        dirty_.store(dirty, std::memory_order_release);
+        version_.fetch_add(1, std::memory_order_acq_rel);
+    }
+}
+
+bool UserLexicon::persist_snapshot(Snapshot snapshot) {
+    snapshot = prepare_snapshot(std::move(snapshot));
+    if (snapshot.path.empty() ||
+        !write_user_data_file_atomically(snapshot.path, serialize_entries(snapshot.entries))) {
         return false;
     }
-    const EntryId id = found->second;
-    const std::string next_key = entry_key(new_text, new_code);
-    const auto duplicate = entry_index_.find(next_key);
-    if (duplicate != entry_index_.end() && duplicate->second != id) {
+    publish_snapshot(std::move(snapshot), false);
+    return true;
+}
+
+bool UserLexicon::add_entry_and_save(const std::string& text, const std::string& code,
+                                     const std::string& syllables) {
+    std::lock_guard<std::mutex> transaction_lock(transaction_mutex_);
+    Snapshot next = snapshot();
+    return add_to_snapshot(&next, text, code, syllables) && persist_snapshot(std::move(next));
+}
+
+bool UserLexicon::delete_entry_and_save(const std::string& text, const std::string& code) {
+    std::lock_guard<std::mutex> transaction_lock(transaction_mutex_);
+    Snapshot next = snapshot();
+    return delete_from_snapshot(&next, text, code) && persist_snapshot(std::move(next));
+}
+
+bool UserLexicon::replace_entry_and_save(const std::string& old_text, const std::string& old_code,
+                                         const std::string& new_text, const std::string& new_code) {
+    std::lock_guard<std::mutex> transaction_lock(transaction_mutex_);
+    Snapshot next = snapshot();
+    return replace_in_snapshot(&next, old_text, old_code, new_text, new_code) &&
+           persist_snapshot(std::move(next));
+}
+
+bool UserLexicon::import_file(const std::string& source_path) {
+    std::lock_guard<std::mutex> transaction_lock(transaction_mutex_);
+    std::string contents;
+    if (!read_existing_user_data_file(source_path, kMaxUserDictImportBytes, &contents)) {
         return false;
     }
 
-    remove_from_indexes(id);
-
-    Entry& entry = entries_[id];
-    entry.text = new_text;
-    entry.code = new_code;
-    entry.sequence = ++sequence_;
-    entry.deleted = false;
-    entry.abbr_code.clear();
-    entry.mixed_keys.clear();
-    entry_index_[next_key] = id;
-    text_index_[new_text].push_back(id);
-    insert_into_indexes(id);
-    std::sort(code_sorted_.begin(), code_sorted_.end(), [this](EntryId left, EntryId right) {
-        return entries_[left].code < entries_[right].code;
-    });
-    dirty_.store(true, std::memory_order_release);
-    version_.fetch_add(1, std::memory_order_acq_rel);
+    std::vector<Entry> imported_entries;
+    std::uint64_t imported_sequence = 0;
+    if (!parse_entries(contents, true, &imported_entries, &imported_sequence)) {
+        return false;
+    }
+    Snapshot next;
+    next.entries = std::move(imported_entries);
+    next.sequence = imported_sequence;
+    {
+        std::shared_lock<std::shared_mutex> lock(mutex_);
+        next.path = path_;
+        next.scoring_profile = scoring_profile_;
+    }
+    next = prepare_snapshot(std::move(next));
+    if (next.path.empty() ||
+        !write_user_data_file_atomically(next.path, serialize_entries(next.entries))) {
+        return false;
+    }
+    publish_snapshot(std::move(next), false);
     return true;
 }
 
@@ -410,107 +448,5 @@ std::size_t UserLexicon::entry_count() const {
 }
 
 std::uint64_t UserLexicon::version() const { return version_.load(std::memory_order_acquire); }
-
-void UserLexicon::bucket_insert_sorted(Bucket& bucket, EntryId id) {
-    auto better = [this](EntryId left, EntryId right) {
-        const Entry& a = entries_[left];
-        const Entry& b = entries_[right];
-        if (a.frequency != b.frequency) {
-            return a.frequency > b.frequency;
-        }
-        if (a.sequence != b.sequence) {
-            return a.sequence > b.sequence;
-        }
-        return left < right;
-    };
-    bucket.ids.insert(std::lower_bound(bucket.ids.begin(), bucket.ids.end(), id, better), id);
-}
-
-void UserLexicon::sort_bucket(Bucket& bucket) {
-    std::sort(bucket.ids.begin(), bucket.ids.end(), [this](EntryId left, EntryId right) {
-        const Entry& a = entries_[left];
-        const Entry& b = entries_[right];
-        if (a.frequency != b.frequency) {
-            return a.frequency > b.frequency;
-        }
-        if (a.sequence != b.sequence) {
-            return a.sequence > b.sequence;
-        }
-        return left < right;
-    });
-}
-
-void UserLexicon::rebuild_indexes_locked() {
-    text_index_.clear();
-    entry_index_.clear();
-    exact_index_.clear();
-    prefix_index_.clear();
-    abbr_index_.clear();
-    mixed_index_.clear();
-    code_sorted_.clear();
-
-    for (std::size_t i = 0; i < entries_.size(); ++i) {
-        Entry& entry = entries_[i];
-        if (entry.deleted) {
-            continue;
-        }
-        const EntryId id = static_cast<EntryId>(i);
-        const std::string key = entry_key(entry.text, entry.code);
-        const auto duplicate = entry_index_.find(key);
-        if (duplicate != entry_index_.end()) {
-            entries_[duplicate->second].frequency =
-                (std::max)(entries_[duplicate->second].frequency, entry.frequency);
-            entry.deleted = true;
-            continue;
-        }
-        entry_index_[key] = id;
-        text_index_[entry.text].push_back(id);
-        insert_into_indexes(id);
-    }
-    for (auto& item : exact_index_) {
-        sort_bucket(item.second);
-    }
-    for (auto& item : prefix_index_) {
-        sort_bucket(item.second);
-    }
-    for (auto& item : abbr_index_) {
-        sort_bucket(item.second);
-    }
-    for (auto& item : mixed_index_) {
-        sort_bucket(item.second);
-    }
-    std::sort(code_sorted_.begin(), code_sorted_.end(), [this](EntryId left, EntryId right) {
-        return entries_[left].code < entries_[right].code;
-    });
-}
-
-void UserLexicon::insert_into_indexes(EntryId id) {
-    Entry& entry = entries_[id];
-    bucket_insert_sorted(exact_index_[entry.code], id);
-    const std::size_t max_prefix = (std::min)(entry.code.size(), kMaxMaterializedPrefixLength);
-    for (std::size_t length = 1; length <= max_prefix; ++length) {
-        bucket_insert_sorted(prefix_index_[entry.code.substr(0, length)], id);
-    }
-    if (!entry.syllables.empty()) {
-        entry.abbr_code = make_abbreviation(entry.syllables);
-        if (!entry.abbr_code.empty()) {
-            bucket_insert_sorted(abbr_index_[entry.abbr_code], id);
-        }
-        entry.mixed_keys = generate_mixed_keys(entry.syllables);
-        for (const auto& key : entry.mixed_keys) {
-            Bucket& bucket = mixed_index_[key];
-            bucket_insert_sorted(bucket, id);
-            if (bucket.ids.size() > kMaxMixedBucketSize) {
-                bucket.ids.resize(kMaxMixedBucketSize);
-            }
-        }
-    }
-    code_sorted_.push_back(id);
-}
-
-void UserLexicon::remove_from_indexes(EntryId id) {
-    entries_[id].deleted = true;
-    rebuild_indexes_locked();
-}
 
 } // namespace cxxime

@@ -12,7 +12,7 @@
 #include <cxxime/ipc_protocol.h>
 #include <cxxime/logging.h>
 
-#include "user_dict_control_handler.h"
+#include "lexicon_control_handler.h"
 
 namespace {
 
@@ -155,7 +155,7 @@ bool ServerApp::initialize(const std::string& dict_path, const std::string& conf
                 return config_writer_.submit(kind, payload, config_json, error_code);
             },
             [this](const std::string& payload, std::string* response_payload) {
-                return handle_user_dict_control_request(session_mgr_, payload, response_payload);
+                return handle_lexicon_control_request(session_mgr_, payload, response_payload);
             })) {
         config_writer_.stop();
         MessageBoxW(nullptr, L"Failed to start config control server.",

@@ -176,8 +176,10 @@ Section "Install"
     File "data\pinyin.dict.idx"
     File "data\pinyin.spellings.bin"
     File "data\pinyin.topn.bin"
+    File "data\pinyin.reverse.idx"
     File "data\wubi86.dict.bin"
     File "data\wubi86.dict.idx"
+    File "data\wubi86.reverse.idx"
     !ifdef FAST
         SetCompress auto
     !endif

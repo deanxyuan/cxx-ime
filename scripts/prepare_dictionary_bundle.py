@@ -33,15 +33,17 @@ SCHEMAS = os.path.join(ROOT, "data", "schemas")
 SCRIPTS = os.path.join(ROOT, "scripts")
 sys.path.insert(0, DATA_TOOLS)
 
-from dict_builder import copy_source_database
+from dict_builder import build_reverse_index, copy_source_database
 
 MANIFEST_FILES = [
     ("pinyin_dict", "pinyin.dict.bin"),
     ("pinyin_idx", "pinyin.dict.idx"),
     ("pinyin_spellings", "pinyin.spellings.bin"),
     ("pinyin_topn", "pinyin.topn.bin"),
+    ("pinyin_reverse_index", "pinyin.reverse.idx"),
     ("wubi_dict", "wubi86.dict.bin"),
     ("wubi_prefix_index", "wubi86.dict.idx"),
+    ("wubi_reverse_index", "wubi86.reverse.idx"),
 ]
 
 REQUIRED_MANIFEST_ROLES = {
@@ -49,8 +51,10 @@ REQUIRED_MANIFEST_ROLES = {
     "pinyin_idx",
     "pinyin_spellings",
     "pinyin_topn",
+    "pinyin_reverse_index",
     "wubi_dict",
     "wubi_prefix_index",
+    "wubi_reverse_index",
 }
 
 
@@ -268,10 +272,13 @@ def prepare_pinyin_dictionary(data_dir: str, output_dir: str) -> list[str]:
 
         output_prefix = os.path.join(output_dir, "pinyin")
         run_build_runtime_dictionary(db_path, output_prefix)
+        reverse_index_path = output_prefix + ".reverse.idx"
+        build_reverse_index(output_prefix + ".dict.bin", reverse_index_path)
         generated.extend([
             output_prefix + ".dict.bin",
             output_prefix + ".dict.idx",
             output_prefix + ".spellings.bin",
+            reverse_index_path,
         ])
 
         topn_path = os.path.join(output_dir, "pinyin.topn.bin")
@@ -309,10 +316,13 @@ def prepare_wubi_dictionary(data_dir: str, output_dir: str) -> list[str]:
             wubi_ranking_source=ranking_source,
             wubi_ranking_baseline=WUBI_RANKING_BASELINE,
         )
+        reverse_index_path = output_prefix + ".reverse.idx"
+        build_reverse_index(output_prefix + ".dict.bin", reverse_index_path)
         generated.extend([
             symbols_output,
             output_prefix + ".dict.bin",
             output_prefix + ".dict.idx",
+            reverse_index_path,
         ])
 
     return generated

@@ -13,7 +13,7 @@
 | 可审查派生数据 | `symbols.json` | 是 | 从五笔源词典拆出的独立符号分类 |
 | 默认配置 | `default.json`、`themes.json` 等 | 是 | 安装包使用的出厂配置 |
 | 临时源数据 | `*.dict.db` | 否 | 从压缩源解包或下载得到的 SQLite 文件 |
-| 运行时数据 | `*.dict.bin`、`*.dict.idx`、`*.spellings.bin`、`*.topn.bin` | 否 | 打包阶段生成的二进制文件 |
+| 运行时数据 | `*.dict.bin`、`*.dict.idx`、`*.spellings.bin`、`*.topn.bin`、`*.reverse.idx` | 否 | 打包阶段生成的二进制文件 |
 
 `dictionary_manifest.json` 由打包流水线在所有运行时数据生成完毕后写入，记录文件角色、大小和
 SHA-256；它同样不作为源文件维护。
@@ -70,6 +70,7 @@ python data\tools\build_runtime_dictionary.py ^
 | `pinyin_syllable_index.py` | 拼音 `.dict.idx` |
 | `wubi_prefix_index.py` | 五笔完整前缀候选 `.dict.idx` |
 | `wubi_ranking.py` | 五笔可见候选的离线语料排序与全量验收 |
+| `reverse_index.py` | Settings 词语反查使用的 `.reverse.idx` |
 | `source_archive.py` | 安全解析 `.dict.db` 与 `.dict.db.zip` 输入 |
 
 ## 数据流水线
@@ -80,7 +81,7 @@ python data\tools\build_runtime_dictionary.py ^
 pinyin.dict.db.zip
   -> 临时 SQLite
   -> 拼写规则展开
-  -> dict.bin + spellings.bin + syllable idx
+  -> dict.bin + spellings.bin + syllable idx + reverse idx
 ```
 
 五笔：
@@ -90,7 +91,7 @@ wubi86.dict.db.zip
   -> 临时 SQLite
   -> symbols.json + 过滤后的临时 SQLite
   -> 读取 pinyin.dict.db.zip 的通用词频
-  -> dict.bin + 完整前缀候选 idx
+  -> dict.bin + 完整前缀候选 idx + reverse idx
 ```
 
 生成文件必须从源数据重建，不应手工编辑或提交。

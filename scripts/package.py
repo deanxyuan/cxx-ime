@@ -766,8 +766,10 @@ def print_summary(config: str, include_x86_modules: bool, host_diagnostics: bool
     print("    pinyin.dict.idx        Pinyin syllable index (runtime)")
     print("    pinyin.spellings.bin   Pinyin spelling trie (runtime)")
     print("    pinyin.topn.bin        Short code cache (runtime)")
+    print("    pinyin.reverse.idx     Pinyin Settings reverse index")
     print("    wubi86.dict.bin        Wubi binary dictionary")
     print("    wubi86.dict.idx        Wubi complete-prefix candidate index")
+    print("    wubi86.reverse.idx     Wubi Settings reverse index")
     optional_scripts = [
         ("install.bat", "Installer helper"),
         ("uninstall.bat", "Uninstaller helper"),

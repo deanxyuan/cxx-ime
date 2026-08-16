@@ -13,6 +13,7 @@
 
 #include "cxxime_resource_ids.h"
 #include "editor_app_internal.h"
+#include "lexicon_view_tabs.h"
 
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "uxtheme.lib")
@@ -176,7 +177,7 @@ void EditorApp::show_panel(int idx) {
     if (idx == 1 || idx == 2)
         update_cand_preview();
     if (idx == 4)
-        query_user_entries();
+        query_lexicon_entries(false);
     update_candidate_preview_buttons();
     InvalidateRect(hList_, nullptr, TRUE);
 }
@@ -401,9 +402,22 @@ LRESULT CALLBACK EditorApp::wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case kDiagnosticsCleanupCompleteMessage:
         a->handle_diagnostics_cleanup_complete(lp);
         return 0;
-    case kUserDictQueryCompleteMessage:
-        a->handle_user_dict_query_complete(wp, lp);
+    case kLexiconQueryCompleteMessage:
+        a->handle_lexicon_query_complete(wp, lp);
         return 0;
+    case kLexiconCodeCompleteMessage:
+        a->handle_lexicon_code_complete(wp, lp);
+        return 0;
+    case kLexiconImportCompleteMessage:
+        a->handle_lexicon_import_complete(lp);
+        return 0;
+    case WM_TIMER:
+        if (wp == kLexiconCodeTimerId) {
+            KillTimer(hwnd, kLexiconCodeTimerId);
+            a->request_lexicon_code_suggestions();
+            return 0;
+        }
+        break;
     case WM_DPICHANGED: {
         float oldDpi = g_dpi;
         g_dpi = (float)LOWORD(wp) / 96.0f;
@@ -500,6 +514,8 @@ LRESULT CALLBACK EditorApp::wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     }
     case WM_DESTROY:
+        a->lexiconImportToken_.reset();
+        a->lexiconImportRunning_ = false;
         a->readback(hwnd);
         a->destroy_candidate_preview_window();
         a->release_fonts();
@@ -553,6 +569,10 @@ LRESULT CALLBACK EditorApp::wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     }
     case WM_DRAWITEM: {
         LPDRAWITEMSTRUCT dis = (LPDRAWITEMSTRUCT)lp;
+        if (draw_lexicon_view_tab(*dis, a->lexiconViewTabs_,
+                                  a->lexiconResource_ == LexiconResource::kCandidatePreference)) {
+            return TRUE;
+        }
         if (dis->CtlID != 1) break;
         int idx = (int)dis->itemID;
         if (idx < 0 || idx >= kPanelCount) break;

@@ -85,12 +85,4 @@ std::vector<std::string> PinyinSegmentor::segment_best(const std::string& pinyin
     return result;
 }
 
-std::vector<std::vector<std::string>> PinyinSegmentor::segment(const std::string& pinyin) {
-    auto best = segment_best(pinyin);
-    if (!best.empty()) {
-        return {best};
-    }
-    return {};
-}
-
 } // namespace cxxime

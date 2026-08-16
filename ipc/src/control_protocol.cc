@@ -46,8 +46,8 @@ bool parse_control_packet(const void* data, std::size_t size, ControlMessage* me
         case ControlMessageType::kMutationResult:
         case ControlMessageType::kPing:
         case ControlMessageType::kPong:
-        case ControlMessageType::kUserDictRequest:
-        case ControlMessageType::kUserDictResult:
+        case ControlMessageType::kLexiconRequest:
+        case ControlMessageType::kLexiconResult:
             break;
         default:
             return false;

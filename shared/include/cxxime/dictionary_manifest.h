@@ -34,8 +34,9 @@ bool compute_file_sha256(const std::string& path, std::string& out, std::string*
 bool load_dictionary_manifest(const std::string& manifest_path,
                               DictionaryManifest& out,
                               std::string* error = nullptr);
-bool validate_dictionary_manifest(const DictionaryManifest& manifest,
-                                  std::string* error = nullptr);
+bool validate_dictionary_manifest_files(const DictionaryManifest& manifest,
+                                        const std::vector<std::string>& roles,
+                                        std::string* error = nullptr);
 
 } // namespace cxxime
 

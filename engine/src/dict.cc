@@ -8,6 +8,7 @@
 #include <windows.h>
 
 #include <cxxime/candidate_preference.h>
+#include <cxxime/disabled_system_lexicon.h>
 #include <cxxime/logging.h>
 #include <cxxime/query_budget.h>
 #include <cxxime/query_trace.h>
@@ -65,7 +66,8 @@ static void set_candidate_code(Candidate& candidate, const char* syllable_ids, u
 
 Dict::Dict()
     : user_lexicon_(std::make_unique<UserLexicon>())
-    , candidate_preference_(std::make_unique<CandidatePreference>()) {}
+    , candidate_preference_(std::make_unique<CandidatePreference>())
+    , disabled_system_lexicon_(std::make_unique<DisabledSystemLexicon>()) {}
 
 Dict::~Dict() { unload_dict(); }
 
@@ -262,6 +264,7 @@ void Dict::unload_dict() {
 void Dict::close() {
     save_user_dict();
     save_candidate_preferences();
+    save_disabled_system_entries();
     unload_dict();
 }
 
@@ -282,6 +285,7 @@ std::vector<Candidate> Dict::lookup_by_syllables(
         concat_code += s;
     const uint32_t key_len = (uint32_t)key.size();
     const char* key_data = key.data();
+    const bool filter_disabled = disabled_system_entry_count() != 0;
 
     // Binary search for first entry with matching syllable_ids
     uint32_t lo = 0, hi = dict_entry_count_;
@@ -310,6 +314,10 @@ std::vector<Candidate> Dict::lookup_by_syllables(
         c.code = concat_code;
         c.syllables = key;
         c.frequency = e.frequency;
+        if (filter_disabled && is_system_entry_disabled(c.text)) {
+            ++lo;
+            continue;
+        }
         if (!contains_text(results, c.text)) {
             merge_candidate_by_score(results, std::move(c));
             if ((int)results.size() >= limit)
@@ -744,6 +752,7 @@ std::vector<Candidate> Dict::lookup_by_ids(const std::vector<uint32_t>& query_id
     uint32_t pos = lo;
     uint32_t exact_count = 0;
     uint32_t check_interval = budget ? budget->deadline.check_interval : 64;
+    const bool filter_disabled = disabled_system_entry_count() != 0;
 
     // Upstream work may already have exhausted the deadline before the scan starts.
     if (budget && budget->deadline.enabled && budget->deadline.expired()) {
@@ -774,6 +783,11 @@ std::vector<Candidate> Dict::lookup_by_ids(const std::vector<uint32_t>& query_id
         }
         Candidate c;
         fill_system_candidate(id_index_[pos].index, c, 100000);
+        if (filter_disabled && is_system_entry_disabled(c.text)) {
+            ++pos;
+            ++exact_count;
+            continue;
+        }
         if (!contains_text(collector.items(), c.text)) {
             if (collector.full() && trace) {
                 trace->truncated = true;
@@ -824,6 +838,11 @@ std::vector<Candidate> Dict::lookup_by_ids(const std::vector<uint32_t>& query_id
             }
             Candidate c;
             fill_system_candidate(id_index_[pos].index, c, 0);
+            if (filter_disabled && is_system_entry_disabled(c.text)) {
+                ++pos;
+                ++prefix_count;
+                continue;
+            }
             if (!contains_text(collector.items(), c.text)) {
                 if (collector.full() && trace) {
                     trace->truncated = true;

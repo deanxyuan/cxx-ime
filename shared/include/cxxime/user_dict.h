@@ -18,6 +18,7 @@ enum class UserDictKind : std::uint32_t {
 enum class LexiconResource : std::uint32_t {
     kUserLexicon = 0,
     kCandidatePreference = 1,
+    kDisabledSystemLexicon = 2,
 };
 
 struct UserDictEntryInfo {

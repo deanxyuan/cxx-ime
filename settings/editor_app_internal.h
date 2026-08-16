@@ -14,8 +14,11 @@ namespace settings {
 inline constexpr int kFontPt = 14;
 inline constexpr int kNavFontPt = kFontPt + 1;
 inline constexpr UINT kDiagnosticsCompleteMessage = WM_APP + 101;
-inline constexpr UINT kUserDictQueryCompleteMessage = WM_APP + 102;
+inline constexpr UINT kLexiconQueryCompleteMessage = WM_APP + 102;
 inline constexpr UINT kDiagnosticsCleanupCompleteMessage = WM_APP + 103;
+inline constexpr UINT kLexiconCodeCompleteMessage = WM_APP + 104;
+inline constexpr UINT kLexiconImportCompleteMessage = WM_APP + 105;
+inline constexpr UINT_PTR kLexiconCodeTimerId = 4100;
 
 extern float g_dpi;
 extern HFONT g_hFont;

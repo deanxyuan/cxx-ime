@@ -72,6 +72,18 @@ std::string CandidatePreference::entry_key(const std::string& text, const std::s
     return key;
 }
 
+std::string CandidatePreference::serialize_entries(const std::vector<Entry>& entries) {
+    std::ostringstream output;
+    for (const auto& entry : entries) {
+        if (entry.deleted) {
+            continue;
+        }
+        output << entry.text << '\t' << entry.code << '\t' << entry.candidate_code << '\t'
+               << entry.frequency << '\t' << entry.sequence << '\t' << entry.syllables << '\n';
+    }
+    return output.str();
+}
+
 bool CandidatePreference::load(const std::string& path) {
     std::lock_guard<std::mutex> save_lock(save_mutex_);
     std::string contents;
@@ -126,16 +138,8 @@ bool CandidatePreference::save() {
         if (!dirty_.load(std::memory_order_acquire) || path_.empty()) {
             return true;
         }
-        std::ostringstream output;
-        for (const auto& entry : entries_) {
-            if (entry.deleted) {
-                continue;
-            }
-            output << entry.text << '\t' << entry.code << '\t' << entry.candidate_code << '\t'
-                << entry.frequency << '\t' << entry.sequence << '\t' << entry.syllables << '\n';
-        }
         path = path_;
-        contents = output.str();
+        contents = serialize_entries(entries_);
         saved_version = version_.load(std::memory_order_acquire);
     }
     if (!write_user_data_file_atomically(path, contents)) {
@@ -161,6 +165,7 @@ bool CandidatePreference::save_if_due(std::chrono::milliseconds delay) {
 }
 
 void CandidatePreference::freeze() {
+    std::lock_guard<std::mutex> save_lock(save_mutex_);
     std::unique_lock<std::shared_mutex> lock(mutex_);
     accepting_updates_ = false;
 }
@@ -273,6 +278,7 @@ std::vector<UserDictEntryInfo> CandidatePreference::query(const std::string& que
 }
 
 bool CandidatePreference::erase(const std::string& text, const std::string& code) {
+    std::lock_guard<std::mutex> save_lock(save_mutex_);
     std::unique_lock<std::shared_mutex> lock(mutex_);
     if (!accepting_updates_) {
         return false;
@@ -290,6 +296,7 @@ bool CandidatePreference::erase(const std::string& text, const std::string& code
 }
 
 bool CandidatePreference::clear() {
+    std::lock_guard<std::mutex> save_lock(save_mutex_);
     std::unique_lock<std::shared_mutex> lock(mutex_);
     if (!accepting_updates_) {
         return false;
@@ -304,6 +311,87 @@ bool CandidatePreference::clear() {
     last_update_ms_.store(GetTickCount64(), std::memory_order_release);
     dirty_.store(true, std::memory_order_release);
     version_.fetch_add(1, std::memory_order_acq_rel);
+    return true;
+}
+
+bool CandidatePreference::erase_and_save(const std::string& text, const std::string& code) {
+    std::lock_guard<std::mutex> save_lock(save_mutex_);
+    std::vector<Entry> entries;
+    std::string path;
+    std::uint64_t captured_version = 0;
+    std::uint64_t target_sequence = 0;
+    {
+        std::shared_lock<std::shared_mutex> lock(mutex_);
+        if (!accepting_updates_) {
+            return false;
+        }
+        const auto found = entry_index_.find(entry_key(text, code));
+        if (found == entry_index_.end()) {
+            return false;
+        }
+        entries = entries_;
+        entries[found->second].deleted = true;
+        target_sequence = entries_[found->second].sequence;
+        path = path_;
+        captured_version = version_.load(std::memory_order_acquire);
+    }
+    if (path.empty() || !write_user_data_file_atomically(path, serialize_entries(entries))) {
+        return false;
+    }
+
+    std::unique_lock<std::shared_mutex> lock(mutex_);
+    const bool concurrent_update = version_.load(std::memory_order_acquire) != captured_version;
+    const auto found = entry_index_.find(entry_key(text, code));
+    if (found != entry_index_.end() && entries_[found->second].sequence == target_sequence) {
+        entries_[found->second].deleted = true;
+        rebuild_indexes_locked();
+        version_.fetch_add(1, std::memory_order_acq_rel);
+    }
+    dirty_.store(concurrent_update, std::memory_order_release);
+    if (!concurrent_update) {
+        last_update_ms_.store(0, std::memory_order_release);
+    }
+    return true;
+}
+
+bool CandidatePreference::clear_and_save() {
+    std::lock_guard<std::mutex> save_lock(save_mutex_);
+    std::string path;
+    std::uint64_t captured_sequence = 0;
+    std::uint64_t captured_version = 0;
+    {
+        std::shared_lock<std::shared_mutex> lock(mutex_);
+        if (!accepting_updates_) {
+            return false;
+        }
+        if (entry_index_.empty() && !dirty_.load(std::memory_order_acquire)) {
+            return true;
+        }
+        path = path_;
+        captured_sequence = sequence_;
+        captured_version = version_.load(std::memory_order_acquire);
+    }
+    if (path.empty() || !write_user_data_file_atomically(path, {})) {
+        return false;
+    }
+
+    std::unique_lock<std::shared_mutex> lock(mutex_);
+    const bool concurrent_update = version_.load(std::memory_order_acquire) != captured_version;
+    bool changed = false;
+    for (auto& entry : entries_) {
+        if (!entry.deleted && entry.sequence <= captured_sequence) {
+            entry.deleted = true;
+            changed = true;
+        }
+    }
+    if (changed) {
+        rebuild_indexes_locked();
+        version_.fetch_add(1, std::memory_order_acq_rel);
+    }
+    dirty_.store(concurrent_update, std::memory_order_release);
+    if (!concurrent_update) {
+        last_update_ms_.store(0, std::memory_order_release);
+    }
     return true;
 }
 

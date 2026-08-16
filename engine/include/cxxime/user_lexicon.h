@@ -37,6 +37,12 @@ public:
     bool delete_entry(const std::string& text, const std::string& code = {});
     bool replace_entry(const std::string& old_text, const std::string& old_code,
                        const std::string& new_text, const std::string& new_code);
+    bool add_entry_and_save(const std::string& text, const std::string& code,
+                            const std::string& syllables = {});
+    bool delete_entry_and_save(const std::string& text, const std::string& code = {});
+    bool replace_entry_and_save(const std::string& old_text, const std::string& old_code,
+                                const std::string& new_text, const std::string& new_code);
+    bool import_file(const std::string& source_path);
 
     std::vector<UserDictEntryInfo> query_entries(const std::string& query, std::size_t offset,
                                                  std::size_t limit,
@@ -77,12 +83,37 @@ private:
         std::vector<EntryId> ids;
     };
 
+    struct Snapshot {
+        std::vector<Entry> entries;
+        std::unordered_map<std::string, std::vector<EntryId>> text_index;
+        std::unordered_map<std::string, EntryId> entry_index;
+        std::unordered_map<std::string, Bucket> exact_index;
+        std::unordered_map<std::string, Bucket> prefix_index;
+        std::unordered_map<std::string, Bucket> abbr_index;
+        std::unordered_map<std::string, Bucket> mixed_index;
+        std::vector<EntryId> code_sorted;
+        std::uint64_t sequence = 0;
+        UserScoringProfile scoring_profile = UserScoringProfile::kPinyin;
+        std::string path;
+    };
+
     static std::string entry_key(const std::string& text, const std::string& code);
-    void rebuild_indexes_locked();
-    void insert_into_indexes(EntryId id);
-    void remove_from_indexes(EntryId id);
-    void bucket_insert_sorted(Bucket& bucket, EntryId id);
-    void sort_bucket(Bucket& bucket);
+    static bool parse_entries(const std::string& contents, bool reject_invalid_lines,
+                              std::vector<Entry>* entries, std::uint64_t* sequence);
+    static std::string serialize_entries(const std::vector<Entry>& entries);
+    static bool add_to_snapshot(Snapshot* snapshot, const std::string& text,
+                                const std::string& code, const std::string& syllables);
+    static bool delete_from_snapshot(Snapshot* snapshot, const std::string& text,
+                                     const std::string& code);
+    static bool replace_in_snapshot(Snapshot* snapshot, const std::string& old_text,
+                                    const std::string& old_code, const std::string& new_text,
+                                    const std::string& new_code);
+    static Snapshot prepare_snapshot(Snapshot snapshot);
+    static void sort_bucket(Snapshot* snapshot, Bucket* bucket);
+    static void insert_into_indexes(Snapshot* snapshot, EntryId id);
+    Snapshot snapshot() const;
+    void publish_snapshot(Snapshot snapshot, bool dirty);
+    bool persist_snapshot(Snapshot snapshot);
 
     std::vector<Entry> entries_;
     std::unordered_map<std::string, std::vector<EntryId>> text_index_;
@@ -96,7 +127,7 @@ private:
     std::uint64_t sequence_ = 0;
     UserScoringProfile scoring_profile_ = UserScoringProfile::kPinyin;
     mutable std::shared_mutex mutex_;
-    std::mutex save_mutex_;
+    std::mutex transaction_mutex_;
     std::atomic<bool> dirty_{false};
     std::string path_;
 };
