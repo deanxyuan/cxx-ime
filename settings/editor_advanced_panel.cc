@@ -135,21 +135,27 @@ void EditorApp::create_advanced_layout_panel(HWND panel) {
         hCandEdits_[i] = make_edit(1200 + i, control_x, y, edit_width, panel);
     }
 
-    const int render_y = top + kRowH * 7;
-    const int control_x = make_aligned_label(L"渲染方式:", kPanelPadLeft, S(90), render_y, panel);
-    hRenderD2D_ = make_radio(1105, L"默认渲染 (D2D)", control_x, render_y, S(125), panel, true);
-    hRenderGDI_ =
-        make_radio(1106, L"兼容渲染 (GDI)", control_x + S(132), render_y, S(125), panel, false);
+    const int preset_y = top + kRowH * 7;
+    const int control_x =
+        make_aligned_label(L"布局方案:", kPanelPadLeft, S(90), preset_y, panel);
+    hCandRecommendBtn_ = CreateWindowExW(
+        0, L"BUTTON", L"应用推荐布局", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+        control_x, preset_y, S(110), kCtrlH, panel,
+        reinterpret_cast<HMENU>(static_cast<INT_PTR>(1220)), GetModuleHandle(nullptr), nullptr);
+    SendMessageW(hCandRecommendBtn_, WM_SETFONT, reinterpret_cast<WPARAM>(get_font()), TRUE);
+    const int preview_y = preset_y + kRowH;
+    const int preview_x =
+        make_aligned_label(L"候选预览:", kPanelPadLeft, S(90), preview_y, panel);
     hCandPreviewBtns_[1] = CreateWindowExW(
         0, L"BUTTON", L"预览窗口", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
-        kPanelPadLeft + S(98), render_y + kRowH, S(110), kCtrlH, panel,
+        preview_x, preview_y, S(110), kCtrlH, panel,
         reinterpret_cast<HMENU>(static_cast<INT_PTR>(1222)), GetModuleHandle(nullptr), nullptr);
     SendMessageW(hCandPreviewBtns_[1], WM_SETFONT, reinterpret_cast<WPARAM>(get_font()), TRUE);
 }
 
 bool EditorApp::handle_advanced_layout_command(int control_id, int notification) {
-    if (notification == BN_CLICKED && (control_id == 1105 || control_id == 1106)) {
-        update_preview();
+    if (control_id == 1220 && notification == BN_CLICKED) {
+        apply_candidate_control(control_id);
         return true;
     }
     if (notification == EN_CHANGE && control_id >= 1200 && control_id <= 1212) {
