@@ -2,6 +2,7 @@
 // candidate_window_tool — interactive visual test for CandidateWindow
 
 #include <windows.h>
+#include <algorithm>
 #include <cstdlib>
 #include <cstdio>
 #include <vector>
@@ -111,16 +112,22 @@ static LRESULT CALLBACK ParentWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             printf("Committed: %s\n", g_page.candidates[g_page.highlighted].text.c_str());
             g_window.hide();
         } else if (vk == 'T') {
-            static int ti = -1;  // first press skips default azure
-            static const char* schemes[] = {
-                "aqua", "dark_temple", "luna", "ps4",
-                "google", "lost_temple", "starcraft", "azure",
-                "solarized_rock", "dota_2", "modern_warfare", "steam", "metroblue"
-            };
-            ti = (ti + 1) % 13;
+            // Cycle through the presets actually loaded from themes.json.
+            static std::vector<std::string> schemes;
+            if (schemes.empty()) {
+                for (const auto& [name, colors] : g_config.preset_color_schemes) {
+                    schemes.push_back(name);
+                }
+                std::sort(schemes.begin(), schemes.end());
+            }
+            static int ti = -1;  // first press skips the default theme
+            if (schemes.empty()) {
+                return 0;
+            }
+            ti = (ti + 1) % static_cast<int>(schemes.size());
             g_config.theme = schemes[ti];
             auto tm = cxxime::build_theme_from_config(g_config);
-            printf("T=%s bg=(%d,%d,%d) hl=(%d,%d,%d)\n", schemes[ti],
+            printf("T=%s bg=(%d,%d,%d) hl=(%d,%d,%d)\n", schemes[ti].c_str(),
                    tm.background.r, tm.background.g, tm.background.b,
                    tm.hilited_back.r, tm.hilited_back.g, tm.hilited_back.b);
             g_window.hide();

@@ -2,8 +2,11 @@
 // tsf_position_tool — validates caret-to-window positioning logic
 
 #include <windows.h>
+#include <algorithm>
 #include <cstdlib>
 #include <cstdio>
+#include <string>
+#include <vector>
 #include <cxxime/candidate_window.h>
 #include <cxxime/candidate.h>
 #include <cxxime/config.h>
@@ -62,13 +65,20 @@ static LRESULT CALLBACK ParentWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
               g_window.set_layout(vert ? "vertical" : "horizontal"); }
             break;
         case 'T':
-            { static int ti = 0;
-              static const char* schemes[] = {"azure","aqua","luna","dark_temple",
-                  "google","starcraft","solarized_rock","metroblue",nullptr};
-              if (!schemes[ti]) ti = 0;
-              g_config.theme = schemes[ti++];
-              auto tm = cxxime::build_theme_from_config(g_config);
-              g_window.set_theme(tm); }
+            { // Cycle through the presets actually loaded from themes.json.
+              static std::vector<std::string> schemes;
+              if (schemes.empty()) {
+                  for (const auto& [name, colors] : g_config.preset_color_schemes) {
+                      schemes.push_back(name);
+                  }
+                  std::sort(schemes.begin(), schemes.end());
+              }
+              static size_t ti = 0;
+              if (!schemes.empty()) {
+                  g_config.theme = schemes[ti++ % schemes.size()];
+                  auto tm = cxxime::build_theme_from_config(g_config);
+                  g_window.set_theme(tm);
+              } }
             break;
         case 'D':
             { static bool d2d = true; d2d = !d2d;
