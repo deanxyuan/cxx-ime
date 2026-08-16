@@ -8,6 +8,7 @@ from typing import Dict, Tuple
 
 
 MAGIC = b"CXDIC\x02\x00\x00"
+VERSION = 2
 HEADER_FORMAT = "<8sIIIII"
 HEADER_SIZE = struct.calcsize(HEADER_FORMAT)
 ENTRY_FORMAT = "<IIIIi"
@@ -66,7 +67,7 @@ def build(database_path: str, output_path: str) -> int:
             struct.pack(
                 HEADER_FORMAT,
                 MAGIC,
-                2,
+                VERSION,
                 len(entries),
                 len(string_data),
                 entries_offset,

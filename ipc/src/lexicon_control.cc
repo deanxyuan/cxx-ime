@@ -1,6 +1,6 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
-#include <cxxime/user_dict_control.h>
+#include <cxxime/lexicon_control.h>
 
 #include <limits>
 #include <utility>
@@ -17,50 +17,65 @@ namespace {
 
 using json = nlohmann::json;
 
-const char* operation_name(UserDictOperation operation) {
+const char* operation_name(LexiconOperation operation) {
     switch (operation) {
-        case UserDictOperation::kQuery:
+        case LexiconOperation::kQuery:
             return "query";
-        case UserDictOperation::kAdd:
+        case LexiconOperation::kAdd:
             return "add";
-        case UserDictOperation::kReplace:
+        case LexiconOperation::kReplace:
             return "replace";
-        case UserDictOperation::kDelete:
+        case LexiconOperation::kDelete:
             return "delete";
-        case UserDictOperation::kReload:
-            return "reload";
-        case UserDictOperation::kSave:
+        case LexiconOperation::kImport:
+            return "import";
+        case LexiconOperation::kSave:
             return "save";
-        case UserDictOperation::kClear:
+        case LexiconOperation::kClear:
             return "clear";
+        case LexiconOperation::kQuerySystemEntryStatus:
+            return "query_system_entry_status";
+        case LexiconOperation::kDisableSystemEntry:
+            return "disable_system_entry";
+        case LexiconOperation::kRestoreSystemEntry:
+            return "restore_system_entry";
         default:
             return "unknown";
     }
 }
 
-UserDictOperation parse_operation(const std::string& operation) {
+LexiconOperation parse_operation(const std::string& operation) {
     if (operation == "query") {
-        return UserDictOperation::kQuery;
+        return LexiconOperation::kQuery;
     }
     if (operation == "add") {
-        return UserDictOperation::kAdd;
+        return LexiconOperation::kAdd;
     }
     if (operation == "replace") {
-        return UserDictOperation::kReplace;
+        return LexiconOperation::kReplace;
     }
     if (operation == "delete") {
-        return UserDictOperation::kDelete;
+        return LexiconOperation::kDelete;
     }
-    if (operation == "reload") {
-        return UserDictOperation::kReload;
+    if (operation == "import") {
+        return LexiconOperation::kImport;
     }
     if (operation == "save") {
-        return UserDictOperation::kSave;
+        return LexiconOperation::kSave;
     }
     if (operation == "clear") {
-        return UserDictOperation::kClear;
+        return LexiconOperation::kClear;
     }
-    return UserDictOperation::kUnknown;
+    if (operation == "query_system_entry_status") {
+        return LexiconOperation::kQuerySystemEntryStatus;
+    }
+    if (operation == "disable_system_entry") {
+        return LexiconOperation::kDisableSystemEntry;
+    }
+    if (operation == "restore_system_entry") {
+        return LexiconOperation::kRestoreSystemEntry;
+    }
+    return LexiconOperation::kUnknown;
 }
 
 const char* kind_name(UserDictKind kind) { return kind == UserDictKind::WUBI ? "wubi" : "pinyin"; }
@@ -81,8 +96,15 @@ bool parse_kind(const std::string& value, UserDictKind* kind) {
 }
 
 const char* resource_name(LexiconResource resource) {
-    return resource == LexiconResource::kCandidatePreference ? "candidate_preference"
-                                                             : "user_lexicon";
+    switch (resource) {
+        case LexiconResource::kCandidatePreference:
+            return "candidate_preference";
+        case LexiconResource::kDisabledSystemLexicon:
+            return "disabled_system_lexicon";
+        case LexiconResource::kUserLexicon:
+        default:
+            return "user_lexicon";
+    }
 }
 
 bool parse_resource(const std::string& value, LexiconResource* resource) {
@@ -95,6 +117,10 @@ bool parse_resource(const std::string& value, LexiconResource* resource) {
     }
     if (value == "candidate_preference") {
         *resource = LexiconResource::kCandidatePreference;
+        return true;
+    }
+    if (value == "disabled_system_lexicon") {
+        *resource = LexiconResource::kDisabledSystemLexicon;
         return true;
     }
     return false;
@@ -112,10 +138,20 @@ bool read_size(const json& object, const char* key, std::size_t* value) {
     return true;
 }
 
+bool dump_json(const json& object, std::string* payload) {
+    try {
+        *payload = object.dump();
+        return true;
+    } catch (const json::exception&) {
+        payload->clear();
+        return false;
+    }
+}
+
 } // namespace
 
-bool encode_user_dict_request(const UserDictControlRequest& request, std::string* payload) {
-    if (!payload || request.operation == UserDictOperation::kUnknown) {
+bool encode_lexicon_request(const LexiconControlRequest& request, std::string* payload) {
+    if (!payload || request.operation == LexiconOperation::kUnknown) {
         return false;
     }
 
@@ -123,34 +159,42 @@ bool encode_user_dict_request(const UserDictControlRequest& request, std::string
                    {"kind", kind_name(request.kind)},
                    {"resource", resource_name(request.resource)}};
     switch (request.operation) {
-        case UserDictOperation::kQuery:
+        case LexiconOperation::kQuery:
             object["query"] = request.query;
             object["offset"] = request.offset;
             object["limit"] = request.limit;
             break;
-        case UserDictOperation::kAdd:
-        case UserDictOperation::kDelete:
+        case LexiconOperation::kAdd:
+        case LexiconOperation::kDelete:
             object["text"] = request.text;
             object["code"] = request.code;
             break;
-        case UserDictOperation::kReplace:
+        case LexiconOperation::kDisableSystemEntry:
+        case LexiconOperation::kRestoreSystemEntry:
+            object["text"] = request.text;
+            break;
+        case LexiconOperation::kQuerySystemEntryStatus:
+            object["texts"] = request.texts;
+            break;
+        case LexiconOperation::kReplace:
             object["old_text"] = request.old_text;
             object["old_code"] = request.old_code;
             object["text"] = request.text;
             object["code"] = request.code;
             break;
-        case UserDictOperation::kReload:
-        case UserDictOperation::kSave:
-        case UserDictOperation::kClear:
+        case LexiconOperation::kImport:
+            object["source_path"] = request.source_path;
+            break;
+        case LexiconOperation::kSave:
+        case LexiconOperation::kClear:
             break;
         default:
             return false;
     }
-    *payload = object.dump();
-    return payload->size() <= CONTROL_MAX_PAYLOAD;
+    return dump_json(object, payload) && payload->size() <= CONTROL_MAX_PAYLOAD;
 }
 
-bool decode_user_dict_request(const std::string& payload, UserDictControlRequest* request) {
+bool decode_lexicon_request(const std::string& payload, LexiconControlRequest* request) {
     if (!request) {
         return false;
     }
@@ -163,26 +207,26 @@ bool decode_user_dict_request(const std::string& payload, UserDictControlRequest
             return false;
         }
 
-        UserDictControlRequest parsed;
+        LexiconControlRequest parsed;
         parsed.operation = parse_operation(object["operation"].get<std::string>());
-        if (parsed.operation == UserDictOperation::kUnknown ||
+        if (parsed.operation == LexiconOperation::kUnknown ||
             !parse_kind(object["kind"].get<std::string>(), &parsed.kind) ||
             !parse_resource(object["resource"].get<std::string>(), &parsed.resource)) {
             return false;
         }
 
         switch (parsed.operation) {
-            case UserDictOperation::kQuery:
+            case LexiconOperation::kQuery:
                 if (!object.contains("query") || !object["query"].is_string() ||
                     !read_size(object, "offset", &parsed.offset) ||
                     !read_size(object, "limit", &parsed.limit) || parsed.limit == 0 ||
-                    parsed.limit > USER_DICT_CONTROL_MAX_LIMIT) {
+                    parsed.limit > LEXICON_CONTROL_MAX_LIMIT) {
                     return false;
                 }
                 parsed.query = object["query"].get<std::string>();
                 break;
-            case UserDictOperation::kAdd:
-            case UserDictOperation::kDelete:
+            case LexiconOperation::kAdd:
+            case LexiconOperation::kDelete:
                 if (!object.contains("text") || !object["text"].is_string() ||
                     !object.contains("code") || !object["code"].is_string()) {
                     return false;
@@ -190,7 +234,27 @@ bool decode_user_dict_request(const std::string& payload, UserDictControlRequest
                 parsed.text = object["text"].get<std::string>();
                 parsed.code = object["code"].get<std::string>();
                 break;
-            case UserDictOperation::kReplace:
+            case LexiconOperation::kDisableSystemEntry:
+            case LexiconOperation::kRestoreSystemEntry:
+                if (!object.contains("text") || !object["text"].is_string()) {
+                    return false;
+                }
+                parsed.text = object["text"].get<std::string>();
+                break;
+            case LexiconOperation::kQuerySystemEntryStatus:
+                if (!object.contains("texts") || !object["texts"].is_array() ||
+                    object["texts"].empty() ||
+                    object["texts"].size() > LEXICON_CONTROL_MAX_LIMIT) {
+                    return false;
+                }
+                for (const auto& text : object["texts"]) {
+                    if (!text.is_string() || text.get_ref<const std::string&>().empty()) {
+                        return false;
+                    }
+                    parsed.texts.push_back(text.get<std::string>());
+                }
+                break;
+            case LexiconOperation::kReplace:
                 if (!object.contains("old_text") || !object["old_text"].is_string() ||
                     !object.contains("old_code") || !object["old_code"].is_string() ||
                     !object.contains("text") || !object["text"].is_string() ||
@@ -202,9 +266,15 @@ bool decode_user_dict_request(const std::string& payload, UserDictControlRequest
                 parsed.text = object["text"].get<std::string>();
                 parsed.code = object["code"].get<std::string>();
                 break;
-            case UserDictOperation::kReload:
-            case UserDictOperation::kSave:
-            case UserDictOperation::kClear:
+            case LexiconOperation::kImport:
+                if (!object.contains("source_path") || !object["source_path"].is_string() ||
+                    object["source_path"].get_ref<const std::string&>().empty()) {
+                    return false;
+                }
+                parsed.source_path = object["source_path"].get<std::string>();
+                break;
+            case LexiconOperation::kSave:
+            case LexiconOperation::kClear:
                 break;
             default:
                 return false;
@@ -217,15 +287,16 @@ bool decode_user_dict_request(const std::string& payload, UserDictControlRequest
     }
 }
 
-bool encode_user_dict_result(const UserDictControlResult& result, std::string* payload) {
-    if (!payload || result.operation == UserDictOperation::kUnknown) {
+bool encode_lexicon_result(const LexiconControlResult& result, std::string* payload) {
+    if (!payload || result.operation == LexiconOperation::kUnknown) {
         return false;
     }
 
     json object = {{"operation", operation_name(result.operation)},
                    {"succeeded", result.succeeded},
                    {"error_code", result.error_code}};
-    if (result.operation == UserDictOperation::kQuery) {
+    if (result.operation == LexiconOperation::kQuery ||
+        result.operation == LexiconOperation::kQuerySystemEntryStatus) {
         object["resource_total"] = result.query.resource_total;
         object["match_total"] = result.query.match_total;
         object["offset"] = result.query.offset;
@@ -239,11 +310,10 @@ bool encode_user_dict_result(const UserDictControlResult& result, std::string* p
                  {"sequence", entry.sequence}});
         }
     }
-    *payload = object.dump();
-    return payload->size() <= CONTROL_MAX_PAYLOAD;
+    return dump_json(object, payload) && payload->size() <= CONTROL_MAX_PAYLOAD;
 }
 
-bool decode_user_dict_result(const std::string& payload, UserDictControlResult* result) {
+bool decode_lexicon_result(const std::string& payload, LexiconControlResult* result) {
     if (!result) {
         return false;
     }
@@ -256,14 +326,15 @@ bool decode_user_dict_result(const std::string& payload, UserDictControlResult* 
             return false;
         }
 
-        UserDictControlResult parsed;
+        LexiconControlResult parsed;
         parsed.operation = parse_operation(object["operation"].get<std::string>());
-        if (parsed.operation == UserDictOperation::kUnknown) {
+        if (parsed.operation == LexiconOperation::kUnknown) {
             return false;
         }
         parsed.succeeded = object["succeeded"].get<bool>();
         parsed.error_code = object["error_code"].get<std::uint32_t>();
-        if (parsed.operation == UserDictOperation::kQuery) {
+        if (parsed.operation == LexiconOperation::kQuery ||
+            parsed.operation == LexiconOperation::kQuerySystemEntryStatus) {
             if (!read_size(object, "resource_total", &parsed.query.resource_total) ||
                 !read_size(object, "match_total", &parsed.query.match_total) ||
                 !read_size(object, "offset", &parsed.query.offset) ||
@@ -294,17 +365,17 @@ bool decode_user_dict_result(const std::string& payload, UserDictControlResult* 
     }
 }
 
-UserDictControlClient::UserDictControlClient(int timeout_ms, const std::wstring& pipe_name)
+LexiconControlClient::LexiconControlClient(int timeout_ms, const std::wstring& pipe_name)
     : timeout_ms_(timeout_ms)
     , pipe_name_(pipe_name) {}
 
-bool UserDictControlClient::execute(const UserDictControlRequest& request,
-                                    UserDictControlResult* result) const {
+bool LexiconControlClient::execute(const LexiconControlRequest& request,
+                                    LexiconControlResult* result, int response_timeout_ms) const {
     if (!result) {
         return false;
     }
     std::string request_payload;
-    if (!encode_user_dict_request(request, &request_payload)) {
+    if (!encode_lexicon_request(request, &request_payload)) {
         result->operation = request.operation;
         result->error_code = request_payload.size() > CONTROL_MAX_PAYLOAD ? ERROR_BUFFER_OVERFLOW
                                                                           : ERROR_INVALID_DATA;
@@ -313,11 +384,11 @@ bool UserDictControlClient::execute(const UserDictControlRequest& request,
 
     ControlMessage response;
     unsigned long transport_error = ERROR_SUCCESS;
-    if (!send_control_request(ControlMessageType::kUserDictRequest, request_payload,
-                              ControlMessageType::kUserDictResult, &response, &transport_error,
-                              timeout_ms_, pipe_name_) ||
+    if (!send_control_request(ControlMessageType::kLexiconRequest, request_payload,
+                              ControlMessageType::kLexiconResult, &response, &transport_error,
+                              timeout_ms_, pipe_name_, response_timeout_ms) ||
         response.generation != ConfigGeneration{} ||
-        !decode_user_dict_result(response.payload, result) ||
+        !decode_lexicon_result(response.payload, result) ||
         result->operation != request.operation) {
         result->operation = request.operation;
         result->succeeded = false;
@@ -328,16 +399,16 @@ bool UserDictControlClient::execute(const UserDictControlRequest& request,
     return result->succeeded;
 }
 
-bool UserDictControlClient::query(UserDictKind kind, const std::string& query, std::size_t offset,
-                                  std::size_t limit, UserDictControlResult* result) const {
+bool LexiconControlClient::query(UserDictKind kind, const std::string& query, std::size_t offset,
+                                  std::size_t limit, LexiconControlResult* result) const {
     return this->query(LexiconResource::kUserLexicon, kind, query, offset, limit, result);
 }
 
-bool UserDictControlClient::query(LexiconResource resource, UserDictKind kind,
+bool LexiconControlClient::query(LexiconResource resource, UserDictKind kind,
                                   const std::string& query, std::size_t offset,
-                                  std::size_t limit, UserDictControlResult* result) const {
-    UserDictControlRequest request;
-    request.operation = UserDictOperation::kQuery;
+                                  std::size_t limit, LexiconControlResult* result) const {
+    LexiconControlRequest request;
+    request.operation = LexiconOperation::kQuery;
     request.kind = kind;
     request.resource = resource;
     request.query = query;
@@ -346,23 +417,23 @@ bool UserDictControlClient::query(LexiconResource resource, UserDictKind kind,
     return execute(request, result);
 }
 
-bool UserDictControlClient::add_entry(UserDictKind kind, const std::string& text,
+bool LexiconControlClient::add_entry(UserDictKind kind, const std::string& text,
                                       const std::string& code,
-                                      UserDictControlResult* result) const {
-    UserDictControlRequest request;
-    request.operation = UserDictOperation::kAdd;
+                                      LexiconControlResult* result) const {
+    LexiconControlRequest request;
+    request.operation = LexiconOperation::kAdd;
     request.kind = kind;
     request.text = text;
     request.code = code;
     return execute(request, result);
 }
 
-bool UserDictControlClient::replace_entry(UserDictKind kind, const std::string& old_text,
+bool LexiconControlClient::replace_entry(UserDictKind kind, const std::string& old_text,
                                           const std::string& old_code, const std::string& new_text,
                                           const std::string& new_code,
-                                          UserDictControlResult* result) const {
-    UserDictControlRequest request;
-    request.operation = UserDictOperation::kReplace;
+                                          LexiconControlResult* result) const {
+    LexiconControlRequest request;
+    request.operation = LexiconOperation::kReplace;
     request.kind = kind;
     request.old_text = old_text;
     request.old_code = old_code;
@@ -371,45 +442,48 @@ bool UserDictControlClient::replace_entry(UserDictKind kind, const std::string& 
     return execute(request, result);
 }
 
-bool UserDictControlClient::delete_entry(UserDictKind kind, const std::string& text,
+bool LexiconControlClient::delete_entry(UserDictKind kind, const std::string& text,
                                          const std::string& code,
-                                         UserDictControlResult* result) const {
-    UserDictControlRequest request;
-    request.operation = UserDictOperation::kDelete;
+                                         LexiconControlResult* result) const {
+    LexiconControlRequest request;
+    request.operation = LexiconOperation::kDelete;
     request.kind = kind;
     request.text = text;
     request.code = code;
     return execute(request, result);
 }
 
-bool UserDictControlClient::reload(UserDictKind kind, UserDictControlResult* result) const {
-    UserDictControlRequest request;
-    request.operation = UserDictOperation::kReload;
+bool LexiconControlClient::import_entries(UserDictKind kind, const std::string& source_path,
+                                          LexiconControlResult* result) const {
+    constexpr int kImportResponseTimeoutMs = 120000;
+    LexiconControlRequest request;
+    request.operation = LexiconOperation::kImport;
+    request.kind = kind;
+    request.source_path = source_path;
+    return execute(request, result, kImportResponseTimeoutMs);
+}
+
+bool LexiconControlClient::save(UserDictKind kind, LexiconControlResult* result) const {
+    LexiconControlRequest request;
+    request.operation = LexiconOperation::kSave;
     request.kind = kind;
     return execute(request, result);
 }
 
-bool UserDictControlClient::save(UserDictKind kind, UserDictControlResult* result) const {
-    UserDictControlRequest request;
-    request.operation = UserDictOperation::kSave;
-    request.kind = kind;
-    return execute(request, result);
-}
-
-bool UserDictControlClient::save_preferences(UserDictKind kind,
-                                             UserDictControlResult* result) const {
-    UserDictControlRequest request;
-    request.operation = UserDictOperation::kSave;
+bool LexiconControlClient::save_preferences(UserDictKind kind,
+                                             LexiconControlResult* result) const {
+    LexiconControlRequest request;
+    request.operation = LexiconOperation::kSave;
     request.kind = kind;
     request.resource = LexiconResource::kCandidatePreference;
     return execute(request, result);
 }
 
-bool UserDictControlClient::delete_preference(UserDictKind kind, const std::string& text,
+bool LexiconControlClient::delete_preference(UserDictKind kind, const std::string& text,
                                               const std::string& code,
-                                              UserDictControlResult* result) const {
-    UserDictControlRequest request;
-    request.operation = UserDictOperation::kDelete;
+                                              LexiconControlResult* result) const {
+    LexiconControlRequest request;
+    request.operation = LexiconOperation::kDelete;
     request.kind = kind;
     request.resource = LexiconResource::kCandidatePreference;
     request.text = text;
@@ -417,12 +491,43 @@ bool UserDictControlClient::delete_preference(UserDictKind kind, const std::stri
     return execute(request, result);
 }
 
-bool UserDictControlClient::clear_preferences(UserDictKind kind,
-                                              UserDictControlResult* result) const {
-    UserDictControlRequest request;
-    request.operation = UserDictOperation::kClear;
+bool LexiconControlClient::clear_preferences(UserDictKind kind,
+                                              LexiconControlResult* result) const {
+    LexiconControlRequest request;
+    request.operation = LexiconOperation::kClear;
     request.kind = kind;
     request.resource = LexiconResource::kCandidatePreference;
+    return execute(request, result);
+}
+
+bool LexiconControlClient::query_system_entry_status(
+    UserDictKind kind, const std::vector<std::string>& texts,
+    LexiconControlResult* result) const {
+    LexiconControlRequest request;
+    request.operation = LexiconOperation::kQuerySystemEntryStatus;
+    request.kind = kind;
+    request.resource = LexiconResource::kDisabledSystemLexicon;
+    request.texts = texts;
+    return execute(request, result);
+}
+
+bool LexiconControlClient::disable_system_entry(UserDictKind kind, const std::string& text,
+                                                LexiconControlResult* result) const {
+    LexiconControlRequest request;
+    request.operation = LexiconOperation::kDisableSystemEntry;
+    request.kind = kind;
+    request.resource = LexiconResource::kDisabledSystemLexicon;
+    request.text = text;
+    return execute(request, result);
+}
+
+bool LexiconControlClient::restore_system_entry(UserDictKind kind, const std::string& text,
+                                                LexiconControlResult* result) const {
+    LexiconControlRequest request;
+    request.operation = LexiconOperation::kRestoreSystemEntry;
+    request.kind = kind;
+    request.resource = LexiconResource::kDisabledSystemLexicon;
+    request.text = text;
     return execute(request, result);
 }
 

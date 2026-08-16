@@ -7,6 +7,7 @@
 #include <windows.h>
 
 #include <cxxime/dict.h>
+#include <cxxime/query_trace.h>
 
 #include "util/testutil.h"
 #include "util/wubi_index_test_data.h"
@@ -60,6 +61,39 @@ TEST(WubiPrefixQuery, ranking_is_independent_of_query_limit) {
     DeleteFileA(dict_path.c_str());
     DeleteFileA(index_path.c_str());
     DeleteFileA(user_path.c_str());
+}
+
+TEST(WubiPrefixQuery, disabled_filter_has_a_fixed_posting_scan_bound) {
+    const std::string dict_path = temp_path("cxxime_wubi_disabled_bound.bin");
+    const std::string index_path = dict_path + ".idx";
+    const std::string user_path = dict_path + ".user.tsv";
+    const std::string disabled_path = dict_path + ".disabled.tsv";
+    std::vector<std::tuple<std::string, std::string, int>> entries;
+    for (int index = 0; index < 50; ++index) {
+        entries.push_back({"a", "entry-" + std::to_string(index), 1000 - index});
+    }
+    ASSERT_TRUE(cxxime::Dict::create_test_dict(dict_path, entries));
+    ASSERT_TRUE(cxxime::test::create_test_wubi_index(index_path, entries));
+    DeleteFileA(user_path.c_str());
+    DeleteFileA(disabled_path.c_str());
+
+    cxxime::Dict dict;
+    ASSERT_TRUE(dict.open_wubi_bundle(dict_path, user_path, index_path));
+    ASSERT_TRUE(dict.load_disabled_system_entries(disabled_path));
+    for (int index = 0; index < 20; ++index) {
+        ASSERT_TRUE(dict.disable_system_entry("entry-" + std::to_string(index)));
+    }
+
+    cxxime::QueryTrace trace;
+    const auto results = dict.lookup("a", 10, &trace);
+    ASSERT_EQ(results.size(), 6u);
+    ASSERT_EQ(trace.prefix_scan_count, 26u);
+
+    dict.close();
+    DeleteFileA(dict_path.c_str());
+    DeleteFileA(index_path.c_str());
+    DeleteFileA(user_path.c_str());
+    DeleteFileA(disabled_path.c_str());
 }
 
 RUN_ALL_TESTS()

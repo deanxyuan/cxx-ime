@@ -61,16 +61,23 @@ private:
         int page_size = 0;
         uint64_t user_dict_version = 0;
         uint64_t candidate_preference_version = 0;
+        uint64_t disabled_system_entry_version = 0;
         uint64_t sequence = 0;
         CandidatePage page;
     };
+    struct QueryCacheVersions {
+        uint64_t user_dict = 0;
+        uint64_t candidate_preference = 0;
+        uint64_t disabled_system_entry = 0;
+    };
     IndexedFastResult lookup_indexed_fast(const std::string& key, int limit,
                                           QueryTrace* trace) const;
+    QueryCacheVersions query_cache_versions() const;
     bool lookup_query_cache(const std::string& input, int page_index, int candidate_offset,
-                            int page_size,
+                            int page_size, const QueryCacheVersions& versions,
                             CandidatePage& page, QueryTrace* trace);
     void store_query_cache(const std::string& input, int page_index, int candidate_offset,
-                           int page_size,
+                           int page_size, const QueryCacheVersions& versions,
                            const CandidatePage& page);
 
     Dict* dict_ = nullptr;

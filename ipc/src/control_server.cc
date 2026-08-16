@@ -430,14 +430,14 @@ private:
                 return write_packet(client->pipe, client->stop_event, packet);
             }
 
-            case ControlMessageType::kUserDictRequest: {
+            case ControlMessageType::kLexiconRequest: {
                 std::string response_payload;
                 if (!request_handler_ ||
                     !request_handler_(message.payload, &response_payload) ||
                     response_payload.empty() || response_payload.size() > CONTROL_MAX_PAYLOAD) {
                     return false;
                 }
-                auto packet = make_packet(ControlMessageType::kUserDictResult, {},
+                auto packet = make_packet(ControlMessageType::kLexiconResult, {},
                                           response_payload.data(), response_payload.size());
                 return write_packet(client->pipe, client->stop_event, packet);
             }

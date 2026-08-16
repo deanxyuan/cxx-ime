@@ -217,6 +217,9 @@ LRESULT CALLBACK PanelForwardProc(HWND window, UINT message, WPARAM wparam, LPAR
         SendMessageW(reinterpret_cast<HWND>(reference_data), WM_NOTIFY, wparam, lparam);
         return 0;
     }
+    if (message == WM_DRAWITEM) {
+        return SendMessageW(reinterpret_cast<HWND>(reference_data), WM_DRAWITEM, wparam, lparam);
+    }
     if (message == WM_NCDESTROY) {
         RemoveWindowSubclass(window, PanelForwardProc, subclass_id);
     }

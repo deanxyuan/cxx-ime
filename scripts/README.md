@@ -52,6 +52,7 @@ python scripts\package.py --output-dir <path>
   -> prepare_dictionary_bundle.py
   -> 拼音 Top-N 构建中间文件
   -> topn_builder 转换为 DAT-16
+  -> 为拼音和五笔 dict.bin 生成 Settings 反向索引
   -> dictionary_manifest.json
   -> verify_dictionary_bundle.py
 ```

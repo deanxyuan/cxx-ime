@@ -52,9 +52,8 @@ bool write_all(HANDLE file, const std::string& contents) {
     return true;
 }
 
-} // namespace
-
-bool read_user_data_file(const std::string& path, std::string* contents) {
+bool read_user_data_file_impl(const std::string& path, bool allow_missing, std::uint64_t max_size,
+                              std::string* contents) {
     if (!contents) {
         return false;
     }
@@ -69,10 +68,11 @@ bool read_user_data_file(const std::string& path, std::string* contents) {
                               OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (file == INVALID_HANDLE_VALUE) {
         const DWORD error = GetLastError();
-        return error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND;
+        return allow_missing && (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND);
     }
     LARGE_INTEGER size = {};
     if (!GetFileSizeEx(file, &size) || size.QuadPart < 0 ||
+        static_cast<unsigned long long>(size.QuadPart) > max_size ||
         static_cast<unsigned long long>(size.QuadPart) >
             static_cast<unsigned long long>((std::numeric_limits<std::size_t>::max)())) {
         CloseHandle(file);
@@ -94,6 +94,18 @@ bool read_user_data_file(const std::string& path, std::string* contents) {
     }
     CloseHandle(file);
     return true;
+}
+
+} // namespace
+
+bool read_user_data_file(const std::string& path, std::string* contents) {
+    return read_user_data_file_impl(path, true, (std::numeric_limits<std::uint64_t>::max)(),
+                                    contents);
+}
+
+bool read_existing_user_data_file(const std::string& path, std::uint64_t max_size,
+                                  std::string* contents) {
+    return read_user_data_file_impl(path, false, max_size, contents);
 }
 
 bool write_user_data_file_atomically(const std::string& path, const std::string& contents) {

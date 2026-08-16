@@ -33,8 +33,11 @@ add_cxxime_test(syllabifier_completion_test)
 add_cxxime_test(pinyin_composer_test)
 add_cxxime_test(dict_test)
 add_cxxime_test(user_data_separation_test)
+add_cxxime_test(disabled_system_lexicon_test)
+target_link_libraries(disabled_system_lexicon_test PRIVATE cxxime-test-topn-data)
 add_cxxime_test(dictionary_format_test)
 target_link_libraries(dictionary_format_test PRIVATE cxxime-test-topn-data)
+add_cxxime_test(dictionary_manifest_test)
 add_cxxime_test(config_test)
 add_cxxime_test(keyboard_shortcut_test)
 add_cxxime_test(layout_test)
@@ -88,6 +91,21 @@ add_cxxime_test(output_composer_test)
 add_cxxime_test(engine_source_test)
 add_cxxime_test(symbol_input_test)
 add_cxxime_test(symbol_table_test)
+add_cxxime_test(system_lexicon_inspector_test)
+target_sources(system_lexicon_inspector_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/settings/pinyin_code_paths.cc
+    ${CMAKE_SOURCE_DIR}/settings/system_lexicon_inspector.cc
+)
+target_include_directories(system_lexicon_inspector_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/settings
+)
+add_cxxime_test(lexicon_panel_model_test)
+target_sources(lexicon_panel_model_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/settings/lexicon_panel_model.cc
+)
+target_include_directories(lexicon_panel_model_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/settings
+)
 add_cxxime_test(wubi_engine_test)
 target_link_libraries(wubi_engine_test PRIVATE cxxime-test-wubi-index-data)
 add_cxxime_test(processor_pagination_test)
@@ -136,7 +154,7 @@ add_executable(session_manager_integration_test
     session_manager_integration_test.cc
     ${TEST_COMMON_SOURCES}
     ${CMAKE_SOURCE_DIR}/server/src/session_manager.cc
-    ${CMAKE_SOURCE_DIR}/server/src/user_dict_control_handler.cc
+    ${CMAKE_SOURCE_DIR}/server/src/lexicon_control_handler.cc
 )
 target_include_directories(session_manager_integration_test PRIVATE
     ${TEST_INCLUDE_DIRS}
@@ -157,6 +175,11 @@ if(Python3_FOUND)
         NAME dictionary_format_verifier_test
         COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/dictionary_format_verifier_test.py
+    )
+    add_test(
+        NAME reverse_index_pipeline_test
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/reverse_index_pipeline_test.py
     )
     add_test(
         NAME wubi_symbol_pipeline_test

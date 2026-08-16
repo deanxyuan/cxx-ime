@@ -18,6 +18,8 @@ namespace cxxime {
 
 namespace {
 
+constexpr std::size_t kDisabledEntryOverfetch = 16;
+
 bool candidate_better(const Candidate& left, const Candidate& right, size_t prefix_length,
                       bool use_prefix_index) {
     if (!use_prefix_index && left.origin == CandidateOrigin::kSystem &&
@@ -117,12 +119,28 @@ std::vector<Candidate> Dict::lookup(const std::string& code_prefix, int limit, Q
     uint32_t prefix_count = 0;
     const bool use_prefix_index =
         wubi_prefix_index_ != nullptr && wubi_prefix_index_->is_loaded() && !code_prefix.empty();
+    const bool filter_disabled = disabled_system_entry_count() != 0;
     if (use_prefix_index) {
         WubiPrefixMatch match;
         if (wubi_prefix_index_->find(code_prefix, &match)) {
-            const size_t count =
-                (std::min)(static_cast<size_t>(match.count), static_cast<size_t>(limit));
-            best_entries.assign(match.entry_indexes, match.entry_indexes + count);
+            const std::size_t scan_limit =
+                (std::min)(static_cast<std::size_t>(match.count),
+                           static_cast<std::size_t>(limit) + kDisabledEntryOverfetch);
+            for (std::size_t position = 0;
+                 position < scan_limit && best_entries.size() < static_cast<std::size_t>(limit);
+                 ++position) {
+                ++prefix_count;
+                const uint32_t index = match.entry_indexes[position];
+                if (!filter_disabled) {
+                    best_entries.push_back(index);
+                    continue;
+                }
+                const auto& entry = dict_entries_[index];
+                const std::string text(dict_strings_ + entry.text_offset, entry.text_len);
+                if (!is_system_entry_disabled(text)) {
+                    best_entries.push_back(index);
+                }
+            }
         }
     } else {
         uint32_t lower = 0;
@@ -152,6 +170,13 @@ std::vector<Candidate> Dict::lookup(const std::string& code_prefix, int limit, Q
                 ++exact_count;
             } else {
                 ++prefix_count;
+            }
+
+            if (filter_disabled) {
+                const std::string text(dict_strings_ + entry.text_offset, entry.text_len);
+                if (is_system_entry_disabled(text)) {
+                    continue;
+                }
             }
 
             bool duplicate = false;

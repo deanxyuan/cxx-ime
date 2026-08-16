@@ -4,6 +4,7 @@
 #ifndef CXXIME_SETTINGS_EDITOR_APP_H_
 #define CXXIME_SETTINGS_EDITOR_APP_H_
 
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -17,8 +18,13 @@
 #include <cxxime/settings_route.h>
 #include <cxxime/user_dict.h>
 
+#include "lexicon_panel_model.h"
+#include "lexicon_view_tabs.h"
+
 namespace cxxime {
 namespace settings {
+
+class LexiconQueryService;
 
 class EditorApp {
 public:
@@ -47,7 +53,8 @@ private:
     bool handle_shortcuts_command(int control_id, int notification);
     bool handle_dictionary_command(int control_id, int notification);
     bool handle_dictionary_notify(LPARAM notification);
-    void handle_user_dict_query_complete(WPARAM generation, LPARAM completion);
+    void handle_lexicon_query_complete(WPARAM generation, LPARAM completion);
+    void handle_lexicon_code_complete(WPARAM generation, LPARAM completion);
     bool handle_diagnostics_command(int control_id, int notification);
     bool handle_about_notify(LPARAM notification);
     void show_panel(int idx);
@@ -55,21 +62,23 @@ private:
     bool save_config();
     void readback(HWND hwnd);
     std::string selected_theme_id() const;
-    void refresh_user_entries();
-    void query_user_entries();
-    void clear_user_entry_form();
-    void add_user_entry();
-    void save_user_entry();
-    void delete_user_entry();
+    void refresh_lexicon_entries();
+    void query_lexicon_entries(bool preserve_editor);
+    void clear_lexicon_entry_form();
+    void add_lexicon_entry();
+    void save_lexicon_entry();
+    void delete_lexicon_entry();
+    void disable_or_restore_system_entry();
+    void request_lexicon_code_suggestions();
     void clear_candidate_preferences();
     void import_user_dict();
+    void handle_lexicon_import_complete(LPARAM completion);
     void export_user_dict();
     void open_user_dict_dir();
     void set_user_dict_status(const std::wstring& text);
-    void update_user_dict_status();
-    void update_user_dict_path();
-    void update_user_entry_actions();
-    void on_user_entry_selected();
+    void update_lexicon_status();
+    void update_lexicon_entry_actions();
+    void on_lexicon_entry_selected();
     void load_diagnostics_controls();
     void read_diagnostics_controls();
     void open_diagnostics_log_directory();
@@ -158,30 +167,46 @@ private:
     HWND hActivateImeHotkey_ = nullptr;
 
     // Dictionary panel
-    HWND hDictStatus_ = nullptr;
-    HWND hDictResource_ = nullptr;
-    HWND hDictKind_ = nullptr;
-    HWND hDictQuery_ = nullptr;
-    HWND hDictList_ = nullptr;
-    HWND hDictText_ = nullptr;
-    HWND hDictCode_ = nullptr;
-    HWND hDictTextLabel_ = nullptr;
-    HWND hDictCodeLabel_ = nullptr;
-    HWND hDictUserPath_ = nullptr;
-    HWND hDictAdd_ = nullptr;
-    HWND hDictSave_ = nullptr;
-    HWND hDictDelete_ = nullptr;
-    HWND hDictClear_ = nullptr;
-    HWND hDictPreferenceClear_ = nullptr;
-    HWND hDictImport_ = nullptr;
-    HWND hDictExport_ = nullptr;
-    HWND hDictOpenDirectory_ = nullptr;
-    HWND hDictLearningNotice_ = nullptr;
-    HWND hDictTooltip_ = nullptr;
-    std::wstring dictPathTooltip_;
-    std::wstring selectedDictText_;
-    std::wstring selectedDictCode_;
-    WPARAM dictQueryGeneration_ = 0;
+    HWND hLexiconStatus_ = nullptr;
+    LexiconViewTabs lexiconViewTabs_;
+    HWND hLexiconKind_ = nullptr;
+    HWND hLexiconQuery_ = nullptr;
+    HWND hLexiconList_ = nullptr;
+    HWND hLexiconText_ = nullptr;
+    HWND hLexiconCode_ = nullptr;
+    HWND hLexiconTextLabel_ = nullptr;
+    HWND hLexiconCodeLabel_ = nullptr;
+    HWND hLexiconAdd_ = nullptr;
+    HWND hLexiconSave_ = nullptr;
+    HWND hLexiconDelete_ = nullptr;
+    HWND hLexiconPreferenceDelete_ = nullptr;
+    HWND hLexiconSystemAction_ = nullptr;
+    HWND hLexiconPreferenceClear_ = nullptr;
+    HWND hLexiconImport_ = nullptr;
+    HWND hLexiconExport_ = nullptr;
+    HWND hLexiconOpenDirectory_ = nullptr;
+    HWND hLexiconLearningNotice_ = nullptr;
+    std::wstring selectedLexiconText_;
+    std::wstring selectedLexiconCode_;
+    std::vector<cxxime::settings::LexiconPanelEntry> lexiconRows_;
+    std::shared_ptr<LexiconQueryService> lexiconQueryService_;
+    WPARAM lexiconQueryGeneration_ = 0;
+    WPARAM lexiconCodeGeneration_ = 0;
+    bool lexiconQueryRunning_ = false;
+    bool lexiconQueryPending_ = false;
+    bool lexiconQueryPendingPreserveEditor_ = false;
+    bool lexiconCodeRunning_ = false;
+    bool lexiconCodePending_ = false;
+    bool lexiconImportRunning_ = false;
+    std::shared_ptr<const bool> lexiconImportToken_ = std::make_shared<const bool>(true);
+    bool selectedLexiconHasSystem_ = false;
+    bool selectedLexiconHasUser_ = false;
+    bool selectedLexiconSystemDisabled_ = false;
+    bool lexiconServerAvailable_ = false;
+    bool lexiconDisabledStateAvailable_ = false;
+    bool updatingLexiconForm_ = false;
+    bool lexiconCodeManuallyEdited_ = false;
+    cxxime::LexiconResource lexiconResource_ = cxxime::LexiconResource::kUserLexicon;
     cxxime::UserDictKind current_user_dict_kind() const;
     cxxime::LexiconResource current_lexicon_resource() const;
     std::string current_user_dict_path() const;

@@ -2,13 +2,16 @@ project(cxxime-engine CXX)
 
 add_library(cxxime-engine STATIC
     src/context.cc
+    src/pinyin_segment_paths.cc
     src/pinyin_segmentor.cc
     src/dict.cc
     src/dict_user_data.cc
     src/dict_span_query.cc
     src/dict_wubi_query.cc
     src/user_data_file.cc
+    src/disabled_system_lexicon.cc
     src/user_lexicon.cc
+    src/user_lexicon_state.cc
     src/user_lexicon_query.cc
     src/candidate_preference.cc
     src/wubi_prefix_index.cc

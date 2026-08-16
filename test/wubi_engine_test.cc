@@ -228,6 +228,39 @@ TEST(WubiEngine, translator_keeps_candidate_order_stable_when_page_query_expands
     DeleteFileA(user_dict_path.c_str());
 }
 
+TEST(WubiEngine, clear_query_cache_discards_candidate_snapshot) {
+    const std::string dict_path = make_temp_path("test_wubi_clear_query_cache.bin");
+    ASSERT_TRUE(cxxime::Dict::create_test_dict(
+        dict_path, {{"a", "exact", 500}, {"aa", "prefix", 400}}));
+
+    cxxime::Dict dict;
+    ASSERT_TRUE(dict.open(dict_path));
+
+    cxxime::WubiTranslator translator;
+    translator.set_dict(&dict);
+    cxxime::QueryBudget budget;
+
+    cxxime::QueryTrace initial_trace = {};
+    const auto initial = translator.translate("a", 0, 9, &initial_trace, &budget);
+    ASSERT_EQ(initial.candidates.size(), 2u);
+    ASSERT_TRUE(initial_trace.exact_scan_count + initial_trace.prefix_scan_count > 0);
+
+    cxxime::QueryTrace cached_trace = {};
+    const auto cached = translator.translate("a", 0, 9, &cached_trace, &budget);
+    ASSERT_EQ(cached.candidates.size(), initial.candidates.size());
+    ASSERT_EQ(cached_trace.exact_scan_count + cached_trace.prefix_scan_count, 0u);
+
+    translator.clear_query_cache();
+
+    cxxime::QueryTrace cleared_trace = {};
+    const auto cleared = translator.translate("a", 0, 9, &cleared_trace, &budget);
+    ASSERT_EQ(cleared.candidates.size(), initial.candidates.size());
+    ASSERT_TRUE(cleared_trace.exact_scan_count + cleared_trace.prefix_scan_count > 0);
+
+    dict.close();
+    DeleteFileA(dict_path.c_str());
+}
+
 TEST(WubiEngine, mixed_order_is_independent_of_page_query_limit) {
     const std::string pinyin_path = make_temp_path("test_mixed_stable_pinyin.bin");
     const std::string wubi_path = make_temp_path("test_mixed_stable_wubi.bin");

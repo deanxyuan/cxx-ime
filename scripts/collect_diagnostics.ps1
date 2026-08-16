@@ -14,6 +14,7 @@ param(
     [switch]$IncludeUserConfig,
     [switch]$IncludeUserDict,
     [switch]$IncludeCandidatePreferences,
+    [switch]$IncludeDisabledSystemLexicon,
     [switch]$NoZip
 )
 
@@ -308,15 +309,19 @@ $dataFiles = @(
     "pinyin.dict.idx",
     "pinyin.spellings.bin",
     "pinyin.topn.bin",
+    "pinyin.reverse.idx",
     "wubi86.dict.bin",
-    "wubi86.dict.idx"
+    "wubi86.dict.idx",
+    "wubi86.reverse.idx"
 )
 $userFiles = @(
     "default.json",
     "user_pinyin.tsv",
     "user_wubi.tsv",
     "learning_pinyin.tsv",
-    "learning_wubi.tsv"
+    "learning_wubi.tsv",
+    "disabled_pinyin.tsv",
+    "disabled_wubi.tsv"
 )
 
 $report.program_files = @()
@@ -409,6 +414,8 @@ Optional:
 - Use -IncludeUserConfig to copy user configuration files.
 - Use -IncludeUserDict to copy user dictionary files. User dictionaries contain personal phrases.
 - Use -IncludeCandidatePreferences to copy candidate preference files. These files reflect input habits.
+- Use -IncludeDisabledSystemLexicon to copy disabled system word files.
+  These files reflect words hidden by the user.
 "@
 $readme | Out-File -Encoding UTF8 -FilePath (Join-Path $root "README.txt")
 
@@ -435,6 +442,12 @@ if ($IncludeCandidatePreferences) {
     $dst = Join-Path $root "candidate-preferences"
     Copy-IfExists (Join-Path $userDir "learning_pinyin.tsv") $dst
     Copy-IfExists (Join-Path $userDir "learning_wubi.tsv") $dst
+}
+
+if ($IncludeDisabledSystemLexicon) {
+    $dst = Join-Path $root "disabled-system-lexicon"
+    Copy-IfExists (Join-Path $userDir "disabled_pinyin.tsv") $dst
+    Copy-IfExists (Join-Path $userDir "disabled_wubi.tsv") $dst
 }
 
 if (-not $NoZip) {

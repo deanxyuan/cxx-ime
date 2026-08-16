@@ -64,6 +64,8 @@ struct SharedResources {
     cxxime::UserDictQueryResult query_lexicon_entries(
         cxxime::LexiconResource resource, const std::string& query,
         cxxime::UserDictKind kind, size_t offset, size_t limit);
+    cxxime::UserDictQueryResult query_disabled_system_entry_status(
+        cxxime::UserDictKind kind, const std::vector<std::string>& texts);
     cxxime::IPCStatus delete_user_entry(cxxime::UserDictKind kind,
                                         const std::string& text,
                                         const std::string& code);
@@ -72,8 +74,13 @@ struct SharedResources {
                                          const std::string& old_code,
                                          const std::string& new_text,
                                          const std::string& new_code);
-    bool reload_user_dict(cxxime::UserDictKind kind);
+    cxxime::IPCStatus import_user_dict(cxxime::UserDictKind kind,
+                                       const std::string& source_path);
     cxxime::IPCStatus save_user_dict(cxxime::UserDictKind kind);
+    cxxime::IPCStatus disable_system_entry(cxxime::UserDictKind kind,
+                                           const std::string& text);
+    cxxime::IPCStatus restore_system_entry(cxxime::UserDictKind kind,
+                                           const std::string& text);
     cxxime::IPCStatus delete_candidate_preference(cxxime::UserDictKind kind,
                                                   const std::string& text,
                                                   const std::string& code);
@@ -146,13 +153,20 @@ public:
     cxxime::UserDictQueryResult query_lexicon_entries(
         cxxime::LexiconResource resource, const std::string& query,
         cxxime::UserDictKind kind, size_t offset, size_t limit);
+    cxxime::UserDictQueryResult query_disabled_system_entry_status(
+        cxxime::UserDictKind kind, const std::vector<std::string>& texts);
     cxxime::IPCStatus delete_user_entry(cxxime::UserDictKind kind,
                                         const std::string& text, const std::string& code);
     cxxime::IPCStatus replace_user_entry(cxxime::UserDictKind kind,
                                          const std::string& old_text, const std::string& old_code,
                                          const std::string& new_text, const std::string& new_code);
-    cxxime::IPCStatus reload_user_dict(cxxime::UserDictKind kind);
+    cxxime::IPCStatus import_user_dict(cxxime::UserDictKind kind,
+                                       const std::string& source_path);
     cxxime::IPCStatus save_user_dict(cxxime::UserDictKind kind);
+    cxxime::IPCStatus disable_system_entry(cxxime::UserDictKind kind,
+                                           const std::string& text);
+    cxxime::IPCStatus restore_system_entry(cxxime::UserDictKind kind,
+                                           const std::string& text);
     cxxime::IPCStatus delete_candidate_preference(cxxime::UserDictKind kind,
                                                   const std::string& text,
                                                   const std::string& code);

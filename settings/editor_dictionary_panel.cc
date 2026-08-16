@@ -2,32 +2,14 @@
 
 #include "editor_app.h"
 
-#include <thread>
-
-#include <commdlg.h>
-#include <shellapi.h>
-
-#include <cxxime/data_path.h>
-#include <cxxime/pipe_names.h>
-#include <cxxime/user_dict_control.h>
+#include <commctrl.h>
 
 #include "editor_app_internal.h"
+#include "lexicon_query_service.h"
 
 namespace cxxime {
 namespace settings {
 namespace {
-
-struct UserDictQueryCompletion {
-    UserDictKind kind = UserDictKind::PINYIN;
-    LexiconResource resource = LexiconResource::kUserLexicon;
-    bool succeeded = false;
-    UserDictControlResult result;
-};
-
-bool control_pipe_is_absent() {
-    const std::wstring pipe_name = make_user_pipe_name(CONTROL_PIPE_BASE_NAME);
-    return !WaitNamedPipeW(pipe_name.c_str(), 1) && GetLastError() == ERROR_FILE_NOT_FOUND;
-}
 
 LRESULT CALLBACK QueryEditProc(HWND window, UINT message, WPARAM wparam, LPARAM lparam,
                                UINT_PTR subclass_id, DWORD_PTR reference_data) {
@@ -45,79 +27,53 @@ LRESULT CALLBACK QueryEditProc(HWND window, UINT message, WPARAM wparam, LPARAM 
     return DefSubclassProc(window, message, wparam, lparam);
 }
 
-std::wstring file_last_write_time_text(const std::string& path) {
-    std::wstring wide_path = path_for_display(path);
-    WIN32_FILE_ATTRIBUTE_DATA data = {};
-    if (!GetFileAttributesExW(wide_path.c_str(), GetFileExInfoStandard, &data)) {
-        return L"未创建";
+void set_list_column(HWND list, int index, const wchar_t* text, int width) {
+    LVCOLUMNW column = {};
+    column.mask = LVCF_TEXT | LVCF_WIDTH | LVCF_SUBITEM;
+    column.pszText = const_cast<LPWSTR>(text);
+    column.cx = width;
+    column.iSubItem = index;
+    if (ListView_GetColumnWidth(list, index) == 0) {
+        ListView_InsertColumn(list, index, &column);
+    } else {
+        ListView_SetColumn(list, index, &column);
     }
-
-    FILETIME local_time = {};
-    SYSTEMTIME system_time = {};
-    if (!FileTimeToLocalFileTime(&data.ftLastWriteTime, &local_time) ||
-        !FileTimeToSystemTime(&local_time, &system_time)) {
-        return L"未知";
-    }
-
-    wchar_t buffer[64] = {};
-    swprintf_s(buffer, L"%04u-%02u-%02u %02u:%02u", system_time.wYear, system_time.wMonth,
-               system_time.wDay, system_time.wHour, system_time.wMinute);
-    return buffer;
-}
-
-bool copy_file_utf8_path(const std::string& source, const std::string& destination) {
-    std::wstring wide_source = path_for_display(source);
-    std::wstring wide_destination = path_for_display(destination);
-    return CopyFileW(wide_source.c_str(), wide_destination.c_str(), FALSE) != FALSE;
-}
-
-void move_control_x(HWND control, int x) {
-    RECT rectangle = {};
-    GetWindowRect(control, &rectangle);
-    MapWindowPoints(nullptr, GetParent(control), reinterpret_cast<POINT*>(&rectangle), 2);
-    SetWindowPos(control, nullptr, x, rectangle.top, 0, 0,
-                 SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
 } // namespace
 
 void EditorApp::create_dictionary_panel(HWND panel, int panel_width) {
     const int top = kPanelPadTop;
+    RECT panel_rect = {};
+    GetClientRect(panel, &panel_rect);
     SetWindowSubclass(panel, PanelForwardProc, 4000, reinterpret_cast<DWORD_PTR>(hwnd_));
+    lexiconQueryService_ = std::make_shared<LexiconQueryService>();
 
-    hDictResource_ = CreateWindowExW(
-        0, WC_TABCONTROLW, L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | TCS_FOCUSNEVER,
-        kPanelPadLeft, top, S(186), S(29), panel,
-        reinterpret_cast<HMENU>(static_cast<INT_PTR>(4014)), GetModuleHandle(nullptr), nullptr);
-    SendMessageW(hDictResource_, WM_SETFONT, reinterpret_cast<WPARAM>(get_font()), TRUE);
-    TCITEMW tab = {};
-    tab.mask = TCIF_TEXT;
-    tab.pszText = const_cast<LPWSTR>(L"用户词库");
-    TabCtrl_InsertItem(hDictResource_, 0, &tab);
-    tab.pszText = const_cast<LPWSTR>(L"选词偏好");
-    TabCtrl_InsertItem(hDictResource_, 1, &tab);
-    TabCtrl_SetCurSel(hDictResource_, 0);
+    lexiconViewTabs_ = create_lexicon_view_tabs(panel, 4014, 4018, kPanelPadLeft, top, S(180),
+                                                kCtrlH, get_font());
 
-    int control_x = make_label(L"输入:", kPanelPadLeft + S(202), top, panel);
-    hDictKind_ = make_combo(4013, control_x, top, S(110), panel);
-    combo_add(hDictKind_, L"拼音");
-    combo_add(hDictKind_, L"五笔");
-    combo_sel(hDictKind_, L"拼音");
+    const int content_right = panel_width - S(10);
+    const int query_y = top + kRowH;
+    const int kind_width = S(100);
+    const int query_button_width = S(68);
+    const int control_gap = S(8);
+    const int query_edit_x = kPanelPadLeft + kind_width + S(12);
+    const int refresh_button_x = content_right - query_button_width;
+    const int query_button_x = refresh_button_x - control_gap - query_button_width;
+    const int query_edit_width = query_button_x - control_gap - query_edit_x;
 
-    hDictStatus_ = CreateWindowExW(0, L"STATIC", L"用户词典: 连接中...",
-                                   WS_CHILD | WS_VISIBLE | SS_LEFT | SS_ENDELLIPSIS,
-                                   control_x + S(122), top, panel_width - control_x - S(132),
-                                   kCtrlH, panel, nullptr, GetModuleHandle(nullptr), nullptr);
-    SendMessageW(hDictStatus_, WM_SETFONT, reinterpret_cast<WPARAM>(get_font()), TRUE);
-
-    int query_y = top + kRowH;
-    control_x = make_label(L"查询:", kPanelPadLeft, query_y, panel);
-    hDictQuery_ = CreateWindowExW(
+    hLexiconKind_ = make_combo(4013, kPanelPadLeft, query_y, kind_width, panel);
+    combo_add(hLexiconKind_, L"拼音");
+    combo_add(hLexiconKind_, L"五笔");
+    combo_sel(hLexiconKind_, L"拼音");
+    set_combo_drop_count(hLexiconKind_, 2);
+    hLexiconQuery_ = CreateWindowExW(
         WS_EX_CLIENTEDGE, L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
-        control_x, query_y, S(190), kCtrlH, panel,
+        query_edit_x, query_y, query_edit_width, kCtrlH, panel,
         reinterpret_cast<HMENU>(static_cast<INT_PTR>(4000)), GetModuleHandle(nullptr), nullptr);
-    SendMessageW(hDictQuery_, WM_SETFONT, reinterpret_cast<WPARAM>(get_font()), TRUE);
-    SetWindowSubclass(hDictQuery_, QueryEditProc, 4000, reinterpret_cast<DWORD_PTR>(hwnd_));
+    SendMessageW(hLexiconQuery_, WM_SETFONT, reinterpret_cast<WPARAM>(get_font()), TRUE);
+    SendMessageW(hLexiconQuery_, EM_SETCUEBANNER, TRUE, reinterpret_cast<LPARAM>(L"词语或编码"));
+    SetWindowSubclass(hLexiconQuery_, QueryEditProc, 4000, reinterpret_cast<DWORD_PTR>(hwnd_));
 
     auto make_button = [&](int id, const wchar_t* text, int x, int y, int width) {
         HWND button = CreateWindowExW(
@@ -127,120 +83,111 @@ void EditorApp::create_dictionary_panel(HWND panel, int panel_width) {
         SendMessageW(button, WM_SETFONT, reinterpret_cast<WPARAM>(get_font()), TRUE);
         return button;
     };
-    make_button(4001, L"查询", control_x + S(202), query_y, S(68));
-    make_button(4002, L"刷新", control_x + S(278), query_y, S(68));
+    make_button(4001, L"查询", query_button_x, query_y, query_button_width);
+    make_button(4002, L"刷新", refresh_button_x, query_y, query_button_width);
 
-    int list_y = query_y + kRowH;
-    int list_width = panel_width - kPanelPadLeft - S(10);
-    int list_height = S(132);
-    hDictList_ = CreateWindowExW(
+    const int list_y = query_y + kRowH;
+    const int status_y = panel_rect.bottom - kCtrlH - S(4);
+    const int file_y = status_y - kRowH;
+    const int action_y = file_y - kRowH;
+    const int edit_y = action_y - kRowH;
+    const int list_width = panel_width - kPanelPadLeft - S(10);
+    const int list_height = edit_y - list_y - S(8);
+    hLexiconList_ = CreateWindowExW(
         WS_EX_CLIENTEDGE, WC_LISTVIEWW, L"",
         WS_CHILD | WS_VISIBLE | WS_TABSTOP | LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS,
         kPanelPadLeft, list_y, list_width, list_height, panel,
         reinterpret_cast<HMENU>(static_cast<INT_PTR>(4003)), GetModuleHandle(nullptr), nullptr);
-    SendMessageW(hDictList_, WM_SETFONT, reinterpret_cast<WPARAM>(get_font()), TRUE);
-    ListView_SetExtendedListViewStyle(hDictList_, LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES);
-    LVCOLUMNW column = {};
-    column.mask = LVCF_TEXT | LVCF_WIDTH | LVCF_SUBITEM;
-    column.pszText = const_cast<LPWSTR>(L"编码");
-    column.cx = S(120);
-    ListView_InsertColumn(hDictList_, 0, &column);
-    column.pszText = const_cast<LPWSTR>(L"词语");
-    column.cx = list_width - S(200);
-    column.iSubItem = 1;
-    ListView_InsertColumn(hDictList_, 1, &column);
-    column.pszText = const_cast<LPWSTR>(L"频率");
-    column.cx = S(70);
-    column.iSubItem = 2;
-    ListView_InsertColumn(hDictList_, 2, &column);
+    SendMessageW(hLexiconList_, WM_SETFONT, reinterpret_cast<WPARAM>(get_font()), TRUE);
+    ListView_SetExtendedListViewStyle(hLexiconList_, LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES);
+    set_list_column(hLexiconList_, 0, L"词语", S(170));
+    set_list_column(hLexiconList_, 1, L"编码", S(145));
+    set_list_column(hLexiconList_, 2, L"来源", S(105));
+    set_list_column(hLexiconList_, 3, L"状态", list_width - S(420));
 
-    int edit_y = list_y + list_height + S(8);
-    int edit_width = S(170);
-    hDictTextLabel_ = CreateWindowExW(0, L"STATIC", L"词语:", WS_CHILD | WS_VISIBLE | SS_LEFT,
-                                      kPanelPadLeft, edit_y + S(3), S(42), kCtrlH, panel, nullptr,
-                                      GetModuleHandle(nullptr), nullptr);
-    SendMessageW(hDictTextLabel_, WM_SETFONT, reinterpret_cast<WPARAM>(get_font()), TRUE);
-    control_x = kPanelPadLeft + S(42);
-    hDictText_ = CreateWindowExW(
+    hLexiconTextLabel_ = CreateWindowExW(0, L"STATIC", L"词语:", WS_CHILD | WS_VISIBLE | SS_LEFT,
+                                         kPanelPadLeft, edit_y + S(3), S(42), kCtrlH, panel,
+                                         nullptr, GetModuleHandle(nullptr), nullptr);
+    SendMessageW(hLexiconTextLabel_, WM_SETFONT, reinterpret_cast<WPARAM>(get_font()), TRUE);
+    const int text_x = kPanelPadLeft + S(42);
+    hLexiconText_ = CreateWindowExW(
         WS_EX_CLIENTEDGE, L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
-        control_x, edit_y, edit_width, kCtrlH, panel,
+        text_x, edit_y, S(190), kCtrlH, panel,
         reinterpret_cast<HMENU>(static_cast<INT_PTR>(4004)), GetModuleHandle(nullptr), nullptr);
-    SendMessageW(hDictText_, WM_SETFONT, reinterpret_cast<WPARAM>(get_font()), TRUE);
+    SendMessageW(hLexiconText_, WM_SETFONT, reinterpret_cast<WPARAM>(get_font()), TRUE);
 
-    int code_x = control_x + edit_width + S(14);
-    hDictCodeLabel_ = CreateWindowExW(0, L"STATIC", L"编码:", WS_CHILD | WS_VISIBLE | SS_LEFT,
-                                      code_x, edit_y + S(3), S(42), kCtrlH, panel, nullptr,
-                                      GetModuleHandle(nullptr), nullptr);
-    SendMessageW(hDictCodeLabel_, WM_SETFONT, reinterpret_cast<WPARAM>(get_font()), TRUE);
-    int code_control_x = code_x + S(42);
-    hDictCode_ = CreateWindowExW(
-        WS_EX_CLIENTEDGE, L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
-        code_control_x, edit_y, S(120), kCtrlH, panel,
+    const int code_x = text_x + S(204);
+    hLexiconCodeLabel_ = CreateWindowExW(0, L"STATIC", L"编码:", WS_CHILD | WS_VISIBLE | SS_LEFT,
+                                         code_x, edit_y + S(3), S(42), kCtrlH, panel, nullptr,
+                                         GetModuleHandle(nullptr), nullptr);
+    SendMessageW(hLexiconCodeLabel_, WM_SETFONT, reinterpret_cast<WPARAM>(get_font()), TRUE);
+    hLexiconCode_ = CreateWindowExW(
+        WS_EX_CLIENTEDGE, WC_COMBOBOXW, L"",
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL | CBS_DROPDOWN | CBS_AUTOHSCROLL,
+        code_x + S(42), edit_y, S(155), S(180), panel,
         reinterpret_cast<HMENU>(static_cast<INT_PTR>(4005)), GetModuleHandle(nullptr), nullptr);
-    SendMessageW(hDictCode_, WM_SETFONT, reinterpret_cast<WPARAM>(get_font()), TRUE);
+    SendMessageW(hLexiconCode_, WM_SETFONT, reinterpret_cast<WPARAM>(get_font()), TRUE);
 
-    int action_y = edit_y + kRowH;
-    int button_x = kPanelPadLeft;
-    hDictAdd_ = make_button(4006, L"新增", button_x, action_y, S(64));
-    hDictSave_ = make_button(4007, L"保存修改", button_x + S(72), action_y, S(86));
-    hDictDelete_ = make_button(4008, L"删除选中", button_x + S(166), action_y, S(86));
-    hDictClear_ = make_button(4009, L"取消编辑", button_x + S(260), action_y, S(86));
-    hDictPreferenceClear_ = make_button(4015, L"清空当前偏好", button_x, action_y, S(112));
-    ShowWindow(hDictPreferenceClear_, SW_HIDE);
+    hLexiconAdd_ = make_button(4006, L"新增", kPanelPadLeft, action_y, S(64));
+    hLexiconSave_ = make_button(4007, L"保存修改", kPanelPadLeft + S(72), action_y, S(86));
+    hLexiconDelete_ = make_button(4008, L"删除用户词", kPanelPadLeft + S(166), action_y, S(86));
+    hLexiconSystemAction_ =
+        make_button(4016, L"隐藏系统词", kPanelPadLeft + S(260), action_y, S(86));
+    hLexiconPreferenceDelete_ =
+        make_button(4017, L"删除选中", kPanelPadLeft, action_y, S(86));
+    hLexiconPreferenceClear_ =
+        make_button(4015, L"清空全部偏好", kPanelPadLeft + S(94), action_y, S(112));
+    ShowWindow(hLexiconPreferenceDelete_, SW_HIDE);
+    ShowWindow(hLexiconPreferenceClear_, SW_HIDE);
 
-    int file_y = action_y + kRowH;
-    hDictImport_ = make_button(4010, L"导入", kPanelPadLeft, file_y, S(64));
-    hDictExport_ = make_button(4011, L"导出", kPanelPadLeft + S(72), file_y, S(64));
-    hDictOpenDirectory_ = make_button(4012, L"打开目录", kPanelPadLeft + S(144), file_y, S(86));
-    hDictLearningNotice_ = CreateWindowExW(
-        0, L"STATIC", L"", WS_CHILD | SS_LEFT, kPanelPadLeft, edit_y + S(3),
+    hLexiconOpenDirectory_ = make_button(4012, L"打开目录", kPanelPadLeft, file_y, S(86));
+    hLexiconImport_ = make_button(4010, L"导入", kPanelPadLeft + S(94), file_y, S(64));
+    hLexiconExport_ = make_button(4011, L"导出", kPanelPadLeft + S(166), file_y, S(64));
+    hLexiconLearningNotice_ =
+        CreateWindowExW(0, L"STATIC", L"", WS_CHILD | SS_LEFT, kPanelPadLeft, edit_y + S(3),
+                        panel_width - kPanelPadLeft - S(10), kCtrlH, panel, nullptr,
+                        GetModuleHandle(nullptr), nullptr);
+    SendMessageW(hLexiconLearningNotice_, WM_SETFONT, reinterpret_cast<WPARAM>(get_font()), TRUE);
+
+    hLexiconStatus_ = CreateWindowExW(
+        0, L"STATIC", L"输入词语或编码开始查询",
+        WS_CHILD | WS_VISIBLE | SS_LEFT | SS_CENTERIMAGE, kPanelPadLeft, status_y,
         panel_width - kPanelPadLeft - S(10), kCtrlH, panel, nullptr, GetModuleHandle(nullptr),
         nullptr);
-    SendMessageW(hDictLearningNotice_, WM_SETFONT, reinterpret_cast<WPARAM>(get_font()), TRUE);
-
-    hDictUserPath_ =
-        CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_LEFT | SS_PATHELLIPSIS,
-                        kPanelPadLeft, file_y + kRowH, panel_width - kPanelPadLeft - S(10), kCtrlH,
-                        panel, nullptr, GetModuleHandle(nullptr), nullptr);
-    SendMessageW(hDictUserPath_, WM_SETFONT, reinterpret_cast<WPARAM>(get_font()), TRUE);
-    hDictTooltip_ = CreateWindowExW(WS_EX_TOPMOST, TOOLTIPS_CLASS, nullptr,
-                                    WS_POPUP | TTS_ALWAYSTIP | TTS_NOPREFIX, CW_USEDEFAULT,
-                                    CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, panel, nullptr,
-                                    GetModuleHandle(nullptr), nullptr);
-    TOOLINFOW tool = {sizeof(tool)};
-    tool.uFlags = TTF_IDISHWND | TTF_SUBCLASS;
-    tool.hwnd = panel;
-    tool.uId = reinterpret_cast<UINT_PTR>(hDictUserPath_);
-    tool.lpszText = const_cast<LPWSTR>(L"");
-    SendMessageW(hDictTooltip_, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&tool));
-    update_user_entry_actions();
+    SendMessageW(hLexiconStatus_, WM_SETFONT, reinterpret_cast<WPARAM>(get_font()), TRUE);
+    update_lexicon_entry_actions();
 }
 
 bool EditorApp::handle_dictionary_command(int control_id, int notification) {
     switch (control_id) {
     case 4001:
-        query_user_entries();
+        query_lexicon_entries(false);
         return true;
     case 4002:
-        refresh_user_entries();
+        refresh_lexicon_entries();
         return true;
     case 4004:
+        if (notification == EN_CHANGE && !updatingLexiconForm_) {
+            lexiconCodeManuallyEdited_ = false;
+            SetTimer(hwnd_, kLexiconCodeTimerId, 150, nullptr);
+            update_lexicon_entry_actions();
+        }
+        return true;
     case 4005:
-        if (notification == EN_CHANGE) {
-            update_user_entry_actions();
+        if ((notification == CBN_EDITCHANGE || notification == CBN_SELCHANGE) &&
+            !updatingLexiconForm_) {
+            lexiconCodeManuallyEdited_ = true;
+            update_lexicon_entry_actions();
         }
         return true;
     case 4006:
-        add_user_entry();
+        add_lexicon_entry();
         return true;
     case 4007:
-        save_user_entry();
+        save_lexicon_entry();
         return true;
     case 4008:
-        delete_user_entry();
-        return true;
-    case 4009:
-        clear_user_entry_form();
+        delete_lexicon_entry();
         return true;
     case 4010:
         import_user_dict();
@@ -253,12 +200,37 @@ bool EditorApp::handle_dictionary_command(int control_id, int notification) {
         return true;
     case 4013:
         if (notification == CBN_SELCHANGE) {
-            clear_user_entry_form();
-            refresh_user_entries();
+            clear_lexicon_entry_form();
+            query_lexicon_entries(false);
         }
         return true;
+    case 4014:
+    case 4018: {
+        if (notification != BN_CLICKED) {
+            return true;
+        }
+        const LexiconResource resource =
+            control_id == 4018 ? LexiconResource::kCandidatePreference
+                               : LexiconResource::kUserLexicon;
+        if (resource == lexiconResource_) {
+            return true;
+        }
+        lexiconResource_ = resource;
+        select_lexicon_view_tab(lexiconViewTabs_,
+                                resource == LexiconResource::kCandidatePreference);
+        clear_lexicon_entry_form();
+        update_lexicon_entry_actions();
+        query_lexicon_entries(false);
+        return true;
+    }
     case 4015:
         clear_candidate_preferences();
+        return true;
+    case 4016:
+        disable_or_restore_system_entry();
+        return true;
+    case 4017:
+        delete_lexicon_entry();
         return true;
     default:
         return false;
@@ -267,447 +239,22 @@ bool EditorApp::handle_dictionary_command(int control_id, int notification) {
 
 bool EditorApp::handle_dictionary_notify(LPARAM notification) {
     auto* header = reinterpret_cast<LPNMHDR>(notification);
-    if (header && header->idFrom == 4014 && header->code == TCN_SELCHANGE) {
-        clear_user_entry_form();
-        update_user_entry_actions();
-        refresh_user_entries();
-        return true;
-    }
     if (!header || header->idFrom != 4003 || header->code != LVN_ITEMCHANGED) {
         return false;
     }
-    auto* item = reinterpret_cast<LPNMLISTVIEW>(notification);
-    if ((item->uChanged & LVIF_STATE) == 0) {
-        return false;
+    const auto* item = reinterpret_cast<LPNMLISTVIEW>(notification);
+    if ((item->uChanged & LVIF_STATE) != 0) {
+        on_lexicon_entry_selected();
     }
-    on_user_entry_selected();
     return true;
 }
 
 UserDictKind EditorApp::current_user_dict_kind() const {
-    int index = combo_index(hDictKind_);
-    return index == 1 ? UserDictKind::WUBI : UserDictKind::PINYIN;
+    return combo_index(hLexiconKind_) == 1 ? UserDictKind::WUBI : UserDictKind::PINYIN;
 }
 
 LexiconResource EditorApp::current_lexicon_resource() const {
-    return hDictResource_ && TabCtrl_GetCurSel(hDictResource_) == 1
-        ? LexiconResource::kCandidatePreference
-        : LexiconResource::kUserLexicon;
-}
-
-std::string EditorApp::current_user_dict_path() const {
-    const bool wubi = current_user_dict_kind() == UserDictKind::WUBI;
-    if (current_lexicon_resource() == LexiconResource::kCandidatePreference) {
-        return user_data_path(wubi ? "learning_wubi.tsv" : "learning_pinyin.tsv");
-    }
-    return user_data_path(wubi ? "user_wubi.tsv" : "user_pinyin.tsv");
-}
-
-void EditorApp::update_user_dict_status() {
-    std::string path = current_user_dict_path();
-    update_user_dict_path();
-    if (!hDictStatus_) {
-        return;
-    }
-
-    std::wstring modified = file_last_write_time_text(path);
-    int shown = hDictList_ ? ListView_GetItemCount(hDictList_) : 0;
-    wchar_t buffer[160] = {};
-    swprintf_s(buffer, L"显示 %d 条，更新于 %s", shown, modified.c_str());
-    SetWindowTextW(hDictStatus_, buffer);
-}
-
-void EditorApp::update_user_dict_path() {
-    if (!hDictUserPath_) {
-        return;
-    }
-    const wchar_t* label = current_lexicon_resource() == LexiconResource::kCandidatePreference
-                               ? L"选词偏好: "
-                               : L"用户词库: ";
-    dictPathTooltip_ = label + path_for_display(current_user_dict_path());
-    SetWindowTextW(hDictUserPath_, dictPathTooltip_.c_str());
-    if (hDictTooltip_) {
-        TOOLINFOW tool = {sizeof(tool)};
-        tool.hwnd = hPanels_[4];
-        tool.uId = reinterpret_cast<UINT_PTR>(hDictUserPath_);
-        tool.lpszText = const_cast<LPWSTR>(dictPathTooltip_.c_str());
-        SendMessageW(hDictTooltip_, TTM_UPDATETIPTEXTW, 0, reinterpret_cast<LPARAM>(&tool));
-    }
-}
-
-void EditorApp::update_user_entry_actions() {
-    const bool user_lexicon = current_lexicon_resource() == LexiconResource::kUserLexicon;
-    bool has_text = hDictText_ && GetWindowTextLengthW(hDictText_) > 0;
-    bool has_code = hDictCode_ && GetWindowTextLengthW(hDictCode_) > 0;
-    bool selected = !selectedDictText_.empty();
-    if (hDictAdd_) {
-        EnableWindow(hDictAdd_, user_lexicon && has_text && has_code && !selected);
-    }
-    if (hDictSave_) {
-        EnableWindow(hDictSave_, user_lexicon && has_text && has_code && selected);
-    }
-    if (hDictDelete_) {
-        EnableWindow(hDictDelete_, selected);
-        move_control_x(hDictDelete_,
-                       user_lexicon ? kPanelPadLeft + S(166) : kPanelPadLeft + S(120));
-    }
-    if (hDictClear_) {
-        EnableWindow(hDictClear_, has_text || has_code || selected);
-    }
-    const int manual_visibility = user_lexicon ? SW_SHOW : SW_HIDE;
-    const int preference_visibility = user_lexicon ? SW_HIDE : SW_SHOW;
-    for (HWND control : {hDictTextLabel_, hDictText_, hDictCodeLabel_, hDictCode_, hDictAdd_,
-                         hDictSave_, hDictClear_, hDictImport_, hDictExport_}) {
-        if (control) {
-            ShowWindow(control, manual_visibility);
-        }
-    }
-    if (hDictPreferenceClear_) {
-        ShowWindow(hDictPreferenceClear_, preference_visibility);
-    }
-    if (hDictLearningNotice_) {
-        SetWindowTextW(hDictLearningNotice_,
-                       config_.candidate_learning
-                           ? L"选词偏好仅用于本机候选排序。"
-                           : L"已停止记录新偏好；已有偏好不会参与排序。");
-        ShowWindow(hDictLearningNotice_, preference_visibility);
-    }
-    if (hDictOpenDirectory_) {
-        move_control_x(hDictOpenDirectory_,
-                       user_lexicon ? kPanelPadLeft + S(144) : kPanelPadLeft);
-    }
-    if (hDictList_) {
-        LVCOLUMNW column = {};
-        column.mask = LVCF_TEXT;
-        column.pszText = const_cast<LPWSTR>(user_lexicon ? L"频率" : L"选择次数");
-        ListView_SetColumn(hDictList_, 2, &column);
-    }
-}
-
-void EditorApp::refresh_user_entries() {
-    if (hDictQuery_) {
-        SetWindowTextW(hDictQuery_, L"");
-    }
-    query_user_entries();
-}
-
-void EditorApp::set_user_dict_status(const std::wstring& text) {
-    if (hDictStatus_) {
-        SetWindowTextW(hDictStatus_, text.c_str());
-    }
-}
-
-void EditorApp::query_user_entries() {
-    if (!hDictList_) {
-        return;
-    }
-
-    selectedDictText_.clear();
-    selectedDictCode_.clear();
-    SetWindowTextW(hDictText_, L"");
-    SetWindowTextW(hDictCode_, L"");
-    ListView_DeleteAllItems(hDictList_);
-    update_user_entry_actions();
-
-    const std::string query = edit_text_utf8(hDictQuery_);
-    const UserDictKind kind = current_user_dict_kind();
-    const LexiconResource resource = current_lexicon_resource();
-    const WPARAM generation = ++dictQueryGeneration_;
-    const HWND window = hwnd_;
-    update_user_dict_path();
-    if (control_pipe_is_absent()) {
-        set_user_dict_status(L"后台未运行");
-        return;
-    }
-    set_user_dict_status(L"正在连接后台...");
-
-    std::thread([window, generation, kind, resource, query]() {
-        UserDictQueryCompletion completion;
-        completion.kind = kind;
-        completion.resource = resource;
-        UserDictControlClient client;
-        completion.succeeded = client.query(resource, kind, query, 0,
-                                            USER_DICT_CONTROL_DEFAULT_LIMIT, &completion.result);
-        SendMessageW(window, kUserDictQueryCompleteMessage, generation,
-                     reinterpret_cast<LPARAM>(&completion));
-    }).detach();
-}
-
-void EditorApp::handle_user_dict_query_complete(WPARAM generation, LPARAM completion_data) {
-    const auto* completion = reinterpret_cast<const UserDictQueryCompletion*>(completion_data);
-    if (!completion || generation != dictQueryGeneration_ ||
-        completion->kind != current_user_dict_kind() ||
-        completion->resource != current_lexicon_resource()) {
-        return;
-    }
-
-    if (!completion->succeeded) {
-        set_user_dict_status(L"后台不可用");
-        return;
-    }
-
-    const UserDictControlResult& result = completion->result;
-    for (size_t i = 0; i < result.query.entries.size(); ++i) {
-        std::wstring code = utf8_to_wstr(result.query.entries[i].code);
-        std::wstring text = utf8_to_wstr(result.query.entries[i].text);
-        wchar_t frequency[32] = {};
-        swprintf_s(frequency, L"%d", result.query.entries[i].frequency);
-        LVITEMW item = {};
-        item.mask = LVIF_TEXT;
-        item.iItem = static_cast<int>(i);
-        item.pszText = const_cast<LPWSTR>(code.c_str());
-        int row = ListView_InsertItem(hDictList_, &item);
-        ListView_SetItemText(hDictList_, row, 1, const_cast<LPWSTR>(text.c_str()));
-        ListView_SetItemText(hDictList_, row, 2, frequency);
-    }
-
-    int shown = ListView_GetItemCount(hDictList_);
-    if (result.query.resource_total == 0) {
-        set_user_dict_status(current_lexicon_resource() == LexiconResource::kUserLexicon
-                                 ? L"暂无用户词条"
-                                 : L"暂无选词偏好");
-        update_user_dict_path();
-        return;
-    }
-
-    std::wstring modified = file_last_write_time_text(current_user_dict_path());
-    wchar_t buffer[192] = {};
-    if (modified == L"未创建") {
-        swprintf_s(buffer, L"共 %zu 条，显示 %d 条", result.query.resource_total, shown);
-    } else {
-        swprintf_s(buffer, L"共 %zu 条，显示 %d 条，更新于 %s", result.query.resource_total,
-            shown, modified.c_str());
-    }
-    SetWindowTextW(hDictStatus_, buffer);
-    update_user_dict_path();
-}
-
-void EditorApp::clear_user_entry_form() {
-    selectedDictText_.clear();
-    selectedDictCode_.clear();
-    if (hDictText_) {
-        SetWindowTextW(hDictText_, L"");
-    }
-    if (hDictCode_) {
-        SetWindowTextW(hDictCode_, L"");
-    }
-    if (hDictList_) {
-        ListView_SetItemState(hDictList_, -1, 0, LVIS_SELECTED);
-    }
-    update_user_entry_actions();
-    set_user_dict_status(L"已取消编辑");
-}
-
-void EditorApp::add_user_entry() {
-    if (current_lexicon_resource() != LexiconResource::kUserLexicon) {
-        return;
-    }
-    std::string text = edit_text_utf8(hDictText_);
-    std::string code = edit_text_utf8(hDictCode_);
-    if (text.empty() || code.empty()) {
-        MessageBoxW(hwnd_, L"请输入词语和编码。", L"CxxIME", MB_OK | MB_ICONWARNING);
-        return;
-    }
-    UserDictControlClient client;
-    UserDictControlResult result;
-    if (!client.add_entry(current_user_dict_kind(), text, code, &result)) {
-        MessageBoxW(hwnd_, L"新增词条失败。", L"CxxIME", MB_OK | MB_ICONERROR);
-        return;
-    }
-    clear_user_entry_form();
-    query_user_entries();
-    set_user_dict_status(L"已新增词条，正在刷新...");
-}
-
-void EditorApp::save_user_entry() {
-    if (current_lexicon_resource() != LexiconResource::kUserLexicon) {
-        return;
-    }
-    if (selectedDictText_.empty()) {
-        MessageBoxW(hwnd_, L"请先在列表中选择一个词条。", L"CxxIME", MB_OK | MB_ICONWARNING);
-        return;
-    }
-    std::string old_text = wstr_to_utf8(selectedDictText_);
-    std::string old_code = wstr_to_utf8(selectedDictCode_);
-    std::string text = edit_text_utf8(hDictText_);
-    std::string code = edit_text_utf8(hDictCode_);
-    if (text.empty() || code.empty()) {
-        MessageBoxW(hwnd_, L"请输入词语和编码。", L"CxxIME", MB_OK | MB_ICONWARNING);
-        return;
-    }
-    UserDictControlClient client;
-    UserDictControlResult result;
-    if (!client.replace_entry(current_user_dict_kind(), old_text, old_code, text, code, &result)) {
-        MessageBoxW(hwnd_, L"保存修改失败。可能存在同名用户词条。", L"CxxIME",
-                    MB_OK | MB_ICONERROR);
-        return;
-    }
-    selectedDictText_ = utf8_to_wstr(text);
-    selectedDictCode_ = utf8_to_wstr(code);
-    query_user_entries();
-    set_user_dict_status(L"已保存修改，正在刷新...");
-}
-
-void EditorApp::delete_user_entry() {
-    if (selectedDictText_.empty()) {
-        MessageBoxW(hwnd_, L"请先在列表中选择一个词条。", L"CxxIME", MB_OK | MB_ICONWARNING);
-        return;
-    }
-    const bool preference = current_lexicon_resource() == LexiconResource::kCandidatePreference;
-    std::wstring message = preference ? L"删除选词偏好 \"" : L"删除用户词条 \"";
-    message += selectedDictText_ + L"\"？";
-    if (MessageBoxW(hwnd_, message.c_str(), L"CxxIME", MB_YESNO | MB_ICONWARNING) != IDYES) {
-        return;
-    }
-    std::string text = wstr_to_utf8(selectedDictText_);
-    std::string code = wstr_to_utf8(selectedDictCode_);
-    UserDictControlClient client;
-    UserDictControlResult result;
-    const bool deleted = preference
-        ? client.delete_preference(current_user_dict_kind(), text, code, &result)
-        : client.delete_entry(current_user_dict_kind(), text, code, &result);
-    if (!deleted) {
-        MessageBoxW(hwnd_, L"删除词条失败。", L"CxxIME", MB_OK | MB_ICONERROR);
-        return;
-    }
-    clear_user_entry_form();
-    query_user_entries();
-    set_user_dict_status(L"已删除词条，正在刷新...");
-}
-
-void EditorApp::clear_candidate_preferences() {
-    if (current_lexicon_resource() != LexiconResource::kCandidatePreference) {
-        return;
-    }
-    const wchar_t* kind = current_user_dict_kind() == UserDictKind::WUBI ? L"五笔" : L"拼音";
-    std::wstring message = L"清空全部";
-    message += kind;
-    message += L"选词偏好？\n\n用户词库不会受到影响。";
-    if (MessageBoxW(hwnd_, message.c_str(), L"CxxIME", MB_YESNO | MB_ICONWARNING) != IDYES) {
-        return;
-    }
-    UserDictControlClient client;
-    UserDictControlResult result;
-    if (!client.clear_preferences(current_user_dict_kind(), &result)) {
-        MessageBoxW(hwnd_, L"清空选词偏好失败。", L"CxxIME", MB_OK | MB_ICONERROR);
-        return;
-    }
-    clear_user_entry_form();
-    query_user_entries();
-    set_user_dict_status(L"选词偏好已清空，正在刷新...");
-}
-
-void EditorApp::import_user_dict() {
-    if (current_lexicon_resource() != LexiconResource::kUserLexicon) {
-        return;
-    }
-    wchar_t file[MAX_PATH] = {};
-    OPENFILENAMEW dialog = {sizeof(dialog)};
-    dialog.hwndOwner = hwnd_;
-    dialog.lpstrFilter = L"TSV 用户词典 (*.tsv)\0*.tsv\0所有文件 (*.*)\0*.*\0";
-    dialog.lpstrFile = file;
-    dialog.nMaxFile = MAX_PATH;
-    dialog.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
-    if (!GetOpenFileNameW(&dialog)) {
-        return;
-    }
-    if (MessageBoxW(hwnd_, L"导入会覆盖当前用户词典，是否继续？", L"CxxIME",
-                    MB_YESNO | MB_ICONWARNING) != IDYES) {
-        return;
-    }
-    std::string source = wstr_to_utf8(file);
-    std::string destination = current_user_dict_path();
-    if (!copy_file_utf8_path(source, destination)) {
-        MessageBoxW(hwnd_, L"导入失败，无法复制词典文件。", L"CxxIME", MB_OK | MB_ICONERROR);
-        return;
-    }
-    UserDictControlClient client;
-    UserDictControlResult result;
-    bool reloaded = client.reload(current_user_dict_kind(), &result);
-    clear_user_entry_form();
-    if (reloaded) {
-        query_user_entries();
-        set_user_dict_status(L"导入完成，正在刷新...");
-        MessageBoxW(hwnd_, L"用户词典已导入并重新加载。", L"CxxIME", MB_OK | MB_ICONINFORMATION);
-    } else {
-        set_user_dict_status(L"已复制词典文件，但服务未能立即重新加载");
-        MessageBoxW(hwnd_,
-                    L"用户词典文件已导入，但 CxxIME 服务未能立即重新加载。"
-                    L"重新切换输入法或重启服务后会使用新词典。",
-                    L"CxxIME", MB_OK | MB_ICONWARNING);
-    }
-}
-
-void EditorApp::export_user_dict() {
-    if (current_lexicon_resource() != LexiconResource::kUserLexicon) {
-        return;
-    }
-    wchar_t file[MAX_PATH] = {};
-    wcscpy_s(file, current_user_dict_kind() == UserDictKind::WUBI ? L"user_wubi.tsv"
-                                                                  : L"user_pinyin.tsv");
-    OPENFILENAMEW dialog = {sizeof(dialog)};
-    dialog.hwndOwner = hwnd_;
-    dialog.lpstrFilter = L"TSV 用户词典 (*.tsv)\0*.tsv\0所有文件 (*.*)\0*.*\0";
-    dialog.lpstrFile = file;
-    dialog.nMaxFile = MAX_PATH;
-    dialog.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
-    dialog.lpstrDefExt = L"tsv";
-    if (!GetSaveFileNameW(&dialog)) {
-        return;
-    }
-    UserDictControlClient client;
-    UserDictControlResult result;
-    bool saved = client.save(current_user_dict_kind(), &result);
-    std::string source = current_user_dict_path();
-    std::string destination = wstr_to_utf8(file);
-    if (!copy_file_utf8_path(source, destination)) {
-        MessageBoxW(hwnd_, L"导出失败，无法复制词典文件。", L"CxxIME", MB_OK | MB_ICONERROR);
-        return;
-    }
-    update_user_dict_status();
-    std::wstring message = L"用户词典已导出到:\n" + path_for_display(destination);
-    if (!saved) {
-        message += L"\n\n注意: 服务未能立即保存最新内存状态，已导出现有词典文件。";
-    }
-    MessageBoxW(hwnd_, message.c_str(), L"CxxIME", MB_OK | MB_ICONINFORMATION);
-}
-
-void EditorApp::open_user_dict_dir() {
-    std::wstring directory = path_for_display(user_data_dir());
-    HINSTANCE result =
-        ShellExecuteW(hwnd_, L"open", directory.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
-    if (reinterpret_cast<INT_PTR>(result) <= 32) {
-        std::wstring message = L"无法打开用户词典目录:\n" + directory;
-        MessageBoxW(hwnd_, message.c_str(), L"CxxIME", MB_OK | MB_ICONERROR);
-    }
-}
-
-void EditorApp::on_user_entry_selected() {
-    if (!hDictList_) {
-        return;
-    }
-    int row = ListView_GetNextItem(hDictList_, -1, LVNI_SELECTED);
-    if (row < 0) {
-        selectedDictCode_.clear();
-        selectedDictText_.clear();
-        SetWindowTextW(hDictCode_, L"");
-        SetWindowTextW(hDictText_, L"");
-        update_user_entry_actions();
-        return;
-    }
-    wchar_t code[64] = {};
-    wchar_t text[128] = {};
-    ListView_GetItemText(hDictList_, row, 0, code, 64);
-    ListView_GetItemText(hDictList_, row, 1, text, 128);
-    selectedDictCode_ = code;
-    selectedDictText_ = text;
-    if (current_lexicon_resource() == LexiconResource::kCandidatePreference) {
-        update_user_entry_actions();
-        return;
-    }
-    SetWindowTextW(hDictCode_, code);
-    SetWindowTextW(hDictText_, text);
-    update_user_entry_actions();
+    return lexiconResource_;
 }
 
 } // namespace settings

@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <climits>
 
 #include <cxxime/query_budget.h>
 #include <cxxime/pinyin_composer.h>
@@ -18,6 +19,8 @@
 namespace cxxime {
 
 namespace {
+
+constexpr int kDisabledTopnOverfetch = 16;
 
 struct CompositionPathSpec {
     size_t id_sequence_index = 0;
@@ -140,8 +143,18 @@ PinyinTranslator::IndexedFastResult PinyinTranslator::lookup_indexed_fast(
     // 2. Pre-built Top-N index
     if (short_cache_ && short_cache_->is_loaded()) {
         bool prefix_complete = false;
-        auto cached = short_cache_->lookup(key, limit, trace, &prefix_complete);
-        result.complete_index_hit = prefix_complete && !cached.empty();
+        const bool filter_disabled = dict_ && dict_->disabled_system_entry_count() != 0;
+        const int cache_limit = filter_disabled && limit <= INT_MAX - kDisabledTopnOverfetch
+                                    ? limit + kDisabledTopnOverfetch
+                                    : limit;
+        auto cached = short_cache_->lookup(key, cache_limit, trace, &prefix_complete);
+        const bool posting_exhausted = cached.size() < static_cast<std::size_t>(cache_limit);
+        if (filter_disabled) {
+            dict_->filter_disabled_system_candidates(cached);
+        }
+        result.complete_index_hit =
+            prefix_complete &&
+            (posting_exhausted || cached.size() >= static_cast<std::size_t>(limit));
         for (auto& c : cached) {
             merge_candidate_by_score(result.candidates, std::move(c));
         }
@@ -158,23 +171,32 @@ PinyinTranslator::IndexedFastResult PinyinTranslator::lookup_indexed_fast(
     return result;
 }
 
+PinyinTranslator::QueryCacheVersions PinyinTranslator::query_cache_versions() const {
+    QueryCacheVersions versions;
+    if (dict_) {
+        versions.user_dict = dict_->user_dict_version();
+        versions.candidate_preference =
+            candidate_learning_enabled_ ? dict_->candidate_preference_version() : 0;
+        versions.disabled_system_entry = dict_->disabled_system_entry_version();
+    }
+    return versions;
+}
+
 bool PinyinTranslator::lookup_query_cache(const std::string& input, int page_index,
                                           int candidate_offset, int page_size,
+                                          const QueryCacheVersions& versions,
                                           CandidatePage& page, QueryTrace* trace) {
     if (!dict_)
         return false;
 
-    uint64_t user_version = dict_->user_dict_version();
-    uint64_t preference_version = candidate_learning_enabled_
-        ? dict_->candidate_preference_version()
-        : 0;
     for (auto& entry : query_cache_) {
         if (entry.input == input &&
             entry.page_index == page_index &&
             entry.candidate_offset == candidate_offset &&
             entry.page_size == page_size &&
-            entry.user_dict_version == user_version &&
-            entry.candidate_preference_version == preference_version) {
+            entry.user_dict_version == versions.user_dict &&
+            entry.candidate_preference_version == versions.candidate_preference &&
+            entry.disabled_system_entry_version == versions.disabled_system_entry) {
             entry.sequence = ++query_cache_sequence_;
             page = entry.page;
             if (trace) {
@@ -202,21 +224,25 @@ bool PinyinTranslator::lookup_query_cache(const std::string& input, int page_ind
 
 void PinyinTranslator::store_query_cache(const std::string& input, int page_index,
                                          int candidate_offset, int page_size,
+                                         const QueryCacheVersions& versions,
                                          const CandidatePage& page) {
     if (!dict_)
         return;
 
-    uint64_t user_version = dict_->user_dict_version();
-    uint64_t preference_version = candidate_learning_enabled_
-                                      ? dict_->candidate_preference_version()
-                                      : 0;
+    const QueryCacheVersions current_versions = query_cache_versions();
+    if (current_versions.user_dict != versions.user_dict ||
+        current_versions.candidate_preference != versions.candidate_preference ||
+        current_versions.disabled_system_entry != versions.disabled_system_entry) {
+        return;
+    }
     for (auto& entry : query_cache_) {
         if (entry.input == input &&
             entry.page_index == page_index &&
             entry.candidate_offset == candidate_offset &&
             entry.page_size == page_size &&
-            entry.user_dict_version == user_version &&
-            entry.candidate_preference_version == preference_version) {
+            entry.user_dict_version == versions.user_dict &&
+            entry.candidate_preference_version == versions.candidate_preference &&
+            entry.disabled_system_entry_version == versions.disabled_system_entry) {
             entry.page = page;
             entry.sequence = ++query_cache_sequence_;
             return;
@@ -237,8 +263,9 @@ void PinyinTranslator::store_query_cache(const std::string& input, int page_inde
     entry.page_index = page_index;
     entry.candidate_offset = candidate_offset;
     entry.page_size = page_size;
-    entry.user_dict_version = user_version;
-    entry.candidate_preference_version = preference_version;
+    entry.user_dict_version = versions.user_dict;
+    entry.candidate_preference_version = versions.candidate_preference;
+    entry.disabled_system_entry_version = versions.disabled_system_entry;
     entry.sequence = ++query_cache_sequence_;
     entry.page = page;
     query_cache_.push_back(std::move(entry));
@@ -258,8 +285,9 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
     page.page_offset = offset;
     int fetch_limit = page_size;
     const int need = offset + fetch_limit + 1;
+    const QueryCacheVersions cache_versions = query_cache_versions();
 
-    if (lookup_query_cache(pinyin, page_index, offset, page_size, page, trace))
+    if (lookup_query_cache(pinyin, page_index, offset, page_size, cache_versions, page, trace))
         return page;
 
     // Try the indexed path before syllabification for every valid pinyin key.
@@ -536,6 +564,7 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
         auto composed = composer.compose(
             pinyin, composition_paths, static_cast<size_t>(need) - sorted.size(),
             composition_deadline, composition_limits, composition_stats);
+        dict_->filter_disabled_system_candidates(composed);
         if (composition_stats.repeated_short_path_count > 0) {
             // Repeated-short composition consumes every key, so a legacy candidate that extends
             // an exact composed result contains text not covered by the input.
@@ -578,6 +607,7 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
     if (candidate_learning_enabled_) {
         dict_->apply_candidate_preferences(pinyin, CandidateSource::kPinyin, sorted, need);
     }
+    dict_->filter_disabled_system_candidates(sorted);
 
     // total_count before pagination (includes extra one for next-page detection)
     page.total_count = (int)sorted.size();
@@ -598,7 +628,7 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
         page.highlighted = 0;
 
     if (!deadline_hit && !(trace && trace->deadline_exceeded))
-        store_query_cache(pinyin, page_index, offset, page_size, page);
+        store_query_cache(pinyin, page_index, offset, page_size, cache_versions, page);
 
     return page;
 }

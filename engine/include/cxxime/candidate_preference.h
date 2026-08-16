@@ -34,6 +34,8 @@ public:
                                          std::size_t* match_total = nullptr) const;
     bool erase(const std::string& text, const std::string& code);
     bool clear();
+    bool erase_and_save(const std::string& text, const std::string& code);
+    bool clear_and_save();
     bool contains(const std::string& text, const std::string& code) const;
     std::size_t entry_count() const;
     std::uint64_t version() const;
@@ -53,6 +55,7 @@ private:
     };
 
     static std::string entry_key(const std::string& text, const std::string& code);
+    static std::string serialize_entries(const std::vector<Entry>& entries);
     void rebuild_indexes_locked();
 
     std::vector<Entry> entries_;

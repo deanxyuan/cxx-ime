@@ -22,6 +22,7 @@ add_library(cxxime-shared STATIC
     src/mpscq.cc
     src/query_trace_log.cc
     src/tsf_factory.cc
+    src/user_dict_validation.cc
     ${CXXIME_SHARED_DIAGNOSTIC_SOURCES}
 )
 

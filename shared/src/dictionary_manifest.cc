@@ -116,15 +116,6 @@ bool is_sha256_hex(const std::string& text) {
     return true;
 }
 
-const char* const kRequiredDictionaryRoles[] = {
-    "pinyin_dict",
-    "pinyin_idx",
-    "pinyin_spellings",
-    "pinyin_topn",
-    "wubi_dict",
-    "wubi_prefix_index",
-};
-
 } // namespace
 
 const DictionaryManifestFile* DictionaryManifest::find_role(const std::string& role) const {
@@ -300,17 +291,14 @@ bool load_dictionary_manifest(const std::string& manifest_path,
         out.files.push_back(std::move(manifest_file));
     }
 
-    for (const char* role : kRequiredDictionaryRoles) {
-        if (!out.find_role(role)) {
-            set_error(error, std::string("manifest missing ") + role);
-            return false;
-        }
-    }
-
     return true;
 }
 
-bool validate_dictionary_manifest(const DictionaryManifest& manifest, std::string* error) {
+bool validate_dictionary_manifest_files(const DictionaryManifest& manifest,
+                                        const std::vector<std::string>& requested_roles,
+                                        std::string* error) {
+    const std::unordered_set<std::string> roles_to_validate(requested_roles.begin(),
+                                                            requested_roles.end());
     std::unordered_set<std::string> roles;
     std::unordered_set<std::string> paths;
     for (const auto& file : manifest.files) {
@@ -330,6 +318,9 @@ bool validate_dictionary_manifest(const DictionaryManifest& manifest, std::strin
         if (!is_sha256_hex(file.sha256)) {
             set_error(error, "manifest sha256 is invalid: " + file.path);
             return false;
+        }
+        if (roles_to_validate.find(file.role) == roles_to_validate.end()) {
+            continue;
         }
 
         uint64_t actual_size = 0;
@@ -359,14 +350,14 @@ bool validate_dictionary_manifest(const DictionaryManifest& manifest, std::strin
             return false;
         }
     }
-    for (const char* role : kRequiredDictionaryRoles) {
+    for (const auto& role : requested_roles) {
         const auto* file = manifest.find_role(role);
         if (!file) {
-            set_error(error, std::string("manifest missing ") + role);
+            set_error(error, "manifest missing " + role);
             return false;
         }
         if (!file->required) {
-            set_error(error, std::string("manifest required role marked optional: ") + role);
+            set_error(error, "manifest required role marked optional: " + role);
             return false;
         }
     }

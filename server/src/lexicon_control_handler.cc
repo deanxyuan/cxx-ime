@@ -1,6 +1,6 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
-#include "user_dict_control_handler.h"
+#include "lexicon_control_handler.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -10,13 +10,14 @@
 #include <cxxime/candidate.h>
 #include <cxxime/input_limits.h>
 #include <cxxime/ipc_protocol.h>
-#include <cxxime/user_dict_control.h>
+#include <cxxime/lexicon_control.h>
+#include <cxxime/user_dict_validation.h>
 
 #include "session_manager.h"
 
 namespace {
 
-std::uint32_t user_dict_error(cxxime::IPCStatus status) {
+std::uint32_t lexicon_error(cxxime::IPCStatus status) {
     switch (status) {
         case cxxime::IPCStatus::OK:
             return ERROR_SUCCESS;
@@ -29,9 +30,9 @@ std::uint32_t user_dict_error(cxxime::IPCStatus status) {
     }
 }
 
-void apply_status(cxxime::IPCStatus status, cxxime::UserDictControlResult* result) {
+void apply_status(cxxime::IPCStatus status, cxxime::LexiconControlResult* result) {
     result->succeeded = status == cxxime::IPCStatus::OK;
-    result->error_code = user_dict_error(status);
+    result->error_code = lexicon_error(status);
 }
 
 std::uint32_t validate_user_entry(const std::string& text, const std::string& code) {
@@ -39,9 +40,7 @@ std::uint32_t validate_user_entry(const std::string& text, const std::string& co
         code.size() > cxxime::kMaxInputCodeLength) {
         return ERROR_BUFFER_OVERFLOW;
     }
-    if (text.empty() || code.empty() || std::any_of(code.begin(), code.end(), [](char ch) {
-            return ch == '\0' || static_cast<unsigned char>(ch) > 0x7f;
-        })) {
+    if (!cxxime::is_valid_user_dict_entry(text, code)) {
         return ERROR_INVALID_DATA;
     }
     return ERROR_SUCCESS;
@@ -49,24 +48,24 @@ std::uint32_t validate_user_entry(const std::string& text, const std::string& co
 
 } // namespace
 
-bool handle_user_dict_control_request(SessionManager& session_manager,
+bool handle_lexicon_control_request(SessionManager& session_manager,
                                       const std::string& request_payload,
                                       std::string* response_payload) {
-    cxxime::UserDictControlRequest request;
-    if (!cxxime::decode_user_dict_request(request_payload, &request)) {
+    cxxime::LexiconControlRequest request;
+    if (!cxxime::decode_lexicon_request(request_payload, &request)) {
         return false;
     }
 
-    cxxime::UserDictControlResult result;
+    cxxime::LexiconControlResult result;
     result.operation = request.operation;
     switch (request.operation) {
-        case cxxime::UserDictOperation::kQuery:
+        case cxxime::LexiconOperation::kQuery:
             result.query = session_manager.query_lexicon_entries(
                 request.resource, request.query, request.kind, request.offset, request.limit);
             result.succeeded = true;
             result.error_code = ERROR_SUCCESS;
             break;
-        case cxxime::UserDictOperation::kAdd:
+        case cxxime::LexiconOperation::kAdd:
             if (request.resource != cxxime::LexiconResource::kUserLexicon) {
                 result.error_code = ERROR_NOT_SUPPORTED;
                 break;
@@ -77,61 +76,109 @@ bool handle_user_dict_control_request(SessionManager& session_manager,
                              &result);
             }
             break;
-        case cxxime::UserDictOperation::kReplace:
+        case cxxime::LexiconOperation::kReplace:
             if (request.resource != cxxime::LexiconResource::kUserLexicon) {
                 result.error_code = ERROR_NOT_SUPPORTED;
                 break;
             }
-            result.error_code = validate_user_entry(request.text, request.code);
+            result.error_code = validate_user_entry(request.old_text, request.old_code);
+            if (result.error_code == ERROR_SUCCESS) {
+                result.error_code = validate_user_entry(request.text, request.code);
+            }
             if (result.error_code == ERROR_SUCCESS) {
                 apply_status(session_manager.replace_user_entry(request.kind, request.old_text,
                                                                 request.old_code, request.text,
                                                                 request.code),
-                             &result);
+                                &result);
             }
             break;
-        case cxxime::UserDictOperation::kDelete:
+        case cxxime::LexiconOperation::kDelete:
+            if (!cxxime::is_valid_user_dict_text(request.text) ||
+                (!request.code.empty() && !cxxime::is_valid_user_dict_code(request.code))) {
+                result.error_code = ERROR_INVALID_DATA;
+                break;
+            }
             if (request.resource == cxxime::LexiconResource::kCandidatePreference) {
                 apply_status(session_manager.delete_candidate_preference(
                                  request.kind, request.text, request.code),
                              &result);
-            } else {
+            } else if (request.resource == cxxime::LexiconResource::kUserLexicon) {
                 apply_status(session_manager.delete_user_entry(request.kind, request.text,
                                                                request.code),
                              &result);
+            } else {
+                result.error_code = ERROR_NOT_SUPPORTED;
             }
             break;
-        case cxxime::UserDictOperation::kReload:
+        case cxxime::LexiconOperation::kImport:
             if (request.resource != cxxime::LexiconResource::kUserLexicon) {
                 result.error_code = ERROR_NOT_SUPPORTED;
                 break;
             }
-            apply_status(session_manager.reload_user_dict(request.kind), &result);
+            if (request.source_path.empty()) {
+                result.error_code = ERROR_INVALID_DATA;
+                break;
+            }
+            apply_status(session_manager.import_user_dict(request.kind, request.source_path), &result);
             break;
-        case cxxime::UserDictOperation::kSave:
+        case cxxime::LexiconOperation::kSave:
             if (request.resource == cxxime::LexiconResource::kCandidatePreference) {
                 apply_status(session_manager.save_candidate_preferences(request.kind), &result);
-            } else {
+            } else if (request.resource == cxxime::LexiconResource::kUserLexicon) {
                 apply_status(session_manager.save_user_dict(request.kind), &result);
+            } else {
+                result.error_code = ERROR_NOT_SUPPORTED;
             }
             break;
-        case cxxime::UserDictOperation::kClear:
+        case cxxime::LexiconOperation::kClear:
             if (request.resource != cxxime::LexiconResource::kCandidatePreference) {
                 result.error_code = ERROR_NOT_SUPPORTED;
                 break;
             }
             apply_status(session_manager.clear_candidate_preferences(request.kind), &result);
             break;
+        case cxxime::LexiconOperation::kQuerySystemEntryStatus:
+            if (request.resource != cxxime::LexiconResource::kDisabledSystemLexicon) {
+                result.error_code = ERROR_NOT_SUPPORTED;
+                break;
+            }
+            if (std::any_of(request.texts.begin(), request.texts.end(), [](const std::string& text) {
+                    return !cxxime::is_valid_user_dict_text(text);
+                })) {
+                result.error_code = ERROR_INVALID_DATA;
+                break;
+            }
+            result.query =
+                session_manager.query_disabled_system_entry_status(request.kind, request.texts);
+            result.succeeded = true;
+            result.error_code = ERROR_SUCCESS;
+            break;
+        case cxxime::LexiconOperation::kDisableSystemEntry:
+            if (request.resource != cxxime::LexiconResource::kDisabledSystemLexicon ||
+                !cxxime::is_valid_user_dict_text(request.text)) {
+                result.error_code = ERROR_INVALID_DATA;
+                break;
+            }
+            apply_status(session_manager.disable_system_entry(request.kind, request.text), &result);
+            break;
+        case cxxime::LexiconOperation::kRestoreSystemEntry:
+            if (request.resource != cxxime::LexiconResource::kDisabledSystemLexicon ||
+                !cxxime::is_valid_user_dict_text(request.text)) {
+                result.error_code = ERROR_INVALID_DATA;
+                break;
+            }
+            apply_status(session_manager.restore_system_entry(request.kind, request.text), &result);
+            break;
         default:
             return false;
     }
 
-    if (cxxime::encode_user_dict_result(result, response_payload)) {
+    if (cxxime::encode_lexicon_result(result, response_payload)) {
         return true;
     }
     result.succeeded = false;
     result.error_code = ERROR_BUFFER_OVERFLOW;
     result.query.entries.clear();
     result.query.has_more = false;
-    return cxxime::encode_user_dict_result(result, response_payload);
+    return cxxime::encode_lexicon_result(result, response_payload);
 }

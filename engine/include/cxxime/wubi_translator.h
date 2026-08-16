@@ -19,6 +19,7 @@ public:
                             QueryScratch* scratch = nullptr,
                             int candidate_offset = -1) override;
 
+    void clear_query_cache() override;
     void set_candidate_learning_enabled(bool enabled) override;
 
 private:
@@ -31,6 +32,7 @@ private:
     std::vector<Candidate> snapshot_candidates_;
     uint64_t snapshot_user_dict_version_ = 0;
     uint64_t snapshot_candidate_preference_version_ = 0;
+    uint64_t snapshot_disabled_system_entry_version_ = 0;
     int snapshot_query_limit_ = 0;
     bool snapshot_exhausted_ = false;
     bool candidate_learning_enabled_ = false;

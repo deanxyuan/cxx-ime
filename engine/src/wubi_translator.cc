@@ -17,8 +17,13 @@ void WubiTranslator::reset_query_snapshot() {
     snapshot_candidates_.clear();
     snapshot_user_dict_version_ = 0;
     snapshot_candidate_preference_version_ = 0;
+    snapshot_disabled_system_entry_version_ = 0;
     snapshot_query_limit_ = 0;
     snapshot_exhausted_ = false;
+}
+
+void WubiTranslator::clear_query_cache() {
+    reset_query_snapshot();
 }
 
 void WubiTranslator::set_candidate_learning_enabled(bool enabled) {
@@ -73,12 +78,15 @@ CandidatePage WubiTranslator::translate(const std::string& code, int page_index,
     uint64_t preference_version = candidate_learning_enabled_
                                       ? dict_->candidate_preference_version()
                                       : 0;
+    const uint64_t disabled_version = dict_->disabled_system_entry_version();
     if (snapshot_code_ != code || snapshot_user_dict_version_ != user_dict_version ||
-        snapshot_candidate_preference_version_ != preference_version) {
+        snapshot_candidate_preference_version_ != preference_version ||
+        snapshot_disabled_system_entry_version_ != disabled_version) {
         reset_query_snapshot();
         snapshot_code_ = code;
         snapshot_user_dict_version_ = user_dict_version;
         snapshot_candidate_preference_version_ = preference_version;
+        snapshot_disabled_system_entry_version_ = disabled_version;
     }
 
     while ((int)snapshot_candidates_.size() < required_count && !snapshot_exhausted_) {
