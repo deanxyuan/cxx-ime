@@ -57,7 +57,7 @@ build.bat debug
 | `Space` | 提交高亮候选 |
 | `Esc` | 隐藏候选窗口 |
 | `PageUp/Down` | 翻页 |
-| `T` | 循环切换主题（13 套配色） |
+| `T` | 循环切换主题（themes.json 全部预设） |
 | `L` | 切换水平/垂直布局 |
 | `D` | 切换 D2D/GDI 渲染后端 |
 | `F` | 循环切换字体大小（12/14/16/18/20） |
@@ -140,3 +140,118 @@ status=0 rtt=74us ascii=0 composing=1
 | 左键点击托盘图标 | 循环切换变体 |
 | 右键点击托盘图标 | 上下文菜单（选择变体/版本） |
 | `Esc` | 退出 |
+
+---
+
+## status_window_tool — 状态窗口可视化测试
+
+```cmd
+.\build\tools\status_window_tool\Debug\status_window_tool.exe
+```
+
+| 按键 | 说明 |
+|------|------|
+| `1` | 切换 中/英 |
+| `2` | 切换 全/半 角 |
+| `3` | 切换 。/. 标点 |
+| `M` | 循环切换 拼/五/混 模式 |
+| `E` | 模拟 IPC 连接/断开 |
+| 方向键 | 移动状态窗口（每次 10px） |
+| `Esc` | 退出 |
+
+窗口上的按钮可直接点击切换状态。标题栏实时显示当前模式状态。
+
+---
+
+## tsf_position_tool — 候选窗口定位测试
+
+```cmd
+.\build\tools\tsf_position_tool\Debug\tsf_position_tool.exe
+```
+
+验证候选窗口跟随光标定位、屏幕边缘 clamp 与多显示器适配逻辑。
+
+| 按键 | 说明 |
+|------|------|
+| 方向键 | 移动光标（每次 2px） |
+| `Shift`+方向键 | 快速移动（每次 20px） |
+| `L` | 切换水平/垂直布局 |
+| `T` | 循环切换主题（themes.json 全部预设） |
+| `D` | 切换 D2D/GDI 渲染后端 |
+| `Space` | 刷新 |
+| `1`-`7` | 选择候选词 |
+| `Esc` | 隐藏候选窗口 |
+
+---
+
+## punct_test — 标点映射测试
+
+```cmd
+.\build\tools\punct_test\Debug\punct_test.exe
+```
+
+加载 `data/punctuation.json`，不经过 IPC 直接测试标点与全角转换逻辑（含成对与轮换标点状态）。
+
+| 命令 | 说明 |
+|------|------|
+| `p` | 切换中文/英文标点 |
+| `f` | 切换全角/半角 |
+| `s` | 显示当前状态 |
+| `r` | 重置成对/轮换状态 |
+| `h` | 显示帮助 |
+| `q` | 退出 |
+
+其他输入逐字符处理，输出转换结果与 Unicode 码位。默认数据目录可用 `--data <dir>` 覆盖。
+
+---
+
+## query_bench — 查询性能基准
+
+```cmd
+.\build\tools\query_bench\Debug\query_bench.exe --data .\data --input s,sd,sdf,sddf,bj,srf,shrf,zguo,nihaoshijie --repeat 1000
+```
+
+| 参数 | 说明 |
+|------|------|
+| `--data <dir>` | 数据目录（必需） |
+| `--input <list>` | 逗号分隔的输入串 |
+| `--file <path>` | 输入文件（每行一个） |
+| `--repeat <n>` | 重复次数（默认 1000） |
+| `--warmup <n>` | 预热次数（默认 100） |
+| `--page-size <n>` | 每页候选数（默认 7） |
+| `--deadline-ms <n>` | 查询截止时间（默认 30ms） |
+| `--mode <m>` | `final_key` / `full_typing` / `both` |
+| `--cache <m>` | `warm` / `cold` / `both` |
+| `--sentence-composition <m>` | `on` / `off` / `both` |
+| `--trace-log` | 显示 should_log 触发率 |
+| `--require-topn` | Top-N 缓存未加载则失败 |
+| `--require-cache-hit` | 物化前缀缓存未命中则失败 |
+| `--json <path>` | 输出 JSONL trace |
+| `--help` | 帮助 |
+
+同目录的 `lexicon_bench` 用于系统词库操作基准（`--data <dir>` / `--repeat <n>` / `--help`）。
+基准回归脚本为 `scripts/check_query_bench.py`，详细说明见 `docs/observability.md`。
+
+---
+
+## topn_index — Top-N 索引工具
+
+`topn_builder`：将 `scripts/build_pinyin_topn.py` 生成的中间文件转换为运行时索引：
+
+```cmd
+.\build\tools\topn_index\Release\topn_builder.exe --input .\data\pinyin.topn.bin --output .\data\pinyin.topn.bin --format dat16
+```
+
+| 参数 | 说明 |
+|------|------|
+| `--input <file>` | 中间文件（`build_pinyin_topn.py` 输出） |
+| `--output <file>` | 输出运行时索引 |
+| `--format <f>` | `flat16` / `dat16` / `dat8` |
+
+`topn_benchmark`：不同索引格式的读取基准：
+
+```cmd
+.\build\tools\topn_index\Release\topn_benchmark.exe --baseline <intermediate> --dat16 <file> --queries 100000 --threads 4
+```
+
+参数：`--baseline`、`--flat16`、`--dat16`、`--dat8`、`--queries`、`--threads`。
