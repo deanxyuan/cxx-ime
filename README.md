@@ -90,8 +90,10 @@ python tools/convert_rime_dictionary.py input.yaml output.db
 | `pinyin.spellings.bin` | `build_runtime_dictionary.py` 生成 | 否 | Patricia trie 拼写索引（运行时） |
 | `pinyin.dict.idx` | `build_runtime_dictionary.py` 生成 | 否 | 音节 ID 索引（运行时） |
 | `pinyin.topn.bin` | `build_pinyin_topn.py` + `topn_builder` 生成 | 否 | DAT-16 Top-N 索引（运行时） |
+| `pinyin.reverse.idx` | `prepare_dictionary_bundle.py` 生成 | 否 | Settings 拼音词语反查索引 |
 | `wubi86.dict.bin` | `build_runtime_dictionary.py` 生成 | 否 | 五笔二进制词典（运行时） |
 | `wubi86.dict.idx` | `build_runtime_dictionary.py --wubi-prefix-index` 生成 | 否 | 五笔完整前缀索引（运行时） |
+| `wubi.reverse.idx` | `prepare_dictionary_bundle.py` 生成 | 否 | Settings 五笔词语反查索引 |
 | `dictionary_manifest.json` | `prepare_dictionary_bundle.py` 生成 | 否 | 运行时词典 bundle 清单与校验哈希 |
 
 ### 词典维护
@@ -201,8 +203,19 @@ scripts\package.py --host-diag         # 宿主诊断包
 }
 ```
 
-开启 `candidate_learning` 后，选词学习记录会跨重启保留; 关闭该选项只停止后续学习，
-不会删除已有记录。需要恢复某个编码的系统排序时，可在设置的用户词库中删除对应词条。
+- 开启 `candidate_learning` 后，选词学习记录会跨重启保留；关闭该选项只停止后续学习，
+  不会删除已有记录。需要恢复某个编码的系统排序时，可在“词库管理 → 选词偏好”中删除记录；
+  “词条”页统一查询系统与用户来源，并管理用户词和系统词停用状态。
+
+- 开启 `wubi_code_hint` 后，五笔候选会显示达到该候选最短编码所需的剩余字母，例如输入
+  `wq` 时显示 `低(a)`；完整码候选不显示空括号。该选项默认关闭。
+
+- `wubi_auto_commit` 控制四码唯一候选上屏；`wubi_commit_first_on_fifth_key` 控制四
+  码存在多个候选时，第五码先提交首选并开始下一段编码。两项可以独立设置。
+
+- 混输模式下，`mixed_candidate_preference` 使用 `auto` 保留智能排序；设为 `wubi` 时
+  按“五笔1、拼音1、五笔2、拼音2”的顺序交错候选。
+
 
 ## 开发工具
 

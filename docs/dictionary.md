@@ -416,6 +416,7 @@ python data/tools/build_runtime_dictionary.py -i data/pinyin.dict.db -o data/pin
 输出文件：
 - `data/pinyin.spellings.bin` — Patricia trie 拼写索引
 - `data/pinyin.dict.bin` — 排序数组主词典
+- `data/pinyin.reverse.idx` — 词语反查索引（由 `prepare_dictionary_bundle.py` 生成，供 Settings 反查）
 
 五笔：先拆分符号扩展项，再生成 `dict.bin` + 完整前缀索引：
 
@@ -460,6 +461,11 @@ fetch_pinyin_dictionary.py / fetch_wubi_dictionary.py    从网络获取词典�
         │
         ▼
    wubi86.dict.bin + wubi86.dict.idx（完整前缀索引）
+
+  prepare_dictionary_bundle.py   bundle 打包 + 反查索引
+        │
+        ▼
+   pinyin.reverse.idx / wubi86.reverse.idx（Settings 词语反查）
 ```
 
 ### 5.4 Patricia Trie 构建过程

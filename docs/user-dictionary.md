@@ -129,9 +129,11 @@ recent_bonus      = (delta <= 1000) ? 1000 - delta : 0，delta = sequence_ - ent
 
 ### 更新流程
 
-`load_user_dict`：写锁下清空条目与索引 → 读取 TSV（3/4 列）→ 规范化 → 逐条插入 → 重建索引 → `version_++`。
+`load_user_dict`：在 `transaction_mutex_` 保护下读取 TSV（3/4 列），`parse_entries()` 解析并校验（合法 UTF-8、编码为 a-z、音节格式），构建 `Snapshot` 后重建全部索引并一次性发布，`version_++`。
 
-`add_user_entry`：写锁下按 code+text 查重，已存在返回 false；新条目插入全部索引并递增 version。
+`add_user_entry` / `delete_user_entry` / `replace_user_entry`：在 `transaction_mutex_` 保护下基于当前快照做变更（查重 / 软删除 / 替换），重建索引后发布并递增 version。另有 `add_entry_and_save` / `delete_entry_and_save` / `replace_entry_and_save` 变体，变更与落盘在同一事务内完成，写盘失败时内存状态保持不变。
+
+`import_file`：从源文件导入用户词库（严格模式，任一行非法即整体失败），文件大小上限 64 MiB（`kMaxUserDictImportBytes`），成功后整体替换当前用户词库并落盘。
 
 ### 文件格式（用户词库）
 
@@ -193,6 +195,10 @@ recency = (当前序号 - 条目序号 <= 1000) ? 1000 - 差值 : 0
 
 ## 并发策略
 
-- 用户词库：`shared_mutex`（查询持有 shared 锁，加载/添加/删除/保存持有 unique 锁）+ `save_mutex` 串行化落盘；删除使用 `deleted` 软标记，不从容器物理移除。
+- 用户词库：`shared_mutex`（查询持有 shared 锁）+ `transaction_mutex_`（加载/添加/删除/导入串行化）+ `save_mutex` 串行化落盘；删除使用 `deleted` 软标记，不从容器物理移除。
 - 候选偏好：`shared_mutex` + `save_mutex`；`save_if_due` 按最后更新时间合并；`freeze` 后拒绝变更。
 - 服务端以 `reload_mutex_` 串行化词典重载与会话生命周期（创建/销毁/清理），关闭流程先冻结偏好再强制保存，避免运行中操作与落盘相互冲突。
+
+## 系统词隐藏
+
+`DisabledSystemLexicon` 维护用户隐藏的系统词列表，持久化为 `disabled_pinyin.tsv` / `disabled_wubi.tsv`（每行一个词）。`disable_system_entry_and_save` / `restore_system_entry_and_save` 以事务方式写入，写盘失败时内存状态保持不变；`Dict::lookup` 在查询热路径统一过滤被隐藏的系统词。
