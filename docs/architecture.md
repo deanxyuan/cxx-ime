@@ -204,8 +204,10 @@ cxx-ime/
 | `pinyin.dict.idx` | ~46.2 MB | 拼音整数 ID 索引（音节→词条映射） |
 | `pinyin.topn.bin` | ~211.5 MB | 拼音 Top-N 候选索引（DAT-16 格式，Darts trie 查找） |
 | `pinyin.spellings.bin` | ~0.03 MB (30 KB) | Patricia trie 拼写索引 |
+| `pinyin.reverse.idx` | — | 拼音词语反查索引（Settings 反查） |
 | `wubi86.dict.bin` | ~2.5 MB | 五笔主词典 |
 | `wubi86.dict.idx` | ~2.3 MB | 五笔完整前缀索引 |
+| `wubi86.reverse.idx` | — | 五笔词语反查索引（Settings 反查） |
 
 ---
 

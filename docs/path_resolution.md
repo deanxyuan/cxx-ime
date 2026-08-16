@@ -18,8 +18,10 @@ C:\Program Files\CxxIME\
     ├── pinyin.dict.idx       音节索引（运行时）
     ├── pinyin.spellings.bin  拼写 trie（运行时）
     ├── pinyin.topn.bin       短码缓存（运行时）
+    ├── pinyin.reverse.idx    词语反查索引（Settings 拼音反查）
     ├── wubi86.dict.bin       五笔词典（运行时）
-    └── wubi86.dict.idx       五笔完整前缀索引（运行时）
+    ├── wubi86.dict.idx       五笔完整前缀索引（运行时）
+    └── wubi86.reverse.idx    词语反查索引（Settings 五笔反查）
 ```
 
 ### 用户目录 `%USERPROFILE%\cxxime\`
@@ -31,7 +33,9 @@ C:\Users\<username>\cxxime\
 ├── user_pinyin.tsv           用户词库（拼音）
 ├── user_wubi.tsv             用户词库（五笔）
 ├── learning_pinyin.tsv       选词偏好（拼音）
-└── learning_wubi.tsv         选词偏好（五笔）
+├── learning_wubi.tsv         选词偏好（五笔）
+├── disabled_pinyin.tsv       系统词隐藏列表（拼音）
+└── disabled_wubi.tsv         系统词隐藏列表（五笔）
 ```
 
 由 `user_data_dir()` 首次调用时自动创建。

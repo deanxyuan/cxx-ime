@@ -48,10 +48,11 @@
 | `reload_config()` | 重新加载配置（保留旧指针直到替换完成） |
 | `reload_dictionaries()` | 重新加载字典（先保存用户词库与候选偏好，再加载新版本） |
 | `add_user_entry` / `query_user_entries` / `delete_user_entry` / `replace_user_entry` | 用户词库 CRUD |
-| `reload_user_dict` / `save_user_dict` | 用户词库持久化 |
+| `import_user_dict` / `save_user_dict` | 用户词库导入与持久化 |
 | `query_lexicon_entries` | 按资源（用户词库 / 候选偏好）查询条目 |
 | `delete_candidate_preference` / `clear_candidate_preferences` / `save_candidate_preferences` | 候选偏好管理 |
 | `save_candidate_preferences(force)` / `freeze_and_save_candidate_preferences` | 偏好合并落盘与关闭前冻结保存 |
+| `disable_system_entry` / `restore_system_entry` | 系统词隐藏/恢复（含 `*_and_save` 原子落盘变体） |
 
 ### SharedResourceSnapshot
 
@@ -137,7 +138,7 @@ void SessionManager::align_session_to_global(SessionEntry& entry);
 |--------|------|---------|
 | `mutex_` | `std::mutex` | session 映射表（`sessions_` + `next_id_`） |
 | `state_mutex_` | `std::mutex` | 全局可见状态（`global_state_`） |
-| `reload_mutex_` | `std::mutex` | 热重载操作的互斥（防止并发 reload） |
+| `reload_mutex_` | `std::mutex` | 词库导入/重载等用户数据操作的互斥（防止并发） |
 
 此外每个 `SessionEntry` 有独立的 `mutex` 保护 per-session 的 engine 操作。
 
@@ -192,8 +193,9 @@ struct ProcessKeyResult {
 - `reload_config()` / `reload_dictionaries()` / `reload_punctuation(path)`
 
 **用户数据管理：**
-- 用户词库：`add_user_entry` / `query_user_entries` / `delete_user_entry` / `replace_user_entry` / `reload_user_dict` / `save_user_dict`
+- 用户词库：`add_user_entry` / `query_user_entries` / `delete_user_entry` / `replace_user_entry` / `import_user_dict` / `save_user_dict`
 - 候选偏好：`query_lexicon_entries`（资源化查询）/ `delete_candidate_preference` / `clear_candidate_preferences` / `save_candidate_preferences`
+- 系统词隐藏：`disable_system_entry` / `restore_system_entry`（持久化到 `disabled_pinyin.tsv` / `disabled_wubi.tsv`）
 
 ---
 
