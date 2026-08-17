@@ -84,6 +84,12 @@ TextService::_effective_edit_target_bindings(const cxxime_tsf::EffectiveEditTarg
     }
 
     bindings.candidate_window_valid = _candidateWindow.is_created();
+    const bool candidate_needs_repair =
+        target.valid() &&
+        cxxime_tsf::external_candidate_ui_needs_repair(
+            _composing, _externalCandidateWindowExpected, _candidateShowPending,
+            _candidateWindow.is_visible());
+    bindings.candidate_visibility_matches = !candidate_needs_repair;
     bindings.candidate_owner_matches =
         !_candidateWindow.is_visible() ||
         _candidateWindow.owner_matches(reinterpret_cast<HWND>(target.owner_window));
@@ -115,8 +121,8 @@ void TextService::_trace_effective_edit_target_sync(
         detail, sizeof(detail),
         "source=%s action=%s old_doc=0x%llx old_ctx=0x%llx new_doc=0x%llx "
         "new_ctx=0x%llx view=0x%llx owner=0x%llx input=%d resources=%d edit=%d "
-        "layout=%d candidate_doc=%d candidate_hwnd=%d candidate_owner=%d status_hwnd=%d "
-        "status_visible=%d status_owner=%d result=%s",
+        "layout=%d candidate_doc=%d candidate_hwnd=%d candidate_visible=%d "
+        "candidate_owner=%d status_hwnd=%d status_visible=%d status_owner=%d result=%s",
         source ? source : "unknown", cxxime_tsf::effective_edit_target_action_name(action),
         static_cast<unsigned long long>(previous.document_identity),
         static_cast<unsigned long long>(previous.context_identity),
@@ -130,6 +136,7 @@ void TextService::_trace_effective_edit_target_sync(
         bindings.layout_sink_matches ? 1 : 0,
         bindings.candidate_document_matches ? 1 : 0,
         bindings.candidate_window_valid ? 1 : 0,
+        bindings.candidate_visibility_matches ? 1 : 0,
         bindings.candidate_owner_matches ? 1 : 0,
         bindings.status_window_valid ? 1 : 0,
         bindings.status_visibility_matches ? 1 : 0,
@@ -305,17 +312,22 @@ bool TextService::_synchronize_effective_edit_target(ITfContext* event_context,
         !_publishedCandidatePage.candidates.empty()) {
         const bool show_external = _candidateUiElement->begin(_threadMgr, document_mgr);
         _candidateUiElement->notify_update(_threadMgr);
+        _externalCandidateWindowExpected = show_external;
         if (!show_external) {
             _hide_external_candidate_window("hide:edit_target_host_ui");
         }
     }
 
     const HWND owner = reinterpret_cast<HWND>(next.owner_window);
-    const bool restore_candidate = _composing && !_publishedCandidatePage.candidates.empty() &&
-                                   _candidateUiElement &&
-                                   _candidateUiElement->wants_external_window();
+    const bool candidate_should_be_bound =
+        _composing && _externalCandidateWindowExpected && _candidateUiElement &&
+        _candidateUiElement->wants_external_window();
+    const bool restore_candidate =
+        candidate_should_be_bound && cxxime_tsf::external_candidate_ui_needs_repair(
+            _composing, _externalCandidateWindowExpected, _candidateShowPending,
+            _candidateWindow.is_visible());
     const HWND candidate_owner =
-        (_candidateWindow.is_visible() || restore_candidate) ? owner : nullptr;
+        (_candidateWindow.is_visible() || candidate_should_be_bound) ? owner : nullptr;
     repaired = _candidateWindow.ensure_created(candidate_owner) && repaired;
     if (restore_candidate && _candidateWindow.is_created()) {
         _candidateWindow.set_page_info(_publishedCandidatePageCurrent,
