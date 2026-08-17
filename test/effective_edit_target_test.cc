@@ -27,6 +27,14 @@ TEST(EffectiveEditTarget, unchanged_when_target_and_bindings_match) {
               cxxime_tsf::EffectiveEditTargetAction::kUnchanged);
 }
 
+TEST(EffectiveEditTarget, repairs_only_missing_external_candidate_ui) {
+    ASSERT_TRUE(cxxime_tsf::external_candidate_ui_needs_repair(true, true, false, false));
+    ASSERT_TRUE(!cxxime_tsf::external_candidate_ui_needs_repair(true, false, false, false));
+    ASSERT_TRUE(!cxxime_tsf::external_candidate_ui_needs_repair(true, true, true, false));
+    ASSERT_TRUE(!cxxime_tsf::external_candidate_ui_needs_repair(true, true, false, true));
+    ASSERT_TRUE(!cxxime_tsf::external_candidate_ui_needs_repair(false, true, false, false));
+}
+
 TEST(EffectiveEditTarget, rebinds_when_any_target_identity_changes) {
     const auto current = target(1, 2, 3, 4);
     const cxxime_tsf::EffectiveEditTargetBindings bindings;
@@ -70,6 +78,11 @@ TEST(EffectiveEditTarget, repairs_matching_target_with_stale_bindings) {
 
     bindings.target_resources_match = true;
     bindings.status_visibility_matches = false;
+    ASSERT_EQ(cxxime_tsf::classify_effective_edit_target_change(current, current, bindings),
+              cxxime_tsf::EffectiveEditTargetAction::kRepairUi);
+
+    bindings.status_visibility_matches = true;
+    bindings.candidate_visibility_matches = false;
     ASSERT_EQ(cxxime_tsf::classify_effective_edit_target_change(current, current, bindings),
               cxxime_tsf::EffectiveEditTargetAction::kRepairUi);
 }

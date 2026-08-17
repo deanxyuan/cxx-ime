@@ -310,6 +310,7 @@ private:
     bool _fTestKeyUpPending = false;
     std::bitset<256> _passThroughKeyUps;
     bool _candidateShowPending = false;
+    bool _externalCandidateWindowExpected = false;
     bool _candidatePendingHasStaleRect = false;
     bool _candidateRepositionPending = false;
     bool _hostCompatibilityRuntimeActive = false;

@@ -21,10 +21,6 @@ bool has_caret_height(const RECT& rect) {
 } // namespace
 
 void TextService::_show_candidate_window(const char* reason) {
-    if (cxxime_tsf::foreground_is_fullscreen()) {
-        _hide_external_candidate_window("hide:fullscreen_foreground");
-        return;
-    }
     if (!_candidateWindow.is_visible())
         _enqueue_event_trace("candidate_window", reason);
     _candidateWindow.show();
@@ -44,6 +40,10 @@ void TextService::_hide_external_candidate_window(const char* reason) {
 }
 
 void TextService::_hide_candidate_window(const char* reason) {
+    _externalCandidateWindowExpected = false;
+    _publishedCandidatePage = {};
+    _publishedCandidatePageCurrent = 0;
+    _publishedCandidatePageTotal = 0;
     _hide_external_candidate_window(reason);
     if (_candidateUiElement) {
         _candidateUiElement->end(_threadMgr);
@@ -122,10 +122,10 @@ bool TextService::_publish_candidate_ui_element(const cxxime::CandidatePage& pag
                                                 uint32_t page_current,
                                                 uint32_t page_total) {
     bool show_external = true;
+    _publishedCandidatePage = page;
+    _publishedCandidatePageCurrent = static_cast<int>(page_current);
+    _publishedCandidatePageTotal = static_cast<int>(page_total);
     if (candidate_count > 0 && _candidateUiElement) {
-        _publishedCandidatePage = page;
-        _publishedCandidatePageCurrent = static_cast<int>(page_current);
-        _publishedCandidatePageTotal = static_cast<int>(page_total);
         _candidateUiElement->set_page(
             page, static_cast<int>(page_current), static_cast<int>(page_total));
         const bool was_active = _candidateUiElement->is_active();
@@ -152,14 +152,18 @@ bool TextService::_publish_candidate_ui_element(const cxxime::CandidatePage& pag
 
 bool TextService::set_candidate_ui_element_shown(bool show) {
     if (!show) {
+        _externalCandidateWindowExpected = false;
         _hide_external_candidate_window("hide:ui_element_show");
         return false;
     }
     if (!_activated || !_inputFocused || !_candidateUiElement ||
         !_candidateUiElement->is_active()) {
+        _externalCandidateWindowExpected = false;
         _hide_external_candidate_window("hide:ui_element_unavailable");
         return false;
     }
+
+    _externalCandidateWindowExpected = true;
 
     _candidateWindow.set_page_info(
         _publishedCandidatePageCurrent, _publishedCandidatePageTotal);
@@ -268,8 +272,11 @@ bool TextService::navigate_candidate_page_from_ui(bool previous) {
         !_client.process_key(_sessionId, key_code, 0, response, false, _candidate_page_step())) {
         return false;
     }
-    if (response.status != cxxime::IPCStatus::OK || !response.composing ||
-        response.candidate_count == 0) {
+    if (response.status != cxxime::IPCStatus::OK || !response.composing) {
+        return false;
+    }
+    if (response.candidate_count == 0) {
+        _hide_candidate_window("hide:page_navigation_empty");
         return false;
     }
 
@@ -277,6 +284,7 @@ bool TextService::navigate_candidate_page_from_ui(bool previous) {
     cxxime::CandidatePage page = _candidate_page_from_response(response);
     bool show_external = _publish_candidate_ui_element(page, response.candidate_count,
                                                         response.page_current, response.page_total);
+    _externalCandidateWindowExpected = show_external;
     if (!show_external) {
         _hide_external_candidate_window("hide:page_navigation_host_ui");
         return true;

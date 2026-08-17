@@ -203,8 +203,13 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
     bool edit_target_validated = false;
     const bool starts_new_composition =
         !_composing && !status_key && _chinese_mode && can_start_text_input(wParam, modifiers);
+    const bool external_candidate_missing =
+        cxxime_tsf::external_candidate_ui_needs_repair(
+            _composing, _externalCandidateWindowExpected, _candidateShowPending,
+            _candidateWindow.is_visible());
     const bool should_validate_edit_target =
-        !_inputFocused || !_effectiveEditTarget.valid() || starts_new_composition;
+        !_inputFocused || !_effectiveEditTarget.valid() || starts_new_composition ||
+        external_candidate_missing;
     if (!block_reason && trace_composition_id() == 0 && should_validate_edit_target) {
         no_edit_target = _context_has_no_edit_target(pic);
         if (no_edit_target) {
@@ -350,6 +355,9 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
     if (has_committed_text) {
         if (commit_continues_composition) {
             _hide_external_candidate_window("hide:commit_continue_reposition");
+            // Prevent reentrant focus callbacks from restoring the previous page before the new
+            // composition exposes its caret.
+            _candidateShowPending = true;
         } else {
             _hide_candidate_window("hide:commit");
             _end_reading_ui_element("hide:commit_reading");
@@ -458,6 +466,7 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
                 external_candidate_window = _publish_candidate_ui_element(
                     page, response.candidate_count, response.page_current, response.page_total);
             }
+            _externalCandidateWindowExpected = external_candidate_window;
             if (external_candidate_window) {
                 const bool candidate_was_visible = _candidateWindow.is_visible();
                 _candidateWindow.set_page_info((int)response.page_current, (int)response.page_total);

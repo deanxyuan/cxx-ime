@@ -25,6 +25,7 @@ struct EffectiveEditTargetBindings {
     bool layout_sink_matches = true;
     bool candidate_document_matches = true;
     bool candidate_window_valid = true;
+    bool candidate_visibility_matches = true;
     bool candidate_owner_matches = true;
     bool status_window_valid = true;
     bool status_visibility_matches = true;
@@ -33,8 +34,8 @@ struct EffectiveEditTargetBindings {
     bool healthy() const {
         return input_state_matches && target_resources_match && edit_sink_matches &&
                layout_sink_matches && candidate_document_matches && candidate_window_valid &&
-               candidate_owner_matches && status_window_valid && status_visibility_matches &&
-               status_owner_matches;
+               candidate_visibility_matches && candidate_owner_matches && status_window_valid &&
+               status_visibility_matches && status_owner_matches;
     }
 };
 
@@ -47,6 +48,9 @@ enum class EffectiveEditTargetAction {
 
 bool same_effective_edit_target(const EffectiveEditTargetSnapshot& current,
                                 const EffectiveEditTargetSnapshot& next);
+
+bool external_candidate_ui_needs_repair(bool composing, bool window_expected, bool show_pending,
+                                        bool window_visible);
 
 EffectiveEditTargetAction
 classify_effective_edit_target_change(const EffectiveEditTargetSnapshot& current,
