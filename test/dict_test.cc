@@ -622,13 +622,15 @@ TEST(Dict, user_dict_scan_count_bounded) {
     // Insert 100 user words with different codes
     for (int i = 0; i < 100; ++i) {
         char code[16];
-        snprintf(code, sizeof(code), "abc%03d", i);
+        snprintf(code, sizeof(code), "abc%c%c",
+                 static_cast<char>('a' + i / 26),
+                 static_cast<char>('a' + i % 26));
         ASSERT_TRUE(dict.add_user_entry("test", code));
     }
 
-    // Query for "abc050" — should scan 1 entry, not 100
+    // Query for "abcby" — should scan 1 entry, not 100
     cxxime::QueryTrace trace = {};
-    std::vector<std::string> syllables = {"abc050"};
+    std::vector<std::string> syllables = {"abcby"};
     dict.lookup_by_syllables(syllables, 10, &trace);
     ASSERT_LE(trace.user_scan_count, 2u);
 
@@ -791,7 +793,10 @@ TEST(Dict, user_dict_stress_10k) {
     ASSERT_TRUE(f != nullptr);
     for (int i = 0; i < 10000; ++i) {
         char code[16];
-        snprintf(code, sizeof(code), "p%04d", i);
+        snprintf(code, sizeof(code), "p%c%c%c",
+                 static_cast<char>('a' + i / (26 * 26)),
+                 static_cast<char>('a' + (i / 26) % 26),
+                 static_cast<char>('a' + i % 26));
         char text[16];
         snprintf(text, sizeof(text), "t%04d", i);
         fprintf(f, "%s\t%s\t1\n", text, code);
@@ -801,23 +806,23 @@ TEST(Dict, user_dict_stress_10k) {
 
     // Query for a specific code — scan count should be O(1), not O(10000)
     cxxime::QueryTrace trace = {};
-    std::vector<std::string> syllables = {"p5000"};
+    std::vector<std::string> syllables = {"phki"};
     dict.lookup_by_syllables(syllables, 10, &trace);
     ASSERT_LE(trace.user_scan_count, 2u);
 
-    // Query prefix "p5" — should use prefix index, scan only matching bucket
+    // Query prefix "ph" — should use prefix index, scan only matching bucket
     cxxime::QueryTrace trace2 = {};
-    dict.lookup("p5", 10, &trace2);
-    // "p5" matches p5000-p5999 = 1000 entries, but prefix index bucket should be smaller
-    ASSERT_LE(trace2.user_scan_count, 1010u);  // bucket + margin
+    dict.lookup("ph", 10, &trace2);
+    // "ph" matches one 676-entry base-26 bucket.
+    ASSERT_LE(trace2.user_scan_count, 686u);  // bucket + margin
     // Should NOT be 10000 (full scan)
     ASSERT_TRUE(trace2.user_scan_count < 10000);
 
     // Count should also be indexed
     cxxime::QueryTrace trace3 = {};
-    int cnt = dict.count("p5", &trace3);
-    ASSERT_GE(cnt, 1000);
-    ASSERT_LE(trace3.user_scan_count, 1010u);
+    int cnt = dict.count("ph", &trace3);
+    ASSERT_EQ(cnt, 676);
+    ASSERT_LE(trace3.user_scan_count, 686u);
 
     dict.close();
     DeleteFileA(path.c_str());
