@@ -13,11 +13,6 @@ bool same_effective_edit_target(const EffectiveEditTargetSnapshot& current,
            current.owner_window == next.owner_window;
 }
 
-bool external_candidate_ui_needs_repair(bool composing, bool window_expected, bool show_pending,
-                                        bool window_visible) {
-    return composing && window_expected && !show_pending && !window_visible;
-}
-
 EffectiveEditTargetAction
 classify_effective_edit_target_change(const EffectiveEditTargetSnapshot& current,
                                       const EffectiveEditTargetSnapshot& next,

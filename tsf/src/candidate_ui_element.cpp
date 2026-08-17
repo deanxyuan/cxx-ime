@@ -82,10 +82,13 @@ STDMETHODIMP CandidateUIElement::Show(BOOL show) {
         return E_FAIL;
     }
 
-    _show_external = show;
-    const bool actual_show = _service->set_candidate_ui_element_shown(requested_show);
+    const bool accepted = _service->set_candidate_ui_element_shown(requested_show);
+    if (accepted) {
+        _show_external = show;
+    }
+    const bool actual_show = _service->is_candidate_ui_element_shown();
     _shown = actual_show ? TRUE : FALSE;
-    const HRESULT result = !requested_show || actual_show ? S_OK : E_FAIL;
+    const HRESULT result = accepted ? S_OK : E_FAIL;
     cxxime_tsf::trace_ui_show(
         _service, "candidate", _ui_element_id, requested_show, actual_show, result);
     return result;
@@ -268,6 +271,11 @@ void CandidateUIElement::set_page(const cxxime::CandidatePage& page,
         _service, _candidates, _selection, page_current, page_total);
 }
 
+void CandidateUIElement::clear_page() {
+    _candidates.clear();
+    _selection = 0;
+}
+
 bool CandidateUIElement::begin(ITfThreadMgr* thread_mgr, ITfDocumentMgr* document_mgr) {
     if (_active) {
         return wants_external_window();
@@ -328,6 +336,7 @@ void CandidateUIElement::notify_update(ITfThreadMgr* thread_mgr) {
 }
 
 void CandidateUIElement::end(ITfThreadMgr* thread_mgr) {
+    clear_page();
     if (!_active)
         return;
 

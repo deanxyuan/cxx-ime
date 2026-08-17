@@ -236,7 +236,6 @@ STDMETHODIMP TextService::OnChange(REFGUID rguid) {
         _lastInlineCompositionText.clear();
         _hide_candidate_window("hide:conversion_change_commit");
         _end_reading_ui_element("hide:conversion_change_commit_reading");
-        _candidateWindow.set_preedit("");
         _reset_trace_composition("conversion_change_commit");
     }
 

@@ -49,9 +49,6 @@ enum class EffectiveEditTargetAction {
 bool same_effective_edit_target(const EffectiveEditTargetSnapshot& current,
                                 const EffectiveEditTargetSnapshot& next);
 
-bool external_candidate_ui_needs_repair(bool composing, bool window_expected, bool show_pending,
-                                        bool window_visible);
-
 EffectiveEditTargetAction
 classify_effective_edit_target_change(const EffectiveEditTargetSnapshot& current,
                                       const EffectiveEditTargetSnapshot& next,

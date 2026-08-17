@@ -58,6 +58,11 @@ bool unavailable_target_reason(const char* reason) {
 
 } // namespace
 
+bool TextService::_context_matches_effective_edit_target(ITfContext* context) const {
+    return context && _effectiveEditTarget.valid() &&
+           com_identity(context) == _effectiveEditTarget.context_identity;
+}
+
 cxxime_tsf::EffectiveEditTargetBindings
 TextService::_effective_edit_target_bindings(const cxxime_tsf::EffectiveEditTargetSnapshot& target,
                                              bool expect_status_window) const {
@@ -86,12 +91,12 @@ TextService::_effective_edit_target_bindings(const cxxime_tsf::EffectiveEditTarg
     bindings.candidate_window_valid = _candidateWindow.is_created();
     const bool candidate_needs_repair =
         target.valid() &&
-        cxxime_tsf::external_candidate_ui_needs_repair(
-            _composing, _externalCandidateWindowExpected, _candidateShowPending,
-            _candidateWindow.is_visible());
+        _candidatePresentation.needs_window_repair(_composing, _candidateWindow.is_visible());
     bindings.candidate_visibility_matches = !candidate_needs_repair;
+    const bool candidate_should_be_bound =
+        target.valid() && _candidatePresentation.should_bind_owner(_composing);
     bindings.candidate_owner_matches =
-        !_candidateWindow.is_visible() ||
+        !candidate_should_be_bound ||
         _candidateWindow.owner_matches(reinterpret_cast<HWND>(target.owner_window));
 
     const bool status_expected = expect_status_window && _activated && target.valid() &&
@@ -308,31 +313,23 @@ bool TextService::_synchronize_effective_edit_target(ITfContext* event_context,
         _candidateUiElement->end(_threadMgr);
     }
 
-    if (candidate_was_active && !bindings.candidate_document_matches && _composing &&
-        !_publishedCandidatePage.candidates.empty()) {
-        const bool show_external = _candidateUiElement->begin(_threadMgr, document_mgr);
-        _candidateUiElement->notify_update(_threadMgr);
-        _externalCandidateWindowExpected = show_external;
-        if (!show_external) {
-            _hide_external_candidate_window("hide:edit_target_host_ui");
-        }
+    if (candidate_was_active && !bindings.candidate_document_matches &&
+        (_composing || _candidatePresentation.waiting_for_caret()) &&
+        _candidatePresentation.has_candidates()) {
+        _sync_candidate_ui_element_snapshot();
+        _publish_candidate_ui_element();
     }
 
     const HWND owner = reinterpret_cast<HWND>(next.owner_window);
     const bool candidate_should_be_bound =
-        _composing && _externalCandidateWindowExpected && _candidateUiElement &&
-        _candidateUiElement->wants_external_window();
+        _candidatePresentation.should_bind_owner(_composing);
     const bool restore_candidate =
-        candidate_should_be_bound && cxxime_tsf::external_candidate_ui_needs_repair(
-            _composing, _externalCandidateWindowExpected, _candidateShowPending,
-            _candidateWindow.is_visible());
+        _candidatePresentation.needs_window_repair(_composing, _candidateWindow.is_visible());
     const HWND candidate_owner =
         (_candidateWindow.is_visible() || candidate_should_be_bound) ? owner : nullptr;
     repaired = _candidateWindow.ensure_created(candidate_owner) && repaired;
     if (restore_candidate && _candidateWindow.is_created()) {
-        _candidateWindow.set_page_info(_publishedCandidatePageCurrent,
-                                       _publishedCandidatePageTotal);
-        _candidateWindow.update(_publishedCandidatePage);
+        _sync_candidate_window_snapshot();
         if (cxxime_tsf::is_valid_caret_rect(_caretRect)) {
             _candidateWindow.move_to_caret(_caretRect);
         }

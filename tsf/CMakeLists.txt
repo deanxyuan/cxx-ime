@@ -31,6 +31,7 @@ add_library(cxxime-tsf SHARED
     src/dllmain.cpp
     src/globals.cpp
     src/class_factory.cpp
+    src/candidate_presentation.cpp
     src/effective_edit_target.cpp
     src/edit_target.cc
     src/text_service.cpp

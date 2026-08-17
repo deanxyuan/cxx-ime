@@ -204,9 +204,7 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
     const bool starts_new_composition =
         !_composing && !status_key && _chinese_mode && can_start_text_input(wParam, modifiers);
     const bool external_candidate_missing =
-        cxxime_tsf::external_candidate_ui_needs_repair(
-            _composing, _externalCandidateWindowExpected, _candidateShowPending,
-            _candidateWindow.is_visible());
+        _candidatePresentation.needs_window_repair(_composing, _candidateWindow.is_visible());
     const bool should_validate_edit_target =
         !_inputFocused || !_effectiveEditTarget.valid() || starts_new_composition ||
         external_candidate_missing;
@@ -357,11 +355,12 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
             _hide_external_candidate_window("hide:commit_continue_reposition");
             // Prevent reentrant focus callbacks from restoring the previous page before the new
             // composition exposes its caret.
-            _candidateShowPending = true;
+            _candidatePresentation.begin_composition_restart(
+                cxxime_tsf::CandidatePresentation::Clock::now());
+            _candidateWindow.ensure_created(_candidate_owner_window(nullptr));
         } else {
             _hide_candidate_window("hide:commit");
             _end_reading_ui_element("hide:commit_reading");
-            _candidateWindow.set_preedit("");
         }
         commit_text = utf8_to_wstring(response.commit_text);
         if (!commit_text.empty()) {
@@ -406,19 +405,27 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
             _config.inline_preedit, _config.preedit_type, preedit, preedit_cursor,
             candidate_texts);
 
+        const bool ui_element_only =
+            (_activateFlags & TF_TMF_UIELEMENTENABLEDONLY) != 0;
         const bool has_candidates = response.candidate_count > 0;
         cxxime::CandidatePage page = _candidate_page_from_response(response);
+        std::string popup_preedit;
+        if (ui_element_only || decision.show_preedit_in_popup) {
+            popup_preedit = response.preedit;
+        }
+        const bool has_preedit = !popup_preedit.empty();
+        _candidatePresentation.update_content(
+            page, popup_preedit, response.preedit_cursor, static_cast<int>(response.page_current),
+            static_cast<int>(response.page_total));
+        _sync_candidate_ui_element_snapshot();
 
         CXXIME_LOG(L"_ProcessKeyEvent: start_comp=%d, _composing=%d, _composition=%d, inline='%s'",
                    decision.start_composition, _composing, _composition != nullptr,
                    decision.inline_text.c_str());
 
-        const bool ui_element_only =
-            (_activateFlags & TF_TMF_UIELEMENTENABLEDONLY) != 0;
-
-            cxxime_tsf::trace_context(
-                trace_input_id(), trace_composition_id(), pic, _threadMgr,
-                ui_element_only ? "candidate_first_standard_tsf_compat" : "standard_tsf");
+        cxxime_tsf::trace_context(
+            trace_input_id(), trace_composition_id(), pic, _threadMgr,
+            ui_element_only ? "candidate_first_standard_tsf_compat" : "standard_tsf");
 
         _caretRect = {};
         _lastInlineCompositionText = ui_element_only
@@ -426,51 +433,47 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
             : (decision.start_composition ? decision.inline_text : L"");
         bool external_candidate_window = true;
         bool candidate_ui_published = false;
+        const bool composition_restart_was_active =
+            _candidatePresentation.composition_restart_active();
         auto apply_composition = [&](const std::wstring& text, size_t cursor) {
             if (commit_continues_composition) {
                 return _commit_then_restart_composition(pic, commit_text, text, cursor);
             }
             return update_composition(pic, text, cursor, true, TF_ES_SYNC);
         };
+        HRESULT composition_result = S_OK;
         if (ui_element_only) {
             _end_reading_ui_element("hide:candidate_mirror_no_reading");
-            external_candidate_window = _publish_candidate_ui_element(
-                page, response.candidate_count, response.page_current, response.page_total);
+            external_candidate_window = _publish_candidate_ui_element();
             candidate_ui_published = true;
-            apply_composition(preedit, preedit_cursor);
+            composition_result = apply_composition(preedit, preedit_cursor);
         } else if (decision.start_composition) {
             _update_reading_ui_element(pic, preedit);
-            apply_composition(decision.inline_text, decision.inline_cursor);
+            composition_result = apply_composition(decision.inline_text, decision.inline_cursor);
         } else {
             _update_reading_ui_element(pic, preedit);
             // Keep a popup-only TSF composition active so the host can terminate it
             // consistently when its selection moves.
-            apply_composition(L"", 0);
+            composition_result = apply_composition(L"", 0);
+        }
+        const bool composition_restart_failed =
+            composition_restart_was_active && FAILED(composition_result);
+        if (composition_restart_failed) {
+            handle_composition_restart_failure(_candidatePresentation.generation());
         }
         *pfEaten = TRUE;
-
-        std::string popup_preedit =
-            ui_element_only ? response.preedit :
-            (decision.show_preedit_in_popup ? response.preedit : "");
-        _candidateWindow.set_preedit(popup_preedit, response.preedit_cursor);
-
-        const bool has_preedit = !popup_preedit.empty();
 
         CXXIME_LOG(L"_ProcessKeyEvent: has_cand=%d, has_preedit=%d, cand_count=%u",
                    has_candidates, has_preedit, response.candidate_count);
 
         auto window_start = std::chrono::steady_clock::now();
 
-        if (has_candidates || has_preedit) {
+        if (!composition_restart_failed && (has_candidates || has_preedit)) {
             if (!candidate_ui_published) {
-                external_candidate_window = _publish_candidate_ui_element(
-                    page, response.candidate_count, response.page_current, response.page_total);
+                external_candidate_window = _publish_candidate_ui_element();
             }
-            _externalCandidateWindowExpected = external_candidate_window;
             if (external_candidate_window) {
                 const bool candidate_was_visible = _candidateWindow.is_visible();
-                _candidateWindow.set_page_info((int)response.page_current, (int)response.page_total);
-
                 // Query the current caret before falling back to the cached rectangle. The cache may
                 // still point to the previous composition after a commit/new preedit boundary.
                 RECT caretRect = {};
@@ -479,8 +482,9 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
                 HWND contextWindow = nullptr;
                 bool hasTrustedNativeCaret =
                     _resolve_context_native_caret_rect(pic, &trustedNativeRect, &contextWindow);
-                _candidateWindow.ensure_created(contextWindow);
-                _candidateWindow.update(page);
+                const HWND candidate_owner = _candidate_owner_window(contextWindow);
+                _candidateWindow.ensure_created(candidate_owner);
+                _sync_candidate_window_snapshot();
                 EditSession* pCaretSession = new (std::nothrow) EditSession(this, pic);
                 if (pCaretSession) {
                     pCaretSession->set_action(EditSession::Action::QUERY_CARET);
@@ -518,39 +522,30 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
                 bool defer_show = commit_continues_composition ||
                                   (!candidate_was_visible && !hasTrustedNativeCaret);
                 if (defer_show) {
-                    bool was_pending = _candidateShowPending;
-                    _candidateShowPending = true;
-                    _candidatePendingStaleRect = caretRect;
-                    _candidatePendingHasStaleRect = cxxime_tsf::is_valid_caret_rect(caretRect);
-                    _candidateRepositionPending = commit_continues_composition;
-                    if (!was_pending ||
-                        _candidateShowPendingSince.time_since_epoch().count() == 0) {
-                        _candidateShowPendingSince = std::chrono::steady_clock::now();
-                    }
+                    const RECT* stale_rect = cxxime_tsf::is_valid_caret_rect(caretRect)
+                        ? &caretRect
+                        : nullptr;
+                    _candidatePresentation.begin_waiting_for_caret(
+                        commit_continues_composition, stale_rect,
+                        cxxime_tsf::CandidatePresentation::Clock::now());
                     _update_state_poll_timer();
                     _request_candidate_position_update(pic, "show:preedit_layout_follow");
                 } else {
-                    _candidateShowPending = false;
-                    _candidatePendingHasStaleRect = false;
-                    _candidateRepositionPending = false;
-                    _candidatePendingStaleRect = {};
-                    _candidateShowPendingSince = {};
                     _candidateWindow.move_to_caret(caretRect);
+                    _candidatePresentation.accept_caret(_candidatePresentation.generation());
                     trace_caret_event("show_move", "initial", true, &caretRect);
                     _show_candidate_window("show:preedit");
                     _request_candidate_position_update(pic, "show:preedit_layout_follow");
                 }
-            } else {
-                _hide_external_candidate_window("hide:tsf_ui_integrated");
             }
-        } else {
+        } else if (!composition_restart_failed) {
             _hide_candidate_window("hide:no_candidates");
         }
 
         auto window_end = std::chrono::steady_clock::now();
         _last_window_update_us = std::chrono::duration_cast<std::chrono::microseconds>(window_end - window_start).count();
 
-        trace.result = TsfResult::PREEDIT;
+        trace.result = composition_restart_failed ? TsfResult::REJECTED : TsfResult::PREEDIT;
         trace.candidate_count = response.candidate_count;
         trace.preedit_len = (uint32_t)strlen(response.preedit);
         trace.preedit_cursor = static_cast<uint32_t>(preedit_cursor);
@@ -562,7 +557,6 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
         bool was_composing = _composing;
         _hide_candidate_window("hide:clear");
         _end_reading_ui_element("hide:clear_reading");
-        _candidateWindow.set_preedit("");
         if (_composing && _composition) {
             update_composition(pic, L"", 0);
         }
@@ -677,7 +671,6 @@ bool TextService::_ProcessKeyUp(WPARAM wParam, LPARAM lParam) {
                 _lastInlineCompositionText.clear();
                 _hide_candidate_window("hide:key_up_commit");
                 _end_reading_ui_element("hide:key_up_commit_reading");
-                _candidateWindow.set_preedit("");
                 committed = true;
             }
         }

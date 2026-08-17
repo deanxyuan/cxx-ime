@@ -24,6 +24,7 @@ class ReadingUIElement;
 #include <cxxime/ipc_protocol.h>
 #include <cxxime/host_trace.h>
 
+#include "candidate_presentation.h"
 #include "effective_edit_target.h"
 #include "status_controller.h"
 
@@ -136,7 +137,12 @@ public:
     void set_caret_rect(const RECT& rc) { _caretRect = rc; }
     void update_candidate_position(const RECT& rc,
                                    ITfContext* context = nullptr,
-                                   bool from_layout_change = false);
+                                   bool from_layout_change = false,
+                                   uint64_t expected_generation = 0);
+    bool candidate_presentation_request_is_current(
+        uint64_t expected_generation, uintptr_t expected_context_identity) const;
+    void handle_composition_restart_success(uint64_t expected_generation);
+    bool handle_composition_restart_failure(uint64_t expected_generation);
     RECT _resolve_caret_rect(ITfContext* pic);
 
     // TSF layer trace (lightweight, no cross-module QueryTrace dependency)
@@ -199,6 +205,7 @@ private:
     HRESULT _read_conversion_mode_compartment(DWORD* conversion_mode,
                                               VARTYPE* value_type) const;
     bool _context_belongs_to_foreground(ITfContext* context) const;
+    bool _context_matches_effective_edit_target(ITfContext* context) const;
     HWND _focused_context_view_window() const;
     bool _ensure_text_edit_sink(ITfContext* context);
     bool _bind_text_edit_sink(ITfContext* context);
@@ -250,11 +257,12 @@ private:
     void _hide_status_window(const char* reason);
     void _show_candidate_window(const char* reason);
     void _hide_candidate_window(const char* reason);
+    void _hide_candidate_projection(const char* reason);
     void _hide_external_candidate_window(const char* reason);
-    bool _publish_candidate_ui_element(const cxxime::CandidatePage& page,
-                                       uint32_t candidate_count,
-                                       uint32_t page_current,
-                                       uint32_t page_total);
+    bool _publish_candidate_ui_element();
+    void _sync_candidate_ui_element_snapshot();
+    void _sync_candidate_window_snapshot();
+    HWND _candidate_owner_window(HWND fallback) const;
     uint32_t _candidate_page_step() const;
     static cxxime::CandidatePage _candidate_page_from_response(
         const cxxime::IPCResponse& response);
@@ -309,24 +317,16 @@ private:
     bool _fTestKeyDownPending = false;
     bool _fTestKeyUpPending = false;
     std::bitset<256> _passThroughKeyUps;
-    bool _candidateShowPending = false;
-    bool _externalCandidateWindowExpected = false;
-    bool _candidatePendingHasStaleRect = false;
-    bool _candidateRepositionPending = false;
     bool _hostCompatibilityRuntimeActive = false;
     bool _writingConversionCompartment = false;
     bool _handlingConversionCompartmentChange = false;
-    RECT _candidatePendingStaleRect = {};
-    std::chrono::steady_clock::time_point _candidateShowPendingSince = {};
     UINT_PTR _statePollTimer = 0;
     UINT _statePollIntervalMs = 0;
     std::chrono::steady_clock::time_point _lastIpcHeartbeat = {};
     bool _ipcHealthy = true;
     std::string _lastInputBlockReason;
     std::wstring _lastInlineCompositionText;
-    cxxime::CandidatePage _publishedCandidatePage;
-    int _publishedCandidatePageCurrent = 0;
-    int _publishedCandidatePageTotal = 0;
+    cxxime_tsf::CandidatePresentation _candidatePresentation;
     cxxime::CandidateWindow _candidateWindow;
     CandidateUIElement* _candidateUiElement = nullptr;
     ReadingUIElement* _readingUiElement = nullptr;

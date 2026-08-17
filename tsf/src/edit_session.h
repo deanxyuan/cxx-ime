@@ -5,6 +5,8 @@
 
 #include "pch.h"
 
+#include <cstdint>
+
 class TextService;
 
 class EditSession : public ITfEditSession {
@@ -36,6 +38,10 @@ public:
     void set_position_update_from_layout_change(bool from_layout_change) {
         _positionUpdateFromLayoutChange = from_layout_change;
     }
+    void set_candidate_presentation_request(uint64_t generation, uintptr_t context_identity) {
+        _candidatePresentationGeneration = generation;
+        _candidatePresentationContextIdentity = context_identity;
+    }
     bool get_caret_rect(RECT& out) const {
         if (_resultValid) {
             out = _resultRect;
@@ -59,6 +65,8 @@ private:
     RECT _resultRect = {};
     bool _resultValid = false;
     bool _positionUpdateFromLayoutChange = false;
+    uint64_t _candidatePresentationGeneration = 0;
+    uintptr_t _candidatePresentationContextIdentity = 0;
     HRESULT _actionResult = E_PENDING;
     bool _compositionStartAttempted = false;
     HRESULT _compositionStartResult = E_PENDING;

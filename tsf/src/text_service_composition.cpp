@@ -66,7 +66,6 @@ STDMETHODIMP TextService::OnCompositionTerminated(TfEditCookie ecWrite,
             clear_succeeded = _client.clear_composition(_sessionId);
         }
         _hide_candidate_window("hide:composition_terminated");
-        _candidateWindow.set_preedit("");
         _reset_trace_composition("host_terminated");
     }
 
@@ -193,6 +192,28 @@ HRESULT TextService::_commit_then_restart_composition(ITfContext* context,
     return update_composition(context, preedit, preedit_cursor, true, TF_ES_ASYNCDONTCARE);
 }
 
+void TextService::handle_composition_restart_success(uint64_t expected_generation) {
+    _candidatePresentation.complete_composition_restart(expected_generation);
+}
+
+bool TextService::candidate_presentation_request_is_current(
+    uint64_t expected_generation, uintptr_t expected_context_identity) const {
+    return _candidatePresentation.generation_matches(expected_generation) &&
+           _effectiveEditTarget.valid() && expected_context_identity != 0 &&
+           expected_context_identity == _effectiveEditTarget.context_identity;
+}
+
+bool TextService::handle_composition_restart_failure(uint64_t expected_generation) {
+    if (!_candidatePresentation.fail_composition_restart(expected_generation)) {
+        return false;
+    }
+    _enqueue_event_trace("candidate_presentation", "restart_failed", true);
+    _hide_candidate_projection("hide:composition_restart_failed");
+    _end_reading_ui_element("hide:composition_restart_failed_reading");
+    _lastInlineCompositionText.clear();
+    return true;
+}
+
 HRESULT TextService::update_composition(ITfContext* context,
                                          const std::wstring& preedit,
                                          size_t preedit_cursor,
@@ -214,6 +235,10 @@ HRESULT TextService::update_composition(ITfContext* context,
         ensure ? EditSession::Action::ENSURE_COMPOSITION_TEXT
                : EditSession::Action::UPDATE_COMPOSITION,
         preedit, preedit_cursor);
+    if (ensure) {
+        edit_session->set_candidate_presentation_request(
+            _candidatePresentation.generation(), _effectiveEditTarget.context_identity);
+    }
 
     HRESULT edit_hr = E_FAIL;
     const bool sync = edit_session_mode == TF_ES_SYNC;
@@ -312,7 +337,6 @@ HRESULT TextService::_end_composition(ITfContext* context) {
 void TextService::_AbortComposition() {
     _hide_candidate_window("hide:abort_composition");
     _end_reading_ui_element("hide:abort_composition_reading");
-    _candidateWindow.set_preedit("");
     _lastInlineCompositionText.clear();
     if (_composing) {
         ITfContext* pContext = _current_edit_context_for_composition();
