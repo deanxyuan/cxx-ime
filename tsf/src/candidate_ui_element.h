@@ -45,6 +45,7 @@ static constexpr DWORD kPublishedUpdatedFlags =
     STDMETHODIMP Abort() override;
 
     void set_page(const cxxime::CandidatePage& page, int page_current, int page_total);
+    void clear_page();
     bool begin(ITfThreadMgr* thread_mgr, ITfDocumentMgr* document_mgr = nullptr);
     void notify_update(ITfThreadMgr* thread_mgr);
     void end(ITfThreadMgr* thread_mgr);

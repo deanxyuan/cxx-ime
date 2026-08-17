@@ -189,7 +189,7 @@ bool get_range_caret_rect(ITfContext* context,
     return resolved;
 }
 
-bool update_caret_rect_from_range(TextService* service,
+bool resolve_caret_rect_from_range(TextService* service,
                                    ITfContext* context,
                                    TfEditCookie ec,
                                    ITfRange* range,
@@ -205,14 +205,12 @@ bool update_caret_rect_from_range(TextService* service,
         return false;
     }
 
-    if (service)
-        service->set_caret_rect(rc);
     if (out)
         *out = rc;
     return true;
 }
 
-bool update_caret_rect_from_selection(TextService* service,
+bool resolve_caret_rect_from_selection(TextService* service,
                                        ITfContext* context,
                                        TfEditCookie ec,
                                        RECT* out) {
@@ -225,13 +223,13 @@ bool update_caret_rect_from_selection(TextService* service,
     if (FAILED(hr) || fetched == 0 || !selection.range)
         return false;
 
-    bool resolved = update_caret_rect_from_range(service, context, ec, selection.range,
+    bool resolved = resolve_caret_rect_from_range(service, context, ec, selection.range,
                                                  TF_ANCHOR_END, out);
     selection.range->Release();
     return resolved;
 }
 
-bool update_caret_rect_from_composition(TextService* service,
+bool resolve_caret_rect_from_composition(TextService* service,
                                        ITfContext* context,
                                        TfEditCookie ec,
                                        RECT* out,
@@ -243,11 +241,11 @@ bool update_caret_rect_from_composition(TextService* service,
         return false;
 
     RECT rc = {};
-    bool resolved = update_caret_rect_from_range(service, context, ec, range,
+    bool resolved = resolve_caret_rect_from_range(service, context, ec, range,
                                                  TF_ANCHOR_END, &rc);
     const char* source = "composition_end";
     if (!resolved) {
-        resolved = update_caret_rect_from_range(service, context, ec, range,
+        resolved = resolve_caret_rect_from_range(service, context, ec, range,
                                                 TF_ANCHOR_START, &rc);
         source = "composition_start";
     }
@@ -266,17 +264,20 @@ void update_caret_rect(TextService* service, ITfContext* context, TfEditCookie e
     if (!service || !context)
         return;
 
-    if (!update_caret_rect_from_selection(service, context, ec, nullptr))
-        update_caret_rect_from_range(service, context, ec, range, TF_ANCHOR_END, nullptr);
+    RECT rc = {};
+    if (resolve_caret_rect_from_selection(service, context, ec, &rc) ||
+        resolve_caret_rect_from_range(service, context, ec, range, TF_ANCHOR_END, &rc)) {
+        service->set_caret_rect(rc);
+    }
 }
 
-bool update_current_caret_rect(TextService* service,
+bool resolve_current_caret_rect(TextService* service,
                                 ITfContext* context,
                                 TfEditCookie ec,
                                 RECT* out,
                                 const char** source_out = nullptr) {
     RECT rc = {};
-    if (update_caret_rect_from_selection(service, context, ec, &rc)) {
+    if (resolve_caret_rect_from_selection(service, context, ec, &rc)) {
         if (out)
             *out = rc;
         if (source_out)
@@ -284,7 +285,7 @@ bool update_current_caret_rect(TextService* service,
         return true;
     }
 
-    if (update_caret_rect_from_composition(service, context, ec, &rc, source_out)) {
+    if (resolve_caret_rect_from_composition(service, context, ec, &rc, source_out)) {
         if (out)
             *out = rc;
         return true;
@@ -526,9 +527,15 @@ HRESULT apply_composition_text(TextService* service, ITfContext* context, TfEdit
 
     const bool placeholder_already_active =
         service->empty_composition_placeholder_active();
-    const bool caret_resolved_before_write =
-        text.empty() && !placeholder_already_active &&
-        update_caret_rect_from_selection(service, context, ec, nullptr);
+    bool caret_resolved_before_write = false;
+    if (text.empty() && !placeholder_already_active) {
+        RECT caret_rect = {};
+        caret_resolved_before_write =
+            resolve_caret_rect_from_selection(service, context, ec, &caret_rect);
+        if (caret_resolved_before_write) {
+            service->set_caret_rect(caret_rect);
+        }
+    }
     const bool use_empty_placeholder =
         text.empty() &&
         (placeholder_already_active || (composition_started && !caret_resolved_before_write));
@@ -666,15 +673,29 @@ STDMETHODIMP EditSession::DoEditSession(TfEditCookie ec) {
             pRange->Release();
         }
     } else if (_action == Action::ENSURE_COMPOSITION_TEXT) {
-        ITfRange* range = nullptr;
-        _actionResult = get_or_create_composition_range(
-            _service, _context, ec, &range, &_compositionStartAttempted,
-            &_compositionStartResult, &_compositionReturned);
-        if (SUCCEEDED(_actionResult) && range) {
-            _actionResult = apply_composition_text(
-                _service, _context, ec, range, _text, _selectionOffset, _hasSelectionOffset,
-                _compositionStartAttempted);
-            range->Release();
+        if (!_service ||
+            !_service->candidate_presentation_request_is_current(
+                _candidatePresentationGeneration, _candidatePresentationContextIdentity)) {
+            _actionResult = S_FALSE;
+        } else {
+            ITfRange* range = nullptr;
+            _actionResult = get_or_create_composition_range(
+                _service, _context, ec, &range, &_compositionStartAttempted,
+                &_compositionStartResult, &_compositionReturned);
+            if (SUCCEEDED(_actionResult) && range) {
+                _actionResult = apply_composition_text(
+                    _service, _context, ec, range, _text, _selectionOffset,
+                    _hasSelectionOffset, _compositionStartAttempted);
+                range->Release();
+            }
+            if (SUCCEEDED(_actionResult)) {
+                _service->handle_composition_restart_success(
+                    _candidatePresentationGeneration);
+            } else if (_service->handle_composition_restart_failure(
+                            _candidatePresentationGeneration) &&
+                        _service->get_composition()) {
+                clear_and_end_composition(_service, _context, ec, nullptr);
+            }
         }
     } else if (_action == Action::COMMIT_COMPOSITION) {
         if (_service->get_composition()) {
@@ -685,10 +706,11 @@ STDMETHODIMP EditSession::DoEditSession(TfEditCookie ec) {
     } else if (_action == Action::QUERY_CARET) {
         RECT rc = {};
         const char* source = "none";
-        if (update_current_caret_rect(_service, _context, ec, &rc, &source)) {
+        if (resolve_current_caret_rect(_service, _context, ec, &rc, &source)) {
             _resultRect = rc;
             _resultValid = true;
             if (_service) {
+                _service->set_caret_rect(rc);
                 _service->trace_caret_event("query", source, true, &rc);
             }
         } else if (_service) {
@@ -697,13 +719,14 @@ STDMETHODIMP EditSession::DoEditSession(TfEditCookie ec) {
     } else if (_action == Action::UPDATE_CANDIDATE_POSITION) {
         RECT rc = {};
         const char* source = "none";
-        if (update_current_caret_rect(_service, _context, ec, &rc, &source)) {
+        if (resolve_current_caret_rect(_service, _context, ec, &rc, &source)) {
             _resultRect = rc;
             _resultValid = true;
             if (_service) {
                 _service->trace_caret_event("layout_update", source, true, &rc);
                 _service->update_candidate_position(rc, _context,
-                                                    _positionUpdateFromLayoutChange);
+                                                    _positionUpdateFromLayoutChange,
+                                                    _candidatePresentationGeneration);
             }
         } else if (_service) {
             _service->trace_caret_event("layout_update", source, false, nullptr, E_FAIL, true);

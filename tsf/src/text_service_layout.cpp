@@ -3,7 +3,6 @@
 #include "text_service.h"
 
 #include <algorithm>
-#include <chrono>
 #include <cstdio>
 #include <new>
 
@@ -74,7 +73,20 @@ bool same_caret_position(const RECT& a, const RECT& b) {
 
 void TextService::update_candidate_position(const RECT& rc,
                                             ITfContext* context,
-                                            bool from_layout_change) {
+                                            bool from_layout_change,
+                                            uint64_t expected_generation) {
+    if (expected_generation != 0 &&
+        (!_candidatePresentation.generation_matches(expected_generation) ||
+         !_context_matches_effective_edit_target(context))) {
+        trace_caret_event("move", "stale_presentation", false, &rc, S_FALSE, true);
+        return;
+    }
+    if (_candidatePresentation.waiting_for_caret() &&
+        !_candidatePresentation.caret_resolution_allowed()) {
+        trace_caret_event("move", "composition_restart_pending", false, &rc, S_FALSE, true);
+        return;
+    }
+
     RECT final_rect = rc;
     bool resolved = cxxime_tsf::is_valid_caret_rect(final_rect);
     bool used_trusted_native = false;
@@ -98,35 +110,28 @@ void TextService::update_candidate_position(const RECT& rc,
     _caretRect = final_rect;
     const bool ui_element_only = (_activateFlags & TF_TMF_UIELEMENTENABLEDONLY) != 0;
     const bool original_ui_allowed =
-        _candidateUiElement && _candidateUiElement->wants_external_window();
+        _candidatePresentation.ownership() != cxxime_tsf::CandidateOwnership::kHost;
     if (ui_element_only && !original_ui_allowed) {
         trace_caret_event("move", "ui_element_only", false, &final_rect);
         return;
     }
     if (!_candidateWindow.is_visible()) {
-        if (_candidateShowPending) {
-            const bool position_unchanged =
-                _candidatePendingHasStaleRect &&
-                same_caret_position(final_rect, _candidatePendingStaleRect);
-            if (position_unchanged &&
-                (_candidateRepositionPending ||
-                 (!from_layout_change && !used_trusted_native))) {
-                auto now = std::chrono::steady_clock::now();
-                const int fallback_delay = _candidateRepositionPending
-                    ? kCandidateRepositionFallbackDelayMs
-                    : kCandidatePendingFallbackDelayMs;
-                if (_candidateShowPendingSince.time_since_epoch().count() != 0 &&
-                    now - _candidateShowPendingSince <
-                        std::chrono::milliseconds(fallback_delay)) {
-                    return;
-                }
+        if (_candidatePresentation.waiting_for_caret()) {
+            if (_candidatePresentation.should_keep_waiting_for_caret(
+                    final_rect, from_layout_change, used_trusted_native,
+                    cxxime_tsf::CandidatePresentation::Clock::now(),
+                    kCandidatePendingFallbackDelayMs,
+                    kCandidateRepositionFallbackDelayMs)) {
+                return;
             }
-            _candidateShowPending = false;
-            _candidatePendingHasStaleRect = false;
-            _candidateRepositionPending = false;
-            _candidatePendingStaleRect = {};
-            _candidateShowPendingSince = {};
             _candidateWindow.move_to_caret(final_rect);
+            uint64_t generation = _candidatePresentation.generation();
+            if (expected_generation != 0) {
+                generation = expected_generation;
+            }
+            if (!_candidatePresentation.accept_caret(generation)) {
+                return;
+            }
             trace_caret_event("move", "candidate_window", resolved, &final_rect);
             _show_candidate_window("show:preedit");
             return;
@@ -147,13 +152,14 @@ void TextService::_follow_native_caret() {
 
     RECT native_rect = {};
     bool resolved = _resolve_context_native_caret_rect(context, &native_rect);
-    context->Release();
     if (!resolved || same_caret_position(native_rect, _caretRect)) {
+        context->Release();
         return;
     }
 
     trace_caret_event("follow", "native_caret", true, &native_rect);
-    update_candidate_position(native_rect);
+    update_candidate_position(native_rect, context);
+    context->Release();
 }
 
 bool TextService::_bind_text_layout_sink(ITfContext* context) {
@@ -202,12 +208,20 @@ void TextService::_request_candidate_position_update(ITfContext* pic,
                                                      const char* reason,
                                                      bool from_layout_change) {
     const bool candidate_active =
-        _candidateShowPending || (_composing && _candidateWindow.is_visible());
+        (_candidatePresentation.external_window_expected() &&
+        _candidatePresentation.waiting_for_caret()) ||
+        (_composing && _candidateWindow.is_visible());
     if (!pic || !candidate_active)
         return;
+    if (_candidatePresentation.waiting_for_caret() &&
+        !_candidatePresentation.caret_resolution_allowed()) {
+        trace_caret_event("request_update", "composition_restart_pending", false, nullptr,
+                          S_FALSE, true);
+        return;
+    }
     const bool ui_element_only = (_activateFlags & TF_TMF_UIELEMENTENABLEDONLY) != 0;
     const bool original_ui_allowed =
-        _candidateUiElement && _candidateUiElement->wants_external_window();
+        _candidatePresentation.ownership() != cxxime_tsf::CandidateOwnership::kHost;
     if (ui_element_only && !original_ui_allowed) {
         trace_caret_event("request_update", "ui_element_only", false, nullptr);
         return;
@@ -221,6 +235,8 @@ void TextService::_request_candidate_position_update(ITfContext* pic,
 
     session->set_action(EditSession::Action::UPDATE_CANDIDATE_POSITION);
     session->set_position_update_from_layout_change(from_layout_change);
+    session->set_candidate_presentation_request(
+        _candidatePresentation.generation(), _effectiveEditTarget.context_identity);
     HRESULT hr = E_FAIL;
     HRESULT request_hr =
         pic->RequestEditSession(_clientId, session, TF_ES_READ | TF_ES_ASYNCDONTCARE, &hr);

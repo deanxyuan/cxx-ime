@@ -50,6 +50,10 @@ add_cxxime_test(effective_edit_target_test)
 target_sources(effective_edit_target_test PRIVATE
     ${CMAKE_SOURCE_DIR}/tsf/src/effective_edit_target.cpp
 )
+add_cxxime_test(candidate_presentation_test)
+target_sources(candidate_presentation_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/tsf/src/candidate_presentation.cpp
+)
 add_cxxime_test(ipc_test)
 add_cxxime_test(wubi_test)
 add_cxxime_test(wubi_prefix_query_test)
