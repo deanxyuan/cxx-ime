@@ -132,21 +132,25 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
     bool has_last_status = false;
     {
         std::lock_guard<std::mutex> lock(_lastImeStatusMutex);
-        has_last_status = _hasLastImeStatus;
+        has_last_status = _has_synced_ime_status();
         if (has_last_status) {
             initial_status = _lastImeStatus;
         }
     }
+    bool initial_status_available = has_last_status;
     bool initial_caps_lock = initial_input_allows_input && _is_caps_lock_on();
     _sessionId = 0;
     if (_ensure_ipc_session()) {
         if (initial_input_allows_input) {
-            _sync_caps_lock_state(initial_caps_lock, "activate_focused", &initial_status);
+            if (_sync_caps_lock_state(initial_caps_lock, "activate_focused", &initial_status)) {
+                initial_status_available = true;
+            }
         }
         cxxime::IPCResponse status_resp = {};
         if (_ensure_ipc_session() &&
             _client.get_status(_sessionId, status_resp) && status_resp.status == cxxime::IPCStatus::OK) {
             initial_status = status_resp.ime_status;
+            initial_status_available = true;
         }
     }
     if (initial_input_allows_input && initial_caps_lock) {
@@ -157,13 +161,14 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
         }
     }
 
-    // Pre-set TextService state so _sync_ime_status sees no delta
+    // Keep fallback values for internal state, but do not publish them as a server-synchronized
+    // status. The default input mode is Pinyin and must not be shown while startup IPC is pending.
     _chinese_mode = initial_status.chinese_mode();
     _caps_lock = initial_status.caps_lock();
-    {
+    if (initial_status_available) {
         std::lock_guard<std::mutex> lock(_lastImeStatusMutex);
         _lastImeStatus = initial_status;
-        _hasLastImeStatus = true;
+        _hasLastImeStatus.store(true, std::memory_order_release);
     }
 
     // Register language bar buttons

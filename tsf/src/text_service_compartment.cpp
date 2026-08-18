@@ -181,7 +181,7 @@ STDMETHODIMP TextService::OnChange(REFGUID rguid) {
 
     {
         std::lock_guard<std::mutex> lock(_lastImeStatusMutex);
-        if (_hasLastImeStatus) {
+        if (_has_synced_ime_status()) {
             trace_event.status_details = true;
             trace_event.before_full_shape = _lastImeStatus.full_shape();
             trace_event.before_chinese_punct = _lastImeStatus.chinese_punct();

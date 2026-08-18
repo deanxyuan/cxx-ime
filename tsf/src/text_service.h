@@ -10,6 +10,7 @@ class ReadingUIElement;
 
 #include "pch.h"
 
+#include <atomic>
 #include <bitset>
 #include <chrono>
 #include <cstdint>
@@ -257,6 +258,9 @@ private:
     bool _ensure_ipc_session();
     bool _recreate_ipc_session_preserving_status();
     bool _heartbeat_ipc();
+    bool _has_synced_ime_status() const noexcept {
+        return _hasLastImeStatus.load(std::memory_order_acquire);
+    }
     void _show_status_window_if_allowed(const char* reason = "input_allowed");
     void _hide_status_window(const char* reason);
     void _show_candidate_window(const char* reason);
@@ -314,7 +318,7 @@ private:
     bool _caps_lock = false;
     std::mutex _lastImeStatusMutex;
     cxxime::ImeStatus _lastImeStatus;
-    bool _hasLastImeStatus = false;
+    std::atomic<bool> _hasLastImeStatus{false};
     bool _activated = false;
     bool _inputFocused = false;
     bool _inputTargetUnavailable = false;
