@@ -9,6 +9,7 @@
 #include <cxxime/config.h>
 #include <cxxime/renderer.h>
 
+#include "dpi_awareness.h"
 #include "gdi_renderer.h"
 
 namespace cxxime {
@@ -23,21 +24,6 @@ static int system_caret_width() {
     }
     return static_cast<int>(width);
 }
-
-class ScopedDpiAwarenessContext {
-public:
-    explicit ScopedDpiAwarenessContext(DPI_AWARENESS_CONTEXT context)
-        : previous_(SetThreadDpiAwarenessContext(context)) {}
-
-    ~ScopedDpiAwarenessContext() {
-        if (previous_) {
-            SetThreadDpiAwarenessContext(previous_);
-        }
-    }
-
-private:
-    DPI_AWARENESS_CONTEXT previous_ = nullptr;
-};
 
 bool CandidateWindow::create(HWND owner, const Config& config) {
     if (hwnd_ && IsWindow(hwnd_)) {
