@@ -60,7 +60,7 @@ TEST(CandidateWindow, recreate_resets_native_window_size_cache) {
     ASSERT_TRUE(window.create(nullptr, config));
     window.update(page);
 
-    HWND first_hwnd = FindWindowW(L"CxxIMECandidateWindow", nullptr);
+    HWND first_hwnd = window.hwnd_for_test();
     ASSERT_TRUE(first_hwnd != nullptr);
     RECT first_rect = {};
     ASSERT_TRUE(GetWindowRect(first_hwnd, &first_rect) != FALSE);
@@ -69,7 +69,7 @@ TEST(CandidateWindow, recreate_resets_native_window_size_cache) {
     ASSERT_TRUE(window.create(nullptr, config));
     window.update(page);
 
-    HWND second_hwnd = FindWindowW(L"CxxIMECandidateWindow", nullptr);
+    HWND second_hwnd = window.hwnd_for_test();
     ASSERT_TRUE(second_hwnd != nullptr);
     RECT second_rect = {};
     ASSERT_TRUE(GetWindowRect(second_hwnd, &second_rect) != FALSE);
@@ -95,13 +95,18 @@ TEST(CandidateWindow, owner_can_follow_active_context_window) {
 
     cxxime::CandidateWindow window;
     ASSERT_TRUE(window.create(nullptr, config));
-    HWND candidate = FindWindowW(L"CxxIMECandidateWindow", nullptr);
+    HWND candidate = window.hwnd_for_test();
     ASSERT_TRUE(candidate != nullptr);
 
     window.set_owner(context_window);
+    ASSERT_TRUE(window.owner_matches(context_window));
+    candidate = window.hwnd_for_test();
+    ASSERT_TRUE(candidate != nullptr);
     ASSERT_EQ(GetWindow(candidate, GW_OWNER), context_window);
 
     window.set_owner(second_owner);
+    candidate = window.hwnd_for_test();
+    ASSERT_TRUE(candidate != nullptr);
     ASSERT_EQ(GetWindow(candidate, GW_OWNER), second_owner);
 
     window.hide();
@@ -122,7 +127,7 @@ TEST(CandidateWindow, ensure_created_recovers_destroyed_window_and_owner) {
 
     cxxime::CandidateWindow window;
     ASSERT_TRUE(window.create(nullptr, config));
-    HWND stale_window = FindWindowW(L"CxxIMECandidateWindow", nullptr);
+    HWND stale_window = window.hwnd_for_test();
     ASSERT_TRUE(stale_window != nullptr);
     ASSERT_TRUE(DestroyWindow(stale_window) != FALSE);
     ASSERT_TRUE(!window.is_created());
@@ -150,7 +155,7 @@ TEST(CandidateWindow, width_is_clamped_to_monitor_work_area) {
 
     cxxime::CandidateWindow window;
     ASSERT_TRUE(window.create(nullptr, config));
-    HWND hwnd = FindWindowW(L"CxxIMECandidateWindow", nullptr);
+    HWND hwnd = window.hwnd_for_test();
     ASSERT_TRUE(hwnd != nullptr);
     HMONITOR monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
     MONITORINFO monitor_info = {sizeof(monitor_info)};
@@ -186,7 +191,7 @@ TEST(CandidateWindow, automatic_width_uses_comfortable_work_area_limit) {
 
     cxxime::CandidateWindow window;
     ASSERT_TRUE(window.create(nullptr, config));
-    HWND hwnd = FindWindowW(L"CxxIMECandidateWindow", nullptr);
+    HWND hwnd = window.hwnd_for_test();
     ASSERT_TRUE(hwnd != nullptr);
     HMONITOR monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
     MONITORINFO monitor_info = {sizeof(monitor_info)};
