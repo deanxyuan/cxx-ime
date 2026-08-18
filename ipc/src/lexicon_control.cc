@@ -165,9 +165,17 @@ bool encode_lexicon_request(const LexiconControlRequest& request, std::string* p
             object["limit"] = request.limit;
             break;
         case LexiconOperation::kAdd:
-        case LexiconOperation::kDelete:
             object["text"] = request.text;
             object["code"] = request.code;
+            break;
+        case LexiconOperation::kDelete:
+            if (request.entries.empty() || request.entries.size() > LEXICON_CONTROL_MAX_LIMIT) {
+                return false;
+            }
+            object["entries"] = json::array();
+            for (const auto& entry : request.entries) {
+                object["entries"].push_back({{"text", entry.text}, {"code", entry.code}});
+            }
             break;
         case LexiconOperation::kDisableSystemEntry:
         case LexiconOperation::kRestoreSystemEntry:
@@ -226,13 +234,27 @@ bool decode_lexicon_request(const std::string& payload, LexiconControlRequest* r
                 parsed.query = object["query"].get<std::string>();
                 break;
             case LexiconOperation::kAdd:
-            case LexiconOperation::kDelete:
                 if (!object.contains("text") || !object["text"].is_string() ||
                     !object.contains("code") || !object["code"].is_string()) {
                     return false;
                 }
                 parsed.text = object["text"].get<std::string>();
                 parsed.code = object["code"].get<std::string>();
+                break;
+            case LexiconOperation::kDelete:
+                if (!object.contains("entries") || !object["entries"].is_array() ||
+                    object["entries"].empty() ||
+                    object["entries"].size() > LEXICON_CONTROL_MAX_LIMIT) {
+                    return false;
+                }
+                for (const auto& item : object["entries"]) {
+                    if (!item.is_object() || !item.contains("text") || !item["text"].is_string() ||
+                        !item.contains("code") || !item["code"].is_string()) {
+                        return false;
+                    }
+                    parsed.entries.push_back(
+                        {item["text"].get<std::string>(), item["code"].get<std::string>()});
+                }
                 break;
             case LexiconOperation::kDisableSystemEntry:
             case LexiconOperation::kRestoreSystemEntry:
@@ -442,14 +464,13 @@ bool LexiconControlClient::replace_entry(UserDictKind kind, const std::string& o
     return execute(request, result);
 }
 
-bool LexiconControlClient::delete_entry(UserDictKind kind, const std::string& text,
-                                         const std::string& code,
-                                         LexiconControlResult* result) const {
+bool LexiconControlClient::delete_entries(UserDictKind kind,
+                                          const std::vector<LexiconEntryKey>& entries,
+                                          LexiconControlResult* result) const {
     LexiconControlRequest request;
     request.operation = LexiconOperation::kDelete;
     request.kind = kind;
-    request.text = text;
-    request.code = code;
+    request.entries = entries;
     return execute(request, result);
 }
 
@@ -479,15 +500,14 @@ bool LexiconControlClient::save_preferences(UserDictKind kind,
     return execute(request, result);
 }
 
-bool LexiconControlClient::delete_preference(UserDictKind kind, const std::string& text,
-                                              const std::string& code,
+bool LexiconControlClient::delete_preferences(UserDictKind kind,
+                                              const std::vector<LexiconEntryKey>& entries,
                                               LexiconControlResult* result) const {
     LexiconControlRequest request;
     request.operation = LexiconOperation::kDelete;
     request.kind = kind;
     request.resource = LexiconResource::kCandidatePreference;
-    request.text = text;
-    request.code = code;
+    request.entries = entries;
     return execute(request, result);
 }
 

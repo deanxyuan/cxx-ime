@@ -25,8 +25,7 @@ struct LexiconQueryCompletion {
     bool preserve_editor = false;
     LexiconSearchKind search_kind = LexiconSearchKind::kEmpty;
     std::string query;
-    std::string selected_text;
-    std::string selected_code;
+    std::vector<LexiconEntryKey> selected_entries;
     SystemLexiconQueryResult system_result;
     LexiconControlResult server_result;
     std::vector<LexiconPanelEntry> rows;
@@ -85,8 +84,8 @@ void EditorApp::query_lexicon_entries(bool preserve_editor) {
     const std::string query = edit_text_utf8(hLexiconQuery_);
     const UserDictKind kind = current_user_dict_kind();
     const LexiconResource resource = current_lexicon_resource();
-    const std::string selected_text = wstr_to_utf8(selectedLexiconText_);
-    const std::string selected_code = wstr_to_utf8(selectedLexiconCode_);
+    const std::vector<LexiconEntryKey> selected_entries =
+        selected_lexicon_entry_keys(lexiconRows_, selected_lexicon_row_indices());
     LexiconSearchKind search_kind = LexiconSearchKind::kEmpty;
     if (resource == LexiconResource::kUserLexicon) {
         search_kind = classify_lexicon_search(query);
@@ -94,10 +93,19 @@ void EditorApp::query_lexicon_entries(bool preserve_editor) {
             lexiconQueryPending_ = false;
             if (!preserve_editor) {
                 clear_lexicon_entry_form();
+            } else {
+                selectedLexiconText_.clear();
+                selectedLexiconCode_.clear();
+                selectedLexiconHasSystem_ = false;
+                selectedLexiconHasUser_ = false;
+                selectedLexiconSystemDisabled_ = false;
+                selectedLexiconCount_ = 0;
+                selectedLexiconDeletableCount_ = 0;
             }
             ListView_DeleteAllItems(hLexiconList_);
             lexiconRows_.clear();
-            SetWindowTextW(hLexiconStatus_, L"请输入中文词语或小写字母编码");
+            lexiconBaseStatus_ = L"请输入中文词语或小写字母编码";
+            SetWindowTextW(hLexiconStatus_, lexiconBaseStatus_.c_str());
             update_lexicon_entry_actions();
             return;
         }
@@ -124,15 +132,14 @@ void EditorApp::query_lexicon_entries(bool preserve_editor) {
     SetWindowTextW(hLexiconStatus_, pipe_absent ? L"正在查询系统词典..." : L"正在查询...");
 
     std::thread([window, generation, kind, resource, search_kind, query, pipe_absent, service,
-                 preserve_editor, selected_text, selected_code]() {
+                 preserve_editor, selected_entries]() {
         LexiconQueryCompletion completion;
         completion.kind = kind;
         completion.resource = resource;
         completion.preserve_editor = preserve_editor;
         completion.search_kind = search_kind;
         completion.query = query;
-        completion.selected_text = selected_text;
-        completion.selected_code = selected_code;
+        completion.selected_entries = selected_entries;
 
         if (resource == LexiconResource::kUserLexicon) {
             completion.system_query_requested = search_kind != LexiconSearchKind::kEmpty;
@@ -247,30 +254,34 @@ void EditorApp::handle_lexicon_query_complete(WPARAM generation, LPARAM completi
         request_lexicon_code_suggestions();
     }
 
-    if (completion->preserve_editor && !completion->selected_text.empty()) {
-        const auto selected = std::find_if(lexiconRows_.begin(), lexiconRows_.end(),
-                                           [&](const LexiconPanelEntry& row) {
-                                               return row.text == completion->selected_text &&
-                                                      row.code == completion->selected_code;
-                                           });
-        if (selected != lexiconRows_.end()) {
-            const std::size_t index = static_cast<std::size_t>(selected - lexiconRows_.begin());
-            selectedLexiconText_ = utf8_to_wstr(selected->text);
-            selectedLexiconCode_ = utf8_to_wstr(selected->code);
-            selectedLexiconHasSystem_ = selected->has_system_source;
-            selectedLexiconHasUser_ = selected->has_user_source;
-            selectedLexiconSystemDisabled_ = selected->system_disabled;
-            updatingLexiconForm_ = true;
-            ListView_SetItemState(hLexiconList_, static_cast<int>(index),
-                                  LVIS_SELECTED | LVIS_FOCUSED, LVIS_SELECTED | LVIS_FOCUSED);
-            updatingLexiconForm_ = false;
-        } else {
-            selectedLexiconText_.clear();
-            selectedLexiconCode_.clear();
-            selectedLexiconHasSystem_ = false;
-            selectedLexiconHasUser_ = false;
-            selectedLexiconSystemDisabled_ = false;
+    bool selection_restored = false;
+    if (completion->preserve_editor && !completion->selected_entries.empty()) {
+        updatingLexiconForm_ = true;
+        for (std::size_t index = 0; index < lexiconRows_.size(); ++index) {
+            const auto& row = lexiconRows_[index];
+            const auto selected = std::find_if(
+                completion->selected_entries.begin(), completion->selected_entries.end(),
+                [&](const LexiconEntryKey& entry) {
+                    return row.text == entry.text && row.code == entry.code;
+                });
+            if (selected != completion->selected_entries.end()) {
+                const UINT state = selection_restored ? LVIS_SELECTED
+                                                      : LVIS_SELECTED | LVIS_FOCUSED;
+                ListView_SetItemState(hLexiconList_, static_cast<int>(index), state,
+                                      LVIS_SELECTED | LVIS_FOCUSED);
+                selection_restored = true;
+            }
         }
+        updatingLexiconForm_ = false;
+    }
+    if (!selection_restored) {
+        selectedLexiconText_.clear();
+        selectedLexiconCode_.clear();
+        selectedLexiconHasSystem_ = false;
+        selectedLexiconHasUser_ = false;
+        selectedLexiconSystemDisabled_ = false;
+        selectedLexiconCount_ = 0;
+        selectedLexiconDeletableCount_ = 0;
     }
 
     if (completion->resource == LexiconResource::kCandidatePreference) {
@@ -299,7 +310,14 @@ void EditorApp::handle_lexicon_query_complete(WPARAM generation, LPARAM completi
         swprintf_s(status, L"显示 %zu 条词条", lexiconRows_.size());
         SetWindowTextW(hLexiconStatus_, status);
     }
-    update_lexicon_entry_actions();
+    wchar_t base_status[128] = {};
+    GetWindowTextW(hLexiconStatus_, base_status, static_cast<int>(_countof(base_status)));
+    lexiconBaseStatus_ = base_status;
+    if (selection_restored) {
+        on_lexicon_selection_changed();
+    } else {
+        update_lexicon_entry_actions();
+    }
 }
 
 void EditorApp::request_lexicon_code_suggestions() {
@@ -378,6 +396,8 @@ void EditorApp::clear_lexicon_entry_form() {
     selectedLexiconHasSystem_ = false;
     selectedLexiconHasUser_ = false;
     selectedLexiconSystemDisabled_ = false;
+    selectedLexiconCount_ = 0;
+    selectedLexiconDeletableCount_ = 0;
     lexiconCodeManuallyEdited_ = false;
     updatingLexiconForm_ = true;
     SetWindowTextW(hLexiconText_, L"");
@@ -388,17 +408,75 @@ void EditorApp::clear_lexicon_entry_form() {
     update_lexicon_entry_actions();
 }
 
-void EditorApp::on_lexicon_entry_selected() {
+std::vector<std::size_t> EditorApp::selected_lexicon_row_indices() const {
+    std::vector<std::size_t> indices;
+    if (!hLexiconList_) {
+        return indices;
+    }
+    int row = -1;
+    while ((row = ListView_GetNextItem(hLexiconList_, row, LVNI_SELECTED)) >= 0) {
+        indices.push_back(static_cast<std::size_t>(row));
+    }
+    return indices;
+}
+
+void EditorApp::select_all_lexicon_entries() {
+    if (!hLexiconList_ || ListView_GetItemCount(hLexiconList_) == 0) {
+        return;
+    }
+    updatingLexiconForm_ = true;
+    ListView_SetItemState(hLexiconList_, -1, LVIS_SELECTED, LVIS_SELECTED);
+    ListView_SetItemState(hLexiconList_, 0, LVIS_FOCUSED, LVIS_FOCUSED);
+    updatingLexiconForm_ = false;
+    on_lexicon_selection_changed();
+}
+
+void EditorApp::on_lexicon_selection_changed() {
     if (updatingLexiconForm_ || !hLexiconList_) {
         return;
     }
-    const int row = ListView_GetNextItem(hLexiconList_, -1, LVNI_SELECTED);
-    if (row < 0 || static_cast<std::size_t>(row) >= lexiconRows_.size()) {
-        clear_lexicon_entry_form();
+
+    const std::vector<std::size_t> indices = selected_lexicon_row_indices();
+    const LexiconSelectionSummary selection = summarize_lexicon_selection(lexiconRows_, indices);
+    selectedLexiconCount_ = selection.selected_count;
+    selectedLexiconDeletableCount_ = selection.deletable_count;
+    selectedLexiconText_.clear();
+    selectedLexiconCode_.clear();
+    selectedLexiconHasSystem_ = false;
+    selectedLexiconHasUser_ = false;
+    selectedLexiconSystemDisabled_ = false;
+    const bool selection_status_available =
+        !lexiconImportRunning_ && !lexiconQueryRunning_ && lexiconServerAvailable_;
+
+    if (selection.selected_count != 1) {
+        KillTimer(hwnd_, kLexiconCodeTimerId);
+        ++lexiconCodeGeneration_;
+        lexiconCodePending_ = false;
+        lexiconCodeManuallyEdited_ = false;
+        updatingLexiconForm_ = true;
+        SetWindowTextW(hLexiconText_, L"");
+        SendMessageW(hLexiconCode_, CB_RESETCONTENT, 0, 0);
+        SetWindowTextW(hLexiconCode_, L"");
+        updatingLexiconForm_ = false;
+        update_lexicon_entry_actions();
+        if (selection.selected_count == 0) {
+            if (selection_status_available) {
+                SetWindowTextW(hLexiconStatus_, lexiconBaseStatus_.c_str());
+            }
+        } else if (selection_status_available) {
+            wchar_t status[96] = {};
+            if (selection.deletable_count == selection.selected_count) {
+                swprintf_s(status, L"已选择 %zu 项", selection.selected_count);
+            } else {
+                swprintf_s(status, L"已选择 %zu 项，其中 %zu 项可删除",
+                           selection.selected_count, selection.deletable_count);
+            }
+            SetWindowTextW(hLexiconStatus_, status);
+        }
         return;
     }
 
-    const auto& selected = lexiconRows_[static_cast<std::size_t>(row)];
+    const auto& selected = lexiconRows_[selection.first_index];
     selectedLexiconText_ = utf8_to_wstr(selected.text);
     selectedLexiconCode_ = utf8_to_wstr(selected.code);
     selectedLexiconHasSystem_ = selected.has_system_source;
@@ -413,22 +491,28 @@ void EditorApp::on_lexicon_entry_selected() {
         lexiconCodeManuallyEdited_ = false;
     }
     update_lexicon_entry_actions();
+    if (selection_status_available) {
+        SetWindowTextW(hLexiconStatus_, L"已选择 1 项");
+    }
 }
 
 void EditorApp::update_lexicon_entry_actions() {
     const bool lexicon_page = current_lexicon_resource() == LexiconResource::kUserLexicon;
-    const bool mutation_available = lexiconServerAvailable_ && !lexiconImportRunning_;
+    const bool mutation_available =
+        lexiconServerAvailable_ && !lexiconImportRunning_ && !lexiconQueryRunning_;
     const bool has_text = hLexiconText_ && GetWindowTextLengthW(hLexiconText_) > 0;
     const bool has_code = hLexiconCode_ && GetWindowTextLengthW(hLexiconCode_) > 0;
     EnableWindow(hLexiconAdd_, lexicon_page && mutation_available && has_text && has_code &&
                                    !selectedLexiconHasUser_);
     EnableWindow(hLexiconSave_, lexicon_page && mutation_available && has_text && has_code &&
-                                   selectedLexiconHasUser_);
-    EnableWindow(hLexiconDelete_, lexicon_page && mutation_available && selectedLexiconHasUser_);
+                                   selectedLexiconCount_ == 1 && selectedLexiconHasUser_);
+    EnableWindow(hLexiconDelete_, lexicon_page && mutation_available &&
+                                      selectedLexiconDeletableCount_ > 0);
     EnableWindow(hLexiconPreferenceDelete_,
-                 !lexicon_page && mutation_available && selectedLexiconHasUser_);
+                 !lexicon_page && mutation_available && selectedLexiconDeletableCount_ > 0);
     EnableWindow(hLexiconSystemAction_, lexicon_page && mutation_available &&
                                             lexiconDisabledStateAvailable_ &&
+                                            selectedLexiconCount_ == 1 &&
                                             selectedLexiconHasSystem_);
     SetWindowTextW(hLexiconSystemAction_,
                    selectedLexiconSystemDisabled_ ? L"恢复系统词" : L"隐藏系统词");

@@ -32,9 +32,9 @@ public:
     std::vector<UserDictEntryInfo> query(const std::string& query, std::size_t offset,
                                          std::size_t limit,
                                          std::size_t* match_total = nullptr) const;
-    bool erase(const std::string& text, const std::string& code);
+    bool erase(const std::vector<LexiconEntryKey>& entries);
     bool clear();
-    bool erase_and_save(const std::string& text, const std::string& code);
+    bool erase_and_save(const std::vector<LexiconEntryKey>& entries);
     bool clear_and_save();
     bool contains(const std::string& text, const std::string& code) const;
     std::size_t entry_count() const;

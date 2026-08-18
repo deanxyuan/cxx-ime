@@ -627,14 +627,14 @@ cxxime::IPCStatus SharedResources::restore_system_entry(cxxime::UserDictKind kin
     return cxxime::IPCStatus::OK;
 }
 
-cxxime::IPCStatus SharedResources::delete_candidate_preference(
-    cxxime::UserDictKind kind, const std::string& text, const std::string& code) {
-    if (text.empty() || code.empty())
+cxxime::IPCStatus SharedResources::delete_candidate_preferences(
+    cxxime::UserDictKind kind, const std::vector<cxxime::LexiconEntryKey>& entries) {
+    if (entries.empty())
         return cxxime::IPCStatus::ERR_UNKNOWN_COMMAND;
     auto dict = dict_for_kind(kind);
     if (!dict || !dict->is_open())
         return cxxime::IPCStatus::ERR_ENGINE_NOT_INITIALIZED;
-    return dict->delete_candidate_preference_and_save(text, code)
+    return dict->delete_candidate_preferences_and_save(entries)
         ? cxxime::IPCStatus::OK
         : cxxime::IPCStatus::ERR_UNKNOWN_COMMAND;
 }
@@ -657,15 +657,14 @@ cxxime::IPCStatus SharedResources::save_candidate_preferences(cxxime::UserDictKi
         : cxxime::IPCStatus::ERR_UNKNOWN_COMMAND;
 }
 
-cxxime::IPCStatus SharedResources::delete_user_entry(cxxime::UserDictKind kind,
-                                                     const std::string& text,
-                                                     const std::string& code) {
-    if (text.empty())
+cxxime::IPCStatus SharedResources::delete_user_entries(
+    cxxime::UserDictKind kind, const std::vector<cxxime::LexiconEntryKey>& entries) {
+    if (entries.empty())
         return cxxime::IPCStatus::ERR_UNKNOWN_COMMAND;
     auto dict = dict_for_kind(kind);
     if (!dict || !dict->is_open())
         return cxxime::IPCStatus::ERR_ENGINE_NOT_INITIALIZED;
-    if (!dict->delete_user_entry_and_save(text, code))
+    if (!dict->delete_user_entries_and_save(entries))
         return cxxime::IPCStatus::ERR_UNKNOWN_COMMAND;
     return cxxime::IPCStatus::OK;
 }
@@ -1135,11 +1134,10 @@ cxxime::UserDictQueryResult SessionManager::query_disabled_system_entry_status(
     return shared_.query_disabled_system_entry_status(kind, texts);
 }
 
-cxxime::IPCStatus SessionManager::delete_user_entry(cxxime::UserDictKind kind,
-                                                    const std::string& text,
-                                                    const std::string& code) {
+cxxime::IPCStatus SessionManager::delete_user_entries(
+    cxxime::UserDictKind kind, const std::vector<cxxime::LexiconEntryKey>& entries) {
     std::lock_guard<std::mutex> reload_lock(reload_mutex_);
-    return shared_.delete_user_entry(kind, text, code);
+    return shared_.delete_user_entries(kind, entries);
 }
 
 cxxime::IPCStatus SessionManager::replace_user_entry(cxxime::UserDictKind kind,
@@ -1174,10 +1172,10 @@ cxxime::IPCStatus SessionManager::restore_system_entry(cxxime::UserDictKind kind
     return shared_.restore_system_entry(kind, text);
 }
 
-cxxime::IPCStatus SessionManager::delete_candidate_preference(
-    cxxime::UserDictKind kind, const std::string& text, const std::string& code) {
+cxxime::IPCStatus SessionManager::delete_candidate_preferences(
+    cxxime::UserDictKind kind, const std::vector<cxxime::LexiconEntryKey>& entries) {
     std::lock_guard<std::mutex> reload_lock(reload_mutex_);
-    return shared_.delete_candidate_preference(kind, text, code);
+    return shared_.delete_candidate_preferences(kind, entries);
 }
 
 cxxime::IPCStatus SessionManager::clear_candidate_preferences(cxxime::UserDictKind kind) {

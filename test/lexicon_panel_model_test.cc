@@ -63,6 +63,35 @@ TEST(LexiconPanelModel, MergesSourcesAndPreservesSystemDisabledState) {
     ASSERT_TRUE(rows[2].system_disabled);
 }
 
+TEST(LexiconPanelModel, SummarizesMultiSelectionAndDeletesOnlyUserSources) {
+    using cxxime::settings::LexiconPanelEntry;
+
+    const std::vector<LexiconPanelEntry> rows = {
+        {"system", "xt", 0, true, false, false},
+        {"both", "bt", 0, true, true, false},
+        {"user", "ur", 0, false, true, false},
+    };
+    const std::vector<std::size_t> selected = {0, 1, 2, 9};
+    const auto summary = cxxime::settings::summarize_lexicon_selection(rows, selected);
+    ASSERT_EQ(summary.selected_count, static_cast<std::size_t>(3));
+    ASSERT_EQ(summary.deletable_count, static_cast<std::size_t>(2));
+    ASSERT_EQ(summary.first_index, static_cast<std::size_t>(0));
+
+    const auto selected_entries = cxxime::settings::selected_lexicon_entry_keys(rows, selected);
+    ASSERT_EQ(selected_entries.size(), static_cast<std::size_t>(3));
+    ASSERT_EQ(selected_entries[0].text, "system");
+    ASSERT_EQ(selected_entries[0].code, "xt");
+    ASSERT_EQ(selected_entries[2].text, "user");
+    ASSERT_EQ(selected_entries[2].code, "ur");
+
+    const auto entries = cxxime::settings::selected_user_entry_keys(rows, selected);
+    ASSERT_EQ(entries.size(), static_cast<std::size_t>(2));
+    ASSERT_EQ(entries[0].text, "both");
+    ASSERT_EQ(entries[0].code, "bt");
+    ASSERT_EQ(entries[1].text, "user");
+    ASSERT_EQ(entries[1].code, "ur");
+}
+
 TEST(LexiconPanelModel, UsesAuthoritativeWholePhraseCodesFirst) {
     auto lookup = [](std::string_view text, std::size_t) {
         if (text == u8"撤单") {

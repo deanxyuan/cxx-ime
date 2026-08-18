@@ -183,7 +183,7 @@ TEST(UserDataSeparation, replacing_code_removes_stale_syllable_indexes) {
               static_cast<std::size_t>(1));
     ASSERT_TRUE(
         dictionary.replace_user_entry("manual-entry", "shurufa", "manual-entry", "xinbianma"));
-    ASSERT_TRUE(!dictionary.delete_user_entry("manual-entry", "shurufa"));
+    ASSERT_TRUE(!dictionary.delete_user_entries({{"manual-entry", "shurufa"}}));
     ASSERT_EQ(dictionary.lookup_user_indexed("srf", 10, budget, nullptr, &stats).size(),
               static_cast<std::size_t>(0));
     const auto exact = dictionary.lookup_user_exact("xinbianma", 10, budget, nullptr, &stats);
@@ -242,7 +242,7 @@ TEST(UserDataSeparation, frozen_preferences_reject_all_mutations_after_final_sav
     dictionary.freeze_candidate_preferences();
     ASSERT_TRUE(
         !dictionary.record_candidate_preference(make_candidate("second", "second"), "second"));
-    ASSERT_TRUE(!dictionary.delete_candidate_preference("first", "first"));
+    ASSERT_TRUE(!dictionary.delete_candidate_preferences({{"first", "first"}}));
     ASSERT_TRUE(!dictionary.clear_candidate_preferences());
     ASSERT_TRUE(dictionary.save_candidate_preferences());
     dictionary.close();
@@ -283,18 +283,24 @@ TEST(UserDataSeparation, failed_preference_transaction_preserves_live_state) {
     cxxime::Dict dictionary;
     ASSERT_TRUE(dictionary.load_candidate_preferences(preference_path));
     ASSERT_TRUE(dictionary.record_candidate_preference(make_candidate("保留", "baoliu"), "baoliu"));
+    ASSERT_TRUE(dictionary.record_candidate_preference(make_candidate("保留二", "baoliuer"),
+                                                       "baoliuer"));
     ASSERT_TRUE(dictionary.save_candidate_preferences());
     ASSERT_TRUE(DeleteFileA(preference_path.c_str()) != FALSE);
     ASSERT_TRUE(CreateDirectoryA(preference_path.c_str(), nullptr) != FALSE);
 
-    ASSERT_TRUE(!dictionary.delete_candidate_preference_and_save("保留", "baoliu"));
+    const std::vector<cxxime::LexiconEntryKey> entries = {
+        {"保留", "baoliu"}, {"保留二", "baoliuer"}};
+    ASSERT_TRUE(!dictionary.delete_candidate_preferences_and_save(entries));
     ASSERT_EQ(dictionary.query_candidate_preferences("保留", 0, 10).size(),
-              static_cast<std::size_t>(1));
+              static_cast<std::size_t>(2));
     ASSERT_TRUE(!dictionary.clear_candidate_preferences_and_save());
-    ASSERT_EQ(dictionary.candidate_preference_count(), static_cast<std::size_t>(1));
+    ASSERT_EQ(dictionary.candidate_preference_count(), static_cast<std::size_t>(2));
 
     ASSERT_TRUE(RemoveDirectoryA(preference_path.c_str()) != FALSE);
-    ASSERT_TRUE(dictionary.delete_candidate_preference_and_save("保留", "baoliu"));
+    const std::uint64_t version_before_delete = dictionary.candidate_preference_version();
+    ASSERT_TRUE(dictionary.delete_candidate_preferences_and_save(entries));
+    ASSERT_EQ(dictionary.candidate_preference_version(), version_before_delete + 1);
     ASSERT_TRUE(dictionary.query_candidate_preferences("保留", 0, 10).empty());
     ASSERT_TRUE(
         dictionary.record_candidate_preference(make_candidate("清空", "qingkong"), "qingkong"));

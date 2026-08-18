@@ -277,17 +277,24 @@ std::vector<UserDictEntryInfo> CandidatePreference::query(const std::string& que
     return std::vector<UserDictEntryInfo>(results.begin() + offset, results.begin() + end);
 }
 
-bool CandidatePreference::erase(const std::string& text, const std::string& code) {
+bool CandidatePreference::erase(const std::vector<LexiconEntryKey>& entries) {
     std::lock_guard<std::mutex> save_lock(save_mutex_);
     std::unique_lock<std::shared_mutex> lock(mutex_);
-    if (!accepting_updates_) {
+    if (!accepting_updates_ || entries.empty()) {
         return false;
     }
-    const auto found = entry_index_.find(entry_key(text, code));
-    if (found == entry_index_.end()) {
+
+    bool changed = false;
+    for (const auto& entry : entries) {
+        const auto found = entry_index_.find(entry_key(entry.text, entry.code));
+        if (found != entry_index_.end()) {
+            entries_[found->second].deleted = true;
+            changed = true;
+        }
+    }
+    if (!changed) {
         return false;
     }
-    entries_[found->second].deleted = true;
     rebuild_indexes_locked();
     last_update_ms_.store(GetTickCount64(), std::memory_order_release);
     dirty_.store(true, std::memory_order_release);
@@ -314,24 +321,32 @@ bool CandidatePreference::clear() {
     return true;
 }
 
-bool CandidatePreference::erase_and_save(const std::string& text, const std::string& code) {
+bool CandidatePreference::erase_and_save(const std::vector<LexiconEntryKey>& requested_entries) {
     std::lock_guard<std::mutex> save_lock(save_mutex_);
     std::vector<Entry> entries;
     std::string path;
     std::uint64_t captured_version = 0;
-    std::uint64_t target_sequence = 0;
+    std::unordered_map<std::string, std::uint64_t> target_sequences;
     {
         std::shared_lock<std::shared_mutex> lock(mutex_);
-        if (!accepting_updates_) {
+        if (!accepting_updates_ || requested_entries.empty()) {
             return false;
         }
-        const auto found = entry_index_.find(entry_key(text, code));
-        if (found == entry_index_.end()) {
-            return false;
-        }
+
         entries = entries_;
-        entries[found->second].deleted = true;
-        target_sequence = entries_[found->second].sequence;
+        target_sequences.reserve(requested_entries.size());
+        for (const auto& requested : requested_entries) {
+            const std::string key = entry_key(requested.text, requested.code);
+            const auto found = entry_index_.find(key);
+            if (found == entry_index_.end()) {
+                continue;
+            }
+            entries[found->second].deleted = true;
+            target_sequences.emplace(key, entries_[found->second].sequence);
+        }
+        if (target_sequences.empty()) {
+            return false;
+        }
         path = path_;
         captured_version = version_.load(std::memory_order_acquire);
     }
@@ -341,9 +356,15 @@ bool CandidatePreference::erase_and_save(const std::string& text, const std::str
 
     std::unique_lock<std::shared_mutex> lock(mutex_);
     const bool concurrent_update = version_.load(std::memory_order_acquire) != captured_version;
-    const auto found = entry_index_.find(entry_key(text, code));
-    if (found != entry_index_.end() && entries_[found->second].sequence == target_sequence) {
-        entries_[found->second].deleted = true;
+    bool changed = false;
+    for (const auto& target : target_sequences) {
+        const auto found = entry_index_.find(target.first);
+        if (found != entry_index_.end() && entries_[found->second].sequence == target.second) {
+            entries_[found->second].deleted = true;
+            changed = true;
+        }
+    }
+    if (changed) {
         rebuild_indexes_locked();
         version_.fetch_add(1, std::memory_order_acq_rel);
     }

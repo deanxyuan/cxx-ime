@@ -50,24 +50,36 @@ void EditorApp::save_lexicon_entry() {
     query_lexicon_entries(false);
 }
 
-void EditorApp::delete_lexicon_entry() {
-    if (!selectedLexiconHasUser_) {
+void EditorApp::delete_lexicon_entries() {
+    if (!lexiconServerAvailable_ || lexiconImportRunning_ || lexiconQueryRunning_) {
+        return;
+    }
+    const std::vector<LexiconEntryKey> entries =
+        selected_user_entry_keys(lexiconRows_, selected_lexicon_row_indices());
+    if (entries.empty()) {
         return;
     }
     const bool preference = current_lexicon_resource() == LexiconResource::kCandidatePreference;
-    std::wstring message = preference ? L"删除选词偏好 \"" : L"删除用户词条 \"";
-    message += selectedLexiconText_ + L"\"？";
+    wchar_t count[32] = {};
+    swprintf_s(count, L"%zu", entries.size());
+    std::wstring message = L"删除选中的 ";
+    message += count;
+    message += preference ? L" 项选词偏好？" : L" 个用户词？";
+    if (!preference && selectedLexiconCount_ > entries.size()) {
+        wchar_t retained[32] = {};
+        swprintf_s(retained, L"%zu", selectedLexiconCount_ - entries.size());
+        message += L"\n\n另外 ";
+        message += retained;
+        message += L" 个仅系统词不会受影响。";
+    }
     if (MessageBoxW(hwnd_, message.c_str(), L"CxxIME", MB_YESNO | MB_ICONWARNING) != IDYES) {
         return;
     }
     LexiconControlClient client;
     LexiconControlResult result;
-    const bool deleted =
-        preference
-            ? client.delete_preference(current_user_dict_kind(), wstr_to_utf8(selectedLexiconText_),
-                                       wstr_to_utf8(selectedLexiconCode_), &result)
-            : client.delete_entry(current_user_dict_kind(), wstr_to_utf8(selectedLexiconText_),
-                                  wstr_to_utf8(selectedLexiconCode_), &result);
+    const bool deleted = preference
+                             ? client.delete_preferences(current_user_dict_kind(), entries, &result)
+                             : client.delete_entries(current_user_dict_kind(), entries, &result);
     if (!deleted) {
         MessageBoxW(hwnd_, L"删除词条失败。", L"CxxIME", MB_OK | MB_ICONERROR);
         return;

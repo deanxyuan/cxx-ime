@@ -67,7 +67,7 @@ private:
     void clear_lexicon_entry_form();
     void add_lexicon_entry();
     void save_lexicon_entry();
-    void delete_lexicon_entry();
+    void delete_lexicon_entries();
     void disable_or_restore_system_entry();
     void request_lexicon_code_suggestions();
     void clear_candidate_preferences();
@@ -78,7 +78,9 @@ private:
     void set_user_dict_status(const std::wstring& text);
     void update_lexicon_status();
     void update_lexicon_entry_actions();
-    void on_lexicon_entry_selected();
+    void on_lexicon_selection_changed();
+    void select_all_lexicon_entries();
+    std::vector<std::size_t> selected_lexicon_row_indices() const;
     void load_diagnostics_controls();
     void read_diagnostics_controls();
     void open_diagnostics_log_directory();
@@ -202,6 +204,9 @@ private:
     bool selectedLexiconHasSystem_ = false;
     bool selectedLexiconHasUser_ = false;
     bool selectedLexiconSystemDisabled_ = false;
+    std::size_t selectedLexiconCount_ = 0;
+    std::size_t selectedLexiconDeletableCount_ = 0;
+    std::wstring lexiconBaseStatus_;
     bool lexiconServerAvailable_ = false;
     bool lexiconDisabledStateAvailable_ = false;
     bool updatingLexiconForm_ = false;

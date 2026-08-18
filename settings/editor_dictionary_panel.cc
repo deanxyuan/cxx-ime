@@ -95,7 +95,7 @@ void EditorApp::create_dictionary_panel(HWND panel, int panel_width) {
     const int list_height = edit_y - list_y - S(8);
     hLexiconList_ = CreateWindowExW(
         WS_EX_CLIENTEDGE, WC_LISTVIEWW, L"",
-        WS_CHILD | WS_VISIBLE | WS_TABSTOP | LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS,
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | LVS_REPORT | LVS_SHOWSELALWAYS,
         kPanelPadLeft, list_y, list_width, list_height, panel,
         reinterpret_cast<HMENU>(static_cast<INT_PTR>(4003)), GetModuleHandle(nullptr), nullptr);
     SendMessageW(hLexiconList_, WM_SETFONT, reinterpret_cast<WPARAM>(get_font()), TRUE);
@@ -187,7 +187,7 @@ bool EditorApp::handle_dictionary_command(int control_id, int notification) {
         save_lexicon_entry();
         return true;
     case 4008:
-        delete_lexicon_entry();
+        delete_lexicon_entries();
         return true;
     case 4010:
         import_user_dict();
@@ -230,7 +230,7 @@ bool EditorApp::handle_dictionary_command(int control_id, int notification) {
         disable_or_restore_system_entry();
         return true;
     case 4017:
-        delete_lexicon_entry();
+        delete_lexicon_entries();
         return true;
     default:
         return false;
@@ -239,14 +239,28 @@ bool EditorApp::handle_dictionary_command(int control_id, int notification) {
 
 bool EditorApp::handle_dictionary_notify(LPARAM notification) {
     auto* header = reinterpret_cast<LPNMHDR>(notification);
-    if (!header || header->idFrom != 4003 || header->code != LVN_ITEMCHANGED) {
+    if (!header || header->idFrom != 4003) {
         return false;
     }
-    const auto* item = reinterpret_cast<LPNMLISTVIEW>(notification);
-    if ((item->uChanged & LVIF_STATE) != 0) {
-        on_lexicon_entry_selected();
+    if (header->code == LVN_ITEMCHANGED) {
+        const auto* item = reinterpret_cast<LPNMLISTVIEW>(notification);
+        if ((item->uChanged & LVIF_STATE) != 0) {
+            on_lexicon_selection_changed();
+        }
+        return true;
     }
-    return true;
+    if (header->code == LVN_KEYDOWN) {
+        const auto* key = reinterpret_cast<LPNMLVKEYDOWN>(notification);
+        if (key->wVKey == 'A' && (GetKeyState(VK_CONTROL) & 0x8000) != 0) {
+            select_all_lexicon_entries();
+            return true;
+        }
+        if (key->wVKey == VK_DELETE) {
+            delete_lexicon_entries();
+            return true;
+        }
+    }
+    return false;
 }
 
 UserDictKind EditorApp::current_user_dict_kind() const {

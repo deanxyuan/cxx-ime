@@ -34,12 +34,12 @@ public:
     void set_scoring_profile(UserScoringProfile profile);
     bool add_entry(const std::string& text, const std::string& code,
                    const std::string& syllables = {});
-    bool delete_entry(const std::string& text, const std::string& code = {});
+    bool delete_entries(const std::vector<LexiconEntryKey>& entries);
     bool replace_entry(const std::string& old_text, const std::string& old_code,
                        const std::string& new_text, const std::string& new_code);
     bool add_entry_and_save(const std::string& text, const std::string& code,
                             const std::string& syllables = {});
-    bool delete_entry_and_save(const std::string& text, const std::string& code = {});
+    bool delete_entries_and_save(const std::vector<LexiconEntryKey>& entries);
     bool replace_entry_and_save(const std::string& old_text, const std::string& old_code,
                                 const std::string& new_text, const std::string& new_code);
     bool import_file(const std::string& source_path);
@@ -103,8 +103,8 @@ private:
     static std::string serialize_entries(const std::vector<Entry>& entries);
     static bool add_to_snapshot(Snapshot* snapshot, const std::string& text,
                                 const std::string& code, const std::string& syllables);
-    static bool delete_from_snapshot(Snapshot* snapshot, const std::string& text,
-                                     const std::string& code);
+    static bool delete_from_snapshot(Snapshot* snapshot,
+                                     const std::vector<LexiconEntryKey>& entries);
     static bool replace_in_snapshot(Snapshot* snapshot, const std::string& old_text,
                                     const std::string& old_code, const std::string& new_text,
                                     const std::string& new_code);

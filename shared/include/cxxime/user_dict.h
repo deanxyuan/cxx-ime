@@ -28,6 +28,11 @@ struct UserDictEntryInfo {
     std::uint64_t sequence = 0;
 };
 
+struct LexiconEntryKey {
+    std::string text;
+    std::string code;
+};
+
 struct UserDictQueryResult {
     std::size_t resource_total = 0;
     std::size_t match_total = 0;

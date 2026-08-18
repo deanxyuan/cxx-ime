@@ -93,18 +93,21 @@ bool handle_lexicon_control_request(SessionManager& session_manager,
             }
             break;
         case cxxime::LexiconOperation::kDelete:
-            if (!cxxime::is_valid_user_dict_text(request.text) ||
-                (!request.code.empty() && !cxxime::is_valid_user_dict_code(request.code))) {
-                result.error_code = ERROR_INVALID_DATA;
+            for (const auto& entry : request.entries) {
+                result.error_code = validate_user_entry(entry.text, entry.code);
+                if (result.error_code != ERROR_SUCCESS) {
+                    break;
+                }
+            }
+            if (result.error_code != ERROR_SUCCESS) {
                 break;
             }
             if (request.resource == cxxime::LexiconResource::kCandidatePreference) {
-                apply_status(session_manager.delete_candidate_preference(
-                                 request.kind, request.text, request.code),
+                apply_status(session_manager.delete_candidate_preferences(request.kind,
+                                                                          request.entries),
                              &result);
             } else if (request.resource == cxxime::LexiconResource::kUserLexicon) {
-                apply_status(session_manager.delete_user_entry(request.kind, request.text,
-                                                               request.code),
+                apply_status(session_manager.delete_user_entries(request.kind, request.entries),
                              &result);
             } else {
                 result.error_code = ERROR_NOT_SUPPORTED;
