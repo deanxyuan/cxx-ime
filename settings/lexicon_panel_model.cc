@@ -322,5 +322,50 @@ std::vector<std::string> generate_lexicon_code_suggestions(SystemLexiconType typ
     return result;
 }
 
+LexiconSelectionSummary
+summarize_lexicon_selection(const std::vector<LexiconPanelEntry>& rows,
+                            const std::vector<std::size_t>& selected_indices) {
+    LexiconSelectionSummary summary;
+    for (std::size_t index : selected_indices) {
+        if (index >= rows.size()) {
+            continue;
+        }
+        if (summary.selected_count == 0) {
+            summary.first_index = index;
+        }
+        ++summary.selected_count;
+        if (rows[index].has_user_source) {
+            ++summary.deletable_count;
+        }
+    }
+    return summary;
+}
+
+std::vector<LexiconEntryKey>
+selected_lexicon_entry_keys(const std::vector<LexiconPanelEntry>& rows,
+                            const std::vector<std::size_t>& selected_indices) {
+    std::vector<LexiconEntryKey> entries;
+    entries.reserve(selected_indices.size());
+    for (std::size_t index : selected_indices) {
+        if (index < rows.size()) {
+            entries.push_back({rows[index].text, rows[index].code});
+        }
+    }
+    return entries;
+}
+
+std::vector<LexiconEntryKey>
+selected_user_entry_keys(const std::vector<LexiconPanelEntry>& rows,
+                         const std::vector<std::size_t>& selected_indices) {
+    std::vector<LexiconEntryKey> entries;
+    entries.reserve(selected_indices.size());
+    for (std::size_t index : selected_indices) {
+        if (index < rows.size() && rows[index].has_user_source) {
+            entries.push_back({rows[index].text, rows[index].code});
+        }
+    }
+    return entries;
+}
+
 } // namespace settings
 } // namespace cxxime

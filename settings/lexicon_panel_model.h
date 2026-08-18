@@ -32,6 +32,12 @@ struct LexiconPanelEntry {
     bool system_disabled = false;
 };
 
+struct LexiconSelectionSummary {
+    std::size_t selected_count = 0;
+    std::size_t deletable_count = 0;
+    std::size_t first_index = 0;
+};
+
 using ExactLexiconLookup =
     std::function<std::vector<SystemLexiconEntry>(std::string_view text, std::size_t limit)>;
 
@@ -50,6 +56,15 @@ std::vector<std::string> generate_lexicon_code_suggestions(SystemLexiconType typ
                                                            std::string_view text,
                                                            const ExactLexiconLookup& lookup,
                                                            std::size_t limit);
+
+LexiconSelectionSummary summarize_lexicon_selection(
+    const std::vector<LexiconPanelEntry>& rows, const std::vector<std::size_t>& selected_indices);
+
+std::vector<LexiconEntryKey> selected_lexicon_entry_keys(
+    const std::vector<LexiconPanelEntry>& rows, const std::vector<std::size_t>& selected_indices);
+
+std::vector<LexiconEntryKey> selected_user_entry_keys(
+    const std::vector<LexiconPanelEntry>& rows, const std::vector<std::size_t>& selected_indices);
 
 } // namespace settings
 } // namespace cxxime

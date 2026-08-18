@@ -6,6 +6,7 @@
 #include <climits>
 #include <cstdlib>
 #include <sstream>
+#include <unordered_set>
 #include <utility>
 
 #include <cxxime/user_dict_validation.h>
@@ -149,18 +150,29 @@ bool UserLexicon::add_to_snapshot(Snapshot* snapshot, const std::string& text,
     return true;
 }
 
-bool UserLexicon::delete_from_snapshot(Snapshot* snapshot, const std::string& text,
-                                       const std::string& code) {
-    if (!snapshot) {
+bool UserLexicon::delete_from_snapshot(Snapshot* snapshot,
+                                       const std::vector<LexiconEntryKey>& entries) {
+    if (!snapshot || entries.empty()) {
         return false;
     }
+
+    std::unordered_set<std::string> targets;
+    targets.reserve(entries.size());
+    for (const auto& entry : entries) {
+        if (!is_valid_user_dict_entry(entry.text, entry.code)) {
+            return false;
+        }
+        targets.insert(entry_key(entry.text, entry.code));
+    }
+
+    bool changed = false;
     for (auto& entry : snapshot->entries) {
-        if (!entry.deleted && entry.text == text && (code.empty() || entry.code == code)) {
+        if (!entry.deleted && targets.find(entry_key(entry.text, entry.code)) != targets.end()) {
             entry.deleted = true;
-            return true;
+            changed = true;
         }
     }
-    return false;
+    return changed;
 }
 
 bool UserLexicon::replace_in_snapshot(Snapshot* snapshot, const std::string& old_text,
@@ -260,10 +272,10 @@ bool UserLexicon::add_entry(const std::string& text, const std::string& code,
     return true;
 }
 
-bool UserLexicon::delete_entry(const std::string& text, const std::string& code) {
+bool UserLexicon::delete_entries(const std::vector<LexiconEntryKey>& entries) {
     std::lock_guard<std::mutex> transaction_lock(transaction_mutex_);
     Snapshot next = snapshot();
-    if (!delete_from_snapshot(&next, text, code)) {
+    if (!delete_from_snapshot(&next, entries)) {
         return false;
     }
     publish_snapshot(prepare_snapshot(std::move(next)), true);
@@ -327,10 +339,10 @@ bool UserLexicon::add_entry_and_save(const std::string& text, const std::string&
     return add_to_snapshot(&next, text, code, syllables) && persist_snapshot(std::move(next));
 }
 
-bool UserLexicon::delete_entry_and_save(const std::string& text, const std::string& code) {
+bool UserLexicon::delete_entries_and_save(const std::vector<LexiconEntryKey>& entries) {
     std::lock_guard<std::mutex> transaction_lock(transaction_mutex_);
     Snapshot next = snapshot();
-    return delete_from_snapshot(&next, text, code) && persist_snapshot(std::move(next));
+    return delete_from_snapshot(&next, entries) && persist_snapshot(std::move(next));
 }
 
 bool UserLexicon::replace_entry_and_save(const std::string& old_text, const std::string& old_code,

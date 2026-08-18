@@ -12,6 +12,8 @@
 
 #include <windows.h>
 
+#include <json.hpp>
+
 #include <cxxime/control_client.h>
 #include <cxxime/control_protocol.h>
 #include <cxxime/control_server.h>
@@ -333,11 +335,46 @@ TEST(ControlChannel, lexicon_codec_rejects_invalid_requests) {
     ASSERT_TRUE(!cxxime::decode_lexicon_request(
         R"({"operation":"query","kind":"unknown","query":"ni","offset":0,"limit":32})",
         &request));
+    ASSERT_TRUE(!cxxime::decode_lexicon_request(
+        R"({"operation":"delete","kind":"pinyin","resource":"user_lexicon",)"
+        R"("text":"legacy","code":"legacy"})",
+        &request));
 
+    request = {};
+    request.operation = cxxime::LexiconOperation::kDelete;
+    std::string payload;
+    ASSERT_TRUE(!cxxime::encode_lexicon_request(request, &payload));
+    request.entries.assign(cxxime::LEXICON_CONTROL_MAX_LIMIT + 1, {"entry", "entry"});
+    ASSERT_TRUE(!cxxime::encode_lexicon_request(request, &payload));
+    request.entries.assign(cxxime::LEXICON_CONTROL_MAX_LIMIT, {"entry", "entry"});
+    request.entries.front() = {"first-text", "first-code"};
+    request.entries.back() = {"last-text", "last-code"};
+    ASSERT_TRUE(cxxime::encode_lexicon_request(request, &payload));
+    cxxime::LexiconControlRequest decoded;
+    ASSERT_TRUE(cxxime::decode_lexicon_request(payload, &decoded));
+    ASSERT_EQ(decoded.entries.size(), cxxime::LEXICON_CONTROL_MAX_LIMIT);
+    ASSERT_EQ(decoded.entries.front().text, "first-text");
+    ASSERT_EQ(decoded.entries.front().code, "first-code");
+    ASSERT_EQ(decoded.entries.back().text, "last-text");
+    ASSERT_EQ(decoded.entries.back().code, "last-code");
+
+    ASSERT_TRUE(!cxxime::decode_lexicon_request(
+        R"({"operation":"delete","kind":"pinyin","resource":"user_lexicon","entries":[]})",
+        &decoded));
+    request.entries.assign(cxxime::LEXICON_CONTROL_MAX_LIMIT + 1, {"entry", "entry"});
+    nlohmann::json oversized = {{"operation", "delete"},
+                                {"kind", "pinyin"},
+                                {"resource", "user_lexicon"},
+                                {"entries", nlohmann::json::array()}};
+    for (const auto& entry : request.entries) {
+        oversized["entries"].push_back({{"text", entry.text}, {"code", entry.code}});
+    }
+    ASSERT_TRUE(!cxxime::decode_lexicon_request(oversized.dump(), &decoded));
+
+    request = {};
     request.operation = cxxime::LexiconOperation::kAdd;
     request.text.assign(cxxime::CONTROL_MAX_PAYLOAD, 'x');
     request.code = "x";
-    std::string payload;
     ASSERT_TRUE(!cxxime::encode_lexicon_request(request, &payload));
 
     request.text = std::string("\xc3\x28", 2);
@@ -381,6 +418,8 @@ TEST(ControlChannel, lexicon_client_supports_all_operations) {
                 result.query.entries.push_back({request.texts[0], "", 1, 0});
             } else if (request.operation == cxxime::LexiconOperation::kImport) {
                 ASSERT_EQ(request.source_path, "C:\\temp\\user_pinyin.tsv");
+            } else if (request.operation == cxxime::LexiconOperation::kDelete) {
+                ASSERT_EQ(request.entries.size(), static_cast<std::size_t>(2));
             }
             return cxxime::encode_lexicon_result(result, response_payload);
         },
@@ -398,7 +437,8 @@ TEST(ControlChannel, lexicon_client_supports_all_operations) {
     ASSERT_TRUE(client.add_entry(cxxime::UserDictKind::PINYIN, "你好", "nihao", &result));
     ASSERT_TRUE(client.replace_entry(cxxime::UserDictKind::PINYIN, "你好", "nihao", "您好",
                                      "ninhao", &result));
-    ASSERT_TRUE(client.delete_entry(cxxime::UserDictKind::PINYIN, "您好", "ninhao", &result));
+    ASSERT_TRUE(client.delete_entries(cxxime::UserDictKind::PINYIN,
+                                      {{"您好", "ninhao"}, {"你们好", "nimenhao"}}, &result));
     ASSERT_TRUE(client.import_entries(cxxime::UserDictKind::PINYIN,
                                       "C:\\temp\\user_pinyin.tsv", &result));
     ASSERT_TRUE(client.save(cxxime::UserDictKind::PINYIN, &result));
@@ -406,8 +446,8 @@ TEST(ControlChannel, lexicon_client_supports_all_operations) {
                              cxxime::UserDictKind::WUBI, "ni", 2, 3, &result));
     ASSERT_TRUE(client.query(cxxime::LexiconResource::kDisabledSystemLexicon,
                              cxxime::UserDictKind::WUBI, "ni", 2, 3, &result));
-    ASSERT_TRUE(client.delete_preference(cxxime::UserDictKind::PINYIN, "你好", "nihao",
-                                         &result));
+    ASSERT_TRUE(client.delete_preferences(cxxime::UserDictKind::PINYIN,
+                                          {{"你好", "nihao"}, {"您好", "ninhao"}}, &result));
     ASSERT_TRUE(client.clear_preferences(cxxime::UserDictKind::PINYIN, &result));
     ASSERT_TRUE(client.save_preferences(cxxime::UserDictKind::PINYIN, &result));
     ASSERT_TRUE(client.query_system_entry_status(cxxime::UserDictKind::PINYIN,

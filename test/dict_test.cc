@@ -563,7 +563,7 @@ TEST(Dict, user_dict_same_text_keeps_distinct_codes) {
     ASSERT_TRUE(still_abc);
     ASSERT_EQ(dict.user_entry_count(), static_cast<size_t>(2));
 
-    ASSERT_TRUE(dict.delete_user_entry("测试", "abc"));
+    ASSERT_TRUE(dict.delete_user_entries({{"测试", "abc"}}));
     ASSERT_TRUE(dict.lookup("abc", 10).empty());
     ASSERT_TRUE(!dict.lookup("xyz", 10).empty());
 
@@ -603,9 +603,13 @@ TEST(Dict, user_dict_management_query_replace_delete) {
     ASSERT_TRUE(!dict.has_user_entry("alt"));
     ASSERT_TRUE(dict.has_user_entry("alt2"));
 
-    ASSERT_TRUE(dict.delete_user_entry("alt2", "nihao"));
+    const std::uint64_t version_before_delete = dict.user_dict_version();
+    ASSERT_TRUE(
+        dict.delete_user_entries_and_save({{"alt2", "nihao"}, {"input", "shurufa"}}));
+    ASSERT_EQ(dict.user_dict_version(), version_before_delete + 1);
     ASSERT_TRUE(!dict.has_user_entry("alt2"));
-    ASSERT_EQ(dict.user_entry_count(), static_cast<size_t>(2));
+    ASSERT_TRUE(!dict.has_user_entry("input"));
+    ASSERT_EQ(dict.user_entry_count(), static_cast<size_t>(1));
 
     dict.close();
     DeleteFileA(path.c_str());

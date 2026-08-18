@@ -66,9 +66,8 @@ struct SharedResources {
         cxxime::UserDictKind kind, size_t offset, size_t limit);
     cxxime::UserDictQueryResult query_disabled_system_entry_status(
         cxxime::UserDictKind kind, const std::vector<std::string>& texts);
-    cxxime::IPCStatus delete_user_entry(cxxime::UserDictKind kind,
-                                        const std::string& text,
-                                        const std::string& code);
+    cxxime::IPCStatus delete_user_entries(
+        cxxime::UserDictKind kind, const std::vector<cxxime::LexiconEntryKey>& entries);
     cxxime::IPCStatus replace_user_entry(cxxime::UserDictKind kind,
                                          const std::string& old_text,
                                          const std::string& old_code,
@@ -81,9 +80,8 @@ struct SharedResources {
                                            const std::string& text);
     cxxime::IPCStatus restore_system_entry(cxxime::UserDictKind kind,
                                            const std::string& text);
-    cxxime::IPCStatus delete_candidate_preference(cxxime::UserDictKind kind,
-                                                  const std::string& text,
-                                                  const std::string& code);
+    cxxime::IPCStatus delete_candidate_preferences(
+        cxxime::UserDictKind kind, const std::vector<cxxime::LexiconEntryKey>& entries);
     cxxime::IPCStatus clear_candidate_preferences(cxxime::UserDictKind kind);
     cxxime::IPCStatus save_candidate_preferences(cxxime::UserDictKind kind);
     bool save_candidate_preferences(bool force);
@@ -155,8 +153,8 @@ public:
         cxxime::UserDictKind kind, size_t offset, size_t limit);
     cxxime::UserDictQueryResult query_disabled_system_entry_status(
         cxxime::UserDictKind kind, const std::vector<std::string>& texts);
-    cxxime::IPCStatus delete_user_entry(cxxime::UserDictKind kind,
-                                        const std::string& text, const std::string& code);
+    cxxime::IPCStatus delete_user_entries(
+        cxxime::UserDictKind kind, const std::vector<cxxime::LexiconEntryKey>& entries);
     cxxime::IPCStatus replace_user_entry(cxxime::UserDictKind kind,
                                          const std::string& old_text, const std::string& old_code,
                                          const std::string& new_text, const std::string& new_code);
@@ -167,9 +165,8 @@ public:
                                            const std::string& text);
     cxxime::IPCStatus restore_system_entry(cxxime::UserDictKind kind,
                                            const std::string& text);
-    cxxime::IPCStatus delete_candidate_preference(cxxime::UserDictKind kind,
-                                                  const std::string& text,
-                                                  const std::string& code);
+    cxxime::IPCStatus delete_candidate_preferences(
+        cxxime::UserDictKind kind, const std::vector<cxxime::LexiconEntryKey>& entries);
     cxxime::IPCStatus clear_candidate_preferences(cxxime::UserDictKind kind);
     cxxime::IPCStatus save_candidate_preferences(cxxime::UserDictKind kind);
     bool save_candidate_preferences(bool force);

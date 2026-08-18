@@ -304,7 +304,7 @@ public:
         for (const auto& setup : q.setup_user_entries) {
             auto* dict = dict_for_mode(setup.mode);
             if (dict)
-                dict->delete_user_entry(setup.text, setup.code);
+                dict->delete_user_entries({{setup.text, setup.code}});
         }
     }
 

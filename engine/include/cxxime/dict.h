@@ -110,12 +110,12 @@ public:
                                                       size_t offset,
                                                       size_t limit,
                                                       size_t* match_total = nullptr) const;
-    bool delete_user_entry(const std::string& text, const std::string& code = "");
+    bool delete_user_entries(const std::vector<LexiconEntryKey>& entries);
     bool replace_user_entry(const std::string& old_text, const std::string& old_code,
                             const std::string& new_text, const std::string& new_code);
     bool add_user_entry_and_save(const std::string& text, const std::string& code,
                                  const std::string& syllables = {});
-    bool delete_user_entry_and_save(const std::string& text, const std::string& code = {});
+    bool delete_user_entries_and_save(const std::vector<LexiconEntryKey>& entries);
     bool replace_user_entry_and_save(const std::string& old_text, const std::string& old_code,
                                      const std::string& new_text,
                                      const std::string& new_code);
@@ -134,9 +134,9 @@ public:
     std::vector<UserDictEntryInfo> query_candidate_preferences(
         const std::string& query, size_t offset, size_t limit,
         size_t* match_total = nullptr) const;
-    bool delete_candidate_preference(const std::string& text, const std::string& code);
+    bool delete_candidate_preferences(const std::vector<LexiconEntryKey>& entries);
     bool clear_candidate_preferences();
-    bool delete_candidate_preference_and_save(const std::string& text, const std::string& code);
+    bool delete_candidate_preferences_and_save(const std::vector<LexiconEntryKey>& entries);
     bool clear_candidate_preferences_and_save();
     size_t candidate_preference_count() const;
     uint64_t candidate_preference_version() const;

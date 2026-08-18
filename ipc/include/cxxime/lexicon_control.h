@@ -42,6 +42,7 @@ struct LexiconControlRequest {
     std::string old_code;
     std::string source_path;
     std::vector<std::string> texts;
+    std::vector<LexiconEntryKey> entries;
 };
 
 struct LexiconControlResult {
@@ -69,14 +70,14 @@ public:
     bool replace_entry(UserDictKind kind, const std::string& old_text, const std::string& old_code,
                        const std::string& new_text, const std::string& new_code,
                        LexiconControlResult* result) const;
-    bool delete_entry(UserDictKind kind, const std::string& text, const std::string& code,
-                      LexiconControlResult* result) const;
+    bool delete_entries(UserDictKind kind, const std::vector<LexiconEntryKey>& entries,
+                        LexiconControlResult* result) const;
     bool import_entries(UserDictKind kind, const std::string& source_path,
                         LexiconControlResult* result) const;
     bool save(UserDictKind kind, LexiconControlResult* result) const;
     bool save_preferences(UserDictKind kind, LexiconControlResult* result) const;
-    bool delete_preference(UserDictKind kind, const std::string& text, const std::string& code,
-                           LexiconControlResult* result) const;
+    bool delete_preferences(UserDictKind kind, const std::vector<LexiconEntryKey>& entries,
+                            LexiconControlResult* result) const;
     bool clear_preferences(UserDictKind kind, LexiconControlResult* result) const;
     bool query_system_entry_status(UserDictKind kind, const std::vector<std::string>& texts,
                                    LexiconControlResult* result) const;

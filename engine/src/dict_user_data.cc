@@ -54,8 +54,8 @@ std::vector<UserDictEntryInfo> Dict::query_user_entries(const std::string& query
     return user_lexicon_->query_entries(query, offset, limit, match_total);
 }
 
-bool Dict::delete_user_entry(const std::string& text, const std::string& code) {
-    return user_lexicon_->delete_entry(text, code);
+bool Dict::delete_user_entries(const std::vector<LexiconEntryKey>& entries) {
+    return user_lexicon_->delete_entries(entries);
 }
 
 bool Dict::replace_user_entry(const std::string& old_text, const std::string& old_code,
@@ -68,8 +68,8 @@ bool Dict::add_user_entry_and_save(const std::string& text, const std::string& c
     return user_lexicon_->add_entry_and_save(text, code, syllables);
 }
 
-bool Dict::delete_user_entry_and_save(const std::string& text, const std::string& code) {
-    return user_lexicon_->delete_entry_and_save(text, code);
+bool Dict::delete_user_entries_and_save(const std::vector<LexiconEntryKey>& entries) {
+    return user_lexicon_->delete_entries_and_save(entries);
 }
 
 bool Dict::replace_user_entry_and_save(const std::string& old_text, const std::string& old_code,
@@ -230,14 +230,14 @@ std::vector<UserDictEntryInfo> Dict::query_candidate_preferences(const std::stri
     return candidate_preference_->query(query, offset, limit, match_total);
 }
 
-bool Dict::delete_candidate_preference(const std::string& text, const std::string& code) {
-    return candidate_preference_->erase(text, code);
+bool Dict::delete_candidate_preferences(const std::vector<LexiconEntryKey>& entries) {
+    return candidate_preference_->erase(entries);
 }
 
 bool Dict::clear_candidate_preferences() { return candidate_preference_->clear(); }
 
-bool Dict::delete_candidate_preference_and_save(const std::string& text, const std::string& code) {
-    return candidate_preference_->erase_and_save(text, code);
+bool Dict::delete_candidate_preferences_and_save(const std::vector<LexiconEntryKey>& entries) {
+    return candidate_preference_->erase_and_save(entries);
 }
 
 bool Dict::clear_candidate_preferences_and_save() {
