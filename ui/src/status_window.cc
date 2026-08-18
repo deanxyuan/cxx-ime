@@ -21,6 +21,8 @@ using std::min;
 
 #include <gdiplus.h>
 
+#include "dpi_awareness.h"
+
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "gdiplus.lib")
 #pragma comment(lib, "uxtheme.lib")
@@ -149,11 +151,7 @@ bool StatusWindow::create(HWND owner, const StatusTheme& theme) {
         RegisterClassExW(&wc);
     }
 
-    // DPI scale
-    HDC dc = GetDC(nullptr);
-    dpi_scale_ = GetDeviceCaps(dc, LOGPIXELSX) / 96.0f;
-    ReleaseDC(nullptr, dc);
-
+    dpi_scale_ = 1.0f;
     win_w_ = WindowWidth();
     win_h_ = WindowHeight();
 
@@ -163,6 +161,7 @@ bool StatusWindow::create(HWND owner, const StatusTheme& theme) {
     int x = work_area.right - win_w_ - 10;
     int y = work_area.bottom - win_h_ - 10;
 
+    ScopedDpiAwarenessContext dpi_context(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     hwnd_ = CreateWindowExW(
         WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_LAYERED,
         L"CxxIMEStatusWindow",
@@ -173,6 +172,16 @@ bool StatusWindow::create(HWND owner, const StatusTheme& theme) {
     );
 
     if (!hwnd_) return false;
+
+    dpi_scale_ = GetDpiForWindow(hwnd_) / 96.0f;
+    if (dpi_scale_ <= 0.0f) {
+        dpi_scale_ = 1.0f;
+    }
+    win_w_ = WindowWidth();
+    win_h_ = WindowHeight();
+    POINT initial_position = clamp_to_monitor_work_area(x, y, win_w_, win_h_);
+    SetWindowPos(hwnd_, nullptr, initial_position.x, initial_position.y, win_w_, win_h_,
+                 SWP_NOZORDER | SWP_NOACTIVATE);
 
     SetWindowLongPtrW(hwnd_, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(this));
     register_window(hwnd_);
@@ -197,10 +206,15 @@ bool StatusWindow::ensure_created(HWND owner) {
             return false;
         }
     }
-    if (!owner_matches(owner) && is_visible()) {
-        hide();
-    }
+    const bool was_visible = is_visible();
     set_owner(owner);
+    if (!owner_matches(owner) && was_visible) {
+        hide();
+        set_owner(owner);
+        if (owner_matches(owner)) {
+            show();
+        }
+    }
     return is_created() && owner_matches(owner);
 }
 
@@ -447,19 +461,17 @@ LRESULT StatusWindow::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 // Fonts (GDI+ fallback)
 // ============================================================
 void StatusWindow::CreateFonts() {
-    HDC hdc = GetDC(hwnd_);
-    int dpi_y = GetDeviceCaps(hdc, LOGPIXELSY);
-    ReleaseDC(hwnd_, hdc);
+    const UINT dpi_y = GetDpiForWindow(hwnd_);
 
     auto make_font = [&](const wchar_t* name, int pt_size, int weight) {
-        int height = -MulDiv(Scaled(pt_size), dpi_y, 72);
+        int height = -MulDiv(pt_size, dpi_y, 72);
         return CreateFontW(height, 0, 0, 0, weight, FALSE, FALSE, FALSE,
                            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                            CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_SWISS, name);
     };
 
     font_cn_    = make_font(L"Microsoft YaHei UI", 12, FW_SEMIBOLD);
-    font_en_    = make_font(L"Segoe UI",           10, FW_BOLD);
+    font_en_    = make_font(L"Segoe UI",           14, FW_SEMIBOLD);
     font_icon_  = make_font(L"Segoe MDL2 Assets",  11, FW_NORMAL);
 }
 
@@ -506,7 +518,8 @@ void StatusWindow::InitD2D() {
 
     D2D1_RENDER_TARGET_PROPERTIES props = D2D1::RenderTargetProperties(
         D2D1_RENDER_TARGET_TYPE_DEFAULT,
-        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
+        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED),
+        96.0f, 96.0f);
     hr = d2d_factory_->CreateDCRenderTarget(&props, &d2d_rt_);
     if (FAILED(hr)) return;
 
@@ -514,9 +527,9 @@ void StatusWindow::InitD2D() {
                              reinterpret_cast<IUnknown**>(&dwrite_factory_));
     if (FAILED(hr)) return;
 
-    HDC dc = GetDC(hwnd_);
-    float dpi = (float)GetDeviceCaps(dc, LOGPIXELSY);
-    ReleaseDC(hwnd_, dc);
+    // Layout rectangles use physical pixels, so keep the DC render target at
+    // 96 DPI and scale DirectWrite's DIP font size exactly once here.
+    const float dpi = static_cast<float>(GetDpiForWindow(hwnd_));
 
     auto mkfmt = [&](const wchar_t* name, int pt, DWRITE_FONT_WEIGHT w) -> IDWriteTextFormat* {
         float sz = (float)pt * dpi / 72.0f;
@@ -531,7 +544,7 @@ void StatusWindow::InitD2D() {
     };
 
     d2d_font_cn_   = mkfmt(L"Microsoft YaHei UI", 12, DWRITE_FONT_WEIGHT_SEMI_BOLD);
-    d2d_font_en_   = mkfmt(L"Segoe UI",           10, DWRITE_FONT_WEIGHT_BOLD);
+    d2d_font_en_   = mkfmt(L"Segoe UI",           14, DWRITE_FONT_WEIGHT_SEMI_BOLD);
     d2d_font_icon_ = mkfmt(L"Segoe MDL2 Assets",  11, DWRITE_FONT_WEIGHT_NORMAL);
 
     use_d2d_ = true;
@@ -596,7 +609,7 @@ struct ButtonDrawInfo {
     Color text_color;
     const wchar_t* text;
     int font_index;  // 0=cn, 1=en, 2=icon
-    int nudge_y;     // vertical nudge for punctuation
+    int nudge_y;     // upward optical adjustment
     int press_offset; // text downward shift when pressed
     bool hovered;     // for border visibility
 };
@@ -623,9 +636,9 @@ void StatusWindow::ComputeButtonDrawInfo(std::vector<ButtonDrawInfo>& out) {
         show_chinese_punct ? 0 : 1,
     };
     int nudge_y[] = {
+        state_.caps_lock ? Scaled(1) : 0,
         0,
-        0,
-        show_chinese_punct ? Scaled(2) : 0,
+        show_chinese_punct ? Scaled(1) : 0,
     };
 
     for (int i = 0; i < 3; ++i) {
@@ -651,8 +664,8 @@ void StatusWindow::ComputeButtonDrawInfo(std::vector<ButtonDrawInfo>& out) {
         info.text_color = txt_col;
         info.text = texts[i];
         info.font_index = fond_indices[i];
-        info.nudge_y = nudge_y[i]; // U+3002 sits low
-        info.press_offset = pressed ? Scaled(2) : 0;
+        info.nudge_y = nudge_y[i];
+        info.press_offset = pressed ? Scaled(1) : 0;
         info.hovered = hover || pressed;
         out.push_back(info);
         x += Scaled(BASE_BUTTON_WIDTH + BASE_BUTTON_GAP);
@@ -756,7 +769,7 @@ void StatusWindow::PaintD2D() {
             bb->Release();
         }
         RECT txt_rc = btn.rect;
-        txt_rc.top += btn.press_offset - btn.nudge_y;
+        OffsetRect(&txt_rc, 0, btn.press_offset - btn.nudge_y);
         draw_text(txt_rc, btn.text, fonts[btn.font_index], btn.text_color);
     }
 
@@ -853,7 +866,7 @@ void StatusWindow::PaintGdiplus() {
         SetTextColor(layered_dc_, RGB(btn.text_color.r, btn.text_color.g, btn.text_color.b));
         SelectObject(layered_dc_, gdi_fonts[btn.font_index]);
         RECT txt_rc = btn.rect;
-        txt_rc.top += btn.press_offset - btn.nudge_y;
+        OffsetRect(&txt_rc, 0, btn.press_offset - btn.nudge_y);
         DrawTextW(layered_dc_, btn.text, -1, const_cast<RECT*>(&txt_rc), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     }
 

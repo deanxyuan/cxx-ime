@@ -79,6 +79,28 @@ TEST(StatusWindow, EnsureCreatedRecoversDestroyedWindowAndOwner) {
     DestroyWindow(owner);
 }
 
+TEST(StatusWindow, EnsureCreatedKeepsVisibleWindowShownWhenOwnerChanges) {
+    HWND first_owner = CreateWindowExW(0, L"STATIC", L"", WS_OVERLAPPED, 0, 0, 0, 0, nullptr,
+                                       nullptr, GetModuleHandleW(nullptr), nullptr);
+    HWND second_owner = CreateWindowExW(0, L"STATIC", L"", WS_OVERLAPPED, 0, 0, 0, 0, nullptr,
+                                        nullptr, GetModuleHandleW(nullptr), nullptr);
+    ASSERT_TRUE(first_owner != nullptr);
+    ASSERT_TRUE(second_owner != nullptr);
+
+    cxxime::StatusWindow window;
+    ASSERT_TRUE(window.create(first_owner, cxxime::StatusTheme()));
+    window.show();
+    ASSERT_TRUE(window.is_visible());
+
+    ASSERT_TRUE(window.ensure_created(second_owner));
+    ASSERT_TRUE(window.is_visible());
+    ASSERT_TRUE(window.owner_matches(second_owner));
+
+    window.destroy();
+    DestroyWindow(second_owner);
+    DestroyWindow(first_owner);
+}
+
 // ============================================================
 // Show / Hide
 // ============================================================
