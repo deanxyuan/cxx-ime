@@ -100,6 +100,7 @@ TextService::_effective_edit_target_bindings(const cxxime_tsf::EffectiveEditTarg
         _candidateWindow.owner_matches(reinterpret_cast<HWND>(target.owner_window));
 
     const bool status_expected = expect_status_window && _activated && target.valid() &&
+                                 _has_synced_ime_status() &&
                                  _config.status_window.enable &&
                                  !cxxime_tsf::foreground_is_fullscreen();
     bindings.status_window_valid = !status_expected || _statusController.is_window_valid();

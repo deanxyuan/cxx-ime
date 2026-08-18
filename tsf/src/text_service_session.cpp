@@ -31,13 +31,15 @@ void TextService::_sync_ime_status(const cxxime::ImeStatus& status) {
     bool local_changed = _chinese_mode != status.chinese_mode() ||
                          _caps_lock != status.caps_lock();
     bool visible_changed = true;
+    bool status_became_available = false;
     _chinese_mode = status.chinese_mode();
     _caps_lock = status.caps_lock();
     {
         std::lock_guard<std::mutex> lock(_lastImeStatusMutex);
-        visible_changed = !_hasLastImeStatus || !same_visible_status(_lastImeStatus, status);
+        status_became_available = !_has_synced_ime_status();
+        visible_changed = status_became_available || !same_visible_status(_lastImeStatus, status);
         _lastImeStatus = status;
-        _hasLastImeStatus = true;
+        _hasLastImeStatus.store(true, std::memory_order_release);
     }
     if (!local_changed && !visible_changed) {
         return;
@@ -50,6 +52,9 @@ void TextService::_sync_ime_status(const cxxime::ImeStatus& status) {
     if (_statusController.is_initialized()) _statusController.sync_status(status);
     if (!_handlingConversionCompartmentChange) {
         _sync_conversion_mode_compartment(status);
+    }
+    if (status_became_available) {
+        _show_status_window_if_allowed("show:status_ready");
     }
 }
 
@@ -100,7 +105,7 @@ bool TextService::_recreate_ipc_session_preserving_status() {
     bool has_desired_status = false;
     {
         std::lock_guard<std::mutex> lock(_lastImeStatusMutex);
-        has_desired_status = _hasLastImeStatus;
+        has_desired_status = _has_synced_ime_status();
         if (has_desired_status) {
             desired_status = _lastImeStatus;
         }

@@ -82,6 +82,9 @@ HWND TextService::_focused_context_view_window() const {
 }
 
 void TextService::_show_status_window_if_allowed(const char* reason) {
+    if (!_has_synced_ime_status()) {
+        return;
+    }
     if (_activated &&
         _inputFocused &&
         _config.status_window.enable) {
