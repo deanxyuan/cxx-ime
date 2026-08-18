@@ -25,6 +25,7 @@ struct TraceCompositionEditResult {
     HRESULT start_hr = E_PENDING;
     bool composition_returned = false;
     bool composition_active = false;
+    bool empty_placeholder_active = false;
 };
 
 void trace_composition_edit(TextService* service,

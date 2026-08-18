@@ -42,6 +42,7 @@ void trace_composition_edit(TextService* service,
         {"start_hr", static_cast<int64_t>(result.start_hr)},
         {"composition_returned", result.composition_returned},
         {"composition_active", result.composition_active},
+        {"empty_placeholder_active", result.empty_placeholder_active},
         {"result", outcome},
     });
 }

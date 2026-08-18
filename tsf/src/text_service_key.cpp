@@ -410,6 +410,8 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
         const bool has_candidates = response.candidate_count > 0;
         cxxime::CandidatePage page = _candidate_page_from_response(response);
         std::string popup_preedit;
+        // CandidateListUIElement has no popup-preedit field. UIElement-only hosts therefore
+        // receive raw input through the composition; keep this mirror consistent with it.
         if (ui_element_only || decision.show_preedit_in_popup) {
             popup_preedit = response.preedit;
         }
@@ -428,9 +430,6 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
             ui_element_only ? "candidate_first_standard_tsf_compat" : "standard_tsf");
 
         _caretRect = {};
-        _lastInlineCompositionText = ui_element_only
-            ? preedit
-            : (decision.start_composition ? decision.inline_text : L"");
         bool external_candidate_window = true;
         bool candidate_ui_published = false;
         const bool composition_restart_was_active =

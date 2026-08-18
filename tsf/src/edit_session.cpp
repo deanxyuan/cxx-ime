@@ -501,6 +501,7 @@ HRESULT clear_and_end_composition(TextService* service,
     service->set_composition_context(nullptr);
     service->set_composing(false);
     service->set_empty_composition_placeholder_active(false);
+    service->set_applied_inline_composition_text(L"");
     hr = composition->EndComposition(ec);
     if (SUCCEEDED(action_result) && FAILED(hr)) {
         action_result = hr;
@@ -536,17 +537,18 @@ HRESULT apply_composition_text(TextService* service, ITfContext* context, TfEdit
             service->set_caret_rect(caret_rect);
         }
     }
+    const bool preserve_empty_composition =
+        service->inline_composition_requires_placeholder(text);
     const bool use_empty_placeholder =
-        text.empty() &&
-        (placeholder_already_active || (composition_started && !caret_resolved_before_write));
-    if (composition_started) {
-        service->set_empty_composition_placeholder_active(use_empty_placeholder);
-    }
+        text.empty() && (placeholder_already_active || preserve_empty_composition ||
+        (composition_started && !caret_resolved_before_write));
     HRESULT result =
         set_composition_range_text(range, ec, text, use_empty_placeholder);
     if (FAILED(result)) {
         return result;
     }
+    service->set_empty_composition_placeholder_active(use_empty_placeholder);
+    service->set_applied_inline_composition_text(text);
 
     set_composition_language(context, ec, range);
     service->apply_composition_display_attribute(context, range, ec);
@@ -653,6 +655,7 @@ STDMETHODIMP EditSession::DoEditSession(TfEditCookie ec) {
             _actionResult = pRange->SetText(
                 ec, 0, _text.c_str(), static_cast<LONG>(_text.length()));
             if (SUCCEEDED(_actionResult)) {
+                _service->set_applied_inline_composition_text(_text);
                 set_composition_language(_context, ec, pRange);
                 _service->apply_composition_display_attribute(_context, pRange, ec);
                 _actionResult = _hasSelectionOffset
