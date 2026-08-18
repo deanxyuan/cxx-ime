@@ -22,10 +22,12 @@ inline size_t clamp_preedit_cursor(size_t cursor, size_t preedit_length) {
 
 // Decide what to show inline vs. in the candidate window popup.
 //
-// inline_preedit=false: no TSF composition, candidate window shows raw pinyin.
+// inline_preedit=false: no TSF composition, candidate window shows raw input.
 //   preedit_type is ignored.
-// inline_preedit=true: TSF composition active, candidate window hides preedit.
-//   preedit_type controls what goes inline (composition/preview).
+// inline_preedit=true: TSF composition active.
+//   composition shows raw input inline and hides duplicate popup preedit.
+//   preview shows the first candidate inline and keeps raw input in the popup. Without a
+//   candidate, the inline text stays empty so the popup remains the only raw-input surface.
 inline PreeditDecision decide_preedit(bool inline_preedit, const std::string& preedit_type,
                                       const std::wstring& preedit, size_t preedit_cursor,
                                       const std::vector<std::wstring>& candidates) {
@@ -39,18 +41,25 @@ inline PreeditDecision decide_preedit(bool inline_preedit, const std::string& pr
         d.start_composition = false;
     } else {
         d.start_composition = true;
-        d.show_preedit_in_popup = false;
-
-        if (preedit_type == "preview" && !candidates.empty() && preedit_cursor == preedit.size()) {
-            d.inline_text = candidates[0];
-            d.inline_cursor = d.inline_text.size();
+        const bool preview_mode = preedit_type == "preview";
+        if (preview_mode) {
+            if (!candidates.empty()) {
+                d.inline_text = candidates[0];
+                d.inline_cursor = d.inline_text.size();
+            }
         } else {
             d.inline_text = preedit;
             d.inline_cursor = preedit_cursor;
         }
+        d.show_preedit_in_popup = preview_mode;
     }
 
     return d;
+}
+
+inline bool composition_transition_requires_placeholder(const std::wstring& current_text,
+                                                        const std::wstring& next_text) {
+    return !current_text.empty() && next_text.empty();
 }
 
 } // namespace cxxime_tsf

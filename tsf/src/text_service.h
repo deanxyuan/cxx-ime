@@ -134,6 +134,10 @@ public:
     void set_empty_composition_placeholder_active(bool active) {
         _emptyCompositionPlaceholderActive = active;
     }
+    void set_applied_inline_composition_text(const std::wstring& text) {
+        _lastInlineCompositionText = text;
+    }
+    bool inline_composition_requires_placeholder(const std::wstring& next_text) const;
     void set_caret_rect(const RECT& rc) { _caretRect = rc; }
     void update_candidate_position(const RECT& rc,
                                    ITfContext* context = nullptr,

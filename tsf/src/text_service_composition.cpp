@@ -7,6 +7,7 @@
 #include <cxxime/logging.h>
 
 #include "edit_session.h"
+#include "preedit_mode.h"
 #include "tsf_composition.h"
 
 void TextService::set_composition_context(ITfContext* context) {
@@ -203,6 +204,13 @@ bool TextService::candidate_presentation_request_is_current(
            expected_context_identity == _effectiveEditTarget.context_identity;
 }
 
+bool TextService::inline_composition_requires_placeholder(const std::wstring& next_text) const {
+    // Some text stores terminate an active composition when its non-empty text becomes empty.
+    return _composing && _composition &&
+           cxxime_tsf::composition_transition_requires_placeholder(_lastInlineCompositionText,
+                                                                   next_text);
+}
+
 bool TextService::handle_composition_restart_failure(uint64_t expected_generation) {
     if (!_candidatePresentation.fail_composition_restart(expected_generation)) {
         return false;
@@ -268,6 +276,7 @@ HRESULT TextService::update_composition(ITfContext* context,
     result.start_hr = edit_session->composition_start_result();
     result.composition_returned = edit_session->composition_returned();
     result.composition_active = _composing && _composition != nullptr;
+    result.empty_placeholder_active = _emptyCompositionPlaceholderActive;
     cxxime_tsf::trace_composition_edit(this, result);
     edit_session->Release();
 
