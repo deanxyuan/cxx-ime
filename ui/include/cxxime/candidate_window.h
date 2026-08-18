@@ -49,6 +49,7 @@ public:
     SIZE window_size() const;
     SIZE layout_size() const;
     UINT dpi() const;
+    HWND hwnd_for_test() const { return hwnd_; }
 
 private:
     void rebuild_render_context(const LayoutConfig& cfg, int window_width);

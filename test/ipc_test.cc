@@ -20,11 +20,17 @@
 // ============================================================
 // Helper
 // ============================================================
+static const std::wstring& test_pipe_name() {
+    static const std::wstring pipe_name =
+        L"\\\\.\\pipe\\CxxIME-Test-" + std::to_wstring(GetCurrentProcessId());
+    return pipe_name;
+}
+
 struct TestServer {
     cxxime::IpcServer server;
     bool start(cxxime::IpcServer::RequestHandler h) {
         server.set_handler(std::move(h));
-        bool ok = server.start();
+        bool ok = server.start(test_pipe_name());
         if (ok) std::this_thread::sleep_for(std::chrono::milliseconds(50));
         return ok;
     }
@@ -86,7 +92,7 @@ TEST(Protocol, candidate_text_over_old_capacity_round_trips) {
     }));
 
     cxxime::IpcClient client;
-    ASSERT_TRUE(client.connect(cxxime::IPC_PIPE_BASE_NAME, 2000));
+    ASSERT_TRUE(client.connect(test_pipe_name(), 2000));
     cxxime::IPCRequest request = {};
     request.command = cxxime::IPCCommand::PING;
     cxxime::IPCResponse response = {};
@@ -122,14 +128,14 @@ TEST(Protocol, ime_status_flags_are_independent) {
 TEST(Server, start_stop) {
     cxxime::IpcServer server;
     server.set_handler([](const cxxime::IPCRequest&) -> cxxime::IPCResponse { return {}; });
-    ASSERT_TRUE(server.start());
+    ASSERT_TRUE(server.start(test_pipe_name()));
     server.stop();
 }
 
 TEST(Server, double_stop) {
     cxxime::IpcServer server;
     server.set_handler([](const cxxime::IPCRequest&) -> cxxime::IPCResponse { return {}; });
-    server.start();
+    server.start(test_pipe_name());
     server.stop();
     server.stop();
 }
@@ -140,7 +146,7 @@ TEST(Server, double_stop) {
 
 TEST(Client, connect_no_server) {
     cxxime::IpcClient client;
-    ASSERT_TRUE(!client.connect(cxxime::IPC_PIPE_BASE_NAME, 300));
+    ASSERT_TRUE(!client.connect(test_pipe_name(), 300));
     ASSERT_TRUE(!client.is_connected());
 }
 
@@ -149,7 +155,7 @@ TEST(Client, connect_with_server) {
     ASSERT_TRUE(ts.start([](const cxxime::IPCRequest&) -> cxxime::IPCResponse { return {}; }));
 
     cxxime::IpcClient client;
-    ASSERT_TRUE(client.connect(cxxime::IPC_PIPE_BASE_NAME, 2000));
+    ASSERT_TRUE(client.connect(test_pipe_name(), 2000));
     ASSERT_TRUE(client.is_connected());
     client.disconnect();
     ASSERT_TRUE(!client.is_connected());
@@ -160,7 +166,7 @@ TEST(Client, disconnect_idempotent) {
     ASSERT_TRUE(ts.start([](const cxxime::IPCRequest&) -> cxxime::IPCResponse { return {}; }));
 
     cxxime::IpcClient client;
-    ASSERT_TRUE(client.connect(cxxime::IPC_PIPE_BASE_NAME, 2000));
+    ASSERT_TRUE(client.connect(test_pipe_name(), 2000));
     client.disconnect();
     client.disconnect();
 }
@@ -178,7 +184,7 @@ TEST(IPC, start_session) {
     }));
 
     cxxime::IpcClient client;
-    ASSERT_TRUE(client.connect(cxxime::IPC_PIPE_BASE_NAME, 2000));
+    ASSERT_TRUE(client.connect(test_pipe_name(), 2000));
     uint32_t sid = 0;
     ASSERT_TRUE(client.start_session(sid));
     ASSERT_EQ(sid, (uint32_t)42);
@@ -193,7 +199,7 @@ TEST(IPC, end_session) {
     }));
 
     cxxime::IpcClient client;
-    ASSERT_TRUE(client.connect(cxxime::IPC_PIPE_BASE_NAME, 2000));
+    ASSERT_TRUE(client.connect(test_pipe_name(), 2000));
     ASSERT_TRUE(client.end_session(1));
 }
 
@@ -208,7 +214,7 @@ TEST(IPC, ping) {
     }));
 
     cxxime::IpcClient client;
-    ASSERT_TRUE(client.connect(cxxime::IPC_PIPE_BASE_NAME, 2000));
+    ASSERT_TRUE(client.connect(test_pipe_name(), 2000));
     ASSERT_TRUE(client.ping());
 }
 
@@ -233,7 +239,7 @@ TEST(IPC, process_key_preedit) {
     }));
 
     cxxime::IpcClient client;
-    ASSERT_TRUE(client.connect(cxxime::IPC_PIPE_BASE_NAME, 2000));
+    ASSERT_TRUE(client.connect(test_pipe_name(), 2000));
     cxxime::IPCResponse resp = {};
     ASSERT_TRUE(client.process_key(1, 'N', 0, resp, false, 2));
     ASSERT_EQ(resp.status, cxxime::IPCStatus::OK);
@@ -255,7 +261,7 @@ TEST(IPC, request_timeout_disconnects_client) {
     }));
 
     cxxime::IpcClient client;
-    ASSERT_TRUE(client.connect(cxxime::IPC_PIPE_BASE_NAME, 100));
+    ASSERT_TRUE(client.connect(test_pipe_name(), 100));
     cxxime::IPCResponse resp = {};
     ASSERT_TRUE(!client.ping(&resp));
     ASSERT_TRUE(!client.is_connected());
@@ -273,7 +279,7 @@ TEST(IPC, process_key_commit) {
     }));
 
     cxxime::IpcClient client;
-    ASSERT_TRUE(client.connect(cxxime::IPC_PIPE_BASE_NAME, 2000));
+    ASSERT_TRUE(client.connect(test_pipe_name(), 2000));
     cxxime::IPCResponse resp = {};
     ASSERT_TRUE(client.process_key(1, '1', 0, resp));
     ASSERT_EQ(resp.status, cxxime::IPCStatus::OK);
@@ -289,7 +295,7 @@ TEST(IPC, process_key_rejected) {
     }));
 
     cxxime::IpcClient client;
-    ASSERT_TRUE(client.connect(cxxime::IPC_PIPE_BASE_NAME, 2000));
+    ASSERT_TRUE(client.connect(test_pipe_name(), 2000));
     cxxime::IPCResponse resp = {};
     ASSERT_TRUE(client.process_key(1, VK_RETURN, 0, resp));
     ASSERT_EQ(resp.status, cxxime::IPCStatus::ERR_ENGINE_PROCESS_FAILED);
@@ -307,7 +313,7 @@ TEST(IPC, select_candidate) {
     }));
 
     cxxime::IpcClient client;
-    ASSERT_TRUE(client.connect(cxxime::IPC_PIPE_BASE_NAME, 2000));
+    ASSERT_TRUE(client.connect(test_pipe_name(), 2000));
     cxxime::IPCResponse resp = {};
     ASSERT_TRUE(client.select_candidate(1, 0, resp));
     ASSERT_EQ(resp.status, cxxime::IPCStatus::OK);
@@ -325,7 +331,7 @@ TEST(IPC, commit_composition) {
     }));
 
     cxxime::IpcClient client;
-    ASSERT_TRUE(client.connect(cxxime::IPC_PIPE_BASE_NAME, 2000));
+    ASSERT_TRUE(client.connect(test_pipe_name(), 2000));
     cxxime::IPCResponse resp = {};
     ASSERT_TRUE(client.commit_composition(1, resp));
     ASSERT_EQ(resp.status, cxxime::IPCStatus::OK);
@@ -344,7 +350,7 @@ TEST(IPC, set_chinese_mode_uses_explicit_target) {
     }));
 
     cxxime::IpcClient client;
-    ASSERT_TRUE(client.connect(cxxime::IPC_PIPE_BASE_NAME, 2000));
+    ASSERT_TRUE(client.connect(test_pipe_name(), 2000));
     cxxime::IPCResponse resp = {};
     ASSERT_TRUE(client.set_chinese_mode(7, false, resp));
     ASSERT_EQ(resp.status, cxxime::IPCStatus::OK);
@@ -364,7 +370,7 @@ TEST(IPC, switch_input_mode_carries_target) {
     }));
 
     cxxime::IpcClient client;
-    ASSERT_TRUE(client.connect(cxxime::IPC_PIPE_BASE_NAME, 2000));
+    ASSERT_TRUE(client.connect(test_pipe_name(), 2000));
     cxxime::IPCResponse resp = {};
     ASSERT_TRUE(client.switch_input_mode(7, cxxime::InputMode::WUBI, resp));
     ASSERT_EQ(resp.status, cxxime::IPCStatus::OK);
@@ -378,7 +384,7 @@ TEST(IPC, focus_in_out) {
     }));
 
     cxxime::IpcClient client;
-    ASSERT_TRUE(client.connect(cxxime::IPC_PIPE_BASE_NAME, 2000));
+    ASSERT_TRUE(client.connect(test_pipe_name(), 2000));
     ASSERT_TRUE(client.focus_in(1));
     ASSERT_TRUE(client.focus_out(1));
 }
@@ -392,7 +398,7 @@ TEST(IPC, send_request) {
     }));
 
     cxxime::IpcClient client;
-    ASSERT_TRUE(client.connect(cxxime::IPC_PIPE_BASE_NAME, 2000));
+    ASSERT_TRUE(client.connect(test_pipe_name(), 2000));
 
     cxxime::IPCRequest req = {};
     req.command = cxxime::IPCCommand::CLEAR_COMPOSITION;
@@ -416,8 +422,8 @@ TEST(MultiClient, two_clients_simultaneous) {
 
     cxxime::IpcClient client1;
     cxxime::IpcClient client2;
-    ASSERT_TRUE(client1.connect(cxxime::IPC_PIPE_BASE_NAME, 2000));
-    ASSERT_TRUE(client2.connect(cxxime::IPC_PIPE_BASE_NAME, 2000));
+    ASSERT_TRUE(client1.connect(test_pipe_name(), 2000));
+    ASSERT_TRUE(client2.connect(test_pipe_name(), 2000));
 
     cxxime::IPCResponse resp1 = {};
     cxxime::IPCResponse resp2 = {};
@@ -447,11 +453,11 @@ TEST(MultiClient, sequential_sessions) {
         }
         return resp;
     });
-    ASSERT_TRUE(server.start());
+    ASSERT_TRUE(server.start(test_pipe_name()));
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
     cxxime::IpcClient client;
-    ASSERT_TRUE(client.connect(cxxime::IPC_PIPE_BASE_NAME, 2000));
+    ASSERT_TRUE(client.connect(test_pipe_name(), 2000));
 
     uint32_t sid1 = 0;
     ASSERT_TRUE(client.start_session(sid1));
@@ -478,7 +484,7 @@ TEST(Reconnect, server_restart) {
             return make_response(cxxime::IPCStatus::ERR_ENGINE_PROCESS_FAILED);
         }));
         cxxime::IpcClient client;
-        ASSERT_TRUE(client.connect(cxxime::IPC_PIPE_BASE_NAME, 2000));
+        ASSERT_TRUE(client.connect(test_pipe_name(), 2000));
         cxxime::IPCResponse resp = {};
         ASSERT_TRUE(client.process_key(1, 'A', 0, resp));
     }
@@ -489,7 +495,7 @@ TEST(Reconnect, server_restart) {
             return make_response(cxxime::IPCStatus::ERR_ENGINE_PROCESS_FAILED);
         }));
         cxxime::IpcClient client;
-        ASSERT_TRUE(client.connect(cxxime::IPC_PIPE_BASE_NAME, 2000));
+        ASSERT_TRUE(client.connect(test_pipe_name(), 2000));
         cxxime::IPCResponse resp = {};
         ASSERT_TRUE(client.process_key(1, 'A', 0, resp));
     }
@@ -508,7 +514,7 @@ TEST(Error, unknown_command) {
     }));
 
     cxxime::IpcClient client;
-    ASSERT_TRUE(client.connect(cxxime::IPC_PIPE_BASE_NAME, 2000));
+    ASSERT_TRUE(client.connect(test_pipe_name(), 2000));
 
     cxxime::IPCRequest req = {};
     req.command = static_cast<cxxime::IPCCommand>(255);  // invalid
@@ -533,7 +539,7 @@ TEST(Error, invalid_session) {
     }));
 
     cxxime::IpcClient client;
-    ASSERT_TRUE(client.connect(cxxime::IPC_PIPE_BASE_NAME, 2000));
+    ASSERT_TRUE(client.connect(test_pipe_name(), 2000));
 
     cxxime::IPCResponse resp = {};
     ASSERT_TRUE(client.process_key(0, 'A', 0, resp));  // session_id=0 is invalid
@@ -553,7 +559,7 @@ TEST(Error, engine_not_initialized) {
     }));
 
     cxxime::IpcClient client;
-    ASSERT_TRUE(client.connect(cxxime::IPC_PIPE_BASE_NAME, 2000));
+    ASSERT_TRUE(client.connect(test_pipe_name(), 2000));
 
     uint32_t sid = 0;
     ASSERT_TRUE(!client.start_session(sid));
@@ -574,7 +580,7 @@ TEST(Stress, rapid_requests) {
     }));
 
     cxxime::IpcClient client;
-    ASSERT_TRUE(client.connect(cxxime::IPC_PIPE_BASE_NAME, 2000));
+    ASSERT_TRUE(client.connect(test_pipe_name(), 2000));
 
     // Send 200 rapid requests
     for (int i = 0; i < 200; ++i) {
@@ -599,7 +605,7 @@ TEST(Stress, concurrent_clients) {
     std::atomic<int> total_sent{0};
     auto client_func = [&](int id) {
         cxxime::IpcClient client;
-        if (!client.connect(cxxime::IPC_PIPE_BASE_NAME, 5000))
+        if (!client.connect(test_pipe_name(), 5000))
             return;
         for (int i = 0; i < 50; ++i) {
             cxxime::IPCResponse resp = {};
