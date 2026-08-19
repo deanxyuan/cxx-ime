@@ -262,18 +262,42 @@ def test_visible_ranking_does_not_import_deeper_candidates():
     assert ranked[10:] == source[10:]
 
 
-def test_visible_ranking_preserves_four_code_order():
+def test_visible_ranking_promotes_reliable_four_code_character():
     entries = [
-        (b"abcd", "原首选".encode("utf-8"), 20),
-        (b"abcd", "高频".encode("utf-8"), 10),
+        (b"kkkk", "串口".encode("utf-8"), 60),
+        (b"kkkk", "叮叮咣咣".encode("utf-8"), 50),
+        (b"kkkk", "口".encode("utf-8"), 40),
+        (b"kkkk", "咒骂".encode("utf-8"), 30),
     ]
     frequencies = {
-        "原首选".encode("utf-8"): 0,
-        "高频".encode("utf-8"): 1000000,
+        "串口".encode("utf-8"): 77910,
+        "叮叮咣咣".encode("utf-8"): 102,
+        "口".encode("utf-8"): 2375024,
+        "咒骂".encode("utf-8"): 22470,
     }
     assert WUBI_RANKING.rerank_visible_candidates(
-        [0, 1], entries, 4, frequencies
-    ) == [0, 1]
+        [0, 1, 2, 3], entries, 4, frequencies
+    ) == [2, 0, 1, 3]
+
+
+def test_visible_ranking_preserves_unproven_four_code_order():
+    entries = [
+        (b"abcd", "原首选".encode("utf-8"), 20),
+        (b"abcd", "低频字".encode("utf-8"), 10),
+        (b"abcd", "常用词".encode("utf-8"), 5),
+        (b"abcd", "常".encode("utf-8"), 1),
+        (b"abcd", "高".encode("utf-8"), 1),
+    ]
+    frequencies = {
+        "原首选".encode("utf-8"): 2000000,
+        "低频字".encode("utf-8"): 99999,
+        "常用词".encode("utf-8"): 1000000,
+        "常".encode("utf-8"): 500000,
+        "高".encode("utf-8"): 1500000,
+    }
+    assert WUBI_RANKING.rerank_visible_candidates(
+        [0, 1, 2, 3, 4], entries, 4, frequencies
+    ) == [0, 1, 2, 3, 4]
 
 
 def test_visible_ranking_does_not_replace_short_completion_with_longer_text():
@@ -333,13 +357,58 @@ def test_ranking_audit_rejects_visible_set_changes_without_key_error():
         raise AssertionError("visible set drift must fail the ranking audit")
 
 
+def test_ranking_audit_accepts_classified_four_code_promotion():
+    entries = [
+        (b"kkkk", "串口".encode("utf-8"), 60),
+        (b"kkkk", "口".encode("utf-8"), 40),
+    ]
+    frequencies = {
+        "串口".encode("utf-8"): 77910,
+        "口".encode("utf-8"): 2375024,
+    }
+    audit = WUBI_RANKING.RankingAudit()
+    WUBI_RANKING.audit_ranking_change(
+        [0, 1], [1, 0], entries, 4, frequencies, audit
+    )
+    assert audit.four_code_top_changes == 1
+    assert audit.safe_four_code_promotions == 1
+    assert audit.unsafe_top_changes == 0
+    audit.validate()
+
+
+def test_ranking_audit_rejects_unclassified_four_code_promotion():
+    entries = [
+        (b"abcd", "原首选".encode("utf-8"), 20),
+        (b"abcd", "常用词".encode("utf-8"), 10),
+    ]
+    frequencies = {
+        "原首选".encode("utf-8"): 100,
+        "常用词".encode("utf-8"): 2000000,
+    }
+    audit = WUBI_RANKING.RankingAudit()
+    WUBI_RANKING.audit_ranking_change(
+        [0, 1], [1, 0], entries, 4, frequencies, audit
+    )
+    assert audit.safe_four_code_promotions == 0
+    assert audit.unsafe_top_changes == 1
+    try:
+        audit.validate()
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("unclassified four-code promotion must fail")
+
+
 if __name__ == "__main__":
     test_complete_ranked_prefix_index()
     test_visible_ranking_guards_short_codes_and_improves_known_completions()
     test_visible_ranking_preserves_exact_and_unproven_candidates()
     test_visible_ranking_does_not_import_deeper_candidates()
-    test_visible_ranking_preserves_four_code_order()
+    test_visible_ranking_promotes_reliable_four_code_character()
+    test_visible_ranking_preserves_unproven_four_code_order()
     test_visible_ranking_does_not_replace_short_completion_with_longer_text()
     test_visible_ranking_does_not_reduce_general_frequency()
     test_visible_ranking_does_not_promote_non_han_completion()
     test_ranking_audit_rejects_visible_set_changes_without_key_error()
+    test_ranking_audit_accepts_classified_four_code_promotion()
+    test_ranking_audit_rejects_unclassified_four_code_promotion()

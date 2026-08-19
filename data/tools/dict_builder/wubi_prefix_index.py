@@ -91,7 +91,7 @@ def _load_baseline(path: Optional[str]) -> Optional[dict]:
         return None
     with open(path, "r", encoding="utf-8") as source:
         baseline = json.load(source)
-    if baseline.get("schema") != 1:
+    if baseline.get("schema") != 2:
         raise ValueError(f"unsupported Wubi ranking baseline: {path}")
     return baseline
 
@@ -237,6 +237,7 @@ def build(
         f"{audit.three_code_prefixes}, "
         f"four-code top changes={audit.four_code_top_changes}/"
         f"{audit.four_code_prefixes}, "
+        f"safe four-code promotions={audit.safe_four_code_promotions}, "
         f"unknown exact demotions={audit.unknown_exact_demotions}, "
         f"visible order changes={audit.visible_order_changes}, "
         f"position moves={audit.visible_position_moves}, "
