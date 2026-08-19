@@ -636,7 +636,7 @@ void StatusWindow::ComputeButtonDrawInfo(std::vector<ButtonDrawInfo>& out) {
         show_chinese_punct ? 0 : 1,
     };
     int nudge_y[] = {
-        state_.caps_lock ? Scaled(1) : 0,
+        0, // state_.caps_lock ? Scaled(1) : 0, // 大写锁定 "A" 的 1px 光学上移
         0,
         show_chinese_punct ? Scaled(1) : 0,
     };
