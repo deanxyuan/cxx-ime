@@ -335,6 +335,21 @@
       }
     },
     {
+      "id": "wubi-four-code-prefers-reliable-complete-character",
+      "mode": "wubi",
+      "input": "kkkk",
+      "contains": [
+        { "text": "口", "max_rank": 1 }
+      ],
+      "forbid_top1": [
+        "串口",
+        "叮叮咣咣"
+      ],
+      "expect_sources": {
+        "口": "wubi"
+      }
+    },
+    {
       "id": "wubi-two-code-protects-system-order",
       "mode": "wubi",
       "input": "aa",

@@ -11,7 +11,9 @@ from typing import Dict, List, Sequence, Set, Tuple
 
 VISIBLE_CANDIDATE_CAPACITY = 10
 MIN_RELIABLE_GENERAL_FREQUENCY = 100000
+MIN_RELIABLE_FOUR_CODE_CHARACTER_FREQUENCY = 1000000
 MAX_PROMOTED_COMPLETION_LENGTH = 3
+MAX_FOUR_CODE_PROMOTION_PERMILLE = 1
 DictionaryEntry = Tuple[bytes, bytes, int]
 
 
@@ -19,7 +21,11 @@ def ranking_rules() -> Dict[str, int]:
     return {
         "visible_candidate_capacity": VISIBLE_CANDIDATE_CAPACITY,
         "min_reliable_general_frequency": MIN_RELIABLE_GENERAL_FREQUENCY,
+        "min_reliable_four_code_character_frequency": (
+            MIN_RELIABLE_FOUR_CODE_CHARACTER_FREQUENCY
+        ),
         "max_promoted_completion_length": MAX_PROMOTED_COMPLETION_LENGTH,
+        "max_four_code_promotion_permille": MAX_FOUR_CODE_PROMOTION_PERMILLE,
     }
 
 
@@ -62,6 +68,7 @@ class RankingAudit:
     unsafe_top_changes: int = 0
     three_code_top_changes: int = 0
     four_code_top_changes: int = 0
+    safe_four_code_promotions: int = 0
     unknown_exact_demotions: int = 0
     visible_order_changes: int = 0
     visible_position_moves: int = 0
@@ -85,10 +92,19 @@ class RankingAudit:
                 "three-code top candidate changes exceed the 20% review budget: "
                 f"{self.three_code_top_changes}/{self.three_code_prefixes}"
             )
-        if self.four_code_top_changes:
+        if self.four_code_top_changes != self.safe_four_code_promotions:
             errors.append(
-                "four-code top candidate changes: "
-                f"{self.four_code_top_changes}/{self.four_code_prefixes}"
+                "unclassified four-code top candidate changes: "
+                f"{self.four_code_top_changes - self.safe_four_code_promotions}"
+            )
+        four_code_promotion_budget = max(
+            1,
+            self.four_code_prefixes * MAX_FOUR_CODE_PROMOTION_PERMILLE // 1000,
+        )
+        if self.safe_four_code_promotions > four_code_promotion_budget:
+            errors.append(
+                "safe four-code promotions exceed the review budget: "
+                f"{self.safe_four_code_promotions}/{self.four_code_prefixes}"
             )
         if self.unknown_exact_demotions > self.three_code_prefixes // 100:
             errors.append(
@@ -185,6 +201,44 @@ def _completion_key(
     )
 
 
+def _safe_four_code_promotion(
+    visible: Sequence[Tuple[int, int]],
+    entries: Sequence[DictionaryEntry],
+    general_frequencies: Dict[bytes, int],
+) -> Tuple[int, int] | None:
+    eligible = []
+    for source_position, entry_index in visible[1:]:
+        code, text, _ = entries[entry_index]
+        frequency = general_frequencies.get(text, 0)
+        if (
+            len(code) != 4
+            or _text_length(text) != 1
+            or not _is_han_text(text)
+            or frequency < MIN_RELIABLE_FOUR_CODE_CHARACTER_FREQUENCY
+        ):
+            continue
+        prior_frequency = max(
+            (
+                general_frequencies.get(entries[prior_index][1], 0)
+                for _, prior_index in visible[:source_position]
+            ),
+            default=0,
+        )
+        if frequency < prior_frequency:
+            continue
+        eligible.append((source_position, entry_index))
+
+    if not eligible:
+        return None
+    return min(
+        eligible,
+        key=lambda item: (
+            -general_frequencies.get(entries[item[1]][1], 0),
+            item[0],
+        ),
+    )
+
+
 def rerank_visible_candidates(
     source_ranking: Sequence[int],
     entries: Sequence[DictionaryEntry],
@@ -261,6 +315,13 @@ def rerank_visible_candidates(
             promoted_indexes = {item[1] for item in promotable}
             remaining = [item for item in visible if item[1] not in promoted_indexes]
             reordered = promotable + remaining
+    elif prefix_length == 4:
+        promoted = _safe_four_code_promotion(
+            visible, entries, general_frequencies
+        )
+        if promoted is None:
+            return list(source_ranking)
+        reordered = [promoted] + [item for item in visible if item != promoted]
     else:
         return list(source_ranking)
 
@@ -349,6 +410,15 @@ def audit_ranking_change(
             return
     elif prefix_length == 4:
         audit.four_code_top_changes += 1
+        visible = list(enumerate(source_visible))
+        safe_promotion = _safe_four_code_promotion(
+            visible, entries, general_frequencies
+        )
+        if safe_promotion is not None and safe_promotion[1] == ranked[0]:
+            audit.safe_four_code_promotions += 1
+        else:
+            audit.unsafe_top_changes += 1
+            return
 
     source_length = _text_length(source_text)
     ranked_length = _text_length(ranked_text)
