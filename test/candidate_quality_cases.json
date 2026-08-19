@@ -335,6 +335,27 @@
       }
     },
     {
+      "id": "wubi-three-code-repairs-rare-single-character-blockers",
+      "mode": "wubi",
+      "input": "akf",
+      "contains": [
+        { "text": "或者", "max_rank": 1 },
+        { "text": "其味无穷", "max_rank": 2 }
+      ],
+      "forbid_top1": [
+        "歎",
+        "尀",
+        "艱",
+        "菋",
+        "囏",
+        "戁"
+      ],
+      "expect_sources": {
+        "或者": "wubi",
+        "其味无穷": "wubi"
+      }
+    },
+    {
       "id": "wubi-four-code-prefers-reliable-complete-character",
       "mode": "wubi",
       "input": "kkkk",
