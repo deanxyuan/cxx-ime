@@ -14,6 +14,10 @@ MIN_RELIABLE_GENERAL_FREQUENCY = 100000
 MIN_RELIABLE_FOUR_CODE_CHARACTER_FREQUENCY = 1000000
 MAX_PROMOTED_COMPLETION_LENGTH = 3
 MAX_FOUR_CODE_PROMOTION_PERMILLE = 1
+MIN_RARE_SINGLE_CHARACTER_BLOCKERS = 3
+MIN_BLOCKED_COMPLETION_FREQUENCY = 500000
+MAX_BLOCKED_COMPLETION_LENGTH = 4
+MAX_BLOCKED_COMPLETION_PROMOTION_PERMILLE = 1
 DictionaryEntry = Tuple[bytes, bytes, int]
 
 
@@ -26,6 +30,12 @@ def ranking_rules() -> Dict[str, int]:
         ),
         "max_promoted_completion_length": MAX_PROMOTED_COMPLETION_LENGTH,
         "max_four_code_promotion_permille": MAX_FOUR_CODE_PROMOTION_PERMILLE,
+        "min_rare_single_character_blockers": MIN_RARE_SINGLE_CHARACTER_BLOCKERS,
+        "min_blocked_completion_frequency": MIN_BLOCKED_COMPLETION_FREQUENCY,
+        "max_blocked_completion_length": MAX_BLOCKED_COMPLETION_LENGTH,
+        "max_blocked_completion_promotion_permille": (
+            MAX_BLOCKED_COMPLETION_PROMOTION_PERMILLE
+        ),
     }
 
 
@@ -69,6 +79,7 @@ class RankingAudit:
     three_code_top_changes: int = 0
     four_code_top_changes: int = 0
     safe_four_code_promotions: int = 0
+    blocked_completion_promotions: int = 0
     unknown_exact_demotions: int = 0
     visible_order_changes: int = 0
     visible_position_moves: int = 0
@@ -91,6 +102,18 @@ class RankingAudit:
             errors.append(
                 "three-code top candidate changes exceed the 20% review budget: "
                 f"{self.three_code_top_changes}/{self.three_code_prefixes}"
+            )
+        blocked_completion_budget = max(
+            1,
+            self.three_code_prefixes
+            * MAX_BLOCKED_COMPLETION_PROMOTION_PERMILLE
+            // 1000,
+        )
+        if self.blocked_completion_promotions > blocked_completion_budget:
+            errors.append(
+                "blocked completion promotions exceed the review budget: "
+                f"{self.blocked_completion_promotions}/"
+                f"{self.three_code_prefixes}"
             )
         if self.four_code_top_changes != self.safe_four_code_promotions:
             errors.append(
@@ -239,6 +262,74 @@ def _safe_four_code_promotion(
     )
 
 
+def _repair_rare_single_character_blockers(
+    visible: Sequence[Tuple[int, int]],
+    entries: Sequence[DictionaryEntry],
+    general_frequencies: Dict[bytes, int],
+) -> List[Tuple[int, int]] | None:
+    leading_blocker_count = 0
+    for _, entry_index in visible:
+        text = entries[entry_index][1]
+        if (
+            _text_length(text) != 1
+            or not _is_han_text(text)
+            or general_frequencies.get(text, 0) != 0
+        ):
+            break
+        leading_blocker_count += 1
+    if leading_blocker_count < MIN_RARE_SINGLE_CHARACTER_BLOCKERS:
+        return None
+
+    strong_completions = [
+        item
+        for item in visible[leading_blocker_count:]
+        if (
+            2
+            <= _text_length(entries[item[1]][1])
+            <= MAX_BLOCKED_COMPLETION_LENGTH
+            and _is_han_text(entries[item[1]][1])
+            and general_frequencies.get(entries[item[1]][1], 0)
+            >= MIN_BLOCKED_COMPLETION_FREQUENCY
+        )
+    ]
+    if not strong_completions:
+        return None
+    strong_completions.sort(
+        key=lambda item: _completion_key(item, entries, general_frequencies)
+    )
+    rare_blockers = [
+        item
+        for item in visible
+        if (
+            _text_length(entries[item[1]][1]) == 1
+            and _is_han_text(entries[item[1]][1])
+            and general_frequencies.get(entries[item[1]][1], 0) == 0
+        )
+    ]
+    meaningful = [
+        item
+        for item in visible
+        if (
+            item not in strong_completions
+            and item not in rare_blockers
+            and 2
+            <= _text_length(entries[item[1]][1])
+            <= MAX_BLOCKED_COMPLETION_LENGTH
+            and _is_han_text(entries[item[1]][1])
+        )
+    ]
+    other = [
+        item
+        for item in visible
+        if (
+            item not in strong_completions
+            and item not in meaningful
+            and item not in rare_blockers
+        )
+    ]
+    return strong_completions + meaningful + rare_blockers + other
+
+
 def rerank_visible_candidates(
     source_ranking: Sequence[int],
     entries: Sequence[DictionaryEntry],
@@ -308,13 +399,23 @@ def rerank_visible_candidates(
                 )
             ]
             if not promotable:
-                return list(source_ranking)
-            promotable.sort(
-                key=lambda item: _completion_key(item, entries, general_frequencies)
-            )
-            promoted_indexes = {item[1] for item in promotable}
-            remaining = [item for item in visible if item[1] not in promoted_indexes]
-            reordered = promotable + remaining
+                repaired = _repair_rare_single_character_blockers(
+                    visible, entries, general_frequencies
+                )
+                if repaired is None:
+                    return list(source_ranking)
+                reordered = repaired
+            else:
+                promotable.sort(
+                    key=lambda item: _completion_key(
+                        item, entries, general_frequencies
+                    )
+                )
+                promoted_indexes = {item[1] for item in promotable}
+                remaining = [
+                    item for item in visible if item[1] not in promoted_indexes
+                ]
+                reordered = promotable + remaining
     elif prefix_length == 4:
         promoted = _safe_four_code_promotion(
             visible, entries, general_frequencies
@@ -407,6 +508,12 @@ def audit_ranking_change(
                 audit.unknown_exact_demotions += 1
                 return
             audit.unsafe_top_changes += 1
+            return
+        repaired = _repair_rare_single_character_blockers(
+            list(enumerate(source_visible)), entries, general_frequencies
+        )
+        if repaired is not None and repaired[0][1] == ranked[0]:
+            audit.blocked_completion_promotions += 1
             return
     elif prefix_length == 4:
         audit.four_code_top_changes += 1

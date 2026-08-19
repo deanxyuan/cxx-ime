@@ -184,6 +184,35 @@ def test_visible_ranking_guards_short_codes_and_improves_known_completions():
     ) == short_source
 
 
+def test_visible_ranking_repairs_rare_single_character_blockers():
+    entries = [
+        (b"akfw", "歎".encode("utf-8"), 20),
+        (b"akfy", "尀".encode("utf-8"), 20),
+        (b"akfe", "艱".encode("utf-8"), 10),
+        (b"akfi", "菋".encode("utf-8"), 10),
+        (b"akfk", "囏".encode("utf-8"), 10),
+        (b"akfn", "戁".encode("utf-8"), 10),
+        (b"akfp", "其味无穷".encode("utf-8"), 10),
+        (b"akft", "或者".encode("utf-8"), 10),
+    ]
+    frequencies = {"其味无穷".encode("utf-8"): 480, "或者".encode("utf-8"): 504213}
+    assert [
+        entries[index][1].decode("utf-8")
+        for index in WUBI_RANKING.rerank_visible_candidates(
+            list(range(len(entries))), entries, 3, frequencies
+        )
+    ] == [
+        "或者",
+        "其味无穷",
+        "歎",
+        "尀",
+        "艱",
+        "菋",
+        "囏",
+        "戁",
+    ]
+
+
 def test_visible_ranking_preserves_exact_and_unproven_candidates():
     entries = [
         (b"goi", b"known-exact", 10),
@@ -376,6 +405,39 @@ def test_ranking_audit_accepts_classified_four_code_promotion():
     audit.validate()
 
 
+def test_ranking_audit_accepts_blocked_completion_repair():
+    entries = [
+        (b"akfw", "歎".encode("utf-8"), 20),
+        (b"akfy", "尀".encode("utf-8"), 20),
+        (b"akfe", "艱".encode("utf-8"), 10),
+        (b"akft", "或者".encode("utf-8"), 10),
+    ]
+    frequencies = {"或者".encode("utf-8"): 504213}
+    audit = WUBI_RANKING.RankingAudit(three_code_prefixes=1000)
+    WUBI_RANKING.audit_ranking_change(
+        [0, 1, 2, 3], [3, 0, 1, 2], entries, 3, frequencies, audit
+    )
+    assert audit.blocked_completion_promotions == 1
+    assert audit.unsafe_top_changes == 0
+    audit.validate()
+
+
+def test_visible_ranking_keeps_non_han_after_rare_blockers():
+    entries = [
+        (b"akfw", "歎".encode("utf-8"), 20),
+        (b"akfy", "尀".encode("utf-8"), 20),
+        (b"akfe", "艱".encode("utf-8"), 10),
+        (b"akfp", "其味无穷".encode("utf-8"), 10),
+        (b"akft", "或者".encode("utf-8"), 10),
+        (b"akfx", b"ASCII", 10),
+    ]
+    frequencies = {"或者".encode("utf-8"): 504213}
+    ranked = WUBI_RANKING.rerank_visible_candidates(
+        list(range(len(entries))), entries, 3, frequencies
+    )
+    assert ranked == [4, 3, 0, 1, 2, 5]
+
+
 def test_ranking_audit_rejects_unclassified_four_code_promotion():
     entries = [
         (b"abcd", "原首选".encode("utf-8"), 20),
@@ -404,6 +466,7 @@ if __name__ == "__main__":
     test_visible_ranking_guards_short_codes_and_improves_known_completions()
     test_visible_ranking_preserves_exact_and_unproven_candidates()
     test_visible_ranking_does_not_import_deeper_candidates()
+    test_visible_ranking_repairs_rare_single_character_blockers()
     test_visible_ranking_promotes_reliable_four_code_character()
     test_visible_ranking_preserves_unproven_four_code_order()
     test_visible_ranking_does_not_replace_short_completion_with_longer_text()
@@ -411,4 +474,6 @@ if __name__ == "__main__":
     test_visible_ranking_does_not_promote_non_han_completion()
     test_ranking_audit_rejects_visible_set_changes_without_key_error()
     test_ranking_audit_accepts_classified_four_code_promotion()
+    test_ranking_audit_accepts_blocked_completion_repair()
+    test_visible_ranking_keeps_non_han_after_rare_blockers()
     test_ranking_audit_rejects_unclassified_four_code_promotion()
