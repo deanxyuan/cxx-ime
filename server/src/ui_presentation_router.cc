@@ -48,6 +48,11 @@ bool is_newer_or_equal(const cxxime::UiPresentationSnapshot& next,
 }
 
 bool requests_visible_ui(const cxxime::UiPresentationSnapshot& snapshot) {
+    // Host ownership is an active presentation state even though CxxIME draws
+    // neither window; the controller must receive it to hide stale UI.
+    if (snapshot.ownership == cxxime::UiOwnership::kHost) {
+        return true;
+    }
     return has_flag(snapshot, cxxime::UiSnapshotFlag::kCandidateVisible) ||
            has_flag(snapshot, cxxime::UiSnapshotFlag::kStatusVisible);
 }

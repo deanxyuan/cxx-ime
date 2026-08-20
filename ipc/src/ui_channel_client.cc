@@ -23,12 +23,16 @@ constexpr std::size_t kMaxPendingSessions = 32;
 struct PendingSnapshot {
     UiPresentationSnapshot snapshot;
     std::uint64_t revision = 0;
+    UiPresentationSnapshot ownership_transition = {};
+    std::uint64_t ownership_transition_revision = 0;
+    bool has_ownership_transition = false;
 };
 
 struct SnapshotToSend {
     std::uint64_t session_id = 0;
     std::uint64_t revision = 0;
     UiPresentationSnapshot snapshot;
+    bool ownership_transition = false;
 };
 
 } // namespace
@@ -97,6 +101,13 @@ public:
                 }
                 pending = snapshots_.emplace(snapshot.session_id, PendingSnapshot{}).first;
             }
+            if (pending->second.snapshot.ownership == UiOwnership::kHost &&
+                snapshot.ownership != UiOwnership::kHost &&
+                pending->second.revision != 0) {
+                pending->second.ownership_transition = pending->second.snapshot;
+                pending->second.ownership_transition_revision = pending->second.revision;
+                pending->second.has_ownership_transition = true;
+            }
             pending->second.snapshot = snapshot;
             pending->second.revision = next_snapshot_revision_++;
         }
@@ -127,11 +138,17 @@ private:
         ResetEvent(snapshot_event_);
         batch.reserve(snapshots_.size());
         for (const auto& entry : snapshots_) {
+            if (entry.second.has_ownership_transition) {
+                batch.push_back({entry.first,
+                                 entry.second.ownership_transition_revision,
+                                 entry.second.ownership_transition,
+                                 true});
+            }
             const auto sent = sent_revisions.find(entry.first);
             if (sent != sent_revisions.end() && sent->second == entry.second.revision) {
                 continue;
             }
-            batch.push_back({entry.first, entry.second.revision, entry.second.snapshot});
+            batch.push_back({entry.first, entry.second.revision, entry.second.snapshot, false});
         }
         return batch;
     }
@@ -144,6 +161,16 @@ private:
             if (!build_ui_snapshot_packet(pending.snapshot, (*sequence)++, &packet) ||
                 !ui_pipe::write_packet(pipe, stop_event_, packet)) {
                 return false;
+            }
+            if (pending.ownership_transition) {
+                std::lock_guard<std::mutex> lock(snapshot_mutex_);
+                const auto current = snapshots_.find(pending.session_id);
+                if (current != snapshots_.end() &&
+                    current->second.has_ownership_transition &&
+                    current->second.ownership_transition_revision == pending.revision) {
+                    current->second.has_ownership_transition = false;
+                }
+                continue;
             }
             (*sent_revisions)[pending.session_id] = pending.revision;
             if ((pending.snapshot.flags & ui_snapshot_flag(UiSnapshotFlag::kSessionEnded)) != 0) {

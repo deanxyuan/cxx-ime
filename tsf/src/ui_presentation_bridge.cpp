@@ -76,8 +76,14 @@ void TextService::_publish_ui_presentation() {
     if (_composing) {
         snapshot.flags |= cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kComposing);
     }
-    const bool status_visible = _activated && _inputFocused && _effectiveEditTarget.valid() &&
-                                _has_synced_ime_status() && _config.status_window.enable;
+    // UI-element-only hosts own the composition presentation; keep the CxxIME
+    // status window hidden for the whole host session, not just one candidate.
+    const bool host_ui_element_only_mode =
+        (_activateFlags & TF_TMF_UIELEMENTENABLEDONLY) != 0;
+    const bool status_visible =
+        _activated && _inputFocused && _effectiveEditTarget.valid() &&
+        _has_synced_ime_status() && _config.status_window.enable &&
+        !host_ui_element_only_mode && snapshot.ownership != cxxime::UiOwnership::kHost;
     if (status_visible) {
         snapshot.flags |= cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kStatusVisible);
     }
