@@ -115,33 +115,24 @@ void TextService::update_candidate_position(const RECT& rc,
         trace_caret_event("move", "ui_element_only", false, &final_rect);
         return;
     }
-    if (!_candidateWindow.is_visible()) {
-        if (_candidatePresentation.waiting_for_caret()) {
-            if (_candidatePresentation.should_keep_waiting_for_caret(
-                    final_rect, from_layout_change, used_trusted_native,
-                    cxxime_tsf::CandidatePresentation::Clock::now(),
-                    kCandidatePendingFallbackDelayMs,
-                    kCandidateRepositionFallbackDelayMs)) {
-                return;
-            }
-            _candidateWindow.move_to_caret(final_rect);
-            uint64_t generation = _candidatePresentation.generation();
-            if (expected_generation != 0) {
-                generation = expected_generation;
-            }
-            if (!_candidatePresentation.accept_caret(generation)) {
-                return;
-            }
-            trace_caret_event("move", "candidate_window", resolved, &final_rect);
-            _show_candidate_window("show:preedit");
+    if (_candidatePresentation.waiting_for_caret()) {
+        if (_candidatePresentation.should_keep_waiting_for_caret(
+                final_rect, from_layout_change, used_trusted_native,
+                cxxime_tsf::CandidatePresentation::Clock::now(),
+                kCandidatePendingFallbackDelayMs, kCandidateRepositionFallbackDelayMs)) {
             return;
         }
-        trace_caret_event("move", "hidden", false, &final_rect);
-        return;
+        uint64_t generation = _candidatePresentation.generation();
+        if (expected_generation != 0) {
+            generation = expected_generation;
+        }
+        if (!_candidatePresentation.accept_caret(generation)) {
+            return;
+        }
     }
 
-    trace_caret_event("move", "candidate_window", resolved, &final_rect);
-    _candidateWindow.move_to_caret(final_rect);
+    trace_caret_event("move", "ui_presentation", resolved, &final_rect);
+    _publish_ui_presentation();
 }
 
 void TextService::_follow_native_caret() {
@@ -210,7 +201,7 @@ void TextService::_request_candidate_position_update(ITfContext* pic,
     const bool candidate_active =
         (_candidatePresentation.external_window_expected() &&
         _candidatePresentation.waiting_for_caret()) ||
-        (_composing && _candidateWindow.is_visible());
+        _candidatePresentation.should_show_external_window(_composing);
     if (!pic || !candidate_active)
         return;
     if (_candidatePresentation.waiting_for_caret() &&
@@ -256,7 +247,7 @@ STDMETHODIMP TextService::OnLayoutChange(ITfContext* pic,
     if (_textLayoutSinkContext && pic != _textLayoutSinkContext)
         return S_OK;
 
-    if (_composing && _candidateWindow.is_visible()) {
+    if (_composing && _candidatePresentation.should_show_external_window(_composing)) {
         char detail[96] = {};
         snprintf(detail, sizeof(detail), "code=%d context_match=%d",
                  static_cast<int>(lcode), (_textLayoutSinkContext == pic) ? 1 : 0);

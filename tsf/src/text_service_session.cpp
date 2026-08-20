@@ -49,13 +49,10 @@ void TextService::_sync_ime_status(const cxxime::ImeStatus& status) {
     // queries GetIcon during the notification, so stale button state causes a
     // second refresh and visible flicker.
     if (_modeButton) _modeButton->update_from_status(status);
-    if (_statusController.is_initialized()) _statusController.sync_status(status);
     if (!_handlingConversionCompartmentChange) {
         _sync_conversion_mode_compartment(status);
     }
-    if (status_became_available) {
-        _show_status_window_if_allowed("show:status_ready");
-    }
+    _publish_ui_presentation();
 }
 
 bool TextService::_is_caps_lock_on() const {
@@ -93,6 +90,11 @@ bool TextService::_ensure_ipc_session() {
     }
 
     _sessionId = session_id;
+    ++_uiSessionGeneration;
+    if (_uiSessionGeneration == 0) {
+        ++_uiSessionGeneration;
+    }
+    _start_ui_presentation_channel();
     _ipcHealthy = true;
     _lastIpcHeartbeat = std::chrono::steady_clock::now();
     CXXIME_LOG(L"IPC session ready, sessionId=%u", _sessionId);
@@ -114,6 +116,7 @@ bool TextService::_recreate_ipc_session_preserving_status() {
     bool input_allows_input = _query_input_focus_from_thread_mgr();
     bool physical_caps_lock = false;
 
+    _publish_ui_session_ended();
     _sessionId = 0;
     _ipcHealthy = false;
     if (!_ensure_ipc_session())
@@ -193,6 +196,7 @@ bool TextService::_heartbeat_ipc() {
         CXXIME_LOG(L"IPC heartbeat reconnect failed");
         if (_ipcHealthy)
             _enqueue_event_trace("ipc_session", "heartbeat_reconnect_failed", true);
+        _publish_ui_session_ended();
         _sessionId = 0;
         _ipcHealthy = false;
         return false;
@@ -214,6 +218,7 @@ bool TextService::_heartbeat_ipc() {
     if (_ipcHealthy)
         _enqueue_event_trace("ipc_session", "heartbeat_failed", true);
     _client.disconnect();
+    _publish_ui_session_ended();
     _sessionId = 0;
     _ipcHealthy = false;
     return false;
@@ -258,8 +263,7 @@ void TextService::_update_state_poll_timer() {
     const bool track_candidate =
         _inputFocused &&
         ((_candidatePresentation.external_window_expected() &&
-         _candidatePresentation.waiting_for_caret()) ||
-         (_composing && _candidateWindow.is_visible()));
+         _candidatePresentation.waiting_for_caret()));
     const UINT interval = track_candidate ? kStatePollFastIntervalMs
                                           : kIpcHeartbeatIntervalMs;
     if (_statePollTimer && _statePollIntervalMs == interval)
@@ -316,10 +320,8 @@ void TextService::_poll_runtime_state() {
     if (!_sessionId || !_inputFocused)
         return;
 
-    if (_composing &&
-        ((_candidatePresentation.external_window_expected() &&
-         _candidatePresentation.waiting_for_caret()) ||
-         _candidateWindow.is_visible())) {
+    if (_composing && _candidatePresentation.external_window_expected() &&
+         _candidatePresentation.waiting_for_caret()) {
         _follow_native_caret();
     }
     if (_candidatePresentation.external_window_expected() &&

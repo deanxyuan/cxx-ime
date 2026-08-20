@@ -50,16 +50,15 @@ public:
     // Called from DllMain(DLL_PROCESS_DETACH) — destroy all lingering windows.
     static void cleanup_all();
 
-    bool create(HWND owner, const StatusTheme& theme);
-    bool ensure_created(HWND owner);
+    bool create(const StatusTheme& theme);
     void destroy();
     bool is_created() const;
 
     void show();
     void hide();
     bool is_visible() const;
-    void set_owner(HWND owner);
-    bool owner_matches(HWND owner) const;
+    bool get_window_rect(RECT* rect) const;
+    UINT dpi() const;
 
     void set_enabled(bool enabled);
 

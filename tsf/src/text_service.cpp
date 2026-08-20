@@ -21,6 +21,7 @@
 TextService::TextService() {}
 
 TextService::~TextService() {
+    _stop_ui_presentation_channel();
     _stop_config_updates();
     _stop_state_poll_timer();
     _unregister_conversion_compartment_sink();
@@ -110,16 +111,6 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
     }
     _initialize_optional_activation_services();
 
-    // Create hidden UI windows without an owner; bind the active context view before showing them.
-    _candidateWindow.create(nullptr, _config);
-    _candidateWindow.set_layout(_config.layout);
-    _candidateWindow.set_click_callback([this](int index) {
-        if (index == -2 || index == -3) {
-            navigate_candidate_page_from_ui(index == -2);
-        } else if (index >= 0) {
-            select_candidate_from_ui(static_cast<UINT>(index));
-        }
-    });
     _candidateUiElement = new (std::nothrow) CandidateUIElement(this);
     _readingUiElement = new (std::nothrow) ReadingUIElement(this);
 
@@ -189,18 +180,6 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
         CXXIME_LOG(L"Failed to get ITfLangBarItemMgr interface");
     }
 
-    // Initialize status window controller hidden; visibility is gated by input focus.
-    if (!_statusController.initialize(nullptr, &_client, _sessionId, &_config)) {
-        CXXIME_LOG(L"StatusController: window creation failed, disabled");
-    } else {
-        _statusController.update_config(_config);
-        _statusController.sync_status(initial_status);
-    }
-
-    _statusController.set_menu_command_callback([this](cxxime::ImeMenuCommand command) {
-        _handle_ime_menu_command(command);
-    });
-
     if (_modeButton) {
         // Left-click toggles Chinese/English mode.
         _modeButton->set_toggle_chinese_callback([this]() {
@@ -231,7 +210,9 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
     //     _sync_ime_status(resp.ime_status);
     // }
     _activated = true;
+    _start_ui_presentation_channel();
     _synchronize_activation_focus();
+    _publish_ui_presentation();
     return S_OK;
 }
 
@@ -243,9 +224,10 @@ STDMETHODIMP TextService::Deactivate() {
     _stop_state_poll_timer();
     _unregister_conversion_compartment_sink();
 
-    // Hide status window immediately, then destroy it to avoid clicks during IPC teardown.
     _hide_status_window("hide:deactivate");
-    _statusController.shutdown();
+    _hide_candidate_window("hide:deactivate_candidates");
+    _publish_ui_presentation();
+    _stop_ui_presentation_channel();
 
     if (_sessionId) {
         // Commit any pending composition before ending session
@@ -276,7 +258,6 @@ STDMETHODIMP TextService::Deactivate() {
 
     _stop_config_updates();
 
-    _hide_candidate_window("hide:deactivate_candidates");
     _end_reading_ui_element("hide:deactivate_reading");
     _unadvise_text_edit_sink();
     _unadvise_text_layout_sink();
@@ -290,8 +271,6 @@ STDMETHODIMP TextService::Deactivate() {
         _readingUiElement->Release();
         _readingUiElement = nullptr;
     }
-    _candidateWindow.destroy();
-
     // Unregister language bar button. The IME branding icon is provided by the TSF profile
     // registration, so CxxIME only owns this GUID_LBI_INPUTMODE status button.
     ITfLangBarItemMgr* pLangBarItemMgr = nullptr;

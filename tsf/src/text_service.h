@@ -15,23 +15,23 @@ class ReadingUIElement;
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <deque>
 #include <mutex>
 #include <string>
 
-#include <cxxime/candidate_window.h>
 #include <cxxime/config.h>
 #include <cxxime/control_protocol.h>
+#include <cxxime/ime_menu.h>
 #include <cxxime/ipc_client.h>
 #include <cxxime/ipc_protocol.h>
 #include <cxxime/host_trace.h>
+#include <cxxime/ui_channel.h>
 
 #include "candidate_presentation.h"
 #include "effective_edit_target.h"
-#include "status_controller.h"
 
 namespace cxxime_tsf {
 
-bool foreground_is_fullscreen();
 bool is_valid_caret_rect(const RECT& rect);
 
 }  // namespace cxxime_tsf
@@ -211,7 +211,6 @@ private:
                                               VARTYPE* value_type) const;
     bool _context_belongs_to_foreground(ITfContext* context) const;
     bool _context_matches_effective_edit_target(ITfContext* context) const;
-    HWND _focused_context_view_window() const;
     bool _ensure_text_edit_sink(ITfContext* context);
     bool _bind_text_edit_sink(ITfContext* context);
     void _unadvise_text_edit_sink();
@@ -235,15 +234,12 @@ private:
     bool _synchronize_effective_edit_target(ITfContext* event_context,
                                             ITfDocumentMgr* event_document_mgr,
                                             const char* source,
-                                            bool context_already_validated = false,
-                                            bool allow_status_window = true);
-    bool _synchronize_effective_edit_target_from_thread_mgr(
-        const char* source, bool allow_status_window = true);
+                                            bool context_already_validated = false);
+    bool _synchronize_effective_edit_target_from_thread_mgr(const char* source);
     void _clear_effective_edit_target(const char* source, bool target_unavailable = false);
     void _release_effective_edit_target();
     cxxime_tsf::EffectiveEditTargetBindings _effective_edit_target_bindings(
-        const cxxime_tsf::EffectiveEditTargetSnapshot& target,
-        bool expect_status_window) const;
+        const cxxime_tsf::EffectiveEditTargetSnapshot& target) const;
     void _trace_effective_edit_target_sync(
         const char* source,
         cxxime_tsf::EffectiveEditTargetAction action,
@@ -269,8 +265,6 @@ private:
     void _hide_external_candidate_window(const char* reason);
     bool _publish_candidate_ui_element();
     void _sync_candidate_ui_element_snapshot();
-    void _sync_candidate_window_snapshot();
-    HWND _candidate_owner_window(HWND fallback) const;
     uint32_t _candidate_page_step() const;
     static cxxime::CandidatePage _candidate_page_from_response(
         const cxxime::IPCResponse& response);
@@ -288,6 +282,14 @@ private:
     bool _start_config_updates();
     void _stop_config_updates();
     void _apply_config_snapshot();
+    bool _start_ui_presentation_channel();
+    void _stop_ui_presentation_channel();
+    void _publish_ui_presentation();
+    void _publish_ui_session_ended();
+    void _queue_ui_command(const cxxime::UiCommand& command);
+    void _drain_ui_commands();
+    bool _is_current_ui_command(const cxxime::UiCommand& command) const;
+    void _handle_ui_command(const cxxime::UiCommand& command);
     static LRESULT CALLBACK _config_window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
 
     LONG _cRef = 1;
@@ -312,6 +314,8 @@ private:
 
     cxxime::IpcClient _client;
     uint32_t _sessionId = 0;
+    uint32_t _visibleCandidateCount = 0;
+    uint64_t _visibleCandidateGeneration = 0;
     bool _composing = false;
     bool _emptyCompositionPlaceholderActive = false;
     bool _chinese_mode = true;
@@ -335,7 +339,6 @@ private:
     std::string _lastInputBlockReason;
     std::wstring _lastInlineCompositionText;
     cxxime_tsf::CandidatePresentation _candidatePresentation;
-    cxxime::CandidateWindow _candidateWindow;
     CandidateUIElement* _candidateUiElement = nullptr;
     ReadingUIElement* _readingUiElement = nullptr;
     cxxime::Config _config;
@@ -346,10 +349,13 @@ private:
     // Language bar buttons
     CLangBarItemButton* _modeButton = nullptr;  // 中/EN 按钮
 
-    // Status window controller
-    cxxime::StatusController _statusController;
-
     RECT _caretRect = {};
+
+    cxxime::UiChannelClient _uiChannel;
+    std::mutex _uiCommandMutex;
+    std::deque<cxxime::UiCommand> _uiCommands;
+    std::uint64_t _uiSessionGeneration = 0;
+    std::uint64_t _uiTargetGeneration = 0;
 
     std::chrono::steady_clock::time_point _key_event_start;
     int64_t _last_ipc_us = 0;
@@ -359,6 +365,7 @@ private:
     // Async trace writer (bounded queue, writer thread, batch flush)
     void _enqueue_trace(const TsfTrace& trace);
     void _enqueue_event_trace(const char* event, const char* detail, bool important = false);
+    void _enqueue_ui_presentation_trace(const cxxime::UiPresentationSnapshot& snapshot);
 };
 
 #endif // CXXIME_TSF_TEXT_SERVICE_H_

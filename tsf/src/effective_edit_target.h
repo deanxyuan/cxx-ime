@@ -11,7 +11,6 @@ struct EffectiveEditTargetSnapshot {
     std::uintptr_t document_identity = 0;
     std::uintptr_t context_identity = 0;
     std::uintptr_t view_window = 0;
-    std::uintptr_t owner_window = 0;
     bool editable = false;
 
     bool valid() const { return editable && document_identity != 0 && context_identity != 0; }
@@ -24,18 +23,10 @@ struct EffectiveEditTargetBindings {
     bool edit_sink_matches = true;
     bool layout_sink_matches = true;
     bool candidate_document_matches = true;
-    bool candidate_window_valid = true;
-    bool candidate_visibility_matches = true;
-    bool candidate_owner_matches = true;
-    bool status_window_valid = true;
-    bool status_visibility_matches = true;
-    bool status_owner_matches = true;
 
     bool healthy() const {
         return input_state_matches && target_resources_match && edit_sink_matches &&
-               layout_sink_matches && candidate_document_matches && candidate_window_valid &&
-               candidate_visibility_matches && candidate_owner_matches && status_window_valid &&
-               status_visibility_matches && status_owner_matches;
+               layout_sink_matches && candidate_document_matches;
     }
 };
 

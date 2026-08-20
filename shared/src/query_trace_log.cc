@@ -28,6 +28,7 @@ namespace cxxime {
 // Async queue configuration
 static constexpr int kQueueCapacity = 256;                     // Bounded queue size
 static constexpr int kBatchSize = 32;                          // Write batch size
+static constexpr int kTraceEntryJsonCapacity = 1024;
 static constexpr auto kFlushInterval = std::chrono::milliseconds(100); // Flush interval
 
 // ─── Slow query thresholds ───────────────────────────────────
@@ -35,7 +36,7 @@ static constexpr auto kFlushInterval = std::chrono::milliseconds(100); // Flush 
 // ─── Queue entry (fixed size, no heap allocation) ────────────
 
 struct TraceEntry {
-    char json[1024];
+    char json[kTraceEntryJsonCapacity];
     int len;
 };
 
@@ -438,12 +439,18 @@ void QueryTrace::log() const {
 void QueryTrace::log_unchecked() const {
     char json_buf[1024];
     int len = to_json(json_buf, sizeof(json_buf));
-    if (len <= 0) return;
+    enqueue_server_trace_json(json_buf, len);
+}
+
+void enqueue_server_trace_json(const char* json, int length) {
+    if (!json || length <= 0 || length >= kTraceEntryJsonCapacity) {
+        return;
+    }
 
 #ifdef _DEBUG
     // Debug: OutputDebugStringW (non-blocking)
     wchar_t wbuf[1024];
-    int wlen = MultiByteToWideChar(CP_UTF8, 0, json_buf, len, wbuf, 1023);
+    int wlen = MultiByteToWideChar(CP_UTF8, 0, json, length, wbuf, 1023);
     if (wlen > 0) {
         if (wlen >= 1023)
             wlen = 1022;
@@ -454,9 +461,9 @@ void QueryTrace::log_unchecked() const {
 #endif
 
     TraceEntry entry;
-    std::memcpy(entry.json, json_buf, len);
-    entry.json[len] = '\0';
-    entry.len = len;
+    std::memcpy(entry.json, json, length);
+    entry.json[length] = '\0';
+    entry.len = length;
 
     // Admission and enqueue share the lifecycle lock so shutdown cannot finish its final drain
     // while a producer that already observed the enabled state is still pending.

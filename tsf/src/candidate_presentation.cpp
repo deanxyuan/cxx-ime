@@ -147,17 +147,9 @@ bool CandidatePresentation::external_window_expected() const {
            ownership_ == CandidateOwnership::kExternal;
 }
 
-bool CandidatePresentation::should_bind_owner(bool composing) const {
-    return external_window_expected() && (composing || waiting_for_caret());
-}
-
 bool CandidatePresentation::should_show_external_window(bool composing) const {
     return composing && external_window_expected() &&
            position_state_ == CandidatePositionState::kReady;
-}
-
-bool CandidatePresentation::needs_window_repair(bool composing, bool window_visible) const {
-    return should_show_external_window(composing) && !window_visible;
 }
 
 void CandidatePresentation::advance_generation() {
