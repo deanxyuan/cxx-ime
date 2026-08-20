@@ -7,6 +7,10 @@ add_library(cxxime-ipc STATIC
     src/ipc_server.cc
     src/ipc_client.cc
     src/pipe_names.cc
+    src/ui_channel_client.cc
+    src/ui_channel_server.cc
+    src/ui_pipe.cc
+    src/ui_protocol.cc
     src/lexicon_control.cc
 )
 

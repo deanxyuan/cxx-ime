@@ -23,10 +23,7 @@ TEST(CandidatePresentation, external_ready_expects_window) {
     presentation.set_ownership(cxxime_tsf::CandidateOwnership::kExternal);
 
     ASSERT_TRUE(presentation.external_window_expected());
-    ASSERT_TRUE(presentation.should_bind_owner(true));
     ASSERT_TRUE(presentation.should_show_external_window(true));
-    ASSERT_TRUE(presentation.needs_window_repair(true, false));
-    ASSERT_TRUE(!presentation.needs_window_repair(true, true));
 }
 
 TEST(CandidatePresentation, host_ownership_never_expects_external_window) {
@@ -35,11 +32,9 @@ TEST(CandidatePresentation, host_ownership_never_expects_external_window) {
     presentation.set_ownership(cxxime_tsf::CandidateOwnership::kHost);
 
     ASSERT_TRUE(!presentation.external_window_expected());
-    ASSERT_TRUE(!presentation.should_bind_owner(true));
-    ASSERT_TRUE(!presentation.needs_window_repair(true, false));
 }
 
-TEST(CandidatePresentation, waiting_caret_keeps_owner_without_showing) {
+TEST(CandidatePresentation, waiting_caret_defers_external_presentation) {
     cxxime_tsf::CandidatePresentation presentation;
     presentation.update_content(page_with_candidate("old"), "", 0, 1, 1);
     presentation.set_ownership(cxxime_tsf::CandidateOwnership::kExternal);
@@ -50,9 +45,7 @@ TEST(CandidatePresentation, waiting_caret_keeps_owner_without_showing) {
     presentation.begin_waiting_for_caret(true, &stale, started);
 
     ASSERT_TRUE(presentation.waiting_for_caret());
-    ASSERT_TRUE(presentation.should_bind_owner(true));
     ASSERT_TRUE(!presentation.should_show_external_window(true));
-    ASSERT_TRUE(!presentation.needs_window_repair(true, false));
     ASSERT_TRUE(presentation.should_keep_waiting_for_caret(
         stale, true, true, started + std::chrono::milliseconds(100), 30, 150));
     ASSERT_TRUE(!presentation.accept_caret(presentation.generation()));
@@ -106,7 +99,6 @@ TEST(CandidatePresentation, host_takeover_suppresses_external_wait_without_losin
 
     ASSERT_TRUE(presentation.waiting_for_caret());
     ASSERT_TRUE(!presentation.external_window_expected());
-    ASSERT_TRUE(!presentation.should_bind_owner(true));
 }
 
 TEST(CandidatePresentation, composition_restart_blocks_an_existing_ordinary_wait) {
@@ -190,9 +182,7 @@ TEST(CandidatePresentation, host_can_return_waiting_presentation_to_external_own
     presentation.set_ownership(cxxime_tsf::CandidateOwnership::kExternal);
 
     ASSERT_TRUE(presentation.waiting_for_caret());
-    ASSERT_TRUE(presentation.should_bind_owner(true));
     ASSERT_TRUE(!presentation.should_show_external_window(true));
-    ASSERT_TRUE(!presentation.needs_window_repair(true, false));
 }
 
 TEST(CandidatePresentation, commit_guard_precedes_new_content_and_ownership) {
@@ -204,8 +194,6 @@ TEST(CandidatePresentation, commit_guard_precedes_new_content_and_ownership) {
     presentation.set_ownership(cxxime_tsf::CandidateOwnership::kExternal);
 
     ASSERT_TRUE(presentation.waiting_for_caret());
-    ASSERT_TRUE(presentation.should_bind_owner(true));
-    ASSERT_TRUE(presentation.should_bind_owner(false));
     ASSERT_TRUE(!presentation.caret_resolution_allowed());
     ASSERT_TRUE(!presentation.should_show_external_window(true));
 }

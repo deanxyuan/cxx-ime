@@ -156,6 +156,8 @@ void CandidateWindow::show() {
     if (!is_created())
         return;
 
+    ScopedDpiAwarenessContext dpi_context(GetWindowDpiAwarenessContext(hwnd_));
+
     if (!IsWindowVisible(hwnd_) && has_last_caret_rect_) {
         RECT wr = {};
         GetWindowRect(hwnd_, &wr);
@@ -220,6 +222,7 @@ int CandidateWindow::visible_candidate_count() const {
 }
 SIZE CandidateWindow::window_size() const {
     RECT rect = {};
+    ScopedDpiAwarenessContext dpi_context(GetWindowDpiAwarenessContext(hwnd_));
     if (!hwnd_ || !GetWindowRect(hwnd_, &rect)) {
         return {};
     }
@@ -229,7 +232,12 @@ SIZE CandidateWindow::layout_size() const {
     return {window_width_, window_height_};
 }
 UINT CandidateWindow::dpi() const {
+    ScopedDpiAwarenessContext dpi_context(GetWindowDpiAwarenessContext(hwnd_));
     return hwnd_ ? GetDpiForWindow(hwnd_) : 0;
+}
+bool CandidateWindow::get_window_rect(RECT* rect) const {
+    ScopedDpiAwarenessContext dpi_context(GetWindowDpiAwarenessContext(hwnd_));
+    return rect && hwnd_ && IsWindow(hwnd_) && GetWindowRect(hwnd_, rect) != FALSE;
 }
 void CandidateWindow::set_config(const Config& config) {
     config_ = &config;
@@ -275,11 +283,13 @@ void CandidateWindow::set_click_callback(ClickCallback cb) { click_cb_ = std::mo
 void CandidateWindow::set_draggable(bool draggable) { draggable_ = draggable; }
 
 void CandidateWindow::move_window_now(int x, int y) {
+    ScopedDpiAwarenessContext dpi_context(GetWindowDpiAwarenessContext(hwnd_));
     SetWindowPos(hwnd_, nullptr, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
 bool CandidateWindow::calculate_target_position(const RECT& caret_rect, int width, int height,
                                                 POINT& target) const {
+    ScopedDpiAwarenessContext dpi_context(GetWindowDpiAwarenessContext(hwnd_));
     HMONITOR hMon = MonitorFromRect(&caret_rect, MONITOR_DEFAULTTONEAREST);
     MONITORINFO mi = {sizeof(mi)};
     if (!GetMonitorInfo(hMon, &mi))
@@ -306,6 +316,7 @@ bool CandidateWindow::calculate_target_position(const RECT& caret_rect, int widt
 }
 
 int CandidateWindow::monitor_work_width() const {
+    ScopedDpiAwarenessContext dpi_context(GetWindowDpiAwarenessContext(hwnd_));
     HMONITOR monitor = nullptr;
     if (has_last_caret_rect_) {
         monitor = MonitorFromRect(&last_caret_rect_, MONITOR_DEFAULTTONEAREST);
@@ -342,6 +353,8 @@ void CandidateWindow::update_window_region(int width, int height, int corner) {
 void CandidateWindow::move_to_caret(const RECT& caretRect) {
     if (!hwnd_) return;
 
+    ScopedDpiAwarenessContext dpi_context(GetWindowDpiAwarenessContext(hwnd_));
+
     has_last_caret_rect_ = true;
     last_caret_rect_ = caretRect;
 
@@ -365,6 +378,7 @@ void CandidateWindow::move_to_screen_position(int x, int y) {
     if (!hwnd_) {
         return;
     }
+    ScopedDpiAwarenessContext dpi_context(GetWindowDpiAwarenessContext(hwnd_));
     move_window_now(x, y);
     if (refresh_dpi_scale()) {
         recreate_renderers_for_dpi();

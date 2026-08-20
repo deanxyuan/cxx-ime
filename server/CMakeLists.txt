@@ -10,6 +10,8 @@ add_executable(cxxime-server WIN32
     src/server_app.cc
     src/session_manager.cc
     src/lexicon_control_handler.cc
+    src/ui_presentation_controller.cc
+    src/ui_presentation_router.cc
 )
 
 target_include_directories(cxxime-server PRIVATE
@@ -20,6 +22,7 @@ target_link_libraries(cxxime-server PRIVATE
     cxxime-shared
     cxxime-engine
     cxxime-ipc
+    cxxime-ui
     shell32
     advapi32
     ole32

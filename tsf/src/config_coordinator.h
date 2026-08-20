@@ -14,6 +14,7 @@
 namespace cxxime_tsf {
 
 constexpr UINT WM_CXXIME_CONFIG_CHANGED = WM_APP + 0x314;
+constexpr UINT WM_CXXIME_UI_COMMAND = WM_APP + 0x315;
 
 struct ConfigSnapshot {
     cxxime::ConfigGeneration generation;
@@ -26,7 +27,6 @@ void unsubscribe_config_updates(HWND window, std::uint32_t subscription_id);
 void shutdown_tsf_log_writer_if_no_config_subscribers();
 ConfigSnapshot current_config_snapshot();
 void set_status_window_enabled(bool enabled);
-void set_status_window_position(int x, int y);
 
 } // namespace cxxime_tsf
 

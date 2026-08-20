@@ -8,7 +8,6 @@
 #include "tsf_log_writer.h"
 
 #include <cxxime/data_path.h>
-#include <cxxime/status_window.h>
 
 // Forward declarations for DllRegisterServer/DllUnregisterServer
 STDAPI DllUnregisterServer();
@@ -22,9 +21,6 @@ BOOL WINAPI DllMain(HINSTANCE hInst, DWORD dwReason, LPVOID) {
         InitializeCriticalSection(&g_cs);
         break;
     case DLL_PROCESS_DETACH:
-        // Destroy all lingering status windows BEFORE other cleanup.
-        cxxime::StatusWindow::cleanup_all();
-
         // Normal teardown joins outside the loader lock when the last service unsubscribes.
         cxxime_tsf::request_tsf_log_writer_stop();
         DeleteCriticalSection(&g_cs);

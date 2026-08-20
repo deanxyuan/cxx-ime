@@ -7,6 +7,7 @@ add_library(cxxime-ui STATIC
     src/layout.cc
     src/theme.cc
     src/status_window.cc
+    src/window_position.cc
 )
 
 target_include_directories(cxxime-ui PUBLIC

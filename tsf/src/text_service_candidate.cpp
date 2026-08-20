@@ -21,25 +21,14 @@ bool has_caret_height(const RECT& rect) {
 } // namespace
 
 void TextService::_show_candidate_window(const char* reason) {
-    if (!_candidatePresentation.should_show_external_window(_composing)) {
-        _update_state_poll_timer();
-        return;
-    }
-    if (!_candidateWindow.is_visible())
-        _enqueue_event_trace("candidate_window", reason);
-    _candidateWindow.show();
+    _enqueue_event_trace("ui_presentation", reason);
+    _publish_ui_presentation();
     _update_state_poll_timer();
 }
 
 void TextService::_hide_external_candidate_window(const char* reason) {
-    const bool visible = _candidateWindow.is_visible();
-    const bool owner_bound =
-        _candidateWindow.is_created() && !_candidateWindow.owner_matches(nullptr);
-    if (visible)
-        _enqueue_event_trace("candidate_window", reason);
-    if (visible || owner_bound) {
-        _candidateWindow.hide();
-    }
+    _enqueue_event_trace("ui_presentation", reason);
+    _publish_ui_presentation();
     _update_state_poll_timer();
 }
 
@@ -49,18 +38,10 @@ void TextService::_hide_candidate_window(const char* reason) {
 }
 
 void TextService::_hide_candidate_projection(const char* reason) {
-    _hide_external_candidate_window(reason);
     if (_candidateUiElement) {
         _candidateUiElement->end(_threadMgr);
     }
-}
-
-void TextService::_sync_candidate_window_snapshot() {
-    _candidateWindow.set_page_info(
-        _candidatePresentation.page_current(), _candidatePresentation.page_total());
-    _candidateWindow.set_preedit(
-        _candidatePresentation.popup_preedit(), _candidatePresentation.popup_preedit_cursor());
-    _candidateWindow.update(_candidatePresentation.page());
+    _hide_external_candidate_window(reason);
 }
 
 void TextService::_sync_candidate_ui_element_snapshot() {
@@ -74,20 +55,6 @@ void TextService::_sync_candidate_ui_element_snapshot() {
     } else {
         _candidateUiElement->clear_page();
     }
-}
-
-HWND TextService::_candidate_owner_window(HWND fallback) const {
-    if (_effectiveEditTarget.valid()) {
-        HWND owner = reinterpret_cast<HWND>(_effectiveEditTarget.owner_window);
-        if (owner && IsWindow(owner)) {
-            return owner;
-        }
-    }
-    if (!fallback || !IsWindow(fallback)) {
-        return nullptr;
-    }
-    HWND root = GetAncestor(fallback, GA_ROOT);
-    return root ? root : fallback;
 }
 
 void TextService::_update_reading_ui_element(ITfContext* context, const std::wstring& reading) {
@@ -147,16 +114,18 @@ TextService::_candidate_page_from_response(const cxxime::IPCResponse& response) 
 }
 
 uint32_t TextService::_candidate_page_step() const {
-    if (_candidateWindow.is_visible()) {
-        int visible_count = _candidateWindow.visible_candidate_count();
-        if (visible_count > 0) {
-            return static_cast<uint32_t>(visible_count);
-        }
+    if (_visibleCandidateGeneration == _candidatePresentation.generation() &&
+        _visibleCandidateCount > 0 &&
+        _visibleCandidateCount <= _candidatePresentation.page().candidates.size()) {
+        return _visibleCandidateCount;
     }
-    if (_candidateUiElement && _candidateUiElement->is_active()) {
-        return static_cast<uint32_t>(_candidatePresentation.page().candidates.size());
+    if (_candidatePresentation.ownership() == cxxime_tsf::CandidateOwnership::kExternal &&
+        !_candidatePresentation.page().candidates.empty()) {
+        // The Server UI has not yet measured the first page. Advance conservatively so a
+        // fast page command cannot skip candidates that have not been presented.
+        return 1;
     }
-    return 0;
+    return static_cast<uint32_t>(_candidatePresentation.page().candidates.size());
 }
 
 bool TextService::_publish_candidate_ui_element() {
@@ -165,6 +134,7 @@ bool TextService::_publish_candidate_ui_element() {
             _candidateUiElement->end(_threadMgr);
         }
         _candidatePresentation.set_ownership(cxxime_tsf::CandidateOwnership::kNone);
+        _publish_ui_presentation();
         return false;
     }
 
@@ -182,9 +152,6 @@ bool TextService::_publish_candidate_ui_element() {
         _candidatePresentation.set_ownership(
             show_external ? cxxime_tsf::CandidateOwnership::kExternal
                           : cxxime_tsf::CandidateOwnership::kHost);
-        if (!show_external) {
-            _hide_external_candidate_window("hide:tsf_ui_integrated");
-        }
         _candidateUiElement->notify_update(_threadMgr);
         show_external = _candidateUiElement->wants_external_window();
         if (!was_active) {
@@ -200,6 +167,7 @@ bool TextService::_publish_candidate_ui_element() {
     _candidatePresentation.set_ownership(
         show_external ? cxxime_tsf::CandidateOwnership::kExternal
                       : cxxime_tsf::CandidateOwnership::kHost);
+    _publish_ui_presentation();
     return show_external;
 }
 
@@ -215,14 +183,9 @@ bool TextService::set_candidate_ui_element_shown(bool show) {
         return false;
     }
 
-    const HWND effective_owner = _candidate_owner_window(nullptr);
     if (_candidatePresentation.waiting_for_caret()) {
-        _candidateWindow.hide();
-        if (!_candidateWindow.ensure_created(effective_owner)) {
-            return false;
-        }
         _candidatePresentation.set_ownership(cxxime_tsf::CandidateOwnership::kExternal);
-        _sync_candidate_window_snapshot();
+        _publish_ui_presentation();
         _update_state_poll_timer();
         return true;
     }
@@ -230,27 +193,16 @@ bool TextService::set_candidate_ui_element_shown(bool show) {
     ITfContext* context = _current_edit_context_for_composition();
     RECT caret_rect = {};
     bool caret_resolved = false;
-    HWND context_window = nullptr;
     if (context) {
-        caret_resolved =
-            _resolve_context_native_caret_rect(context, &caret_rect, &context_window);
+        caret_resolved = _resolve_context_native_caret_rect(context, &caret_rect);
         if (!caret_resolved) {
             caret_rect = _resolve_caret_rect(context);
             caret_resolved = has_caret_height(caret_rect);
         }
     }
-    const HWND owner = _candidate_owner_window(context_window);
-    if (!_candidateWindow.ensure_created(owner)) {
-        if (context) {
-            context->Release();
-        }
-        return false;
-    }
     _candidatePresentation.set_ownership(cxxime_tsf::CandidateOwnership::kExternal);
-    _sync_candidate_window_snapshot();
     if (caret_resolved) {
         _caretRect = caret_rect;
-        _candidateWindow.move_to_caret(caret_rect);
         _candidatePresentation.accept_caret(_candidatePresentation.generation());
         trace_caret_event("show_move", "ui_element_show", true, &caret_rect);
     } else {
@@ -268,7 +220,7 @@ bool TextService::set_candidate_ui_element_shown(bool show) {
 }
 
 bool TextService::is_candidate_ui_element_shown() const {
-    return _candidateWindow.is_visible();
+    return _candidatePresentation.external_window_expected();
 }
 
 void TextService::_prepare_host_candidate_compatibility() {
@@ -353,7 +305,7 @@ bool TextService::navigate_candidate_page_from_ui(bool previous) {
     if (!show_external) {
         return true;
     }
-    _sync_candidate_window_snapshot();
+    _publish_ui_presentation();
 
     return true;
 }

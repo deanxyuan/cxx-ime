@@ -49,6 +49,7 @@ public:
     SIZE window_size() const;
     SIZE layout_size() const;
     UINT dpi() const;
+    bool get_window_rect(RECT* rect) const;
     HWND hwnd_for_test() const { return hwnd_; }
 
 private:

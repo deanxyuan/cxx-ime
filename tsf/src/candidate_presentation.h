@@ -73,9 +73,7 @@ public:
     }
     bool composition_restart_active() const { return composition_restart_active_; }
     bool external_window_expected() const;
-    bool should_bind_owner(bool composing) const;
     bool should_show_external_window(bool composing) const;
-    bool needs_window_repair(bool composing, bool window_visible) const;
 
 private:
     void advance_generation();

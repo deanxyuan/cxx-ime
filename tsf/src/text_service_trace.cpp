@@ -15,6 +15,24 @@ const char* bool_json(bool value) {
     return value ? "true" : "false";
 }
 
+using GetSystemTimePreciseAsFileTimeFn = VOID(WINAPI*)(LPFILETIME);
+
+std::uint64_t precise_system_time_100ns() {
+    static const GetSystemTimePreciseAsFileTimeFn get_precise_time = []() {
+        const HMODULE kernel32 = GetModuleHandleW(L"kernel32.dll");
+        return kernel32 ? reinterpret_cast<GetSystemTimePreciseAsFileTimeFn>(
+                              GetProcAddress(kernel32, "GetSystemTimePreciseAsFileTime"))
+                        : nullptr;
+    }();
+    FILETIME file_time = {};
+    if (get_precise_time) {
+        get_precise_time(&file_time);
+    } else {
+        GetSystemTimeAsFileTime(&file_time);
+    }
+    return (static_cast<std::uint64_t>(file_time.dwHighDateTime) << 32) | file_time.dwLowDateTime;
+}
+
 bool tsf_should_log_event(bool important) {
     cxxime::DiagnosticsConfig config = cxxime::diagnostics_config();
     if (config.trace_mode == cxxime::DiagnosticTraceMode::kOff)
@@ -124,6 +142,30 @@ void TextService::_enqueue_event_trace(const char* event, const char* detail, bo
     cxxime_tsf::enqueue_tsf_log_line(json, length);
 }
 
+void TextService::_enqueue_ui_presentation_trace(const cxxime::UiPresentationSnapshot& snapshot) {
+    const std::uint64_t timestamp_100ns = precise_system_time_100ns();
+    char json[512] = {};
+    const int length = std::snprintf(
+        json, sizeof(json),
+        "{\"event\":\"ui.presentation_publish\",\"timestamp_100ns\":%llu,\"session\":%llu,"
+        "\"session_generation\":%llu,\"target_generation\":%llu,"
+        "\"composition_generation\":%llu,\"candidate_visible\":%s,\"status_visible\":%s}",
+        static_cast<unsigned long long>(timestamp_100ns),
+        static_cast<unsigned long long>(snapshot.session_id),
+        static_cast<unsigned long long>(snapshot.session_generation),
+        static_cast<unsigned long long>(snapshot.target_generation),
+        static_cast<unsigned long long>(snapshot.composition_generation),
+        (snapshot.flags & cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kCandidateVisible)) != 0
+            ? "true"
+            : "false",
+        (snapshot.flags & cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kStatusVisible)) != 0
+            ? "true"
+            : "false");
+    if (length > 0 && length < static_cast<int>(sizeof(json))) {
+        cxxime_tsf::enqueue_tsf_log_line(json, length);
+    }
+}
+
 void TextService::_trace_input_decision(const char* block_reason) {
     if (!block_reason) {
         if (!_lastInputBlockReason.empty()) {
@@ -161,26 +203,24 @@ void TextService::trace_caret_event(const char* action,
                                     const RECT* rect,
                                     HRESULT hr,
                                     bool important) {
-    const SIZE candidate_size = _candidateWindow.layout_size();
-    const UINT candidate_dpi = _candidateWindow.dpi();
     char detail[256] = {};
     if (rect) {
         snprintf(detail, sizeof(detail),
                  "action=%s source=%s resolved=%d rc=%ld,%ld,%ld,%ld hr=0x%08lx "
-                 "composing=%d visible=%d dpi=%u layout_size=%ld,%ld",
+                 "composing=%d external=%d waiting=%d",
                  action ? action : "unknown", source ? source : "unknown",
                  resolved ? 1 : 0, rect->left, rect->top, rect->right, rect->bottom,
                  static_cast<unsigned long>(hr), _composing ? 1 : 0,
-                 _candidateWindow.is_visible() ? 1 : 0, candidate_dpi,
-                 candidate_size.cx, candidate_size.cy);
+                 _candidatePresentation.external_window_expected() ? 1 : 0,
+                 _candidatePresentation.waiting_for_caret() ? 1 : 0);
     } else {
         snprintf(detail, sizeof(detail),
-                 "action=%s source=%s resolved=%d hr=0x%08lx composing=%d visible=%d "
-                 "dpi=%u layout_size=%ld,%ld",
+                 "action=%s source=%s resolved=%d hr=0x%08lx composing=%d external=%d waiting=%d",
                  action ? action : "unknown", source ? source : "unknown",
                  resolved ? 1 : 0, static_cast<unsigned long>(hr),
-                 _composing ? 1 : 0, _candidateWindow.is_visible() ? 1 : 0,
-                 candidate_dpi, candidate_size.cx, candidate_size.cy);
+                 _composing ? 1 : 0,
+                 _candidatePresentation.external_window_expected() ? 1 : 0,
+                 _candidatePresentation.waiting_for_caret() ? 1 : 0);
     }
     _enqueue_event_trace("caret_position", detail, important);
 }

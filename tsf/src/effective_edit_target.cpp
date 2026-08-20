@@ -9,8 +9,7 @@ bool same_effective_edit_target(const EffectiveEditTargetSnapshot& current,
     return current.valid() && next.valid() &&
            current.document_identity == next.document_identity &&
            current.context_identity == next.context_identity &&
-           current.view_window == next.view_window &&
-           current.owner_window == next.owner_window;
+           current.view_window == next.view_window;
 }
 
 EffectiveEditTargetAction

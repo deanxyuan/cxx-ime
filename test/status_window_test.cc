@@ -1,14 +1,45 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
-#include "util/testutil.h"
-#include <cstdio>
-#include <cstring>
-#include <windows.h>
-#include <cxxime/status_window.h>
-#include <cxxime/render_context.h>
+#include <limits>
 
-static bool create_test_window(cxxime::StatusWindow& w) {
-    return w.create(GetDesktopWindow(), cxxime::StatusTheme());
+#include <windows.h>
+
+#include <cxxime/status_window.h>
+#include <cxxime/window_position.h>
+
+#include "util/testutil.h"
+
+static bool create_test_window(cxxime::StatusWindow& window) {
+    const cxxime::StatusTheme theme;
+    return window.create(theme);
+}
+
+static int scale_status_metric(HWND hwnd, int metric) {
+    return static_cast<int>(metric * (GetDpiForWindow(hwnd) / 96.0f) + 0.5f);
+}
+
+static POINT status_button_center(HWND hwnd, int index) {
+    int x = scale_status_metric(hwnd, 6);
+    x += scale_status_metric(hwnd, 28);
+    x += scale_status_metric(hwnd, 4);
+    for (int i = 0; i < index; ++i) {
+        x += scale_status_metric(hwnd, i < 3 ? 28 : 24);
+        x += scale_status_metric(hwnd, 4);
+        if (i == 2) {
+            x += scale_status_metric(hwnd, 2 * 8 + 1);
+        }
+    }
+
+    const int width = scale_status_metric(hwnd, index < 3 ? 28 : 24);
+    const int center_y = scale_status_metric(hwnd, 6) + scale_status_metric(hwnd, 22) / 2;
+    return {x + width / 2, center_y};
+}
+
+static POINT input_mode_center(HWND hwnd) {
+    return {
+        scale_status_metric(hwnd, 6) + scale_status_metric(hwnd, 28) / 2,
+        scale_status_metric(hwnd, 6) + scale_status_metric(hwnd, 22) / 2,
+    };
 }
 
 // ============================================================
@@ -21,6 +52,7 @@ TEST(StatusWindow, CreateAndDestroy) {
 
     ASSERT_TRUE(create_test_window(window));
     ASSERT_TRUE(window.is_created());
+    ASSERT_TRUE(GetWindow(window.hwnd_for_test(), GW_OWNER) == nullptr);
 
     window.destroy();
     ASSERT_TRUE(!window.is_created());
@@ -30,75 +62,21 @@ TEST(StatusWindow, CreateTwice) {
     cxxime::StatusWindow window;
     ASSERT_TRUE(create_test_window(window));
     ASSERT_TRUE(window.is_created());
+    const HWND first_window = window.hwnd_for_test();
 
-    // Second create should return true without crash
+    // Creating an existing window is idempotent.
     ASSERT_TRUE(create_test_window(window));
     ASSERT_TRUE(window.is_created());
+    ASSERT_EQ(window.hwnd_for_test(), first_window);
 
     window.destroy();
-}
-
-TEST(StatusWindow, CreateWithOwnerAndDetachOnHide) {
-    HWND owner = CreateWindowExW(0, L"STATIC", L"", WS_OVERLAPPED, 0, 0, 0, 0, nullptr, nullptr,
-                                 GetModuleHandleW(nullptr), nullptr);
-    ASSERT_TRUE(owner != nullptr);
-
-    cxxime::StatusWindow window;
-    ASSERT_TRUE(window.create(owner, cxxime::StatusTheme()));
-    ASSERT_EQ(GetWindow(window.hwnd_for_test(), GW_OWNER), owner);
-
-    window.hide();
-    ASSERT_TRUE(GetWindow(window.hwnd_for_test(), GW_OWNER) == nullptr);
-
-    window.destroy();
-    DestroyWindow(owner);
 }
 
 TEST(StatusWindow, DestroyWithoutCreate) {
     cxxime::StatusWindow window;
-    // Should not crash
+    // Destroying an uncreated window is idempotent.
     window.destroy();
     ASSERT_TRUE(!window.is_created());
-}
-
-TEST(StatusWindow, EnsureCreatedRecoversDestroyedWindowAndOwner) {
-    HWND owner = CreateWindowExW(0, L"STATIC", L"", WS_OVERLAPPED, 0, 0, 0, 0, nullptr, nullptr,
-                                 GetModuleHandleW(nullptr), nullptr);
-    ASSERT_TRUE(owner != nullptr);
-
-    cxxime::StatusWindow window;
-    ASSERT_TRUE(window.create(nullptr, cxxime::StatusTheme()));
-    ASSERT_TRUE(DestroyWindow(window.hwnd_for_test()) != FALSE);
-    ASSERT_TRUE(!window.is_created());
-
-    ASSERT_TRUE(window.ensure_created(owner));
-    ASSERT_TRUE(window.is_created());
-    ASSERT_TRUE(window.owner_matches(owner));
-
-    window.destroy();
-    DestroyWindow(owner);
-}
-
-TEST(StatusWindow, EnsureCreatedKeepsVisibleWindowShownWhenOwnerChanges) {
-    HWND first_owner = CreateWindowExW(0, L"STATIC", L"", WS_OVERLAPPED, 0, 0, 0, 0, nullptr,
-                                       nullptr, GetModuleHandleW(nullptr), nullptr);
-    HWND second_owner = CreateWindowExW(0, L"STATIC", L"", WS_OVERLAPPED, 0, 0, 0, 0, nullptr,
-                                        nullptr, GetModuleHandleW(nullptr), nullptr);
-    ASSERT_TRUE(first_owner != nullptr);
-    ASSERT_TRUE(second_owner != nullptr);
-
-    cxxime::StatusWindow window;
-    ASSERT_TRUE(window.create(first_owner, cxxime::StatusTheme()));
-    window.show();
-    ASSERT_TRUE(window.is_visible());
-
-    ASSERT_TRUE(window.ensure_created(second_owner));
-    ASSERT_TRUE(window.is_visible());
-    ASSERT_TRUE(window.owner_matches(second_owner));
-
-    window.destroy();
-    DestroyWindow(second_owner);
-    DestroyWindow(first_owner);
 }
 
 // ============================================================
@@ -120,133 +98,51 @@ TEST(StatusWindow, ShowHide) {
 
 TEST(StatusWindow, ShowWithoutCreate) {
     cxxime::StatusWindow window;
-    // Should be no-op, no crash
+    // Showing and hiding an uncreated window are no-ops.
     window.show();
     window.hide();
     ASSERT_TRUE(!window.is_created());
 }
 
 // ============================================================
-// State
-// ============================================================
-
-TEST(StatusWindow, UpdateState) {
-    cxxime::StatusWindow window;
-    ASSERT_TRUE(create_test_window(window));
-
-    cxxime::ButtonState state;
-    state.chinese_mode = false;
-    state.full_shape = true;
-    state.chinese_punct = false;
-
-    // Should not crash
-    window.update_state(state);
-
-    window.destroy();
-}
-
-TEST(StatusWindow, UpdateStateCapsLock) {
-    cxxime::StatusWindow window;
-    ASSERT_TRUE(create_test_window(window));
-
-    cxxime::ButtonState state;
-    state.chinese_mode = true;
-    state.caps_lock = true;
-    state.full_shape = false;
-    state.chinese_punct = true;
-
-    // CapsLock display is derived during redraw; this should not crash.
-    window.update_state(state);
-
-    window.destroy();
-}
-
-TEST(StatusWindow, UpdateInputMode) {
-    cxxime::StatusWindow window;
-    ASSERT_TRUE(create_test_window(window));
-
-    cxxime::ButtonState state;
-    state.input_mode = cxxime::InputMode::PINYIN;
-    window.update_state(state);
-    state.input_mode = cxxime::InputMode::WUBI;
-    window.update_state(state);
-    state.input_mode = cxxime::InputMode::MIXED;
-    window.update_state(state);
-
-    window.destroy();
-}
-
-TEST(StatusWindow, SetEnabled) {
-    cxxime::StatusWindow window;
-    ASSERT_TRUE(create_test_window(window));
-
-    window.set_enabled(false);
-    window.set_enabled(true);
-
-    window.destroy();
-}
-
-// ============================================================
 // Position
 // ============================================================
 
-TEST(StatusWindow, PositionMemory) {
-    cxxime::StatusWindow window;
-    ASSERT_TRUE(create_test_window(window));
+TEST(StatusWindow, ClampPositionToWorkArea) {
+    const RECT work_area = {-1600, 120, 1600, 1080};
 
-    window.set_position(200, 300);
-    int x = 0, y = 0;
-    window.get_position(x, y);
-    ASSERT_EQ(x, 200);
-    ASSERT_EQ(y, 300);
+    POINT position = cxxime::clamp_window_position_to_work_area(-1000, 300, 200, 100, work_area);
+    ASSERT_EQ(position.x, -1000);
+    ASSERT_EQ(position.y, 300);
 
-    window.set_position(50, 100);
-    window.get_position(x, y);
-    ASSERT_EQ(x, 50);
-    ASSERT_EQ(y, 100);
+    position = cxxime::clamp_window_position_to_work_area(-2000, 0, 200, 100, work_area);
+    ASSERT_EQ(position.x, -1600);
+    ASSERT_EQ(position.y, 120);
 
-    window.destroy();
-}
+    position = cxxime::clamp_window_position_to_work_area(1500, 1000, 200, 100, work_area);
+    ASSERT_EQ(position.x, 1400);
+    ASSERT_EQ(position.y, 980);
 
-TEST(StatusWindow, PositionWithoutCreate) {
-    cxxime::StatusWindow window;
-    int x = -1, y = -1;
-    window.get_position(x, y);
-    ASSERT_EQ(x, 0);
-    ASSERT_EQ(y, 0);
-}
+    position = cxxime::clamp_window_position_to_work_area(300, 500, 4000, 100, work_area);
+    ASSERT_EQ(position.x, -1600);
+    ASSERT_EQ(position.y, 500);
 
-TEST(StatusWindow, PositionStaysInsideMonitorWorkArea) {
-    cxxime::StatusWindow window;
-    ASSERT_TRUE(create_test_window(window));
+    position = cxxime::clamp_window_position_to_work_area(-800, 500, 200, 2000, work_area);
+    ASSERT_EQ(position.x, -800);
+    ASSERT_EQ(position.y, 120);
 
-    window.set_position(1000000, 1000000);
+    position = cxxime::clamp_window_position_to_work_area(-500, 200, 4000, 1000, work_area);
+    ASSERT_EQ(position.x, -1600);
+    ASSERT_EQ(position.y, 120);
 
-    RECT window_rect = {};
-    ASSERT_TRUE(GetWindowRect(window.hwnd_for_test(), &window_rect));
-    HMONITOR monitor = MonitorFromRect(&window_rect, MONITOR_DEFAULTTONEAREST);
-    MONITORINFO monitor_info = {};
-    monitor_info.cbSize = sizeof(monitor_info);
-    ASSERT_TRUE(GetMonitorInfoW(monitor, &monitor_info));
-    ASSERT_TRUE(window_rect.left >= monitor_info.rcWork.left);
-    ASSERT_TRUE(window_rect.top >= monitor_info.rcWork.top);
-    ASSERT_TRUE(window_rect.right <= monitor_info.rcWork.right);
-    ASSERT_TRUE(window_rect.bottom <= monitor_info.rcWork.bottom);
+    position = cxxime::clamp_window_position_to_work_area(
+        std::numeric_limits<int>::max(), std::numeric_limits<int>::min(), 200, 100, work_area);
+    ASSERT_EQ(position.x, 1400);
+    ASSERT_EQ(position.y, 120);
 
-    SetWindowPos(window.hwnd_for_test(), nullptr, 1000000, 1000000, 0, 0,
-                 SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
-    SendMessageW(window.hwnd_for_test(), WM_DISPLAYCHANGE, 0, 0);
-    ASSERT_TRUE(GetWindowRect(window.hwnd_for_test(), &window_rect));
-    monitor = MonitorFromRect(&window_rect, MONITOR_DEFAULTTONEAREST);
-    monitor_info = {};
-    monitor_info.cbSize = sizeof(monitor_info);
-    ASSERT_TRUE(GetMonitorInfoW(monitor, &monitor_info));
-    ASSERT_TRUE(window_rect.left >= monitor_info.rcWork.left);
-    ASSERT_TRUE(window_rect.top >= monitor_info.rcWork.top);
-    ASSERT_TRUE(window_rect.right <= monitor_info.rcWork.right);
-    ASSERT_TRUE(window_rect.bottom <= monitor_info.rcWork.bottom);
-
-    window.destroy();
+    position = cxxime::clamp_window_position_to_work_area(1601, 1081, -1, -1, work_area);
+    ASSERT_EQ(position.x, 1600);
+    ASSERT_EQ(position.y, 1080);
 }
 
 // ============================================================
@@ -266,9 +162,9 @@ TEST(StatusWindow, ClickCallback) {
 
     window.show();
 
-    // Button 0 (中/EN) is at x=38, y=6, w=28, h=22 → center at (52, 17)
-    SendMessageW(window.hwnd_for_test(), WM_LBUTTONDOWN, 0, MAKELPARAM(52, 17));
-    SendMessageW(window.hwnd_for_test(), WM_LBUTTONUP, 0, MAKELPARAM(52, 17));
+    const POINT point = status_button_center(window.hwnd_for_test(), 0);
+    SendMessageW(window.hwnd_for_test(), WM_LBUTTONDOWN, 0, MAKELPARAM(point.x, point.y));
+    SendMessageW(window.hwnd_for_test(), WM_LBUTTONUP, 0, MAKELPARAM(point.x, point.y));
 
     ASSERT_EQ(click_count, 1);
     ASSERT_TRUE(last_button == cxxime::StatusButton::CHINESE_MODE);
@@ -285,9 +181,9 @@ TEST(StatusWindow, ClickWhenDisabled) {
 
     window.set_enabled(false);
 
-    // Button 0 center at (52, 17)
-    SendMessageW(window.hwnd_for_test(), WM_LBUTTONDOWN, 0, MAKELPARAM(52, 17));
-    SendMessageW(window.hwnd_for_test(), WM_LBUTTONUP, 0, MAKELPARAM(52, 17));
+    const POINT point = status_button_center(window.hwnd_for_test(), 0);
+    SendMessageW(window.hwnd_for_test(), WM_LBUTTONDOWN, 0, MAKELPARAM(point.x, point.y));
+    SendMessageW(window.hwnd_for_test(), WM_LBUTTONUP, 0, MAKELPARAM(point.x, point.y));
 
     ASSERT_EQ(click_count, 0);
 
@@ -303,10 +199,12 @@ TEST(StatusWindow, DragVsClick) {
     window.set_click_callback([&](cxxime::StatusButton) { click_count++; });
     window.set_position_callback([&](int, int) { drag_count++; });
 
-    // Simulate drag: press, move well past threshold (4px), release
-    SendMessageW(window.hwnd_for_test(), WM_LBUTTONDOWN, 0, MAKELPARAM(52, 17));
-    SendMessageW(window.hwnd_for_test(), WM_MOUSEMOVE, 0, MAKELPARAM(152, 17));
-    SendMessageW(window.hwnd_for_test(), WM_LBUTTONUP, 0, MAKELPARAM(152, 17));
+    // Simulate drag: move well past the DPI-scaled threshold before release.
+    const POINT point = status_button_center(window.hwnd_for_test(), 0);
+    const int drag_x = point.x + scale_status_metric(window.hwnd_for_test(), 100);
+    SendMessageW(window.hwnd_for_test(), WM_LBUTTONDOWN, 0, MAKELPARAM(point.x, point.y));
+    SendMessageW(window.hwnd_for_test(), WM_MOUSEMOVE, 0, MAKELPARAM(drag_x, point.y));
+    SendMessageW(window.hwnd_for_test(), WM_LBUTTONUP, 0, MAKELPARAM(drag_x, point.y));
 
     ASSERT_EQ(click_count, 0);
     ASSERT_EQ(drag_count, 1);
@@ -314,30 +212,8 @@ TEST(StatusWindow, DragVsClick) {
     window.destroy();
 }
 
-TEST(StatusWindow, PositionCallback) {
-    cxxime::StatusWindow window;
-    ASSERT_TRUE(create_test_window(window));
-
-    int pos_x = -1, pos_y = -1;
-    window.set_position_callback([&](int x, int y) {
-        pos_x = x;
-        pos_y = y;
-    });
-
-    window.destroy();
-}
-
-TEST(StatusWindow, MenuCommandCallback) {
-    cxxime::StatusWindow window;
-    ASSERT_TRUE(create_test_window(window));
-
-    window.set_menu_command_callback([](cxxime::ImeMenuCommand) {});
-
-    window.destroy();
-}
-
 // ============================================================
-// Input mode and separator — non-interactive
+// Input mode is non-interactive
 // ============================================================
 
 TEST(StatusWindow, InputModeClickIgnored) {
@@ -349,9 +225,9 @@ TEST(StatusWindow, InputModeClickIgnored) {
 
     window.show();
 
-    // Input mode area: x=6, y=6, w=28, h=22 → center at (20, 17)
-    SendMessageW(window.hwnd_for_test(), WM_LBUTTONDOWN, 0, MAKELPARAM(20, 17));
-    SendMessageW(window.hwnd_for_test(), WM_LBUTTONUP, 0, MAKELPARAM(20, 17));
+    const POINT point = input_mode_center(window.hwnd_for_test());
+    SendMessageW(window.hwnd_for_test(), WM_LBUTTONDOWN, 0, MAKELPARAM(point.x, point.y));
+    SendMessageW(window.hwnd_for_test(), WM_LBUTTONUP, 0, MAKELPARAM(point.x, point.y));
 
     ASSERT_EQ(click_count, 0);
 
@@ -359,7 +235,7 @@ TEST(StatusWindow, InputModeClickIgnored) {
 }
 
 // ============================================================
-// Settings button click (index 3, was 4)
+// Settings button
 // ============================================================
 
 TEST(StatusWindow, SettingsClick) {
@@ -373,10 +249,9 @@ TEST(StatusWindow, SettingsClick) {
 
     window.show();
 
-    // Settings button (index 3): x after 3 func buttons + separator = ~144
-    // x = 6+28+4+84+8+16+1+8 = 155, center at 155+12=167, y=17
-    SendMessageW(window.hwnd_for_test(), WM_LBUTTONDOWN, 0, MAKELPARAM(167, 17));
-    SendMessageW(window.hwnd_for_test(), WM_LBUTTONUP, 0, MAKELPARAM(167, 17));
+    const POINT point = status_button_center(window.hwnd_for_test(), 3);
+    SendMessageW(window.hwnd_for_test(), WM_LBUTTONDOWN, 0, MAKELPARAM(point.x, point.y));
+    SendMessageW(window.hwnd_for_test(), WM_LBUTTONUP, 0, MAKELPARAM(point.x, point.y));
 
     ASSERT_TRUE(last_button == cxxime::StatusButton::SETTINGS);
 

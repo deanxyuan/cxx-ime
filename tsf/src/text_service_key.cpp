@@ -11,7 +11,6 @@
 
 #include <cxxime/diagnostics_config.h>
 #include <cxxime/logging.h>
-#include <cxxime/render_context.h>
 
 #include "edit_session.h"
 #include "globals.h"
@@ -203,11 +202,8 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
     bool edit_target_validated = false;
     const bool starts_new_composition =
         !_composing && !status_key && _chinese_mode && can_start_text_input(wParam, modifiers);
-    const bool external_candidate_missing =
-        _candidatePresentation.needs_window_repair(_composing, _candidateWindow.is_visible());
     const bool should_validate_edit_target =
-        !_inputFocused || !_effectiveEditTarget.valid() || starts_new_composition ||
-        external_candidate_missing;
+        !_inputFocused || !_effectiveEditTarget.valid() || starts_new_composition;
     if (!block_reason && trace_composition_id() == 0 && should_validate_edit_target) {
         no_edit_target = _context_has_no_edit_target(pic);
         if (no_edit_target) {
@@ -301,7 +297,6 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
     // If IPC failed, reconnect and create a fresh server session.
     if (!ok) {
         _client.disconnect();
-        _sessionId = 0;
         _ipcHealthy = false;
         if (_recreate_ipc_session_preserving_status()) {
             CXXIME_LOG(L"Reconnected, new sessionId=%u", _sessionId);
@@ -357,7 +352,7 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
             // composition exposes its caret.
             _candidatePresentation.begin_composition_restart(
                 cxxime_tsf::CandidatePresentation::Clock::now());
-            _candidateWindow.ensure_created(_candidate_owner_window(nullptr));
+            _publish_ui_presentation();
         } else {
             _hide_candidate_window("hide:commit");
             _end_reading_ui_element("hide:commit_reading");
@@ -472,18 +467,13 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
                 external_candidate_window = _publish_candidate_ui_element();
             }
             if (external_candidate_window) {
-                const bool candidate_was_visible = _candidateWindow.is_visible();
                 // Query the current caret before falling back to the cached rectangle. The cache may
                 // still point to the previous composition after a commit/new preedit boundary.
                 RECT caretRect = {};
                 bool caretResolved = false;
                 RECT trustedNativeRect = {};
-                HWND contextWindow = nullptr;
                 bool hasTrustedNativeCaret =
-                    _resolve_context_native_caret_rect(pic, &trustedNativeRect, &contextWindow);
-                const HWND candidate_owner = _candidate_owner_window(contextWindow);
-                _candidateWindow.ensure_created(candidate_owner);
-                _sync_candidate_window_snapshot();
+                    _resolve_context_native_caret_rect(pic, &trustedNativeRect);
                 EditSession* pCaretSession = new (std::nothrow) EditSession(this, pic);
                 if (pCaretSession) {
                     pCaretSession->set_action(EditSession::Action::QUERY_CARET);
@@ -519,7 +509,7 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
                 // Both TSF and HWND caret geometry can lag after a synchronous commit. Defer the
                 // continuation popup until the queued composition edit exposes its new position.
                 bool defer_show = commit_continues_composition ||
-                                  (!candidate_was_visible && !hasTrustedNativeCaret);
+                                  (!caretResolved && !hasTrustedNativeCaret);
                 if (defer_show) {
                     const RECT* stale_rect = cxxime_tsf::is_valid_caret_rect(caretRect)
                         ? &caretRect
@@ -527,10 +517,11 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
                     _candidatePresentation.begin_waiting_for_caret(
                         commit_continues_composition, stale_rect,
                         cxxime_tsf::CandidatePresentation::Clock::now());
+                    _publish_ui_presentation();
                     _update_state_poll_timer();
                     _request_candidate_position_update(pic, "show:preedit_layout_follow");
                 } else {
-                    _candidateWindow.move_to_caret(caretRect);
+                    _caretRect = caretRect;
                     _candidatePresentation.accept_caret(_candidatePresentation.generation());
                     trace_caret_event("show_move", "initial", true, &caretRect);
                     _show_candidate_window("show:preedit");

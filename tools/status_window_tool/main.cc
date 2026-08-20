@@ -175,7 +175,7 @@ int main() {
         nullptr, nullptr, GetModuleHandle(nullptr), nullptr);
 
     // Create status window
-    g_window.create(nullptr, g_theme);
+    g_window.create(g_theme);
     g_window.set_click_callback(on_button_click);
 
     // Initial display

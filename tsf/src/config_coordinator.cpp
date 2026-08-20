@@ -165,14 +165,4 @@ void set_status_window_enabled(bool enabled) {
     }
 }
 
-void set_status_window_position(int x, int y) {
-    nlohmann::json patch;
-    patch["status_window"]["x"] = x;
-    patch["status_window"]["y"] = y;
-    std::lock_guard<std::mutex> lock(g_coordinator_mutex);
-    if (g_coordinator) {
-        g_coordinator->patch(patch.dump());
-    }
-}
-
 } // namespace cxxime_tsf

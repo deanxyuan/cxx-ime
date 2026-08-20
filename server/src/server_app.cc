@@ -132,6 +132,7 @@ bool ServerApp::initialize(const std::string& dict_path, const std::string& conf
             [this, config_window](const std::shared_ptr<const cxxime::Config>& config) {
                 SendMessageW(config_window, kCommitConfigMessage, 0, 0);
                 session_mgr_.apply_config(config);
+                ui_presentation_controller_.update_config(config);
                 control_server_.publish_snapshot(config->to_runtime_json());
             },
             [config_window](const std::shared_ptr<const cxxime::Config>& config,
@@ -178,6 +179,28 @@ bool ServerApp::initialize(const std::string& dict_path, const std::string& conf
         return false;
     }
 
+    const bool ui_controller_started = ui_presentation_controller_.start(
+        initial_config,
+        [this](cxxime::UiEndpointId endpoint, const cxxime::UiCommand& command) {
+            ui_presentation_router_.send_command(endpoint, command);
+        },
+        [this](int x, int y) {
+            const std::string patch =
+                "{\"status_window\":{\"x\":" + std::to_string(x) +
+                ",\"y\":" + std::to_string(y) + "}}";
+            config_writer_.enqueue_patch(patch);
+        });
+    if (!ui_controller_started) {
+        CXXIME_LOG(L"%s", L"ui_presentation event=start_controller result=degraded");
+    } else if (!ui_presentation_router_.start(
+                   [this](cxxime::UiEndpointId endpoint,
+                          const cxxime::UiPresentationSnapshot* snapshot) {
+                       ui_presentation_controller_.present(endpoint, snapshot);
+                   })) {
+        CXXIME_LOG(L"%s", L"ui_presentation event=start_channel result=degraded");
+        ui_presentation_controller_.stop();
+    }
+
     std::string manifest_path = cxxime::dictionary_manifest_path_for_dict(resolved_dict);
     if (!dictionary_monitor_.start({manifest_path}, [this]() {
             return session_mgr_.reload_dictionaries() == cxxime::IPCStatus::OK;
@@ -218,6 +241,8 @@ void ServerApp::prepare_user_data_shutdown() {
 void ServerApp::finalize() {
     diagnostic_log_maintenance_.stop();
     dictionary_monitor_.stop();
+    ui_presentation_router_.stop();
+    ui_presentation_controller_.stop();
     ipc_server_.stop();
     control_server_.stop();
     prepare_user_data_shutdown();

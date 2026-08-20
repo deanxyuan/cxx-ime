@@ -7,12 +7,11 @@
 namespace {
 
 cxxime_tsf::EffectiveEditTargetSnapshot target(std::uintptr_t document, std::uintptr_t context,
-                                               std::uintptr_t view, std::uintptr_t owner) {
+                                               std::uintptr_t view) {
     cxxime_tsf::EffectiveEditTargetSnapshot snapshot;
     snapshot.document_identity = document;
     snapshot.context_identity = context;
     snapshot.view_window = view;
-    snapshot.owner_window = owner;
     snapshot.editable = true;
     return snapshot;
 }
@@ -20,7 +19,7 @@ cxxime_tsf::EffectiveEditTargetSnapshot target(std::uintptr_t document, std::uin
 } // namespace
 
 TEST(EffectiveEditTarget, unchanged_when_target_and_bindings_match) {
-    const auto current = target(1, 2, 3, 4);
+    const auto current = target(1, 2, 3);
     const cxxime_tsf::EffectiveEditTargetBindings bindings;
 
     ASSERT_EQ(cxxime_tsf::classify_effective_edit_target_change(current, current, bindings),
@@ -28,25 +27,22 @@ TEST(EffectiveEditTarget, unchanged_when_target_and_bindings_match) {
 }
 
 TEST(EffectiveEditTarget, rebinds_when_any_target_identity_changes) {
-    const auto current = target(1, 2, 3, 4);
+    const auto current = target(1, 2, 3);
     const cxxime_tsf::EffectiveEditTargetBindings bindings;
 
     ASSERT_EQ(
-        cxxime_tsf::classify_effective_edit_target_change(current, target(5, 2, 3, 4), bindings),
+        cxxime_tsf::classify_effective_edit_target_change(current, target(5, 2, 3), bindings),
         cxxime_tsf::EffectiveEditTargetAction::kRebind);
     ASSERT_EQ(
-        cxxime_tsf::classify_effective_edit_target_change(current, target(1, 5, 3, 4), bindings),
+        cxxime_tsf::classify_effective_edit_target_change(current, target(1, 5, 3), bindings),
         cxxime_tsf::EffectiveEditTargetAction::kRebind);
     ASSERT_EQ(
-        cxxime_tsf::classify_effective_edit_target_change(current, target(1, 2, 5, 4), bindings),
-        cxxime_tsf::EffectiveEditTargetAction::kRebind);
-    ASSERT_EQ(
-        cxxime_tsf::classify_effective_edit_target_change(current, target(1, 2, 3, 5), bindings),
+        cxxime_tsf::classify_effective_edit_target_change(current, target(1, 2, 5), bindings),
         cxxime_tsf::EffectiveEditTargetAction::kRebind);
 }
 
 TEST(EffectiveEditTarget, repairs_matching_target_with_stale_bindings) {
-    const auto current = target(1, 2, 3, 4);
+    const auto current = target(1, 2, 3);
     cxxime_tsf::EffectiveEditTargetBindings bindings;
     bindings.candidate_document_matches = false;
 
@@ -54,11 +50,6 @@ TEST(EffectiveEditTarget, repairs_matching_target_with_stale_bindings) {
               cxxime_tsf::EffectiveEditTargetAction::kRepairUi);
 
     bindings.candidate_document_matches = true;
-    bindings.status_window_valid = false;
-    ASSERT_EQ(cxxime_tsf::classify_effective_edit_target_change(current, current, bindings),
-              cxxime_tsf::EffectiveEditTargetAction::kRepairUi);
-
-    bindings.status_window_valid = true;
     bindings.input_state_matches = false;
     ASSERT_EQ(cxxime_tsf::classify_effective_edit_target_change(current, current, bindings),
               cxxime_tsf::EffectiveEditTargetAction::kRepairUi);
@@ -69,18 +60,13 @@ TEST(EffectiveEditTarget, repairs_matching_target_with_stale_bindings) {
               cxxime_tsf::EffectiveEditTargetAction::kRepairUi);
 
     bindings.target_resources_match = true;
-    bindings.status_visibility_matches = false;
-    ASSERT_EQ(cxxime_tsf::classify_effective_edit_target_change(current, current, bindings),
-              cxxime_tsf::EffectiveEditTargetAction::kRepairUi);
-
-    bindings.status_visibility_matches = true;
-    bindings.candidate_visibility_matches = false;
+    bindings.layout_sink_matches = false;
     ASSERT_EQ(cxxime_tsf::classify_effective_edit_target_change(current, current, bindings),
               cxxime_tsf::EffectiveEditTargetAction::kRepairUi);
 }
 
 TEST(EffectiveEditTarget, clears_bound_target_when_input_is_unavailable) {
-    const auto current = target(1, 2, 3, 4);
+    const auto current = target(1, 2, 3);
     cxxime_tsf::EffectiveEditTargetSnapshot unavailable;
     cxxime_tsf::EffectiveEditTargetBindings bindings;
 

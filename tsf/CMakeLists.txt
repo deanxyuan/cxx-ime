@@ -47,6 +47,7 @@ add_library(cxxime-tsf SHARED
     src/text_service_config.cpp
     src/text_service_activation.cpp
     src/text_service_trace.cpp
+    src/ui_presentation_bridge.cpp
     src/tsf_log_writer.cpp
     src/key_event_sink.cpp
     src/edit_session.cpp
@@ -57,7 +58,6 @@ add_library(cxxime-tsf SHARED
     src/resource_loader.cc
     src/settings_launcher.cc
     src/language_bar.cpp
-    src/status_controller.cc
     src/host_compatibility/host_classification_compatibility.cc
     src/host_compatibility/host_classification_runtime.cc
     src/host_compatibility/host_ime_private_api.cc
@@ -75,7 +75,6 @@ target_include_directories(cxxime-tsf PRIVATE
 target_link_libraries(cxxime-tsf PRIVATE
     cxxime-shared
     cxxime-ipc
-    cxxime-ui
     cxxime-engine
     ole32
     oleaut32

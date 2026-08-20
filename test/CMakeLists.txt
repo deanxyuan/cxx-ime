@@ -72,6 +72,14 @@ endif()
 add_cxxime_test(mpscq_test)
 add_cxxime_test(control_channel_test)
 add_cxxime_test(control_lifecycle_test)
+add_cxxime_test(ui_channel_test)
+add_cxxime_test(ui_presentation_router_test)
+target_sources(ui_presentation_router_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/server/src/ui_presentation_router.cc
+)
+target_include_directories(ui_presentation_router_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/server/src
+)
 
 add_executable(config_write_coordinator_test
     config_write_coordinator_test.cc

@@ -8,6 +8,10 @@
 
 namespace cxxime {
 
+// Queues a preformatted JSON object for server-trace.jsonl. The caller owns
+// sampling and must keep the line free of a trailing newline.
+void enqueue_server_trace_json(const char* json, int length);
+
 // Lightweight trace structure for query observability.
 // All fields are POD types - no heap allocation, can be memcpy'd.
 // Use QueryPerformanceCounter for timing (convert to microseconds).

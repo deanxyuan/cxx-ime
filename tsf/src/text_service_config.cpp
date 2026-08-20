@@ -72,7 +72,6 @@ void TextService::_apply_config_snapshot() {
         return;
     }
 
-    bool status_was_enabled = _config.status_window.enable;
     _configGeneration = snapshot.generation;
     _config = *snapshot.config;
 
@@ -80,18 +79,11 @@ void TextService::_apply_config_snapshot() {
         return;
     }
 
-    _candidateWindow.set_config(_config);
-    _candidateWindow.set_layout(_config.layout);
-    _statusController.update_config(_config);
     if (_modeButton) {
         _modeButton->set_status_visible(_config.status_window.enable);
     }
 
-    if (!_config.status_window.enable) {
-        _hide_status_window("hide:config_disabled");
-    } else if (!status_was_enabled && _inputFocused) {
-        _show_status_window_if_allowed("show:config_enabled");
-    }
+    _publish_ui_presentation();
 }
 
 LRESULT CALLBACK TextService::_config_window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
@@ -105,6 +97,10 @@ LRESULT CALLBACK TextService::_config_window_proc(HWND hwnd, UINT msg, WPARAM wp
     if (msg == cxxime_tsf::WM_CXXIME_CONFIG_CHANGED && service &&
         wp == static_cast<WPARAM>(service->_configSubscriptionId)) {
         service->_apply_config_snapshot();
+        return 0;
+    }
+    if (msg == cxxime_tsf::WM_CXXIME_UI_COMMAND && service) {
+        service->_drain_ui_commands();
         return 0;
     }
     return DefWindowProcW(hwnd, msg, wp, lp);

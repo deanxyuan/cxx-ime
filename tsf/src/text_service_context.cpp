@@ -5,110 +5,14 @@
 #include "edit_target.h"
 #include "tsf_trace.h"
 
-namespace cxxime_tsf {
-
-bool foreground_is_fullscreen() {
-    HWND foreground = GetForegroundWindow();
-    if (!foreground || IsIconic(foreground) || !IsWindowVisible(foreground))
-        return false;
-
-    RECT client_rect = {};
-    if (!GetClientRect(foreground, &client_rect) ||
-        client_rect.right <= client_rect.left ||
-        client_rect.bottom <= client_rect.top) {
-        return false;
-    }
-
-    POINT client_top_left = { client_rect.left, client_rect.top };
-    POINT client_bottom_right = { client_rect.right, client_rect.bottom };
-    if (!ClientToScreen(foreground, &client_top_left) ||
-        !ClientToScreen(foreground, &client_bottom_right)) {
-        return false;
-    }
-
-    RECT screen_client_rect = {
-        client_top_left.x,
-        client_top_left.y,
-        client_bottom_right.x,
-        client_bottom_right.y,
-    };
-
-    HMONITOR monitor = MonitorFromWindow(foreground, MONITOR_DEFAULTTONULL);
-    if (!monitor)
-        return false;
-
-    MONITORINFO monitor_info = { sizeof(monitor_info) };
-    if (!GetMonitorInfoW(monitor, &monitor_info))
-        return false;
-
-    constexpr LONG tolerance = 2;
-    const RECT& screen = monitor_info.rcMonitor;
-    return screen_client_rect.left <= screen.left + tolerance &&
-           screen_client_rect.top <= screen.top + tolerance &&
-           screen_client_rect.right >= screen.right - tolerance &&
-           screen_client_rect.bottom >= screen.bottom - tolerance;
-}
-
-}  // namespace cxxime_tsf
-
-HWND TextService::_focused_context_view_window() const {
-    if (!_threadMgr) {
-        return nullptr;
-    }
-
-    ITfDocumentMgr* document_mgr = nullptr;
-    if (FAILED(_threadMgr->GetFocus(&document_mgr)) || !document_mgr) {
-        return nullptr;
-    }
-
-    ITfContext* context = nullptr;
-    HRESULT hr = document_mgr->GetTop(&context);
-    document_mgr->Release();
-    if (FAILED(hr) || !context) {
-        return nullptr;
-    }
-
-    ITfContextView* view = nullptr;
-    hr = context->GetActiveView(&view);
-    context->Release();
-    if (FAILED(hr) || !view) {
-        return nullptr;
-    }
-
-    HWND window = nullptr;
-    hr = view->GetWnd(&window);
-    view->Release();
-    return SUCCEEDED(hr) ? window : nullptr;
-}
-
 void TextService::_show_status_window_if_allowed(const char* reason) {
-    if (!_has_synced_ime_status()) {
-        return;
-    }
-    if (_activated &&
-        _inputFocused &&
-        _config.status_window.enable) {
-        if (cxxime_tsf::foreground_is_fullscreen()) {
-            _hide_status_window("hide:fullscreen_foreground");
-            return;
-        }
-        HWND owner = _effectiveEditTarget.valid()
-                         ? reinterpret_cast<HWND>(_effectiveEditTarget.owner_window)
-                         : _focused_context_view_window();
-        if (!_statusController.ensure_window(owner))
-            return;
-        if (!_statusController.is_visible())
-            _enqueue_event_trace("status_window", reason);
-        _statusController.show();
-    }
+    _enqueue_event_trace("ui_presentation", reason);
+    _publish_ui_presentation();
 }
 
 void TextService::_hide_status_window(const char* reason) {
-    if (!_statusController.is_initialized())
-        return;
-    if (_statusController.is_visible())
-        _enqueue_event_trace("status_window", reason);
-    _statusController.hide();
+    _enqueue_event_trace("ui_presentation", reason);
+    _publish_ui_presentation();
 }
 
 bool TextService::_context_belongs_to_foreground(ITfContext* context) const {

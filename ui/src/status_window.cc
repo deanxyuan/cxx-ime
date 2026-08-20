@@ -1,6 +1,7 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
 #include <cxxime/status_window.h>
+
 #include <commctrl.h>
 #include <d2d1.h>
 #include <dwrite.h>
@@ -20,6 +21,8 @@ using std::min;
 }
 
 #include <gdiplus.h>
+
+#include <cxxime/window_position.h>
 
 #include "dpi_awareness.h"
 
@@ -112,17 +115,7 @@ static POINT clamp_to_monitor_work_area(int x, int y, int width, int height) {
         return {x, y};
     }
 
-    const RECT& work_area = monitor_info.rcWork;
-    const int work_left = static_cast<int>(work_area.left);
-    const int work_top = static_cast<int>(work_area.top);
-    const int work_right = static_cast<int>(work_area.right);
-    const int work_bottom = static_cast<int>(work_area.bottom);
-    const int max_x = std::max(work_left, work_right - width);
-    const int max_y = std::max(work_top, work_bottom - height);
-    return {
-        std::max(work_left, std::min(x, max_x)),
-        std::max(work_top, std::min(y, max_y)),
-    };
+    return clamp_window_position_to_work_area(x, y, width, height, monitor_info.rcWork);
 }
 
 // ============================================================
@@ -134,7 +127,7 @@ StatusWindow::~StatusWindow() {
     destroy();
 }
 
-bool StatusWindow::create(HWND owner, const StatusTheme& theme) {
+bool StatusWindow::create(const StatusTheme& theme) {
     if (hwnd_ && IsWindow(hwnd_)) return true;
     if (hwnd_ || gdiplus_initialized_) destroy();
 
@@ -168,7 +161,7 @@ bool StatusWindow::create(HWND owner, const StatusTheme& theme) {
         L"CxxIME Status",
         WS_POPUP,
         x, y, win_w_, win_h_,
-        owner, nullptr, GetModuleHandle(nullptr), this
+        nullptr, nullptr, GetModuleHandle(nullptr), this
     );
 
     if (!hwnd_) return false;
@@ -194,28 +187,6 @@ bool StatusWindow::create(HWND owner, const StatusTheme& theme) {
     InitTooltip();
 
     return true;
-}
-
-bool StatusWindow::ensure_created(HWND owner) {
-    if (!is_created()) {
-        StatusTheme theme = theme_;
-        if (hwnd_ || gdiplus_initialized_) {
-            destroy();
-        }
-        if (!create(owner, theme)) {
-            return false;
-        }
-    }
-    const bool was_visible = is_visible();
-    set_owner(owner);
-    if (!owner_matches(owner) && was_visible) {
-        hide();
-        set_owner(owner);
-        if (owner_matches(owner)) {
-            show();
-        }
-    }
-    return is_created() && owner_matches(owner);
 }
 
 void StatusWindow::destroy() {
@@ -259,50 +230,18 @@ void StatusWindow::show() {
 
 void StatusWindow::hide() {
     if (hwnd_ && IsWindow(hwnd_)) ShowWindow(hwnd_, SW_HIDE);
-    set_owner(nullptr);
 }
 
 bool StatusWindow::is_visible() const {
     return hwnd_ && IsWindow(hwnd_) && IsWindowVisible(hwnd_);
 }
 
-void StatusWindow::set_owner(HWND owner) {
-    if (!hwnd_ || (owner && !IsWindow(owner))) {
-        return;
-    }
-
-    HWND actual_owner = GetWindow(hwnd_, GW_OWNER);
-    HWND root_owner = owner ? GetAncestor(owner, GA_ROOT) : nullptr;
-    if (actual_owner == owner || (root_owner && actual_owner == root_owner)) {
-        return;
-    }
-
-    SetWindowLongPtrW(hwnd_, GWLP_HWNDPARENT, reinterpret_cast<LONG_PTR>(owner));
-    actual_owner = GetWindow(hwnd_, GW_OWNER);
-    if (actual_owner == owner || (root_owner && actual_owner == root_owner)) {
-        return;
-    }
-
-    if (owner && !IsWindowVisible(hwnd_)) {
-        int x = 0;
-        int y = 0;
-        get_position(x, y);
-        StatusTheme theme = theme_;
-        destroy();
-        if (create(owner, theme)) {
-            set_position(x, y);
-        }
-    }
+bool StatusWindow::get_window_rect(RECT* rect) const {
+    return rect && hwnd_ && IsWindow(hwnd_) && GetWindowRect(hwnd_, rect) != FALSE;
 }
 
-bool StatusWindow::owner_matches(HWND owner) const {
-    if (!is_created() || (owner && !IsWindow(owner))) {
-        return false;
-    }
-
-    HWND actual_owner = GetWindow(hwnd_, GW_OWNER);
-    HWND root_owner = owner ? GetAncestor(owner, GA_ROOT) : nullptr;
-    return actual_owner == owner || (root_owner && actual_owner == root_owner);
+UINT StatusWindow::dpi() const {
+    return hwnd_ && IsWindow(hwnd_) ? GetDpiForWindow(hwnd_) : 0;
 }
 
 void StatusWindow::set_enabled(bool enabled) {

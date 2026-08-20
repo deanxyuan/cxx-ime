@@ -18,6 +18,8 @@
 #include "diagnostic_log_maintenance_worker.h"
 #include "input_method_hotkey.h"
 #include "session_manager.h"
+#include "ui_presentation_controller.h"
+#include "ui_presentation_router.h"
 
 class ServerApp {
 public:
@@ -39,6 +41,8 @@ private:
     cxxime::DictionaryMonitor dictionary_monitor_;
     DiagnosticLogMaintenanceWorker diagnostic_log_maintenance_;
     InputMethodHotkey input_method_hotkey_;
+    UiPresentationController ui_presentation_controller_;
+    UiPresentationRouter ui_presentation_router_;
     HWND hwnd_ = nullptr;
     bool user_data_shutdown_prepared_ = false;
     std::string config_path_;
