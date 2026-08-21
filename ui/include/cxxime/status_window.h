@@ -63,6 +63,8 @@ public:
     UINT dpi() const;
 
     void set_enabled(bool enabled);
+    void set_auto_dock(bool auto_dock);
+    void recover_if_invisible();
 
     void update_state(const ButtonState& state);
     void set_position(int x, int y);
@@ -83,6 +85,7 @@ private:
     void OnMouseMove(int x, int y);
     void OnMouseLeave();
     void OnRButtonUp(int x, int y);
+    void ApplyPosition(int requested_x, int requested_y, POINT position);
 
     // Rendering: D2D primary, GDI+ fallback — both render to layered_dc_
     void InitLayeredSurface();
@@ -162,6 +165,7 @@ private:
     ButtonState state_;
     int hovered_button_ = -1;
     bool is_enabled_ = true;
+    bool auto_dock_ = false;
     bool layered_ready_ = false;
 
     // ── Drag state ────────────────────────────────────────────

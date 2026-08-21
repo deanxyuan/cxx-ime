@@ -311,12 +311,23 @@ private:
         if (!config) {
             return;
         }
+        const bool is_initial_config = !current_config_;
         current_config_ = config;
         candidate_window_.set_config(*current_config_);
         candidate_window_.set_layout(current_config_->layout);
-        if (current_config_->status_window.x != -1 || current_config_->status_window.y != -1) {
-            status_window_.set_position(current_config_->status_window.x,
-                                        current_config_->status_window.y);
+        if (is_initial_config) {
+            const bool has_saved_position = current_config_->status_window.x != -1 ||
+                                            current_config_->status_window.y != -1;
+            if (has_saved_position) {
+                status_window_.set_position(current_config_->status_window.x,
+                                            current_config_->status_window.y);
+            }
+            status_window_.set_auto_dock(current_config_->status_window.auto_dock);
+            if (!current_config_->status_window.auto_dock) {
+                status_window_.recover_if_invisible();
+            }
+        } else {
+            status_window_.set_auto_dock(current_config_->status_window.auto_dock);
         }
         if (!current_config_->status_window.enable) {
             cancel_status_handoff();

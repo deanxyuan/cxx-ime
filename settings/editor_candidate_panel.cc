@@ -52,9 +52,6 @@ void EditorApp::create_candidate_panel(HWND panel) {
     hLayoutH_ = make_radio(1103, L"横向", control_x, top + kRowH * 3, S(60), panel, true);
     hLayoutV_ = make_radio(1104, L"纵向", control_x + S(68), top + kRowH * 3, S(60), panel, false);
 
-    control_x = make_aligned_label(L"状态窗口:", column_two, label_width, top + kRowH * 3, panel);
-    hStatusWindow_ = make_check(1107, L"显示状态窗口", control_x, top + kRowH * 3, S(130), panel);
-
     control_x = make_aligned_label(L"内容密度:", column_one, label_width, top + kRowH * 4, panel);
     hCandDensity_ = make_combo(1214, control_x, top + kRowH * 4, control_width, panel);
     combo_add(hCandDensity_, L"紧凑");
@@ -90,7 +87,13 @@ void EditorApp::create_candidate_panel(HWND panel) {
     hRenderGDI_ =
         make_radio(1106, L"兼容渲染 (GDI)", control_x + S(132), render_y, S(125), panel, false);
 
-    const int default_y = top + kRowH * 8;
+    const int status_y = top + kRowH * 8;
+    control_x = make_aligned_label(L"状态窗口:", column_one, label_width, status_y, panel);
+    hStatusWindow_ = make_check(1107, L"显示", control_x, status_y, S(60), panel);
+    hStatusAutoDock_ =
+        make_check(1109, L"自动停靠", control_x + S(68), status_y, S(85), panel);
+
+    const int default_y = top + kRowH * 9;
     control_x = make_aligned_label(L"默认设置:", column_one, label_width, default_y, panel);
     hCandDefaultBtn_ = CreateWindowExW(
         0, L"BUTTON", L"恢复默认", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
@@ -139,6 +142,10 @@ bool EditorApp::handle_candidate_command(int control_id, int notification) {
         apply_candidate_control(control_id);
         return true;
     }
+    if (control_id == 1107 && notification == BN_CLICKED) {
+        update_status_window_controls_enabled();
+        return true;
+    }
     if (notification == BN_CLICKED && (control_id == 1105 || control_id == 1106)) {
         update_preview();
         return true;
@@ -169,6 +176,10 @@ bool EditorApp::handle_candidate_command(int control_id, int notification) {
         return true;
     }
     return false;
+}
+
+void EditorApp::update_status_window_controls_enabled() {
+    EnableWindow(hStatusAutoDock_, get_check(hStatusWindow_) ? TRUE : FALSE);
 }
 
 void EditorApp::show_candidate_preview_window() {
