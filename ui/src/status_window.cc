@@ -118,6 +118,18 @@ static POINT clamp_to_monitor_work_area(int x, int y, int width, int height) {
     return clamp_window_position_to_work_area(x, y, width, height, monitor_info.rcWork);
 }
 
+static POINT clamp_to_pointer_monitor_work_area(int x, int y, int width, int height,
+                                                POINT pointer) {
+    HMONITOR monitor = MonitorFromPoint(pointer, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO monitor_info = {};
+    monitor_info.cbSize = sizeof(monitor_info);
+    if (!monitor || !GetMonitorInfoW(monitor, &monitor_info)) {
+        return clamp_to_monitor_work_area(x, y, width, height);
+    }
+
+    return clamp_window_position_to_work_area(x, y, width, height, monitor_info.rcWork);
+}
+
 // ============================================================
 // Lifecycle
 // ============================================================
@@ -225,7 +237,8 @@ bool StatusWindow::is_created() const {
 void StatusWindow::show() {
     if (!hwnd_ || !IsWindow(hwnd_)) return;
     if (layered_ready_) RedrawLayered();
-    ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
+    SetWindowPos(hwnd_, HWND_TOPMOST, 0, 0, 0, 0,
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
 }
 
 void StatusWindow::hide() {
@@ -320,7 +333,7 @@ LRESULT StatusWindow::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
 
     case WM_LBUTTONUP:
-        EndTracking();
+        EndTracking((short)LOWORD(lp), (short)HIWORD(lp));
         return 0;
 
     case WM_RBUTTONUP:
@@ -344,7 +357,11 @@ LRESULT StatusWindow::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         RECT* rc = reinterpret_cast<RECT*>(lp);
         int width = rc->right - rc->left;
         int height = rc->bottom - rc->top;
-        POINT position = clamp_to_monitor_work_area(rc->left, rc->top, width, height);
+        POINT position = {rc->left, rc->top};
+        // Preserve free cross-monitor movement; the release path clamps the final position.
+        if (!is_dragging_) {
+            position = clamp_to_monitor_work_area(rc->left, rc->top, width, height);
+        }
         SetWindowPos(hwnd_, nullptr, position.x, position.y, width, height,
                      SWP_NOZORDER | SWP_NOACTIVATE);
         // Rebuild offscreen surface
@@ -966,7 +983,9 @@ void StatusWindow::ContinueTracking(int x, int y) {
     if (is_dragging_) {
         int new_x = window_start_.x + (screen_pt.x - track_start_.x);
         int new_y = window_start_.y + (screen_pt.y - track_start_.y);
-        set_position(new_x, new_y);
+        SetWindowPos(hwnd_, nullptr, new_x, new_y, 0, 0,
+                     SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        if (layered_ready_) RedrawLayered();
     } else {
         // Before drag threshold: update pressed button highlight
         int new_hover = HitTest(x, y);
@@ -977,9 +996,18 @@ void StatusWindow::ContinueTracking(int x, int y) {
     }
 }
 
-void StatusWindow::EndTracking() {
+void StatusWindow::EndTracking(int x, int y) {
     if (is_dragging_) {
+        POINT screen_pt = {x, y};
+        ClientToScreen(hwnd_, &screen_pt);
+
         RECT rc;
+        GetWindowRect(hwnd_, &rc);
+        POINT position = clamp_to_pointer_monitor_work_area(
+            rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top, screen_pt);
+        is_dragging_ = false;
+        SetWindowPos(hwnd_, nullptr, position.x, position.y, 0, 0,
+                     SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
         GetWindowRect(hwnd_, &rc);
         if (position_callback_) position_callback_(rc.left, rc.top);
     } else {

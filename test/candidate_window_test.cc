@@ -79,6 +79,24 @@ TEST(CandidateWindow, recreate_resets_native_window_size_cache) {
     window.destroy();
 }
 
+TEST(CandidateWindow, show_restores_topmost_z_order) {
+    cxxime::Config config;
+    config.render_backend = "gdi";
+
+    cxxime::CandidateWindow window;
+    ASSERT_TRUE(window.create(nullptr, config));
+    HWND hwnd = window.hwnd_for_test();
+    ASSERT_TRUE(hwnd != nullptr);
+    ASSERT_TRUE(SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
+                             SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE) != FALSE);
+    ASSERT_TRUE((GetWindowLongPtrW(hwnd, GWL_EXSTYLE) & WS_EX_TOPMOST) == 0);
+
+    window.show();
+
+    ASSERT_TRUE((GetWindowLongPtrW(hwnd, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0);
+    window.destroy();
+}
+
 TEST(CandidateWindow, owner_can_follow_active_context_window) {
     HWND first_owner = CreateWindowExW(0, L"STATIC", L"", WS_OVERLAPPED, 0, 0, 0, 0, nullptr,
                                        nullptr, GetModuleHandleW(nullptr), nullptr);
