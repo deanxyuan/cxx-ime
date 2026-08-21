@@ -127,6 +127,11 @@ private:
         evidence_->caret_hwnd = gui_thread_info.hwndCaret;
         evidence_->focus_hwnd = gui_thread_info.hwndFocus;
         evidence_->foreground_hwnd = GetForegroundWindow();
+        const HWND foreground_root = evidence_->foreground_hwnd
+                                        ? GetAncestor(evidence_->foreground_hwnd, GA_ROOT)
+                                        : nullptr;
+        evidence_->foreground_is_shell_window =
+            foreground_root && foreground_root == GetShellWindow();
         evidence_->context_is_focused_child =
             evidence_->gui_thread_info_ok && evidence_->context_hwnd &&
             evidence_->focus_hwnd == evidence_->context_hwnd && evidence_->foreground_hwnd &&
@@ -177,6 +182,9 @@ EditTargetState classify_edit_target(const EditTargetEvidence& evidence) {
         return EditTargetState::Editable;
     }
     if (evidence.placeholder_text_rect) {
+        return EditTargetState::NoEditTarget;
+    }
+    if (evidence.foreground_is_shell_window) {
         return EditTargetState::NoEditTarget;
     }
     return evidence.context_is_focused_child ? EditTargetState::Unknown

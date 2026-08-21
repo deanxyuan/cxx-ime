@@ -24,6 +24,7 @@
 namespace {
 
 constexpr DWORD kUiThreadStartTimeoutMs = 5000;
+constexpr UINT kStatusHandoffDelayMs = 150;
 
 bool ui_timeline_enabled(const cxxime::Config& config) {
     return config.diagnostics.trace_mode == cxxime::DiagnosticTraceMode::kNormal ||
@@ -99,25 +100,6 @@ cxxime::ButtonState button_state_from_snapshot(const cxxime::UiPresentationSnaps
     state.chinese_punct = snapshot.ime_status.chinese_punct();
     state.input_mode = snapshot.ime_status.input_mode;
     return state;
-}
-
-bool snapshot_belongs_to_foreground(const cxxime::UiPresentationSnapshot& snapshot) {
-    if (snapshot.target_window == 0) {
-        return true;
-    }
-
-    const HWND target = reinterpret_cast<HWND>(snapshot.target_window);
-    const HWND foreground = GetForegroundWindow();
-    if (!foreground || !IsWindow(target)) {
-        return false;
-    }
-    if (target == foreground || IsChild(foreground, target) || IsChild(target, foreground)) {
-        return true;
-    }
-
-    const HWND target_root = GetAncestor(target, GA_ROOT);
-    const HWND foreground_root = GetAncestor(foreground, GA_ROOT);
-    return target_root && target_root == foreground_root;
 }
 
 } // namespace
@@ -211,11 +193,13 @@ public:
         close_events();
     }
 
-    void present(cxxime::UiEndpointId endpoint, const cxxime::UiPresentationSnapshot* snapshot) {
+    void present(cxxime::UiEndpointId endpoint, const cxxime::UiPresentationSnapshot* snapshot,
+                 bool preserve_status_during_handoff, std::uint64_t router_revision) {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (!running_) {
+        if (!running_ || router_revision <= pending_router_revision_) {
             return;
         }
+        pending_router_revision_ = router_revision;
         if (snapshot) {
             pending_snapshot_ = RoutedPresentation{
                 endpoint, *snapshot,
@@ -225,6 +209,7 @@ public:
         } else {
             pending_snapshot_.reset();
         }
+        pending_status_handoff_ = !snapshot && preserve_status_during_handoff;
         ++presentation_revision_;
         SetEvent(update_event_);
     }
@@ -255,29 +240,9 @@ private:
         }
     }
 
-    static void CALLBACK foreground_event(HWINEVENTHOOK, DWORD event, HWND, LONG, LONG, DWORD,
-                                          DWORD) {
-        if (event == EVENT_SYSTEM_FOREGROUND) {
-            std::lock_guard<std::mutex> lock(foreground_listener_mutex_);
-            Impl* listener = foreground_listener_;
-            if (listener) {
-                listener->on_foreground_changed();
-            }
-        }
-    }
-
-    void on_foreground_changed() {
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (!running_) {
-            return;
-        }
-        ++foreground_revision_;
-        SetEvent(update_event_);
-    }
-
     void dispatch_command(cxxime::UiCommandType type, std::uint32_t candidate_index = 0,
                           std::uint32_t value = 0) {
-        if (!rendered_presentation_) {
+        if (!rendered_presentation_ || status_handoff_active_) {
             return;
         }
         CommandHandler handler;
@@ -354,27 +319,61 @@ private:
                                         current_config_->status_window.y);
         }
         if (!current_config_->status_window.enable) {
+            cancel_status_handoff();
             status_window_.hide();
         }
     }
 
-    void apply_presentation(const std::optional<RoutedPresentation>& presentation) {
+    void cancel_status_handoff() {
+        if (status_handoff_timer_) {
+            KillTimer(nullptr, status_handoff_timer_);
+            status_handoff_timer_ = 0;
+        }
+        status_handoff_active_ = false;
+    }
+
+    bool begin_status_handoff() {
+        if (!status_window_.is_visible()) {
+            return false;
+        }
+        if (status_handoff_timer_) {
+            KillTimer(nullptr, status_handoff_timer_);
+        }
+        status_handoff_timer_ =
+            SetTimer(nullptr, next_status_handoff_timer_++, kStatusHandoffDelayMs, nullptr);
+        status_handoff_active_ = status_handoff_timer_ != 0;
+        return status_handoff_active_;
+    }
+
+    void finish_status_handoff() {
+        if (status_handoff_timer_) {
+            KillTimer(nullptr, status_handoff_timer_);
+        }
+        status_handoff_timer_ = 0;
+        if (!status_handoff_active_) {
+            return;
+        }
+        status_handoff_active_ = false;
+        status_window_.hide();
+        rendered_presentation_.reset();
+    }
+
+    void apply_presentation(const std::optional<RoutedPresentation>& presentation,
+                            bool preserve_status_during_handoff) {
         if (!presentation) {
             candidate_window_.hide();
-            status_window_.hide();
             clear_visible_candidate_count();
+            if (preserve_status_during_handoff && begin_status_handoff()) {
+                return;
+            }
+            cancel_status_handoff();
+            status_window_.hide();
             rendered_presentation_.reset();
             return;
         }
 
+        cancel_status_handoff();
         const cxxime::UiPresentationSnapshot& current = presentation->snapshot;
-        if (!snapshot_belongs_to_foreground(current)) {
-            candidate_window_.hide();
-            status_window_.hide();
-            clear_visible_candidate_count();
-            rendered_presentation_.reset();
-            return;
-        }
         status_window_.update_state(button_state_from_snapshot(current));
         AppliedPresentation applied;
         applied.status_visible = current_config_ && current_config_->status_window.enable &&
@@ -500,7 +499,7 @@ private:
         std::optional<RoutedPresentation> snapshot;
         std::uint64_t config_revision = 0;
         std::uint64_t presentation_revision = 0;
-        std::uint64_t foreground_revision = 0;
+        bool preserve_status_during_handoff = false;
         {
             std::lock_guard<std::mutex> lock(mutex_);
             ResetEvent(update_event_);
@@ -508,18 +507,17 @@ private:
             snapshot = pending_snapshot_;
             config_revision = config_revision_;
             presentation_revision = presentation_revision_;
-            foreground_revision = foreground_revision_;
+            preserve_status_during_handoff = pending_status_handoff_;
+            pending_status_handoff_ = false;
         }
         const bool config_changed = config_revision != applied_config_revision_;
         if (config_changed) {
             apply_config(config);
             applied_config_revision_ = config_revision;
         }
-        if (config_changed || presentation_revision != applied_presentation_revision_ ||
-            foreground_revision != applied_foreground_revision_) {
-            apply_presentation(snapshot);
+        if (config_changed || presentation_revision != applied_presentation_revision_) {
+            apply_presentation(snapshot, preserve_status_during_handoff);
             applied_presentation_revision_ = presentation_revision;
-            applied_foreground_revision_ = foreground_revision;
         }
     }
 
@@ -544,13 +542,6 @@ private:
             status_window_.hide();
             apply_config(initial_config);
             applied_config_revision_ = initial_config_revision;
-            foreground_hook_ =
-                SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, nullptr,
-                                foreground_event, 0, 0, WINEVENT_OUTOFCONTEXT);
-            if (foreground_hook_) {
-                std::lock_guard<std::mutex> lock(foreground_listener_mutex_);
-                foreground_listener_ = this;
-            }
         }
 
         {
@@ -577,6 +568,11 @@ private:
                             stopping = true;
                             break;
                         }
+                        if (message.message == WM_TIMER &&
+                            message.wParam == status_handoff_timer_) {
+                            finish_status_handoff();
+                            continue;
+                        }
                         TranslateMessage(&message);
                         DispatchMessageW(&message);
                     }
@@ -586,16 +582,7 @@ private:
             }
         }
 
-        if (foreground_hook_) {
-            UnhookWinEvent(foreground_hook_);
-            foreground_hook_ = nullptr;
-        }
-        {
-            std::lock_guard<std::mutex> lock(foreground_listener_mutex_);
-            if (foreground_listener_ == this) {
-                foreground_listener_ = nullptr;
-            }
-        }
+        cancel_status_handoff();
         candidate_window_.destroy();
         status_window_.destroy();
         current_config_.reset();
@@ -615,7 +602,6 @@ private:
     std::atomic<bool> trace_enabled_{false};
     HANDLE stop_event_ = nullptr;
     HANDLE update_event_ = nullptr;
-    HWINEVENTHOOK foreground_hook_ = nullptr;
     std::thread thread_;
     CommandHandler command_handler_;
     PositionHandler position_handler_;
@@ -623,12 +609,15 @@ private:
     std::shared_ptr<const cxxime::Config> current_config_;
     std::optional<RoutedPresentation> pending_snapshot_;
     std::optional<RoutedPresentation> rendered_presentation_;
+    bool pending_status_handoff_ = false;
+    bool status_handoff_active_ = false;
+    UINT_PTR status_handoff_timer_ = 0;
+    UINT_PTR next_status_handoff_timer_ = 1;
     std::uint64_t config_revision_ = 1;
     std::uint64_t presentation_revision_ = 0;
     std::uint64_t applied_config_revision_ = 0;
     std::uint64_t applied_presentation_revision_ = 0;
-    std::uint64_t foreground_revision_ = 0;
-    std::uint64_t applied_foreground_revision_ = 0;
+    std::uint64_t pending_router_revision_ = 0;
     std::uint64_t visible_candidate_session_id_ = 0;
     std::uint64_t visible_candidate_session_generation_ = 0;
     std::uint64_t visible_candidate_target_generation_ = 0;
@@ -637,12 +626,7 @@ private:
     cxxime::CandidateWindow candidate_window_;
     cxxime::StatusWindow status_window_;
 
-    static std::mutex foreground_listener_mutex_;
-    static Impl* foreground_listener_;
 };
-
-std::mutex UiPresentationController::Impl::foreground_listener_mutex_;
-UiPresentationController::Impl* UiPresentationController::Impl::foreground_listener_ = nullptr;
 
 UiPresentationController::UiPresentationController()
     : impl_(new Impl()) {}
@@ -658,8 +642,10 @@ bool UiPresentationController::start(const std::shared_ptr<const cxxime::Config>
 void UiPresentationController::stop() { impl_->stop(); }
 
 void UiPresentationController::present(cxxime::UiEndpointId endpoint,
-                                       const cxxime::UiPresentationSnapshot* snapshot) {
-    impl_->present(endpoint, snapshot);
+                                       const cxxime::UiPresentationSnapshot* snapshot,
+                                       bool preserve_status_during_handoff,
+                                       std::uint64_t router_revision) {
+    impl_->present(endpoint, snapshot, preserve_status_during_handoff, router_revision);
 }
 
 void UiPresentationController::update_config(const std::shared_ptr<const cxxime::Config>& config) {

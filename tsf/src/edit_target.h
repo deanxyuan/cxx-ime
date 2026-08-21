@@ -41,6 +41,7 @@ struct EditTargetEvidence {
     bool has_native_caret = false;
     HWND focus_hwnd = nullptr;
     HWND foreground_hwnd = nullptr;
+    bool foreground_is_shell_window = false;
     bool context_is_focused_child = false;
     HRESULT screen_rect_hr = E_UNEXPECTED;
     RECT screen_rect = {};

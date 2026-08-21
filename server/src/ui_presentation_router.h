@@ -3,6 +3,7 @@
 #ifndef CXXIME_SERVER_UI_PRESENTATION_ROUTER_H_
 #define CXXIME_SERVER_UI_PRESENTATION_ROUTER_H_
 
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
@@ -12,7 +13,9 @@
 class UiPresentationRouter {
 public:
     using PresentationHandler =
-        std::function<void(cxxime::UiEndpointId, const cxxime::UiPresentationSnapshot*)>;
+        std::function<void(cxxime::UiEndpointId, const cxxime::UiPresentationSnapshot*,
+                           bool preserve_status_during_handoff,
+                           std::uint64_t router_revision)>;
 
     UiPresentationRouter();
     ~UiPresentationRouter();

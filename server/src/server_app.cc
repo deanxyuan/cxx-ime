@@ -194,8 +194,11 @@ bool ServerApp::initialize(const std::string& dict_path, const std::string& conf
         CXXIME_LOG(L"%s", L"ui_presentation event=start_controller result=degraded");
     } else if (!ui_presentation_router_.start(
                    [this](cxxime::UiEndpointId endpoint,
-                          const cxxime::UiPresentationSnapshot* snapshot) {
-                       ui_presentation_controller_.present(endpoint, snapshot);
+                          const cxxime::UiPresentationSnapshot* snapshot,
+                          bool preserve_status_during_handoff, std::uint64_t router_revision) {
+                       ui_presentation_controller_.present(endpoint, snapshot,
+                                                           preserve_status_during_handoff,
+                                                           router_revision);
                    })) {
         CXXIME_LOG(L"%s", L"ui_presentation event=start_channel result=degraded");
         ui_presentation_controller_.stop();

@@ -9,6 +9,7 @@
 
 #include <cxxime/logging.h>
 
+#include "config_coordinator.h"
 #include "language_bar.h"
 
 namespace {
@@ -252,6 +253,14 @@ bool TextService::_refresh_caps_lock_on_focus(const char* source) {
     }
 
     return _sync_caps_lock_state(physical_caps_lock, source);
+}
+
+void TextService::_schedule_caps_lock_refresh() {
+    if (!_configWindow || _capsLockRefreshPending) {
+        return;
+    }
+    _capsLockRefreshPending =
+        PostMessageW(_configWindow, cxxime_tsf::WM_CXXIME_REFRESH_CAPS_LOCK, 0, 0) != FALSE;
 }
 
 void TextService::_update_state_poll_timer() {

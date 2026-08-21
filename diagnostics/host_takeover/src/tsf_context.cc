@@ -54,6 +54,7 @@ void trace_edit_target(uint64_t input_id, uint64_t composition_id, EditTargetSta
             {"has_native_caret", evidence.has_native_caret},
             {"focus_hwnd", reinterpret_cast<uintptr_t>(evidence.focus_hwnd)},
             {"foreground_hwnd", reinterpret_cast<uintptr_t>(evidence.foreground_hwnd)},
+            {"foreground_is_shell_window", evidence.foreground_is_shell_window},
             {"context_is_focused_child", evidence.context_is_focused_child},
             {"screen_rect_hr", static_cast<int64_t>(evidence.screen_rect_hr)},
             {"screen_left", evidence.screen_rect.left},

@@ -55,6 +55,7 @@ bool TextService::_start_config_updates() {
 
 void TextService::_stop_config_updates() {
     if (!_configWindow) {
+        _capsLockRefreshPending = false;
         cxxime_tsf::shutdown_tsf_log_writer_if_no_config_subscribers();
         return;
     }
@@ -62,6 +63,7 @@ void TextService::_stop_config_updates() {
     cxxime_tsf::unsubscribe_config_updates(_configWindow, _configSubscriptionId);
     DestroyWindow(_configWindow);
     _configWindow = nullptr;
+    _capsLockRefreshPending = false;
     _configSubscriptionId = 0;
     _configGeneration = {};
 }
@@ -101,6 +103,13 @@ LRESULT CALLBACK TextService::_config_window_proc(HWND hwnd, UINT msg, WPARAM wp
     }
     if (msg == cxxime_tsf::WM_CXXIME_UI_COMMAND && service) {
         service->_drain_ui_commands();
+        return 0;
+    }
+    if (msg == cxxime_tsf::WM_CXXIME_REFRESH_CAPS_LOCK && service) {
+        service->_capsLockRefreshPending = false;
+        if (service->_activated && service->_inputFocused) {
+            service->_refresh_caps_lock_on_focus("focus_deferred");
+        }
         return 0;
     }
     return DefWindowProcW(hwnd, msg, wp, lp);

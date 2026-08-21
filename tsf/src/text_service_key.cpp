@@ -83,6 +83,7 @@ STDMETHODIMP TextService::OnSetFocus(BOOL fForeground) {
     if (fForeground) {
         if (_synchronize_effective_edit_target_from_thread_mgr("key_sink_focus")) {
             _refresh_caps_lock_on_focus("key_sink_focus");
+            _schedule_caps_lock_refresh();
             if (_sessionId && _client.ensure_connected())
                 _client.focus_in(_sessionId);
         } else {
