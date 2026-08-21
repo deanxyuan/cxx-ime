@@ -3,13 +3,15 @@
 #ifndef CXXIME_STATUS_WINDOW_H_
 #define CXXIME_STATUS_WINDOW_H_
 
-#include <windows.h>
+#include <cstdint>
 #include <functional>
 #include <vector>
-#include <cstdint>
+
+#include <windows.h>
+
 #include <cxxime/ime_menu.h>
-#include <cxxime/render_context.h>
 #include <cxxime/ipc_protocol.h>
+#include <cxxime/render_context.h>
 
 struct ID2D1Factory;
 struct ID2D1DCRenderTarget;
@@ -105,7 +107,7 @@ private:
     int drag_threshold() const { return Scaled(6); }
     void BeginTracking(int x, int y);
     void ContinueTracking(int x, int y);
-    void EndTracking();
+    void EndTracking(int x, int y);
 
     // Layout constants (base values; actual rendering multiplied by dpi_scale_)
     static constexpr int BUTTON_COUNT = 4;            // Interactive buttons (excludes input mode)

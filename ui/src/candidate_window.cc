@@ -170,8 +170,8 @@ void CandidateWindow::show() {
         }
     }
 
-    if (!IsWindowVisible(hwnd_))
-        ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
+    SetWindowPos(hwnd_, HWND_TOPMOST, 0, 0, 0, 0,
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
     visible_candidate_count_ = static_cast<int>(candidate_rects_.size());
     RedrawWindow(hwnd_, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE);
 }

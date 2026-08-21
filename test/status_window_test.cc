@@ -104,6 +104,20 @@ TEST(StatusWindow, ShowWithoutCreate) {
     ASSERT_TRUE(!window.is_created());
 }
 
+TEST(StatusWindow, ShowRestoresTopmostZOrder) {
+    cxxime::StatusWindow window;
+    ASSERT_TRUE(create_test_window(window));
+    HWND hwnd = window.hwnd_for_test();
+    ASSERT_TRUE(SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
+                             SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE) != FALSE);
+    ASSERT_TRUE((GetWindowLongPtrW(hwnd, GWL_EXSTYLE) & WS_EX_TOPMOST) == 0);
+
+    window.show();
+
+    ASSERT_TRUE((GetWindowLongPtrW(hwnd, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0);
+    window.destroy();
+}
+
 // ============================================================
 // Position
 // ============================================================
