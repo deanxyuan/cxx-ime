@@ -95,20 +95,29 @@ static bool effective_chinese_punct(const ButtonState& state) {
     return state.chinese_mode && !state.caps_lock && state.chinese_punct;
 }
 
-static POINT clamp_to_monitor_work_area(int x, int y, int width, int height) {
+static RECT status_window_rect(int x, int y, int width, int height) {
     const long long target_right =
         std::min(static_cast<long long>(std::numeric_limits<LONG>::max()),
                  static_cast<long long>(x) + std::max(width, 0));
     const long long target_bottom =
         std::min(static_cast<long long>(std::numeric_limits<LONG>::max()),
                  static_cast<long long>(y) + std::max(height, 0));
-    RECT target = {
+    return {
         static_cast<LONG>(x),
         static_cast<LONG>(y),
         static_cast<LONG>(target_right),
         static_cast<LONG>(target_bottom),
     };
-    HMONITOR monitor = MonitorFromRect(&target, MONITOR_DEFAULTTONEAREST);
+}
+
+static POINT clamp_to_monitor_work_area(int x, int y, int width, int height,
+                                        HMONITOR preferred_monitor = nullptr) {
+    RECT target = status_window_rect(x, y, width, height);
+
+    HMONITOR monitor = preferred_monitor;
+    if (!monitor) {
+        monitor = MonitorFromRect(&target, MONITOR_DEFAULTTONEAREST);
+    }
     MONITORINFO monitor_info = {};
     monitor_info.cbSize = sizeof(monitor_info);
     if (!monitor || !GetMonitorInfoW(monitor, &monitor_info)) {
@@ -118,16 +127,12 @@ static POINT clamp_to_monitor_work_area(int x, int y, int width, int height) {
     return clamp_window_position_to_work_area(x, y, width, height, monitor_info.rcWork);
 }
 
-static POINT clamp_to_pointer_monitor_work_area(int x, int y, int width, int height,
-                                                POINT pointer) {
-    HMONITOR monitor = MonitorFromPoint(pointer, MONITOR_DEFAULTTONEAREST);
-    MONITORINFO monitor_info = {};
-    monitor_info.cbSize = sizeof(monitor_info);
-    if (!monitor || !GetMonitorInfoW(monitor, &monitor_info)) {
-        return clamp_to_monitor_work_area(x, y, width, height);
+static POINT recover_invisible_status_window(int x, int y, int width, int height) {
+    const RECT target = status_window_rect(x, y, width, height);
+    if (MonitorFromRect(&target, MONITOR_DEFAULTTONULL)) {
+        return {x, y};
     }
-
-    return clamp_window_position_to_work_area(x, y, width, height, monitor_info.rcWork);
+    return clamp_to_monitor_work_area(x, y, width, height);
 }
 
 // ============================================================
@@ -184,7 +189,7 @@ bool StatusWindow::create(const StatusTheme& theme) {
     }
     win_w_ = WindowWidth();
     win_h_ = WindowHeight();
-    POINT initial_position = clamp_to_monitor_work_area(x, y, win_w_, win_h_);
+    POINT initial_position = recover_invisible_status_window(x, y, win_w_, win_h_);
     SetWindowPos(hwnd_, nullptr, initial_position.x, initial_position.y, win_w_, win_h_,
                  SWP_NOZORDER | SWP_NOACTIVATE);
 
@@ -262,6 +267,19 @@ void StatusWindow::set_enabled(bool enabled) {
     if (layered_ready_) RedrawLayered();
 }
 
+void StatusWindow::set_auto_dock(bool auto_dock) {
+    if (auto_dock_ == auto_dock) {
+        return;
+    }
+    auto_dock_ = auto_dock;
+    if (auto_dock_ && hwnd_) {
+        RECT window_rect = {};
+        if (GetWindowRect(hwnd_, &window_rect)) {
+            set_position(window_rect.left, window_rect.top);
+        }
+    }
+}
+
 // ============================================================
 // State
 // ============================================================
@@ -272,11 +290,32 @@ void StatusWindow::update_state(const ButtonState& state) {
 
 void StatusWindow::set_position(int x, int y) {
     if (hwnd_) {
-        POINT position = clamp_to_monitor_work_area(x, y, win_w_, win_h_);
-        SetWindowPos(hwnd_, nullptr, position.x, position.y, 0, 0,
-                     SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
-        if (layered_ready_) RedrawLayered();
+        const POINT position =
+            auto_dock_ ? clamp_to_monitor_work_area(x, y, win_w_, win_h_) : POINT{x, y};
+        ApplyPosition(x, y, position);
     }
+}
+
+void StatusWindow::recover_if_invisible() {
+    if (hwnd_) {
+        RECT window_rect = {};
+        if (GetWindowRect(hwnd_, &window_rect)) {
+            const POINT position = recover_invisible_status_window(
+                window_rect.left, window_rect.top, window_rect.right - window_rect.left,
+                window_rect.bottom - window_rect.top);
+            ApplyPosition(window_rect.left, window_rect.top, position);
+        }
+    }
+}
+
+void StatusWindow::ApplyPosition(int requested_x, int requested_y, POINT position) {
+    const bool position_adjusted = position.x != requested_x || position.y != requested_y;
+    const BOOL moved = SetWindowPos(hwnd_, nullptr, position.x, position.y, 0, 0,
+                                    SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    if (moved && position_adjusted && position_callback_) {
+        position_callback_(position.x, position.y);
+    }
+    if (layered_ready_) RedrawLayered();
 }
 
 void StatusWindow::get_position(int& x, int& y) const {
@@ -358,12 +397,17 @@ LRESULT StatusWindow::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         int width = rc->right - rc->left;
         int height = rc->bottom - rc->top;
         POINT position = {rc->left, rc->top};
-        // Preserve free cross-monitor movement; the release path clamps the final position.
+        // Preserve free cross-monitor movement while the pointer owns the window position.
         if (!is_dragging_) {
-            position = clamp_to_monitor_work_area(rc->left, rc->top, width, height);
+            position = auto_dock_ ? clamp_to_monitor_work_area(rc->left, rc->top, width, height)
+                                  : POINT{rc->left, rc->top};
         }
-        SetWindowPos(hwnd_, nullptr, position.x, position.y, width, height,
-                     SWP_NOZORDER | SWP_NOACTIVATE);
+        const BOOL moved = SetWindowPos(hwnd_, nullptr, position.x, position.y, width, height,
+                                        SWP_NOZORDER | SWP_NOACTIVATE);
+        if (!is_dragging_ && moved &&
+            (position.x != rc->left || position.y != rc->top) && position_callback_) {
+            position_callback_(position.x, position.y);
+        }
         // Rebuild offscreen surface
         CleanupLayeredSurface();
         InitLayeredSurface();
@@ -380,7 +424,11 @@ LRESULT StatusWindow::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
         RECT window_rect = {};
         if (GetWindowRect(hwnd_, &window_rect)) {
-            set_position(window_rect.left, window_rect.top);
+            if (auto_dock_) {
+                set_position(window_rect.left, window_rect.top);
+            } else {
+                recover_if_invisible();
+            }
         }
         return 0;
     }
@@ -998,16 +1046,21 @@ void StatusWindow::ContinueTracking(int x, int y) {
 
 void StatusWindow::EndTracking(int x, int y) {
     if (is_dragging_) {
-        POINT screen_pt = {x, y};
-        ClientToScreen(hwnd_, &screen_pt);
-
         RECT rc;
         GetWindowRect(hwnd_, &rc);
-        POINT position = clamp_to_pointer_monitor_work_area(
-            rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top, screen_pt);
         is_dragging_ = false;
-        SetWindowPos(hwnd_, nullptr, position.x, position.y, 0, 0,
-                     SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        if (auto_dock_) {
+            HMONITOR target_monitor = MonitorFromRect(&rc, MONITOR_DEFAULTTONULL);
+            if (!target_monitor) {
+                POINT screen_pt = {x, y};
+                ClientToScreen(hwnd_, &screen_pt);
+                target_monitor = MonitorFromPoint(screen_pt, MONITOR_DEFAULTTONEAREST);
+            }
+            POINT position = clamp_to_monitor_work_area(
+                rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top, target_monitor);
+            SetWindowPos(hwnd_, nullptr, position.x, position.y, 0, 0,
+                         SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        }
         GetWindowRect(hwnd_, &rc);
         if (position_callback_) position_callback_(rc.left, rc.top);
     } else {

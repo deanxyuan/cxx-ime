@@ -159,6 +159,48 @@ TEST(StatusWindow, ClampPositionToWorkArea) {
     ASSERT_EQ(position.y, 1080);
 }
 
+TEST(StatusWindow, AutoDockClampsCurrentPositionToWorkArea) {
+    const DPI_AWARENESS_CONTEXT previous_context =
+        SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+
+    cxxime::StatusWindow window;
+    ASSERT_TRUE(create_test_window(window));
+
+    HWND hwnd = window.hwnd_for_test();
+    RECT window_rect = {};
+    ASSERT_TRUE(GetWindowRect(hwnd, &window_rect));
+    const POINT virtual_right_edge = {
+        GetSystemMetrics(SM_XVIRTUALSCREEN) + GetSystemMetrics(SM_CXVIRTUALSCREEN) - 1,
+        GetSystemMetrics(SM_YVIRTUALSCREEN),
+    };
+    HMONITOR monitor = MonitorFromPoint(virtual_right_edge, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO monitor_info = {sizeof(monitor_info)};
+    ASSERT_TRUE(GetMonitorInfoW(monitor, &monitor_info));
+
+    const int width = window_rect.right - window_rect.left;
+    const int partial_x = monitor_info.rcWork.right - width / 2;
+    window.set_position(partial_x, monitor_info.rcWork.top);
+    ASSERT_TRUE(GetWindowRect(hwnd, &window_rect));
+    ASSERT_EQ(window_rect.left, partial_x);
+
+    int callback_count = 0;
+    POINT saved_position = {};
+    window.set_position_callback([&](int x, int y) {
+        ++callback_count;
+        saved_position = {x, y};
+    });
+    window.set_auto_dock(true);
+
+    ASSERT_TRUE(GetWindowRect(hwnd, &window_rect));
+    ASSERT_EQ(window_rect.right, monitor_info.rcWork.right);
+    ASSERT_EQ(callback_count, 1);
+    ASSERT_EQ(saved_position.x, window_rect.left);
+    ASSERT_EQ(saved_position.y, window_rect.top);
+
+    window.destroy();
+    SetThreadDpiAwarenessContext(previous_context);
+}
+
 // ============================================================
 // Callbacks
 // ============================================================

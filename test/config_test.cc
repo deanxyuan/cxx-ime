@@ -187,6 +187,7 @@ TEST(Config, runtime_snapshot_round_trip) {
     saved.theme = "dark";
     saved.inline_preedit = true;
     saved.status_window.enable = false;
+    saved.status_window.auto_dock = true;
     ASSERT_TRUE(cxxime::parse_keyboard_shortcut("Ctrl+Alt+M",
                                                 &saved.input_mode_switch_shortcut));
     ASSERT_TRUE(cxxime::parse_keyboard_shortcut("Ctrl+Shift+Space",
@@ -207,6 +208,7 @@ TEST(Config, runtime_snapshot_round_trip) {
     ASSERT_TRUE(loaded.theme == "dark");
     ASSERT_TRUE(loaded.inline_preedit);
     ASSERT_TRUE(!loaded.status_window.enable);
+    ASSERT_TRUE(loaded.status_window.auto_dock);
     ASSERT_TRUE(cxxime::keyboard_shortcut_string(loaded.input_mode_switch_shortcut) ==
                 "Ctrl+Alt+M");
     ASSERT_TRUE(cxxime::keyboard_shortcut_string(loaded.activate_ime_shortcut) ==
