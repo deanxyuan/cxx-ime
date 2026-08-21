@@ -214,6 +214,7 @@ void TextService::_initialize_optional_activation_services() {
 void TextService::_synchronize_activation_focus() {
     if (_synchronize_effective_edit_target_from_thread_mgr("activate_complete")) {
         _refresh_caps_lock_on_focus("activate_complete");
+        _schedule_caps_lock_refresh();
         if (_sessionId && _client.ensure_connected()) {
             _client.focus_in(_sessionId);
         }

@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <mutex>
+#include <optional>
 #include <unordered_map>
 #include <utility>
 
@@ -29,6 +30,11 @@ struct SessionKeyHash {
 };
 
 struct RoutedSnapshot {
+    cxxime::UiPresentationSnapshot snapshot;
+};
+
+struct ActivePresentation {
+    SessionKey key;
     cxxime::UiPresentationSnapshot snapshot;
 };
 
@@ -76,6 +82,26 @@ bool belongs_to_foreground(const cxxime::UiPresentationSnapshot& snapshot) {
     return target_root && target_root == foreground_root;
 }
 
+bool should_preserve_status_during_handoff(const cxxime::UiPresentationSnapshot& snapshot) {
+    if (!has_flag(snapshot, cxxime::UiSnapshotFlag::kStatusVisible) ||
+        snapshot.target_window == 0) {
+        return false;
+    }
+
+    const HWND target = reinterpret_cast<HWND>(snapshot.target_window);
+    const HWND foreground = GetForegroundWindow();
+    if (!foreground || !IsWindow(target)) {
+        return false;
+    }
+
+    const HWND target_root = GetAncestor(target, GA_ROOT);
+    const HWND foreground_root = GetAncestor(foreground, GA_ROOT);
+    if (foreground_root && foreground_root == GetShellWindow()) {
+        return false;
+    }
+    return target_root && foreground_root && target_root != foreground_root;
+}
+
 } // namespace
 
 class UiPresentationRouter::Impl {
@@ -102,10 +128,19 @@ public:
         }
         foreground_hook_ = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND,
                                            nullptr, foreground_event, 0, 0, WINEVENT_OUTOFCONTEXT);
-        if (foreground_hook_) {
-            std::lock_guard<std::mutex> lock(foreground_listener_mutex_);
-            foreground_listener_ = this;
+        if (!foreground_hook_) {
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                running_ = false;
+                presentation_handler_ = {};
+                sessions_.clear();
+                active_.reset();
+            }
+            channel_.stop();
+            return false;
         }
+        std::lock_guard<std::mutex> lock(foreground_listener_mutex_);
+        foreground_listener_ = this;
         return true;
     }
 
@@ -130,15 +165,17 @@ public:
         channel_.stop();
 
         PresentationHandler handler;
+        std::uint64_t router_revision = 0;
         {
             std::lock_guard<std::mutex> lock(mutex_);
             sessions_.clear();
-            active_ = {};
+            active_.reset();
             handler = presentation_handler_;
             presentation_handler_ = {};
+            router_revision = ++router_revision_;
         }
         if (handler) {
-            handler(0, nullptr);
+            handler(0, nullptr, false, router_revision);
         }
     }
 
@@ -192,8 +229,8 @@ private:
         if (!selected) {
             return false;
         }
-        active_ = selected_key;
         *presentation = selected->snapshot;
+        active_ = ActivePresentation{selected_key, *presentation};
         return true;
     }
 
@@ -203,19 +240,26 @@ private:
         cxxime::UiEndpointId endpoint = 0;
         bool publish = false;
         bool clear = false;
+        bool preserve_status_during_handoff = false;
+        std::uint64_t router_revision = 0;
         {
             std::lock_guard<std::mutex> lock(mutex_);
             if (!running_) {
                 return;
             }
 
-            const SessionKey previous = active_;
+            const std::optional<ActivePresentation> previous = active_;
             if (select_active_for_foreground_locked(&presentation)) {
-                publish = force_publish || !(active_ == previous);
-                endpoint = active_.endpoint;
+                publish = force_publish || !previous || !(active_->key == previous->key);
+                endpoint = active_->key.endpoint;
             } else {
-                active_ = {};
-                clear = previous.session_id != 0;
+                active_.reset();
+                clear = previous.has_value();
+                preserve_status_during_handoff =
+                    clear && should_preserve_status_during_handoff(previous->snapshot);
+            }
+            if (publish || clear) {
+                router_revision = ++router_revision_;
             }
             handler = presentation_handler_;
         }
@@ -223,9 +267,9 @@ private:
             return;
         }
         if (publish) {
-            handler(endpoint, &presentation);
+            handler(endpoint, &presentation, false, router_revision);
         } else if (clear) {
-            handler(0, nullptr);
+            handler(0, nullptr, preserve_status_during_handoff, router_revision);
         }
     }
 
@@ -275,7 +319,8 @@ private:
     HWINEVENTHOOK foreground_hook_ = nullptr;
     PresentationHandler presentation_handler_;
     std::unordered_map<SessionKey, RoutedSnapshot, SessionKeyHash> sessions_;
-    SessionKey active_;
+    std::optional<ActivePresentation> active_;
+    std::uint64_t router_revision_ = 0;
 
     static std::mutex foreground_listener_mutex_;
     static Impl* foreground_listener_;

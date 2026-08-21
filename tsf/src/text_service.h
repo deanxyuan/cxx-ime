@@ -251,6 +251,7 @@ private:
                                const char* source,
                                cxxime::ImeStatus* synced_status = nullptr);
     bool _refresh_caps_lock_on_focus(const char* source);
+    void _schedule_caps_lock_refresh();
     bool _ensure_ipc_session();
     bool _recreate_ipc_session_preserving_status();
     bool _heartbeat_ipc();
@@ -345,6 +346,7 @@ private:
     cxxime::ConfigGeneration _configGeneration;
     HWND _configWindow = nullptr;
     std::uint32_t _configSubscriptionId = 0;
+    bool _capsLockRefreshPending = false;
 
     // Language bar buttons
     CLangBarItemButton* _modeButton = nullptr;  // 中/EN 按钮

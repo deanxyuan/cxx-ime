@@ -326,6 +326,7 @@ STDMETHODIMP TextService::OnSetThreadFocus() {
 
     if (_synchronize_effective_edit_target_from_thread_mgr("thread_focus")) {
         _refresh_caps_lock_on_focus("thread_focus");
+        _schedule_caps_lock_refresh();
     }
     return S_OK;
 }
@@ -371,20 +372,23 @@ STDMETHODIMP TextService::OnSetFocus(ITfDocumentMgr* pDocMgrFocus,
         _sync_ime_status(response.ime_status);
     }
     _refresh_caps_lock_on_focus("document_focus");
+    _schedule_caps_lock_refresh();
     return S_OK;
 }
 
 STDMETHODIMP TextService::OnPushContext(ITfContext* pic) {
-    if (_activated) {
-        _synchronize_effective_edit_target(pic, nullptr, "push_context");
+    if (_activated && _synchronize_effective_edit_target(pic, nullptr, "push_context")) {
+        _refresh_caps_lock_on_focus("push_context");
+        _schedule_caps_lock_refresh();
     }
     return S_OK;
 }
 
 STDMETHODIMP TextService::OnPopContext(ITfContext* pic) {
     UNREFERENCED_PARAMETER(pic);
-    if (_activated) {
-        _synchronize_effective_edit_target_from_thread_mgr("pop_context");
+    if (_activated && _synchronize_effective_edit_target_from_thread_mgr("pop_context")) {
+        _refresh_caps_lock_on_focus("pop_context");
+        _schedule_caps_lock_refresh();
     }
     return S_OK;
 }

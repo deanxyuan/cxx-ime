@@ -72,7 +72,10 @@ TEST(UiPresentationRouter, ignores_stale_snapshots_and_routes_bound_commands) {
     std::atomic<std::uint64_t> presented_generation{0};
     UiPresentationRouter router;
     ASSERT_TRUE(router.start(
-        [&](cxxime::UiEndpointId endpoint, const cxxime::UiPresentationSnapshot* snapshot) {
+        [&](cxxime::UiEndpointId endpoint, const cxxime::UiPresentationSnapshot* snapshot,
+            bool preserve_status_during_handoff, std::uint64_t router_revision) {
+            UNREFERENCED_PARAMETER(preserve_status_during_handoff);
+            UNREFERENCED_PARAMETER(router_revision);
             if (snapshot) {
                 presented_endpoint.store(endpoint);
                 presented_generation.store(snapshot->target_generation);
@@ -142,7 +145,10 @@ TEST(UiPresentationRouter, disconnect_clears_only_the_active_endpoint) {
     UiPresentationRouter router;
     ASSERT_TRUE(router.start(
         [&](cxxime::UiEndpointId published_endpoint,
-            const cxxime::UiPresentationSnapshot* published_snapshot) {
+            const cxxime::UiPresentationSnapshot* published_snapshot,
+            bool preserve_status_during_handoff, std::uint64_t router_revision) {
+            UNREFERENCED_PARAMETER(preserve_status_during_handoff);
+            UNREFERENCED_PARAMETER(router_revision);
             if (published_snapshot) {
                 endpoint.store(published_endpoint);
             } else {
