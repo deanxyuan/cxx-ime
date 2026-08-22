@@ -69,6 +69,7 @@ void trace_edit_target(uint64_t input_id, uint64_t composition_id, EditTargetSta
             {"text_clipped", evidence.text_clipped},
             {"text_rect_at_view_origin", evidence.text_rect_at_view_origin},
             {"placeholder_text_rect", evidence.placeholder_text_rect},
+            {"text_rect_outside_view", evidence.text_rect_outside_view},
             {"has_meaningful_text_rect", evidence.has_meaningful_text_rect},
             {"editable_target_predicted", state == EditTargetState::Editable},
             {"result", edit_target_state_name(state)},

@@ -41,7 +41,7 @@ struct EditTargetEvidence {
     bool has_native_caret = false;
     HWND focus_hwnd = nullptr;
     HWND foreground_hwnd = nullptr;
-    bool foreground_is_shell_window = false;
+    bool foreground_is_shell_window = false; // Desktop or Explorer shell surface.
     bool context_is_focused_child = false;
     HRESULT screen_rect_hr = E_UNEXPECTED;
     RECT screen_rect = {};
@@ -50,9 +50,12 @@ struct EditTargetEvidence {
     bool text_clipped = false;
     bool text_rect_at_view_origin = false;
     bool placeholder_text_rect = false;
+    bool text_rect_outside_view = false;
     bool has_meaningful_text_rect = false;
 };
 
+bool text_rect_is_outside_view(HRESULT screen_rect_hr, const RECT& screen_rect,
+    HRESULT text_rect_hr, const RECT& text_rect, bool text_clipped);
 EditTargetState classify_edit_target(const EditTargetEvidence& evidence);
 EditTargetState inspect_edit_target(ITfContext* context, TfClientId client_id,
     EditTargetEvidence* evidence);

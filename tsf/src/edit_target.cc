@@ -2,13 +2,53 @@
 
 #include "edit_target.h"
 
+#include <cwchar>
 #include <new>
 
 #include <initguid.h>
 #include <inputscope.h>
 
 namespace cxxime_tsf {
+
+bool text_rect_is_outside_view(HRESULT screen_rect_hr, const RECT& screen_rect,
+    HRESULT text_rect_hr, const RECT& text_rect, bool text_clipped) {
+    const bool screen_rect_valid = SUCCEEDED(screen_rect_hr) &&
+                                   screen_rect.right > screen_rect.left &&
+                                   screen_rect.bottom > screen_rect.top;
+    return SUCCEEDED(text_rect_hr) && screen_rect_valid && !text_clipped &&
+           (text_rect.right <= screen_rect.left || text_rect.left >= screen_rect.right ||
+            text_rect.bottom <= screen_rect.top || text_rect.top >= screen_rect.bottom);
+}
+
 namespace {
+
+bool is_shell_process(HWND hwnd) {
+    if (!hwnd) {
+        return false;
+    }
+
+    DWORD process_id = 0;
+    if (!GetWindowThreadProcessId(hwnd, &process_id) || !process_id) {
+        return false;
+    }
+
+    HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, process_id);
+    if (!process) {
+        return false;
+    }
+
+    wchar_t path[MAX_PATH] = {};
+    DWORD path_length = static_cast<DWORD>(sizeof(path) / sizeof(path[0]));
+    const bool queried = QueryFullProcessImageNameW(process, 0, path, &path_length) != FALSE;
+    CloseHandle(process);
+    if (!queried) {
+        return false;
+    }
+
+    const wchar_t* filename = std::wcsrchr(path, L'\\');
+    filename = filename ? filename + 1 : path;
+    return _wcsicmp(filename, L"explorer.exe") == 0;
+}
 
 class EditTargetSession final : public ITfEditSession {
 public:
@@ -162,7 +202,17 @@ private:
             evidence_->text_rect.right - evidence_->text_rect.left <= 2 &&
             evidence_->screen_rect.right - evidence_->screen_rect.left > 100 &&
             evidence_->screen_rect.bottom - evidence_->screen_rect.top > 100;
-        evidence_->has_meaningful_text_rect = text_rect_valid && !evidence_->placeholder_text_rect;
+        evidence_->text_rect_outside_view = text_rect_is_outside_view(
+            evidence_->screen_rect_hr, evidence_->screen_rect, evidence_->text_rect_hr,
+            evidence_->text_rect, evidence_->text_clipped);
+        evidence_->has_meaningful_text_rect =
+            text_rect_valid && !evidence_->placeholder_text_rect &&
+            !evidence_->text_rect_outside_view;
+        if (!evidence_->foreground_is_shell_window && foreground_root &&
+            !evidence_->has_active_selection && !evidence_->has_input_scope &&
+            !evidence_->has_native_caret && !evidence_->has_meaningful_text_rect) {
+            evidence_->foreground_is_shell_window = is_shell_process(foreground_root);
+        }
     }
 
     LONG ref_count_ = 1;

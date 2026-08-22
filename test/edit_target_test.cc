@@ -39,6 +39,42 @@ TEST(EditTarget, unknown_when_focused_child_requires_provisional_composition) {
     ASSERT_EQ(cxxime_tsf::classify_edit_target(evidence), cxxime_tsf::EditTargetState::Unknown);
 }
 
+TEST(EditTarget, no_target_when_unclipped_text_position_is_outside_view) {
+    const RECT uninstall_view = {1445, 857, 2368, 1235};
+    const RECT uninstall_text = {3540, 1891, 3541, 1891};
+    ASSERT_TRUE(cxxime_tsf::text_rect_is_outside_view(
+        S_OK, uninstall_view, S_OK, uninstall_text, false));
+
+    ASSERT_TRUE(cxxime_tsf::text_rect_is_outside_view(
+        S_OK, uninstall_view, S_OK, {1444, 900, 1445, 920}, false));
+    ASSERT_TRUE(cxxime_tsf::text_rect_is_outside_view(
+        S_OK, uninstall_view, S_OK, {2368, 900, 2369, 920}, false));
+    ASSERT_TRUE(cxxime_tsf::text_rect_is_outside_view(
+        S_OK, uninstall_view, S_OK, {1500, 856, 1520, 857}, false));
+    ASSERT_TRUE(cxxime_tsf::text_rect_is_outside_view(
+        S_OK, uninstall_view, S_OK, {1500, 1235, 1520, 1236}, false));
+    ASSERT_TRUE(!cxxime_tsf::text_rect_is_outside_view(
+        S_OK, uninstall_view, S_OK, {1445, 857, 1446, 858}, false));
+    ASSERT_TRUE(!cxxime_tsf::text_rect_is_outside_view(
+        S_OK, uninstall_view, S_OK, uninstall_text, true));
+    ASSERT_TRUE(!cxxime_tsf::text_rect_is_outside_view(
+        E_FAIL, uninstall_view, S_OK, uninstall_text, false));
+    ASSERT_TRUE(!cxxime_tsf::text_rect_is_outside_view(
+        S_OK, {}, S_OK, uninstall_text, false));
+    ASSERT_TRUE(!cxxime_tsf::text_rect_is_outside_view(
+        S_OK, uninstall_view, E_FAIL, uninstall_text, false));
+
+    auto evidence = captured_selection();
+    evidence.context_is_focused_child = true;
+    evidence.text_rect_outside_view = true;
+    ASSERT_EQ(cxxime_tsf::classify_edit_target(evidence),
+        cxxime_tsf::EditTargetState::Unknown);
+
+    evidence.foreground_is_shell_window = true;
+    ASSERT_EQ(cxxime_tsf::classify_edit_target(evidence),
+        cxxime_tsf::EditTargetState::NoEditTarget);
+}
+
 TEST(EditTarget, no_target_on_shell_surface_without_editing_evidence) {
     auto evidence = captured_selection();
     evidence.context_is_focused_child = true;
@@ -62,6 +98,11 @@ TEST(EditTarget, editable_when_any_supported_evidence_is_present) {
 
     evidence = captured_selection();
     evidence.has_meaningful_text_rect = true;
+    ASSERT_EQ(cxxime_tsf::classify_edit_target(evidence), cxxime_tsf::EditTargetState::Editable);
+
+    evidence = captured_selection();
+    evidence.has_input_scope = true;
+    evidence.text_rect_outside_view = true;
     ASSERT_EQ(cxxime_tsf::classify_edit_target(evidence), cxxime_tsf::EditTargetState::Editable);
 
     evidence = captured_selection();
