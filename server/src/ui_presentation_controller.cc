@@ -419,6 +419,9 @@ private:
             return;
         }
 
+        // Bind the popup to the active TSF view before showing it so ordinary
+        // desktop hosts keep the candidate window in their owner hierarchy.
+        candidate_window_.ensure_created(reinterpret_cast<HWND>(current.target_window));
         candidate_window_.set_page_info(static_cast<int>(current.candidate_page.page_current),
                                         static_cast<int>(current.candidate_page.page_total));
         if (has_flag(current, cxxime::UiSnapshotFlag::kHasPreedit)) {
