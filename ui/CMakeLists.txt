@@ -18,6 +18,7 @@ target_include_directories(cxxime-ui PUBLIC
 target_link_libraries(cxxime-ui PUBLIC
     cxxime-shared
     d2d1
+    dwmapi
     dwrite
     windowscodecs
 )

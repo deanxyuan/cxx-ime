@@ -47,7 +47,9 @@ cxxime::UiPresentationSnapshot make_snapshot(std::uint64_t generation) {
                      cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kCandidateVisible) |
                      cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kHasCaret) |
                      cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kHasPreedit) |
-                     cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kHasCandidates);
+                     cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kHasCandidates) |
+                     cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kImmersiveMode) |
+                     cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kTsfLocalCandidate);
     snapshot.caret = {100, 120, 102, 144};
     std::memcpy(snapshot.preedit, "ni", 2);
     snapshot.preedit_length = 2;
@@ -71,6 +73,7 @@ TEST(UiChannel, protocol_round_trip) {
     ASSERT_TRUE(cxxime::parse_ui_snapshot_packet(packet.data(), packet.size(), &actual));
     ASSERT_EQ(actual.session_id, expected.session_id);
     ASSERT_EQ(actual.target_generation, expected.target_generation);
+    ASSERT_EQ(actual.flags, expected.flags);
     ASSERT_EQ(actual.preedit_length, static_cast<std::uint32_t>(2));
     ASSERT_EQ(actual.candidate_page.count, static_cast<std::uint32_t>(1));
 

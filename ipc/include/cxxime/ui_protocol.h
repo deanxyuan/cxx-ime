@@ -40,6 +40,9 @@ enum class UiSnapshotFlag : std::uint32_t {
     kHasPreedit = 1u << 4,
     kHasCandidates = 1u << 5,
     kSessionEnded = 1u << 6,
+    // Immersive hosts can reorder owned popups after creating their edit UI.
+    kImmersiveMode = 1u << 7,
+    kTsfLocalCandidate = 1u << 8,
 };
 
 constexpr std::uint32_t ui_snapshot_flag(UiSnapshotFlag flag) noexcept {

@@ -100,6 +100,33 @@ void Engine::finalize() {
     handled_shortcut_key_ = 0;
 }
 
+CandidatePage Engine::translate_for_search(const std::string& input, int limit) {
+    if (!translator_ || input.empty() || limit <= 0) {
+        return {};
+    }
+
+    QueryScratch scratch;
+    QueryBudget budget = budget_;
+    budget.deadline = QueryDeadline{};
+    return translator_->translate(input, 0, limit, nullptr, &budget, &scratch, 0);
+}
+
+bool Engine::record_search_result(const std::string& input, const std::string& result) {
+    if (!translator_ || input.empty() || result.empty()) {
+        return false;
+    }
+
+    const CandidatePage page = translate_for_search(input, 64);
+    const auto candidate = std::find_if(
+        page.candidates.begin(), page.candidates.end(),
+        [&](const Candidate& item) { return item.text == result; });
+    if (candidate == page.candidates.end()) {
+        return false;
+    }
+    Dict* dict = candidate->source == CandidateSource::kWubi ? wubi_dict_ : pinyin_dict_;
+    return record_candidate_preference(dict, &*candidate, input);
+}
+
 void Engine::reload_config(const Config& config) {
     config_ = &config;
     ascii_composer_.load_config(config);

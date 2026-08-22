@@ -18,6 +18,7 @@ class ReadingUIElement;
 #include <deque>
 #include <mutex>
 #include <string>
+#include <memory>
 
 #include <cxxime/config.h>
 #include <cxxime/control_protocol.h>
@@ -29,6 +30,10 @@ class ReadingUIElement;
 
 #include "candidate_presentation.h"
 #include "effective_edit_target.h"
+
+namespace cxxime {
+class CandidateWindow;
+}
 
 namespace cxxime_tsf {
 
@@ -44,7 +49,9 @@ class TextService : public ITfTextInputProcessorEx,
                     public ITfCompartmentEventSink,
                     public ITfTextEditSink,
                     public ITfTextLayoutSink,
-                    public ITfDisplayAttributeProvider {
+                    public ITfDisplayAttributeProvider,
+                    public ITfFunctionProvider,
+                    public ITfFnSearchCandidateProvider {
 public:
     TextService();
     ~TextService();
@@ -98,6 +105,18 @@ public:
     STDMETHODIMP EnumDisplayAttributeInfo(IEnumTfDisplayAttributeInfo** ppEnum) override;
     STDMETHODIMP GetDisplayAttributeInfo(REFGUID rguid, ITfDisplayAttributeInfo** ppInfo) override;
 
+    // ITfFunctionProvider
+    STDMETHODIMP GetType(GUID* guid) override;
+    STDMETHODIMP GetDescription(BSTR* description) override;
+    STDMETHODIMP GetFunction(REFGUID function_guid, REFIID riid, IUnknown** function) override;
+
+    // ITfFnSearchCandidateProvider
+    STDMETHODIMP GetDisplayName(BSTR* name) override;
+    STDMETHODIMP GetSearchCandidates(BSTR query,
+                                     BSTR application_id,
+                                     ITfCandidateList** candidates) override;
+    STDMETHODIMP SetResult(BSTR query, BSTR application_id, BSTR result) override;
+
     // Helper
     HRESULT insert_text(const std::wstring& text, bool sync = false);
     bool select_candidate_from_ui(UINT index);
@@ -127,6 +146,9 @@ public:
     void set_composition(ITfComposition* comp) { _composition = comp; }
     ITfContext* get_composition_context() const { return _compositionContext; }
     bool is_composing() const { return _composing; }
+    bool is_immersive_mode() const {
+        return (_activateFlags & TF_TMF_IMMERSIVEMODE) != 0;
+    }
     void set_composition_context(ITfContext* context);
     void set_composing(bool val) { _composing = val; }
     bool empty_composition_placeholder_active() const {
@@ -286,6 +308,12 @@ private:
     bool _start_ui_presentation_channel();
     void _stop_ui_presentation_channel();
     void _publish_ui_presentation();
+    bool _present_immersive_candidate_window(const cxxime::CandidatePage& page,
+                                             int page_current,
+                                             int page_total,
+                                             const std::string& preedit,
+                                             std::size_t preedit_cursor);
+    void _hide_immersive_candidate_window();
     void _publish_ui_session_ended();
     void _queue_ui_command(const cxxime::UiCommand& command);
     void _drain_ui_commands();
@@ -327,6 +355,7 @@ private:
     bool _activated = false;
     bool _inputFocused = false;
     bool _inputTargetUnavailable = false;
+    unsigned int _runtimeTargetValidationFailures = 0;
     bool _fTestKeyDownPending = false;
     bool _fTestKeyUpPending = false;
     std::bitset<256> _passThroughKeyUps;
@@ -343,6 +372,7 @@ private:
     CandidateUIElement* _candidateUiElement = nullptr;
     ReadingUIElement* _readingUiElement = nullptr;
     cxxime::Config _config;
+    std::unique_ptr<cxxime::CandidateWindow> _immersiveCandidateWindow;
     cxxime::ConfigGeneration _configGeneration;
     HWND _configWindow = nullptr;
     std::uint32_t _configSubscriptionId = 0;

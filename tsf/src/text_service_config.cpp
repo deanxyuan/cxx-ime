@@ -4,6 +4,8 @@
 
 #include <cstdint>
 
+#include <cxxime/candidate_window.h>
+
 #include "config_coordinator.h"
 #include "globals.h"
 #include "language_bar.h"
@@ -84,8 +86,12 @@ void TextService::_apply_config_snapshot() {
     if (_modeButton) {
         _modeButton->set_status_visible(_config.status_window.enable);
     }
+    if (_immersiveCandidateWindow) {
+        _immersiveCandidateWindow->set_config(_config);
+    }
 
     _publish_ui_presentation();
+    _update_state_poll_timer();
 }
 
 LRESULT CALLBACK TextService::_config_window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {

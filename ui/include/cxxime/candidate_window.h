@@ -24,6 +24,8 @@ class CandidateWindow {
 public:
     using ClickCallback = std::function<void(int)>;
 
+    ~CandidateWindow();
+
     bool create(HWND owner, const Config& config);
     bool ensure_created(HWND owner);
     void destroy();

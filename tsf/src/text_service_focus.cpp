@@ -135,6 +135,7 @@ void TextService::_clear_effective_edit_target(const char* source, bool target_u
         cxxime_tsf::classify_effective_edit_target_change(previous, unavailable, bindings);
 
     _inputTargetUnavailable = target_unavailable;
+    _runtimeTargetValidationFailures = 0;
     if (action == cxxime_tsf::EffectiveEditTargetAction::kUnchanged) {
         _inputFocused = false;
         ++_uiTargetGeneration;
@@ -293,6 +294,7 @@ bool TextService::_synchronize_effective_edit_target(ITfContext* event_context,
 
     _inputFocused = true;
     _inputTargetUnavailable = false;
+    _runtimeTargetValidationFailures = 0;
     if (action == cxxime_tsf::EffectiveEditTargetAction::kRebind || context_changed ||
         document_changed) {
         ++_uiTargetGeneration;

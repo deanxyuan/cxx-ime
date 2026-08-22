@@ -272,6 +272,55 @@ cxxime::IPCResponse ServerApp::handle_request(const cxxime::IPCRequest& request)
         response.status = cxxime::IPCStatus::OK;
         break;
 
+    case cxxime::IPCCommand::SEARCH_CANDIDATES: {
+        const size_t query_length = strnlen_s(request.search_query,
+                                              sizeof(request.search_query));
+        if (query_length == sizeof(request.search_query)) {
+            response.status = cxxime::IPCStatus::ERR_ENGINE_PROCESS_FAILED;
+            break;
+        }
+        const std::string query(request.search_query, query_length);
+        const auto page = session_mgr_.search_candidates(query);
+        response.candidate_count = static_cast<uint32_t>(
+            (std::min)(page.candidates.size(), static_cast<size_t>(cxxime::kCandidateCapacity)));
+        response.candidate_total = static_cast<uint32_t>(page.total_count);
+        response.page_current = static_cast<uint32_t>(page.page_index + 1);
+        const int page_size = page.page_size > 0 ? page.page_size : 10;
+        response.page_total = page.total_count > 0
+            ? static_cast<uint32_t>((page.total_count + page_size - 1) / page_size)
+            : 1;
+        response.highlighted = page.highlighted >= 0
+            ? static_cast<uint32_t>(page.highlighted)
+            : 0;
+        for (uint32_t i = 0; i < response.candidate_count; ++i) {
+            if (!cxxime::candidate_text_fits(page.candidates[i].text) ||
+                !response_copy_field(response.candidates[i], sizeof(response.candidates[i]),
+                                     page.candidates[i].text)) {
+                response.status = cxxime::IPCStatus::ERR_ENGINE_PROCESS_FAILED;
+                break;
+            }
+        }
+        break;
+    }
+
+    case cxxime::IPCCommand::SEARCH_CANDIDATE_RESULT: {
+        const size_t query_length = strnlen_s(request.search_query,
+                                              sizeof(request.search_query));
+        const size_t result_length = strnlen_s(request.search_result,
+                                               sizeof(request.search_result));
+        if (query_length == sizeof(request.search_query) ||
+            result_length == sizeof(request.search_result)) {
+            response.status = cxxime::IPCStatus::ERR_ENGINE_PROCESS_FAILED;
+            break;
+        }
+        response.status = session_mgr_.record_search_result(
+            std::string(request.search_query, query_length),
+            std::string(request.search_result, result_length))
+            ? cxxime::IPCStatus::OK
+            : cxxime::IPCStatus::ERR_ENGINE_PROCESS_FAILED;
+        break;
+    }
+
     case cxxime::IPCCommand::START_SESSION: {
         uint32_t id = session_mgr_.create_session();
         if (id == 0) {

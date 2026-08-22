@@ -72,6 +72,8 @@ public:
     void set_sentence_composition_enabled(bool enabled);
     bool sentence_composition_enabled() const { return sentence_composition_enabled_; }
     void clear_query_cache();
+    CandidatePage translate_for_search(const std::string& input, int limit = 10);
+    bool record_search_result(const std::string& input, const std::string& result);
 
     // Override config page_size (only for self-contained init)
     void set_config_page_size(int size) {

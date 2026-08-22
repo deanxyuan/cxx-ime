@@ -10,13 +10,14 @@
 
 class TextService;
 
-class CandidateUIElement : public ITfCandidateListUIElementBehavior {
+class CandidateUIElement : public ITfCandidateListUIElementBehavior,
+                           public ITfIntegratableCandidateListUIElement {
 public:
     explicit CandidateUIElement(TextService* service);
 
-static constexpr DWORD kPublishedUpdatedFlags =
-    TF_CLUIE_COUNT | TF_CLUIE_SELECTION | TF_CLUIE_STRING |
-    TF_CLUIE_PAGEINDEX | TF_CLUIE_CURRENTPAGE;
+    static constexpr DWORD kPublishedUpdatedFlags =
+        TF_CLUIE_DOCUMENTMGR | TF_CLUIE_COUNT | TF_CLUIE_SELECTION | TF_CLUIE_STRING |
+        TF_CLUIE_PAGEINDEX | TF_CLUIE_CURRENTPAGE;
 
     // IUnknown
     STDMETHODIMP QueryInterface(REFIID riid, void** ppvObj) override;
@@ -44,12 +45,20 @@ static constexpr DWORD kPublishedUpdatedFlags =
     STDMETHODIMP Finalize() override;
     STDMETHODIMP Abort() override;
 
+    // ITfIntegratableCandidateListUIElement
+    STDMETHODIMP SetIntegrationStyle(GUID guidIntegrationStyle) override;
+    STDMETHODIMP
+    GetSelectionStyle(TfIntegratableCandidateListSelectionStyle* selection_style) override;
+    STDMETHODIMP OnKeyDown(WPARAM wParam, LPARAM lParam, BOOL* eaten) override;
+    STDMETHODIMP ShowCandidateNumbers(BOOL* show) override;
+    STDMETHODIMP FinalizeExactCompositionString() override;
+
     void set_page(const cxxime::CandidatePage& page, int page_current, int page_total);
     void clear_page();
     bool begin(ITfThreadMgr* thread_mgr, ITfDocumentMgr* document_mgr = nullptr);
     void notify_update(ITfThreadMgr* thread_mgr);
     void end(ITfThreadMgr* thread_mgr);
-    bool wants_external_window() const { return !_active || _show_external != FALSE; }
+    bool wants_external_window() const;
     bool is_active() const { return _active; }
     ITfDocumentMgr* bound_document_mgr() const { return _document_mgr; }
 
@@ -69,6 +78,8 @@ private:
     ITfDocumentMgr* _document_mgr = nullptr;
     std::vector<std::wstring> _candidates;
     UINT _selection = 0;
+    UINT _page_current = 0;
+    UINT _page_total = 1;
 };
 
 #endif // CXXIME_TSF_CANDIDATE_UI_ELEMENT_H_

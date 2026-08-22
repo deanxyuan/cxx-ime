@@ -64,7 +64,7 @@ TEST(Protocol, user_pipe_name_preserves_endpoint_and_is_idempotent) {
 }
 
 TEST(Protocol, request_struct_size) {
-    ASSERT_EQ(sizeof(cxxime::IPCRequest), static_cast<size_t>(28));
+    ASSERT_EQ(sizeof(cxxime::IPCRequest), static_cast<size_t>(540));
 }
 
 TEST(Protocol, response_struct_size) {

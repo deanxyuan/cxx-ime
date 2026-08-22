@@ -20,6 +20,7 @@
 #include <cxxime/ime_menu.h>
 #include <cxxime/status_window.h>
 #include <cxxime/ui_presentation_trace.h>
+#include <cxxime/window_position.h>
 
 namespace {
 
@@ -115,6 +116,8 @@ public:
     struct AppliedPresentation {
         bool candidate_requested = false;
         bool candidate_visible = false;
+        bool status_requested = false;
+        bool status_suppressed_fullscreen = false;
         bool status_visible = false;
         RECT source_caret = {};
         RECT caret = {};
@@ -387,8 +390,13 @@ private:
         const cxxime::UiPresentationSnapshot& current = presentation->snapshot;
         status_window_.update_state(button_state_from_snapshot(current));
         AppliedPresentation applied;
-        applied.status_visible = current_config_ && current_config_->status_window.enable &&
-                                 has_flag(current, cxxime::UiSnapshotFlag::kStatusVisible);
+        applied.status_requested = current_config_ && current_config_->status_window.enable &&
+                                   has_flag(current, cxxime::UiSnapshotFlag::kStatusVisible);
+        applied.status_suppressed_fullscreen =
+            applied.status_requested &&
+            cxxime::is_fullscreen_window(reinterpret_cast<HWND>(current.target_window));
+        applied.status_visible =
+            applied.status_requested && !applied.status_suppressed_fullscreen;
         applied.source_caret = current.caret;
         applied.caret = current.caret;
         if (applied.status_visible) {
@@ -400,7 +408,8 @@ private:
         applied.candidate_requested =
             current.ownership == cxxime::UiOwnership::kExternal &&
             has_flag(current, cxxime::UiSnapshotFlag::kCandidateVisible) &&
-            has_flag(current, cxxime::UiSnapshotFlag::kHasCaret);
+            has_flag(current, cxxime::UiSnapshotFlag::kHasCaret) &&
+            !has_flag(current, cxxime::UiSnapshotFlag::kTsfLocalCandidate);
         applied.candidate_visible = applied.candidate_requested;
         if (applied.candidate_visible) {
             applied.caret_transformed =
@@ -421,7 +430,12 @@ private:
 
         // Bind the popup to the active TSF view before showing it so ordinary
         // desktop hosts keep the candidate window in their owner hierarchy.
-        candidate_window_.ensure_created(reinterpret_cast<HWND>(current.target_window));
+        const bool immersive_mode =
+            has_flag(current, cxxime::UiSnapshotFlag::kImmersiveMode);
+        const HWND candidate_owner = immersive_mode
+                                        ? nullptr
+                                        : reinterpret_cast<HWND>(current.target_window);
+        candidate_window_.ensure_created(candidate_owner);
         candidate_window_.set_page_info(static_cast<int>(current.candidate_page.page_current),
                                         static_cast<int>(current.candidate_page.page_total));
         if (has_flag(current, cxxime::UiSnapshotFlag::kHasPreedit)) {
@@ -465,8 +479,15 @@ private:
         trace.session_generation = snapshot.session_generation;
         trace.target_generation = snapshot.target_generation;
         trace.composition_generation = snapshot.composition_generation;
+        trace.immersive_mode =
+            has_flag(snapshot, cxxime::UiSnapshotFlag::kImmersiveMode);
+        trace.tsf_local_candidate =
+            has_flag(snapshot, cxxime::UiSnapshotFlag::kTsfLocalCandidate);
+        trace.candidate_ownerless = trace.immersive_mode && applied.candidate_visible;
         trace.candidate_requested = applied.candidate_requested;
         trace.candidate_visible = applied.candidate_visible;
+        trace.status_requested = applied.status_requested;
+        trace.status_suppressed_fullscreen = applied.status_suppressed_fullscreen;
         trace.status_visible = applied.status_visible;
         trace.source_caret = applied.source_caret;
         trace.caret = applied.caret;

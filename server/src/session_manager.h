@@ -138,6 +138,8 @@ public:
 
     ProcessKeyResult process_key(uint32_t id, const cxxime::KeyEvent& event,
                                  uint32_t visible_candidate_count = 0);
+    cxxime::CandidatePage search_candidates(const std::string& input);
+    bool record_search_result(const std::string& input, const std::string& result);
     ProcessKeyResult select_candidate(uint32_t id, int index);
     ProcessKeyResult commit_composition(uint32_t id);
     cxxime::IPCStatus clear_composition(uint32_t id);

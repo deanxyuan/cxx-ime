@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstring>
 
+#include <cxxime/candidate_window.h>
 #include <cxxime/ime_menu.h>
 
 #include "config_coordinator.h"
@@ -15,6 +16,21 @@ constexpr std::size_t kMaxPendingUiCommands = 64;
 
 bool has_flag(const cxxime::UiPresentationSnapshot& snapshot, cxxime::UiSnapshotFlag flag) {
     return (snapshot.flags & cxxime::ui_snapshot_flag(flag)) != 0;
+}
+
+bool host_suppresses_status_window(bool ui_element_only,
+                                   bool immersive_mode,
+                                   std::uint64_t target_window,
+                                   cxxime::UiOwnership ownership) {
+    if (ui_element_only || ownership == cxxime::UiOwnership::kHost) {
+        return true;
+    }
+    if (!immersive_mode) {
+        return false;
+    }
+    const HWND window = reinterpret_cast<HWND>(target_window);
+    const HWND root = window ? GetAncestor(window, GA_ROOT) : nullptr;
+    return !root || root == window;
 }
 
 cxxime::UiOwnership ui_ownership(cxxime_tsf::CandidateOwnership ownership) {
@@ -40,6 +56,45 @@ void copy_packet_text(char* destination, std::size_t capacity, std::uint32_t* le
 
 } // namespace
 
+bool TextService::_present_immersive_candidate_window(const cxxime::CandidatePage& page,
+                                                      int page_current,
+                                                      int page_total,
+                                                      const std::string& preedit,
+                                                      std::size_t preedit_cursor) {
+    HWND owner = reinterpret_cast<HWND>(_effectiveEditTarget.view_window);
+    if (!owner || !IsWindow(owner)) {
+        owner = GetFocus();
+    }
+    if (!owner || !IsWindow(owner)) {
+        return false;
+    }
+
+    if (!_immersiveCandidateWindow) {
+        _immersiveCandidateWindow = std::make_unique<cxxime::CandidateWindow>();
+        if (!_immersiveCandidateWindow->create(owner, _config)) {
+            _immersiveCandidateWindow.reset();
+            return false;
+        }
+        _immersiveCandidateWindow->set_click_callback(
+            [this](int index) { select_candidate_from_ui(static_cast<UINT>(index)); });
+    } else if (!_immersiveCandidateWindow->ensure_created(owner)) {
+        return false;
+    }
+
+    _immersiveCandidateWindow->set_page_info(page_current, page_total);
+    _immersiveCandidateWindow->set_preedit(preedit, preedit_cursor);
+    _immersiveCandidateWindow->update(page);
+    _immersiveCandidateWindow->move_to_caret(_caretRect);
+    _immersiveCandidateWindow->show();
+    return _immersiveCandidateWindow->is_visible();
+}
+
+void TextService::_hide_immersive_candidate_window() {
+    if (_immersiveCandidateWindow) {
+        _immersiveCandidateWindow->hide();
+    }
+}
+
 bool TextService::_start_ui_presentation_channel() {
     if (_uiChannel.is_running()) {
         return true;
@@ -52,6 +107,7 @@ bool TextService::_start_ui_presentation_channel() {
 }
 
 void TextService::_stop_ui_presentation_channel() {
+    _hide_immersive_candidate_window();
     _uiChannel.stop();
     std::lock_guard<std::mutex> lock(_uiCommandMutex);
     _uiCommands.clear();
@@ -76,19 +132,22 @@ void TextService::_publish_ui_presentation() {
     if (_composing) {
         snapshot.flags |= cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kComposing);
     }
-    // UI-element-only hosts own the composition presentation; keep the CxxIME
-    // status window hidden for the whole host session, not just one candidate.
-    const bool host_ui_element_only_mode =
-        (_activateFlags & TF_TMF_UIELEMENTENABLEDONLY) != 0;
+    if (is_immersive_mode()) {
+        snapshot.flags |= cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kImmersiveMode);
+    }
+    snapshot.target_window = _effectiveEditTarget.view_window;
+    // A top-level immersive target includes surfaces such as Start/SearchUI.
+    // Framed immersive applications retain CxxIME's normal status presentation.
+    const bool host_suppresses_status = host_suppresses_status_window(
+        (_activateFlags & TF_TMF_UIELEMENTENABLEDONLY) != 0, is_immersive_mode(),
+        snapshot.target_window, snapshot.ownership);
     const bool status_visible =
         _activated && _inputFocused && _effectiveEditTarget.valid() &&
         _has_synced_ime_status() && _config.status_window.enable &&
-        !host_ui_element_only_mode && snapshot.ownership != cxxime::UiOwnership::kHost;
+        !host_suppresses_status;
     if (status_visible) {
         snapshot.flags |= cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kStatusVisible);
     }
-
-    snapshot.target_window = _effectiveEditTarget.view_window;
 
     if (cxxime_tsf::is_valid_caret_rect(_caretRect)) {
         snapshot.caret = _caretRect;
@@ -136,6 +195,18 @@ void TextService::_publish_ui_presentation() {
     if (candidate_visible) {
         snapshot.flags |= cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kCandidateVisible);
     }
+    const bool local_candidate_visible =
+        candidate_visible && is_immersive_mode() &&
+        _present_immersive_candidate_window(
+            page, static_cast<int>(snapshot.candidate_page.page_current),
+            static_cast<int>(snapshot.candidate_page.page_total),
+            _candidatePresentation.popup_preedit(),
+            _candidatePresentation.popup_preedit_cursor());
+    if (local_candidate_visible) {
+        snapshot.flags |= cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kTsfLocalCandidate);
+    } else {
+        _hide_immersive_candidate_window();
+    }
     const cxxime::DiagnosticTraceMode trace_mode = _config.diagnostics.trace_mode;
     if (trace_mode == cxxime::DiagnosticTraceMode::kNormal ||
         trace_mode == cxxime::DiagnosticTraceMode::kVerbose) {
@@ -145,6 +216,7 @@ void TextService::_publish_ui_presentation() {
 }
 
 void TextService::_publish_ui_session_ended() {
+    _hide_immersive_candidate_window();
     if (!_uiChannel.is_running() || _sessionId == 0 || _uiSessionGeneration == 0) {
         return;
     }

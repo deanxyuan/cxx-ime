@@ -107,7 +107,9 @@ bool is_valid_ui_snapshot(const UiPresentationSnapshot& snapshot) {
                                           ui_snapshot_flag(UiSnapshotFlag::kHasCaret) |
                                           ui_snapshot_flag(UiSnapshotFlag::kHasPreedit) |
                                           ui_snapshot_flag(UiSnapshotFlag::kHasCandidates) |
-                                          ui_snapshot_flag(UiSnapshotFlag::kSessionEnded);
+                                          ui_snapshot_flag(UiSnapshotFlag::kSessionEnded) |
+                                          ui_snapshot_flag(UiSnapshotFlag::kImmersiveMode) |
+                                          ui_snapshot_flag(UiSnapshotFlag::kTsfLocalCandidate);
     if (snapshot.session_id == 0 || snapshot.session_generation == 0 ||
         (snapshot.flags & ~kKnownFlags) != 0 || !valid_ownership(snapshot.ownership) ||
         snapshot.preedit_length > static_cast<std::uint32_t>(kUiPreeditCapacity) ||

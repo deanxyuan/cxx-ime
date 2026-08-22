@@ -57,9 +57,13 @@ inline PreeditDecision decide_preedit(bool inline_preedit, const std::string& pr
     return d;
 }
 
-inline bool composition_transition_requires_placeholder(const std::wstring& current_text,
-                                                        const std::wstring& next_text) {
-    return !current_text.empty() && next_text.empty();
+inline bool empty_composition_requires_placeholder(bool immersive_mode, bool composition_active,
+                                                   const std::wstring& current_text,
+                                                   const std::wstring& next_text) {
+    if (!next_text.empty()) {
+        return false;
+    }
+    return immersive_mode || (composition_active && !current_text.empty());
 }
 
 } // namespace cxxime_tsf
