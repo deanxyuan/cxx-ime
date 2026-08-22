@@ -104,11 +104,18 @@ TEST(PreeditMode, cursor_is_clamped_to_preedit_length) {
     ASSERT_EQ(d.inline_cursor, preedit.size());
 }
 
-TEST(PreeditMode, only_nonempty_to_empty_requires_placeholder) {
-    ASSERT_TRUE(cxxime_tsf::composition_transition_requires_placeholder(L"你好", L""));
-    ASSERT_TRUE(!cxxime_tsf::composition_transition_requires_placeholder(L"", L""));
-    ASSERT_TRUE(!cxxime_tsf::composition_transition_requires_placeholder(L"", L"你好"));
-    ASSERT_TRUE(!cxxime_tsf::composition_transition_requires_placeholder(L"你好", L"您好"));
+TEST(PreeditMode, immersive_empty_composition_always_requires_placeholder) {
+    ASSERT_TRUE(cxxime_tsf::empty_composition_requires_placeholder(true, false, L"", L""));
+    ASSERT_TRUE(cxxime_tsf::empty_composition_requires_placeholder(true, true, L"", L""));
+    ASSERT_TRUE(
+        !cxxime_tsf::empty_composition_requires_placeholder(true, true, L"", L"composition"));
+}
+
+TEST(PreeditMode, desktop_placeholder_is_limited_to_nonempty_to_empty_transition) {
+    ASSERT_TRUE(
+        cxxime_tsf::empty_composition_requires_placeholder(false, true, L"composition", L""));
+    ASSERT_TRUE(!cxxime_tsf::empty_composition_requires_placeholder(false, false, L"", L""));
+    ASSERT_TRUE(!cxxime_tsf::empty_composition_requires_placeholder(false, true, L"", L""));
 }
 
 RUN_ALL_TESTS()

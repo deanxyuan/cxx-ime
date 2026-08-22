@@ -6,6 +6,8 @@
 #include <cmath>
 #include <string>
 
+#include <dwmapi.h>
+
 #include <cxxime/config.h>
 #include <cxxime/renderer.h>
 
@@ -23,6 +25,10 @@ static int system_caret_width() {
         return 1;
     }
     return static_cast<int>(width);
+}
+
+CandidateWindow::~CandidateWindow() {
+    destroy();
 }
 
 bool CandidateWindow::create(HWND owner, const Config& config) {
@@ -199,14 +205,19 @@ void CandidateWindow::set_owner(HWND owner) {
         return;
     }
 
-    if (owner && !IsWindowVisible(hwnd_) && config_) {
+    if (config_) {
         const Config* config = config_;
         destroy();
         create(owner, *config);
     }
 }
 bool CandidateWindow::is_visible() const {
-    return is_created() && IsWindowVisible(hwnd_) != FALSE;
+    if (!is_created() || IsWindowVisible(hwnd_) == FALSE) {
+        return false;
+    }
+    DWORD cloaked = 0;
+    return FAILED(DwmGetWindowAttribute(hwnd_, DWMWA_CLOAKED, &cloaked, sizeof(cloaked))) ||
+           cloaked == 0;
 }
 bool CandidateWindow::owner_matches(HWND owner) const {
     if (!is_created() || (owner && !IsWindow(owner))) {

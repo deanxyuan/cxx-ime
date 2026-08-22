@@ -18,6 +18,8 @@ constexpr UINT kIpcHeartbeatIntervalMs = 1500;
 constexpr auto kIpcHeartbeatInterval = std::chrono::milliseconds(kIpcHeartbeatIntervalMs);
 constexpr int kTsfIpcTimeoutMs = 800;
 constexpr UINT kStatePollFastIntervalMs = 30;
+constexpr UINT kEditTargetValidationIntervalMs = 250;
+constexpr unsigned int kEditTargetValidationFailureLimit = 2;
 
 std::mutex g_state_poll_timer_mutex;
 std::unordered_map<UINT_PTR, TextService*> g_state_poll_timers;
@@ -273,8 +275,13 @@ void TextService::_update_state_poll_timer() {
         _inputFocused &&
         ((_candidatePresentation.external_window_expected() &&
          _candidatePresentation.waiting_for_caret()));
-    const UINT interval = track_candidate ? kStatePollFastIntervalMs
-                                          : kIpcHeartbeatIntervalMs;
+    const bool validate_edit_target =
+        _inputFocused && _effectiveContext && _effectiveEditTarget.valid() &&
+        _config.status_window.enable;
+    const UINT interval = track_candidate
+        ? kStatePollFastIntervalMs
+        : (validate_edit_target ? kEditTargetValidationIntervalMs
+                                : kIpcHeartbeatIntervalMs);
     if (_statePollTimer && _statePollIntervalMs == interval)
         return;
 
@@ -328,6 +335,18 @@ void TextService::_poll_runtime_state() {
     _heartbeat_ipc();
     if (!_sessionId || !_inputFocused)
         return;
+
+    if (_effectiveContext && _effectiveEditTarget.valid()) {
+        if (_context_belongs_to_foreground(_effectiveContext)) {
+            _runtimeTargetValidationFailures = 0;
+        } else if (++_runtimeTargetValidationFailures >= kEditTargetValidationFailureLimit) {
+            _clear_effective_edit_target("runtime_target_validation", true);
+            if (_sessionId && _client.is_connected()) {
+                _client.focus_out(_sessionId);
+            }
+            return;
+        }
+    }
 
     if (_composing && _candidatePresentation.external_window_expected() &&
          _candidatePresentation.waiting_for_caret()) {

@@ -205,10 +205,9 @@ bool TextService::candidate_presentation_request_is_current(
 }
 
 bool TextService::inline_composition_requires_placeholder(const std::wstring& next_text) const {
-    // Some text stores terminate an active composition when its non-empty text becomes empty.
-    return _composing && _composition &&
-           cxxime_tsf::composition_transition_requires_placeholder(_lastInlineCompositionText,
-                                                                   next_text);
+    // Keep an observable range in immersive text stores and across non-empty-to-empty updates.
+    return cxxime_tsf::empty_composition_requires_placeholder(
+        is_immersive_mode(), _composing && _composition, _lastInlineCompositionText, next_text);
 }
 
 bool TextService::handle_composition_restart_failure(uint64_t expected_generation) {

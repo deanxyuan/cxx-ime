@@ -39,7 +39,7 @@ TEST(EditTarget, unknown_when_focused_child_requires_provisional_composition) {
     ASSERT_EQ(cxxime_tsf::classify_edit_target(evidence), cxxime_tsf::EditTargetState::Unknown);
 }
 
-TEST(EditTarget, no_target_when_unclipped_text_position_is_outside_view) {
+TEST(EditTarget, outside_view_is_diagnostic_only) {
     const RECT uninstall_view = {1445, 857, 2368, 1235};
     const RECT uninstall_text = {3540, 1891, 3541, 1891};
     ASSERT_TRUE(cxxime_tsf::text_rect_is_outside_view(
@@ -63,6 +63,12 @@ TEST(EditTarget, no_target_when_unclipped_text_position_is_outside_view) {
         S_OK, {}, S_OK, uninstall_text, false));
     ASSERT_TRUE(!cxxime_tsf::text_rect_is_outside_view(
         S_OK, uninstall_view, E_FAIL, uninstall_text, false));
+
+    const RECT dota_text = {-1000, -1000, -983, -980};
+    ASSERT_TRUE(cxxime_tsf::text_rect_is_meaningful(S_OK, dota_text, false));
+    ASSERT_TRUE(!cxxime_tsf::text_rect_is_meaningful(S_OK, uninstall_text, false));
+    ASSERT_TRUE(!cxxime_tsf::text_rect_is_meaningful(S_OK, dota_text, true));
+    ASSERT_TRUE(!cxxime_tsf::text_rect_is_meaningful(E_FAIL, dota_text, false));
 
     auto evidence = captured_selection();
     evidence.context_is_focused_child = true;
@@ -98,6 +104,7 @@ TEST(EditTarget, editable_when_any_supported_evidence_is_present) {
 
     evidence = captured_selection();
     evidence.has_meaningful_text_rect = true;
+    evidence.text_rect_outside_view = true;
     ASSERT_EQ(cxxime_tsf::classify_edit_target(evidence), cxxime_tsf::EditTargetState::Editable);
 
     evidence = captured_selection();

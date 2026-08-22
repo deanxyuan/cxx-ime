@@ -300,4 +300,30 @@ bool IpcClient::ping(IPCResponse* response) {
     return send_request(req, resp) && resp.status == IPCStatus::OK;
 }
 
+bool IpcClient::search_candidates(const std::string& query, IPCResponse& response) {
+    if (query.size() >= sizeof(IPCRequest::search_query)) {
+        return false;
+    }
+
+    IPCRequest req = {};
+    req.command = IPCCommand::SEARCH_CANDIDATES;
+    memcpy(req.search_query, query.data(), query.size());
+    req.search_query[query.size()] = '\0';
+    return send_request(req, response) && response.status == IPCStatus::OK;
+}
+
+bool IpcClient::set_search_result(const std::string& query, const std::string& result) {
+    if (query.size() >= sizeof(IPCRequest::search_query) ||
+        result.size() >= sizeof(IPCRequest::search_result)) {
+        return false;
+    }
+
+    IPCRequest req = {};
+    req.command = IPCCommand::SEARCH_CANDIDATE_RESULT;
+    memcpy(req.search_query, query.data(), query.size());
+    memcpy(req.search_result, result.data(), result.size());
+    IPCResponse response = {};
+    return send_request(req, response) && response.status == IPCStatus::OK;
+}
+
 } // namespace cxxime

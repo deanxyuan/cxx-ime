@@ -106,6 +106,8 @@ enum class IPCCommand : uint32_t {
     SYNC_CAPS_LOCK = 16,
     PING = 22,
     SET_CHINESE_MODE = 24,
+    SEARCH_CANDIDATES = 25,
+    SEARCH_CANDIDATE_RESULT = 26,
 };
 
 enum class IPCStatus : uint32_t {
@@ -124,6 +126,9 @@ struct IPCRequest {
     uint32_t candidate_index = 0;  // Candidate selection or target input mode.
     uint32_t visible_candidate_count = 0;  // Number actually presented by the current UI page.
     uint32_t is_key_up = 0;
+    // UTF-8 query for SEARCH_CANDIDATES; unused by input-session commands.
+    char search_query[256] = {};
+    char search_result[256] = {};
 };
 
 static_assert(std::is_standard_layout<IPCRequest>::value,
@@ -131,8 +136,12 @@ static_assert(std::is_standard_layout<IPCRequest>::value,
 static_assert(std::is_trivially_copyable<IPCRequest>::value,
               "IPCRequest must remain trivially copyable");
 static_assert(alignof(IPCRequest) == 4, "IPCRequest alignment changed");
-static_assert(sizeof(IPCRequest) == 28, "IPCRequest size changed");
+static_assert(sizeof(IPCRequest) == 540, "IPCRequest size changed");
 static_assert(offsetof(IPCRequest, is_key_up) == 24, "IPCRequest::is_key_up offset changed");
+static_assert(offsetof(IPCRequest, search_query) == 28,
+              "IPCRequest::search_query offset changed");
+static_assert(offsetof(IPCRequest, search_result) == 284,
+              "IPCRequest::search_result offset changed");
 
 struct IPCResponse {
     IPCStatus status = IPCStatus::OK;

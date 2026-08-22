@@ -20,6 +20,12 @@ bool text_rect_is_outside_view(HRESULT screen_rect_hr, const RECT& screen_rect,
             text_rect.bottom <= screen_rect.top || text_rect.top >= screen_rect.bottom);
 }
 
+bool text_rect_is_meaningful(HRESULT text_rect_hr, const RECT& text_rect,
+    bool placeholder_text_rect) {
+    return SUCCEEDED(text_rect_hr) && text_rect.right > text_rect.left &&
+           text_rect.bottom > text_rect.top && !placeholder_text_rect;
+}
+
 namespace {
 
 bool is_shell_process(HWND hwnd) {
@@ -205,9 +211,8 @@ private:
         evidence_->text_rect_outside_view = text_rect_is_outside_view(
             evidence_->screen_rect_hr, evidence_->screen_rect, evidence_->text_rect_hr,
             evidence_->text_rect, evidence_->text_clipped);
-        evidence_->has_meaningful_text_rect =
-            text_rect_valid && !evidence_->placeholder_text_rect &&
-            !evidence_->text_rect_outside_view;
+        evidence_->has_meaningful_text_rect = text_rect_is_meaningful(
+            evidence_->text_rect_hr, evidence_->text_rect, evidence_->placeholder_text_rect);
         if (!evidence_->foreground_is_shell_window && foreground_root &&
             !evidence_->has_active_selection && !evidence_->has_input_scope &&
             !evidence_->has_native_caret && !evidence_->has_meaningful_text_rect) {

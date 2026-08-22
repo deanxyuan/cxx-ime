@@ -2,6 +2,7 @@
 
 #include "session_manager.h"
 
+#include <algorithm>
 #include <fstream>
 
 #include <windows.h>
@@ -1023,6 +1024,84 @@ ProcessKeyResult SessionManager::process_key(uint32_t id, const cxxime::KeyEvent
     }
 
     return ret;
+}
+
+cxxime::CandidatePage SessionManager::search_candidates(const std::string& input) {
+    if (input.empty()) {
+        return {};
+    }
+
+    const auto resources = shared_.snapshot();
+    if (!resources.dict || !resources.spellings || !resources.config) {
+        return {};
+    }
+
+    const auto visible_state = snapshot_global_state();
+    cxxime::Engine search_engine;
+    if (!search_engine.initialize(*resources.dict, *resources.spellings,
+                                  resources.syllabifier.get(), *resources.config,
+                                  resources.symbol_table.get())) {
+        return {};
+    }
+    search_engine.set_wubi_dict(resources.wubi_dict.get());
+    search_engine.switch_mode(visible_state.input_mode);
+    cxxime::CandidatePage page = search_engine.translate_for_search(input, 10);
+    std::vector<cxxime::Candidate> filtered;
+    filtered.reserve(page.candidates.size());
+    for (auto& candidate : page.candidates) {
+        if (candidate.origin == cxxime::CandidateOrigin::kComposed || candidate.text.empty()) {
+            continue;
+        }
+
+        bool redundant = false;
+        for (auto it = filtered.begin(); it != filtered.end();) {
+            const bool existing_prefix = candidate.text.size() >= it->text.size() &&
+                candidate.text.compare(0, it->text.size(), it->text) == 0;
+            const bool candidate_prefix = it->text.size() >= candidate.text.size() &&
+                it->text.compare(0, candidate.text.size(), candidate.text) == 0;
+            if (!existing_prefix && !candidate_prefix) {
+                ++it;
+                continue;
+            }
+            if (it->text.size() <= candidate.text.size()) {
+                redundant = true;
+                break;
+            }
+            it = filtered.erase(it);
+        }
+        if (!redundant) {
+            filtered.push_back(std::move(candidate));
+        }
+    }
+    page.candidates = std::move(filtered);
+    page.total_count = static_cast<int>(page.candidates.size());
+    page.page_index = 0;
+    page.page_offset = 0;
+    page.page_size = 10;
+    page.highlighted = page.candidates.empty() ? -1 : 0;
+    return page;
+}
+
+bool SessionManager::record_search_result(const std::string& input,
+                                          const std::string& result) {
+    if (input.empty() || result.empty()) {
+        return false;
+    }
+    const auto resources = shared_.snapshot();
+    if (!resources.dict || !resources.spellings || !resources.config) {
+        return false;
+    }
+
+    const auto visible_state = snapshot_global_state();
+    cxxime::Engine search_engine;
+    if (!search_engine.initialize(*resources.dict, *resources.spellings,
+                                  resources.syllabifier.get(), *resources.config,
+                                  resources.symbol_table.get())) {
+        return false;
+    }
+    search_engine.set_wubi_dict(resources.wubi_dict.get());
+    search_engine.switch_mode(visible_state.input_mode);
+    return search_engine.record_search_result(input, result);
 }
 
 ProcessKeyResult SessionManager::select_candidate(uint32_t id, int index) {

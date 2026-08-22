@@ -17,8 +17,13 @@ struct UiPresentationTrace {
     std::uint64_t session_generation = 0;
     std::uint64_t target_generation = 0;
     std::uint64_t composition_generation = 0;
+    bool immersive_mode = false;
+    bool tsf_local_candidate = false;
+    bool candidate_ownerless = false;
     bool candidate_requested = false;
     bool candidate_visible = false;
+    bool status_requested = false;
+    bool status_suppressed_fullscreen = false;
     bool status_visible = false;
     RECT source_caret = {};
     RECT caret = {};

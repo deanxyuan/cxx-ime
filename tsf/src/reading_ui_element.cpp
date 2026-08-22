@@ -12,6 +12,13 @@ ReadingUIElement::~ReadingUIElement() {
     release_context();
 }
 
+bool ReadingUIElement::wants_external_window() const {
+    if (!_active) {
+        return true;
+    }
+    return _show_external != FALSE;
+}
+
 STDMETHODIMP ReadingUIElement::QueryInterface(REFIID riid, void** ppvObj) {
     if (!ppvObj)
         return E_INVALIDARG;

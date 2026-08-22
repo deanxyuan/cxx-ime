@@ -11,6 +11,9 @@ namespace cxxime {
 POINT clamp_window_position_to_work_area(int x, int y, int width, int height,
                                          const RECT& work_area);
 
+bool rect_covers_monitor(const RECT& rect, const RECT& monitor_rect);
+bool is_fullscreen_window(HWND window);
+
 } // namespace cxxime
 
 #endif // CXXIME_WINDOW_POSITION_H_

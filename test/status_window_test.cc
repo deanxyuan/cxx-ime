@@ -159,6 +159,16 @@ TEST(StatusWindow, ClampPositionToWorkArea) {
     ASSERT_EQ(position.y, 1080);
 }
 
+TEST(StatusWindow, FullscreenRequiresCoveringTheEntireMonitor) {
+    const RECT monitor = {0, 0, 1920, 1080};
+
+    ASSERT_TRUE(cxxime::rect_covers_monitor({0, 0, 1920, 1080}, monitor));
+    ASSERT_TRUE(cxxime::rect_covers_monitor({-8, -8, 1928, 1088}, monitor));
+    ASSERT_TRUE(!cxxime::rect_covers_monitor({0, 0, 1920, 1040}, monitor));
+    ASSERT_TRUE(!cxxime::rect_covers_monitor({0, 40, 1920, 1080}, monitor));
+    ASSERT_TRUE(!cxxime::rect_covers_monitor({}, monitor));
+}
+
 TEST(StatusWindow, AutoDockClampsCurrentPositionToWorkArea) {
     const DPI_AWARENESS_CONTEXT previous_context =
         SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);

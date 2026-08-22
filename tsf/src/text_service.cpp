@@ -8,6 +8,7 @@
 #include <new>
 #include <string>
 
+#include <cxxime/candidate_window.h>
 #include <cxxime/logging.h>
 
 #include "candidate_ui_element.h"
@@ -15,13 +16,38 @@
 #include "globals.h"
 #include "language_bar.h"
 #include "reading_ui_element.h"
+#include "search_candidate_list.h"
 #include "tsf_activation.h"
 #include "tsf_trace.h"
+
+namespace {
+
+std::string wstring_to_utf8(const wchar_t* text) {
+    if (!text || *text == L'\0') {
+        return {};
+    }
+    const int source_length = static_cast<int>(wcslen(text));
+    const int byte_length = WideCharToMultiByte(
+        CP_UTF8, WC_ERR_INVALID_CHARS, text, source_length, nullptr, 0, nullptr, nullptr);
+    if (byte_length <= 0) {
+        return {};
+    }
+    std::string result(static_cast<size_t>(byte_length), '\0');
+    if (WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, text, source_length,
+                            result.data(), byte_length, nullptr, nullptr) != byte_length) {
+        return {};
+    }
+    return result;
+}
+
+} // namespace
 
 TextService::TextService() {}
 
 TextService::~TextService() {
+    _hide_immersive_candidate_window();
     _stop_ui_presentation_channel();
+    _immersiveCandidateWindow.reset();
     _stop_config_updates();
     _stop_state_poll_timer();
     _unregister_conversion_compartment_sink();
@@ -55,7 +81,20 @@ STDMETHODIMP TextService::QueryInterface(REFIID riid, void** ppvObj) {
         *ppvObj = static_cast<ITfTextLayoutSink*>(this);
     else if (IsEqualIID(riid, IID_ITfDisplayAttributeProvider))
         *ppvObj = static_cast<ITfDisplayAttributeProvider*>(this);
+    else if (IsEqualIID(riid, IID_ITfFunction))
+        *ppvObj = static_cast<ITfFunction*>(this);
+    else if (IsEqualIID(riid, IID_ITfFunctionProvider))
+        *ppvObj = static_cast<ITfFunctionProvider*>(this);
+    else if (IsEqualIID(riid, IID_ITfFnSearchCandidateProvider))
+        *ppvObj = static_cast<ITfFnSearchCandidateProvider*>(this);
 
+    const bool function_interface = IsEqualIID(riid, IID_ITfFunction) ||
+                                    IsEqualIID(riid, IID_ITfFunctionProvider) ||
+                                    IsEqualIID(riid, IID_ITfFnSearchCandidateProvider);
+    const HRESULT result = *ppvObj ? S_OK : E_NOINTERFACE;
+    if (function_interface) {
+        cxxime_tsf::trace_ui_query(this, "function_provider", riid, result);
+    }
     if (*ppvObj) {
         AddRef();
         return S_OK;
@@ -72,6 +111,84 @@ STDMETHODIMP_(ULONG) TextService::Release() {
     if (cr == 0)
         delete this;
     return cr;
+}
+
+STDMETHODIMP TextService::GetType(GUID* guid) {
+    if (!guid) {
+        return E_INVALIDARG;
+    }
+    *guid = c_clsidTextService;
+    return S_OK;
+}
+
+STDMETHODIMP TextService::GetDescription(BSTR* description) {
+    if (!description) {
+        return E_INVALIDARG;
+    }
+    *description = SysAllocString(TEXTSERVICE_DESC);
+    return *description ? S_OK : E_OUTOFMEMORY;
+}
+
+STDMETHODIMP TextService::GetFunction(REFGUID function_guid,
+                                      REFIID riid,
+                                      IUnknown** function) {
+    if (!function) {
+        return E_INVALIDARG;
+    }
+    *function = nullptr;
+    if (!IsEqualGUID(function_guid, GUID_NULL)) {
+        return E_NOINTERFACE;
+    }
+    return QueryInterface(riid, reinterpret_cast<void**>(function));
+}
+
+STDMETHODIMP TextService::GetDisplayName(BSTR* name) {
+    if (!name) {
+        return E_INVALIDARG;
+    }
+    *name = SysAllocString(L"CxxIME Search Candidates");
+    return *name ? S_OK : E_OUTOFMEMORY;
+}
+
+STDMETHODIMP TextService::GetSearchCandidates(BSTR query,
+                                              BSTR application_id,
+                                              ITfCandidateList** candidates) {
+    UNREFERENCED_PARAMETER(application_id);
+    if (!candidates) {
+        return E_INVALIDARG;
+    }
+    *candidates = nullptr;
+    const std::string query_utf8 = wstring_to_utf8(query);
+    if (query && *query != L'\0' && query_utf8.empty()) {
+        return E_INVALIDARG;
+    }
+
+    cxxime::IPCResponse response = {};
+    std::vector<std::wstring> values;
+    if (!query_utf8.empty() && _client.search_candidates(query_utf8, response)) {
+        for (uint32_t index = 0; index < response.candidate_count &&
+                                index < cxxime::kCandidateCapacity; ++index) {
+            values.push_back(utf8_to_wstring(response.candidates[index]));
+        }
+    }
+
+    auto* result = new (std::nothrow) SearchCandidateList(std::move(values));
+    if (!result) {
+        return E_OUTOFMEMORY;
+    }
+    *candidates = result;
+    return S_OK;
+}
+
+STDMETHODIMP TextService::SetResult(BSTR query, BSTR application_id, BSTR result) {
+    UNREFERENCED_PARAMETER(application_id);
+    const std::string query_utf8 = wstring_to_utf8(query);
+    const std::string result_utf8 = wstring_to_utf8(result);
+    if ((query && *query != L'\0' && query_utf8.empty()) ||
+        (result && *result != L'\0' && result_utf8.empty())) {
+        return E_INVALIDARG;
+    }
+    return _client.set_search_result(query_utf8, result_utf8) ? S_OK : E_FAIL;
 }
 
 STDMETHODIMP TextService::Activate(ITfThreadMgr* ptim, TfClientId tid) {

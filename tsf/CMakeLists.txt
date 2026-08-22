@@ -52,6 +52,7 @@ add_library(cxxime-tsf SHARED
     src/key_event_sink.cpp
     src/edit_session.cpp
     src/candidate_ui_element.cpp
+    src/search_candidate_list.cpp
     src/reading_ui_element.cpp
     src/display_attribute.cpp
     src/register.cpp
@@ -76,6 +77,7 @@ target_link_libraries(cxxime-tsf PRIVATE
     cxxime-shared
     cxxime-ipc
     cxxime-engine
+    cxxime-ui
     ole32
     oleaut32
     uuid

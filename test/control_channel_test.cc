@@ -461,7 +461,7 @@ TEST(ControlChannel, lexicon_client_supports_all_operations) {
 }
 
 TEST(ControlChannel, input_protocol_size_matches_native_layout) {
-    ASSERT_EQ(sizeof(cxxime::IPCRequest), static_cast<std::size_t>(28));
+    ASSERT_EQ(sizeof(cxxime::IPCRequest), static_cast<std::size_t>(540));
     ASSERT_EQ(sizeof(cxxime::IPCResponse), static_cast<std::size_t>(3176));
 }
 

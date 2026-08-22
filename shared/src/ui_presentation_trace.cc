@@ -131,8 +131,13 @@ void enqueue_ui_presentation_trace(const UiPresentationTrace& trace) {
     builder.uint64_field("session_generation", trace.session_generation);
     builder.uint64_field("target_generation", trace.target_generation);
     builder.uint64_field("composition_generation", trace.composition_generation);
+    builder.bool_field("immersive_mode", trace.immersive_mode);
+    builder.bool_field("tsf_local_candidate", trace.tsf_local_candidate);
+    builder.bool_field("candidate_ownerless", trace.candidate_ownerless);
     builder.bool_field("candidate_requested", trace.candidate_requested);
     builder.bool_field("candidate_visible", trace.candidate_visible);
+    builder.bool_field("status_requested", trace.status_requested);
+    builder.bool_field("status_suppressed_fullscreen", trace.status_suppressed_fullscreen);
     builder.bool_field("status_visible", trace.status_visible);
     builder.rect_field("source_caret", trace.source_caret);
     builder.rect_field("caret", trace.caret);

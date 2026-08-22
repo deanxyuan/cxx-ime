@@ -42,6 +42,8 @@ public:
     bool get_status(uint32_t session_id, IPCResponse& response);
     bool sync_caps_lock(uint32_t session_id, bool caps_lock, IPCResponse& response);
     bool ping(IPCResponse* response = nullptr);
+    bool search_candidates(const std::string& query, IPCResponse& response);
+    bool set_search_result(const std::string& query, const std::string& result);
 
     int64_t last_ipc_us() const { return last_ipc_us_; }
 

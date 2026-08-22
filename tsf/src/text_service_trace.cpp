@@ -149,13 +149,17 @@ void TextService::_enqueue_ui_presentation_trace(const cxxime::UiPresentationSna
         json, sizeof(json),
         "{\"event\":\"ui.presentation_publish\",\"timestamp_100ns\":%llu,\"session\":%llu,"
         "\"session_generation\":%llu,\"target_generation\":%llu,"
-        "\"composition_generation\":%llu,\"candidate_visible\":%s,\"status_visible\":%s}",
+        "\"composition_generation\":%llu,\"candidate_visible\":%s,"
+        "\"tsf_local_candidate\":%s,\"status_visible\":%s}",
         static_cast<unsigned long long>(timestamp_100ns),
         static_cast<unsigned long long>(snapshot.session_id),
         static_cast<unsigned long long>(snapshot.session_generation),
         static_cast<unsigned long long>(snapshot.target_generation),
         static_cast<unsigned long long>(snapshot.composition_generation),
         (snapshot.flags & cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kCandidateVisible)) != 0
+            ? "true"
+            : "false",
+        (snapshot.flags & cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kTsfLocalCandidate)) != 0
             ? "true"
             : "false",
         (snapshot.flags & cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kStatusVisible)) != 0

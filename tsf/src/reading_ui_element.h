@@ -35,7 +35,7 @@ public:
     bool begin(ITfThreadMgr* thread_mgr);
     void notify_update(ITfThreadMgr* thread_mgr);
     void end(ITfThreadMgr* thread_mgr);
-    bool wants_external_window() const { return !_active || _show_external != FALSE; }
+    bool wants_external_window() const;
     bool is_active() const { return _active; }
 
 private:
