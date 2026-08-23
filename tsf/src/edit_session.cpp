@@ -713,7 +713,6 @@ STDMETHODIMP EditSession::DoEditSession(TfEditCookie ec) {
             _resultRect = rc;
             _resultValid = true;
             if (_service) {
-                _service->set_caret_rect(rc);
                 _service->trace_caret_event("query", source, true, &rc);
             }
         } else if (_service) {

@@ -16,6 +16,7 @@
 #include "globals.h"
 #include "preedit_mode.h"
 #include "tsf_trace.h"
+#include "ui_presentation_batch.h"
 
 namespace {
 
@@ -397,6 +398,7 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
 
         const size_t preedit_cursor = cxxime_tsf::clamp_preedit_cursor(
             response.preedit_cursor, preedit.size());
+        cxxime_tsf::UiPresentationBatch ui_presentation_batch(*this);
         auto decision = cxxime_tsf::decide_preedit(
             _config.inline_preedit, _config.preedit_type, preedit, preedit_cursor,
             candidate_texts);
