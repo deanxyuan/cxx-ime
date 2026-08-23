@@ -60,6 +60,7 @@ add_library(cxxime-tsf SHARED
     src/resource_loader.cc
     src/settings_launcher.cc
     src/language_bar.cpp
+    src/input_indicator_controller.cpp
     src/host_compatibility/host_classification_compatibility.cc
     src/host_compatibility/host_classification_runtime.cc
     src/host_compatibility/host_ime_private_api.cc

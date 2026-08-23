@@ -10,7 +10,6 @@
 #include <cxxime/logging.h>
 
 #include "config_coordinator.h"
-#include "language_bar.h"
 
 namespace {
 
@@ -20,6 +19,7 @@ constexpr int kTsfIpcTimeoutMs = 800;
 constexpr UINT kStatePollFastIntervalMs = 30;
 constexpr UINT kEditTargetValidationIntervalMs = 250;
 constexpr unsigned int kEditTargetValidationFailureLimit = 2;
+constexpr UINT kInputIndicatorRefreshRetryDelaysMs[] = {100, 500, 2000, 5000};
 
 std::mutex g_state_poll_timer_mutex;
 std::unordered_map<UINT_PTR, TextService*> g_state_poll_timers;
@@ -51,7 +51,7 @@ void TextService::_sync_ime_status(const cxxime::ImeStatus& status) {
     // Update button state before notifying the compartment. The language bar
     // queries GetIcon during the notification, so stale button state causes a
     // second refresh and visible flicker.
-    if (_modeButton) _modeButton->update_from_status(status);
+    _inputIndicator.update_from_status(status);
     if (!_handlingConversionCompartmentChange) {
         _sync_conversion_mode_compartment(status);
     }
@@ -225,6 +225,38 @@ bool TextService::_heartbeat_ipc() {
     _sessionId = 0;
     _ipcHealthy = false;
     return false;
+}
+
+bool TextService::_refresh_input_indicator() {
+    if (_inputIndicator.reconcile_host_registration()) {
+        _stop_input_indicator_refresh_retry();
+        _inputIndicatorRefreshRetryCount = 0;
+        return true;
+    }
+    _schedule_input_indicator_refresh_retry();
+    return false;
+}
+
+void TextService::_schedule_input_indicator_refresh_retry() {
+    if (!_configWindow || _inputIndicatorRefreshRetryActive ||
+        _inputIndicatorRefreshRetryCount >=
+        sizeof(kInputIndicatorRefreshRetryDelaysMs) /
+            sizeof(kInputIndicatorRefreshRetryDelaysMs[0])) {
+            return;
+    }
+    const UINT delay =
+        kInputIndicatorRefreshRetryDelaysMs[_inputIndicatorRefreshRetryCount++];
+    if (SetTimer(_configWindow, cxxime_tsf::TIMER_CXXIME_INPUT_INDICATOR_REFRESH,
+        delay, nullptr)) {
+        _inputIndicatorRefreshRetryActive = true;
+    }
+}
+
+void TextService::_stop_input_indicator_refresh_retry() {
+    if (_inputIndicatorRefreshRetryActive && _configWindow) {
+        KillTimer(_configWindow, cxxime_tsf::TIMER_CXXIME_INPUT_INDICATOR_REFRESH);
+    }
+    _inputIndicatorRefreshRetryActive = false;
 }
 
 bool TextService::_sync_caps_lock_state(bool caps_lock,

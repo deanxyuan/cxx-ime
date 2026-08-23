@@ -30,7 +30,8 @@ bool valid_ownership(UiOwnership ownership) {
 }
 
 bool valid_command_type(UiCommandType type) {
-    return type >= UiCommandType::kSelectCandidate && type <= UiCommandType::kMenuCommand;
+    return type >= UiCommandType::kSelectCandidate &&
+           type <= UiCommandType::kRefreshInputIndicator;
 }
 
 template <typename Payload>
@@ -148,6 +149,10 @@ bool is_valid_ui_command(const UiCommand& command) {
     if (command.type == UiCommandType::kVisibleCandidateCount &&
         (command.value == 0 || command.value > static_cast<std::uint32_t>(kCandidateCapacity))) {
         return false;
+    }
+    if (command.type == UiCommandType::kRefreshInputIndicator) {
+        return command.target_generation == 0 && command.composition_generation == 0 &&
+               command.candidate_index == 0 && command.value == 0;
     }
     return true;
 }

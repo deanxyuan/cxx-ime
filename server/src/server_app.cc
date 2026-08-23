@@ -5,12 +5,14 @@
 #include <algorithm>
 #include <cstring>
 #include <memory>
+#include <optional>
 
 #include <cxxime/candidate.h>
 #include <cxxime/data_path.h>
 #include <cxxime/dictionary_manifest.h>
 #include <cxxime/ipc_protocol.h>
 #include <cxxime/logging.h>
+#include <cxxime/ui_protocol.h>
 
 #include "lexicon_control_handler.h"
 
@@ -203,6 +205,13 @@ bool ServerApp::initialize(const std::string& dict_path, const std::string& conf
         CXXIME_LOG(L"%s", L"ui_presentation event=start_channel result=degraded");
         ui_presentation_controller_.stop();
     }
+    if (!system_lifecycle_monitor_.start(
+            hwnd_, [this](SystemLifecycleMonitor::Event event) {
+                ui_presentation_router_.reconcile_system_ui(
+                    event == SystemLifecycleMonitor::Event::kSessionResumed);
+            })) {
+        CXXIME_LOG(L"%s", L"system_lifecycle event=start result=degraded");
+    }
 
     std::string manifest_path = cxxime::dictionary_manifest_path_for_dict(resolved_dict);
     if (!dictionary_monitor_.start({manifest_path}, [this]() {
@@ -244,6 +253,7 @@ void ServerApp::prepare_user_data_shutdown() {
 void ServerApp::finalize() {
     diagnostic_log_maintenance_.stop();
     dictionary_monitor_.stop();
+    system_lifecycle_monitor_.stop();
     ui_presentation_router_.stop();
     ui_presentation_controller_.stop();
     ipc_server_.stop();
@@ -571,6 +581,13 @@ cxxime::IPCResponse ServerApp::handle_request(const cxxime::IPCRequest& request)
 
 LRESULT CALLBACK ServerApp::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     ServerApp* app = reinterpret_cast<ServerApp*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    if (app) {
+        const std::optional<LRESULT> lifecycle_result =
+            app->system_lifecycle_monitor_.handle_message(msg, wp, lp);
+        if (lifecycle_result) {
+            return *lifecycle_result;
+        }
+    }
     if (msg == kPrepareConfigMessage) {
         auto* error_code = reinterpret_cast<unsigned long*>(wp);
         const auto* config = reinterpret_cast<const cxxime::Config*>(lp);

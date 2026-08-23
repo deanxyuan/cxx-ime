@@ -7,6 +7,7 @@
 #include <optional>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 #include <windows.h>
 
@@ -139,8 +140,10 @@ public:
             channel_.stop();
             return false;
         }
-        std::lock_guard<std::mutex> lock(foreground_listener_mutex_);
-        foreground_listener_ = this;
+        {
+            std::lock_guard<std::mutex> lock(foreground_listener_mutex_);
+            foreground_listener_ = this;
+        }
         return true;
     }
 
@@ -199,6 +202,38 @@ public:
             }
         }
         return channel_.send_command(endpoint, command);
+    }
+
+    void reconcile_system_ui(bool clear_presentation) {
+        std::vector<std::pair<cxxime::UiEndpointId, cxxime::UiCommand>> commands;
+        PresentationHandler handler;
+        std::uint64_t router_revision = 0;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (!running_) {
+                return;
+            }
+            commands.reserve(sessions_.size());
+            for (const auto& entry : sessions_) {
+                cxxime::UiCommand command;
+                command.session_id = entry.second.snapshot.session_id;
+                command.session_generation = entry.second.snapshot.session_generation;
+                command.type = cxxime::UiCommandType::kRefreshInputIndicator;
+                commands.emplace_back(entry.first.endpoint, command);
+            }
+            if (clear_presentation) {
+                sessions_.clear();
+                active_.reset();
+                handler = presentation_handler_;
+                router_revision = ++router_revision_;
+            }
+        }
+        if (handler) {
+            handler(0, nullptr, false, router_revision);
+        }
+        for (const auto& entry : commands) {
+            channel_.send_command(entry.first, entry.second);
+        }
     }
 
 private:
@@ -290,7 +325,11 @@ private:
             if (has_flag(snapshot, cxxime::UiSnapshotFlag::kSessionEnded)) {
                 sessions_.erase(key);
             } else {
-                sessions_[key] = {snapshot};
+                if (found == sessions_.end()) {
+                    sessions_[key] = {snapshot};
+                } else {
+                    found->second.snapshot = snapshot;
+                }
             }
         }
         refresh_active_for_foreground(true);
@@ -344,4 +383,8 @@ void UiPresentationRouter::stop() { impl_->stop(); }
 bool UiPresentationRouter::send_command(cxxime::UiEndpointId endpoint,
                                         const cxxime::UiCommand& command) {
     return impl_->send_command(endpoint, command);
+}
+
+void UiPresentationRouter::reconcile_system_ui(bool clear_presentation) {
+    impl_->reconcile_system_ui(clear_presentation);
 }

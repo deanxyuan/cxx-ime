@@ -136,7 +136,8 @@ public:
         }
 
         const std::shared_ptr<UiClientContext> client = find_client(endpoint);
-        return client && enqueue_write(client, std::move(packet));
+        return client && enqueue_write(client, std::move(packet),
+                                       command.type == UiCommandType::kRefreshInputIndicator);
     }
 
     std::size_t endpoint_count() const {
@@ -205,7 +206,7 @@ private:
     }
 
     bool enqueue_write(const std::shared_ptr<UiClientContext>& client,
-                       std::vector<std::uint8_t> packet) {
+                       std::vector<std::uint8_t> packet, bool priority_command) {
         bool failed = false;
         {
             std::lock_guard<std::mutex> lock(client->write_mutex);
@@ -215,7 +216,9 @@ private:
                 return false;
             }
             if (client->write_pending) {
-                if (client->pending_writes.size() >= kMaxPendingCommandsPerEndpoint) {
+                const std::size_t capacity = kMaxPendingCommandsPerEndpoint -
+                    (priority_command ? 0 : 1);
+                if (client->pending_writes.size() >= capacity) {
                     return false;
                 }
                 client->pending_writes.push_back(std::move(packet));

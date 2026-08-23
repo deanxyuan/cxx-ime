@@ -42,6 +42,10 @@ CLangBarItemButton::CLangBarItemButton(TfClientId tid, REFGUID guid)
 }
 
 CLangBarItemButton::~CLangBarItemButton() {
+    if (_pSink) {
+        _pSink->Release();
+        _pSink = nullptr;
+    }
     if (_hIconZh) {
         DestroyIcon(_hIconZh);
         _hIconZh = nullptr;
@@ -54,7 +58,6 @@ CLangBarItemButton::~CLangBarItemButton() {
         DestroyIcon(_hIconCaps);
         _hIconCaps = nullptr;
     }
-    _pSink = nullptr;
     DllRelease();
 }
 
@@ -293,4 +296,12 @@ void CLangBarItemButton::set_menu_command_callback(MenuCommandCallback cb) {
 
 void CLangBarItemButton::set_status_visible(bool visible) {
     _status_visible = visible;
+}
+
+void CLangBarItemButton::notify_full_update() {
+    if (_pSink) {
+        const DWORD flags = TF_LBI_STATUS | TF_LBI_ICON | TF_LBI_TOOLTIP | TF_LBI_TEXT;
+        const HRESULT hr = _pSink->OnUpdate(flags);
+        CXXIME_LOG(L"ModeButton full update: flags=0x%08x, hr=0x%08x", flags, hr);
+    }
 }

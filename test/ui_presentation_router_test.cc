@@ -92,6 +92,9 @@ TEST(UiPresentationRouter, ignores_stale_snapshots_and_routes_bound_commands) {
     cxxime::UiChannelClient client;
     ASSERT_TRUE(client.start(
         [&](const cxxime::UiCommand& command) {
+            if (command.type == cxxime::UiCommandType::kRefreshInputIndicator) {
+                return;
+            }
             std::lock_guard<std::mutex> lock(received_mutex);
             received = command;
             command_count.fetch_add(1);
@@ -165,6 +168,76 @@ TEST(UiPresentationRouter, disconnect_clears_only_the_active_endpoint) {
         endpoint.load(), make_command(make_snapshot(3), cxxime::UiCommandType::kPageNext)));
     client.stop();
     ASSERT_TRUE(wait_for([&]() { return clear_count.load() == 1; }));
+    router.stop();
+}
+
+TEST(UiPresentationRouter, refreshes_only_connected_sessions_and_clears_resume_ui) {
+    const std::wstring pipe_name = test_pipe_name();
+    std::atomic<int> presentation_count{0};
+    std::atomic<int> clear_count{0};
+    UiPresentationRouter router;
+    ASSERT_TRUE(router.start(
+        [&](cxxime::UiEndpointId, const cxxime::UiPresentationSnapshot* snapshot, bool,
+            std::uint64_t) {
+            if (snapshot) {
+                presentation_count.fetch_add(1);
+            } else {
+                clear_count.fetch_add(1);
+            }
+        },
+        pipe_name));
+
+    std::atomic<int> first_refresh_count{0};
+    cxxime::UiCommand first_command;
+    std::mutex first_command_mutex;
+    cxxime::UiChannelClient first_client;
+    ASSERT_TRUE(first_client.start(
+        [&](const cxxime::UiCommand& command) {
+            if (command.type == cxxime::UiCommandType::kRefreshInputIndicator) {
+                std::lock_guard<std::mutex> lock(first_command_mutex);
+                first_command = command;
+                first_refresh_count.fetch_add(1);
+            }
+        },
+        pipe_name));
+
+    const cxxime::UiPresentationSnapshot visible = make_snapshot(5);
+    ASSERT_TRUE(first_client.publish_latest(visible));
+    ASSERT_TRUE(wait_for([&]() { return presentation_count.load() == 1; }));
+    router.reconcile_system_ui(true);
+    ASSERT_TRUE(wait_for([&]() { return first_refresh_count.load() == 1; }));
+    ASSERT_TRUE(wait_for([&]() { return clear_count.load() == 1; }));
+    {
+        std::lock_guard<std::mutex> lock(first_command_mutex);
+        ASSERT_EQ(first_command.session_id, visible.session_id);
+        ASSERT_EQ(first_command.session_generation, visible.session_generation);
+        ASSERT_EQ(first_command.target_generation, static_cast<std::uint64_t>(0));
+        ASSERT_EQ(first_command.composition_generation, static_cast<std::uint64_t>(0));
+    }
+
+    std::atomic<int> second_refresh_count{0};
+    cxxime::UiChannelClient second_client;
+    ASSERT_TRUE(second_client.start(
+        [&](const cxxime::UiCommand& command) {
+            if (command.type == cxxime::UiCommandType::kRefreshInputIndicator) {
+                second_refresh_count.fetch_add(1);
+            }
+        },
+        pipe_name));
+    cxxime::UiPresentationSnapshot second = make_snapshot(20);
+    second.session_id = 24;
+    second.session_generation = 5;
+    ASSERT_TRUE(second_client.publish_latest(second));
+    ASSERT_TRUE(wait_for([&]() { return presentation_count.load() == 2; }));
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    ASSERT_EQ(second_refresh_count.load(), 0);
+
+    router.reconcile_system_ui(false);
+    ASSERT_TRUE(wait_for([&]() { return second_refresh_count.load() == 1; }));
+    ASSERT_EQ(clear_count.load(), 1);
+
+    second_client.stop();
+    first_client.stop();
     router.stop();
 }
 

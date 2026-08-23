@@ -28,6 +28,7 @@ public:
     void stop();
 
     bool send_command(cxxime::UiEndpointId endpoint, const cxxime::UiCommand& command);
+    void reconcile_system_ui(bool clear_presentation);
 
 private:
     class Impl;
