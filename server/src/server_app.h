@@ -18,6 +18,7 @@
 #include "diagnostic_log_maintenance_worker.h"
 #include "input_method_hotkey.h"
 #include "session_manager.h"
+#include "system_lifecycle_monitor.h"
 #include "ui_presentation_controller.h"
 #include "ui_presentation_router.h"
 
@@ -41,6 +42,7 @@ private:
     cxxime::DictionaryMonitor dictionary_monitor_;
     DiagnosticLogMaintenanceWorker diagnostic_log_maintenance_;
     InputMethodHotkey input_method_hotkey_;
+    SystemLifecycleMonitor system_lifecycle_monitor_;
     UiPresentationController ui_presentation_controller_;
     UiPresentationRouter ui_presentation_router_;
     HWND hwnd_ = nullptr;

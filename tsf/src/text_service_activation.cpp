@@ -12,7 +12,6 @@
 #include "display_attribute.h"
 #include "globals.h"
 #include "host_compatibility/host_classification_compatibility.h"
-#include "language_bar.h"
 #include "settings_launcher.h"
 #include "tsf_activation.h"
 #include "tsf_imm_mode.h"
@@ -86,7 +85,7 @@ void TextService::_stop_host_compatibility_runtime() {
 }
 
 void TextService::_sync_conversion_mode_compartment(
-        const cxxime::ImeStatus& status) {
+    const cxxime::ImeStatus& status) {
     if (!_threadMgr || _clientId == TF_CLIENTID_NULL) {
         return;
     }

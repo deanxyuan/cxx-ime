@@ -16,6 +16,7 @@ namespace cxxime_tsf {
 constexpr UINT WM_CXXIME_CONFIG_CHANGED = WM_APP + 0x314;
 constexpr UINT WM_CXXIME_UI_COMMAND = WM_APP + 0x315;
 constexpr UINT WM_CXXIME_REFRESH_CAPS_LOCK = WM_APP + 0x316;
+constexpr UINT_PTR TIMER_CXXIME_INPUT_INDICATOR_REFRESH = 0xC317;
 
 struct ConfigSnapshot {
     cxxime::ConfigGeneration generation;

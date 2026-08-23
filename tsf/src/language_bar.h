@@ -46,6 +46,7 @@ public:
     void set_toggle_chinese_callback(ToggleChineseCallback cb);
     void set_menu_command_callback(MenuCommandCallback cb);
     void set_status_visible(bool visible);
+    void notify_full_update();
 
 private:
     static const DWORD LANGBARITEMSINK_COOKIE = 0x43585849; // "CXXI"

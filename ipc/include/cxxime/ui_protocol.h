@@ -101,6 +101,7 @@ enum class UiCommandType : std::uint32_t {
     // Server UI reports the layout-derived page stride to its TSF session.
     kVisibleCandidateCount = 14,
     kMenuCommand = 15,
+    kRefreshInputIndicator = 16,
 };
 
 struct UiCommand {

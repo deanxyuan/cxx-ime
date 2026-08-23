@@ -14,7 +14,6 @@
 #include "candidate_ui_element.h"
 #include "config_coordinator.h"
 #include "globals.h"
-#include "language_bar.h"
 #include "reading_ui_element.h"
 #include "search_candidate_list.h"
 #include "tsf_activation.h"
@@ -231,12 +230,12 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
     _candidateUiElement = new (std::nothrow) CandidateUIElement(this);
     _readingUiElement = new (std::nothrow) ReadingUIElement(this);
 
-    // Connect to server and query initial status before adding language bar buttons.
-    // Pre-set the mode button to match the server before AddItem, so TSF reads the
+    // Connect to server and query initial status before registering the input indicator.
+    // Pre-set the indicator to match the server before AddItem, so TSF reads the
     // correct icon on the first GetIcon call.
     bool initial_input_allows_input = _query_input_focus_from_thread_mgr();
     cxxime::ImeStatus initial_status = {};
-    initial_status.set_chinese_mode(true); // fallback default matching CLangBarItemButton ctor
+    initial_status.set_chinese_mode(true); // Fallback input-indicator default.
     bool has_last_status = false;
     {
         std::lock_guard<std::mutex> lock(_lastImeStatusMutex);
@@ -279,44 +278,23 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
         _hasLastImeStatus.store(true, std::memory_order_release);
     }
 
-    // Register language bar buttons
-    ITfLangBarItemMgr* pLangBarItemMgr = nullptr;
-    if (SUCCEEDED(_threadMgr->QueryInterface(IID_ITfLangBarItemMgr, (void**)&pLangBarItemMgr))) {
-        _modeButton = new CLangBarItemButton(tid, GUID_LBI_INPUTMODE);
-
-        // Pre-set button state before AddItem to avoid flash
-        _modeButton->update_from_status(initial_status);
-
-        if (FAILED(pLangBarItemMgr->AddItem(_modeButton))) {
-            CXXIME_LOG(L"Failed to add mode button to language bar");
-        }
-
-        pLangBarItemMgr->Release();
-        CXXIME_LOG(L"Mode language bar button registered");
-    } else {
-        CXXIME_LOG(L"Failed to get ITfLangBarItemMgr interface");
-    }
-
-    if (_modeButton) {
-        // Left-click toggles Chinese/English mode.
-        _modeButton->set_toggle_chinese_callback([this]() {
-            CXXIME_LOG(L"toggle_chinese: sessionId=%u", _sessionId);
-            cxxime::IPCResponse resp = {};
-            if (_ensure_ipc_session()) {
-                _client.toggle_chinese(_sessionId, resp);
-            }
-            CXXIME_LOG(L"toggle_chinese: result status=%d, chinese=%d",
-                       static_cast<int>(resp.status), resp.ime_status.chinese_mode());
-            if (resp.status == cxxime::IPCStatus::OK) {
-                _sync_ime_status(resp.ime_status);
-            }
-        });
-
-        _modeButton->set_menu_command_callback([this](cxxime::ImeMenuCommand command) {
-            _handle_ime_menu_command(command);
-        });
-
-        _modeButton->set_status_visible(_config.status_window.enable);
+    if (!_inputIndicator.initialize(
+            _threadMgr, tid, initial_status,
+            [this]() {
+                CXXIME_LOG(L"toggle_chinese: sessionId=%u", _sessionId);
+                cxxime::IPCResponse resp = {};
+                if (_ensure_ipc_session()) {
+                    _client.toggle_chinese(_sessionId, resp);
+                }
+                CXXIME_LOG(L"toggle_chinese: result status=%d, chinese=%d",
+                           static_cast<int>(resp.status), resp.ime_status.chinese_mode());
+                if (resp.status == cxxime::IPCStatus::OK) {
+                    _sync_ime_status(resp.ime_status);
+                }
+            },
+            [this](cxxime::ImeMenuCommand command) { _handle_ime_menu_command(command); },
+            _config.status_window.enable)) {
+        CXXIME_LOG(L"input_indicator event=initialize result=degraded");
     }
 
     // Avoid a redundant get_status IPC here. initial_status was already read
@@ -388,18 +366,7 @@ STDMETHODIMP TextService::Deactivate() {
         _readingUiElement->Release();
         _readingUiElement = nullptr;
     }
-    // Unregister language bar button. The IME branding icon is provided by the TSF profile
-    // registration, so CxxIME only owns this GUID_LBI_INPUTMODE status button.
-    ITfLangBarItemMgr* pLangBarItemMgr = nullptr;
-    if (_threadMgr && SUCCEEDED(_threadMgr->QueryInterface(IID_ITfLangBarItemMgr, (void**)&pLangBarItemMgr))) {
-        if (_modeButton) {
-            pLangBarItemMgr->RemoveItem(_modeButton);
-            _modeButton->Release();
-            _modeButton = nullptr;
-        }
-        pLangBarItemMgr->Release();
-        CXXIME_LOG(L"Mode language bar button unregistered");
-    }
+    _inputIndicator.shutdown();
 
     _unregister_thread_sinks();
 

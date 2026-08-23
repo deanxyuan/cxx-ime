@@ -108,9 +108,11 @@ bool TextService::_start_ui_presentation_channel() {
 
 void TextService::_stop_ui_presentation_channel() {
     _hide_immersive_candidate_window();
+    _stop_input_indicator_refresh_retry();
     _uiChannel.stop();
     std::lock_guard<std::mutex> lock(_uiCommandMutex);
     _uiCommands.clear();
+    _pendingInputIndicatorRefreshCommand.reset();
 }
 
 void TextService::_publish_ui_presentation() {
@@ -236,10 +238,14 @@ void TextService::_publish_ui_session_ended() {
 void TextService::_queue_ui_command(const cxxime::UiCommand& command) {
     {
         std::lock_guard<std::mutex> lock(_uiCommandMutex);
-        if (_uiCommands.size() >= kMaxPendingUiCommands) {
-            return;
+        if (command.type == cxxime::UiCommandType::kRefreshInputIndicator) {
+            _pendingInputIndicatorRefreshCommand = command;
+        } else {
+            if (_uiCommands.size() >= kMaxPendingUiCommands) {
+                return;
+            }
+            _uiCommands.push_back(command);
         }
-        _uiCommands.push_back(command);
     }
     if (_configWindow) {
         PostMessageW(_configWindow, cxxime_tsf::WM_CXXIME_UI_COMMAND, 0, 0);
@@ -248,8 +254,13 @@ void TextService::_queue_ui_command(const cxxime::UiCommand& command) {
 
 bool TextService::_is_current_ui_command(const cxxime::UiCommand& command) const {
     if (!_activated || command.session_id != _sessionId ||
-        command.session_generation != _uiSessionGeneration ||
-        command.target_generation != _uiTargetGeneration) {
+        command.session_generation != _uiSessionGeneration) {
+        return false;
+    }
+    if (command.type == cxxime::UiCommandType::kRefreshInputIndicator) {
+        return command.target_generation == 0 && command.composition_generation == 0;
+    }
+    if (command.target_generation != _uiTargetGeneration) {
         return false;
     }
     switch (command.type) {
@@ -327,6 +338,11 @@ void TextService::_handle_ui_command(const cxxime::UiCommand& command) {
             _handle_ime_menu_command(static_cast<cxxime::ImeMenuCommand>(command.value));
         }
         break;
+    case cxxime::UiCommandType::kRefreshInputIndicator:
+        _inputIndicatorRefreshRetryCount = 0;
+        _stop_input_indicator_refresh_retry();
+        _refresh_input_indicator();
+        return;
     case cxxime::UiCommandType::kCommitComposition:
         finalize_exact_candidate_ui_from_tsf();
         break;
@@ -341,9 +357,14 @@ void TextService::_handle_ui_command(const cxxime::UiCommand& command) {
 
 void TextService::_drain_ui_commands() {
     std::deque<cxxime::UiCommand> commands;
+    std::optional<cxxime::UiCommand> indicator_refresh;
     {
         std::lock_guard<std::mutex> lock(_uiCommandMutex);
         commands.swap(_uiCommands);
+        indicator_refresh.swap(_pendingInputIndicatorRefreshCommand);
+    }
+    if (indicator_refresh) {
+        _handle_ui_command(*indicator_refresh);
     }
     for (const cxxime::UiCommand& command : commands) {
         _handle_ui_command(command);

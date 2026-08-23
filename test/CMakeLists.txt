@@ -80,6 +80,16 @@ target_sources(ui_presentation_router_test PRIVATE
 target_include_directories(ui_presentation_router_test PRIVATE
     ${CMAKE_SOURCE_DIR}/server/src
 )
+add_cxxime_test(system_lifecycle_monitor_test)
+target_sources(system_lifecycle_monitor_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/server/src/system_lifecycle_monitor.cc
+)
+target_include_directories(system_lifecycle_monitor_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/server/src
+)
+target_link_libraries(system_lifecycle_monitor_test PRIVATE
+    wtsapi32
+)
 
 add_executable(config_write_coordinator_test
     config_write_coordinator_test.cc

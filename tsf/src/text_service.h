@@ -3,8 +3,6 @@
 #ifndef CXXIME_TSF_TEXT_SERVICE_H_
 #define CXXIME_TSF_TEXT_SERVICE_H_
 
-// Forward declarations for language bar buttons
-class CLangBarItemButton;
 class CandidateUIElement;
 class ReadingUIElement;
 
@@ -16,9 +14,10 @@ class ReadingUIElement;
 #include <cstdint>
 #include <cstdio>
 #include <deque>
-#include <mutex>
-#include <string>
 #include <memory>
+#include <mutex>
+#include <optional>
+#include <string>
 
 #include <cxxime/config.h>
 #include <cxxime/control_protocol.h>
@@ -30,6 +29,7 @@ class ReadingUIElement;
 
 #include "candidate_presentation.h"
 #include "effective_edit_target.h"
+#include "input_indicator_controller.h"
 
 namespace cxxime {
 class CandidateWindow;
@@ -280,6 +280,9 @@ private:
     bool _ensure_ipc_session();
     bool _recreate_ipc_session_preserving_status();
     bool _heartbeat_ipc();
+    bool _refresh_input_indicator();
+    void _schedule_input_indicator_refresh_retry();
+    void _stop_input_indicator_refresh_retry();
     bool _has_synced_ime_status() const noexcept {
         return _hasLastImeStatus.load(std::memory_order_acquire);
     }
@@ -381,16 +384,18 @@ private:
     std::uint32_t _configSubscriptionId = 0;
     bool _capsLockRefreshPending = false;
 
-    // Language bar buttons
-    CLangBarItemButton* _modeButton = nullptr;  // 中/EN 按钮
+    cxxime_tsf::InputIndicatorController _inputIndicator;
 
     RECT _caretRect = {};
 
     cxxime::UiChannelClient _uiChannel;
     std::mutex _uiCommandMutex;
     std::deque<cxxime::UiCommand> _uiCommands;
+    std::optional<cxxime::UiCommand> _pendingInputIndicatorRefreshCommand;
     std::uint64_t _uiSessionGeneration = 0;
     std::uint64_t _uiTargetGeneration = 0;
+    unsigned int _inputIndicatorRefreshRetryCount = 0;
+    bool _inputIndicatorRefreshRetryActive = false;
     unsigned int _uiPresentationBatchDepth = 0;
     bool _uiPresentationPublishPending = false;
 

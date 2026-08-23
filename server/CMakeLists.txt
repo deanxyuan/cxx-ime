@@ -9,6 +9,7 @@ add_executable(cxxime-server WIN32
     src/main.cc
     src/server_app.cc
     src/session_manager.cc
+    src/system_lifecycle_monitor.cc
     src/lexicon_control_handler.cc
     src/ui_presentation_controller.cc
     src/ui_presentation_router.cc
@@ -27,6 +28,7 @@ target_link_libraries(cxxime-server PRIVATE
     advapi32
     ole32
     uuid
+    wtsapi32
 )
 
 cxxime_add_version_resource(

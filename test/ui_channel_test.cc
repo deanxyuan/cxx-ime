@@ -125,6 +125,18 @@ TEST(UiChannel, protocol_rejects_invalid_payloads) {
     ASSERT_TRUE(!cxxime::build_ui_command_packet(command, 1, &packet));
     command.value = 4;
     ASSERT_TRUE(cxxime::build_ui_command_packet(command, 1, &packet));
+
+    command.type = cxxime::UiCommandType::kRefreshInputIndicator;
+    command.target_generation = 1;
+    command.value = 0;
+    ASSERT_TRUE(!cxxime::build_ui_command_packet(command, 1, &packet));
+    command.target_generation = 0;
+    ASSERT_TRUE(cxxime::build_ui_command_packet(command, 1, &packet));
+    cxxime::UiCommand parsed;
+    ASSERT_TRUE(cxxime::parse_ui_command_packet(packet.data(), packet.size(), &parsed));
+    ASSERT_EQ(parsed.type, cxxime::UiCommandType::kRefreshInputIndicator);
+    command.value = 1;
+    ASSERT_TRUE(!cxxime::build_ui_command_packet(command, 1, &packet));
 }
 
 TEST(UiChannel, queued_snapshots_coalesce_before_connect) {
