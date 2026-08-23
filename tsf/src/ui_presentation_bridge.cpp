@@ -117,6 +117,10 @@ void TextService::_publish_ui_presentation() {
     if (!_uiChannel.is_running() || _sessionId == 0 || _uiSessionGeneration == 0) {
         return;
     }
+    if (_uiPresentationBatchDepth != 0) {
+        _uiPresentationPublishPending = true;
+        return;
+    }
 
     cxxime::UiPresentationSnapshot snapshot;
     snapshot.session_id = _sessionId;

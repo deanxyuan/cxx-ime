@@ -38,6 +38,7 @@ class CandidateWindow;
 namespace cxxime_tsf {
 
 bool is_valid_caret_rect(const RECT& rect);
+class UiPresentationBatch;
 
 }  // namespace cxxime_tsf
 
@@ -200,6 +201,8 @@ public:
     };
 
 private:
+    friend class cxxime_tsf::UiPresentationBatch;
+
     HRESULT _initialize_required_activation_sinks();
     void _initialize_optional_activation_services();
     void _synchronize_activation_focus();
@@ -388,6 +391,8 @@ private:
     std::deque<cxxime::UiCommand> _uiCommands;
     std::uint64_t _uiSessionGeneration = 0;
     std::uint64_t _uiTargetGeneration = 0;
+    unsigned int _uiPresentationBatchDepth = 0;
+    bool _uiPresentationPublishPending = false;
 
     std::chrono::steady_clock::time_point _key_event_start;
     int64_t _last_ipc_us = 0;
