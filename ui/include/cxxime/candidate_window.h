@@ -19,10 +19,13 @@ namespace cxxime {
 
 struct Config;
 enum class RenderBackend { GDI, D2D };
+enum class CandidatePageDirection { Previous, Next };
 
 class CandidateWindow {
 public:
-    using ClickCallback = std::function<void(int)>;
+    using CandidateSelectionCallback = std::function<void(std::size_t)>;
+    using LayoutChangedCallback = std::function<void()>;
+    using PageCallback = std::function<void(CandidatePageDirection)>;
 
     ~CandidateWindow();
 
@@ -40,7 +43,9 @@ public:
     void set_layout(const std::string& layout);
     void move_to_caret(const RECT& caretRect);
     void move_to_screen_position(int x, int y);
-    void set_click_callback(ClickCallback cb);
+    void set_candidate_selection_callback(CandidateSelectionCallback cb);
+    void set_layout_changed_callback(LayoutChangedCallback cb);
+    void set_page_callback(PageCallback cb);
     void set_draggable(bool draggable);
     void set_theme(const Theme& theme);
     void set_render_backend(RenderBackend backend);
@@ -53,6 +58,14 @@ public:
     UINT dpi() const;
     bool get_window_rect(RECT* rect) const;
     HWND hwnd_for_test() const { return hwnd_; }
+    RECT page_button_rect_for_test(CandidatePageDirection direction) const {
+        return direction == CandidatePageDirection::Previous ? render_ctx_.prev_button_rect
+                                                             : render_ctx_.next_button_rect;
+    }
+    RECT candidate_rect_for_test(std::size_t index) const {
+        return index < candidate_rects_.size() ? candidate_rects_[index].highlight_rect
+                                               : RECT{};
+    }
 
 private:
     void rebuild_render_context(const LayoutConfig& cfg, int window_width);
@@ -74,7 +87,9 @@ private:
     size_t preedit_cursor_ = 0;
     int preedit_cursor_width_ = 1;
     std::string layout_orientation_ = "horizontal";
-    ClickCallback click_cb_;
+    CandidateSelectionCallback candidate_selection_cb_;
+    LayoutChangedCallback layout_changed_cb_;
+    PageCallback page_cb_;
     bool draggable_ = false;
     std::vector<CandidateRect> candidate_rects_;
     RenderContext render_ctx_;

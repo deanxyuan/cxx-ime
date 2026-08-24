@@ -190,6 +190,7 @@ public:
         std::lock_guard<std::mutex> lock(mutex_);
         pending_snapshot_.reset();
         rendered_presentation_.reset();
+        clear_visible_candidate_count();
         pending_config_.reset();
         command_handler_ = {};
         position_handler_ = {};
@@ -231,6 +232,19 @@ public:
         SetEvent(update_event_);
     }
 
+    std::uint32_t visible_candidate_count(
+        std::uint32_t session_id, const cxxime::CandidateUiContext& context) const {
+        std::lock_guard<std::mutex> lock(visible_candidate_mutex_);
+        if (visible_candidate_session_id_ != session_id ||
+            visible_candidate_session_generation_ != context.session_generation ||
+            visible_candidate_target_generation_ != context.target_generation ||
+            visible_candidate_composition_generation_ != context.composition_generation ||
+            visible_candidate_presentation_generation_ != context.presentation_generation) {
+            return 0;
+        }
+        return visible_candidate_count_;
+    }
+
 private:
     void close_events() {
         if (update_event_) {
@@ -260,6 +274,7 @@ private:
             command.session_generation = snapshot.session_generation;
             command.target_generation = snapshot.target_generation;
             command.composition_generation = snapshot.composition_generation;
+            command.presentation_generation = snapshot.presentation_generation;
             command.type = type;
             command.candidate_index = candidate_index;
             command.value = value;
@@ -268,15 +283,21 @@ private:
     }
 
     void configure_window_callbacks() {
-        candidate_window_.set_click_callback([this](int index) {
-            if (index == -2) {
-                dispatch_command(cxxime::UiCommandType::kPagePrevious);
-            } else if (index == -3) {
-                dispatch_command(cxxime::UiCommandType::kPageNext);
-            } else if (index >= 0) {
-                dispatch_command(cxxime::UiCommandType::kSelectCandidate,
-                                 static_cast<std::uint32_t>(index));
+        candidate_window_.set_candidate_selection_callback([this](std::size_t index) {
+            dispatch_command(cxxime::UiCommandType::kSelectCandidate,
+                             static_cast<std::uint32_t>(index));
+        });
+        candidate_window_.set_page_callback([this](cxxime::CandidatePageDirection direction) {
+            dispatch_command(direction == cxxime::CandidatePageDirection::Previous
+                                 ? cxxime::UiCommandType::kPagePrevious
+                                 : cxxime::UiCommandType::kPageNext);
+        });
+        candidate_window_.set_layout_changed_callback([this]() {
+            if (applying_candidate_presentation_ || !rendered_presentation_ ||
+                !candidate_window_.is_visible()) {
+                return;
             }
+            store_visible_candidate_count(rendered_presentation_->snapshot);
         });
         status_window_.set_click_callback([this](cxxime::StatusButton button) {
             switch (button) {
@@ -435,7 +456,20 @@ private:
         const HWND candidate_owner = immersive_mode
                                         ? nullptr
                                         : reinterpret_cast<HWND>(current.target_window);
-        candidate_window_.ensure_created(candidate_owner);
+        applying_candidate_presentation_ = true;
+        if (!candidate_window_.ensure_created(candidate_owner)) {
+            applying_candidate_presentation_ = false;
+            applied.candidate_visible = false;
+            candidate_window_.hide();
+            clear_visible_candidate_count();
+            if (applied.status_visible) {
+                rendered_presentation_ = presentation;
+            } else {
+                rendered_presentation_.reset();
+            }
+            trace_presentation(*presentation, applied);
+            return;
+        }
         candidate_window_.set_page_info(static_cast<int>(current.candidate_page.page_current),
                                         static_cast<int>(current.candidate_page.page_total));
         if (has_flag(current, cxxime::UiSnapshotFlag::kHasPreedit)) {
@@ -447,9 +481,22 @@ private:
         }
         candidate_window_.update(candidate_page_from_snapshot(current));
         candidate_window_.move_to_caret(applied.caret);
-        rendered_presentation_ = presentation;
-        report_visible_candidate_count(current);
         candidate_window_.show();
+        applied.candidate_visible = candidate_window_.is_visible();
+        applying_candidate_presentation_ = false;
+        if (!applied.candidate_visible) {
+            candidate_window_.hide();
+            clear_visible_candidate_count();
+            if (applied.status_visible) {
+                rendered_presentation_ = presentation;
+            } else {
+                rendered_presentation_.reset();
+            }
+            trace_presentation(*presentation, applied);
+            return;
+        }
+        rendered_presentation_ = presentation;
+        store_visible_candidate_count(current);
         trace_presentation(*presentation, applied);
     }
 
@@ -502,31 +549,30 @@ private:
     }
 
     void clear_visible_candidate_count() {
+        std::lock_guard<std::mutex> lock(visible_candidate_mutex_);
         visible_candidate_session_id_ = 0;
         visible_candidate_session_generation_ = 0;
         visible_candidate_target_generation_ = 0;
         visible_candidate_composition_generation_ = 0;
+        visible_candidate_presentation_generation_ = 0;
         visible_candidate_count_ = 0;
     }
 
-    void report_visible_candidate_count(const cxxime::UiPresentationSnapshot& snapshot) {
+    void store_visible_candidate_count(const cxxime::UiPresentationSnapshot& snapshot) {
         const std::uint32_t visible_count =
             static_cast<std::uint32_t>(candidate_window_.visible_candidate_count());
-        if (visible_count == 0 ||
-            (visible_candidate_session_id_ == snapshot.session_id &&
-             visible_candidate_session_generation_ == snapshot.session_generation &&
-             visible_candidate_target_generation_ == snapshot.target_generation &&
-             visible_candidate_composition_generation_ == snapshot.composition_generation &&
-             visible_candidate_count_ == visible_count)) {
+        if (visible_count == 0) {
+            clear_visible_candidate_count();
             return;
         }
 
+        std::lock_guard<std::mutex> lock(visible_candidate_mutex_);
         visible_candidate_session_id_ = snapshot.session_id;
         visible_candidate_session_generation_ = snapshot.session_generation;
         visible_candidate_target_generation_ = snapshot.target_generation;
         visible_candidate_composition_generation_ = snapshot.composition_generation;
+        visible_candidate_presentation_generation_ = snapshot.presentation_generation;
         visible_candidate_count_ = visible_count;
-        dispatch_command(cxxime::UiCommandType::kVisibleCandidateCount, 0, visible_count);
     }
 
     void consume_pending_updates() {
@@ -644,6 +690,7 @@ private:
     std::shared_ptr<const cxxime::Config> current_config_;
     std::optional<RoutedPresentation> pending_snapshot_;
     std::optional<RoutedPresentation> rendered_presentation_;
+    bool applying_candidate_presentation_ = false;
     bool pending_status_handoff_ = false;
     bool status_handoff_active_ = false;
     UINT_PTR status_handoff_timer_ = 0;
@@ -653,10 +700,12 @@ private:
     std::uint64_t applied_config_revision_ = 0;
     std::uint64_t applied_presentation_revision_ = 0;
     std::uint64_t pending_router_revision_ = 0;
+    mutable std::mutex visible_candidate_mutex_;
     std::uint64_t visible_candidate_session_id_ = 0;
     std::uint64_t visible_candidate_session_generation_ = 0;
     std::uint64_t visible_candidate_target_generation_ = 0;
     std::uint64_t visible_candidate_composition_generation_ = 0;
+    std::uint64_t visible_candidate_presentation_generation_ = 0;
     std::uint32_t visible_candidate_count_ = 0;
     cxxime::CandidateWindow candidate_window_;
     cxxime::StatusWindow status_window_;
@@ -685,4 +734,9 @@ void UiPresentationController::present(cxxime::UiEndpointId endpoint,
 
 void UiPresentationController::update_config(const std::shared_ptr<const cxxime::Config>& config) {
     impl_->update_config(config);
+}
+
+std::uint32_t UiPresentationController::visible_candidate_count(
+    std::uint32_t session_id, const cxxime::CandidateUiContext& context) const {
+    return impl_->visible_candidate_count(session_id, context);
 }

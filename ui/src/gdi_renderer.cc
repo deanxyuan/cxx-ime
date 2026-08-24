@@ -198,7 +198,8 @@ void GdiRenderer::render(HDC hdc, const RECT& clip, const RenderContext& ctx) {
     for (const auto& cr : *ctx.rects) {
         int i = cr.index;
         bool hl = (i == ctx.highlighted);
-        bool hv = (i == ctx.hovered_index);
+        bool hv = ctx.hovered_target == CandidateHoverTarget::Candidate &&
+                  i == ctx.hovered_candidate_index;
 
         if (hl || hv) {
             HBRUSH use = hl ? hl_brush_ : hover_brush_;
@@ -239,7 +240,7 @@ void GdiRenderer::render(HDC hdc, const RECT& clip, const RenderContext& ctx) {
             (uint8_t)((ctx.theme->background.b * 3 + ctx.theme->text.b) / 4), 255});
         // <
         {
-            bool h = pe && (ctx.hovered_index == -2);
+            bool h = pe && ctx.hovered_target == CandidateHoverTarget::PreviousPage;
             if (h) {
                 HBRUSH ob = (HBRUSH)SelectObject(target_dc, hl_brush_);
                 HPEN op = (HPEN)SelectObject(target_dc, GetStockObject(NULL_PEN));
@@ -253,7 +254,7 @@ void GdiRenderer::render(HDC hdc, const RECT& clip, const RenderContext& ctx) {
         }
         // >
         {
-            bool h = ne && (ctx.hovered_index == -3);
+            bool h = ne && ctx.hovered_target == CandidateHoverTarget::NextPage;
             if (h) {
                 HBRUSH ob = (HBRUSH)SelectObject(target_dc, hl_brush_);
                 HPEN op = (HPEN)SelectObject(target_dc, GetStockObject(NULL_PEN));

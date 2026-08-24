@@ -32,6 +32,7 @@ struct SessionKeyHash {
 
 struct RoutedSnapshot {
     cxxime::UiPresentationSnapshot snapshot;
+    std::uint64_t received_revision = 0;
 };
 
 struct ActivePresentation {
@@ -51,7 +52,10 @@ bool is_newer_or_equal(const cxxime::UiPresentationSnapshot& next,
     if (next.target_generation != current.target_generation) {
         return next.target_generation > current.target_generation;
     }
-    return next.composition_generation >= current.composition_generation;
+    if (next.composition_generation != current.composition_generation) {
+        return next.composition_generation > current.composition_generation;
+    }
+    return next.presentation_generation >= current.presentation_generation;
 }
 
 bool requests_visible_ui(const cxxime::UiPresentationSnapshot& snapshot) {
@@ -62,6 +66,23 @@ bool requests_visible_ui(const cxxime::UiPresentationSnapshot& snapshot) {
     }
     return has_flag(snapshot, cxxime::UiSnapshotFlag::kCandidateVisible) ||
            has_flag(snapshot, cxxime::UiSnapshotFlag::kStatusVisible);
+}
+
+bool is_candidate_command(cxxime::UiCommandType type) {
+    return type == cxxime::UiCommandType::kSelectCandidate ||
+           type == cxxime::UiCommandType::kPagePrevious ||
+           type == cxxime::UiCommandType::kPageNext;
+}
+
+bool command_is_allowed(const cxxime::UiPresentationSnapshot& snapshot,
+                        cxxime::UiCommandType type) {
+    if (!is_candidate_command(type)) {
+        return requests_visible_ui(snapshot);
+    }
+    return snapshot.ownership == cxxime::UiOwnership::kExternal &&
+           has_flag(snapshot, cxxime::UiSnapshotFlag::kCandidateVisible) &&
+           has_flag(snapshot, cxxime::UiSnapshotFlag::kHasCandidates) &&
+           !has_flag(snapshot, cxxime::UiSnapshotFlag::kTsfLocalCandidate);
 }
 
 bool belongs_to_foreground(const cxxime::UiPresentationSnapshot& snapshot) {
@@ -197,7 +218,9 @@ public:
             if (command.session_generation != snapshot.session_generation ||
                 command.target_generation != snapshot.target_generation ||
                 command.composition_generation != snapshot.composition_generation ||
-                !requests_visible_ui(snapshot) || !belongs_to_foreground(snapshot)) {
+                command.presentation_generation != snapshot.presentation_generation ||
+                !command_is_allowed(snapshot, command.type) ||
+                !belongs_to_foreground(snapshot)) {
                 return false;
             }
         }
@@ -256,7 +279,7 @@ private:
             if (!requests_visible_ui(snapshot) || !belongs_to_foreground(snapshot)) {
                 continue;
             }
-            if (!selected || is_newer_or_equal(snapshot, selected->snapshot)) {
+            if (!selected || entry.second.received_revision > selected->received_revision) {
                 selected = &entry.second;
                 selected_key = entry.first;
             }
@@ -326,9 +349,10 @@ private:
                 sessions_.erase(key);
             } else {
                 if (found == sessions_.end()) {
-                    sessions_[key] = {snapshot};
+                    sessions_[key] = {snapshot, ++received_revision_};
                 } else {
                     found->second.snapshot = snapshot;
+                    found->second.received_revision = ++received_revision_;
                 }
             }
         }
@@ -360,6 +384,7 @@ private:
     std::unordered_map<SessionKey, RoutedSnapshot, SessionKeyHash> sessions_;
     std::optional<ActivePresentation> active_;
     std::uint64_t router_revision_ = 0;
+    std::uint64_t received_revision_ = 0;
 
     static std::mutex foreground_listener_mutex_;
     static Impl* foreground_listener_;

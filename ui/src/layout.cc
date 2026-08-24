@@ -10,6 +10,13 @@
 
 namespace cxxime {
 
+PageNavigationMetrics candidate_page_navigation_metrics(UINT dpi) {
+    const UINT effective_dpi = dpi == 0 ? USER_DEFAULT_SCREEN_DPI : dpi;
+    return {(std::max)(1, MulDiv(16, effective_dpi, USER_DEFAULT_SCREEN_DPI)),
+            (std::max)(1, MulDiv(2, effective_dpi, USER_DEFAULT_SCREEN_DPI)),
+            (std::max)(1, MulDiv(4, effective_dpi, USER_DEFAULT_SCREEN_DPI))};
+}
+
 int calculate_auto_candidate_window_max_width(int work_area_width, float dpi_scale) {
     if (work_area_width <= 0) {
         return 0;
@@ -160,8 +167,9 @@ LayoutResult calculate_horizontal_layout(HDC hdc,
     int max_w = cfg.max_width > 0 ? cfg.max_width : 600;
     int nav_extra = 0;
     if (page_total > 1) {
-        constexpr int nav_buttons_width = 16 + 2 + 16;
-        int nav_overlap = cfg.hilite_padding_x + 4 - cfg.candidate_spacing;
+        const PageNavigationMetrics nav = candidate_page_navigation_metrics(dpi);
+        const int nav_buttons_width = nav.button_width * 2 + nav.gap;
+        int nav_overlap = cfg.hilite_padding_x + nav.leading_gap - cfg.candidate_spacing;
         nav_extra = nav_buttons_width + (std::max)(0, nav_overlap);
         max_w = (std::max)(1, max_w - nav_extra);
     }

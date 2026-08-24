@@ -195,7 +195,7 @@ STDMETHODIMP CandidateUIElement::GetPageIndex(UINT* index, UINT size, UINT* page
         _service->trace_ui_element_method("candidate", "GetPageIndex");
     if (!page_count)
         return E_INVALIDARG;
-    *page_count = _page_total;
+    *page_count = 1;
     if (!index) {
         cxxime_tsf::trace_candidate_get_page(
             _service, _ui_element_id, size, *page_count, true, 0, S_OK);
@@ -203,30 +203,17 @@ STDMETHODIMP CandidateUIElement::GetPageIndex(UINT* index, UINT size, UINT* page
     }
     if (size < 1)
         return E_INVALIDARG;
-    index[0] = _page_current;
+    index[0] = 0;
     cxxime_tsf::trace_candidate_get_page(
         _service, _ui_element_id, size, *page_count, false, index[0], S_OK);
     return S_OK;
 }
 
 STDMETHODIMP CandidateUIElement::SetPageIndex(UINT* index, UINT page_count) {
-    if (page_count > 0 && !index)
+    if (!index || page_count != 1 || index[0] != 0)
         return E_INVALIDARG;
-    if (page_count > 0 && index[0] >= _page_total)
-        return E_INVALIDARG;
-    if (page_count > 0 && index[0] != _page_current && _service) {
-        const UINT target_page = index[0];
-        while (_page_current != target_page) {
-            const UINT previous_page = _page_current;
-            const bool previous = target_page < previous_page;
-            if (!_service->navigate_candidate_page_from_ui(previous) ||
-                _page_current == previous_page) {
-                return E_FAIL;
-            }
-        }
-    }
     cxxime_tsf::trace_candidate_page_set(
-        _service, _ui_element_id, page_count, page_count > 0 ? index[0] : 0, S_OK);
+        _service, _ui_element_id, page_count, index[0], S_OK);
     return S_OK;
 }
 
@@ -235,7 +222,7 @@ STDMETHODIMP CandidateUIElement::GetCurrentPage(UINT* page) {
         _service->trace_ui_element_method("candidate", "GetCurrentPage");
     if (!page)
         return E_INVALIDARG;
-    *page = _page_current;
+    *page = 0;
     cxxime_tsf::trace_ui_get_number(
         _service, "candidate", _ui_element_id, "GetCurrentPage", "current_page", *page);
     return S_OK;
@@ -327,8 +314,6 @@ void CandidateUIElement::set_page(const cxxime::CandidatePage& page,
                                   int page_total) {
     _candidates.clear();
     _candidates.reserve(page.candidates.size());
-    _page_current = page_current > 0 ? static_cast<UINT>(page_current - 1) : 0;
-    _page_total = page_total > 0 ? static_cast<UINT>(page_total) : 1;
     for (const auto& candidate : page.candidates) {
         std::string formatted;
         _candidates.push_back(utf8_to_wstring(
@@ -350,8 +335,6 @@ void CandidateUIElement::set_page(const cxxime::CandidatePage& page,
 void CandidateUIElement::clear_page() {
     _candidates.clear();
     _selection = 0;
-    _page_current = 0;
-    _page_total = 1;
 }
 
 bool CandidateUIElement::begin(ITfThreadMgr* thread_mgr, ITfDocumentMgr* document_mgr) {

@@ -184,14 +184,14 @@ bool IpcClient::end_session(uint32_t session_id) {
 
 bool IpcClient::process_key(uint32_t session_id, uint32_t key_code, uint32_t modifiers,
                             IPCResponse& response, bool is_key_up,
-                            uint32_t visible_candidate_count) {
+                            CandidateUiContext candidate_ui) {
     IPCRequest req = {};
     req.command = IPCCommand::PROCESS_KEY;
     req.session_id = session_id;
     req.key_code = key_code;
     req.modifiers = modifiers;
-    req.visible_candidate_count = visible_candidate_count;
     req.is_key_up = is_key_up;
+    req.candidate_ui = candidate_ui;
     return send_request(req, response);
 }
 

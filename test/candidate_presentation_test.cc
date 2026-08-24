@@ -49,39 +49,47 @@ TEST(CandidatePresentation, local_visible_count_controls_selection_and_paginatio
     cxxime_tsf::CandidatePresentation presentation;
     presentation.update_content(page_with_candidates(2), "", 0, 1, 1);
     presentation.set_ownership(cxxime_tsf::CandidateOwnership::kExternal);
+    presentation.set_presenter(cxxime_tsf::CandidatePresenter::kLocal);
     presentation.set_local_visible_candidate_count(2);
 
-    ASSERT_EQ(presentation.candidate_page_step(0, 0), 2u);
+    ASSERT_EQ(presentation.local_visible_candidate_count(), 2u);
 }
 
 TEST(CandidatePresentation, content_update_invalidates_local_visible_count) {
     cxxime_tsf::CandidatePresentation presentation;
     presentation.update_content(page_with_candidates(2), "", 0, 1, 1);
     presentation.set_ownership(cxxime_tsf::CandidateOwnership::kExternal);
+    presentation.set_presenter(cxxime_tsf::CandidatePresenter::kLocal);
     presentation.set_local_visible_candidate_count(2);
 
     presentation.update_content(page_with_candidates(3), "", 0, 1, 1);
     presentation.set_ownership(cxxime_tsf::CandidateOwnership::kExternal);
 
-    ASSERT_EQ(presentation.candidate_page_step(0, 0), 1u);
+    ASSERT_EQ(presentation.local_visible_candidate_count(), 0u);
 }
 
-TEST(CandidatePresentation, hidden_local_window_falls_back_to_current_server_count) {
+TEST(CandidatePresentation, server_presenter_invalidates_local_visible_count) {
     cxxime_tsf::CandidatePresentation presentation;
     presentation.update_content(page_with_candidates(3), "", 0, 1, 1);
     presentation.set_ownership(cxxime_tsf::CandidateOwnership::kExternal);
+    presentation.set_presenter(cxxime_tsf::CandidatePresenter::kLocal);
     presentation.set_local_visible_candidate_count(2);
-    presentation.set_local_visible_candidate_count(0);
+    presentation.set_presenter(cxxime_tsf::CandidatePresenter::kServer);
 
-    ASSERT_EQ(presentation.candidate_page_step(presentation.generation(), 3), 3u);
+    ASSERT_EQ(presentation.local_visible_candidate_count(), 0u);
 }
 
-TEST(CandidatePresentation, stale_server_count_uses_conservative_first_page_step) {
+TEST(CandidatePresentation, presenter_transition_advances_presentation_generation) {
     cxxime_tsf::CandidatePresentation presentation;
     presentation.update_content(page_with_candidates(3), "", 0, 1, 1);
     presentation.set_ownership(cxxime_tsf::CandidateOwnership::kExternal);
+    presentation.set_presenter(cxxime_tsf::CandidatePresenter::kServer);
+    const std::uint64_t server_generation = presentation.presentation_generation();
 
-    ASSERT_EQ(presentation.candidate_page_step(presentation.generation() - 1, 3), 1u);
+    presentation.set_presenter(cxxime_tsf::CandidatePresenter::kHost);
+
+    ASSERT_TRUE(presentation.presentation_generation() > server_generation);
+    ASSERT_EQ(presentation.presenter(), cxxime_tsf::CandidatePresenter::kHost);
 }
 
 TEST(CandidatePresentation, waiting_caret_defers_external_presentation) {

@@ -82,6 +82,7 @@ bool build_ui_command_packet(const UiCommand& command, std::uint64_t sequence,
     normalized.session_generation = command.session_generation;
     normalized.target_generation = command.target_generation;
     normalized.composition_generation = command.composition_generation;
+    normalized.presentation_generation = command.presentation_generation;
     normalized.type = command.type;
     normalized.candidate_index = command.candidate_index;
     normalized.value = command.value;
@@ -112,6 +113,7 @@ bool is_valid_ui_snapshot(const UiPresentationSnapshot& snapshot) {
                                           ui_snapshot_flag(UiSnapshotFlag::kImmersiveMode) |
                                           ui_snapshot_flag(UiSnapshotFlag::kTsfLocalCandidate);
     if (snapshot.session_id == 0 || snapshot.session_generation == 0 ||
+        snapshot.presentation_generation == 0 ||
         (snapshot.flags & ~kKnownFlags) != 0 || !valid_ownership(snapshot.ownership) ||
         snapshot.preedit_length > static_cast<std::uint32_t>(kUiPreeditCapacity) ||
         snapshot.preedit_cursor > snapshot.preedit_length ||
@@ -138,6 +140,10 @@ bool is_valid_ui_command(const UiCommand& command) {
         !valid_command_type(command.type)) {
         return false;
     }
+    if (command.type != UiCommandType::kRefreshInputIndicator &&
+        command.presentation_generation == 0) {
+        return false;
+    }
     if (command.type == UiCommandType::kSelectCandidate &&
         command.candidate_index >= static_cast<std::uint32_t>(kCandidateCapacity)) {
         return false;
@@ -146,13 +152,10 @@ bool is_valid_ui_command(const UiCommand& command) {
         command.value > static_cast<std::uint32_t>(InputMode::MIXED)) {
         return false;
     }
-    if (command.type == UiCommandType::kVisibleCandidateCount &&
-        (command.value == 0 || command.value > static_cast<std::uint32_t>(kCandidateCapacity))) {
-        return false;
-    }
     if (command.type == UiCommandType::kRefreshInputIndicator) {
         return command.target_generation == 0 && command.composition_generation == 0 &&
-               command.candidate_index == 0 && command.value == 0;
+               command.presentation_generation == 0 && command.candidate_index == 0 &&
+               command.value == 0;
     }
     return true;
 }

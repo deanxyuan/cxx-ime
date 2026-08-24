@@ -3,9 +3,9 @@
 #ifndef CXXIME_TSF_CANDIDATE_PRESENTATION_H_
 #define CXXIME_TSF_CANDIDATE_PRESENTATION_H_
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
-#include <chrono>
 #include <string>
 
 #include <windows.h>
@@ -26,6 +26,13 @@ enum class CandidateOwnership {
     kHost,
 };
 
+enum class CandidatePresenter {
+    kNone,
+    kServer,
+    kLocal,
+    kHost,
+};
+
 enum class CandidatePositionState {
     kReady,
     kWaitingCaret,
@@ -40,9 +47,9 @@ public:
                         std::size_t popup_preedit_cursor, int page_current, int page_total);
     void update_page(const cxxime::CandidatePage& page, int page_current, int page_total);
     void set_ownership(CandidateOwnership ownership);
+    void set_presenter(CandidatePresenter presenter);
     void set_local_visible_candidate_count(std::size_t count);
-    std::uint32_t candidate_page_step(std::uint64_t reported_generation,
-                                      std::uint32_t reported_count) const;
+    std::uint32_t local_visible_candidate_count() const;
     void begin_waiting_for_caret(bool reposition, const RECT* stale_rect, TimePoint now);
     void begin_composition_restart(TimePoint now);
     bool fail_composition_restart(std::uint64_t generation);
@@ -55,6 +62,7 @@ public:
 
     CandidateContentState content_state() const { return content_state_; }
     CandidateOwnership ownership() const { return ownership_; }
+    CandidatePresenter presenter() const { return presenter_; }
     CandidatePositionState position_state() const { return position_state_; }
     const cxxime::CandidatePage& page() const { return page_; }
     int page_current() const { return page_current_; }
@@ -62,6 +70,7 @@ public:
     const std::string& popup_preedit() const { return popup_preedit_; }
     std::size_t popup_preedit_cursor() const { return popup_preedit_cursor_; }
     std::uint64_t generation() const { return generation_; }
+    std::uint64_t presentation_generation() const { return presentation_generation_; }
     bool generation_matches(std::uint64_t generation) const {
         return generation != 0 && generation == generation_;
     }
@@ -84,6 +93,7 @@ private:
 
     CandidateContentState content_state_ = CandidateContentState::kEmpty;
     CandidateOwnership ownership_ = CandidateOwnership::kNone;
+    CandidatePresenter presenter_ = CandidatePresenter::kNone;
     CandidatePositionState position_state_ = CandidatePositionState::kReady;
     cxxime::CandidatePage page_;
     int page_current_ = 0;
@@ -92,6 +102,7 @@ private:
     std::size_t popup_preedit_cursor_ = 0;
     std::size_t local_visible_candidate_count_ = 0;
     std::uint64_t generation_ = 1;
+    std::uint64_t presentation_generation_ = 1;
     bool composition_restart_active_ = false;
     bool caret_resolution_allowed_ = true;
     bool reposition_wait_ = false;

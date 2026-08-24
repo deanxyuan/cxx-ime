@@ -10,41 +10,78 @@
 
 #include "util/testutil.h"
 
-// --- HitTest (using highlight_rect) ---
-static int hit_test(POINT pt,
-                    const std::vector<cxxime::CandidateRect>& rects,
-                    const RECT& prev_btn, const RECT& next_btn) {
-    if (prev_btn.right > prev_btn.left && PtInRect(&prev_btn, pt)) return -2;
-    if (next_btn.right > next_btn.left && PtInRect(&next_btn, pt)) return -3;
-    for (const auto& cr : rects)
-        if (PtInRect(&cr.highlight_rect, pt)) return cr.index;
-    return -1;
-}
+TEST(CandidateWindow, page_buttons_use_page_callback) {
+    cxxime::Config config;
+    config.render_backend = "gdi";
 
-TEST(HitTest, candidate_click) {
-    std::vector<cxxime::CandidateRect> rects;
-    cxxime::CandidateRect cr; cr.index = 0; cr.highlight_rect = {10,10,80,34}; rects.push_back(cr);
-    cr.index = 1; cr.highlight_rect = {88,10,158,34}; rects.push_back(cr);
-    ASSERT_EQ(hit_test({50,20}, rects, {}, {}), 0);
-    ASSERT_EQ(hit_test({120,20}, rects, {}, {}), 1);
-}
+    cxxime::CandidatePage page;
+    cxxime::Candidate candidate;
+    candidate.text = "candidate";
+    page.candidates.push_back(candidate);
 
-TEST(HitTest, miss) {
-    std::vector<cxxime::CandidateRect> rects;
-    cxxime::CandidateRect cr; cr.index = 0; cr.highlight_rect = {10,10,80,34}; rects.push_back(cr);
-    ASSERT_EQ(hit_test({200,200}, rects, {}, {}), -1);
-}
+    cxxime::CandidateWindow window;
+    ASSERT_TRUE(window.create(nullptr, config));
 
-TEST(HitTest, prev_button) {
-    std::vector<cxxime::CandidateRect> rects;
-    RECT prev = {4,50,24,72};
-    ASSERT_EQ(hit_test({14,60}, rects, prev, {}), -2);
-}
+    int callback_count = 0;
+    int selection_count = 0;
+    std::size_t selected_index = 1;
+    cxxime::CandidatePageDirection last_direction = cxxime::CandidatePageDirection::Previous;
+    window.set_candidate_selection_callback([&](std::size_t index) {
+        ++selection_count;
+        selected_index = index;
+    });
+    window.set_page_callback([&](cxxime::CandidatePageDirection direction) {
+        ++callback_count;
+        last_direction = direction;
+    });
 
-TEST(HitTest, next_button) {
-    std::vector<cxxime::CandidateRect> rects;
-    RECT next = {150,50,170,72};
-    ASSERT_EQ(hit_test({160,60}, rects, {}, next), -3);
+    window.set_page_info(1, 2);
+    window.update(page);
+    RECT previous = window.page_button_rect_for_test(cxxime::CandidatePageDirection::Previous);
+    ASSERT_TRUE(previous.right > previous.left);
+    SendMessageW(
+        window.hwnd_for_test(), WM_LBUTTONDOWN, 0,
+        MAKELPARAM((previous.left + previous.right) / 2,
+                   (previous.top + previous.bottom) / 2));
+    ASSERT_EQ(callback_count, 0);
+    ASSERT_EQ(selection_count, 0);
+
+    RECT next = window.page_button_rect_for_test(cxxime::CandidatePageDirection::Next);
+    ASSERT_TRUE(next.right > next.left);
+    SendMessageW(window.hwnd_for_test(), WM_LBUTTONDOWN, 0,
+                 MAKELPARAM((next.left + next.right) / 2, (next.top + next.bottom) / 2));
+    ASSERT_EQ(callback_count, 1);
+    ASSERT_EQ(selection_count, 0);
+    ASSERT_EQ(last_direction, cxxime::CandidatePageDirection::Next);
+
+    window.set_page_info(2, 2);
+    window.update(page);
+    previous = window.page_button_rect_for_test(cxxime::CandidatePageDirection::Previous);
+    ASSERT_TRUE(previous.right > previous.left);
+    SendMessageW(
+        window.hwnd_for_test(), WM_LBUTTONDOWN, 0,
+        MAKELPARAM((previous.left + previous.right) / 2, (previous.top + previous.bottom) / 2));
+    ASSERT_EQ(callback_count, 2);
+    ASSERT_EQ(selection_count, 0);
+    ASSERT_EQ(last_direction, cxxime::CandidatePageDirection::Previous);
+
+    next = window.page_button_rect_for_test(cxxime::CandidatePageDirection::Next);
+    SendMessageW(window.hwnd_for_test(), WM_LBUTTONDOWN, 0,
+                 MAKELPARAM((next.left + next.right) / 2, (next.top + next.bottom) / 2));
+    ASSERT_EQ(callback_count, 2);
+    ASSERT_EQ(selection_count, 0);
+
+    RECT candidate_rect = window.candidate_rect_for_test(0);
+    ASSERT_TRUE(candidate_rect.right > candidate_rect.left);
+    SendMessageW(
+        window.hwnd_for_test(), WM_LBUTTONDOWN, 0,
+        MAKELPARAM((candidate_rect.left + candidate_rect.right) / 2,
+                   (candidate_rect.top + candidate_rect.bottom) / 2));
+    ASSERT_EQ(callback_count, 2);
+    ASSERT_EQ(selection_count, 1);
+    ASSERT_EQ(selected_index, 0);
+
+    window.destroy();
 }
 
 TEST(CandidateWindow, recreate_resets_native_window_size_cache) {
@@ -76,6 +113,35 @@ TEST(CandidateWindow, recreate_resets_native_window_size_cache) {
 
     ASSERT_EQ(second_rect.right - second_rect.left, first_rect.right - first_rect.left);
     ASSERT_EQ(second_rect.bottom - second_rect.top, first_rect.bottom - first_rect.top);
+    window.destroy();
+}
+
+TEST(CandidateWindow, dpi_relayout_notifies_controller) {
+    cxxime::Config config;
+    config.render_backend = "gdi";
+
+    cxxime::CandidatePage page;
+    cxxime::Candidate candidate;
+    candidate.text = "candidate";
+    page.candidates.push_back(candidate);
+
+    cxxime::CandidateWindow window;
+    ASSERT_TRUE(window.create(nullptr, config));
+    window.update(page);
+    window.show();
+
+    int callback_count = 0;
+    window.set_layout_changed_callback([&callback_count]() { ++callback_count; });
+    const UINT old_dpi = window.dpi();
+    const UINT next_dpi = old_dpi == 96 ? 120 : 96;
+    RECT suggested = {};
+    ASSERT_TRUE(window.get_window_rect(&suggested));
+    SendMessageW(window.hwnd_for_test(), WM_DPICHANGED, MAKELPARAM(next_dpi, next_dpi),
+                 reinterpret_cast<LPARAM>(&suggested));
+
+    ASSERT_EQ(callback_count, 1);
+    ASSERT_TRUE(window.is_visible());
+    ASSERT_TRUE(window.visible_candidate_count() > 0);
     window.destroy();
 }
 

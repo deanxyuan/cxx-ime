@@ -71,6 +71,7 @@ struct UiPresentationSnapshot {
     std::uint64_t session_generation = 0;
     std::uint64_t target_generation = 0;
     std::uint64_t composition_generation = 0;
+    std::uint64_t presentation_generation = 0;
     // Source window for coordinate conversion only; never a parent or owner.
     std::uint64_t target_window = 0;
     std::uint32_t flags = 0;
@@ -98,10 +99,8 @@ enum class UiCommandType : std::uint32_t {
     kSwitchInputMode = 11,
     kOpenDictionary = 12,
     kOpenAbout = 13,
-    // Server UI reports the layout-derived page stride to its TSF session.
-    kVisibleCandidateCount = 14,
-    kMenuCommand = 15,
-    kRefreshInputIndicator = 16,
+    kMenuCommand = 14,
+    kRefreshInputIndicator = 15,
 };
 
 struct UiCommand {
@@ -109,6 +108,7 @@ struct UiCommand {
     std::uint64_t session_generation = 0;
     std::uint64_t target_generation = 0;
     std::uint64_t composition_generation = 0;
+    std::uint64_t presentation_generation = 0;
     UiCommandType type = UiCommandType::kNone;
     std::uint32_t candidate_index = 0;
     std::uint32_t value = 0;
@@ -134,19 +134,19 @@ static_assert(std::is_trivially_copyable<UiCommand>::value,
 static_assert(sizeof(UiCandidate) == 268, "UiCandidate layout changed");
 static_assert(sizeof(UiCandidatePage) == 2704, "UiCandidatePage layout changed");
 static_assert(alignof(UiPresentationSnapshot) == 8, "UiPresentationSnapshot alignment changed");
-static_assert(offsetof(UiPresentationSnapshot, target_window) == 32,
+static_assert(offsetof(UiPresentationSnapshot, target_window) == 40,
               "UiPresentationSnapshot::target_window offset changed");
-static_assert(offsetof(UiPresentationSnapshot, ime_status) == 48,
+static_assert(offsetof(UiPresentationSnapshot, ime_status) == 56,
               "UiPresentationSnapshot::ime_status offset changed");
-static_assert(offsetof(UiPresentationSnapshot, preedit) == 88,
+static_assert(offsetof(UiPresentationSnapshot, preedit) == 96,
               "UiPresentationSnapshot::preedit offset changed");
-static_assert(offsetof(UiPresentationSnapshot, candidate_page) == 344,
+static_assert(offsetof(UiPresentationSnapshot, candidate_page) == 352,
               "UiPresentationSnapshot::candidate_page offset changed");
-static_assert(sizeof(UiPresentationSnapshot) == 3048, "UiPresentationSnapshot layout changed");
+static_assert(sizeof(UiPresentationSnapshot) == 3056, "UiPresentationSnapshot layout changed");
 static_assert(alignof(UiCommand) == 8, "UiCommand alignment changed");
-static_assert(offsetof(UiCommand, type) == 32, "UiCommand::type offset changed");
-static_assert(offsetof(UiCommand, value) == 40, "UiCommand::value offset changed");
-static_assert(sizeof(UiCommand) == 48, "UiCommand layout changed");
+static_assert(offsetof(UiCommand, type) == 40, "UiCommand::type offset changed");
+static_assert(offsetof(UiCommand, value) == 48, "UiCommand::value offset changed");
+static_assert(sizeof(UiCommand) == 56, "UiCommand layout changed");
 static_assert(offsetof(UiPacketHeader, sequence) == 12, "UiPacketHeader::sequence offset changed");
 static_assert(sizeof(UiPacketHeader) == 20, "UiPacketHeader layout changed");
 
