@@ -61,6 +61,7 @@ target_link_libraries(wubi_prefix_query_test PRIVATE cxxime-test-wubi-index-data
 add_cxxime_test(candidate_window_test)
 add_cxxime_test(candidate_quality_test)
 add_cxxime_test(status_window_test)
+add_cxxime_test(window_position_test)
 add_cxxime_test(benchmark_test)
 add_cxxime_test(short_cache_test)
 target_link_libraries(short_cache_test PRIVATE cxxime-test-topn-data)
