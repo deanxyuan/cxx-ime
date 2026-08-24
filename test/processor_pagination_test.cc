@@ -1,6 +1,7 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
 #include <cstdint>
+#include <initializer_list>
 #include <utility>
 
 #include <windows.h>
@@ -85,6 +86,22 @@ void verify_variable_page_offsets() {
     ASSERT_EQ(context.page_offset, 0);
 }
 
+template <typename Processor>
+void verify_second_visible_candidate_is_selectable() {
+    Processor processor;
+    cxxime::Context context;
+    context.pinyin_buffer = "code";
+    context.visible_candidate_count = 2;
+    for (const char* text : {"first", "second"}) {
+        cxxime::Candidate candidate;
+        candidate.text = text;
+        context.candidates.candidates.push_back(std::move(candidate));
+    }
+
+    ASSERT_EQ(processor.process_key(make_key('2'), context), cxxime::ProcessResult::COMMITTED);
+    ASSERT_EQ(context.committed_text, "second");
+}
+
 cxxime::CandidatePage make_candidate_page(int page_index, int page_offset, int total_count,
                                           int candidate_count) {
     cxxime::CandidatePage page;
@@ -147,6 +164,14 @@ TEST(ProcessorPagination, pinyin_uses_visible_candidate_count_as_page_step) {
 
 TEST(ProcessorPagination, wubi_uses_visible_candidate_count_as_page_step) {
     verify_variable_page_offsets<cxxime::WubiProcessor>();
+}
+
+TEST(ProcessorPagination, pinyin_selects_second_visible_candidate) {
+    verify_second_visible_candidate_is_selectable<cxxime::PinyinProcessor>();
+}
+
+TEST(ProcessorPagination, wubi_selects_second_visible_candidate) {
+    verify_second_visible_candidate_is_selectable<cxxime::WubiProcessor>();
 }
 
 TEST(ProcessorPagination, pinyin_arrows_cross_pages_without_wrapping) {

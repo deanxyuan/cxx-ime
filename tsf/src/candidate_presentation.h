@@ -40,6 +40,9 @@ public:
                         std::size_t popup_preedit_cursor, int page_current, int page_total);
     void update_page(const cxxime::CandidatePage& page, int page_current, int page_total);
     void set_ownership(CandidateOwnership ownership);
+    void set_local_visible_candidate_count(std::size_t count);
+    std::uint32_t candidate_page_step(std::uint64_t reported_generation,
+                                      std::uint32_t reported_count) const;
     void begin_waiting_for_caret(bool reposition, const RECT* stale_rect, TimePoint now);
     void begin_composition_restart(TimePoint now);
     bool fail_composition_restart(std::uint64_t generation);
@@ -87,6 +90,7 @@ private:
     int page_total_ = 0;
     std::string popup_preedit_;
     std::size_t popup_preedit_cursor_ = 0;
+    std::size_t local_visible_candidate_count_ = 0;
     std::uint64_t generation_ = 1;
     bool composition_restart_active_ = false;
     bool caret_resolution_allowed_ = true;

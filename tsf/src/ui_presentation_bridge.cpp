@@ -86,10 +86,16 @@ bool TextService::_present_immersive_candidate_window(const cxxime::CandidatePag
     _immersiveCandidateWindow->update(page);
     _immersiveCandidateWindow->move_to_caret(_caretRect);
     _immersiveCandidateWindow->show();
-    return _immersiveCandidateWindow->is_visible();
+    if (!_immersiveCandidateWindow->is_visible()) {
+        return false;
+    }
+    _candidatePresentation.set_local_visible_candidate_count(
+        static_cast<std::size_t>(_immersiveCandidateWindow->visible_candidate_count()));
+    return true;
 }
 
 void TextService::_hide_immersive_candidate_window() {
+    _candidatePresentation.set_local_visible_candidate_count(0);
     if (_immersiveCandidateWindow) {
         _immersiveCandidateWindow->hide();
     }

@@ -114,18 +114,8 @@ TextService::_candidate_page_from_response(const cxxime::IPCResponse& response) 
 }
 
 uint32_t TextService::_candidate_page_step() const {
-    if (_visibleCandidateGeneration == _candidatePresentation.generation() &&
-        _visibleCandidateCount > 0 &&
-        _visibleCandidateCount <= _candidatePresentation.page().candidates.size()) {
-        return _visibleCandidateCount;
-    }
-    if (_candidatePresentation.ownership() == cxxime_tsf::CandidateOwnership::kExternal &&
-        !_candidatePresentation.page().candidates.empty()) {
-        // The Server UI has not yet measured the first page. Advance conservatively so a
-        // fast page command cannot skip candidates that have not been presented.
-        return 1;
-    }
-    return static_cast<uint32_t>(_candidatePresentation.page().candidates.size());
+    return _candidatePresentation.candidate_page_step(
+        _visibleCandidateGeneration, _visibleCandidateCount);
 }
 
 bool TextService::_publish_candidate_ui_element() {
