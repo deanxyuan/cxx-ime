@@ -30,7 +30,7 @@ public:
 private:
     static VOID CALLBACK wts_ready_callback(PVOID context, BOOLEAN timed_out);
 
-    void invalidate_once();
+    void try_notify_session_resumed(const wchar_t* source);
     bool register_wts_notifications();
     bool wait_for_wts_service();
     void cancel_wts_wait();
@@ -44,7 +44,9 @@ private:
     UINT taskbar_created_message_ = 0;
     ReconcileHandler reconcile_handler_;
     bool wts_registered_ = false;
+    bool power_suspended_ = false;
     bool session_locked_ = false;
+    bool session_disconnected_ = false;
     bool transition_refresh_issued_ = false;
 };
 
