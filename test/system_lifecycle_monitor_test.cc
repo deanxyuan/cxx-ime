@@ -20,7 +20,7 @@ HWND create_test_window() {
 
 } // namespace
 
-TEST(SystemLifecycleMonitor, coalesces_suspend_and_lock_into_one_reconcile) {
+TEST(SystemLifecycleMonitor, ignores_unpaired_events_and_coalesces_recovery) {
     HWND window = create_test_window();
     ASSERT_TRUE(window != nullptr);
 
@@ -32,6 +32,13 @@ TEST(SystemLifecycleMonitor, coalesces_suspend_and_lock_into_one_reconcile) {
         last_event = event;
         ++reconcile_count;
     });
+
+    lifecycle.handle_message(WM_POWERBROADCAST, PBT_APMRESUMEAUTOMATIC, 0);
+    lifecycle.handle_message(WM_POWERBROADCAST, PBT_APMRESUMESUSPEND, 0);
+    lifecycle.handle_message(WM_WTSSESSION_CHANGE, WTS_CONSOLE_CONNECT, 0);
+    lifecycle.handle_message(WM_WTSSESSION_CHANGE, WTS_SESSION_DESKTOP_READY, 0);
+    lifecycle.handle_message(WM_WTSSESSION_CHANGE, WTS_SESSION_UNLOCK, 0);
+    ASSERT_EQ(reconcile_count, 0);
 
     lifecycle.handle_message(WM_WTSSESSION_CHANGE, WTS_SESSION_LOCK, 0);
     lifecycle.handle_message(WM_POWERBROADCAST, PBT_APMSUSPEND, 0);
@@ -53,9 +60,6 @@ TEST(SystemLifecycleMonitor, coalesces_suspend_and_lock_into_one_reconcile) {
     lifecycle.handle_message(WM_POWERBROADCAST, PBT_APMRESUMESUSPEND, 0);
     ASSERT_EQ(reconcile_count, 3);
 
-    lifecycle.handle_message(WM_POWERBROADCAST, PBT_APMRESUMECRITICAL, 0);
-    ASSERT_EQ(reconcile_count, 3);
-
     lifecycle.handle_message(WM_WTSSESSION_CHANGE, WTS_CONSOLE_CONNECT, 0);
     ASSERT_EQ(reconcile_count, 3);
     lifecycle.handle_message(WM_WTSSESSION_CHANGE, WTS_SESSION_DESKTOP_READY, 0);
@@ -67,6 +71,31 @@ TEST(SystemLifecycleMonitor, coalesces_suspend_and_lock_into_one_reconcile) {
     lifecycle.handle_message(WM_WTSSESSION_CHANGE, WTS_CONSOLE_DISCONNECT, 0);
     lifecycle.handle_message(WM_WTSSESSION_CHANGE, WTS_CONSOLE_CONNECT, 0);
     ASSERT_EQ(reconcile_count, 4);
+
+    lifecycle.handle_message(WM_WTSSESSION_CHANGE, WTS_REMOTE_DISCONNECT, 0);
+    lifecycle.handle_message(WM_WTSSESSION_CHANGE, WTS_SESSION_DESKTOP_READY, 0);
+    ASSERT_EQ(reconcile_count, 5);
+
+    lifecycle.handle_message(WM_POWERBROADCAST, PBT_APMSUSPEND, 0);
+    lifecycle.handle_message(WM_POWERBROADCAST, PBT_APMRESUMECRITICAL, 0);
+    ASSERT_EQ(reconcile_count, 6);
+
+    lifecycle.handle_message(WM_POWERBROADCAST, PBT_APMRESUMECRITICAL, 0);
+    ASSERT_EQ(reconcile_count, 7);
+
+    lifecycle.handle_message(WM_POWERBROADCAST, PBT_APMSUSPEND, 0);
+    lifecycle.handle_message(WM_WTSSESSION_CHANGE, WTS_SESSION_LOCK, 0);
+    lifecycle.handle_message(WM_WTSSESSION_CHANGE, WTS_SESSION_UNLOCK, 0);
+    ASSERT_EQ(reconcile_count, 7);
+    lifecycle.handle_message(WM_POWERBROADCAST, PBT_APMRESUMEAUTOMATIC, 0);
+    ASSERT_EQ(reconcile_count, 8);
+
+    lifecycle.handle_message(WM_POWERBROADCAST, PBT_APMSUSPEND, 0);
+    lifecycle.handle_message(WM_WTSSESSION_CHANGE, WTS_CONSOLE_DISCONNECT, 0);
+    lifecycle.handle_message(WM_WTSSESSION_CHANGE, WTS_CONSOLE_CONNECT, 0);
+    ASSERT_EQ(reconcile_count, 8);
+    lifecycle.handle_message(WM_POWERBROADCAST, PBT_APMRESUMEAUTOMATIC, 0);
+    ASSERT_EQ(reconcile_count, 9);
 
     lifecycle.stop();
     DestroyWindow(window);

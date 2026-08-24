@@ -53,7 +53,9 @@ void SystemLifecycleMonitor::stop() {
     window_ = nullptr;
     taskbar_created_message_ = 0;
     reconcile_handler_ = {};
+    power_suspended_ = false;
     session_locked_ = false;
+    session_disconnected_ = false;
     transition_refresh_issued_ = false;
 }
 
@@ -73,18 +75,22 @@ std::optional<LRESULT> SystemLifecycleMonitor::handle_message(UINT message, WPAR
     if (message == WM_POWERBROADCAST) {
         switch (wparam) {
         case PBT_APMSUSPEND:
+            power_suspended_ = true;
             transition_refresh_issued_ = false;
             break;
         case PBT_APMRESUMEAUTOMATIC:
-        case PBT_APMRESUMECRITICAL:
-            if (!session_locked_) {
-                invalidate_once();
+        case PBT_APMRESUMESUSPEND: {
+            const bool was_suspended = power_suspended_;
+            power_suspended_ = false;
+            if (was_suspended) {
+                try_notify_session_resumed(L"power");
             }
             break;
-        case PBT_APMRESUMESUSPEND:
-            if (!session_locked_) {
-                invalidate_once();
-            }
+        }
+        case PBT_APMRESUMECRITICAL:
+            power_suspended_ = false;
+            transition_refresh_issued_ = false;
+            try_notify_session_resumed(L"power_critical");
             break;
         default:
             break;
@@ -101,16 +107,23 @@ std::optional<LRESULT> SystemLifecycleMonitor::handle_message(UINT message, WPAR
             const bool was_locked = session_locked_;
             session_locked_ = false;
             if (was_locked) {
-                invalidate_once();
+                try_notify_session_resumed(L"session_unlock");
             }
         } else if (wparam == WTS_CONSOLE_DISCONNECT || wparam == WTS_REMOTE_DISCONNECT) {
+            session_disconnected_ = true;
             transition_refresh_issued_ = false;
         } else if (wparam == WTS_CONSOLE_CONNECT || wparam == WTS_REMOTE_CONNECT) {
-            if (!session_locked_) {
-                invalidate_once();
+            const bool was_disconnected = session_disconnected_;
+            session_disconnected_ = false;
+            if (was_disconnected) {
+                try_notify_session_resumed(L"session_connect");
             }
-        } else if (wparam == WTS_SESSION_DESKTOP_READY && !session_locked_) {
-            invalidate_once();
+        } else if (wparam == WTS_SESSION_DESKTOP_READY) {
+            const bool was_disconnected = session_disconnected_;
+            session_disconnected_ = false;
+            if (was_disconnected) {
+                try_notify_session_resumed(L"desktop_ready");
+            }
         }
         return 0;
     }
@@ -174,11 +187,13 @@ VOID CALLBACK SystemLifecycleMonitor::wts_ready_callback(PVOID context, BOOLEAN)
     }
 }
 
-void SystemLifecycleMonitor::invalidate_once() {
-    if (transition_refresh_issued_) {
+void SystemLifecycleMonitor::try_notify_session_resumed(const wchar_t* source) {
+    if (power_suspended_ || session_locked_ || session_disconnected_ ||
+        transition_refresh_issued_) {
         return;
     }
     transition_refresh_issued_ = true;
+    CXXIME_LOG(L"system_lifecycle event=session_resumed source=%s", source);
     if (reconcile_handler_) {
         reconcile_handler_(Event::kSessionResumed);
     }

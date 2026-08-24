@@ -100,7 +100,7 @@ bool should_preserve_status_during_handoff(const cxxime::UiPresentationSnapshot&
     if (foreground_root && foreground_root == GetShellWindow()) {
         return false;
     }
-    return target_root && foreground_root && target_root != foreground_root;
+    return target_root && foreground_root;
 }
 
 } // namespace
