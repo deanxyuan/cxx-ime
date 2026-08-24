@@ -1,6 +1,7 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
 #include <chrono>
+#include <utility>
 
 #include "candidate_presentation.h"
 #include "util/testutil.h"
@@ -12,6 +13,16 @@ cxxime::CandidatePage page_with_candidate(const char* text) {
     cxxime::Candidate candidate;
     candidate.text = text;
     page.candidates.push_back(candidate);
+    return page;
+}
+
+cxxime::CandidatePage page_with_candidates(std::size_t count) {
+    cxxime::CandidatePage page;
+    for (std::size_t index = 0; index < count; ++index) {
+        cxxime::Candidate candidate;
+        candidate.text = "candidate";
+        page.candidates.push_back(std::move(candidate));
+    }
     return page;
 }
 
@@ -32,6 +43,45 @@ TEST(CandidatePresentation, host_ownership_never_expects_external_window) {
     presentation.set_ownership(cxxime_tsf::CandidateOwnership::kHost);
 
     ASSERT_TRUE(!presentation.external_window_expected());
+}
+
+TEST(CandidatePresentation, local_visible_count_controls_selection_and_pagination) {
+    cxxime_tsf::CandidatePresentation presentation;
+    presentation.update_content(page_with_candidates(2), "", 0, 1, 1);
+    presentation.set_ownership(cxxime_tsf::CandidateOwnership::kExternal);
+    presentation.set_local_visible_candidate_count(2);
+
+    ASSERT_EQ(presentation.candidate_page_step(0, 0), 2u);
+}
+
+TEST(CandidatePresentation, content_update_invalidates_local_visible_count) {
+    cxxime_tsf::CandidatePresentation presentation;
+    presentation.update_content(page_with_candidates(2), "", 0, 1, 1);
+    presentation.set_ownership(cxxime_tsf::CandidateOwnership::kExternal);
+    presentation.set_local_visible_candidate_count(2);
+
+    presentation.update_content(page_with_candidates(3), "", 0, 1, 1);
+    presentation.set_ownership(cxxime_tsf::CandidateOwnership::kExternal);
+
+    ASSERT_EQ(presentation.candidate_page_step(0, 0), 1u);
+}
+
+TEST(CandidatePresentation, hidden_local_window_falls_back_to_current_server_count) {
+    cxxime_tsf::CandidatePresentation presentation;
+    presentation.update_content(page_with_candidates(3), "", 0, 1, 1);
+    presentation.set_ownership(cxxime_tsf::CandidateOwnership::kExternal);
+    presentation.set_local_visible_candidate_count(2);
+    presentation.set_local_visible_candidate_count(0);
+
+    ASSERT_EQ(presentation.candidate_page_step(presentation.generation(), 3), 3u);
+}
+
+TEST(CandidatePresentation, stale_server_count_uses_conservative_first_page_step) {
+    cxxime_tsf::CandidatePresentation presentation;
+    presentation.update_content(page_with_candidates(3), "", 0, 1, 1);
+    presentation.set_ownership(cxxime_tsf::CandidateOwnership::kExternal);
+
+    ASSERT_EQ(presentation.candidate_page_step(presentation.generation() - 1, 3), 1u);
 }
 
 TEST(CandidatePresentation, waiting_caret_defers_external_presentation) {

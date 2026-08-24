@@ -49,6 +49,31 @@ void CandidatePresentation::update_page(const cxxime::CandidatePage& page, int p
 void CandidatePresentation::set_ownership(CandidateOwnership ownership) {
     ownership_ =
         content_state_ == CandidateContentState::kEmpty ? CandidateOwnership::kNone : ownership;
+    if (ownership_ != CandidateOwnership::kExternal) {
+        local_visible_candidate_count_ = 0;
+    }
+}
+
+void CandidatePresentation::set_local_visible_candidate_count(std::size_t count) {
+    local_visible_candidate_count_ = ownership_ == CandidateOwnership::kExternal
+                                         ? (std::min)(count, page_.candidates.size())
+                                         : 0;
+}
+
+std::uint32_t CandidatePresentation::candidate_page_step(std::uint64_t reported_generation,
+                                                         std::uint32_t reported_count) const {
+    const std::size_t candidate_count = page_.candidates.size();
+    if (ownership_ == CandidateOwnership::kExternal && local_visible_candidate_count_ > 0) {
+        return static_cast<std::uint32_t>(local_visible_candidate_count_);
+    }
+    if (reported_generation == generation_ && reported_count > 0 &&
+        reported_count <= candidate_count) {
+        return reported_count;
+    }
+    if (ownership_ == CandidateOwnership::kExternal && candidate_count > 0) {
+        return 1;
+    }
+    return static_cast<std::uint32_t>(candidate_count);
 }
 
 void CandidatePresentation::begin_waiting_for_caret(bool reposition, const RECT* stale_rect,
@@ -157,6 +182,7 @@ void CandidatePresentation::advance_generation() {
     if (generation_ == 0) {
         ++generation_;
     }
+    local_visible_candidate_count_ = 0;
 }
 
 void CandidatePresentation::reset_position_state() {
