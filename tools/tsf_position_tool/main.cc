@@ -126,8 +126,8 @@ int main() {
     ShowWindow(parent, SW_SHOW);
 
     g_window.create(nullptr, g_config);
-    g_window.set_click_callback([](int idx) {
-        printf("Clicked: %d\n", idx);
+    g_window.set_candidate_selection_callback([](std::size_t index) {
+        printf("Clicked: %u\n", static_cast<unsigned>(index));
         g_window.hide();
     });
 

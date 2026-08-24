@@ -28,6 +28,8 @@ public:
     void present(cxxime::UiEndpointId endpoint, const cxxime::UiPresentationSnapshot* snapshot,
                  bool preserve_status_during_handoff, std::uint64_t router_revision);
     void update_config(const std::shared_ptr<const cxxime::Config>& config);
+    std::uint32_t visible_candidate_count(
+        std::uint32_t session_id, const cxxime::CandidateUiContext& context) const;
 
 private:
     class Impl;

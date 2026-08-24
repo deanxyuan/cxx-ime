@@ -290,7 +290,13 @@ void CandidateWindow::set_preedit(const std::string& preedit, size_t cursor) {
     }
 }
 void CandidateWindow::set_layout(const std::string& l) { layout_orientation_ = l; }
-void CandidateWindow::set_click_callback(ClickCallback cb) { click_cb_ = std::move(cb); }
+void CandidateWindow::set_candidate_selection_callback(CandidateSelectionCallback cb) {
+    candidate_selection_cb_ = std::move(cb);
+}
+void CandidateWindow::set_layout_changed_callback(LayoutChangedCallback cb) {
+    layout_changed_cb_ = std::move(cb);
+}
+void CandidateWindow::set_page_callback(PageCallback cb) { page_cb_ = std::move(cb); }
 void CandidateWindow::set_draggable(bool draggable) { draggable_ = draggable; }
 
 void CandidateWindow::move_window_now(int x, int y) {
@@ -411,9 +417,13 @@ void CandidateWindow::rebuild_render_context(const LayoutConfig& cfg, int window
     render_ctx_.highlighted = page_.candidates.empty() ? -1 : page_.highlighted;
 
     // Page nav placement depends on layout orientation
+    render_ctx_.prev_button_rect = {};
+    render_ctx_.next_button_rect = {};
     if (page_total_ > 1 && !candidate_rects_.empty()) {
         auto& last = candidate_rects_.back();
-        int pw = 16, nw = 16;
+        const PageNavigationMetrics nav = candidate_page_navigation_metrics(dpi());
+        const int pw = nav.button_width;
+        const int nw = nav.button_width;
         int nav_h = last.highlight_rect.bottom - last.highlight_rect.top;
 
         if (layout_orientation_ == "vertical") {
@@ -422,14 +432,16 @@ void CandidateWindow::rebuild_render_context(const LayoutConfig& cfg, int window
             int nav_y = last.text_rect.bottom;
             int nav_x = cfg.margin_x;
             render_ctx_.prev_button_rect = {nav_x, nav_y, nav_x + pw, nav_y + nav_h};
-            render_ctx_.next_button_rect = {nav_x + pw + 2, nav_y, nav_x + pw + 2 + nw, nav_y + nav_h};
+            render_ctx_.next_button_rect = {nav_x + pw + nav.gap, nav_y,
+                                            nav_x + pw + nav.gap + nw, nav_y + nav_h};
             render_ctx_.page_indicator_rect = {};
         } else {
             // Horizontal layout: nav buttons after last candidate, same row
             int nav_y = last.highlight_rect.top;
-            int x = last.highlight_rect.right + 4;
+            int x = last.highlight_rect.right + nav.leading_gap;
             render_ctx_.prev_button_rect = {x, nav_y, x + pw, nav_y + nav_h};
-            render_ctx_.next_button_rect = {x + pw + 2, nav_y, x + pw + 2 + nw, nav_y + nav_h};
+            render_ctx_.next_button_rect = {x + pw + nav.gap, nav_y,
+                                            x + pw + nav.gap + nw, nav_y + nav_h};
             render_ctx_.page_indicator_rect = {};
         }
     }
@@ -545,7 +557,7 @@ void CandidateWindow::update(const CandidatePage& page) {
     rebuild_render_context(cfg, lr.width);
     // Extend width for page nav buttons if present
     if (page_total_ > 1 && render_ctx_.next_button_rect.right > lr.width)
-        lr.width = render_ctx_.next_button_rect.right + config_->layout_config.margin_x;
+        lr.width = render_ctx_.next_button_rect.right + cfg.margin_x;
     // Vertical layout: extend height for nav buttons row below candidates
     if (layout_orientation_ == "vertical" && page_total_ > 1 && !candidate_rects_.empty()) {
         int nav_bottom = render_ctx_.next_button_rect.bottom + cfg.hilite_padding_y;
@@ -601,36 +613,71 @@ LRESULT CALLBACK CandidateWindow::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM
         }
         POINT pt = lp2pt(lp);
         if (PtInRect(&self->render_ctx_.prev_button_rect, pt) && self->page_current_ > 1) {
-            if (self->click_cb_) self->click_cb_(-2); return 0;
+            if (self->page_cb_) {
+                self->page_cb_(CandidatePageDirection::Previous);
+            }
+            return 0;
         }
-        if (PtInRect(&self->render_ctx_.next_button_rect, pt) && self->page_current_ < self->page_total_) {
-            if (self->click_cb_) self->click_cb_(-3); return 0;
+        if (PtInRect(&self->render_ctx_.next_button_rect, pt) &&
+            self->page_current_ < self->page_total_) {
+            if (self->page_cb_) {
+                self->page_cb_(CandidatePageDirection::Next);
+            }
+            return 0;
         }
         for (const auto& cr : self->candidate_rects_) {
-            if (PtInRect(&cr.highlight_rect, pt)) { if (self->click_cb_) self->click_cb_(cr.index); break; }
+            if (PtInRect(&cr.highlight_rect, pt)) {
+                if (self->candidate_selection_cb_ && cr.index >= 0) {
+                    self->candidate_selection_cb_(static_cast<std::size_t>(cr.index));
+                }
+                break;
+            }
         }
         return 0;
     }
     case WM_MOUSEMOVE: {
         if (!self || self->page_.candidates.empty()) return 0;
-        POINT pt = lp2pt(lp); int hovered = -1;
+        POINT pt = lp2pt(lp);
+        CandidateHoverTarget hovered_target = CandidateHoverTarget::None;
+        int hovered_candidate_index = -1;
         RECT old_r{}, new_r{};
-        int old = self->render_ctx_.hovered_index;
+        const CandidateHoverTarget old_target = self->render_ctx_.hovered_target;
+        const int old_candidate_index = self->render_ctx_.hovered_candidate_index;
         // Find old hover rect for targeted invalidation
-        auto find_rect = [&](int idx) -> RECT {
-            if (idx >= 0) { for (auto& cr : *self->render_ctx_.rects) if (cr.index == idx) return cr.highlight_rect; }
-            else if (idx == -2) return self->render_ctx_.prev_button_rect;
-            else if (idx == -3) return self->render_ctx_.next_button_rect;
+        auto find_rect = [&](CandidateHoverTarget target, int candidate_index) -> RECT {
+            if (target == CandidateHoverTarget::Candidate) {
+                for (const auto& cr : *self->render_ctx_.rects) {
+                    if (cr.index == candidate_index) {
+                        return cr.highlight_rect;
+                    }
+                }
+            } else if (target == CandidateHoverTarget::PreviousPage) {
+                return self->render_ctx_.prev_button_rect;
+            } else if (target == CandidateHoverTarget::NextPage) {
+                return self->render_ctx_.next_button_rect;
+            }
             return {};
         };
-        old_r = find_rect(old);
-
-        if (PtInRect(&self->render_ctx_.prev_button_rect, pt)) { hovered = -2; new_r = self->render_ctx_.prev_button_rect; }
-        else if (PtInRect(&self->render_ctx_.next_button_rect, pt)) { hovered = -3; new_r = self->render_ctx_.next_button_rect; }
-        else { for (auto& cr : self->candidate_rects_) if (PtInRect(&cr.highlight_rect, pt)) { hovered = cr.index; new_r = cr.highlight_rect; break; } }
-
-        if (hovered != old) {
-            self->render_ctx_.hovered_index = hovered;
+        old_r = find_rect(old_target, old_candidate_index);
+        if (PtInRect(&self->render_ctx_.prev_button_rect, pt)) {
+            hovered_target = CandidateHoverTarget::PreviousPage;
+            new_r = self->render_ctx_.prev_button_rect;
+        } else if (PtInRect(&self->render_ctx_.next_button_rect, pt)) {
+            hovered_target = CandidateHoverTarget::NextPage;
+            new_r = self->render_ctx_.next_button_rect;
+        } else {
+            for (const auto& cr : self->candidate_rects_) {
+                if (PtInRect(&cr.highlight_rect, pt)) {
+                    hovered_target = CandidateHoverTarget::Candidate;
+                    hovered_candidate_index = cr.index;
+                    new_r = cr.highlight_rect;
+                    break;
+                }
+            }
+        }
+        if (hovered_target != old_target || hovered_candidate_index != old_candidate_index) {
+            self->render_ctx_.hovered_target = hovered_target;
+            self->render_ctx_.hovered_candidate_index = hovered_candidate_index;
             if (old_r.right > old_r.left) InvalidateRect(hwnd, &old_r, FALSE);
             if (new_r.right > new_r.left) InvalidateRect(hwnd, &new_r, FALSE);
         }
@@ -638,7 +685,11 @@ LRESULT CALLBACK CandidateWindow::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM
         return 0;
     }
     case WM_MOUSELEAVE:
-        if (self) { self->render_ctx_.hovered_index = -1; InvalidateRect(hwnd, nullptr, FALSE); }
+        if (self) {
+            self->render_ctx_.hovered_target = CandidateHoverTarget::None;
+            self->render_ctx_.hovered_candidate_index = -1;
+            InvalidateRect(hwnd, nullptr, FALSE);
+        }
         return 0;
     case WM_MOUSEACTIVATE: return MA_NOACTIVATE;  // prevent focus theft on click
     case WM_NCHITTEST: return HTCLIENT;  // prevent resize cursor at edges
@@ -655,12 +706,18 @@ LRESULT CALLBACK CandidateWindow::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM
                              SWP_NOZORDER | SWP_NOACTIVATE);
                 self->recreate_renderers_for_dpi();
                 self->update(self->page_);
+                if (self->layout_changed_cb_) {
+                    self->layout_changed_cb_();
+                }
             }
         }
         return 0;
     case WM_SETTINGCHANGE:
         if (self && self->refresh_preedit_cursor_width()) {
             self->update(self->page_);
+            if (self->layout_changed_cb_) {
+                self->layout_changed_cb_();
+            }
         }
         return 0;
     }

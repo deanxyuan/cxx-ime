@@ -57,15 +57,29 @@ static void build_page() {
     g_page.page_size = 7;
 }
 
-static void handle_click(int index) {
-    if (index == -2) {
-        if (g_page_idx > 0) { g_page_idx--; build_page(); update_display(); }
-    } else if (index == -3) {
-        if (g_page_idx + 1 < g_total_pages) { g_page_idx++; build_page(); update_display(); }
-    } else if (index >= 0 && index < (int)g_page.candidates.size()) {
+static void handle_candidate_selection(std::size_t index) {
+    if (index < g_page.candidates.size()) {
         printf("Clicked: %s\n", g_page.candidates[index].text.c_str());
         g_window.hide();
     }
+}
+
+static void handle_page(cxxime::CandidatePageDirection direction) {
+    if (direction == cxxime::CandidatePageDirection::Previous && g_page_idx > 0) {
+        --g_page_idx;
+    } else if (direction == cxxime::CandidatePageDirection::Next &&
+               g_page_idx + 1 < g_total_pages) {
+        ++g_page_idx;
+    } else {
+        return;
+    }
+    build_page();
+    update_display();
+}
+
+static void configure_candidate_window_callbacks() {
+    g_window.set_candidate_selection_callback(handle_candidate_selection);
+    g_window.set_page_callback(handle_page);
 }
 
 static void update_display() {
@@ -156,7 +170,7 @@ static LRESULT CALLBACK ParentWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             printf("字体大小: %dpx\n", fs);
             g_window.destroy();
             g_window.create(nullptr, g_config);
-            g_window.set_click_callback(handle_click);
+            configure_candidate_window_callbacks();
             g_window.set_layout(g_config.layout);
             build_page();
             if (g_d2d) g_window.set_render_backend(cxxime::RenderBackend::D2D);
@@ -236,7 +250,7 @@ int main() {
     g_d2d = (g_config.render_backend != "gdi");
     g_window.create(nullptr, g_config);
 
-    g_window.set_click_callback(handle_click);
+    configure_candidate_window_callbacks();
 
     build_page();
     g_window.set_preedit("ni'hao");

@@ -40,11 +40,17 @@ cxxime::UiPresentationSnapshot make_snapshot(std::uint64_t target_generation, bo
     snapshot.session_generation = 4;
     snapshot.target_generation = target_generation;
     snapshot.composition_generation = 9;
+    snapshot.presentation_generation = target_generation + 20;
     snapshot.ownership = cxxime::UiOwnership::kExternal;
     snapshot.flags = cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kComposing) |
                      cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kHasCaret);
     if (visible) {
-        snapshot.flags |= cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kCandidateVisible);
+        snapshot.flags |= cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kCandidateVisible) |
+                          cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kHasCandidates);
+        snapshot.candidate_page.count = 1;
+        snapshot.candidate_page.total = 1;
+        snapshot.candidate_page.candidates[0].text_length = 1;
+        snapshot.candidate_page.candidates[0].text[0] = 'a';
     }
     snapshot.caret = {20, 40, 21, 60};
     return snapshot;
@@ -57,6 +63,7 @@ cxxime::UiCommand make_command(const cxxime::UiPresentationSnapshot& snapshot,
     command.session_generation = snapshot.session_generation;
     command.target_generation = snapshot.target_generation;
     command.composition_generation = snapshot.composition_generation;
+    command.presentation_generation = snapshot.presentation_generation;
     command.type = type;
     command.candidate_index = candidate_index;
     return command;
@@ -128,6 +135,23 @@ TEST(UiPresentationRouter, ignores_stale_snapshots_and_routes_bound_commands) {
     ASSERT_TRUE(router.send_command(presented_endpoint.load(),
                                     make_command(replacement, cxxime::UiCommandType::kPageNext)));
     ASSERT_TRUE(wait_for([&]() { return command_count.load() == 2; }));
+
+    cxxime::UiPresentationSnapshot host = replacement;
+    host.presentation_generation++;
+    host.ownership = cxxime::UiOwnership::kHost;
+    ASSERT_TRUE(client.publish_latest(host));
+    ASSERT_TRUE(wait_for([&]() { return presentation_count.load() == 3; }));
+    ASSERT_TRUE(!router.send_command(presented_endpoint.load(),
+                                     make_command(host, cxxime::UiCommandType::kPageNext)));
+
+    cxxime::UiPresentationSnapshot local = host;
+    local.presentation_generation++;
+    local.ownership = cxxime::UiOwnership::kExternal;
+    local.flags |= cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kTsfLocalCandidate);
+    ASSERT_TRUE(client.publish_latest(local));
+    ASSERT_TRUE(wait_for([&]() { return presentation_count.load() >= 5; }));
+    ASSERT_TRUE(!router.send_command(presented_endpoint.load(),
+                                     make_command(local, cxxime::UiCommandType::kSelectCandidate)));
 
     const cxxime::UiPresentationSnapshot hidden = make_snapshot(9, false);
     ASSERT_TRUE(client.publish_latest(hidden));

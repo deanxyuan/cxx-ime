@@ -354,8 +354,15 @@ cxxime::IPCResponse ServerApp::handle_request(const cxxime::IPCRequest& request)
         event.modifiers = request.modifiers;
         event.is_key_up = request.is_key_up != 0;
 
-        auto r = session_mgr_.process_key(
-            request.session_id, event, request.visible_candidate_count);
+        const std::uint32_t server_visible_count =
+            request.candidate_ui.presenter == cxxime::CandidateUiContext::Presenter::SERVER
+                ? ui_presentation_controller_.visible_candidate_count(
+                      request.session_id, request.candidate_ui)
+                : 0;
+        const std::uint32_t visible_candidate_count =
+            cxxime::candidate_ui_visible_count(request.candidate_ui, server_visible_count);
+        auto r =
+            session_mgr_.process_key(request.session_id, event, visible_candidate_count);
 
         if (r.status != cxxime::IPCStatus::OK) {
             response.status = r.status;

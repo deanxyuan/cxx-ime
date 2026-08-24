@@ -282,7 +282,7 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
         ++engine_calls;
         return _client.process_key(
             _sessionId, static_cast<uint32_t>(wParam), modifiers, response, false,
-            _candidate_page_step());
+            _candidate_ui_context());
     };
     auto ipc_start = std::chrono::steady_clock::now();
     bool ok = _ensure_ipc_session() && process_key();

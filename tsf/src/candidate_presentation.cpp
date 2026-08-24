@@ -54,26 +54,33 @@ void CandidatePresentation::set_ownership(CandidateOwnership ownership) {
     }
 }
 
+void CandidatePresentation::set_presenter(CandidatePresenter presenter) {
+    if (content_state_ == CandidateContentState::kEmpty) {
+        presenter = CandidatePresenter::kNone;
+    }
+    if (presenter_ == presenter) {
+        return;
+    }
+    presenter_ = presenter;
+    ++presentation_generation_;
+    if (presentation_generation_ == 0) {
+        ++presentation_generation_;
+    }
+    if (presenter_ != CandidatePresenter::kLocal) {
+        local_visible_candidate_count_ = 0;
+    }
+}
+
 void CandidatePresentation::set_local_visible_candidate_count(std::size_t count) {
-    local_visible_candidate_count_ = ownership_ == CandidateOwnership::kExternal
+    local_visible_candidate_count_ = presenter_ == CandidatePresenter::kLocal
                                          ? (std::min)(count, page_.candidates.size())
                                          : 0;
 }
 
-std::uint32_t CandidatePresentation::candidate_page_step(std::uint64_t reported_generation,
-                                                         std::uint32_t reported_count) const {
-    const std::size_t candidate_count = page_.candidates.size();
-    if (ownership_ == CandidateOwnership::kExternal && local_visible_candidate_count_ > 0) {
-        return static_cast<std::uint32_t>(local_visible_candidate_count_);
-    }
-    if (reported_generation == generation_ && reported_count > 0 &&
-        reported_count <= candidate_count) {
-        return reported_count;
-    }
-    if (ownership_ == CandidateOwnership::kExternal && candidate_count > 0) {
-        return 1;
-    }
-    return static_cast<std::uint32_t>(candidate_count);
+std::uint32_t CandidatePresentation::local_visible_candidate_count() const {
+    return presenter_ == CandidatePresenter::kLocal
+               ? static_cast<std::uint32_t>(local_visible_candidate_count_)
+               : 0;
 }
 
 void CandidatePresentation::begin_waiting_for_caret(bool reposition, const RECT* stale_rect,
@@ -159,6 +166,7 @@ void CandidatePresentation::finish() {
     advance_generation();
     content_state_ = CandidateContentState::kEmpty;
     ownership_ = CandidateOwnership::kNone;
+    presenter_ = CandidatePresenter::kNone;
     page_ = {};
     page_current_ = 0;
     page_total_ = 0;
@@ -181,6 +189,10 @@ void CandidatePresentation::advance_generation() {
     ++generation_;
     if (generation_ == 0) {
         ++generation_;
+    }
+    ++presentation_generation_;
+    if (presentation_generation_ == 0) {
+        ++presentation_generation_;
     }
     local_visible_candidate_count_ = 0;
 }

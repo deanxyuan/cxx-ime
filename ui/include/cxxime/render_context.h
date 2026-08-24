@@ -62,6 +62,8 @@ struct Config;
 Theme build_theme_from_config(const Config& cfg);
 
 struct LayoutConfig;
+enum class CandidateHoverTarget { None, Candidate, PreviousPage, NextPage };
+
 struct RenderContext {
     const std::vector<CandidateRect>* rects = nullptr;
     const Theme* theme = nullptr;
@@ -71,7 +73,9 @@ struct RenderContext {
     int preedit_cursor_width = 1;
     bool show_preedit_cursor = false;
     int page_current = 1, page_total = 1;
-    int highlighted = -1, hovered_index = -1;
+    int highlighted = -1;
+    CandidateHoverTarget hovered_target = CandidateHoverTarget::None;
+    int hovered_candidate_index = -1;
     RECT preedit_rect{};
     RECT page_indicator_rect{};
     RECT prev_button_rect{};

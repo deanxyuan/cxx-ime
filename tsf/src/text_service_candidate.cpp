@@ -113,9 +113,29 @@ TextService::_candidate_page_from_response(const cxxime::IPCResponse& response) 
     return page;
 }
 
-uint32_t TextService::_candidate_page_step() const {
-    return _candidatePresentation.candidate_page_step(
-        _visibleCandidateGeneration, _visibleCandidateCount);
+cxxime::CandidateUiContext TextService::_candidate_ui_context() const {
+    cxxime::CandidateUiContext context;
+    context.session_generation = _uiSessionGeneration;
+    context.target_generation = _uiTargetGeneration;
+    context.composition_generation = _candidatePresentation.generation();
+    context.presentation_generation = _candidatePresentation.presentation_generation();
+    context.local_visible_candidate_count =
+        _candidatePresentation.local_visible_candidate_count();
+    switch (_candidatePresentation.presenter()) {
+    case cxxime_tsf::CandidatePresenter::kServer:
+        context.presenter = cxxime::CandidateUiContext::Presenter::SERVER;
+        break;
+    case cxxime_tsf::CandidatePresenter::kLocal:
+        context.presenter = cxxime::CandidateUiContext::Presenter::LOCAL;
+        break;
+    case cxxime_tsf::CandidatePresenter::kHost:
+        context.presenter = cxxime::CandidateUiContext::Presenter::HOST;
+        break;
+    case cxxime_tsf::CandidatePresenter::kNone:
+        context.presenter = cxxime::CandidateUiContext::Presenter::NONE;
+        break;
+    }
+    return context;
 }
 
 bool TextService::_publish_candidate_ui_element() {
@@ -275,7 +295,8 @@ bool TextService::navigate_candidate_page_from_ui(bool previous) {
     cxxime::IPCResponse response = {};
     uint32_t key_code = previous ? VK_PRIOR : VK_NEXT;
     if (!_ensure_ipc_session() ||
-        !_client.process_key(_sessionId, key_code, 0, response, false, _candidate_page_step())) {
+        !_client.process_key(_sessionId, key_code, 0, response, false,
+                             _candidate_ui_context())) {
         return false;
     }
     if (response.status != cxxime::IPCStatus::OK || !response.composing) {

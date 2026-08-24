@@ -42,6 +42,7 @@ cxxime::UiPresentationSnapshot make_snapshot(std::uint64_t generation) {
     snapshot.session_generation = 3;
     snapshot.target_generation = generation;
     snapshot.composition_generation = generation + 10;
+    snapshot.presentation_generation = generation + 20;
     snapshot.ownership = cxxime::UiOwnership::kExternal;
     snapshot.flags = cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kComposing) |
                      cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kCandidateVisible) |
@@ -82,6 +83,7 @@ TEST(UiChannel, protocol_round_trip) {
     expected_command.session_generation = expected.session_generation;
     expected_command.target_generation = expected.target_generation;
     expected_command.composition_generation = expected.composition_generation;
+    expected_command.presentation_generation = expected.presentation_generation;
     expected_command.type = cxxime::UiCommandType::kSelectCandidate;
     expected_command.candidate_index = 0;
     ASSERT_TRUE(cxxime::build_ui_command_packet(expected_command, 10, &packet));
@@ -90,6 +92,7 @@ TEST(UiChannel, protocol_round_trip) {
     ASSERT_TRUE(cxxime::parse_ui_command_packet(packet.data(), packet.size(), &actual_command));
     ASSERT_EQ(actual_command.type, cxxime::UiCommandType::kSelectCandidate);
     ASSERT_EQ(actual_command.composition_generation, expected.composition_generation);
+    ASSERT_EQ(actual_command.presentation_generation, expected.presentation_generation);
 }
 
 TEST(UiChannel, protocol_rejects_invalid_payloads) {
@@ -113,24 +116,18 @@ TEST(UiChannel, protocol_rejects_invalid_payloads) {
     cxxime::UiCommand command;
     command.session_id = 17;
     command.session_generation = 3;
+    command.presentation_generation = 1;
     command.type = cxxime::UiCommandType::kSelectCandidate;
     command.candidate_index = cxxime::kCandidateCapacity;
     ASSERT_TRUE(!cxxime::build_ui_command_packet(command, 1, &packet));
 
-    command.candidate_index = 0;
-    command.type = cxxime::UiCommandType::kVisibleCandidateCount;
-    command.value = 0;
-    ASSERT_TRUE(!cxxime::build_ui_command_packet(command, 1, &packet));
-    command.value = cxxime::kCandidateCapacity + 1;
-    ASSERT_TRUE(!cxxime::build_ui_command_packet(command, 1, &packet));
-    command.value = 4;
-    ASSERT_TRUE(cxxime::build_ui_command_packet(command, 1, &packet));
-
     command.type = cxxime::UiCommandType::kRefreshInputIndicator;
+    command.candidate_index = 0;
     command.target_generation = 1;
     command.value = 0;
     ASSERT_TRUE(!cxxime::build_ui_command_packet(command, 1, &packet));
     command.target_generation = 0;
+    command.presentation_generation = 0;
     ASSERT_TRUE(cxxime::build_ui_command_packet(command, 1, &packet));
     cxxime::UiCommand parsed;
     ASSERT_TRUE(cxxime::parse_ui_command_packet(packet.data(), packet.size(), &parsed));
@@ -208,6 +205,7 @@ TEST(UiChannel, server_routes_command_to_the_originating_endpoint) {
     command.session_generation = 3;
     command.target_generation = 7;
     command.composition_generation = 17;
+    command.presentation_generation = 18;
     command.type = cxxime::UiCommandType::kPageNext;
     ASSERT_TRUE(server.send_command(endpoint.load(), command));
     ASSERT_TRUE(wait_for([&]() { return command_count.load() == 1; }));

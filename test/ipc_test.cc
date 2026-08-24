@@ -64,7 +64,21 @@ TEST(Protocol, user_pipe_name_preserves_endpoint_and_is_idempotent) {
 }
 
 TEST(Protocol, request_struct_size) {
-    ASSERT_EQ(sizeof(cxxime::IPCRequest), static_cast<size_t>(540));
+    ASSERT_EQ(sizeof(cxxime::IPCRequest), static_cast<size_t>(576));
+}
+
+TEST(Protocol, candidate_ui_visible_count_distinguishes_unknown_server_layout) {
+    cxxime::CandidateUiContext context;
+    context.presenter = cxxime::CandidateUiContext::Presenter::SERVER;
+    ASSERT_EQ(cxxime::candidate_ui_visible_count(context, 0), 1u);
+    ASSERT_EQ(cxxime::candidate_ui_visible_count(context, 3), 3u);
+
+    context.presenter = cxxime::CandidateUiContext::Presenter::LOCAL;
+    context.local_visible_candidate_count = 2;
+    ASSERT_EQ(cxxime::candidate_ui_visible_count(context, 0), 2u);
+
+    context.presenter = cxxime::CandidateUiContext::Presenter::HOST;
+    ASSERT_EQ(cxxime::candidate_ui_visible_count(context, 0), 0u);
 }
 
 TEST(Protocol, response_struct_size) {
@@ -220,11 +234,11 @@ TEST(IPC, ping) {
 
 TEST(IPC, process_key_preedit) {
     TestServer ts;
-    uint32_t visible_candidate_count = 0;
+    cxxime::CandidateUiContext candidate_ui;
     ASSERT_TRUE(ts.start([&](const cxxime::IPCRequest& req) -> cxxime::IPCResponse {
         cxxime::IPCResponse resp = {};
         if (req.command == cxxime::IPCCommand::PROCESS_KEY) {
-            visible_candidate_count = req.visible_candidate_count;
+            candidate_ui = req.candidate_ui;
             resp.status = cxxime::IPCStatus::OK;
             strncpy_s(resp.preedit, "ni", sizeof(resp.preedit) - 1);
             resp.preedit_cursor = 1;
@@ -241,9 +255,21 @@ TEST(IPC, process_key_preedit) {
     cxxime::IpcClient client;
     ASSERT_TRUE(client.connect(test_pipe_name(), 2000));
     cxxime::IPCResponse resp = {};
-    ASSERT_TRUE(client.process_key(1, 'N', 0, resp, false, 2));
+    cxxime::CandidateUiContext expected_ui;
+    expected_ui.session_generation = 3;
+    expected_ui.target_generation = 4;
+    expected_ui.composition_generation = 5;
+    expected_ui.presentation_generation = 6;
+    expected_ui.local_visible_candidate_count = 2;
+    expected_ui.presenter = cxxime::CandidateUiContext::Presenter::LOCAL;
+    ASSERT_TRUE(client.process_key(1, 'N', 0, resp, false, expected_ui));
     ASSERT_EQ(resp.status, cxxime::IPCStatus::OK);
-    ASSERT_EQ(visible_candidate_count, 2u);
+    ASSERT_EQ(candidate_ui.session_generation, expected_ui.session_generation);
+    ASSERT_EQ(candidate_ui.target_generation, expected_ui.target_generation);
+    ASSERT_EQ(candidate_ui.composition_generation, expected_ui.composition_generation);
+    ASSERT_EQ(candidate_ui.presentation_generation, expected_ui.presentation_generation);
+    ASSERT_EQ(candidate_ui.local_visible_candidate_count, 2u);
+    ASSERT_EQ(candidate_ui.presenter, cxxime::CandidateUiContext::Presenter::LOCAL);
     ASSERT_EQ(strcmp(resp.preedit, "ni"), 0);
     ASSERT_EQ(resp.preedit_cursor, 1u);
     ASSERT_EQ(resp.candidate_count, (uint32_t)2);

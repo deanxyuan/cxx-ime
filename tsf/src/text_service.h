@@ -294,7 +294,7 @@ private:
     void _hide_external_candidate_window(const char* reason);
     bool _publish_candidate_ui_element();
     void _sync_candidate_ui_element_snapshot();
-    uint32_t _candidate_page_step() const;
+    cxxime::CandidateUiContext _candidate_ui_context() const;
     static cxxime::CandidatePage _candidate_page_from_response(
         const cxxime::IPCResponse& response);
     static std::wstring utf8_to_wstring(const char* text);
@@ -349,8 +349,6 @@ private:
 
     cxxime::IpcClient _client;
     uint32_t _sessionId = 0;
-    uint32_t _visibleCandidateCount = 0;
-    uint64_t _visibleCandidateGeneration = 0;
     bool _composing = false;
     bool _emptyCompositionPlaceholderActive = false;
     bool _chinese_mode = true;

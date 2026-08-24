@@ -78,8 +78,6 @@ private:
     ITfDocumentMgr* _document_mgr = nullptr;
     std::vector<std::wstring> _candidates;
     UINT _selection = 0;
-    UINT _page_current = 0;
-    UINT _page_total = 1;
 };
 
 #endif // CXXIME_TSF_CANDIDATE_UI_ELEMENT_H_

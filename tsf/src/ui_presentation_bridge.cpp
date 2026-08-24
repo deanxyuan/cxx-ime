@@ -75,8 +75,25 @@ bool TextService::_present_immersive_candidate_window(const cxxime::CandidatePag
             _immersiveCandidateWindow.reset();
             return false;
         }
-        _immersiveCandidateWindow->set_click_callback(
-            [this](int index) { select_candidate_from_ui(static_cast<UINT>(index)); });
+        _immersiveCandidateWindow->set_candidate_selection_callback(
+            [this](std::size_t index) {
+                select_candidate_from_ui(static_cast<UINT>(index));
+            });
+        _immersiveCandidateWindow->set_page_callback(
+            [this](cxxime::CandidatePageDirection direction) {
+                navigate_candidate_page_from_ui(
+                    direction == cxxime::CandidatePageDirection::Previous);
+            });
+        _immersiveCandidateWindow->set_layout_changed_callback([this]() {
+            if (!_immersiveCandidateWindow || !_immersiveCandidateWindow->is_visible() ||
+                _candidatePresentation.presenter() !=
+                    cxxime_tsf::CandidatePresenter::kLocal) {
+                return;
+            }
+            _candidatePresentation.set_local_visible_candidate_count(
+                static_cast<std::size_t>(
+                    _immersiveCandidateWindow->visible_candidate_count()));
+        });
     } else if (!_immersiveCandidateWindow->ensure_created(owner)) {
         return false;
     }
@@ -89,6 +106,7 @@ bool TextService::_present_immersive_candidate_window(const cxxime::CandidatePag
     if (!_immersiveCandidateWindow->is_visible()) {
         return false;
     }
+    _candidatePresentation.set_presenter(cxxime_tsf::CandidatePresenter::kLocal);
     _candidatePresentation.set_local_visible_candidate_count(
         static_cast<std::size_t>(_immersiveCandidateWindow->visible_candidate_count()));
     return true;
@@ -216,9 +234,17 @@ void TextService::_publish_ui_presentation() {
             _candidatePresentation.popup_preedit_cursor());
     if (local_candidate_visible) {
         snapshot.flags |= cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kTsfLocalCandidate);
+    } else if (snapshot.ownership == cxxime::UiOwnership::kHost) {
+        _hide_immersive_candidate_window();
+        _candidatePresentation.set_presenter(cxxime_tsf::CandidatePresenter::kHost);
+    } else if (candidate_visible) {
+        _hide_immersive_candidate_window();
+        _candidatePresentation.set_presenter(cxxime_tsf::CandidatePresenter::kServer);
     } else {
         _hide_immersive_candidate_window();
+        _candidatePresentation.set_presenter(cxxime_tsf::CandidatePresenter::kNone);
     }
+    snapshot.presentation_generation = _candidatePresentation.presentation_generation();
     const cxxime::DiagnosticTraceMode trace_mode = _config.diagnostics.trace_mode;
     if (trace_mode == cxxime::DiagnosticTraceMode::kNormal ||
         trace_mode == cxxime::DiagnosticTraceMode::kVerbose) {
@@ -237,6 +263,7 @@ void TextService::_publish_ui_session_ended() {
     snapshot.session_generation = _uiSessionGeneration;
     snapshot.target_generation = _uiTargetGeneration;
     snapshot.composition_generation = _candidatePresentation.generation();
+    snapshot.presentation_generation = _candidatePresentation.presentation_generation();
     snapshot.flags = cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kSessionEnded);
     _uiChannel.publish_latest(snapshot);
 }
@@ -264,7 +291,8 @@ bool TextService::_is_current_ui_command(const cxxime::UiCommand& command) const
         return false;
     }
     if (command.type == cxxime::UiCommandType::kRefreshInputIndicator) {
-        return command.target_generation == 0 && command.composition_generation == 0;
+        return command.target_generation == 0 && command.composition_generation == 0 &&
+               command.presentation_generation == 0;
     }
     if (command.target_generation != _uiTargetGeneration) {
         return false;
@@ -273,9 +301,16 @@ bool TextService::_is_current_ui_command(const cxxime::UiCommand& command) const
     case cxxime::UiCommandType::kSelectCandidate:
     case cxxime::UiCommandType::kPagePrevious:
     case cxxime::UiCommandType::kPageNext:
+        return command.composition_generation == _candidatePresentation.generation() &&
+               command.presentation_generation ==
+                   _candidatePresentation.presentation_generation() &&
+               _candidatePresentation.presenter() ==
+                   cxxime_tsf::CandidatePresenter::kServer;
     case cxxime::UiCommandType::kCommitComposition:
     case cxxime::UiCommandType::kCancelComposition:
-        return command.composition_generation == _candidatePresentation.generation();
+        return command.composition_generation == _candidatePresentation.generation() &&
+               command.presentation_generation ==
+                   _candidatePresentation.presentation_generation();
     default:
         return true;
     }
@@ -296,10 +331,6 @@ void TextService::_handle_ui_command(const cxxime::UiCommand& command) {
         break;
     case cxxime::UiCommandType::kPageNext:
         navigate_candidate_page_from_ui(false);
-        break;
-    case cxxime::UiCommandType::kVisibleCandidateCount:
-        _visibleCandidateCount = command.value;
-        _visibleCandidateGeneration = command.composition_generation;
         break;
     case cxxime::UiCommandType::kToggleChinese:
         if (_ensure_ipc_session() && _client.toggle_chinese(_sessionId, response) &&

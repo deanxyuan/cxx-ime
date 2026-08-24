@@ -80,6 +80,17 @@ void verify_variable_page_offsets() {
     ASSERT_EQ(processor.process_key(make_key(VK_PRIOR), context), cxxime::ProcessResult::ACCEPTED);
     ASSERT_EQ(context.page_index, 1);
     ASSERT_EQ(context.page_offset, 2);
+    cxxime::CandidatePage previous_page;
+    previous_page.page_index = 1;
+    previous_page.page_offset = 2;
+    previous_page.total_count = 12;
+    for (int index = 0; index < 3; ++index) {
+        cxxime::Candidate candidate;
+        candidate.text = "candidate";
+        previous_page.candidates.push_back(std::move(candidate));
+    }
+    context.update_candidates(std::move(previous_page));
+    ASSERT_EQ(context.candidates.highlighted, 0);
 
     ASSERT_EQ(processor.process_key(make_key(VK_PRIOR), context), cxxime::ProcessResult::ACCEPTED);
     ASSERT_EQ(context.page_index, 0);
@@ -121,8 +132,8 @@ void verify_arrow_pagination_without_wrapping() {
     Processor processor;
     cxxime::Context context;
     context.pinyin_buffer = "ni";
-    context.visible_candidate_count = 2;
-    context.update_candidates(make_candidate_page(0, 0, 4, 3));
+    context.visible_candidate_count = 5;
+    context.update_candidates(make_candidate_page(0, 0, 7, 5));
 
     ASSERT_EQ(processor.process_key(make_key(VK_UP), context), cxxime::ProcessResult::ACCEPTED);
     ASSERT_EQ(context.candidates.highlighted, 0);
@@ -130,22 +141,24 @@ void verify_arrow_pagination_without_wrapping() {
 
     ASSERT_EQ(processor.process_key(make_key(VK_DOWN), context), cxxime::ProcessResult::ACCEPTED);
     ASSERT_EQ(context.candidates.highlighted, 1);
+    context.candidates.highlighted = 4;
     ASSERT_EQ(processor.process_key(make_key(VK_DOWN), context), cxxime::ProcessResult::ACCEPTED);
-    ASSERT_EQ(context.page_offset, 2);
+    ASSERT_EQ(context.page_offset, 5);
 
-    context.update_candidates(make_candidate_page(1, 2, 4, 2));
+    context.update_candidates(make_candidate_page(1, 5, 7, 2));
+    context.visible_candidate_count = 2;
     ASSERT_EQ(context.candidates.highlighted, 0);
     ASSERT_EQ(processor.process_key(make_key(VK_DOWN), context), cxxime::ProcessResult::ACCEPTED);
     ASSERT_EQ(context.candidates.highlighted, 1);
     ASSERT_EQ(processor.process_key(make_key(VK_DOWN), context), cxxime::ProcessResult::ACCEPTED);
     ASSERT_EQ(context.candidates.highlighted, 1);
-    ASSERT_EQ(context.page_offset, 2);
+    ASSERT_EQ(context.page_offset, 5);
 
     context.candidates.highlighted = 0;
     ASSERT_EQ(processor.process_key(make_key(VK_UP), context), cxxime::ProcessResult::ACCEPTED);
     ASSERT_EQ(context.page_offset, 0);
-    context.update_candidates(make_candidate_page(0, 0, 4, 3));
-    ASSERT_EQ(context.candidates.highlighted, 1);
+    context.update_candidates(make_candidate_page(0, 0, 7, 5));
+    ASSERT_EQ(context.candidates.highlighted, 4);
 }
 
 } // namespace

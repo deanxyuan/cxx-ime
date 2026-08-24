@@ -222,7 +222,9 @@ void D2DRenderer::render(const RenderContext& ctx) {
     // Candidates
     for (const auto& cr : *ctx.rects) {
         int i = cr.index;
-        bool hl = (i == ctx.highlighted), hv = (i == ctx.hovered_index);
+        bool hl = (i == ctx.highlighted);
+        bool hv = ctx.hovered_target == CandidateHoverTarget::Candidate &&
+                  i == ctx.hovered_candidate_index;
         D2D1_RECT_F hr = {(float)cr.highlight_rect.left, (float)cr.highlight_rect.top,
                           (float)cr.highlight_rect.right, (float)cr.highlight_rect.bottom};
         if (hl || hv) {
@@ -261,7 +263,7 @@ void D2DRenderer::render(const RenderContext& ctx) {
         {
             D2D1_RECT_F pr = {(float)ctx.prev_button_rect.left, (float)ctx.prev_button_rect.top,
                               (float)ctx.prev_button_rect.right, (float)ctx.prev_button_rect.bottom};
-            bool h = pe && (ctx.hovered_index == -2);
+            bool h = pe && ctx.hovered_target == CandidateHoverTarget::PreviousPage;
             if (h) { D2D1_ROUNDED_RECT rr = {pr, nc, nc}; render_target_->FillRoundedRectangle(rr, highlight_brush_); }
             auto* b = h ? highlight_text_brush_ : (pe ? nav_brush_ : preedit_brush_);
             render_target_->DrawText(L"<", 1, fmt_small_, pr, b);
@@ -270,7 +272,7 @@ void D2DRenderer::render(const RenderContext& ctx) {
         {
             D2D1_RECT_F nr = {(float)ctx.next_button_rect.left, (float)ctx.next_button_rect.top,
                               (float)ctx.next_button_rect.right, (float)ctx.next_button_rect.bottom};
-            bool h = ne && (ctx.hovered_index == -3);
+            bool h = ne && ctx.hovered_target == CandidateHoverTarget::NextPage;
             if (h) { D2D1_ROUNDED_RECT rr = {nr, nc, nc}; render_target_->FillRoundedRectangle(rr, highlight_brush_); }
             auto* b = h ? highlight_text_brush_ : (ne ? nav_brush_ : preedit_brush_);
             render_target_->DrawText(L">", 1, fmt_small_, nr, b);

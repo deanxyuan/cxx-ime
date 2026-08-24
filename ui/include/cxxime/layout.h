@@ -22,6 +22,14 @@ struct LayoutResult {
     int row_height = 0;  // measured font height in pixels
 };
 
+struct PageNavigationMetrics {
+    int button_width = 0;
+    int gap = 0;
+    int leading_gap = 0;
+};
+
+PageNavigationMetrics candidate_page_navigation_metrics(UINT dpi);
+
 // Returns the automatic candidate-window width limit in physical pixels.
 int calculate_auto_candidate_window_max_width(int work_area_width, float dpi_scale);
 

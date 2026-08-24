@@ -3,9 +3,9 @@
 #include <cwchar>
 #include <vector>
 
-#include <cxxime/layout.h>
 #include <cxxime/candidate.h>
 #include <cxxime/config.h>
+#include <cxxime/layout.h>
 
 #include "util/testutil.h"
 
@@ -46,6 +46,26 @@ TEST(Layout, automatic_candidate_window_width_adapts_to_dpi_and_work_area) {
     ASSERT_EQ(cxxime::calculate_auto_candidate_window_max_width(1280, 1.0f), 960);
     ASSERT_EQ(cxxime::calculate_auto_candidate_window_max_width(1920, 1.0f), 960);
     ASSERT_EQ(cxxime::calculate_auto_candidate_window_max_width(2560, 1.5f), 1440);
+}
+
+TEST(Layout, page_navigation_metrics_scale_with_dpi) {
+    const cxxime::PageNavigationMetrics dpi96 =
+        cxxime::candidate_page_navigation_metrics(96);
+    const cxxime::PageNavigationMetrics dpi120 =
+        cxxime::candidate_page_navigation_metrics(120);
+    const cxxime::PageNavigationMetrics dpi144 =
+        cxxime::candidate_page_navigation_metrics(144);
+    const cxxime::PageNavigationMetrics dpi192 =
+        cxxime::candidate_page_navigation_metrics(192);
+
+    ASSERT_EQ(dpi96.button_width, 16);
+    ASSERT_EQ(dpi96.gap, 2);
+    ASSERT_EQ(dpi96.leading_gap, 4);
+    ASSERT_EQ(dpi120.button_width, 20);
+    ASSERT_EQ(dpi144.button_width, 24);
+    ASSERT_EQ(dpi192.button_width, 32);
+    ASSERT_EQ(dpi192.gap, 4);
+    ASSERT_EQ(dpi192.leading_gap, 8);
 }
 
 TEST(Layout, font_measurement_uses_explicit_window_dpi) {

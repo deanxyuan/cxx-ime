@@ -118,14 +118,55 @@ enum class IPCStatus : uint32_t {
     ERR_ENGINE_PROCESS_FAILED = 101,
 };
 
+struct CandidateUiContext {
+    enum class Presenter : uint32_t {
+        NONE = 0,
+        SERVER = 1,
+        LOCAL = 2,
+        HOST = 3,
+    };
+
+    uint64_t session_generation = 0;
+    uint64_t target_generation = 0;
+    uint64_t composition_generation = 0;
+    uint64_t presentation_generation = 0;
+    uint32_t local_visible_candidate_count = 0;
+    Presenter presenter = Presenter::NONE;
+};
+
+static_assert(std::is_standard_layout<CandidateUiContext>::value,
+              "CandidateUiContext must use standard layout");
+static_assert(std::is_trivially_copyable<CandidateUiContext>::value,
+              "CandidateUiContext must remain trivially copyable");
+static_assert(alignof(CandidateUiContext) == 8, "CandidateUiContext alignment changed");
+static_assert(sizeof(CandidateUiContext) == 40, "CandidateUiContext size changed");
+
+constexpr uint32_t candidate_ui_visible_count(const CandidateUiContext& context,
+                                              uint32_t server_visible_count) noexcept {
+    const uint32_t capacity = static_cast<uint32_t>(kCandidateCapacity);
+    if (context.presenter == CandidateUiContext::Presenter::LOCAL) {
+        return context.local_visible_candidate_count == 0
+                   ? 1
+                   : (context.local_visible_candidate_count < capacity
+                          ? context.local_visible_candidate_count
+                          : capacity);
+    }
+    if (context.presenter == CandidateUiContext::Presenter::SERVER) {
+        return server_visible_count == 0
+                   ? 1
+                   : (server_visible_count < capacity ? server_visible_count : capacity);
+    }
+    return 0;
+}
+
 struct IPCRequest {
     IPCCommand command;
     uint32_t session_id = 0;
     uint32_t key_code = 0;
     uint32_t modifiers = 0;
     uint32_t candidate_index = 0;  // Candidate selection or target input mode.
-    uint32_t visible_candidate_count = 0;  // Number actually presented by the current UI page.
     uint32_t is_key_up = 0;
+    CandidateUiContext candidate_ui;
     // UTF-8 query for SEARCH_CANDIDATES; unused by input-session commands.
     char search_query[256] = {};
     char search_result[256] = {};
@@ -135,12 +176,14 @@ static_assert(std::is_standard_layout<IPCRequest>::value,
               "IPCRequest must use standard layout");
 static_assert(std::is_trivially_copyable<IPCRequest>::value,
               "IPCRequest must remain trivially copyable");
-static_assert(alignof(IPCRequest) == 4, "IPCRequest alignment changed");
-static_assert(sizeof(IPCRequest) == 540, "IPCRequest size changed");
-static_assert(offsetof(IPCRequest, is_key_up) == 24, "IPCRequest::is_key_up offset changed");
-static_assert(offsetof(IPCRequest, search_query) == 28,
+static_assert(alignof(IPCRequest) == 8, "IPCRequest alignment changed");
+static_assert(sizeof(IPCRequest) == 576, "IPCRequest size changed");
+static_assert(offsetof(IPCRequest, is_key_up) == 20, "IPCRequest::is_key_up offset changed");
+static_assert(offsetof(IPCRequest, candidate_ui) == 24,
+              "IPCRequest::candidate_ui offset changed");
+static_assert(offsetof(IPCRequest, search_query) == 64,
               "IPCRequest::search_query offset changed");
-static_assert(offsetof(IPCRequest, search_result) == 284,
+static_assert(offsetof(IPCRequest, search_result) == 320,
               "IPCRequest::search_result offset changed");
 
 struct IPCResponse {

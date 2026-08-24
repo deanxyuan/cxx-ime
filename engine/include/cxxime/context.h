@@ -54,7 +54,7 @@ public:
     void update_candidates(CandidatePage&& page);
     void reset_pagination();
     void move_to_next_page();
-    void move_to_previous_page();
+    void move_to_previous_page(bool highlight_last = false);
     void move_to_next_candidate();
     void move_to_previous_candidate();
     int selectable_candidate_count() const;
@@ -71,10 +71,15 @@ public:
     char last_committed_char = '\0';                    // Digit separator guard
 
 private:
+    struct PageHistoryEntry {
+        int offset = 0;
+        int visible_candidate_count = 0;
+    };
+
     size_t preedit_cursor_from_end_ = 0;
     uint64_t preedit_revision_ = 0;
-    std::vector<int> previous_page_offsets_;
-    bool highlight_last_after_page_change_ = false;
+    std::vector<PageHistoryEntry> previous_pages_;
+    int highlight_count_after_page_change_ = 0;
     CommitSource commit_source_ = CommitSource::kRawCode;
     Candidate committed_candidate_;
     std::string committed_candidate_code_;
