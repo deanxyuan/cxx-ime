@@ -36,35 +36,23 @@ bool has_flag(const cxxime::UiPresentationSnapshot& snapshot, cxxime::UiSnapshot
     return (snapshot.flags & cxxime::ui_snapshot_flag(flag)) != 0;
 }
 
-bool transform_caret_with_window(HWND hwnd, RECT* caret) {
-    if (!caret || !hwnd || !IsWindow(hwnd)) {
-        return false;
-    }
-
-    POINT top_left = {caret->left, caret->top};
-    POINT bottom_right = {caret->right, caret->bottom};
-    if (!LogicalToPhysicalPointForPerMonitorDPI(hwnd, &top_left) ||
-        !LogicalToPhysicalPointForPerMonitorDPI(hwnd, &bottom_right)) {
-        return false;
-    }
-
-    caret->left = top_left.x;
-    caret->top = top_left.y;
-    caret->right = bottom_right.x;
-    caret->bottom = bottom_right.y;
-    return true;
-}
-
 bool transform_caret_to_physical(std::uint64_t source_window, RECT* caret) {
     const HWND hwnd = reinterpret_cast<HWND>(source_window);
-    if (transform_caret_with_window(hwnd, caret)) {
+    RECT transformed = {};
+    if (caret && cxxime::logical_screen_rect_to_physical(hwnd, *caret, &transformed)) {
+        *caret = transformed;
         return true;
     }
 
     // UWP input sites can reject cross-process DPI conversion even while their
     // foreground root remains a valid screen-coordinate conversion target.
     const HWND root = hwnd ? GetAncestor(hwnd, GA_ROOT) : nullptr;
-    return root != hwnd && transform_caret_with_window(root, caret);
+    if (root == hwnd || !caret ||
+        !cxxime::logical_screen_rect_to_physical(root, *caret, &transformed)) {
+        return false;
+    }
+    *caret = transformed;
+    return true;
 }
 
 std::string packet_text(const char* text, std::uint32_t length, std::size_t capacity) {
