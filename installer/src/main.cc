@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <cstdlib>
+#include <cwchar>
 #include <string>
 #include <vector>
 
@@ -9,6 +10,8 @@
 
 #include <cxxime/installer_lock.h>
 #include <cxxime/installer_prompt.h>
+#include <cxxime/installer_server_process.h>
+#include <cxxime/installer_tsf.h>
 
 namespace {
 
@@ -78,6 +81,24 @@ bool write_utf16_report(const std::wstring& path, const std::wstring& report) {
 } // namespace
 
 int wmain(int argc, wchar_t** argv) {
+    if (argc == 2 && std::wstring(argv[1]) == L"release") {
+        return cxxime::installer::release_input_processor();
+    }
+    if (argc == 3 && std::wstring(argv[1]) == L"server-running") {
+        return cxxime::installer::server_running(argv[2]);
+    }
+    if (argc == 3 && std::wstring(argv[1]) == L"server-pid") {
+        return cxxime::installer::print_server_pid(argv[2]);
+    }
+    if (argc == 3 && std::wstring(argv[1]) == L"stop-server") {
+        return cxxime::installer::stop_server(argv[2], false);
+    }
+    if (argc == 3 && std::wstring(argv[1]) == L"force-stop-server") {
+        return cxxime::installer::stop_server(argv[2], true);
+    }
+    if (argc == 3 && std::wstring(argv[1]) == L"start-server") {
+        return cxxime::installer::start_server(argv[2]);
+    }
     if (argc < 4 || std::wstring(argv[1]) != L"query" || std::wstring(argv[2]) != L"--report") {
         return kExitInvalidArguments;
     }

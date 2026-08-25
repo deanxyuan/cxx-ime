@@ -41,7 +41,9 @@ std::string wstring_to_utf8(const wchar_t* text) {
 
 } // namespace
 
-TextService::TextService() {}
+TextService::TextService() {
+    DllAddRef();
+}
 
 TextService::~TextService() {
     _hide_immersive_candidate_window();
@@ -53,6 +55,7 @@ TextService::~TextService() {
     set_composition_context(nullptr);
     _release_effective_edit_target();
     _stop_host_compatibility_runtime();
+    DllRelease();
 }
 
 STDMETHODIMP TextService::QueryInterface(REFIID riid, void** ppvObj) {

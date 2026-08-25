@@ -11,9 +11,12 @@ Unicode true
 !define UNINSTALL_KEY "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\CxxIME"
 !define RUN_KEY "SOFTWARE\Microsoft\Windows\CurrentVersion\Run"
 !define TSF_INPROC_KEY "SOFTWARE\Classes\CLSID\${CLSID}\InprocServer32"
+!define TSF_TIP_KEY "SOFTWARE\Microsoft\CTF\TIP\${CLSID}"
 !define INSTALL_MARKER ".cxxime-install-complete"
 !define TRANSACTION_MARKER ".cxxime-install-transaction"
 !define TRANSACTION_TEMP ".cxxime-install-transaction.tmp"
+!define RUNTIME_MARKER ".cxxime-install-runtime"
+!define RUNTIME_TEMP ".cxxime-install-runtime.tmp"
 !define ROLLBACK_DIR ".cxxime-rollback"
 !define UNINSTALL_TRANSACTION_MARKER ".cxxime-uninstall-transaction"
 !define UNINSTALL_TRANSACTION_TEMP ".cxxime-uninstall-transaction.tmp"
@@ -68,6 +71,8 @@ Var OldTsfX64Present
 Var OldTsfX86Present
 Var OldTsfX64Registered
 Var OldTsfX86Registered
+Var OldTipX64Present
+Var OldTipX86Present
 Var SystemImeX64Present
 Var SystemImeX86Present
 Var OldUninstallPresent
@@ -75,11 +80,21 @@ Var OldDisplayVersion
 Var OldRunPresent
 Var OldRunValue
 Var ServerWasRunning
+Var InitialServerWasRunning
+Var TransactionServerWasRunning
+Var ServerRestartResult
+Var ServerStopResult
+Var ServerProcessId
+Var RuntimeInstallRoot
+Var RuntimeServerPath
+Var RuntimeVersion
+Var InstallStateVerified
 Var UninstallRemoveUserData
 Var UninstallRemoveUserDataCheckbox
 Var UninstallUserDataDir
 Var UninstallUserDataDirSuffix
 Var UninstallServerWasRunning
+Var UninstallServerStopResult
 Var UninstallDeferred
 Var UninstallDeferredResume
 Var UninstallRollbackDir
@@ -118,7 +133,25 @@ Section "Install"
     File /oname=cxxime-installer-helper.exe "cxxime-installer-helper.exe"
 
     Call SetTransactionPaths
+    Call RecoverRuntimeSnapshot
+    Pop $0
+    StrCmp $0 "1" runtime_snapshot_ready
+    Call CaptureServerState
+    Pop $0
+    StrCmp $0 "1" runtime_snapshot_ready
+        Goto install_failed_before_swap
+    runtime_snapshot_ready:
+    Call WriteRuntimeSnapshot
+    Pop $0
+    StrCmp $0 "1" install_runtime_snapshot_ready
+        Goto install_failed_before_swap
+    install_runtime_snapshot_ready:
     Call StopServer
+    StrCmp $ServerStopResult "0" install_server_stopped
+        StrCpy $FailureMessage "无法确认 CxxIME 后台已终止，未继续覆盖文件。"
+        Goto install_failed_before_swap
+    install_server_stopped:
+    Call ReleaseInputProcessor
     Call CheckInstallLocks
     Call RecoverInterruptedInstall
     Pop $0
@@ -128,6 +161,11 @@ Section "Install"
         Goto install_failed_recovery
 
     install_recovery_ready:
+    ${If} $InitialServerWasRunning == 0
+    ${AndIf} $TransactionServerWasRunning == 1
+        StrCpy $InitialServerWasRunning 1
+    ${EndIf}
+    StrCpy $ServerWasRunning $InitialServerWasRunning
     Call CheckInstallDirectory
     Pop $0
     StrCmp $0 "1" install_directory_checked
@@ -254,9 +292,26 @@ Section "Install"
         Goto install_failed_after_transaction
 
     install_commit:
-    RMDir /r "$INSTDIR\${ROLLBACK_DIR}"
+    IfFileExists "$INSTDIR\${ROLLBACK_DIR}" 0 install_commit_delete_transaction
+        ClearErrors
+        RMDir /r "$INSTDIR\${ROLLBACK_DIR}"
+        IfErrors install_failed_after_transaction
+        IfFileExists "$INSTDIR\${ROLLBACK_DIR}" 0 install_commit_delete_transaction
+            Goto install_failed_after_transaction
+    install_commit_delete_transaction:
+    ClearErrors
     Delete "$INSTDIR\${TRANSACTION_MARKER}"
-    RMDir /r "$BackupDir"
+    IfErrors install_failed_after_transaction
+    ClearErrors
+    Delete "$INSTDIR\..\${RUNTIME_MARKER}"
+    IfErrors install_failed_after_transaction
+    IfFileExists "$BackupDir" 0 install_commit_done
+        ClearErrors
+        RMDir /r "$BackupDir"
+        IfErrors install_failed_after_transaction
+        IfFileExists "$BackupDir" 0 install_commit_done
+            Goto install_failed_after_transaction
+    install_commit_done:
     CreateDirectory "$PROFILE\cxxime"
     IfFileExists "$PROFILE\cxxime\default.json" install_user_config_ready
         CopyFiles /SILENT /FILESONLY "$INSTDIR\data\default.json" "$PROFILE\cxxime"
@@ -266,12 +321,27 @@ Section "Install"
     Goto install_done
 
     install_failed_before_swap:
+    StrCpy $InstallStateVerified 1
+    ClearErrors
     RMDir /r "$StageDir"
+    IfErrors install_failed_before_swap_cleanup_failed
+    IfFileExists "$StageDir" 0 install_failed_before_swap_cleanup_done
+    install_failed_before_swap_cleanup_failed:
+    StrCpy $InstallStateVerified 0
+    StrCpy $FailureMessage "$FailureMessage$\r$\n$\r$\n无法清理安装暂存目录，未恢复启动后台。"
+    Goto install_failed_before_swap_report_ready
+    install_failed_before_swap_cleanup_done:
+    Delete "$INSTDIR\..\${RUNTIME_MARKER}"
+    Call RestartInstalledServer
+    StrCmp $ServerRestartResult "2" 0 install_failed_before_swap_report_ready
+        StrCpy $FailureMessage "$FailureMessage$\r$\n$\r$\nCxxIME 后台未能自动恢复，请检查占用进程或手动启动 CxxIME。"
+    install_failed_before_swap_report_ready:
     IfSilent install_failed_silent
         MessageBox MB_ICONSTOP "$FailureMessage$\r$\n$\r$\n已安装的 CxxIME 文件未发生变化。"
         Goto install_failed_abort
 
     install_failed_after_transaction:
+    StrCpy $InstallStateVerified 0
     Call RollbackInstall
     Pop $0
     StrCmp $0 "1" install_rollback_complete
@@ -279,13 +349,24 @@ Section "Install"
             "$FailureMessage$\r$\n$\r$\n自动回滚未能完成。请重新运行安装程序后再使用 CxxIME。"
         Goto install_failed_silent_or_message
     install_rollback_complete:
+        Call VerifyRestoredInstall
+        Pop $0
+        StrCmp $0 "1" install_rollback_verified
+            Goto install_failed_silent_or_message
+        install_rollback_verified:
+        Delete "$INSTDIR\..\${RUNTIME_MARKER}"
         StrCpy $FailureMessage "$FailureMessage$\r$\n$\r$\n已恢复 CxxIME 安装前的状态。"
         Goto install_failed_silent_or_message
 
     install_failed_recovery:
+        StrCpy $InstallStateVerified 0
         Goto install_failed_silent_or_message
 
     install_failed_silent_or_message:
+    Call RestartInstalledServer
+    StrCmp $ServerRestartResult "2" 0 install_failed_restart_report_ready
+        StrCpy $FailureMessage "$FailureMessage$\r$\n$\r$\nCxxIME 后台未能自动恢复，请检查占用进程或手动启动 CxxIME。"
+    install_failed_restart_report_ready:
     IfSilent install_failed_silent
         MessageBox MB_ICONSTOP "$FailureMessage"
         Goto install_failed_abort
@@ -293,7 +374,6 @@ Section "Install"
     install_failed_silent:
     DetailPrint "$FailureMessage"
     install_failed_abort:
-    Call RestartInstalledServer
     SetErrorLevel 1
     Abort
 
@@ -314,7 +394,12 @@ Section "Uninstall"
     StrCpy $LockReportPath "$PLUGINSDIR\cxxime-locks.txt"
 
     Call un.StopServer
+    StrCmp $UninstallServerStopResult "0" un_server_stopped
+        StrCpy $FailureMessage "无法确认 CxxIME 后台已终止，卸载已停止。"
+        Call un.FailAndRestart
+    un_server_stopped:
     StrCmp $UninstallDeferredResume "1" un_deferred_resume
+    Call un.ReleaseInputProcessor
     Call un.CheckFileLocks
     StrCmp $UninstallDeferred "1" un_deferred_prepare
     Call un.PrepareTransaction

@@ -4,6 +4,8 @@ Function SnapshotPreviousState
     StrCpy $OldTsfX86Present 0
     StrCpy $OldTsfX64Registered 0
     StrCpy $OldTsfX86Registered 0
+    StrCpy $OldTipX64Present 0
+    StrCpy $OldTipX86Present 0
     StrCpy $OldUninstallPresent 0
     StrCpy $OldDisplayVersion ""
     StrCpy $OldRunPresent 0
@@ -32,6 +34,14 @@ Function SnapshotPreviousState
             StrCpy $OldTsfX86Registered 1
         ${EndIf}
     ${EndIf}
+    SetRegView 64
+    Call QueryTipRegistration
+    Pop $0
+    StrCpy $OldTipX64Present $0
+    SetRegView 32
+    Call QueryTipRegistration
+    Pop $0
+    StrCpy $OldTipX86Present $0
     SetRegView 64
 
     ClearErrors
@@ -98,12 +108,15 @@ Function WriteTransactionState
     FileWriteUTF16LE $0 "old_tsf_x86_present=$OldTsfX86Present$\r$\n"
     FileWriteUTF16LE $0 "old_tsf_x64_registered=$OldTsfX64Registered$\r$\n"
     FileWriteUTF16LE $0 "old_tsf_x86_registered=$OldTsfX86Registered$\r$\n"
+    FileWriteUTF16LE $0 "old_tip_x64_present=$OldTipX64Present$\r$\n"
+    FileWriteUTF16LE $0 "old_tip_x86_present=$OldTipX86Present$\r$\n"
     FileWriteUTF16LE $0 "system_ime_x64_present=$SystemImeX64Present$\r$\n"
     FileWriteUTF16LE $0 "system_ime_x86_present=$SystemImeX86Present$\r$\n"
     FileWriteUTF16LE $0 "old_uninstall_present=$OldUninstallPresent$\r$\n"
     FileWriteUTF16LE $0 "old_display_version=$OldDisplayVersion$\r$\n"
     FileWriteUTF16LE $0 "old_run_present=$OldRunPresent$\r$\n"
     FileWriteUTF16LE $0 "old_run_value=$OldRunValue$\r$\n"
+    FileWriteUTF16LE $0 "server_was_running=$InitialServerWasRunning$\r$\n"
     IfErrors transaction_state_write_close_failed
     FileClose $0
     IfErrors transaction_state_write_failed
@@ -117,6 +130,7 @@ Function WriteTransactionState
         i ${MOVEFILE_REPLACE_WRITE_THROUGH}) i .r0 ?e'
     Pop $1
     StrCmp $0 "0" transaction_state_commit_failed
+    Delete "$INSTDIR\..\${RUNTIME_MARKER}"
     Push 1
     Return
 
@@ -133,6 +147,65 @@ Function WriteTransactionState
     StrCpy $FailureMessage \
         "无法提交 CxxIME 安装事务（Win32 错误 $1）。"
     Push 0
+FunctionEnd
+
+Function WriteRuntimeSnapshot
+    CreateDirectory "$INSTDIR"
+    Delete "$INSTDIR\..\${RUNTIME_TEMP}"
+    ClearErrors
+    FileOpen $0 "$INSTDIR\..\${RUNTIME_TEMP}" w
+    IfErrors runtime_snapshot_failed
+    FileWriteUTF16LE /BOM $0 "[transaction]$\r$\n"
+    FileWriteUTF16LE $0 "format=2$\r$\n"
+    FileWriteUTF16LE $0 "snapshot_only=1$\r$\n"
+    FileWriteUTF16LE $0 "server_was_running=$InitialServerWasRunning$\r$\n"
+    FileWriteUTF16LE $0 "server_pid=$ServerProcessId$\r$\n"
+    FileWriteUTF16LE $0 "install_root=$INSTDIR$\r$\n"
+    FileWriteUTF16LE $0 "server_path=$INSTDIR\cxxime-server.exe$\r$\n"
+    FileWriteUTF16LE $0 "version=${VERSION}$\r$\n"
+    FileClose $0
+    IfErrors runtime_snapshot_failed
+    System::Call 'kernel32::MoveFileExW(\
+        w "$INSTDIR\..\${RUNTIME_TEMP}", \
+        w "$INSTDIR\..\${RUNTIME_MARKER}", \
+        i ${MOVEFILE_REPLACE_WRITE_THROUGH}) i .r0 ?e'
+    Pop $1
+    StrCmp $0 "0" runtime_snapshot_failed
+    Push 1
+    Return
+    runtime_snapshot_failed:
+    Delete "$INSTDIR\..\${RUNTIME_TEMP}"
+    Delete "$INSTDIR\..\${RUNTIME_MARKER}"
+    StrCpy $FailureMessage "CxxIME 安装前状态保存失败。"
+    Push 0
+FunctionEnd
+
+Function RecoverRuntimeSnapshot
+    IfFileExists "$INSTDIR\..\${RUNTIME_MARKER}" 0 runtime_snapshot_missing
+    ClearErrors
+    ReadINIStr $0 "$INSTDIR\..\${RUNTIME_MARKER}" "transaction" "format"
+    IfErrors runtime_snapshot_invalid
+    StrCmp $0 "2" 0 runtime_snapshot_invalid
+    ReadINIStr $ServerWasRunning "$INSTDIR\..\${RUNTIME_MARKER}" "transaction" \
+        "server_was_running"
+    ReadINIStr $ServerProcessId "$INSTDIR\..\${RUNTIME_MARKER}" "transaction" "server_pid"
+    ReadINIStr $RuntimeInstallRoot "$INSTDIR\..\${RUNTIME_MARKER}" "transaction" \
+        "install_root"
+    ReadINIStr $RuntimeServerPath "$INSTDIR\..\${RUNTIME_MARKER}" "transaction" "server_path"
+    ReadINIStr $RuntimeVersion "$INSTDIR\..\${RUNTIME_MARKER}" "transaction" "version"
+    StrCmp $RuntimeInstallRoot "$INSTDIR" 0 runtime_snapshot_invalid
+    StrCmp $RuntimeServerPath "$INSTDIR\cxxime-server.exe" 0 runtime_snapshot_invalid
+    StrCmp $RuntimeVersion "" runtime_snapshot_invalid
+    StrCmp $ServerWasRunning "0" runtime_snapshot_loaded
+    StrCmp $ServerWasRunning "1" runtime_snapshot_loaded runtime_snapshot_invalid
+    runtime_snapshot_loaded:
+        StrCpy $InitialServerWasRunning $ServerWasRunning
+        Push 1
+        Return
+    runtime_snapshot_invalid:
+        Delete "$INSTDIR\..\${RUNTIME_MARKER}"
+    runtime_snapshot_missing:
+        Push 0
 FunctionEnd
 
 Function RestoreSystemIme
