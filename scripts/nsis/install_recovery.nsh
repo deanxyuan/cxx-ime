@@ -1,9 +1,13 @@
 Function LoadTransactionState
+    StrCpy $ServerWasRunning ""
+    StrCpy $TransactionServerWasRunning ""
     StrCpy $OldInstallAvailable 0
     StrCpy $OldTsfX64Present 0
     StrCpy $OldTsfX86Present 0
     StrCpy $OldTsfX64Registered 0
     StrCpy $OldTsfX86Registered 0
+    StrCpy $OldTipX64Present 0
+    StrCpy $OldTipX86Present 0
     StrCpy $SystemImeX64Present 0
     StrCpy $SystemImeX86Present 0
     StrCpy $OldUninstallPresent 0
@@ -25,6 +29,10 @@ Function LoadTransactionState
         "old_tsf_x64_registered"
     ReadINIStr $OldTsfX86Registered "$TransactionDir\${TRANSACTION_MARKER}" "transaction" \
         "old_tsf_x86_registered"
+    ReadINIStr $OldTipX64Present "$TransactionDir\${TRANSACTION_MARKER}" "transaction" \
+        "old_tip_x64_present"
+    ReadINIStr $OldTipX86Present "$TransactionDir\${TRANSACTION_MARKER}" "transaction" \
+        "old_tip_x86_present"
     ReadINIStr $SystemImeX64Present "$TransactionDir\${TRANSACTION_MARKER}" "transaction" \
         "system_ime_x64_present"
     ReadINIStr $SystemImeX86Present "$TransactionDir\${TRANSACTION_MARKER}" "transaction" \
@@ -36,6 +44,9 @@ Function LoadTransactionState
     ReadINIStr $OldRunPresent "$TransactionDir\${TRANSACTION_MARKER}" "transaction" \
         "old_run_present"
     ReadINIStr $OldRunValue "$TransactionDir\${TRANSACTION_MARKER}" "transaction" "old_run_value"
+    ReadINIStr $ServerWasRunning "$TransactionDir\${TRANSACTION_MARKER}" "transaction" \
+        "server_was_running"
+    StrCpy $TransactionServerWasRunning $ServerWasRunning
     StrCmp $OldInstallAvailable "0" transaction_old_install_valid
     StrCmp $OldInstallAvailable "1" transaction_old_install_valid transaction_state_invalid
     transaction_old_install_valid:
@@ -53,6 +64,12 @@ Function LoadTransactionState
     StrCmp $OldTsfX86Registered "1" transaction_tsf_x86_registration_valid \
         transaction_state_invalid
     transaction_tsf_x86_registration_valid:
+    StrCmp $OldTipX64Present "0" transaction_tip_x86_valid
+    StrCmp $OldTipX64Present "1" transaction_tip_x86_valid transaction_state_invalid
+    transaction_tip_x86_valid:
+    StrCmp $OldTipX86Present "0" transaction_old_install_state_valid
+    StrCmp $OldTipX86Present "1" transaction_old_install_state_valid transaction_state_invalid
+    transaction_old_install_state_valid:
     StrCmp $OldTsfX64Registered "0" transaction_tsf_x64_state_valid
     StrCmp $OldTsfX64Present "1" transaction_tsf_x64_state_valid transaction_state_invalid
     transaction_tsf_x64_state_valid:
@@ -71,6 +88,9 @@ Function LoadTransactionState
     StrCmp $OldRunPresent "0" transaction_run_valid
     StrCmp $OldRunPresent "1" transaction_run_valid transaction_state_invalid
     transaction_run_valid:
+    StrCmp $TransactionServerWasRunning "0" transaction_server_state_valid
+    StrCmp $TransactionServerWasRunning "1" transaction_server_state_valid transaction_state_invalid
+    transaction_server_state_valid:
     Push 1
     Return
 
@@ -174,9 +194,19 @@ Function RecoverTransaction
         Return
 
     transaction_cleanup:
-    StrCmp $TransactionDir "$StageDir" 0 +2
+    StrCmp $TransactionDir "$StageDir" 0 transaction_cleanup_backup
+        ClearErrors
         RMDir /r "$StageDir"
+        IfErrors transaction_recovery_failed
+        IfFileExists "$StageDir" 0 transaction_cleanup_backup
+        Goto transaction_recovery_failed
+    transaction_cleanup_backup:
+    ClearErrors
     RMDir /r "$BackupDir"
+    IfErrors transaction_recovery_failed
+    IfFileExists "$BackupDir" 0 transaction_cleanup_done
+        Goto transaction_recovery_failed
+    transaction_cleanup_done:
     DetailPrint "已恢复先前的 CxxIME 安装状态。"
     Push 1
     Return
@@ -195,12 +225,26 @@ Function RecoverInterruptedInstall
 
     recover_check_committed_install:
     IfFileExists "$INSTDIR\${INSTALL_MARKER}" 0 recover_incomplete_install
+        ClearErrors
         RMDir /r "$INSTDIR\${ROLLBACK_DIR}"
+        IfErrors recover_committed_cleanup_failed
+        IfFileExists "$INSTDIR\${ROLLBACK_DIR}" 0 recover_committed_delete_transaction
+        Goto recover_committed_cleanup_failed
+    recover_committed_delete_transaction:
+        ClearErrors
         Delete "$INSTDIR\${TRANSACTION_MARKER}"
+        IfErrors recover_committed_cleanup_failed
+        ClearErrors
         RMDir /r "$BackupDir"
+        IfErrors recover_committed_cleanup_failed
         RMDir /r "$StageDir"
-        IfFileExists "$BackupDir\*" recover_committed_cleanup_failed
-        IfFileExists "$StageDir\*" recover_committed_cleanup_failed
+        IfErrors recover_committed_cleanup_failed
+        IfFileExists "$BackupDir" 0 recover_committed_check_stage
+        Goto recover_committed_cleanup_failed
+    recover_committed_check_stage:
+        IfFileExists "$StageDir" 0 recover_committed_cleanup_done
+        Goto recover_committed_cleanup_failed
+    recover_committed_cleanup_done:
         Push 1
         Return
 
@@ -217,14 +261,23 @@ Function RecoverInterruptedInstall
         Return
 
     recover_untracked_backup:
-    IfFileExists "$BackupDir\*" 0 recover_remove_uncommitted_stage
+    IfFileExists "$StageDir\${RUNTIME_MARKER}" 0 recover_check_backup_directory
+        Push 1
+        Return
+    recover_check_backup_directory:
+    IfFileExists "$BackupDir" 0 recover_remove_uncommitted_stage
         StrCpy $FailureMessage \
             "检测到 CxxIME 备份目录，但没有有效的安装事务，无法安全恢复。"
         Push 0
         Return
 
     recover_remove_uncommitted_stage:
+    ClearErrors
     RMDir /r "$StageDir"
+    IfErrors recover_committed_cleanup_failed
+    IfFileExists "$StageDir" 0 recover_remove_uncommitted_stage_done
+        Goto recover_committed_cleanup_failed
+    recover_remove_uncommitted_stage_done:
     Push 1
     Return
 

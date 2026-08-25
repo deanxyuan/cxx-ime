@@ -14,6 +14,12 @@ def check_installer_flow(
     label = "cxxime-setup.nsi"
     require_text(errors, text, "Function AcquireInstallerMutex", label)
     require_text(errors, text, "Function CheckInstallLocks", label)
+    require_text(errors, text, "Function ReleaseInputProcessor", label)
+    require_text(errors, text, "Function un.ReleaseInputProcessor", label)
+    require_text(errors, text, "Function CaptureServerState", label)
+    require_text(errors, text, "Function QueryTipRegistration", label)
+    require_text(errors, text, "Function WriteRuntimeSnapshot", label)
+    require_text(errors, text, "Function VerifyRestoredInstall", label)
     require_text(errors, text, "Function CheckInstallDirectory", label)
     require_text(errors, text, "Function un.CheckFileLocks", label)
     require_text(errors, text, "Function RecoverInterruptedInstall", label)
@@ -30,6 +36,8 @@ def check_installer_flow(
     require_text(errors, text, "!define TSF_INPROC_KEY", label)
     require_text(errors, text, '"old_tsf_x64_registered"', label)
     require_text(errors, text, '"old_tsf_x86_registered"', label)
+    require_text(errors, text, '"server_was_running"', label)
+    require_text(errors, text, '"LanguageProfile"', label)
     require_text(errors, text, '"tsf_x64_registered"', label)
     require_text(errors, text, '"tsf_x86_registered"', label)
     require_text(errors, text, "$OldTsfX64Registered == 1", label)
@@ -39,19 +47,19 @@ def check_installer_flow(
     require_text(errors, text, '$UninstallTransactionPhase "staged"', label)
     require_text(errors, text, '"transaction" "phase"', label)
     require_text(errors, text, "phase=$UninstallTransactionPhase", label)
-    if text.count("MOVEFILE_REPLACE_WRITE_THROUGH})") != 2:
-        add_error(errors, f"{label}: install and uninstall transactions must commit atomically")
+    if text.count("MOVEFILE_REPLACE_WRITE_THROUGH})") != 3:
+        add_error(errors, f"{label}: install, runtime, and uninstall transactions must commit atomically")
     require_text(errors, text, "!define MOVEFILE_REPLACE_WRITE_THROUGH 0x9", label)
     require_text(errors, text, "!define MOVEFILE_DELAY_UNTIL_REBOOT 0x4", label)
-    if text.count("FileWriteUTF16LE /BOM") != 3:
+    if text.count("FileWriteUTF16LE /BOM") != 4:
         add_error(
             errors,
             f"{label}: transaction and deferred marker files must be UTF-16 INI files",
         )
-    if text.count('"format=2$\\r$\\n"') != 2:
-        add_error(errors, f"{label}: install and uninstall transactions must use format 2")
-    if text.count('ReadRegStr $0 HKLM "${TSF_INPROC_KEY}" ""') != 4:
-        add_error(errors, f"{label}: both architectures must snapshot TSF registration")
+    if text.count('"format=2$\\r$\\n"') != 3:
+        add_error(errors, f"{label}: install, runtime, and uninstall transactions must use format 2")
+    if text.count('ReadRegStr $0 HKLM "${TSF_INPROC_KEY}" ""') != 8:
+        add_error(errors, f"{label}: both architectures must snapshot and verify TSF registration")
     require_text(
         errors,
         text,
@@ -88,7 +96,10 @@ def check_installer_flow(
         errors,
         install_text,
         [
+            "Call CaptureServerState",
+            "Call WriteRuntimeSnapshot",
             "Call StopServer",
+            "Call ReleaseInputProcessor",
             "Call CheckInstallLocks",
             "Call RecoverInterruptedInstall",
             "Call CheckInstallDirectory",
@@ -108,6 +119,7 @@ def check_installer_flow(
         uninstall_text,
         [
             "Call un.StopServer",
+            "Call un.ReleaseInputProcessor",
             "Call un.CheckFileLocks",
             "Call un.PrepareTransaction",
             "Call un.UnregisterInstalledTsf",
@@ -124,6 +136,7 @@ def check_installer_flow(
     forbid_text(errors, text, r"Keyboard Layout\Preload", label)
     forbid_text(errors, text, "LoadKeyboardLayoutW", label)
     forbid_text(errors, text, "RequireReplaceableTsfDll", label)
+    forbid_text(errors, text, "restored_install_verified:", label)
     forbid_text(errors, text, "kernel32::CreateFileW", label)
     forbid_text(errors, text, "WriteINIStr", label)
     forbid_text(errors, text, "FlushINI", label)

@@ -23,6 +23,17 @@ FunctionEnd
 
 Function .onInit
     StrCpy $LaunchSettings 0
+    StrCpy $ServerRestartResult 0
+    StrCpy $InstallStateVerified 1
+    StrCpy $InitialServerWasRunning 0
+    StrCpy $TransactionServerWasRunning ""
+    StrCpy $ServerStopResult 0
+    StrCpy $ServerProcessId 0
+    StrCpy $RuntimeInstallRoot ""
+    StrCpy $RuntimeServerPath ""
+    StrCpy $RuntimeVersion ""
+    StrCpy $OldTipX64Present 0
+    StrCpy $OldTipX86Present 0
     ${IfNot} ${RunningX64}
         StrCpy $FailureMessage "CxxIME 需要 64 位 Windows。"
         IfSilent installer_requires_x64_silent
@@ -75,6 +86,7 @@ Function un.onInit
     SetShellVarContext all
     SetRegView 64
     StrCpy $UninstallServerWasRunning 0
+    StrCpy $UninstallServerStopResult 0
     StrCpy $UninstallDeferred 0
     StrCpy $UninstallDeferredResume 0
     StrCpy $UninstallRemoveUserData 0
@@ -171,6 +183,7 @@ Function CheckInstallDirectory
     install_directory_scan:
         StrCmp $1 "." install_directory_next
         StrCmp $1 ".." install_directory_next
+        StrCmp $1 "${RUNTIME_MARKER}" install_directory_next
         FindClose $0
         StrCpy $FailureMessage \
             "所选目录不为空，并且不是 CxxIME 安装目录。请选择一个空目录。"
