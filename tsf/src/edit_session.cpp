@@ -591,6 +591,8 @@ HRESULT insert_at_selection(ITfContext* context,
 
 EditSession::EditSession(TextService* service, ITfContext* context)
     : _service(service), _context(context) {
+    if (_service)
+        _service->AddRef();
     if (_context)
         _context->AddRef();
 }
@@ -598,6 +600,8 @@ EditSession::EditSession(TextService* service, ITfContext* context)
 EditSession::~EditSession() {
     if (_context)
         _context->Release();
+    if (_service)
+        _service->Release();
 }
 
 STDMETHODIMP EditSession::QueryInterface(REFIID riid, void** ppvObj) {

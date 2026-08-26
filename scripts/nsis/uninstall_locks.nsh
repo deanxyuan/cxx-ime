@@ -99,8 +99,7 @@ Function un.CheckFileLocks
     IfSilent un_lock_options_ready
         StrCpy $LockPromptOptions "--prompt=uninstall --parent=$HWNDPARENT"
     un_lock_options_ready:
-    un_lock_retry:
-        Call un.ReleaseInputProcessor
+    un_lock_query:
         Delete "$LockReportPath"
         nsExec::ExecToStack \
             '"$PLUGINSDIR\cxxime-installer-helper.exe" query --report "$LockReportPath" \
@@ -150,5 +149,8 @@ Function un.CheckFileLocks
         Call un.RestartInstalledServer
         SetErrorLevel 2
         Abort
+    un_lock_retry:
+        Call un.ReleaseInputProcessor
+        Goto un_lock_query
     un_lock_done:
 FunctionEnd

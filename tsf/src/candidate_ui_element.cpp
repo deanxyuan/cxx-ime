@@ -20,10 +20,15 @@ std::wstring utf8_to_wstring(const std::string& text) {
 } // namespace
 
 CandidateUIElement::CandidateUIElement(TextService* service)
-    : _service(service) {}
+    : _service(service) {
+    if (_service)
+        _service->AddRef();
+}
 
 CandidateUIElement::~CandidateUIElement() {
     release_document_mgr();
+    if (_service)
+        _service->Release();
 }
 
 STDMETHODIMP CandidateUIElement::QueryInterface(REFIID riid, void** ppvObj) {

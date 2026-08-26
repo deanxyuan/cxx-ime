@@ -6,10 +6,16 @@
 #include "tsf_trace.h"
 #include <algorithm>
 
-ReadingUIElement::ReadingUIElement(TextService* service) : _service(service) {}
+ReadingUIElement::ReadingUIElement(TextService* service)
+    : _service(service) {
+    if (_service)
+        _service->AddRef();
+}
 
 ReadingUIElement::~ReadingUIElement() {
     release_context();
+    if (_service)
+        _service->Release();
 }
 
 bool ReadingUIElement::wants_external_window() const {

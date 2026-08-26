@@ -117,6 +117,12 @@ Function RestartInstalledServer
     restart_installed_server_done:
 FunctionEnd
 
+Function CleanupRuntimeSnapshotAfterServerRestore
+    StrCmp $ServerRestartResult "2" cleanup_runtime_snapshot_done
+        Delete "$INSTDIR\..\${RUNTIME_MARKER}"
+    cleanup_runtime_snapshot_done:
+FunctionEnd
+
 Function ReleaseInputProcessor
     nsExec::Exec '"$PLUGINSDIR\cxxime-installer-helper.exe" release'
     Pop $0
@@ -299,8 +305,7 @@ Function CheckInstallLocks
     IfSilent install_lock_options_ready
         StrCpy $LockPromptOptions "--prompt=install --parent=$HWNDPARENT"
     install_lock_options_ready:
-    install_lock_retry:
-        Call ReleaseInputProcessor
+    install_lock_query:
         Delete "$LockReportPath"
         nsExec::ExecToStack \
             '"$PLUGINSDIR\cxxime-installer-helper.exe" query --report "$LockReportPath" \
@@ -348,12 +353,17 @@ Function CheckInstallLocks
             IDRETRY install_lock_retry
     install_lock_cancel:
         Call RestartInstalledServer
+        Call CleanupRuntimeSnapshotAfterServerRestore
         SetErrorLevel 2
         Abort
     install_lock_silent:
         DetailPrint "$LockReportText"
         Call RestartInstalledServer
+        Call CleanupRuntimeSnapshotAfterServerRestore
         SetErrorLevel 2
         Abort
+    install_lock_retry:
+        Call ReleaseInputProcessor
+        Goto install_lock_query
     install_lock_done:
 FunctionEnd

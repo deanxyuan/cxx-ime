@@ -130,7 +130,6 @@ Function WriteTransactionState
         i ${MOVEFILE_REPLACE_WRITE_THROUGH}) i .r0 ?e'
     Pop $1
     StrCmp $0 "0" transaction_state_commit_failed
-    Delete "$INSTDIR\..\${RUNTIME_MARKER}"
     Push 1
     Return
 
@@ -175,7 +174,6 @@ Function WriteRuntimeSnapshot
     Return
     runtime_snapshot_failed:
     Delete "$INSTDIR\..\${RUNTIME_TEMP}"
-    Delete "$INSTDIR\..\${RUNTIME_MARKER}"
     StrCpy $FailureMessage "CxxIME 安装前状态保存失败。"
     Push 0
 FunctionEnd

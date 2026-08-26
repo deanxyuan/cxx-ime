@@ -45,7 +45,9 @@ STDAPI DllGetClassObject(REFCLSID rclsid, REFIID riid, void** ppv) {
 }
 
 STDAPI DllCanUnloadNow() {
-    return g_cRefDll >= 0 || cxxime_tsf::tsf_log_writer_has_thread() ? S_FALSE : S_OK;
+    const bool writer_active = cxxime_tsf::tsf_log_writer_has_thread();
+    const bool unloadable = g_cRefDll < 0 && !writer_active;
+    return unloadable ? S_OK : S_FALSE;
 }
 
 STDAPI DllRegisterServer() {
