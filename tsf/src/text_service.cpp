@@ -46,15 +46,10 @@ TextService::TextService() {
 }
 
 TextService::~TextService() {
-    _hide_immersive_candidate_window();
-    _stop_ui_presentation_channel();
+    // TSF normally calls Deactivate before releasing the service. Keep destruction safe for
+    // hosts that tear down an instance directly after a partial activation.
+    Deactivate();
     _immersiveCandidateWindow.reset();
-    _stop_config_updates();
-    _stop_state_poll_timer();
-    _unregister_conversion_compartment_sink();
-    set_composition_context(nullptr);
-    _release_effective_edit_target();
-    _stop_host_compatibility_runtime();
     DllRelease();
 }
 

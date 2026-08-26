@@ -261,10 +261,6 @@ Function RecoverInterruptedInstall
         Return
 
     recover_untracked_backup:
-    IfFileExists "$StageDir\${RUNTIME_MARKER}" 0 recover_check_backup_directory
-        Push 1
-        Return
-    recover_check_backup_directory:
     IfFileExists "$BackupDir" 0 recover_remove_uncommitted_stage
         StrCpy $FailureMessage \
             "检测到 CxxIME 备份目录，但没有有效的安装事务，无法安全恢复。"

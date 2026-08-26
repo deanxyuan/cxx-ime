@@ -146,12 +146,12 @@ Section "Install"
     StrCmp $0 "1" install_runtime_snapshot_ready
         Goto install_failed_before_swap
     install_runtime_snapshot_ready:
+    Call ReleaseInputProcessor
     Call StopServer
     StrCmp $ServerStopResult "0" install_server_stopped
         StrCpy $FailureMessage "无法确认 CxxIME 后台已终止，未继续覆盖文件。"
         Goto install_failed_before_swap
     install_server_stopped:
-    Call ReleaseInputProcessor
     Call CheckInstallLocks
     Call RecoverInterruptedInstall
     Pop $0
@@ -292,26 +292,26 @@ Section "Install"
         Goto install_failed_after_transaction
 
     install_commit:
-    IfFileExists "$INSTDIR\${ROLLBACK_DIR}" 0 install_commit_delete_transaction
+    IfFileExists "$INSTDIR\${ROLLBACK_DIR}" 0 install_commit_cleanup_backup
         ClearErrors
         RMDir /r "$INSTDIR\${ROLLBACK_DIR}"
         IfErrors install_failed_after_transaction
-        IfFileExists "$INSTDIR\${ROLLBACK_DIR}" 0 install_commit_delete_transaction
+        IfFileExists "$INSTDIR\${ROLLBACK_DIR}" 0 install_commit_cleanup_backup
             Goto install_failed_after_transaction
-    install_commit_delete_transaction:
-    ClearErrors
-    Delete "$INSTDIR\${TRANSACTION_MARKER}"
-    IfErrors install_failed_after_transaction
-    ClearErrors
-    Delete "$INSTDIR\..\${RUNTIME_MARKER}"
-    IfErrors install_failed_after_transaction
-    IfFileExists "$BackupDir" 0 install_commit_done
+    install_commit_cleanup_backup:
+    IfFileExists "$BackupDir" 0 install_commit_delete_runtime
         ClearErrors
         RMDir /r "$BackupDir"
         IfErrors install_failed_after_transaction
-        IfFileExists "$BackupDir" 0 install_commit_done
+        IfFileExists "$BackupDir" 0 install_commit_delete_runtime
             Goto install_failed_after_transaction
-    install_commit_done:
+    install_commit_delete_runtime:
+    ClearErrors
+    Delete "$INSTDIR\..\${RUNTIME_MARKER}"
+    IfErrors install_failed_after_transaction
+    ClearErrors
+    Delete "$INSTDIR\${TRANSACTION_MARKER}"
+    IfErrors install_failed_after_transaction
     CreateDirectory "$PROFILE\cxxime"
     IfFileExists "$PROFILE\cxxime\default.json" install_user_config_ready
         CopyFiles /SILENT /FILESONLY "$INSTDIR\data\default.json" "$PROFILE\cxxime"
@@ -331,8 +331,8 @@ Section "Install"
     StrCpy $FailureMessage "$FailureMessage$\r$\n$\r$\n无法清理安装暂存目录，未恢复启动后台。"
     Goto install_failed_before_swap_report_ready
     install_failed_before_swap_cleanup_done:
-    Delete "$INSTDIR\..\${RUNTIME_MARKER}"
     Call RestartInstalledServer
+    Call CleanupRuntimeSnapshotAfterServerRestore
     StrCmp $ServerRestartResult "2" 0 install_failed_before_swap_report_ready
         StrCpy $FailureMessage "$FailureMessage$\r$\n$\r$\nCxxIME 后台未能自动恢复，请检查占用进程或手动启动 CxxIME。"
     install_failed_before_swap_report_ready:
@@ -354,7 +354,6 @@ Section "Install"
         StrCmp $0 "1" install_rollback_verified
             Goto install_failed_silent_or_message
         install_rollback_verified:
-        Delete "$INSTDIR\..\${RUNTIME_MARKER}"
         StrCpy $FailureMessage "$FailureMessage$\r$\n$\r$\n已恢复 CxxIME 安装前的状态。"
         Goto install_failed_silent_or_message
 
@@ -364,6 +363,7 @@ Section "Install"
 
     install_failed_silent_or_message:
     Call RestartInstalledServer
+    Call CleanupRuntimeSnapshotAfterServerRestore
     StrCmp $ServerRestartResult "2" 0 install_failed_restart_report_ready
         StrCpy $FailureMessage "$FailureMessage$\r$\n$\r$\nCxxIME 后台未能自动恢复，请检查占用进程或手动启动 CxxIME。"
     install_failed_restart_report_ready:
@@ -393,13 +393,13 @@ Section "Uninstall"
     File /oname=cxxime-installer-helper.exe "cxxime-installer-helper.exe"
     StrCpy $LockReportPath "$PLUGINSDIR\cxxime-locks.txt"
 
+    Call un.ReleaseInputProcessor
     Call un.StopServer
     StrCmp $UninstallServerStopResult "0" un_server_stopped
         StrCpy $FailureMessage "无法确认 CxxIME 后台已终止，卸载已停止。"
         Call un.FailAndRestart
     un_server_stopped:
     StrCmp $UninstallDeferredResume "1" un_deferred_resume
-    Call un.ReleaseInputProcessor
     Call un.CheckFileLocks
     StrCmp $UninstallDeferred "1" un_deferred_prepare
     Call un.PrepareTransaction

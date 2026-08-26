@@ -19,16 +19,9 @@ int release_input_processor() {
 
     ITfInputProcessorProfileMgr* profile_manager = nullptr;
     HRESULT result = CoCreateInstance(
-        CLSID_TF_InputProcessorProfiles, nullptr, CLSCTX_ALL,
+        CLSID_TF_InputProcessorProfiles, nullptr, CLSCTX_INPROC_SERVER,
         IID_ITfInputProcessorProfileMgr, reinterpret_cast<void**>(&profile_manager));
     if (SUCCEEDED(result)) {
-        // Deactivate the profile for every thread on this desktop before asking TSF to release
-        // its TIP instance. This covers hosts that switched away from CxxIME but still retain an
-        // active profile object in their thread manager.
-        profile_manager->DeactivateProfile(
-            TF_PROFILETYPE_INPUTPROCESSOR, cxxime::kTextServiceLanguageId,
-            cxxime::kTextServiceClsid, cxxime::kTextServiceProfileGuid, nullptr,
-            TF_IPPMF_FORSESSION);
         result = profile_manager->ReleaseInputProcessor(
             cxxime::kTextServiceClsid, TF_RIP_FLAG_FREEUNUSEDLIBRARIES);
         profile_manager->Release();

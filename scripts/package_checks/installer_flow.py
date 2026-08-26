@@ -17,6 +17,7 @@ def check_installer_flow(
     require_text(errors, text, "Function ReleaseInputProcessor", label)
     require_text(errors, text, "Function un.ReleaseInputProcessor", label)
     require_text(errors, text, "Function CaptureServerState", label)
+    require_text(errors, text, "Function CleanupRuntimeSnapshotAfterServerRestore", label)
     require_text(errors, text, "Function QueryTipRegistration", label)
     require_text(errors, text, "Function WriteRuntimeSnapshot", label)
     require_text(errors, text, "Function VerifyRestoredInstall", label)
@@ -60,6 +61,14 @@ def check_installer_flow(
         add_error(errors, f"{label}: install, runtime, and uninstall transactions must use format 2")
     if text.count('ReadRegStr $0 HKLM "${TSF_INPROC_KEY}" ""') != 8:
         add_error(errors, f"{label}: both architectures must snapshot and verify TSF registration")
+    if text.count("Call CleanupRuntimeSnapshotAfterServerRestore") != 4:
+        add_error(errors, f"{label}: install failure paths must preserve recoverable runtime state")
+    transaction_state_start = text.find("Function WriteTransactionState")
+    transaction_state_end = text.find("FunctionEnd", transaction_state_start)
+    if transaction_state_start >= 0 and transaction_state_end >= 0:
+        transaction_state = text[transaction_state_start:transaction_state_end]
+        if 'Delete "$INSTDIR\\..\\${RUNTIME_MARKER}"' in transaction_state:
+            add_error(errors, f"{label}: transaction handoff must preserve runtime state")
     require_text(
         errors,
         text,
@@ -98,8 +107,8 @@ def check_installer_flow(
         [
             "Call CaptureServerState",
             "Call WriteRuntimeSnapshot",
-            "Call StopServer",
             "Call ReleaseInputProcessor",
+            "Call StopServer",
             "Call CheckInstallLocks",
             "Call RecoverInterruptedInstall",
             "Call CheckInstallDirectory",
@@ -116,10 +125,20 @@ def check_installer_flow(
     )
     require_order(
         errors,
+        install_text,
+        [
+            'RMDir /r "$BackupDir"',
+            'Delete "$INSTDIR\\..\\${RUNTIME_MARKER}"',
+            'Delete "$INSTDIR\\${TRANSACTION_MARKER}"',
+        ],
+        "Install commit",
+    )
+    require_order(
+        errors,
         uninstall_text,
         [
-            "Call un.StopServer",
             "Call un.ReleaseInputProcessor",
+            "Call un.StopServer",
             "Call un.CheckFileLocks",
             "Call un.PrepareTransaction",
             "Call un.UnregisterInstalledTsf",
@@ -141,6 +160,7 @@ def check_installer_flow(
     forbid_text(errors, text, "WriteINIStr", label)
     forbid_text(errors, text, "FlushINI", label)
     forbid_text(errors, text, '"format" "1"', label)
+    forbid_text(errors, text, '"$StageDir\\${RUNTIME_MARKER}"', label)
     forbid_text(errors, text, "recover_legacy_backup", label)
     forbid_text(errors, uninstall_text, 'RMDir /r "$INSTDIR"', "Uninstall section")
     require_text(errors, uninstall_text, 'RMDir "$INSTDIR"', "Uninstall section")
