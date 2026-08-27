@@ -2,6 +2,7 @@
 
 #include <cxxime/control_protocol.h>
 
+#include <algorithm>
 #include <cstring>
 
 namespace cxxime {
@@ -33,30 +34,34 @@ bool parse_control_packet(const void* data, std::size_t size, ControlMessage* me
 
     ControlHeader header;
     std::memcpy(&header, data, sizeof(header));
-    if (header.magic != CONTROL_MAGIC || header.protocol_version != CONTROL_PROTOCOL_VERSION ||
+    if (header.magic != CONTROL_MAGIC ||
+        header.protocol_version < CONTROL_PROTOCOL_MIN_COMPATIBLE_VERSION ||
         header.payload_size > CONTROL_MAX_PAYLOAD || size != sizeof(header) + header.payload_size) {
         return false;
-    }
-
-    switch (header.message_type) {
-        case ControlMessageType::kSubscribe:
-        case ControlMessageType::kConfigSnapshot:
-        case ControlMessageType::kReplaceUserConfig:
-        case ControlMessageType::kPatchUserConfig:
-        case ControlMessageType::kMutationResult:
-        case ControlMessageType::kPing:
-        case ControlMessageType::kPong:
-        case ControlMessageType::kLexiconRequest:
-        case ControlMessageType::kLexiconResult:
-            break;
-        default:
-            return false;
     }
 
     message->type = header.message_type;
     message->generation = {header.server_epoch, header.revision};
     const char* payload = static_cast<const char*>(data) + sizeof(header);
     message->payload.assign(payload, payload + header.payload_size);
+    return true;
+}
+
+bool decode_control_subscribe(const std::string& payload, ControlSubscribe* subscribe) {
+    if (!subscribe || payload.size() < CONTROL_SUBSCRIBE_BASELINE_SIZE) {
+        return false;
+    }
+    *subscribe = {};
+    std::memcpy(subscribe, payload.data(), std::min(payload.size(), sizeof(*subscribe)));
+    return true;
+}
+
+bool decode_control_mutation_result(const std::string& payload, ControlMutationResult* result) {
+    if (!result || payload.size() < CONTROL_MUTATION_RESULT_BASELINE_SIZE) {
+        return false;
+    }
+    *result = {};
+    std::memcpy(result, payload.data(), std::min(payload.size(), sizeof(*result)));
     return true;
 }
 

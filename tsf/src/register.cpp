@@ -319,7 +319,10 @@ void unregister_legacy_ime_hkl(LANGID langid) {
 
 HRESULT register_server() {
     WCHAR dll_path[MAX_PATH] = {};
-    GetModuleFileNameW(g_hInst, dll_path, MAX_PATH);
+    const DWORD module_length = GetModuleFileNameW(g_hInst, dll_path, MAX_PATH);
+    if (module_length == 0 || module_length >= MAX_PATH) {
+        return HRESULT_FROM_WIN32(GetLastError());
+    }
 
     WCHAR key_path[256] = {};
     wsprintfW(key_path, L"CLSID\\{%08lX-%04hX-%04hX-%02X%02X-%02X%02X%02X%02X%02X%02X}",
@@ -333,21 +336,29 @@ HRESULT register_server() {
     if (lr != ERROR_SUCCESS)
         return E_FAIL;
 
-    RegSetValueExW(hKey, nullptr, 0, REG_SZ, (const BYTE*)TEXTSERVICE_DESC,
-                   (DWORD)((wcslen(TEXTSERVICE_DESC) + 1) * sizeof(WCHAR)));
+    lr = RegSetValueExW(hKey, nullptr, 0, REG_SZ, (const BYTE*)TEXTSERVICE_DESC,
+                        (DWORD)((wcslen(TEXTSERVICE_DESC) + 1) * sizeof(WCHAR)));
+    if (lr != ERROR_SUCCESS) {
+        RegCloseKey(hKey);
+        return HRESULT_FROM_WIN32(lr);
+    }
 
     HKEY hSubKey = nullptr;
     lr = RegCreateKeyExW(hKey, L"InprocServer32", 0, nullptr, 0, KEY_WRITE, nullptr, &hSubKey, nullptr);
-    if (lr == ERROR_SUCCESS) {
-        RegSetValueExW(hSubKey, nullptr, 0, REG_SZ, (const BYTE*)dll_path,
-                       (DWORD)((wcslen(dll_path) + 1) * sizeof(WCHAR)));
-        RegSetValueExW(hSubKey, L"ThreadingModel", 0, REG_SZ, (const BYTE*)TEXTSERVICE_MODEL,
-                       (DWORD)((wcslen(TEXTSERVICE_MODEL) + 1) * sizeof(WCHAR)));
-        RegCloseKey(hSubKey);
+    if (lr != ERROR_SUCCESS) {
+        RegCloseKey(hKey);
+        return HRESULT_FROM_WIN32(lr);
     }
-
+    lr = RegSetValueExW(hSubKey, nullptr, 0, REG_SZ, (const BYTE*)dll_path,
+                        (DWORD)((wcslen(dll_path) + 1) * sizeof(WCHAR)));
+    if (lr == ERROR_SUCCESS) {
+        lr = RegSetValueExW(hSubKey, L"ThreadingModel", 0, REG_SZ,
+                            (const BYTE*)TEXTSERVICE_MODEL,
+                            (DWORD)((wcslen(TEXTSERVICE_MODEL) + 1) * sizeof(WCHAR)));
+    }
+    RegCloseKey(hSubKey);
     RegCloseKey(hKey);
-    return S_OK;
+    return lr == ERROR_SUCCESS ? S_OK : HRESULT_FROM_WIN32(lr);
 }
 
 HRESULT unregister_server() {
@@ -358,8 +369,10 @@ HRESULT unregister_server() {
               c_clsidTextService.Data4[3], c_clsidTextService.Data4[4], c_clsidTextService.Data4[5],
               c_clsidTextService.Data4[6], c_clsidTextService.Data4[7]);
 
-    SHDeleteKeyW(HKEY_CLASSES_ROOT, key_path);
-    return S_OK;
+    const LONG lr = SHDeleteKeyW(HKEY_CLASSES_ROOT, key_path);
+    return lr == ERROR_SUCCESS || lr == ERROR_FILE_NOT_FOUND
+               ? S_OK
+               : HRESULT_FROM_WIN32(lr);
 }
 
 // Profile registration (Windows 8+ API).
@@ -412,13 +425,14 @@ HRESULT unregister_profiles() {
 
     // Ask TSF to deactivate loaded instances first so TextService::Deactivate can
     // remove its language bar item before the profile registration disappears.
-    pProfileMgr->ReleaseInputProcessor(c_clsidTextService, TF_RIP_FLAG_FREEUNUSEDLIBRARIES);
+    pProfileMgr->ReleaseInputProcessor(c_clsidTextService,
+                                       TF_RIP_FLAG_FREEUNUSEDLIBRARIES);
 
     hr = pProfileMgr->UnregisterProfile(c_clsidTextService, TEXTSERVICE_LANGID_HANS,
                                         c_guidProfile, 0);
     pProfileMgr->Release();
     unregister_legacy_ime_hkl(TEXTSERVICE_LANGID_HANS);
-    return FAILED(hr) ? hr : S_OK;
+    return hr;
 }
 
 // Category registration.

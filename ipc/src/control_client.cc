@@ -225,11 +225,10 @@ private:
                 handler_(message.generation, message.payload);
             }
         } else if (message.type == ControlMessageType::kMutationResult) {
-            if (message.payload.size() != sizeof(ControlMutationResult)) {
+            ControlMutationResult result = {};
+            if (!decode_control_mutation_result(message.payload, &result)) {
                 return false;
             }
-            ControlMutationResult result;
-            std::memcpy(&result, message.payload.data(), sizeof(result));
             {
                 std::lock_guard<std::mutex> lock(mutation_mutex_);
                 if (!patch_in_flight_ || pending_patches_.empty()) {
@@ -468,13 +467,12 @@ bool replace_user_config(const std::string& config_json, ConfigGeneration* gener
     bool transaction_ok = send_control_request(
         ControlMessageType::kReplaceUserConfig, config_json,
         ControlMessageType::kMutationResult, &message, error_code, timeout_ms, pipe_name);
-    bool ok = transaction_ok && message.payload.size() == sizeof(ControlMutationResult);
+    ControlMutationResult result = {};
+    bool ok = transaction_ok && decode_control_mutation_result(message.payload, &result);
     if (transaction_ok && !ok && error_code) {
         *error_code = ERROR_INVALID_DATA;
     }
-    ControlMutationResult result = {};
     if (ok) {
-        std::memcpy(&result, message.payload.data(), sizeof(result));
         if (generation) {
             *generation = message.generation;
         }

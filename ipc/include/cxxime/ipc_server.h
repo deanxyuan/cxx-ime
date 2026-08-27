@@ -3,12 +3,12 @@
 #ifndef CXXIME_IPC_SERVER_H_
 #define CXXIME_IPC_SERVER_H_
 
+#include <atomic>
 #include <functional>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
-#include <mutex>
-#include <atomic>
 
 #include <windows.h>
 
@@ -35,6 +35,8 @@ private:
     struct ClientContext {
         HANDLE pipe = nullptr;
         OVERLAPPED ol = {};
+        std::vector<uint8_t> read_buffer;
+        std::vector<uint8_t> write_buffer;
         IPCRequest request = {};
         IPCResponse response = {};
         bool read_pending = true;

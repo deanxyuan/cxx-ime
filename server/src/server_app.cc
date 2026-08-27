@@ -280,6 +280,7 @@ cxxime::IPCResponse ServerApp::handle_request(const cxxime::IPCRequest& request)
     switch (request.command) {
     case cxxime::IPCCommand::PING:
         response.status = cxxime::IPCStatus::OK;
+        response.server_process_id = GetCurrentProcessId();
         break;
 
     case cxxime::IPCCommand::SEARCH_CANDIDATES: {

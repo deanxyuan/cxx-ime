@@ -43,6 +43,33 @@ static cxxime::IPCResponse make_response(cxxime::IPCStatus status) {
     return resp;
 }
 
+static bool raw_round_trip(const std::vector<uint8_t>& request,
+                           std::vector<uint8_t>* response) {
+    const std::wstring pipe_name = cxxime::make_user_pipe_name(test_pipe_name());
+    if (!WaitNamedPipeW(pipe_name.c_str(), 2000)) {
+        return false;
+    }
+    HANDLE pipe = CreateFileW(pipe_name.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
+                              OPEN_EXISTING, 0, nullptr);
+    if (pipe == INVALID_HANDLE_VALUE) {
+        return false;
+    }
+    DWORD mode = PIPE_READMODE_MESSAGE;
+    SetNamedPipeHandleState(pipe, &mode, nullptr, nullptr);
+    DWORD transferred = 0;
+    bool ok = WriteFile(pipe, request.data(), static_cast<DWORD>(request.size()), &transferred,
+                        nullptr) != FALSE &&
+              transferred == static_cast<DWORD>(request.size());
+    if (ok) {
+        response->resize(65536);
+        ok = ReadFile(pipe, response->data(), static_cast<DWORD>(response->size()), &transferred,
+                      nullptr) != FALSE;
+        response->resize(ok ? transferred : 0);
+    }
+    CloseHandle(pipe);
+    return ok;
+}
+
 // ============================================================
 // Protocol Tests
 // ============================================================
@@ -64,7 +91,81 @@ TEST(Protocol, user_pipe_name_preserves_endpoint_and_is_idempotent) {
 }
 
 TEST(Protocol, request_struct_size) {
-    ASSERT_EQ(sizeof(cxxime::IPCRequest), static_cast<size_t>(576));
+    ASSERT_EQ(cxxime::IPC_REQUEST_BASELINE_SIZE, static_cast<uint32_t>(576));
+    ASSERT_EQ(cxxime::IPC_RESPONSE_BASELINE_SIZE, static_cast<uint32_t>(3176));
+    ASSERT_TRUE(sizeof(cxxime::IPCRequest) >= cxxime::IPC_REQUEST_BASELINE_SIZE);
+    ASSERT_TRUE(sizeof(cxxime::IPCResponse) >= cxxime::IPC_RESPONSE_BASELINE_SIZE);
+}
+
+TEST(Protocol, wire_header_is_stable) {
+    cxxime::IPCWireHeader header;
+    ASSERT_EQ(sizeof(header), static_cast<size_t>(12));
+    ASSERT_EQ(header.magic, cxxime::IPC_WIRE_MAGIC);
+    ASSERT_EQ(cxxime::IPC_WIRE_MIN_COMPATIBLE_VERSION, static_cast<uint16_t>(1));
+    ASSERT_TRUE(cxxime::IPC_WIRE_VERSION >= cxxime::IPC_WIRE_MIN_COMPATIBLE_VERSION);
+    ASSERT_EQ(header.version, cxxime::IPC_WIRE_VERSION);
+    ASSERT_EQ(header.header_size, static_cast<uint16_t>(sizeof(header)));
+}
+
+TEST(Protocol, server_accepts_future_append_only_request) {
+    TestServer server;
+    ASSERT_TRUE(server.start([](const cxxime::IPCRequest& request) {
+        return make_response(request.command == cxxime::IPCCommand::PING
+                                 ? cxxime::IPCStatus::OK
+                                 : cxxime::IPCStatus::ERR_UNKNOWN_COMMAND);
+    }));
+
+    cxxime::IPCRequest request = {};
+    request.command = cxxime::IPCCommand::PING;
+    cxxime::IPCWireHeader header;
+    header.version = cxxime::IPC_WIRE_VERSION + 1;
+    header.payload_size = sizeof(request) + 16;
+    std::vector<uint8_t> wire(sizeof(header) + header.payload_size, 0);
+    memcpy(wire.data(), &header, sizeof(header));
+    memcpy(wire.data() + sizeof(header), &request, sizeof(request));
+
+    std::vector<uint8_t> response_wire;
+    ASSERT_TRUE(raw_round_trip(wire, &response_wire));
+    ASSERT_EQ(response_wire.size(), sizeof(cxxime::IPCWireHeader) + sizeof(cxxime::IPCResponse));
+    cxxime::IPCWireHeader response_header = {};
+    memcpy(&response_header, response_wire.data(), sizeof(response_header));
+    ASSERT_EQ(response_header.magic, cxxime::IPC_WIRE_MAGIC);
+    cxxime::IPCResponse response = {};
+    memcpy(&response, response_wire.data() + response_header.header_size, sizeof(response));
+    ASSERT_EQ(response.status, cxxime::IPCStatus::OK);
+}
+
+TEST(Protocol, server_accepts_baseline_request_prefix) {
+    TestServer server;
+    ASSERT_TRUE(server.start([](const cxxime::IPCRequest& request) {
+        return make_response(request.command == cxxime::IPCCommand::PING
+                                 ? cxxime::IPCStatus::OK
+                                 : cxxime::IPCStatus::ERR_UNKNOWN_COMMAND);
+    }));
+
+    cxxime::IPCRequest request = {};
+    request.command = cxxime::IPCCommand::PING;
+    cxxime::IPCWireHeader header;
+    header.version = cxxime::IPC_WIRE_MIN_COMPATIBLE_VERSION;
+    header.payload_size = cxxime::IPC_REQUEST_BASELINE_SIZE;
+    std::vector<uint8_t> wire(sizeof(header) + header.payload_size, 0);
+    memcpy(wire.data(), &header, sizeof(header));
+    memcpy(wire.data() + sizeof(header), &request, header.payload_size);
+
+    std::vector<uint8_t> response_wire;
+    ASSERT_TRUE(raw_round_trip(wire, &response_wire));
+}
+
+TEST(Protocol, server_rejects_legacy_0_3_raw_request) {
+    TestServer server;
+    ASSERT_TRUE(server.start(
+        [](const cxxime::IPCRequest&) { return make_response(cxxime::IPCStatus::OK); }));
+    cxxime::IPCRequest request = {};
+    request.command = cxxime::IPCCommand::PING;
+    std::vector<uint8_t> wire(sizeof(request));
+    memcpy(wire.data(), &request, sizeof(request));
+    std::vector<uint8_t> response_wire;
+    ASSERT_TRUE(!raw_round_trip(wire, &response_wire));
 }
 
 TEST(Protocol, candidate_ui_visible_count_distinguishes_unknown_server_layout) {
@@ -82,7 +183,7 @@ TEST(Protocol, candidate_ui_visible_count_distinguishes_unknown_server_layout) {
 }
 
 TEST(Protocol, response_struct_size) {
-    ASSERT_EQ(sizeof(cxxime::IPCResponse), static_cast<size_t>(3176));
+    ASSERT_TRUE(sizeof(cxxime::IPCResponse) >= cxxime::IPC_RESPONSE_BASELINE_SIZE);
 }
 
 TEST(Protocol, response_zero_init) {
@@ -93,6 +194,7 @@ TEST(Protocol, response_zero_init) {
     ASSERT_EQ(resp.preedit_cursor, (uint32_t)0);
     ASSERT_EQ(resp.candidate_count, (uint32_t)0);
     ASSERT_EQ(resp.key_handled, (uint32_t)0);
+    ASSERT_EQ(resp.server_process_id, (uint32_t)0);
 }
 
 TEST(Protocol, candidate_text_over_old_capacity_round_trips) {

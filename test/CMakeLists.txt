@@ -139,6 +139,11 @@ add_cxxime_test(temporary_ascii_test)
 add_cxxime_test(tsf_factory_test)
 target_link_libraries(tsf_factory_test PRIVATE ole32 uuid)
 
+add_cxxime_test(settings_launcher_util_test)
+target_sources(settings_launcher_util_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/tsf/src/settings_launcher_util.cpp
+)
+
 add_cxxime_test(installer_lock_test)
 target_link_libraries(installer_lock_test PRIVATE cxxime-installer-lock)
 

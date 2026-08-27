@@ -366,18 +366,12 @@ public:
 private:
     bool handle_message(const std::shared_ptr<ClientContext>& client,
                         const ControlMessage& message) {
-        if (message.generation != ConfigGeneration{}) {
-            return false;
-        }
-
         switch (message.type) {
             case ControlMessageType::kSubscribe: {
-                if (message.payload.size() != sizeof(ControlSubscribe)) {
-                    return false;
-                }
-                ControlSubscribe subscribe;
-                std::memcpy(&subscribe, message.payload.data(), sizeof(subscribe));
-                if (subscribe.process_id == 0 ||
+                ControlSubscribe subscribe = {};
+                if (message.generation != ConfigGeneration{} ||
+                    !decode_control_subscribe(message.payload, &subscribe) ||
+                    subscribe.process_id == 0 ||
                     (subscribe.pointer_size != 4 && subscribe.pointer_size != 8) ||
                     subscribe.reserved != 0) {
                     return false;
@@ -389,7 +383,7 @@ private:
 
             case ControlMessageType::kReplaceUserConfig:
             case ControlMessageType::kPatchUserConfig: {
-                if (!message.payload.empty()) {
+                if (message.generation == ConfigGeneration{} && !message.payload.empty()) {
                     UserConfigMutationKind kind = message.type == ControlMessageType::kReplaceUserConfig
                                                   ? UserConfigMutationKind::kReplace
                                                   : UserConfigMutationKind::kMergePatch;
@@ -423,7 +417,7 @@ private:
             }
 
             case ControlMessageType::kPing: {
-                if (!message.payload.empty()) {
+                if (message.generation != ConfigGeneration{} || !message.payload.empty()) {
                     return false;
                 }
                 auto packet = make_packet(ControlMessageType::kPong, generation());
@@ -432,7 +426,7 @@ private:
 
             case ControlMessageType::kLexiconRequest: {
                 std::string response_payload;
-                if (!request_handler_ ||
+                if (message.generation != ConfigGeneration{} || !request_handler_ ||
                     !request_handler_(message.payload, &response_payload) ||
                     response_payload.empty() || response_payload.size() > CONTROL_MAX_PAYLOAD) {
                     return false;
@@ -443,7 +437,7 @@ private:
             }
 
             default:
-                return false;
+                return true;
         }
     }
 

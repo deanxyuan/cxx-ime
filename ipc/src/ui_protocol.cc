@@ -2,6 +2,7 @@
 
 #include <cxxime/ui_protocol.h>
 
+#include <algorithm>
 #include <cstring>
 
 namespace cxxime {
@@ -29,25 +30,52 @@ bool valid_ownership(UiOwnership ownership) {
            ownership == UiOwnership::kHost;
 }
 
+constexpr std::uint32_t kKnownSnapshotFlags =
+    ui_snapshot_flag(UiSnapshotFlag::kComposing) |
+    ui_snapshot_flag(UiSnapshotFlag::kCandidateVisible) |
+    ui_snapshot_flag(UiSnapshotFlag::kStatusVisible) |
+    ui_snapshot_flag(UiSnapshotFlag::kHasCaret) |
+    ui_snapshot_flag(UiSnapshotFlag::kHasPreedit) |
+    ui_snapshot_flag(UiSnapshotFlag::kHasCandidates) |
+    ui_snapshot_flag(UiSnapshotFlag::kSessionEnded) |
+    ui_snapshot_flag(UiSnapshotFlag::kImmersiveMode) |
+    ui_snapshot_flag(UiSnapshotFlag::kTsfLocalCandidate);
+
 bool valid_command_type(UiCommandType type) {
     return type >= UiCommandType::kSelectCandidate &&
            type <= UiCommandType::kRefreshInputIndicator;
 }
 
 template <typename Payload>
-bool parse_packet(const void* data, std::size_t size, UiPacketType type, Payload* payload) {
-    if (!data || !payload || size != sizeof(UiPacketHeader) + sizeof(Payload)) {
-        return false;
+UiPacketParseResult decode_packet(const void* data, std::size_t size, UiPacketType type,
+                                  std::size_t baseline_size, Payload* payload) {
+    if (!data || !payload || size < sizeof(UiPacketHeader)) {
+        return UiPacketParseResult::kInvalid;
     }
 
     UiPacketHeader header = {};
     std::memcpy(&header, data, sizeof(header));
-    if (header.magic != UI_PROTOCOL_MAGIC || header.protocol_version != UI_PROTOCOL_VERSION ||
-        header.packet_type != type || header.payload_size != sizeof(Payload)) {
-        return false;
+    if (header.magic != UI_PROTOCOL_MAGIC ||
+        header.protocol_version < UI_PROTOCOL_MIN_COMPATIBLE_VERSION ||
+        header.payload_size > size - sizeof(header) ||
+        size != sizeof(header) + header.payload_size) {
+        return UiPacketParseResult::kInvalid;
     }
-    std::memcpy(payload, static_cast<const std::uint8_t*>(data) + sizeof(header), sizeof(*payload));
-    return true;
+    if (header.packet_type != type) {
+        if (header.packet_type == UiPacketType::kSnapshot ||
+            header.packet_type == UiPacketType::kCommand) {
+            return UiPacketParseResult::kInvalid;
+        }
+        return UiPacketParseResult::kIgnored;
+    }
+    if (header.payload_size < baseline_size) {
+        return UiPacketParseResult::kInvalid;
+    }
+    *payload = {};
+    const std::size_t payload_size =
+        (std::min)(static_cast<std::size_t>(header.payload_size), sizeof(*payload));
+    std::memcpy(payload, static_cast<const std::uint8_t*>(data) + sizeof(header), payload_size);
+    return UiPacketParseResult::kAccepted;
 }
 
 } // namespace
@@ -58,18 +86,30 @@ bool build_ui_snapshot_packet(const UiPresentationSnapshot& snapshot, std::uint6
            build_packet(UiPacketType::kSnapshot, snapshot, sequence, packet);
 }
 
-bool parse_ui_snapshot_packet(const void* data, std::size_t size,
-                              UiPresentationSnapshot* snapshot) {
+UiPacketParseResult decode_ui_snapshot_packet(const void* data, std::size_t size,
+                                              UiPresentationSnapshot* snapshot) {
     if (!snapshot) {
-        return false;
+        return UiPacketParseResult::kInvalid;
     }
     UiPresentationSnapshot parsed;
-    if (!parse_packet(data, size, UiPacketType::kSnapshot, &parsed) ||
-        !is_valid_ui_snapshot(parsed)) {
-        return false;
+    const UiPacketParseResult result =
+        decode_packet(data, size, UiPacketType::kSnapshot, UI_SNAPSHOT_BASELINE_SIZE, &parsed);
+    if (result != UiPacketParseResult::kAccepted) {
+        return result;
+    }
+    if ((parsed.flags & ~kKnownSnapshotFlags) != 0 || !valid_ownership(parsed.ownership)) {
+        return UiPacketParseResult::kIgnored;
+    }
+    if (!is_valid_ui_snapshot(parsed)) {
+        return UiPacketParseResult::kInvalid;
     }
     *snapshot = parsed;
-    return true;
+    return UiPacketParseResult::kAccepted;
+}
+
+bool parse_ui_snapshot_packet(const void* data, std::size_t size,
+                              UiPresentationSnapshot* snapshot) {
+    return decode_ui_snapshot_packet(data, size, snapshot) == UiPacketParseResult::kAccepted;
 }
 
 bool build_ui_command_packet(const UiCommand& command, std::uint64_t sequence,
@@ -89,32 +129,35 @@ bool build_ui_command_packet(const UiCommand& command, std::uint64_t sequence,
     return build_packet(UiPacketType::kCommand, normalized, sequence, packet);
 }
 
-bool parse_ui_command_packet(const void* data, std::size_t size, UiCommand* command) {
+UiPacketParseResult decode_ui_command_packet(const void* data, std::size_t size,
+                                             UiCommand* command) {
     if (!command) {
-        return false;
+        return UiPacketParseResult::kInvalid;
     }
     UiCommand parsed;
-    if (!parse_packet(data, size, UiPacketType::kCommand, &parsed) ||
-        !is_valid_ui_command(parsed)) {
-        return false;
+    const UiPacketParseResult result =
+        decode_packet(data, size, UiPacketType::kCommand, UI_COMMAND_BASELINE_SIZE, &parsed);
+    if (result != UiPacketParseResult::kAccepted) {
+        return result;
+    }
+    if (parsed.type > UiCommandType::kRefreshInputIndicator) {
+        return UiPacketParseResult::kIgnored;
+    }
+    if (!is_valid_ui_command(parsed)) {
+        return UiPacketParseResult::kInvalid;
     }
     *command = parsed;
-    return true;
+    return UiPacketParseResult::kAccepted;
+}
+
+bool parse_ui_command_packet(const void* data, std::size_t size, UiCommand* command) {
+    return decode_ui_command_packet(data, size, command) == UiPacketParseResult::kAccepted;
 }
 
 bool is_valid_ui_snapshot(const UiPresentationSnapshot& snapshot) {
-    constexpr std::uint32_t kKnownFlags = ui_snapshot_flag(UiSnapshotFlag::kComposing) |
-                                          ui_snapshot_flag(UiSnapshotFlag::kCandidateVisible) |
-                                          ui_snapshot_flag(UiSnapshotFlag::kStatusVisible) |
-                                          ui_snapshot_flag(UiSnapshotFlag::kHasCaret) |
-                                          ui_snapshot_flag(UiSnapshotFlag::kHasPreedit) |
-                                          ui_snapshot_flag(UiSnapshotFlag::kHasCandidates) |
-                                          ui_snapshot_flag(UiSnapshotFlag::kSessionEnded) |
-                                          ui_snapshot_flag(UiSnapshotFlag::kImmersiveMode) |
-                                          ui_snapshot_flag(UiSnapshotFlag::kTsfLocalCandidate);
     if (snapshot.session_id == 0 || snapshot.session_generation == 0 ||
         snapshot.presentation_generation == 0 ||
-        (snapshot.flags & ~kKnownFlags) != 0 || !valid_ownership(snapshot.ownership) ||
+        (snapshot.flags & ~kKnownSnapshotFlags) != 0 || !valid_ownership(snapshot.ownership) ||
         snapshot.preedit_length > static_cast<std::uint32_t>(kUiPreeditCapacity) ||
         snapshot.preedit_cursor > snapshot.preedit_length ||
         snapshot.candidate_page.count > static_cast<std::uint32_t>(kCandidateCapacity)) {

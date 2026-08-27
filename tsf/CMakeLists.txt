@@ -59,6 +59,7 @@ add_library(cxxime-tsf SHARED
     src/register.cpp
     src/resource_loader.cc
     src/settings_launcher.cc
+    src/settings_launcher_util.cpp
     src/language_bar.cpp
     src/input_indicator_controller.cpp
     src/host_compatibility/host_classification_compatibility.cc

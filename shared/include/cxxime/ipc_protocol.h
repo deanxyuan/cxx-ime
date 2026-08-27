@@ -11,6 +11,25 @@
 
 namespace cxxime {
 
+constexpr uint32_t IPC_WIRE_MAGIC = 0x43584950;  // "CXIP"
+constexpr uint16_t IPC_WIRE_MIN_COMPATIBLE_VERSION = 1;
+constexpr uint16_t IPC_WIRE_VERSION = 1;
+constexpr uint32_t IPC_REQUEST_BASELINE_SIZE = 576;
+constexpr uint32_t IPC_RESPONSE_BASELINE_SIZE = 3176;
+
+// The framed wire protocol starts at 0.4.0; the 0.3.0 raw-struct format is intentionally
+// unsupported. Payloads are append-only from this baseline. Existing fields and offsets must
+// never be removed or reordered. Readers accept larger payloads and ignore unknown tails.
+
+struct IPCWireHeader {
+    uint32_t magic = IPC_WIRE_MAGIC;
+    uint16_t version = IPC_WIRE_VERSION;
+    uint16_t header_size = 12;
+    uint32_t payload_size = 0;
+};
+
+static_assert(sizeof(IPCWireHeader) == 12, "IPCWireHeader layout changed");
+
 enum class InputMode : uint32_t {
     PINYIN = 0,
     WUBI = 1,
@@ -177,7 +196,8 @@ static_assert(std::is_standard_layout<IPCRequest>::value,
 static_assert(std::is_trivially_copyable<IPCRequest>::value,
               "IPCRequest must remain trivially copyable");
 static_assert(alignof(IPCRequest) == 8, "IPCRequest alignment changed");
-static_assert(sizeof(IPCRequest) == 576, "IPCRequest size changed");
+static_assert(sizeof(IPCRequest) >= IPC_REQUEST_BASELINE_SIZE,
+              "IPCRequest dropped fields from the 0.4.0 baseline");
 static_assert(offsetof(IPCRequest, is_key_up) == 20, "IPCRequest::is_key_up offset changed");
 static_assert(offsetof(IPCRequest, candidate_ui) == 24,
               "IPCRequest::candidate_ui offset changed");
@@ -203,6 +223,7 @@ struct IPCResponse {
     uint32_t page_current = 1;
     uint32_t page_total = 1;
     uint32_t key_handled = 0;
+    uint32_t server_process_id = 0;
 };
 
 static_assert(std::is_standard_layout<IPCResponse>::value,
@@ -222,8 +243,8 @@ static_assert(offsetof(IPCResponse, page_current) == 3160,
               "IPCResponse::page_current offset changed");
 static_assert(offsetof(IPCResponse, key_handled) == 3168,
               "IPCResponse::key_handled offset changed");
-static_assert(sizeof(IPCResponse) == 3176, "IPCResponse size changed");
-
+static_assert(sizeof(IPCResponse) >= IPC_RESPONSE_BASELINE_SIZE,
+              "IPCResponse dropped fields from the 0.4.0 baseline");
 } // namespace cxxime
 
 #endif // CXXIME_IPC_PROTOCOL_H_
