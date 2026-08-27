@@ -6,13 +6,18 @@
 #include <new>
 #include <utility>
 
+#include "globals.h"
+
 namespace {
 
 class SearchCandidateString final : public ITfCandidateString {
 public:
     SearchCandidateString(std::wstring text, ULONG index)
         : text_(std::move(text))
-        , index_(index) {}
+        , index_(index) {
+            DllAddRef();
+        }
+    ~SearchCandidateString() { DllRelease(); }
 
     STDMETHODIMP QueryInterface(REFIID riid, void** ppvObj) override {
         if (!ppvObj) {
@@ -56,7 +61,6 @@ public:
     }
 
 private:
-    ~SearchCandidateString() = default;
 
     LONG ref_count_ = 1;
     std::wstring text_;
@@ -66,11 +70,16 @@ private:
 class SearchCandidateEnumerator final : public IEnumTfCandidates {
 public:
     explicit SearchCandidateEnumerator(const std::vector<std::wstring>& candidates)
-        : candidates_(candidates) {}
+        : candidates_(candidates) {
+        DllAddRef();
+    }
 
     SearchCandidateEnumerator(const SearchCandidateEnumerator& other)
         : candidates_(other.candidates_)
-        , position_(other.position_) {}
+        , position_(other.position_) {
+        DllAddRef();
+    }
+    ~SearchCandidateEnumerator() { DllRelease(); }
 
     STDMETHODIMP QueryInterface(REFIID riid, void** ppvObj) override {
         if (!ppvObj) {
@@ -137,7 +146,6 @@ public:
     }
 
 private:
-    ~SearchCandidateEnumerator() = default;
 
     LONG ref_count_ = 1;
     std::vector<std::wstring> candidates_;
@@ -147,7 +155,13 @@ private:
 } // namespace
 
 SearchCandidateList::SearchCandidateList(std::vector<std::wstring> candidates)
-    : candidates_(std::move(candidates)) {}
+    : candidates_(std::move(candidates)) {
+    DllAddRef();
+}
+
+SearchCandidateList::~SearchCandidateList() {
+    DllRelease();
+}
 
 STDMETHODIMP SearchCandidateList::QueryInterface(REFIID riid, void** ppvObj) {
     if (!ppvObj) {

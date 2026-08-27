@@ -8,6 +8,7 @@
 class DisplayAttributeInfo : public ITfDisplayAttributeInfo {
 public:
     DisplayAttributeInfo();
+    ~DisplayAttributeInfo();
 
     // IUnknown
     STDMETHODIMP QueryInterface(REFIID riid, void** ppvObj) override;
@@ -28,6 +29,7 @@ private:
 class EnumDisplayAttributeInfo : public IEnumTfDisplayAttributeInfo {
 public:
     EnumDisplayAttributeInfo();
+    ~EnumDisplayAttributeInfo();
 
     // IUnknown
     STDMETHODIMP QueryInterface(REFIID riid, void** ppvObj) override;

@@ -8,6 +8,8 @@
 #include <initguid.h>
 #include <inputscope.h>
 
+#include "globals.h"
+
 namespace cxxime_tsf {
 
 bool text_rect_is_outside_view(HRESULT screen_rect_hr, const RECT& screen_rect,
@@ -62,6 +64,11 @@ public:
         : context_(context)
         , evidence_(evidence) {
         context_->AddRef();
+        DllAddRef();
+    }
+    ~EditTargetSession() {
+        context_->Release();
+        DllRelease();
     }
 
     STDMETHODIMP QueryInterface(REFIID iid, void** object) override {
@@ -111,7 +118,6 @@ public:
     }
 
 private:
-    ~EditTargetSession() { context_->Release(); }
 
     void inspect_input_scope(TfEditCookie edit_cookie, ITfRange* range) {
         ITfReadOnlyProperty* property = nullptr;

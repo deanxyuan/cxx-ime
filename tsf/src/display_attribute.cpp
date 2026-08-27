@@ -4,7 +4,13 @@
 #include "globals.h"
 
 // DisplayAttributeInfo
-DisplayAttributeInfo::DisplayAttributeInfo() {}
+DisplayAttributeInfo::DisplayAttributeInfo() {
+    DllAddRef();
+}
+
+DisplayAttributeInfo::~DisplayAttributeInfo() {
+    DllRelease();
+}
 
 STDMETHODIMP DisplayAttributeInfo::QueryInterface(REFIID riid, void** ppvObj) {
     if (!ppvObj)
@@ -64,7 +70,13 @@ STDMETHODIMP DisplayAttributeInfo::Reset() {
 }
 
 // EnumDisplayAttributeInfo
-EnumDisplayAttributeInfo::EnumDisplayAttributeInfo() {}
+EnumDisplayAttributeInfo::EnumDisplayAttributeInfo() {
+    DllAddRef();
+}
+
+EnumDisplayAttributeInfo::~EnumDisplayAttributeInfo() {
+    DllRelease();
+}
 
 STDMETHODIMP EnumDisplayAttributeInfo::QueryInterface(REFIID riid, void** ppvObj) {
     if (!ppvObj)
