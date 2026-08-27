@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from package_checks.common import add_error, forbid_text, require_order, require_text
+from package_checks.common import forbid_text, require_order, require_text
 
 
 def check_installer_flow(
@@ -12,126 +12,94 @@ def check_installer_flow(
     uninstall_text: str,
 ) -> None:
     label = "cxxime-setup.nsi"
-    require_text(errors, text, "Function AcquireInstallerMutex", label)
-    require_text(errors, text, "Function CheckInstallLocks", label)
-    require_text(errors, text, "Function ReleaseInputProcessor", label)
-    require_text(errors, text, "Function un.ReleaseInputProcessor", label)
-    require_text(errors, text, "Function CaptureServerState", label)
-    require_text(errors, text, "Function CleanupRuntimeSnapshotAfterServerRestore", label)
-    require_text(errors, text, "Function QueryTipRegistration", label)
-    require_text(errors, text, "Function WriteRuntimeSnapshot", label)
-    require_text(errors, text, "Function VerifyRestoredInstall", label)
-    require_text(errors, text, "Function CheckInstallDirectory", label)
-    require_text(errors, text, "Function un.CheckFileLocks", label)
-    require_text(errors, text, "Function RecoverInterruptedInstall", label)
-    require_text(errors, text, "Function RollbackInstall", label)
-    require_text(errors, text, "Function WriteTransactionState", label)
-    require_text(errors, text, "Function un.PrepareTransaction", label)
-    require_text(errors, text, "Function un.MarkTransactionStaged", label)
-    require_text(errors, text, "Function un.StageInstalledFiles", label)
-    require_text(errors, text, "Function un.DeleteStagedFiles", label)
-    require_text(errors, text, 'StrCpy $StageDir "$INSTDIR.cxxime-stage"', label)
-    require_text(errors, text, 'StrCpy $BackupDir "$INSTDIR.cxxime-backup"', label)
-    require_text(errors, text, "StrCpy $RegisteredInstallDir $0", label)
-    require_text(errors, text, "StrCpy $LockResult $0", label)
-    require_text(errors, text, "!define TSF_INPROC_KEY", label)
-    require_text(errors, text, '"old_tsf_x64_registered"', label)
-    require_text(errors, text, '"old_tsf_x86_registered"', label)
-    require_text(errors, text, '"server_was_running"', label)
-    require_text(errors, text, '"LanguageProfile"', label)
-    require_text(errors, text, '"tsf_x64_registered"', label)
-    require_text(errors, text, '"tsf_x86_registered"', label)
-    require_text(errors, text, "$OldTsfX64Registered == 1", label)
-    require_text(errors, text, "$OldTsfX86Registered == 1", label)
-    require_text(errors, text, '$UninstallTsfX64Registered "1"', label)
-    require_text(errors, text, '$UninstallTsfX86Registered "1"', label)
-    require_text(errors, text, '$UninstallTransactionPhase "staged"', label)
-    require_text(errors, text, '"transaction" "phase"', label)
-    require_text(errors, text, "phase=$UninstallTransactionPhase", label)
-    if text.count("MOVEFILE_REPLACE_WRITE_THROUGH})") != 3:
-        add_error(errors, f"{label}: install, runtime, and uninstall transactions must commit atomically")
-    require_text(errors, text, "!define MOVEFILE_REPLACE_WRITE_THROUGH 0x9", label)
-    require_text(errors, text, "!define MOVEFILE_DELAY_UNTIL_REBOOT 0x4", label)
-    if text.count("FileWriteUTF16LE /BOM") != 4:
-        add_error(
-            errors,
-            f"{label}: transaction and deferred marker files must be UTF-16 INI files",
-        )
-    if text.count('"format=2$\\r$\\n"') != 3:
-        add_error(errors, f"{label}: install, runtime, and uninstall transactions must use format 2")
-    if text.count('ReadRegStr $0 HKLM "${TSF_INPROC_KEY}" ""') != 8:
-        add_error(errors, f"{label}: both architectures must snapshot and verify TSF registration")
-    if text.count("Call CleanupRuntimeSnapshotAfterServerRestore") != 4:
-        add_error(errors, f"{label}: install failure paths must preserve recoverable runtime state")
-    transaction_state_start = text.find("Function WriteTransactionState")
-    transaction_state_end = text.find("FunctionEnd", transaction_state_start)
-    if transaction_state_start >= 0 and transaction_state_end >= 0:
-        transaction_state = text[transaction_state_start:transaction_state_end]
-        if 'Delete "$INSTDIR\\..\\${RUNTIME_MARKER}"' in transaction_state:
-            add_error(errors, f"{label}: transaction handoff must preserve runtime state")
-    require_text(
-        errors,
-        text,
-        'StrCmp $RegisteredInstallDir "$INSTDIR" 0 install_directory_scan_start',
-        label,
-    )
-    require_text(errors, text, 'Rename "$INSTDIR" "$BackupDir"', label)
-    require_text(errors, text, 'Rename "$StageDir" "$INSTDIR"', label)
-    require_text(errors, text, "Call RollbackInstall", label)
-    require_text(errors, text, ".cxxime-install-complete", label)
-    require_text(errors, text, 'IfFileExists "$INSTDIR\\cxxime-resources.dll"', label)
-    require_text(errors, text, 'IfFileExists "$INSTDIR\\cxxime_tsf_x64.dll"', label)
-    require_text(errors, text, 'IfFileExists "$INSTDIR\\cxxime_tsf_x86.dll"', label)
-    require_text(errors, text, ".cxxime-install-transaction", label)
-    require_text(errors, text, ".cxxime-uninstall-transaction", label)
-    require_text(errors, text, ".cxxime-uninstall-pending", label)
-    require_text(errors, text, 'Push "removing"', label)
-    require_text(errors, text, 'Push "pending_restart"', label)
-    require_text(errors, text, '$UninstallDeferredResume "1"', label)
-    require_text(errors, text, "Function un.BeginDeferredUninstall", label)
-    require_text(errors, text, "Function un.CommitDeferredUninstall", label)
-    require_text(errors, text, "Call un.FailDeferred", label)
-    require_text(errors, text, "SetRebootFlag true", label)
-    require_text(errors, text, "cxxime-installer-helper.exe", label)
-    require_text(errors, text, "--prompt=install", label)
-    require_text(errors, text, "--prompt=uninstall", label)
-    require_text(errors, text, "--parent=$HWNDPARENT", label)
-    if text.count('"$WINDIR\\System32\\cxxime.ime"') != 2:
-        add_error(errors, f"{label}: lock checks must use the x64 helper's System32 path")
-    require_text(errors, text, "nsExec::ExecToStack", label)
-    require_text(errors, install_text, "Call CheckInstallLocks", "Install section")
-    require_text(errors, uninstall_text, "Call un.CheckFileLocks", "Uninstall section")
+    required = [
+        "Function AcquireInstallerMutex",
+        "Function PrepareInstallTarget",
+        "Function CheckFreshInstallBase",
+        "Function SecureInstallBase",
+        "Function CheckInstallLocks",
+        "Function StartNewServer",
+        "Function ReleaseInputProcessor",
+        "Function CaptureServerState",
+        "Function SnapshotPreviousState",
+        "Function CleanupPreviousInstall",
+        "Function WriteInstallLayoutState",
+        "Function RefreshInstallLayoutAfterRecovery",
+        "Function RecoverPendingSystemIme",
+        "Function PrepareSystemImeUpdate",
+        "Function CancelPendingSystemImeUpdate",
+        "Function WriteTransactionState",
+        "Function RollbackInstall",
+        "Function un.ReleaseInputProcessor",
+        "Function un.CheckFileLocks",
+        "!define MOVEFILE_DELAY_UNTIL_REBOOT 0x4",
+        "!define MOVEFILE_REPLACE_DELAY_UNTIL_REBOOT 0x5",
+        "!insertmacro MUI_PAGE_FINISH",
+        'StrCpy $InstallBaseDir "$PROGRAMFILES64\\CxxIME"',
+        'StrCpy $PreviousInstallDir $0',
+        'StrCpy $ActiveServerDir "$PreviousInstallDir"',
+        'StrCpy $InstallTargetDir "$InstallBaseDir\\${VERSION}"',
+        'StrCpy $InstallTargetPrepared 0',
+        '${If} $InstallTargetPrepared == 0',
+        'StrCpy $InstallBaseDir "$INSTDIR"',
+        'StrCpy $InstallTargetPrepared 1',
+        'StrCpy $StageDir "$InstallBaseDir\\update"',
+        'StrCpy $InstallTargetDir "$InstallBaseDir\\${VERSION}.next"',
+        'WriteRegStr HKLM "${UNINSTALL_KEY}" "InstallBaseLocation" "$InstallBaseDir"',
+        'WriteRegStr HKLM "${UNINSTALL_KEY}" "PreviousInstallLocation" "$PreviousInstallDir"',
+        'FileWriteUTF16LE $0 "active=$INSTDIR$\\r$\\n"',
+        'CreateDirectory "$InstallBaseDir\\update"',
+        'server-ready "$INSTDIR\\cxxime-server.exe"',
+        'secure-install-root "$InstallBaseDir"',
+        'validate-install-directory "$StageDir"',
+        'Delete /REBOOTOK "$PreviousInstallDir\\cxxime_tsf_x64.dll"',
+        'WriteINIStr "$InstallBaseDir\\${SYSTEM_IME_UPDATE_MARKER}"',
+    ]
+    for item in required:
+        require_text(errors, text, item, label)
+
     require_order(
         errors,
-        install_text,
+        text,
         [
+            "Call PrepareInstallTarget",
+            "Call SetTransactionPaths",
+            "Call CheckFreshInstallBase",
+            "Call SecureInstallBase",
+            "Goto install_failed_untrusted_base",
             "Call CaptureServerState",
-            "Call WriteRuntimeSnapshot",
             "Call ReleaseInputProcessor",
             "Call StopServer",
             "Call CheckInstallLocks",
             "Call RecoverInterruptedInstall",
+            "Call RefreshInstallLayoutAfterRecovery",
+            "Call RecoverPendingSystemIme",
+            "Call CheckPreviousVersionLimit",
             "Call CheckInstallDirectory",
             "Call SnapshotPreviousState",
             "Call WriteTransactionState",
-            'Rename "$INSTDIR" "$BackupDir"',
             'Rename "$StageDir" "$INSTDIR"',
-            "Call CopyNewSystemIme",
             "Call RegisterNewTsf",
             "Call WriteInstallationRegistry",
+            "Call StartNewServer",
+            "Call PrepareSystemImeUpdate",
             "Call WriteInstallMarker",
+            'Delete "$INSTDIR\\${TRANSACTION_MARKER}"',
+            "Call CopyNewSystemIme",
+            "Call CleanupPreviousInstall",
+            "Call WriteInstallLayoutState",
         ],
-        "Install section",
+        "Versioned install flow",
     )
     require_order(
         errors,
-        install_text,
+        text,
         [
-            'RMDir /r "$BackupDir"',
-            'Delete "$INSTDIR\\..\\${RUNTIME_MARKER}"',
-            'Delete "$INSTDIR\\${TRANSACTION_MARKER}"',
+            'StrCmp $MultiVersionInstall "1" install_lock_done',
+            '"$ActiveServerDir\\cxxime_tsf_x64.dll"',
+            '"$ActiveServerDir\\cxxime-server.exe"',
         ],
-        "Install commit",
+        "Legacy install lock source",
     )
     require_order(
         errors,
@@ -142,25 +110,156 @@ def check_installer_flow(
             "Call un.CheckFileLocks",
             "Call un.PrepareTransaction",
             "Call un.UnregisterInstalledTsf",
-            "Call un.RemoveSystemIme",
-            "Call un.StageInstalledFiles",
-            "Call un.MarkTransactionStaged",
-            "Call un.DeleteStagedFiles",
-            'DeleteRegKey HKLM "${UNINSTALL_KEY}"',
-            'Delete "$INSTDIR\\uninstall.exe"',
         ],
-        "Uninstall section",
+        "Uninstall flow",
     )
-    forbid_text(errors, install_text, "/REBOOTOK", "Install section")
-    forbid_text(errors, text, r"Keyboard Layout\Preload", label)
-    forbid_text(errors, text, "LoadKeyboardLayoutW", label)
-    forbid_text(errors, text, "RequireReplaceableTsfDll", label)
-    forbid_text(errors, text, "restored_install_verified:", label)
-    forbid_text(errors, text, "kernel32::CreateFileW", label)
-    forbid_text(errors, text, "WriteINIStr", label)
-    forbid_text(errors, text, "FlushINI", label)
-    forbid_text(errors, text, '"format" "1"', label)
-    forbid_text(errors, text, '"$StageDir\\${RUNTIME_MARKER}"', label)
-    forbid_text(errors, text, "recover_legacy_backup", label)
-    forbid_text(errors, uninstall_text, 'RMDir /r "$INSTDIR"', "Uninstall section")
-    require_text(errors, uninstall_text, 'RMDir "$INSTDIR"', "Uninstall section")
+    require_order(
+        errors,
+        text,
+        [
+            "Function FinalizeCommittedInstall",
+            "Call CleanupPreviousInstall",
+            "Call WriteInstallLayoutState",
+            'Delete "$INSTDIR\\${TRANSACTION_MARKER}"',
+        ],
+        "Committed install recovery",
+    )
+    require_order(
+        errors,
+        text,
+        [
+            "Function RecoverInterruptedInstall",
+            'IfFileExists "$INSTDIR\\${TRANSACTION_MARKER}" recover_target_transaction',
+            'IfFileExists "$StageDir\\${TRANSACTION_MARKER}" recover_stage_transaction',
+            'IfFileExists "$PreviousInstallDir\\${INSTALL_MARKER}"',
+        ],
+        "Interrupted transaction recovery priority",
+    )
+    require_order(
+        errors,
+        text,
+        [
+            "Function WriteInstallLayoutState",
+            'CreateDirectory "$InstallBaseDir\\update"',
+            'FileOpen $0 "$InstallBaseDir\\${INSTALL_STATE_TEMP}" w',
+        ],
+        "Stable install layout",
+    )
+    require_order(
+        errors,
+        install_text,
+        [
+            "Call WriteInstallLayoutState",
+            'StrCmp $0 "1" install_layout_state_written',
+            "SetErrorLevel 1",
+            "Abort",
+            "install_layout_state_written:",
+        ],
+        "Install layout failure handling",
+    )
+    untrusted_start = install_text.find("install_failed_untrusted_base:")
+    untrusted_end = install_text.find("install_failed_before_swap:", untrusted_start)
+    if untrusted_start < 0 or untrusted_end < 0:
+        errors.append("Untrusted install base failure: missing isolated failure block")
+    else:
+        untrusted_block = install_text[untrusted_start:untrusted_end]
+        for required_item in ["CloseHandle", "SetErrorLevel 1", "Abort"]:
+            if required_item not in untrusted_block:
+                errors.append(
+                    f"Untrusted install base failure: missing `{required_item}`"
+                )
+        for forbidden_item in ["RMDir", "Delete", "StopServer", "RestartInstalledServer"]:
+            if forbidden_item in untrusted_block:
+                errors.append(
+                    f"Untrusted install base failure: forbidden `{forbidden_item}`"
+                )
+
+    fresh_base_start = text.find("Function CheckFreshInstallBase")
+    fresh_base_end = text.find("FunctionEnd", fresh_base_start)
+    if fresh_base_start < 0 or fresh_base_end < 0:
+        errors.append("Fresh install base validation: missing function")
+    else:
+        fresh_base_block = text[fresh_base_start:fresh_base_end]
+        for forbidden_item in ["CreateDirectory", "RMDir", "Delete"]:
+            if forbidden_item in fresh_base_block:
+                errors.append(
+                    f"Fresh install base validation: forbidden `{forbidden_item}`"
+                )
+
+    snapshot_start = text.find("Function SnapshotPreviousState")
+    snapshot_end = text.find("FunctionEnd", snapshot_start)
+    if snapshot_start < 0 or snapshot_end < 0:
+        errors.append("Fresh install TIP state: missing snapshot function")
+    else:
+        require_order(
+            errors,
+            text[snapshot_start:snapshot_end],
+            [
+                "Call QueryTipRegistration",
+                '${If} $OldInstallAvailable == 0',
+                "StrCpy $OldTipX64Present 0",
+                "StrCpy $OldTipX86Present 0",
+            ],
+            "Fresh install TIP state",
+        )
+
+    registry_start = text.find("Function WriteInstallationRegistry")
+    registry_end = text.find("FunctionEnd", registry_start)
+    if registry_start < 0 or registry_end < 0:
+        errors.append("Installation registry writes: missing function")
+    else:
+        registry_block = text[registry_start:registry_end]
+        require_order(
+            errors,
+            registry_block,
+            [
+                'WriteRegStr HKLM "${UNINSTALL_KEY}" "InstallBaseLocation"',
+                "IfErrors installation_registry_failed",
+                'ReadRegStr $0 HKLM "${UNINSTALL_KEY}" "PreviousInstallLocation"',
+                'DeleteRegValue HKLM "${UNINSTALL_KEY}" "PreviousInstallLocation"',
+                "ClearErrors",
+                'WriteRegStr HKLM "${UNINSTALL_KEY}" "UninstallString"',
+                "IfErrors installation_registry_failed",
+            ],
+            "Installation registry error handling",
+        )
+        delete_previous_check = (
+            'DeleteRegValue HKLM "${UNINSTALL_KEY}" "PreviousInstallLocation"\n'
+            "            IfErrors installation_registry_failed"
+        )
+        if delete_previous_check not in registry_block:
+            errors.append(
+                "Installation registry error handling: optional value deletion "
+                "is not checked"
+            )
+
+    restore_registry_start = text.find("Function RestorePreviousRegistry")
+    restore_registry_end = text.find("FunctionEnd", restore_registry_start)
+    if restore_registry_start < 0 or restore_registry_end < 0:
+        errors.append("Registry restore error handling: missing function")
+    else:
+        restore_registry_block = text[restore_registry_start:restore_registry_end]
+        for value_name in ("InstallBaseLocation", "PreviousInstallLocation"):
+            delete_value_check = (
+                f'DeleteRegValue HKLM "${{UNINSTALL_KEY}}" "{value_name}"\n'
+                "                IfErrors restore_registry_failed"
+            )
+            if delete_value_check not in restore_registry_block:
+                errors.append(
+                    "Registry restore error handling: optional "
+                    f"`{value_name}` deletion is not checked"
+                )
+
+    forbid_text(errors, text, "InitializeInstallResume", label)
+    forbid_text(errors, text, "ScheduleDeferredInstall", label)
+    forbid_text(errors, text, "INSTALL_PENDING_", label)
+    forbid_text(errors, text, "InstallDeferred", label)
+    forbid_text(errors, text, "InstallResume", label)
+    forbid_text(errors, text, 'StrCpy $StageDir "$INSTDIR.cxxime-stage"', label)
+    forbid_text(errors, text, 'StrCpy $InstallTargetDir "$InstallBaseDir\\versions', label)
+    forbid_text(errors, text, 'RMDir /r "$PreviousInstallDir"', label)
+    forbid_text(errors, text, 'RMDir /r /REBOOTOK "$PreviousInstallDir"', label)
+    forbid_text(errors, text, "RmShutdown", label)
+    forbid_text(errors, text, "FreeLibrary", label)
+    forbid_text(errors, text, "VersionCompare", label)
+    forbid_text(errors, text, "CompareVersion", label)

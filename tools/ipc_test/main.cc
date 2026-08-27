@@ -1,6 +1,6 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 //
-// IPC test tool — interactive command-line utility for testing the IPC layer.
+// IPC test tool - interactive command-line utility for testing the IPC layer.
 // Usage: ipc_test [--pipe <name>]
 
 #include <cstdio>
@@ -23,20 +23,20 @@ void set_console_utf8() {
 
 void print_usage() {
     printf("Commands:\n");
-    printf("  connect [pipe_name]     — connect to IPC server\n");
-    printf("  disconnect              — disconnect from server\n");
-    printf("  session start           — start a new session\n");
-    printf("  session end <id>        — end a session\n");
-    printf("  key <vk> [mods] [up]    — send key event (vk in hex/dec)\n");
-    printf("  select <index>          — select candidate\n");
-    printf("  commit                  — commit composition\n");
-    printf("  focus in|out            — send focus event\n");
-    printf("  ping                    — measure RTT\n");
-    printf("  stress <n> [conc]       — send n requests with c concurrent clients\n");
-    printf("  bench <n>               — benchmark n round-trips\n");
-    printf("  status                  — show connection status\n");
-    printf("  help                    — show this help\n");
-    printf("  quit                    — exit\n");
+    printf("  connect [pipe_name]     - connect to IPC server\n");
+    printf("  disconnect              - disconnect from server\n");
+    printf("  session start           - start a new session\n");
+    printf("  session end <id>        - end a session\n");
+    printf("  key <vk> [mods] [up]    - send key event (vk in hex/dec)\n");
+    printf("  select <index>          - select candidate\n");
+    printf("  commit                  - commit composition\n");
+    printf("  focus in|out            - send focus event\n");
+    printf("  ping                    - measure RTT\n");
+    printf("  stress <n> [conc]       - send n requests with c concurrent clients\n");
+    printf("  bench <n>               - benchmark n round-trips\n");
+    printf("  status                  - show connection status\n");
+    printf("  help                    - show this help\n");
+    printf("  quit                    - exit\n");
     printf("\n");
     printf("Key codes: A=41, B=42, ..., Z=5A, Space=20, Enter=0D, Backspace=08, Esc=1B\n");
     printf("Modifiers: Shift=1, Ctrl=2, Alt=4 (additive)\n");
@@ -333,7 +333,7 @@ private:
         }
         printf("  Connected.\n");
 
-        // Step 2: start session (engine init — may take a moment)
+        // Step 2: start session (engine init - may take a moment)
         printf("Starting session...\n");
         fflush(stdout);
         uint32_t sid = 0;

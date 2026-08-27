@@ -70,8 +70,18 @@ cleanup:
 }
 
 STDAPI DllUnregisterServer() {
-    unregister_categories();
-    unregister_profiles();
-    unregister_server();
-    return S_OK;
+    HRESULT result = S_OK;
+    const HRESULT categories_hr = unregister_categories();
+    if (FAILED(categories_hr)) {
+        result = categories_hr;
+    }
+    const HRESULT profiles_hr = unregister_profiles();
+    if (FAILED(profiles_hr) && SUCCEEDED(result)) {
+        result = profiles_hr;
+    }
+    const HRESULT server_hr = unregister_server();
+    if (FAILED(server_hr) && SUCCEEDED(result)) {
+        result = server_hr;
+    }
+    return result;
 }

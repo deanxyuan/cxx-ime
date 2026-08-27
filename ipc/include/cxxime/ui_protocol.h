@@ -16,7 +16,12 @@
 namespace cxxime {
 
 constexpr std::uint32_t UI_PROTOCOL_MAGIC = 0x43584955; // CXIU
+constexpr std::uint16_t UI_PROTOCOL_MIN_COMPATIBLE_VERSION = 1;
 constexpr std::uint16_t UI_PROTOCOL_VERSION = 1;
+constexpr std::size_t UI_SNAPSHOT_BASELINE_SIZE = 3056;
+constexpr std::size_t UI_COMMAND_BASELINE_SIZE = 56;
+
+// UI payload prefixes are frozen at the framed 0.4.0 baseline and are append-only.
 constexpr std::size_t kUiPreeditCapacity = 256;
 constexpr std::size_t kUiCandidateHintCapacity = 4;
 constexpr std::size_t kUiMaxPacketSize = 64 * 1024;
@@ -24,6 +29,12 @@ constexpr std::size_t kUiMaxPacketSize = 64 * 1024;
 enum class UiPacketType : std::uint16_t {
     kSnapshot = 1,
     kCommand = 2,
+};
+
+enum class UiPacketParseResult : std::uint8_t {
+    kAccepted,
+    kIgnored,
+    kInvalid,
 };
 
 enum class UiOwnership : std::uint32_t {
@@ -142,11 +153,13 @@ static_assert(offsetof(UiPresentationSnapshot, preedit) == 96,
               "UiPresentationSnapshot::preedit offset changed");
 static_assert(offsetof(UiPresentationSnapshot, candidate_page) == 352,
               "UiPresentationSnapshot::candidate_page offset changed");
-static_assert(sizeof(UiPresentationSnapshot) == 3056, "UiPresentationSnapshot layout changed");
+static_assert(sizeof(UiPresentationSnapshot) >= UI_SNAPSHOT_BASELINE_SIZE,
+              "UiPresentationSnapshot cannot shrink below the 0.4.0 baseline");
 static_assert(alignof(UiCommand) == 8, "UiCommand alignment changed");
 static_assert(offsetof(UiCommand, type) == 40, "UiCommand::type offset changed");
 static_assert(offsetof(UiCommand, value) == 48, "UiCommand::value offset changed");
-static_assert(sizeof(UiCommand) == 56, "UiCommand layout changed");
+static_assert(sizeof(UiCommand) >= UI_COMMAND_BASELINE_SIZE,
+              "UiCommand cannot shrink below the 0.4.0 baseline");
 static_assert(offsetof(UiPacketHeader, sequence) == 12, "UiPacketHeader::sequence offset changed");
 static_assert(sizeof(UiPacketHeader) == 20, "UiPacketHeader layout changed");
 
@@ -158,9 +171,13 @@ static_assert(kUiCommandPacketSize <= kUiMaxPacketSize, "UI command packet excee
 
 bool build_ui_snapshot_packet(const UiPresentationSnapshot& snapshot, std::uint64_t sequence,
                               std::vector<std::uint8_t>* packet);
+UiPacketParseResult decode_ui_snapshot_packet(const void* data, std::size_t size,
+                                              UiPresentationSnapshot* snapshot);
 bool parse_ui_snapshot_packet(const void* data, std::size_t size, UiPresentationSnapshot* snapshot);
 bool build_ui_command_packet(const UiCommand& command, std::uint64_t sequence,
                              std::vector<std::uint8_t>* packet);
+UiPacketParseResult decode_ui_command_packet(const void* data, std::size_t size,
+                                             UiCommand* command);
 bool parse_ui_command_packet(const void* data, std::size_t size, UiCommand* command);
 bool is_valid_ui_snapshot(const UiPresentationSnapshot& snapshot);
 bool is_valid_ui_command(const UiCommand& command);

@@ -31,7 +31,7 @@ struct UiClientContext {
     HANDLE pipe = INVALID_HANDLE_VALUE;
     OVERLAPPED read = {};
     OVERLAPPED write = {};
-    std::array<std::uint8_t, kUiSnapshotPacketSize> read_buffer = {};
+    std::array<std::uint8_t, kUiMaxPacketSize> read_buffer = {};
     std::vector<std::uint8_t> write_buffer;
     std::deque<std::vector<std::uint8_t>> pending_writes;
     std::atomic<bool> closing{false};
@@ -298,7 +298,9 @@ private:
         }
 
         UiPresentationSnapshot snapshot;
-        if (!parse_ui_snapshot_packet(client->read_buffer.data(), transferred, &snapshot)) {
+        const UiPacketParseResult result =
+            decode_ui_snapshot_packet(client->read_buffer.data(), transferred, &snapshot);
+        if (result == UiPacketParseResult::kInvalid) {
             request_close(client);
             finish_io(client);
             return;
@@ -308,7 +310,7 @@ private:
             finish_io(client);
             return;
         }
-        if (snapshot_handler_) {
+        if (result == UiPacketParseResult::kAccepted && snapshot_handler_) {
             snapshot_handler_(client->endpoint, snapshot);
         }
         if (!post_read(client)) {
@@ -346,8 +348,7 @@ private:
                 PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
                 PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
                 PIPE_UNLIMITED_INSTANCES,
-                static_cast<DWORD>(kUiSnapshotPacketSize),
-                static_cast<DWORD>(kUiCommandPacketSize),
+                static_cast<DWORD>(kUiMaxPacketSize), static_cast<DWORD>(kUiMaxPacketSize),
                 0,
                 security.get());
             if (pipe == INVALID_HANDLE_VALUE) {

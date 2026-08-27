@@ -125,6 +125,56 @@ Function un.BeginDeferredUninstall
     Push 1
 FunctionEnd
 
+Function un.CleanupKnownVersion
+    Pop $2
+    StrCmp $2 "" un_cleanup_known_version_done
+    StrCmp $2 $INSTDIR un_cleanup_known_version_files
+    StrCmp $2 $InstallBaseDir un_cleanup_known_version_files
+    StrLen $0 "$InstallBaseDir\"
+    StrCpy $1 "$2" $0
+    StrCmp $1 "$InstallBaseDir\" un_cleanup_known_version_files \
+        un_cleanup_known_version_done
+
+    un_cleanup_known_version_files:
+    Delete /REBOOTOK "$2\cxxime_tsf_x64.dll"
+    Delete /REBOOTOK "$2\cxxime_tsf_x86.dll"
+    Delete /REBOOTOK "$2\cxxime_ime_x64.ime"
+    Delete /REBOOTOK "$2\cxxime_ime_x86.ime"
+    Delete /REBOOTOK "$2\cxxime-resources.dll"
+    Delete /REBOOTOK "$2\cxxime-server.exe"
+    Delete /REBOOTOK "$2\cxxime-settings.exe"
+    Delete /REBOOTOK "$2\collect_diagnostics.ps1"
+    Delete /REBOOTOK "$2\cxxime-ime-host-probe-x64.exe"
+    Delete /REBOOTOK "$2\cxxime-ime-host-probe-x86.exe"
+    Delete /REBOOTOK "$2\export_host_trace.ps1"
+    Delete /REBOOTOK "$2\license.txt"
+    Delete /REBOOTOK "$2\THIRD_PARTY_NOTICES.txt"
+    Delete /REBOOTOK "$2\uninstall.exe"
+    Delete /REBOOTOK "$2\${INSTALL_MARKER}"
+    Delete /REBOOTOK "$2\${TRANSACTION_MARKER}"
+    Delete /REBOOTOK "$2\${TRANSACTION_TEMP}"
+    Delete /REBOOTOK "$2\data\default.json"
+    Delete /REBOOTOK "$2\data\settings_presets.json"
+    Delete /REBOOTOK "$2\data\themes.json"
+    Delete /REBOOTOK "$2\data\punctuation.json"
+    Delete /REBOOTOK "$2\data\symbols.json"
+    Delete /REBOOTOK "$2\data\dictionary_manifest.json"
+    Delete /REBOOTOK "$2\data\pinyin.dict.bin"
+    Delete /REBOOTOK "$2\data\pinyin.dict.idx"
+    Delete /REBOOTOK "$2\data\pinyin.spellings.bin"
+    Delete /REBOOTOK "$2\data\pinyin.topn.bin"
+    Delete /REBOOTOK "$2\data\pinyin.reverse.idx"
+    Delete /REBOOTOK "$2\data\wubi86.dict.bin"
+    Delete /REBOOTOK "$2\data\wubi86.dict.idx"
+    Delete /REBOOTOK "$2\data\wubi86.reverse.idx"
+    Delete /REBOOTOK "$2\licenses\rime-ice-GPL-3.0.txt"
+    RMDir /REBOOTOK "$2\data"
+    RMDir /REBOOTOK "$2\licenses"
+    StrCmp $2 $InstallBaseDir un_cleanup_known_version_done
+    RMDir /REBOOTOK "$2"
+    un_cleanup_known_version_done:
+FunctionEnd
+
 Function un.CommitDeferredUninstall
     SetOutPath "$PLUGINSDIR"
     Push "pending_restart"
@@ -136,6 +186,11 @@ Function un.CommitDeferredUninstall
     !insertmacro ScheduleDeferredPath "$INSTDIR\uninstall.exe"
     !insertmacro ScheduleDeferredPath "$INSTDIR\${UNINSTALL_DEFERRED_MARKER}"
     !insertmacro ScheduleDeferredPath "$INSTDIR"
+    !insertmacro ScheduleDeferredPath "$InstallBaseDir\${RUNTIME_MARKER}"
+    !insertmacro ScheduleDeferredPath "$InstallBaseDir\${RUNTIME_TEMP}"
+    !insertmacro ScheduleDeferredPath "$InstallBaseDir\${SYSTEM_IME_X64_PENDING}"
+    !insertmacro ScheduleDeferredPath "$InstallBaseDir\${SYSTEM_IME_X86_PENDING}"
+    !insertmacro ScheduleDeferredPath "$InstallBaseDir\${SYSTEM_IME_UPDATE_MARKER}"
     SetRebootFlag true
     Push 1
 FunctionEnd

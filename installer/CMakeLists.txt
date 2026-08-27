@@ -12,9 +12,11 @@ target_link_libraries(cxxime-installer-lock PUBLIC Rstrtmgr.lib)
 
 add_executable(cxxime-installer-helper
     installer.manifest
+    include/cxxime/installer_path_security.h
     include/cxxime/installer_server_process.h
     include/cxxime/installer_tsf.h
     src/main.cc
+    src/installer_path_security.cc
     src/installer_prompt.cc
     src/installer_server_process.cc
     src/installer_tsf.cc
@@ -26,6 +28,7 @@ target_include_directories(cxxime-installer-helper PRIVATE
 
 target_link_libraries(cxxime-installer-helper PRIVATE
     cxxime-installer-lock
+    cxxime-ipc
     comctl32.lib
     ole32.lib
     uuid.lib

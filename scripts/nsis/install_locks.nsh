@@ -3,7 +3,7 @@ Function StopServer
     StrCpy $ServerWasRunning $InitialServerWasRunning
     StrCmp $InitialServerWasRunning "1" stop_server_request stop_server_done
     stop_server_request:
-    nsExec::Exec '"$PLUGINSDIR\cxxime-installer-helper.exe" stop-server "$INSTDIR\cxxime-server.exe"'
+    nsExec::Exec '"$PLUGINSDIR\cxxime-installer-helper.exe" stop-server "$ActiveServerDir\cxxime-server.exe"'
     Pop $0
     StrCmp $0 "0" stop_server_wait_start
         StrCpy $ServerStopResult 2
@@ -12,14 +12,14 @@ Function StopServer
     StrCpy $1 0
     stop_server_wait:
         Sleep 100
-        nsExec::Exec '"$PLUGINSDIR\cxxime-installer-helper.exe" server-running "$INSTDIR\cxxime-server.exe"'
+        nsExec::Exec '"$PLUGINSDIR\cxxime-installer-helper.exe" server-running "$ActiveServerDir\cxxime-server.exe"'
         Pop $0
         StrCmp $0 "1" stop_server_done
         StrCmp $0 "2" stop_server_failed
         IntOp $1 $1 + 1
         IntCmp $1 30 stop_server_force stop_server_wait stop_server_force
     stop_server_force:
-        nsExec::Exec '"$PLUGINSDIR\cxxime-installer-helper.exe" force-stop-server "$INSTDIR\cxxime-server.exe"'
+        nsExec::Exec '"$PLUGINSDIR\cxxime-installer-helper.exe" force-stop-server "$ActiveServerDir\cxxime-server.exe"'
         Pop $0
         StrCmp $0 "0" stop_server_force_wait
         Goto stop_server_failed
@@ -27,7 +27,7 @@ Function StopServer
         StrCpy $1 0
     stop_server_force_poll:
         Sleep 100
-        nsExec::Exec '"$PLUGINSDIR\cxxime-installer-helper.exe" server-running "$INSTDIR\cxxime-server.exe"'
+        nsExec::Exec '"$PLUGINSDIR\cxxime-installer-helper.exe" server-running "$ActiveServerDir\cxxime-server.exe"'
         Pop $0
         StrCmp $0 "1" stop_server_done
         StrCmp $0 "2" stop_server_failed
@@ -60,7 +60,7 @@ Function QueryTipRegistration
 FunctionEnd
 
 Function CaptureServerState
-    nsExec::Exec '"$PLUGINSDIR\cxxime-installer-helper.exe" server-running "$INSTDIR\cxxime-server.exe"'
+    nsExec::Exec '"$PLUGINSDIR\cxxime-installer-helper.exe" server-running "$ActiveServerDir\cxxime-server.exe"'
     Pop $0
     StrCmp $0 "0" capture_server_running
     StrCmp $0 "1" capture_server_not_running
@@ -76,7 +76,7 @@ Function CaptureServerState
         StrCpy $InitialServerWasRunning 1
         StrCpy $ServerWasRunning 1
         nsExec::ExecToStack \
-            '"$PLUGINSDIR\cxxime-installer-helper.exe" server-pid "$INSTDIR\cxxime-server.exe"'
+            '"$PLUGINSDIR\cxxime-installer-helper.exe" server-pid "$ActiveServerDir\cxxime-server.exe"'
         Pop $1
         Pop $2
         StrCmp $1 "0" 0 capture_server_query_failed
@@ -92,15 +92,15 @@ Function RestartInstalledServer
     StrCpy $ServerRestartResult 0
     StrCmp $InitialServerWasRunning "1" 0 restart_installed_server_done
     StrCmp $InstallStateVerified "1" 0 restart_installed_server_failed
-    IfFileExists "$INSTDIR\cxxime-server.exe" 0 restart_installed_server_failed
+    IfFileExists "$ActiveServerDir\cxxime-server.exe" 0 restart_installed_server_failed
         ClearErrors
-        nsExec::Exec '"$PLUGINSDIR\cxxime-installer-helper.exe" start-server "$INSTDIR\cxxime-server.exe"'
+        nsExec::Exec '"$PLUGINSDIR\cxxime-installer-helper.exe" start-server "$ActiveServerDir\cxxime-server.exe"'
         Pop $0
         StrCmp $0 "0" 0 restart_installed_server_failed
         StrCpy $1 0
     restart_installed_server_wait:
         Sleep 100
-        nsExec::Exec '"$PLUGINSDIR\cxxime-installer-helper.exe" server-running "$INSTDIR\cxxime-server.exe"'
+        nsExec::Exec '"$PLUGINSDIR\cxxime-installer-helper.exe" server-running "$ActiveServerDir\cxxime-server.exe"'
         Pop $0
         StrCmp $0 "0" restart_installed_server_ready
         StrCmp $0 "2" restart_installed_server_failed
@@ -115,6 +115,30 @@ Function RestartInstalledServer
         StrCpy $ServerRestartResult 2
         DetailPrint "CxxIME 后台恢复启动失败。"
     restart_installed_server_done:
+FunctionEnd
+
+Function StartNewServer
+    IfFileExists "$INSTDIR\cxxime-server.exe" 0 start_new_server_failed
+    nsExec::Exec '"$PLUGINSDIR\cxxime-installer-helper.exe" start-server "$INSTDIR\cxxime-server.exe"'
+    Pop $0
+    StrCmp $0 "0" start_new_server_poll start_new_server_failed
+    StrCpy $1 0
+    start_new_server_poll:
+        Sleep 100
+        nsExec::Exec '"$PLUGINSDIR\cxxime-installer-helper.exe" server-ready "$INSTDIR\cxxime-server.exe"'
+        Pop $0
+        StrCmp $0 "0" start_new_server_ready
+        StrCmp $0 "2" start_new_server_failed
+        IntOp $1 $1 + 1
+        IntCmp $1 30 start_new_server_failed start_new_server_poll start_new_server_failed
+    start_new_server_ready:
+        Push 1
+        Return
+    start_new_server_failed:
+        nsExec::Exec '"$PLUGINSDIR\cxxime-installer-helper.exe" force-stop-server "$INSTDIR\cxxime-server.exe"'
+        Pop $0
+        StrCpy $FailureMessage "无法确认新版本 CxxIME 后台已启动。"
+        Push 0
 FunctionEnd
 
 Function CleanupRuntimeSnapshotAfterServerRestore
@@ -133,6 +157,9 @@ Function ReleaseInputProcessor
 FunctionEnd
 
 Function VerifyRestoredInstall
+    ${If} $MultiVersionInstall == 1
+        StrCpy $INSTDIR "$StateInstallDir"
+    ${EndIf}
     StrCmp $OldInstallAvailable "1" restored_install_check_files
     IfFileExists "$INSTDIR\cxxime-server.exe" 0 restored_install_no_old_resources
         Goto restored_install_invalid
@@ -276,7 +303,7 @@ Function VerifyRestoredInstall
     restored_install_invalid:
         StrCpy $InstallStateVerified 0
         StrCpy $FailureMessage \
-            "$FailureMessage$\r$\n$\r$\nCxxIME 旧版文件未通过恢复校验，未启动后台。"
+            "$FailureMessage$\r$\n$\r$\nCxxIME 安装前状态未通过恢复校验，未启动后台。"
         Push 0
 FunctionEnd
 
@@ -301,6 +328,7 @@ Function ReadLockReport
 FunctionEnd
 
 Function CheckInstallLocks
+    StrCmp $MultiVersionInstall "1" install_lock_done
     StrCpy $LockPromptOptions ""
     IfSilent install_lock_options_ready
         StrCpy $LockPromptOptions "--prompt=install --parent=$HWNDPARENT"
@@ -310,10 +338,10 @@ Function CheckInstallLocks
         nsExec::ExecToStack \
             '"$PLUGINSDIR\cxxime-installer-helper.exe" query --report "$LockReportPath" \
             $LockPromptOptions \
-            "$INSTDIR\cxxime_tsf_x64.dll" "$INSTDIR\cxxime_tsf_x86.dll" \
-            "$INSTDIR\cxxime_ime_x64.ime" "$INSTDIR\cxxime_ime_x86.ime" \
-            "$INSTDIR\cxxime-resources.dll" "$INSTDIR\cxxime-server.exe" \
-            "$INSTDIR\cxxime-settings.exe" "$INSTDIR\uninstall.exe" \
+            "$ActiveServerDir\cxxime_tsf_x64.dll" "$ActiveServerDir\cxxime_tsf_x86.dll" \
+            "$ActiveServerDir\cxxime_ime_x64.ime" "$ActiveServerDir\cxxime_ime_x86.ime" \
+            "$ActiveServerDir\cxxime-resources.dll" "$ActiveServerDir\cxxime-server.exe" \
+            "$ActiveServerDir\cxxime-settings.exe" "$ActiveServerDir\uninstall.exe" \
             "$WINDIR\System32\cxxime.ime" "$SYSDIR\cxxime.ime"'
         Pop $0
         Pop $1
@@ -347,11 +375,11 @@ Function CheckInstallLocks
         Call ReadLockReport
         IfSilent install_lock_silent
         StrCmp $LockResult "10" install_lock_retry
-        StrCmp $LockResult "12" install_lock_cancel
+        StrCmp $LockResult "12" install_lock_cancel_restore
         MessageBox MB_RETRYCANCEL|MB_ICONSTOP|MB_DEFBUTTON1 \
             "$LockReportText$\r$\n$\r$\n无法显示文件占用详情。关闭相关应用程序后单击“重试”。" \
             IDRETRY install_lock_retry
-    install_lock_cancel:
+    install_lock_cancel_restore:
         Call RestartInstalledServer
         Call CleanupRuntimeSnapshotAfterServerRestore
         SetErrorLevel 2

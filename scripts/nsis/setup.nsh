@@ -25,13 +25,21 @@ Function .onInit
     StrCpy $LaunchSettings 0
     StrCpy $ServerRestartResult 0
     StrCpy $InstallStateVerified 1
+    StrCpy $InstallBaseHandle 0
     StrCpy $InitialServerWasRunning 0
     StrCpy $TransactionServerWasRunning ""
     StrCpy $ServerStopResult 0
     StrCpy $ServerProcessId 0
-    StrCpy $RuntimeInstallRoot ""
-    StrCpy $RuntimeServerPath ""
-    StrCpy $RuntimeVersion ""
+    StrCpy $InstallBaseDir "$PROGRAMFILES64\CxxIME"
+    StrCpy $PreviousInstallDir ""
+    StrCpy $OldPreviousInstallDir ""
+    StrCpy $PreviousVersionDir ""
+    StrCpy $MultiVersionInstall 0
+    StrCpy $ActiveServerDir "$PROGRAMFILES64\CxxIME"
+    StrCpy $StateInstallDir "$PROGRAMFILES64\CxxIME"
+    StrCpy $InstallTargetDir "$PROGRAMFILES64\CxxIME\${VERSION}"
+    StrCpy $InstallTargetPrepared 0
+    StrCpy $PreviousInstallFlat 0
     StrCpy $OldTipX64Present 0
     StrCpy $OldTipX86Present 0
     ${IfNot} ${RunningX64}
@@ -54,8 +62,139 @@ Function .onInit
     ${IfNot} ${Errors}
     ${AndIf} $0 != ""
         StrCpy $RegisteredInstallDir $0
+        StrCpy $PreviousInstallDir $0
         StrCpy $INSTDIR $0
+        ClearErrors
+        ReadRegStr $1 HKLM "${UNINSTALL_KEY}" "InstallBaseLocation"
+        ${IfNot} ${Errors}
+        ${AndIf} $1 != ""
+            StrCpy $InstallBaseDir $1
+        ${Else}
+            StrCpy $InstallBaseDir $0
+        ${EndIf}
+        ClearErrors
+        ReadRegStr $PreviousVersionDir HKLM "${UNINSTALL_KEY}" "PreviousInstallLocation"
+        ${If} ${Errors}
+            StrCpy $PreviousVersionDir ""
+        ${EndIf}
+        StrCpy $INSTDIR $InstallBaseDir
+        StrCpy $InstallTargetDir "$InstallBaseDir\${VERSION}"
+        StrCmp $InstallTargetDir $RegisteredInstallDir setup_existing_same_version 0
+            StrCpy $MultiVersionInstall 1
+            Goto setup_install_layout_ready
+        setup_existing_same_version:
+            StrCpy $InstallTargetDir "$InstallBaseDir\${VERSION}.next"
+            StrCpy $MultiVersionInstall 1
     ${EndIf}
+    setup_install_layout_ready:
+FunctionEnd
+
+Function RefreshInstallLayoutAfterRecovery
+    StrCpy $RegisteredInstallDir ""
+    StrCpy $PreviousInstallDir ""
+    StrCpy $PreviousVersionDir ""
+    StrCpy $MultiVersionInstall 0
+    ClearErrors
+    ReadRegStr $0 HKLM "${UNINSTALL_KEY}" "InstallLocation"
+    IfErrors refresh_install_layout_fresh
+    StrCmp $0 "" refresh_install_layout_fresh
+
+    StrCpy $RegisteredInstallDir $0
+    StrCpy $PreviousInstallDir $0
+    StrCpy $ActiveServerDir $0
+    StrCpy $StateInstallDir $0
+    StrCpy $MultiVersionInstall 1
+    ClearErrors
+    ReadRegStr $1 HKLM "${UNINSTALL_KEY}" "InstallBaseLocation"
+    ${IfNot} ${Errors}
+    ${AndIf} $1 != ""
+        StrCpy $InstallBaseDir $1
+    ${Else}
+        StrCpy $InstallBaseDir $0
+    ${EndIf}
+    ClearErrors
+    ReadRegStr $PreviousVersionDir HKLM "${UNINSTALL_KEY}" "PreviousInstallLocation"
+    ${If} ${Errors}
+        StrCpy $PreviousVersionDir ""
+    ${EndIf}
+    StrCpy $InstallTargetDir "$InstallBaseDir\${VERSION}"
+    StrCmp $InstallTargetDir $RegisteredInstallDir refresh_install_layout_same_version
+        StrCpy $INSTDIR $InstallTargetDir
+        Return
+    refresh_install_layout_same_version:
+        StrCpy $InstallTargetDir "$InstallBaseDir\${VERSION}.next"
+        StrCpy $INSTDIR $InstallTargetDir
+        Return
+
+    refresh_install_layout_fresh:
+    StrCpy $ActiveServerDir $InstallBaseDir
+    StrCpy $StateInstallDir $InstallBaseDir
+    StrCpy $InstallTargetDir "$InstallBaseDir\${VERSION}"
+    StrCpy $INSTDIR $InstallTargetDir
+FunctionEnd
+
+Function RecoverPendingSystemIme
+    IfFileExists "$InstallBaseDir\${SYSTEM_IME_UPDATE_MARKER}" recover_pending_system_ime
+    IfFileExists "$InstallBaseDir\${SYSTEM_IME_X64_PENDING}" recover_pending_system_ime
+    IfFileExists "$InstallBaseDir\${SYSTEM_IME_X86_PENDING}" recover_pending_system_ime
+    Push 1
+    Return
+
+    recover_pending_system_ime:
+    ClearErrors
+    ReadRegStr $1 HKLM "${UNINSTALL_KEY}" "InstallLocation"
+    IfErrors recover_pending_system_ime_failed
+    StrCmp $1 "" recover_pending_system_ime_failed
+    StrCpy $RegisteredInstallDir $1
+    Push $INSTDIR
+    StrCpy $INSTDIR $RegisteredInstallDir
+    Call PrepareSystemImeUpdate
+    Pop $0
+    StrCmp $0 "1" 0 recover_pending_system_ime_restore_dir
+    Call CopyNewSystemIme
+    Pop $0
+    recover_pending_system_ime_restore_dir:
+    Pop $INSTDIR
+    StrCmp $0 "1" 0 recover_pending_system_ime_failed
+    IfFileExists "$InstallBaseDir\${SYSTEM_IME_X64_PENDING}" \
+        recover_pending_system_ime_restart_required
+    IfFileExists "$InstallBaseDir\${SYSTEM_IME_X86_PENDING}" \
+        recover_pending_system_ime_restart_required
+    Push 1
+    Return
+
+    recover_pending_system_ime_restart_required:
+    StrCpy $FailureMessage \
+        "上一次 CxxIME 系统 IME 更新需要重新启动 Windows 后才能完成。"
+    Push 0
+    Return
+
+    recover_pending_system_ime_failed:
+    StrCpy $FailureMessage "无法恢复上一次 CxxIME 系统 IME 更新。"
+    Push 0
+FunctionEnd
+
+Function CheckPreviousVersionLimit
+    ; Product versions identify directories only. Upgrades and downgrades use the same flow.
+    StrCmp $PreviousVersionDir "" previous_version_limit_done
+    StrCmp $PreviousVersionDir $RegisteredInstallDir previous_version_limit_done
+    IfFileExists "$PreviousVersionDir\cxxime_tsf_x64.dll" previous_version_limit_block
+    IfFileExists "$PreviousVersionDir\cxxime_tsf_x86.dll" previous_version_limit_block
+    IfFileExists "$PreviousVersionDir\cxxime_ime_x64.ime" previous_version_limit_block
+    IfFileExists "$PreviousVersionDir\cxxime_ime_x86.ime" previous_version_limit_block
+    IfFileExists "$PreviousVersionDir\cxxime-resources.dll" previous_version_limit_block
+    IfFileExists "$PreviousVersionDir\cxxime-server.exe" previous_version_limit_block
+    IfFileExists "$PreviousVersionDir\cxxime-settings.exe" previous_version_limit_block
+    IfFileExists "$PreviousVersionDir\uninstall.exe" previous_version_limit_block
+    Goto previous_version_limit_done
+
+    previous_version_limit_block:
+    StrCpy $FailureMessage \
+        "上一版本仍在被应用程序使用。请重新启动 Windows 完成旧文件清理后再升级。"
+    Push 0
+    Return
+    previous_version_limit_done:
+    Push 1
 FunctionEnd
 
 Function un.AcquireInstallerMutex
@@ -91,6 +230,16 @@ Function un.onInit
     StrCpy $UninstallDeferredResume 0
     StrCpy $UninstallRemoveUserData 0
     StrCpy $UninstallUserDataDir "$PROFILE\cxxime"
+    StrCpy $PreviousVersionDir ""
+    StrCpy $InstallBaseDir "$INSTDIR"
+    ClearErrors
+    ReadRegStr $InstallBaseDir HKLM "${UNINSTALL_KEY}" "InstallBaseLocation"
+    ${If} ${Errors}
+    ${OrIf} $InstallBaseDir == ""
+        StrCpy $InstallBaseDir "$INSTDIR"
+    ${EndIf}
+    ClearErrors
+    ReadRegStr $PreviousVersionDir HKLM "${UNINSTALL_KEY}" "PreviousInstallLocation"
     StrCpy $UninstallRollbackDir "$INSTDIR\${UNINSTALL_ROLLBACK_DIR}"
     IfFileExists "$INSTDIR\${UNINSTALL_DEFERRED_MARKER}" 0 un_init_ready
         ClearErrors
@@ -98,8 +247,11 @@ Function un.onInit
         IfErrors un_init_deferred_invalid
         StrCmp $0 "removing" un_init_deferred_resume
         StrCmp $0 "pending_restart" 0 un_init_deferred_invalid
+            IfSilent un_init_deferred_silent
             MessageBox MB_ICONEXCLAMATION \
                 "CxxIME 正在等待 Windows 重新启动以完成卸载。"
+        un_init_deferred_silent:
+            DetailPrint "CxxIME 正在等待 Windows 重新启动以完成卸载。"
             SetErrorLevel 3
             Abort
         un_init_deferred_resume:
@@ -107,15 +259,17 @@ Function un.onInit
             StrCpy $UninstallDeferredResume 1
             Goto un_init_ready
         un_init_deferred_invalid:
+            IfSilent un_init_deferred_invalid_silent
             MessageBox MB_ICONSTOP \
                 "CxxIME 延期卸载状态无效。请重新启动 Windows 后再次运行安装程序。"
+        un_init_deferred_invalid_silent:
+            DetailPrint "CxxIME 延期卸载状态无效。请重新启动 Windows 后再次运行安装程序。"
             SetErrorLevel 3
             Abort
     un_init_ready:
 FunctionEnd
 
 Function .onInstSuccess
-    Exec '"$INSTDIR\cxxime-server.exe"'
     ${If} $LaunchSettings == ${BST_CHECKED}
         Exec '"$INSTDIR\cxxime-settings.exe"'
     ${EndIf}
@@ -205,16 +359,113 @@ Function CheckInstallDirectory
 FunctionEnd
 
 Function ValidateInstallDirectory
+    ${If} $RegisteredInstallDir != ""
+        StrCpy $MultiVersionInstall 1
+        StrCpy $PreviousInstallDir $RegisteredInstallDir
+        IfFileExists "$InstallTargetDir\*" install_target_conflict
+        StrCpy $INSTDIR $InstallTargetDir
+        StrCpy $InstallTargetPrepared 1
+        Push 1
+        Return
+    ${EndIf}
+    StrCpy $InstallBaseDir "$INSTDIR"
     Call CheckInstallDirectory
     Pop $0
     StrCmp $0 "1" install_directory_valid
         MessageBox MB_ICONSTOP "$FailureMessage"
         Abort
     install_directory_valid:
+    StrCpy $InstallTargetDir "$InstallBaseDir\${VERSION}"
+    StrCpy $INSTDIR $InstallTargetDir
+    StrCpy $InstallTargetPrepared 1
+    Return
+    install_target_conflict:
+    StrCpy $FailureMessage "目标版本目录已存在。请先完成或清理上一次未完成的安装。"
+    IfSilent install_target_conflict_silent
+        MessageBox MB_ICONSTOP "$FailureMessage"
+    install_target_conflict_silent:
+    DetailPrint "$FailureMessage"
+    Abort
 FunctionEnd
 
 Function SetTransactionPaths
-    StrCpy $StageDir "$INSTDIR.cxxime-stage"
-    StrCpy $BackupDir "$INSTDIR.cxxime-backup"
+    StrCpy $StageDir "$InstallBaseDir\update"
+    StrCpy $BackupDir "$InstallBaseDir\.cxxime-backup"
     StrCpy $LockReportPath "$PLUGINSDIR\cxxime-locks.txt"
+FunctionEnd
+
+Function CheckFreshInstallBase
+    ${If} $MultiVersionInstall == 1
+        Push 1
+        Return
+    ${EndIf}
+    FindFirst $0 $1 "$InstallBaseDir\*"
+    IfErrors fresh_install_base_ready
+    fresh_install_base_scan:
+        StrCmp $1 "." fresh_install_base_next
+        StrCmp $1 ".." fresh_install_base_next
+        FindClose $0
+        StrCpy $FailureMessage \
+            "所选产品目录不为空。首次安装请选择一个空目录。"
+        Push 0
+        Return
+    fresh_install_base_next:
+        ClearErrors
+        FindNext $0 $1
+        IfErrors fresh_install_base_empty
+        Goto fresh_install_base_scan
+    fresh_install_base_empty:
+        FindClose $0
+    fresh_install_base_ready:
+    Push 1
+FunctionEnd
+
+Function SecureInstallBase
+    nsExec::Exec \
+        '"$PLUGINSDIR\cxxime-installer-helper.exe" secure-install-root "$InstallBaseDir"'
+    Pop $0
+    StrCmp $0 "0" 0 secure_install_base_failed
+    System::Call 'kernel32::CreateFileW(\
+        w "$InstallBaseDir", i 0x80, i 0x3, p 0, i 3, i 0x02200000, p 0) p .r0'
+    StrCpy $InstallBaseHandle $0
+    IntCmp $InstallBaseHandle -1 secure_install_base_failed
+    nsExec::Exec \
+        '"$PLUGINSDIR\cxxime-installer-helper.exe" validate-install-directory "$StageDir"'
+    Pop $0
+    StrCmp $0 "0" 0 secure_install_base_failed
+    nsExec::Exec \
+        '"$PLUGINSDIR\cxxime-installer-helper.exe" validate-install-directory "$BackupDir"'
+    Pop $0
+    StrCmp $0 "0" 0 secure_install_base_failed
+    nsExec::Exec \
+        '"$PLUGINSDIR\cxxime-installer-helper.exe" validate-install-directory "$INSTDIR"'
+    Pop $0
+    StrCmp $0 "0" secure_install_base_done
+    secure_install_base_failed:
+    StrCpy $FailureMessage "无法安全地准备 CxxIME 产品目录。"
+    Push 0
+    Return
+    secure_install_base_done:
+    Push 1
+FunctionEnd
+
+Function PrepareInstallTarget
+    StrCpy $PreviousInstallFlat 0
+    ${If} $MultiVersionInstall == 1
+        StrCpy $ActiveServerDir "$PreviousInstallDir"
+        StrCpy $StateInstallDir "$PreviousInstallDir"
+        StrCpy $INSTDIR $InstallTargetDir
+        ${If} $PreviousInstallDir == $InstallBaseDir
+            StrCpy $PreviousInstallFlat 1
+        ${EndIf}
+    ${Else}
+        ${If} $InstallTargetPrepared == 0
+            StrCpy $InstallBaseDir "$INSTDIR"
+            StrCpy $InstallTargetDir "$InstallBaseDir\${VERSION}"
+            StrCpy $InstallTargetPrepared 1
+        ${EndIf}
+        StrCpy $ActiveServerDir "$INSTDIR"
+        StrCpy $StateInstallDir "$INSTDIR"
+        StrCpy $INSTDIR "$InstallTargetDir"
+    ${EndIf}
 FunctionEnd

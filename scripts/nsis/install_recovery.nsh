@@ -14,11 +14,24 @@ Function LoadTransactionState
     StrCpy $OldDisplayVersion ""
     StrCpy $OldRunPresent 0
     StrCpy $OldRunValue ""
+    StrCpy $OldPreviousInstallDir ""
+    StrCpy $InstallTransactionFormat ""
 
     ClearErrors
     ReadINIStr $0 "$TransactionDir\${TRANSACTION_MARKER}" "transaction" "format"
     IfErrors transaction_state_invalid
-    StrCmp $0 "2" 0 transaction_state_invalid
+    StrCpy $InstallTransactionFormat $0
+    StrCmp $0 "2" transaction_state_format_2
+    StrCmp $0 "3" transaction_state_format_3
+    StrCmp $0 "4" transaction_state_format_3 transaction_state_invalid
+    transaction_state_format_3:
+    ReadINIStr $OldPreviousInstallDir "$TransactionDir\${TRANSACTION_MARKER}" \
+        "transaction" "old_previous_install_dir"
+    IfErrors transaction_state_invalid
+    Goto transaction_state_format_ready
+    transaction_state_format_2:
+    StrCpy $OldPreviousInstallDir ""
+    transaction_state_format_ready:
     ReadINIStr $OldInstallAvailable "$TransactionDir\${TRANSACTION_MARKER}" "transaction" \
         "old_install_available"
     ReadINIStr $OldTsfX64Present "$TransactionDir\${TRANSACTION_MARKER}" "transaction" \
@@ -44,6 +57,16 @@ Function LoadTransactionState
     ReadINIStr $OldRunPresent "$TransactionDir\${TRANSACTION_MARKER}" "transaction" \
         "old_run_present"
     ReadINIStr $OldRunValue "$TransactionDir\${TRANSACTION_MARKER}" "transaction" "old_run_value"
+    ReadINIStr $PreviousInstallDir "$TransactionDir\${TRANSACTION_MARKER}" "transaction" \
+        "old_install_dir"
+    StrCpy $StateInstallDir "$PreviousInstallDir"
+    ${If} $PreviousInstallDir != ""
+        StrCpy $MultiVersionInstall 1
+        StrCpy $ActiveServerDir "$PreviousInstallDir"
+        StrCpy $PreviousInstallFlat 0
+        StrCmp $PreviousInstallDir $InstallBaseDir 0 +2
+            StrCpy $PreviousInstallFlat 1
+    ${EndIf}
     ReadINIStr $ServerWasRunning "$TransactionDir\${TRANSACTION_MARKER}" "transaction" \
         "server_was_running"
     StrCpy $TransactionServerWasRunning $ServerWasRunning
@@ -131,8 +154,47 @@ Function RecoverTransaction
         Return
 
     transaction_state_loaded:
+    StrCmp $InstallTransactionFormat "4" 0 transaction_pending_ime_cancelled
+        Call CancelPendingSystemImeUpdate
+    transaction_pending_ime_cancelled:
+    StrCmp $MultiVersionInstall "1" transaction_multiversion_restore
     StrCmp $TransactionDir "$INSTDIR" transaction_remove_partial_install
         Goto transaction_restore_system_ime
+
+    transaction_multiversion_restore:
+    Call UnregisterTransactionTsf
+    Pop $0
+    StrCmp $0 "1" transaction_multiversion_restore_ime
+        Push 0
+        Return
+    transaction_multiversion_restore_ime:
+    StrCmp $InstallTransactionFormat "4" transaction_multiversion_restore_register
+    Call RestoreSystemIme
+    Pop $0
+    StrCmp $0 "1" transaction_multiversion_restore_register
+        Push 0
+        Return
+    transaction_multiversion_restore_register:
+    Call RegisterPreviousTsf
+    Pop $0
+    StrCmp $0 "1" transaction_multiversion_restore_registry
+        Push 0
+        Return
+    transaction_multiversion_restore_registry:
+    Call RestorePreviousRegistry
+    Pop $0
+    StrCmp $0 "1" transaction_multiversion_restore_cleanup
+        Push 0
+        Return
+    transaction_multiversion_restore_cleanup:
+    RMDir /r "$INSTDIR"
+    IfFileExists "$INSTDIR\*" transaction_recovery_failed
+    StrCmp $TransactionDir $INSTDIR transaction_multiversion_restore_done
+        RMDir /r "$TransactionDir"
+        IfFileExists "$TransactionDir" transaction_recovery_failed
+    transaction_multiversion_restore_done:
+    Push 1
+    Return
 
     transaction_remove_partial_install:
     Call UnregisterTransactionTsf
@@ -142,6 +204,7 @@ Function RecoverTransaction
         Return
 
     transaction_restore_system_ime:
+    StrCmp $InstallTransactionFormat "4" transaction_restore_program_files
     Call RestoreSystemIme
     Pop $0
     StrCmp $0 "1" transaction_restore_program_files
@@ -216,7 +279,84 @@ Function RecoverTransaction
     Push 0
 FunctionEnd
 
+Function FinalizeCommittedInstall
+    ClearErrors
+    RMDir /r "$INSTDIR\${ROLLBACK_DIR}"
+    IfErrors finalize_committed_install_failed
+    IfFileExists "$INSTDIR\${ROLLBACK_DIR}" 0 finalize_committed_cleanup_backup
+    Goto finalize_committed_install_failed
+    finalize_committed_cleanup_backup:
+    ClearErrors
+    RMDir /r "$BackupDir"
+    IfErrors finalize_committed_install_failed
+    RMDir /r "$StageDir"
+    IfErrors finalize_committed_install_failed
+    IfFileExists "$BackupDir" 0 finalize_committed_check_stage
+    Goto finalize_committed_install_failed
+    finalize_committed_check_stage:
+    IfFileExists "$StageDir" 0 finalize_committed_cleanup_previous
+    Goto finalize_committed_install_failed
+    finalize_committed_cleanup_previous:
+    StrCpy $PreviousInstallDir $PreviousVersionDir
+    StrCpy $PreviousInstallFlat 0
+    StrCmp $PreviousInstallDir $InstallBaseDir 0 +2
+        StrCpy $PreviousInstallFlat 1
+    Call CleanupPreviousInstall
+    Pop $0
+    StrCmp $0 "1" 0 finalize_committed_install_failed
+    Call WriteInstallLayoutState
+    Pop $0
+    StrCmp $0 "1" 0 finalize_committed_install_failed
+    ClearErrors
+    Delete "$INSTDIR\${TRANSACTION_MARKER}"
+    IfErrors finalize_committed_install_failed
+    Delete "$INSTDIR\${TRANSACTION_TEMP}"
+    Push 1
+    Return
+
+    finalize_committed_install_failed:
+    StrCpy $FailureMessage "无法清理已完成安装留下的 CxxIME 文件。"
+    Push 0
+FunctionEnd
+
 Function RecoverInterruptedInstall
+    IfFileExists "$INSTDIR\${TRANSACTION_MARKER}" recover_target_transaction
+    IfFileExists "$StageDir\${TRANSACTION_MARKER}" recover_stage_transaction
+    Goto recover_check_registered_install
+
+    recover_target_transaction:
+        StrCpy $TransactionDir "$INSTDIR"
+        Call RecoverTransaction
+        Return
+
+    recover_stage_transaction:
+        StrCpy $TransactionDir "$StageDir"
+        Call RecoverTransaction
+        Return
+
+    recover_check_registered_install:
+    ${If} $MultiVersionInstall == 1
+        IfFileExists "$PreviousInstallDir\${INSTALL_MARKER}" \
+            recover_registered_install_complete recover_registered_transaction
+        recover_registered_install_complete:
+        Push $INSTDIR
+        StrCpy $INSTDIR $PreviousInstallDir
+        Call FinalizeCommittedInstall
+        Pop $0
+        Pop $INSTDIR
+        StrCmp $0 "1" recover_check_uninstall_transaction
+            Push 0
+            Return
+        recover_registered_transaction:
+        IfFileExists "$PreviousInstallDir\${TRANSACTION_MARKER}" 0 \
+            recover_check_uninstall_transaction
+            StrCpy $INSTDIR "$PreviousInstallDir"
+            StrCpy $TransactionDir "$PreviousInstallDir"
+            Call RecoverTransaction
+            Return
+    ${EndIf}
+
+    recover_check_uninstall_transaction:
     IfFileExists "$INSTDIR\${UNINSTALL_TRANSACTION_MARKER}" 0 recover_check_committed_install
         StrCpy $FailureMessage \
             "上一次 CxxIME 卸载尚未完成。请先重新运行已安装的卸载程序。"
@@ -225,40 +365,11 @@ Function RecoverInterruptedInstall
 
     recover_check_committed_install:
     IfFileExists "$INSTDIR\${INSTALL_MARKER}" 0 recover_incomplete_install
-        ClearErrors
-        RMDir /r "$INSTDIR\${ROLLBACK_DIR}"
-        IfErrors recover_committed_cleanup_failed
-        IfFileExists "$INSTDIR\${ROLLBACK_DIR}" 0 recover_committed_delete_transaction
-        Goto recover_committed_cleanup_failed
-    recover_committed_delete_transaction:
-        ClearErrors
-        Delete "$INSTDIR\${TRANSACTION_MARKER}"
-        IfErrors recover_committed_cleanup_failed
-        ClearErrors
-        RMDir /r "$BackupDir"
-        IfErrors recover_committed_cleanup_failed
-        RMDir /r "$StageDir"
-        IfErrors recover_committed_cleanup_failed
-        IfFileExists "$BackupDir" 0 recover_committed_check_stage
-        Goto recover_committed_cleanup_failed
-    recover_committed_check_stage:
-        IfFileExists "$StageDir" 0 recover_committed_cleanup_done
-        Goto recover_committed_cleanup_failed
-    recover_committed_cleanup_done:
-        Push 1
+        Call FinalizeCommittedInstall
         Return
 
     recover_incomplete_install:
-    IfFileExists "$INSTDIR\${TRANSACTION_MARKER}" 0 recover_staged_transaction
-        StrCpy $TransactionDir "$INSTDIR"
-        Call RecoverTransaction
-        Return
-
-    recover_staged_transaction:
-    IfFileExists "$StageDir\${TRANSACTION_MARKER}" 0 recover_untracked_backup
-        StrCpy $TransactionDir "$StageDir"
-        Call RecoverTransaction
-        Return
+    Goto recover_untracked_backup
 
     recover_untracked_backup:
     IfFileExists "$BackupDir" 0 recover_remove_uncommitted_stage
@@ -270,14 +381,14 @@ Function RecoverInterruptedInstall
     recover_remove_uncommitted_stage:
     ClearErrors
     RMDir /r "$StageDir"
-    IfErrors recover_committed_cleanup_failed
+    IfErrors recover_staged_cleanup_failed
     IfFileExists "$StageDir" 0 recover_remove_uncommitted_stage_done
-        Goto recover_committed_cleanup_failed
+        Goto recover_staged_cleanup_failed
     recover_remove_uncommitted_stage_done:
     Push 1
     Return
 
-    recover_committed_cleanup_failed:
+    recover_staged_cleanup_failed:
     StrCpy $FailureMessage "无法清理已完成安装留下的 CxxIME 文件。"
     Push 0
 FunctionEnd

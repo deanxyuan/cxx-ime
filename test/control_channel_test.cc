@@ -19,6 +19,7 @@
 #include <cxxime/control_server.h>
 #include <cxxime/ipc_protocol.h>
 #include <cxxime/lexicon_control.h>
+#include <cxxime/pipe_names.h>
 
 #include "util/testutil.h"
 
@@ -56,6 +57,17 @@ TEST(ControlChannel, protocol_round_trip) {
     ASSERT_EQ(message.generation.server_epoch, 123ULL);
     ASSERT_EQ(message.generation.revision, 456ULL);
     ASSERT_TRUE(message.payload == payload);
+
+    cxxime::ControlHeader header = {};
+    std::memcpy(&header, packet.data(), sizeof(header));
+    header.protocol_version = cxxime::CONTROL_PROTOCOL_VERSION + 1;
+    std::memcpy(packet.data(), &header, sizeof(header));
+    ASSERT_TRUE(cxxime::parse_control_packet(packet.data(), packet.size(), &message));
+    ASSERT_TRUE(message.payload == payload);
+    header.message_type = static_cast<cxxime::ControlMessageType>(0xffff);
+    std::memcpy(packet.data(), &header, sizeof(header));
+    ASSERT_TRUE(cxxime::parse_control_packet(packet.data(), packet.size(), &message));
+    ASSERT_EQ(static_cast<std::uint16_t>(message.type), static_cast<std::uint16_t>(0xffff));
 }
 
 TEST(ControlChannel, protocol_rejects_invalid_header_and_oversized_payload) {
@@ -66,6 +78,41 @@ TEST(ControlChannel, protocol_rejects_invalid_header_and_oversized_payload) {
     std::vector<std::uint8_t> payload(cxxime::CONTROL_MAX_PAYLOAD + 1, 0);
     ASSERT_TRUE(!cxxime::build_control_packet(cxxime::ControlMessageType::kConfigSnapshot, {},
                                                payload.data(), payload.size(), &packet));
+}
+
+TEST(ControlChannel, explicit_user_pipe_name_is_not_rescoped) {
+    const std::wstring scoped =
+        cxxime::make_user_pipe_name(cxxime::CONTROL_PIPE_BASE_NAME, L"interactive-user");
+    ASSERT_TRUE(scoped == L"\\\\.\\pipe\\interactive-user\\CxxIME-Control");
+    ASSERT_TRUE(cxxime::make_user_pipe_name(scoped, L"elevated-admin") == scoped);
+}
+
+TEST(ControlChannel, fixed_payloads_accept_baseline_prefix_and_future_tail) {
+    cxxime::ControlSubscribe subscribe;
+    std::string subscribe_payload(cxxime::CONTROL_SUBSCRIBE_BASELINE_SIZE, '\0');
+    const std::uint32_t process_id = 42;
+    const std::uint16_t pointer_size = 8;
+    std::memcpy(&subscribe_payload[0], &process_id, sizeof(process_id));
+    std::memcpy(&subscribe_payload[sizeof(process_id)], &pointer_size, sizeof(pointer_size));
+    ASSERT_TRUE(cxxime::decode_control_subscribe(subscribe_payload, &subscribe));
+    ASSERT_EQ(subscribe.process_id, process_id);
+    ASSERT_EQ(subscribe.pointer_size, pointer_size);
+    subscribe_payload.append(4, '\0');
+    ASSERT_TRUE(cxxime::decode_control_subscribe(subscribe_payload, &subscribe));
+
+    cxxime::ControlMutationResult result;
+    std::string result_payload(cxxime::CONTROL_MUTATION_RESULT_BASELINE_SIZE, '\0');
+    const std::uint32_t succeeded = 1;
+    std::memcpy(&result_payload[0], &succeeded, sizeof(succeeded));
+    ASSERT_TRUE(cxxime::decode_control_mutation_result(result_payload, &result));
+    ASSERT_EQ(result.succeeded, succeeded);
+    result_payload.append(4, '\0');
+    ASSERT_TRUE(cxxime::decode_control_mutation_result(result_payload, &result));
+
+    ASSERT_TRUE(!cxxime::decode_control_subscribe(
+        std::string(cxxime::CONTROL_SUBSCRIBE_BASELINE_SIZE - 1, '\0'), &subscribe));
+    ASSERT_TRUE(!cxxime::decode_control_mutation_result(
+        std::string(cxxime::CONTROL_MUTATION_RESULT_BASELINE_SIZE - 1, '\0'), &result));
 }
 
 TEST(ControlChannel, publishes_initial_and_replaced_snapshots) {
@@ -461,8 +508,8 @@ TEST(ControlChannel, lexicon_client_supports_all_operations) {
 }
 
 TEST(ControlChannel, input_protocol_size_matches_native_layout) {
-    ASSERT_EQ(sizeof(cxxime::IPCRequest), static_cast<std::size_t>(576));
-    ASSERT_EQ(sizeof(cxxime::IPCResponse), static_cast<std::size_t>(3176));
+    ASSERT_TRUE(sizeof(cxxime::IPCRequest) >= cxxime::IPC_REQUEST_BASELINE_SIZE);
+    ASSERT_TRUE(sizeof(cxxime::IPCResponse) >= cxxime::IPC_RESPONSE_BASELINE_SIZE);
 }
 
 RUN_ALL_TESTS()

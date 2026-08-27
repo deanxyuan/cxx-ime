@@ -187,17 +187,18 @@ private:
 
     bool process_command(const void* buffer, DWORD transferred) {
         UiCommand command;
-        if (!parse_ui_command_packet(buffer, transferred, &command)) {
+        const UiPacketParseResult result = decode_ui_command_packet(buffer, transferred, &command);
+        if (result == UiPacketParseResult::kInvalid) {
             return false;
         }
-        if (command_handler_) {
+        if (result == UiPacketParseResult::kAccepted && command_handler_) {
             command_handler_(command);
         }
         return true;
     }
 
     bool connected_loop(HANDLE pipe) {
-        std::array<std::uint8_t, kUiCommandPacketSize> read_buffer = {};
+        std::array<std::uint8_t, kUiMaxPacketSize> read_buffer = {};
         OVERLAPPED read = {};
         read.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
         if (!read.hEvent) {

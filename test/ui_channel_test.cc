@@ -36,6 +36,26 @@ std::wstring test_pipe_name() {
            std::to_wstring(sequence.fetch_add(1));
 }
 
+HANDLE connect_test_pipe(const std::wstring& pipe_name, int timeout_ms = 3000) {
+    const std::wstring scoped_name = cxxime::make_user_pipe_name(pipe_name);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (WaitNamedPipeW(scoped_name.c_str(), 50)) {
+            HANDLE pipe = CreateFileW(scoped_name.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
+                                      OPEN_EXISTING, 0, nullptr);
+            if (pipe != INVALID_HANDLE_VALUE) {
+                DWORD mode = PIPE_READMODE_MESSAGE;
+                if (SetNamedPipeHandleState(pipe, &mode, nullptr, nullptr)) {
+                    return pipe;
+                }
+                CloseHandle(pipe);
+            }
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    return INVALID_HANDLE_VALUE;
+}
+
 cxxime::UiPresentationSnapshot make_snapshot(std::uint64_t generation) {
     cxxime::UiPresentationSnapshot snapshot;
     snapshot.session_id = 17;
@@ -107,9 +127,14 @@ TEST(UiChannel, protocol_rejects_invalid_payloads) {
 
     snapshot = make_snapshot(1);
     ASSERT_TRUE(cxxime::build_ui_snapshot_packet(snapshot, 1, &packet));
-    cxxime::UiPacketHeader header;
+    cxxime::UiPacketHeader header = {};
     std::memcpy(&header, packet.data(), sizeof(header));
     header.protocol_version++;
+    header.payload_size += 4;
+    packet.resize(packet.size() + 4, 0);
+    std::memcpy(packet.data(), &header, sizeof(header));
+    ASSERT_TRUE(cxxime::parse_ui_snapshot_packet(packet.data(), packet.size(), &snapshot));
+    header.protocol_version = 0;
     std::memcpy(packet.data(), &header, sizeof(header));
     ASSERT_TRUE(!cxxime::parse_ui_snapshot_packet(packet.data(), packet.size(), &snapshot));
 
@@ -134,6 +159,66 @@ TEST(UiChannel, protocol_rejects_invalid_payloads) {
     ASSERT_EQ(parsed.type, cxxime::UiCommandType::kRefreshInputIndicator);
     command.value = 1;
     ASSERT_TRUE(!cxxime::build_ui_command_packet(command, 1, &packet));
+}
+
+TEST(UiChannel, protocol_ignores_unknown_compatible_extensions) {
+    cxxime::UiCommand command;
+    command.session_id = 17;
+    command.session_generation = 3;
+    command.presentation_generation = 1;
+    command.type = cxxime::UiCommandType::kPageNext;
+    std::vector<std::uint8_t> packet;
+    ASSERT_TRUE(cxxime::build_ui_command_packet(command, 1, &packet));
+    command.type = static_cast<cxxime::UiCommandType>(0xffff);
+    std::memcpy(packet.data() + sizeof(cxxime::UiPacketHeader), &command, sizeof(command));
+    ASSERT_EQ(cxxime::decode_ui_command_packet(packet.data(), packet.size(), &command),
+              cxxime::UiPacketParseResult::kIgnored);
+
+    cxxime::UiPresentationSnapshot snapshot = make_snapshot(1);
+    ASSERT_TRUE(cxxime::build_ui_snapshot_packet(snapshot, 2, &packet));
+    snapshot.flags |= 1u << 31;
+    std::memcpy(packet.data() + sizeof(cxxime::UiPacketHeader), &snapshot, sizeof(snapshot));
+    ASSERT_EQ(cxxime::decode_ui_snapshot_packet(packet.data(), packet.size(), &snapshot),
+              cxxime::UiPacketParseResult::kIgnored);
+
+    snapshot = make_snapshot(1);
+    ASSERT_TRUE(cxxime::build_ui_snapshot_packet(snapshot, 3, &packet));
+    snapshot.ownership = static_cast<cxxime::UiOwnership>(0xffff);
+    std::memcpy(packet.data() + sizeof(cxxime::UiPacketHeader), &snapshot, sizeof(snapshot));
+    ASSERT_EQ(cxxime::decode_ui_snapshot_packet(packet.data(), packet.size(), &snapshot),
+              cxxime::UiPacketParseResult::kIgnored);
+}
+
+TEST(UiChannel, server_keeps_connection_after_unknown_packet) {
+    const std::wstring pipe_name = test_pipe_name();
+    std::atomic<int> snapshot_count{0};
+    cxxime::UiChannelServer server;
+    ASSERT_TRUE(
+        server.start([&](cxxime::UiEndpointId,
+                         const cxxime::UiPresentationSnapshot&) { snapshot_count.fetch_add(1); },
+        {}, pipe_name));
+
+    HANDLE pipe = connect_test_pipe(pipe_name);
+    ASSERT_TRUE(pipe != INVALID_HANDLE_VALUE);
+    ASSERT_TRUE(wait_for([&]() { return server.endpoint_count() == 1; }));
+
+    cxxime::UiPacketHeader unknown_header;
+    unknown_header.packet_type = static_cast<cxxime::UiPacketType>(0xffff);
+    DWORD transferred = 0;
+    ASSERT_TRUE(WriteFile(pipe, &unknown_header, sizeof(unknown_header), &transferred, nullptr));
+    ASSERT_EQ(transferred, static_cast<DWORD>(sizeof(unknown_header)));
+
+    const cxxime::UiPresentationSnapshot snapshot = make_snapshot(9);
+    std::vector<std::uint8_t> packet;
+    ASSERT_TRUE(cxxime::build_ui_snapshot_packet(snapshot, 2, &packet));
+    ASSERT_TRUE(
+        WriteFile(pipe, packet.data(), static_cast<DWORD>(packet.size()), &transferred, nullptr));
+    ASSERT_EQ(transferred, static_cast<DWORD>(packet.size()));
+    ASSERT_TRUE(wait_for([&]() { return snapshot_count.load() == 1; }));
+    ASSERT_EQ(server.endpoint_count(), static_cast<std::size_t>(1));
+
+    CloseHandle(pipe);
+    server.stop();
 }
 
 TEST(UiChannel, queued_snapshots_coalesce_before_connect) {

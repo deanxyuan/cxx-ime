@@ -11,8 +11,13 @@
 namespace cxxime {
 
 constexpr std::uint32_t CONTROL_MAGIC = 0x43434647; // CCFG
+constexpr std::uint16_t CONTROL_PROTOCOL_MIN_COMPATIBLE_VERSION = 1;
 constexpr std::uint16_t CONTROL_PROTOCOL_VERSION = 1;
 constexpr std::size_t CONTROL_MAX_PAYLOAD = 64 * 1024;
+constexpr std::size_t CONTROL_SUBSCRIBE_BASELINE_SIZE = 8;
+constexpr std::size_t CONTROL_MUTATION_RESULT_BASELINE_SIZE = 8;
+
+// Control payload prefixes are frozen at the framed 0.4.0 baseline and are append-only.
 
 enum class ControlMessageType : std::uint16_t {
     kSubscribe = 1,
@@ -67,8 +72,10 @@ struct ControlMutationResult {
 #pragma pack(pop)
 
 static_assert(sizeof(ControlHeader) == 28, "Unexpected control header size");
-static_assert(sizeof(ControlSubscribe) == 8, "Unexpected subscribe payload size");
-static_assert(sizeof(ControlMutationResult) == 8, "Unexpected mutation result size");
+static_assert(sizeof(ControlSubscribe) >= CONTROL_SUBSCRIBE_BASELINE_SIZE,
+              "ControlSubscribe is smaller than the 0.4.0 baseline");
+static_assert(sizeof(ControlMutationResult) >= CONTROL_MUTATION_RESULT_BASELINE_SIZE,
+              "ControlMutationResult is smaller than the 0.4.0 baseline");
 
 struct ControlMessage {
     ControlMessageType type = ControlMessageType::kPing;
@@ -80,6 +87,10 @@ bool build_control_packet(ControlMessageType type, ConfigGeneration generation, 
                           std::size_t payload_size, std::vector<std::uint8_t>* packet);
 
 bool parse_control_packet(const void* data, std::size_t size, ControlMessage* message);
+
+bool decode_control_subscribe(const std::string& payload, ControlSubscribe* subscribe);
+
+bool decode_control_mutation_result(const std::string& payload, ControlMutationResult* result);
 
 } // namespace cxxime
 

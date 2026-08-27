@@ -7,6 +7,8 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstring>
+#include <vector>
 
 #include <windows.h>
 
@@ -127,21 +129,50 @@ bool IpcClient::send_request(const IPCRequest& request, IPCResponse& response) {
 
         HANDLE pipe = (HANDLE)pipe_handle_;
 
+        IPCWireHeader request_header = {};
+        request_header.payload_size = sizeof(IPCRequest);
+        std::vector<uint8_t> request_wire(sizeof(request_header) + sizeof(request));
+        memcpy(request_wire.data(), &request_header, sizeof(request_header));
+        memcpy(request_wire.data() + sizeof(request_header), &request, sizeof(request));
+
         // No FlushFileBuffers needed for message-mode pipe.
         DWORD bytes_written = 0;
-        IPCRequest writable_request = request;
-        if (!overlapped_io(pipe, true, &writable_request, sizeof(writable_request),
+        if (!overlapped_io(pipe, true, request_wire.data(),
+                           static_cast<DWORD>(request_wire.size()),
                            static_cast<DWORD>(timeout_ms_), bytes_written) ||
-            bytes_written != sizeof(request)) {
+            bytes_written != static_cast<DWORD>(request_wire.size())) {
+            disconnect();
+            continue;
+        }
+
+        constexpr size_t kMaxResponseWire = 65536;
+        std::vector<uint8_t> response_wire(kMaxResponseWire);
+        DWORD bytes_read = 0;
+        if (!overlapped_io(pipe, false, response_wire.data(),
+                           static_cast<DWORD>(response_wire.size()),
+                           static_cast<DWORD>(timeout_ms_), bytes_read)) {
             disconnect();
             continue;
         }
 
         response = {};
-        DWORD bytes_read = 0;
-        if (!overlapped_io(pipe, false, &response, sizeof(response),
-                           static_cast<DWORD>(timeout_ms_), bytes_read) ||
-            bytes_read < sizeof(IPCStatus)) {
+        if (bytes_read >= sizeof(IPCWireHeader) + IPC_RESPONSE_BASELINE_SIZE) {
+            IPCWireHeader response_header = {};
+            memcpy(&response_header, response_wire.data(), sizeof(response_header));
+            if (response_header.magic != IPC_WIRE_MAGIC ||
+                response_header.version < IPC_WIRE_MIN_COMPATIBLE_VERSION ||
+                response_header.header_size < sizeof(IPCWireHeader) ||
+                response_header.header_size > bytes_read ||
+                response_header.payload_size < IPC_RESPONSE_BASELINE_SIZE ||
+                response_header.payload_size > bytes_read - response_header.header_size ||
+                bytes_read != response_header.header_size + response_header.payload_size) {
+                disconnect();
+                continue;
+            }
+            const size_t response_size =
+                (std::min)(static_cast<size_t>(response_header.payload_size), sizeof(response));
+            memcpy(&response, response_wire.data() + response_header.header_size, response_size);
+        } else {
             disconnect();
             continue;
         }

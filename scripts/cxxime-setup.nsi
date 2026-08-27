@@ -13,10 +13,15 @@ Unicode true
 !define TSF_INPROC_KEY "SOFTWARE\Classes\CLSID\${CLSID}\InprocServer32"
 !define TSF_TIP_KEY "SOFTWARE\Microsoft\CTF\TIP\${CLSID}"
 !define INSTALL_MARKER ".cxxime-install-complete"
+!define INSTALL_STATE_MARKER ".cxxime-install-state"
+!define INSTALL_STATE_TEMP ".cxxime-install-state.tmp"
 !define TRANSACTION_MARKER ".cxxime-install-transaction"
 !define TRANSACTION_TEMP ".cxxime-install-transaction.tmp"
 !define RUNTIME_MARKER ".cxxime-install-runtime"
 !define RUNTIME_TEMP ".cxxime-install-runtime.tmp"
+!define SYSTEM_IME_X64_PENDING ".cxxime-ime-x64.pending"
+!define SYSTEM_IME_X86_PENDING ".cxxime-ime-x86.pending"
+!define SYSTEM_IME_UPDATE_MARKER ".cxxime-ime-update"
 !define ROLLBACK_DIR ".cxxime-rollback"
 !define UNINSTALL_TRANSACTION_MARKER ".cxxime-uninstall-transaction"
 !define UNINSTALL_TRANSACTION_TEMP ".cxxime-uninstall-transaction.tmp"
@@ -24,6 +29,7 @@ Unicode true
 !define UNINSTALL_DEFERRED_MARKER ".cxxime-uninstall-pending"
 !define MOVEFILE_REPLACE_WRITE_THROUGH 0x9
 !define MOVEFILE_DELAY_UNTIL_REBOOT 0x4
+!define MOVEFILE_REPLACE_DELAY_UNTIL_REBOOT 0x5
 
 !ifndef VERSION
     !error "VERSION must be provided by package.py"
@@ -61,6 +67,7 @@ Var RegisteredInstallDir
 Var StageDir
 Var BackupDir
 Var TransactionDir
+Var InstallTransactionFormat
 Var LockReportPath
 Var LockReportText
 Var LockResult
@@ -85,10 +92,19 @@ Var TransactionServerWasRunning
 Var ServerRestartResult
 Var ServerStopResult
 Var ServerProcessId
-Var RuntimeInstallRoot
-Var RuntimeServerPath
-Var RuntimeVersion
 Var InstallStateVerified
+Var InstallBaseHandle
+Var InstallBaseDir
+Var PreviousInstallDir
+Var OldPreviousInstallDir
+Var MultiVersionInstall
+Var ActiveServerDir
+Var StateInstallDir
+Var RegistryInstallDir
+Var PreviousVersionDir
+Var InstallTargetDir
+Var InstallTargetPrepared
+Var PreviousInstallFlat
 Var UninstallRemoveUserData
 Var UninstallRemoveUserDataCheckbox
 Var UninstallUserDataDir
@@ -110,11 +126,11 @@ Var UninstallTsfX86Registered
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
 Page custom FinishPage FinishPageLeave
+!insertmacro MUI_PAGE_FINISH
 !insertmacro MUI_UNPAGE_CONFIRM
 UninstPage custom un.UserDataPage un.UserDataPageLeave
 !insertmacro MUI_UNPAGE_INSTFILES
-!define MUI_FINISHPAGE_REBOOTLATER_DEFAULT
-!define MUI_FINISHPAGE_TEXT_REBOOT \
+!define MUI_UNTEXT_FINISH_INFO_REBOOT \
     "CxxIME 已停用。请重新启动 Windows，以删除仍在使用的文件并完成卸载。"
 !insertmacro MUI_UNPAGE_FINISH
 !insertmacro MUI_LANGUAGE "SimpChinese"
@@ -132,20 +148,23 @@ Section "Install"
     SetOutPath "$PLUGINSDIR"
     File /oname=cxxime-installer-helper.exe "cxxime-installer-helper.exe"
 
+    Call PrepareInstallTarget
     Call SetTransactionPaths
-    Call RecoverRuntimeSnapshot
+    Call CheckFreshInstallBase
     Pop $0
-    StrCmp $0 "1" runtime_snapshot_ready
+    StrCmp $0 "1" install_base_contents_ready
+        Goto install_failed_untrusted_base
+    install_base_contents_ready:
+    Call SecureInstallBase
+    Pop $0
+    StrCmp $0 "1" install_base_ready
+        Goto install_failed_untrusted_base
+    install_base_ready:
     Call CaptureServerState
     Pop $0
     StrCmp $0 "1" runtime_snapshot_ready
         Goto install_failed_before_swap
     runtime_snapshot_ready:
-    Call WriteRuntimeSnapshot
-    Pop $0
-    StrCmp $0 "1" install_runtime_snapshot_ready
-        Goto install_failed_before_swap
-    install_runtime_snapshot_ready:
     Call ReleaseInputProcessor
     Call StopServer
     StrCmp $ServerStopResult "0" install_server_stopped
@@ -166,17 +185,39 @@ Section "Install"
         StrCpy $InitialServerWasRunning 1
     ${EndIf}
     StrCpy $ServerWasRunning $InitialServerWasRunning
+    Call RefreshInstallLayoutAfterRecovery
+    Call SetTransactionPaths
+    Call RecoverPendingSystemIme
+    Pop $0
+    StrCmp $0 "1" install_system_ime_recovery_ready
+        Goto install_failed_before_swap
+    install_system_ime_recovery_ready:
+    Call CheckPreviousVersionLimit
+    Pop $0
+    StrCmp $0 "1" install_previous_version_ready
+        Goto install_failed_before_swap
+    install_previous_version_ready:
     Call CheckInstallDirectory
     Pop $0
     StrCmp $0 "1" install_directory_checked
         Goto install_failed_before_swap
 
     install_directory_checked:
+    Call PrepareInstallTarget
+    Call SetTransactionPaths
     Call SnapshotPreviousState
 
-    RMDir /r "$StageDir"
-    CreateDirectory "$StageDir"
     ClearErrors
+    RMDir "$StageDir"
+    IfFileExists "$StageDir" 0 install_stage_path_ready
+        StrCpy $FailureMessage "CxxIME 更新目录中仍有未完成的安装文件。"
+        Goto install_failed_before_swap
+    install_stage_path_ready:
+    CreateDirectory "$StageDir"
+    IfErrors 0 install_stage_directory_ready
+        StrCpy $FailureMessage "无法创建 CxxIME 更新目录。"
+        Goto install_failed_before_swap
+    install_stage_directory_ready:
 
     SetOutPath "$StageDir"
     File "cxxime_tsf_x64.dll"
@@ -241,7 +282,8 @@ Section "Install"
 
     install_transaction_ready:
     SetOutPath "$PLUGINSDIR"
-    ${If} $ExistingInstall == 1
+    ${If} $MultiVersionInstall == 0
+    ${AndIf} $ExistingInstall == 1
         IfFileExists "$BackupDir\*" 0 install_backup_path_ready
             StrCpy $FailureMessage "无法准备 CxxIME 备份目录。"
             Goto install_failed_after_transaction
@@ -252,10 +294,12 @@ Section "Install"
             StrCpy $FailureMessage "无法备份已安装的 CxxIME 版本。"
             Goto install_failed_after_transaction
         install_backup_ready:
-        Call UnregisterPreviousTsf
-        Pop $0
-        StrCmp $0 "1" install_swap_stage
-            Goto install_failed_after_transaction
+        ${If} $MultiVersionInstall == 0
+            Call UnregisterPreviousTsf
+            Pop $0
+            StrCmp $0 "1" install_swap_stage
+                Goto install_failed_after_transaction
+        ${EndIf}
     ${Else}
         RMDir "$INSTDIR"
     ${EndIf}
@@ -268,12 +312,6 @@ Section "Install"
         Goto install_failed_after_transaction
 
     install_stage_swapped:
-    Call CopyNewSystemIme
-    Pop $0
-    StrCmp $0 "1" install_register_tsf
-        Goto install_failed_after_transaction
-
-    install_register_tsf:
     Call RegisterNewTsf
     Pop $0
     StrCmp $0 "1" install_write_registry
@@ -281,6 +319,18 @@ Section "Install"
 
     install_write_registry:
     Call WriteInstallationRegistry
+    Pop $0
+    StrCmp $0 "1" install_start_new_server
+        Goto install_failed_after_transaction
+
+    install_start_new_server:
+    Call StartNewServer
+    Pop $0
+    StrCmp $0 "1" install_prepare_system_ime
+        Goto install_failed_after_transaction
+
+    install_prepare_system_ime:
+    Call PrepareSystemImeUpdate
     Pop $0
     StrCmp $0 "1" install_write_marker
         Goto install_failed_after_transaction
@@ -292,26 +342,48 @@ Section "Install"
         Goto install_failed_after_transaction
 
     install_commit:
+    ClearErrors
+    Delete "$INSTDIR\${TRANSACTION_MARKER}"
+    IfErrors install_failed_after_transaction
+    Call CopyNewSystemIme
+    Pop $0
+    StrCmp $0 "1" install_system_ime_committed
+        IfSilent install_system_ime_warning_silent
+            MessageBox MB_ICONEXCLAMATION \
+                "CxxIME ${VERSION} 已安装，但系统 IME 模块未能完成更新。$\r$\n$\r$\n$FailureMessage$\r$\n$\r$\n\
+                安装状态已保留，后续运行安装程序时会再次尝试。"
+        install_system_ime_warning_silent:
+        DetailPrint "$FailureMessage"
+    install_system_ime_committed:
     IfFileExists "$INSTDIR\${ROLLBACK_DIR}" 0 install_commit_cleanup_backup
         ClearErrors
         RMDir /r "$INSTDIR\${ROLLBACK_DIR}"
-        IfErrors install_failed_after_transaction
         IfFileExists "$INSTDIR\${ROLLBACK_DIR}" 0 install_commit_cleanup_backup
-            Goto install_failed_after_transaction
+            DetailPrint "安装已提交，但未能删除回滚数据，将在后续安装时再次清理。"
     install_commit_cleanup_backup:
     IfFileExists "$BackupDir" 0 install_commit_delete_runtime
         ClearErrors
         RMDir /r "$BackupDir"
-        IfErrors install_failed_after_transaction
         IfFileExists "$BackupDir" 0 install_commit_delete_runtime
-            Goto install_failed_after_transaction
+            DetailPrint "安装已提交，但未能删除备份目录，将在后续安装时再次清理。"
     install_commit_delete_runtime:
-    ClearErrors
-    Delete "$INSTDIR\..\${RUNTIME_MARKER}"
-    IfErrors install_failed_after_transaction
-    ClearErrors
-    Delete "$INSTDIR\${TRANSACTION_MARKER}"
-    IfErrors install_failed_after_transaction
+    Call CleanupPreviousInstall
+    Pop $0
+    StrCmp $0 "1" install_old_version_removed
+        DetailPrint "$FailureMessage"
+    install_old_version_removed:
+    Call WriteInstallLayoutState
+    Pop $0
+    StrCmp $0 "1" install_layout_state_written
+        StrCpy $LaunchSettings 0
+        SetErrorLevel 1
+        IfSilent install_layout_state_failed_silent
+            MessageBox MB_ICONSTOP \
+                "CxxIME ${VERSION} 文件已安装，但无法完成安装状态记录。$\r$\n$\r$\n$FailureMessage$\r$\n$\r$\n请重新运行安装程序完成恢复。"
+        install_layout_state_failed_silent:
+        DetailPrint "$FailureMessage"
+        Abort
+    install_layout_state_written:
     CreateDirectory "$PROFILE\cxxime"
     IfFileExists "$PROFILE\cxxime\default.json" install_user_config_ready
         CopyFiles /SILENT /FILESONLY "$INSTDIR\data\default.json" "$PROFILE\cxxime"
@@ -319,6 +391,19 @@ Section "Install"
     Call CreateInstallShortcuts
     DetailPrint "CxxIME ${VERSION} 安装已完成。"
     Goto install_done
+
+    install_failed_untrusted_base:
+    StrCmp $InstallBaseHandle "0" install_untrusted_base_handle_closed
+    StrCmp $InstallBaseHandle "-1" install_untrusted_base_handle_closed
+        System::Call 'kernel32::CloseHandle(p $InstallBaseHandle)'
+        StrCpy $InstallBaseHandle 0
+    install_untrusted_base_handle_closed:
+    IfSilent install_untrusted_base_silent
+        MessageBox MB_ICONSTOP "$FailureMessage"
+    install_untrusted_base_silent:
+    DetailPrint "$FailureMessage"
+    SetErrorLevel 1
+    Abort
 
     install_failed_before_swap:
     StrCpy $InstallStateVerified 1
@@ -342,6 +427,8 @@ Section "Install"
 
     install_failed_after_transaction:
     StrCpy $InstallStateVerified 0
+    nsExec::Exec '"$PLUGINSDIR\cxxime-installer-helper.exe" force-stop-server "$INSTDIR\cxxime-server.exe"'
+    Pop $0
     Call RollbackInstall
     Pop $0
     StrCmp $0 "1" install_rollback_complete
@@ -378,6 +465,10 @@ Section "Install"
     Abort
 
     install_done:
+    StrCmp $InstallBaseHandle "0" install_base_handle_closed
+        System::Call 'kernel32::CloseHandle(p $InstallBaseHandle)'
+        StrCpy $InstallBaseHandle 0
+    install_base_handle_closed:
 SectionEnd
 
 !include "nsis\uninstall_locks.nsh"
@@ -514,6 +605,19 @@ Section "Uninstall"
         Call un.FailDeferred
 
     un_remove_user_data:
+    ${If} $PreviousVersionDir != ""
+        Push "$PreviousVersionDir"
+        Call un.CleanupKnownVersion
+    ${EndIf}
+    Push "$InstallBaseDir\update"
+    Call un.CleanupKnownVersion
+    Delete /REBOOTOK "$InstallBaseDir\${INSTALL_STATE_MARKER}"
+    Delete /REBOOTOK "$InstallBaseDir\${INSTALL_STATE_TEMP}"
+    Delete /REBOOTOK "$InstallBaseDir\${RUNTIME_MARKER}"
+    Delete /REBOOTOK "$InstallBaseDir\${RUNTIME_TEMP}"
+    Delete /REBOOTOK "$InstallBaseDir\${SYSTEM_IME_X64_PENDING}"
+    Delete /REBOOTOK "$InstallBaseDir\${SYSTEM_IME_X86_PENDING}"
+    Delete /REBOOTOK "$InstallBaseDir\${SYSTEM_IME_UPDATE_MARKER}"
     ${If} $UninstallRemoveUserData == ${BST_CHECKED}
         StrCpy $UninstallUserDataDirSuffix $UninstallUserDataDir 7 -7
         ${If} $UninstallUserDataDir != ""

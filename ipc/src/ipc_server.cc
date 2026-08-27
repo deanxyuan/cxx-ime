@@ -8,16 +8,53 @@
 // No FlushFileBuffers — message-mode pipe preserves boundaries without it.
 
 #include <cxxime/ipc_server.h>
-#include "security_attributes.h"
-#include <windows.h>
-#include <cstring>
+
 #include <algorithm>
+#include <cstring>
+
+#include <windows.h>
+
+#include "security_attributes.h"
 
 namespace cxxime {
 
 namespace {
 
 constexpr DWORD kAcceptWaitMs = 100;
+constexpr size_t kMaxIpcMessage = 65536;
+
+bool decode_request(const uint8_t* data, size_t size, IPCRequest* request) {
+    if (!data || !request) {
+        return false;
+    }
+    *request = {};
+
+    if (size >= sizeof(IPCWireHeader) + IPC_REQUEST_BASELINE_SIZE) {
+        IPCWireHeader header = {};
+        memcpy(&header, data, sizeof(header));
+        if (header.magic != IPC_WIRE_MAGIC ||
+            header.version < IPC_WIRE_MIN_COMPATIBLE_VERSION ||
+            header.header_size < sizeof(IPCWireHeader) || header.header_size > size ||
+            header.payload_size < IPC_REQUEST_BASELINE_SIZE ||
+            header.payload_size > size - header.header_size ||
+            size != header.header_size + header.payload_size) {
+            return false;
+        }
+        const size_t request_size =
+            (std::min)(static_cast<size_t>(header.payload_size), sizeof(*request));
+        memcpy(request, data + header.header_size, request_size);
+        return true;
+    }
+    return false;
+}
+
+void encode_response(const IPCResponse& response, std::vector<uint8_t>* wire) {
+    IPCWireHeader header = {};
+    header.payload_size = sizeof(response);
+    wire->resize(sizeof(header) + sizeof(response));
+    memcpy(wire->data(), &header, sizeof(header));
+    memcpy(wire->data() + sizeof(header), &response, sizeof(response));
+}
 
 void unblock_accept_thread(const std::wstring& pipe_name) {
     for (int i = 0; i < 50; ++i) {
@@ -68,7 +105,7 @@ bool connect_pipe_instance(HANDLE pipe, const std::atomic<bool>& running) {
     return connected;
 }
 
-}  // namespace
+} // namespace
 
 // ============================================================
 // Lifecycle
@@ -191,12 +228,14 @@ void IpcServer::accept_loop() {
 
         auto* ctx = new ClientContext{};
         ctx->pipe = pipe;
+        ctx->read_buffer.resize(kMaxIpcMessage);
 
         add_context(ctx);
 
         // Post initial overlapped read
         DWORD bytes = 0;
-        if (!ReadFile(pipe, &ctx->request, sizeof(IPCRequest), &bytes, &ctx->ol)) {
+        if (!ReadFile(pipe, ctx->read_buffer.data(),
+                      static_cast<DWORD>(ctx->read_buffer.size()), &bytes, &ctx->ol)) {
             if (GetLastError() != ERROR_IO_PENDING) {
                 cleanup_client(ctx);
             }
@@ -221,13 +260,17 @@ void IpcServer::worker_loop() {
         auto* ctx = reinterpret_cast<ClientContext*>(
             reinterpret_cast<char*>(ol) - offsetof(ClientContext, ol));
 
-        if (!ok || (ctx->read_pending && bytes < sizeof(IPCCommand))) {
+        if (!ok || (ctx->read_pending && bytes == 0)) {
             cleanup_client(ctx);
             continue;
         }
 
         if (ctx->read_pending) {
             // Read completed — dispatch to handler, post overlapped write
+            if (!decode_request(ctx->read_buffer.data(), bytes, &ctx->request)) {
+                cleanup_client(ctx);
+                continue;
+            }
             if (handler_) {
                 ctx->response = handler_(ctx->request);
             } else {
@@ -236,8 +279,10 @@ void IpcServer::worker_loop() {
             }
 
             ctx->read_pending = false;
+            encode_response(ctx->response, &ctx->write_buffer);
             DWORD written = 0;
-            if (!WriteFile(ctx->pipe, &ctx->response, sizeof(IPCResponse), &written, &ctx->ol)) {
+            if (!WriteFile(ctx->pipe, ctx->write_buffer.data(),
+                           static_cast<DWORD>(ctx->write_buffer.size()), &written, &ctx->ol)) {
                 if (GetLastError() != ERROR_IO_PENDING) {
                     cleanup_client(ctx);
                 }
@@ -246,7 +291,8 @@ void IpcServer::worker_loop() {
             // Write completed — post next overlapped read
             ctx->read_pending = true;
             DWORD bytes_read = 0;
-            if (!ReadFile(ctx->pipe, &ctx->request, sizeof(IPCRequest), &bytes_read, &ctx->ol)) {
+            if (!ReadFile(ctx->pipe, ctx->read_buffer.data(),
+                          static_cast<DWORD>(ctx->read_buffer.size()), &bytes_read, &ctx->ol)) {
                 if (GetLastError() != ERROR_IO_PENDING) {
                     cleanup_client(ctx);
                 }

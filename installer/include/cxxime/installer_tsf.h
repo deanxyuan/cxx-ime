@@ -6,6 +6,7 @@
 namespace cxxime {
 namespace installer {
 
+int release_input_processor_with_timeout();
 int release_input_processor();
 
 } // namespace installer

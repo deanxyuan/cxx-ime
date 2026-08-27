@@ -25,7 +25,6 @@ public:
     STDMETHODIMP SetResult(ULONG index, TfCandidateResult result) override;
 
 private:
-
     LONG ref_count_ = 1;
     std::vector<std::wstring> candidates_;
 };

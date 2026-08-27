@@ -9,6 +9,9 @@
 #include <windows.h>
 #include <tlhelp32.h>
 
+#include <cxxime/ipc_client.h>
+#include <cxxime/pipe_names.h>
+
 namespace cxxime {
 namespace installer {
 namespace {
@@ -158,11 +161,82 @@ BOOL CALLBACK request_server_close(HWND window, LPARAM parameter) {
     return TRUE;
 }
 
+int query_server_process_id(const std::wstring& path, std::uint32_t* process_id) {
+    if (!process_id) {
+        return 2;
+    }
+    DWORD native_process_id = 0;
+    const int status = find_server_process(path, &native_process_id);
+    *process_id = status == 0 ? native_process_id : 0;
+    return status;
+}
+
+bool query_process_user_name(std::uint32_t process_id, std::wstring* username) {
+    if (process_id == 0 || !username) {
+        return false;
+    }
+    HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, process_id);
+    if (!process) {
+        return false;
+    }
+    HANDLE token = nullptr;
+    const bool token_opened = OpenProcessToken(process, TOKEN_QUERY, &token) != FALSE;
+    CloseHandle(process);
+    if (!token_opened) {
+        return false;
+    }
+
+    DWORD token_size = 0;
+    GetTokenInformation(token, TokenUser, nullptr, 0, &token_size);
+    std::vector<BYTE> token_buffer(token_size);
+    if (token_size == 0 ||
+        !GetTokenInformation(token, TokenUser, token_buffer.data(), token_size, &token_size)) {
+        CloseHandle(token);
+        return false;
+    }
+    auto* token_user = reinterpret_cast<TOKEN_USER*>(token_buffer.data());
+    DWORD name_size = 0;
+    DWORD domain_size = 0;
+    SID_NAME_USE use = SidTypeUnknown;
+    LookupAccountSidW(nullptr, token_user->User.Sid, nullptr, &name_size, nullptr, &domain_size,
+                      &use);
+    std::vector<wchar_t> name(name_size);
+    std::vector<wchar_t> domain(domain_size);
+    const bool resolved =
+        name_size != 0 && LookupAccountSidW(nullptr, token_user->User.Sid, name.data(), &name_size,
+                                            domain.data(), &domain_size, &use) != FALSE;
+    CloseHandle(token);
+    if (!resolved) {
+        return false;
+    }
+    username->assign(name.data());
+    return !username->empty();
+}
+
 } // namespace
 
 int server_running(const std::wstring& path) {
     DWORD process_id = 0;
     return find_server_process(path, &process_id);
+}
+
+int server_ready(const std::wstring& path) {
+    std::uint32_t process_id = 0;
+    const int running = query_server_process_id(path, &process_id);
+    if (running != 0) {
+        return running;
+    }
+    std::wstring username;
+    if (!query_process_user_name(process_id, &username)) {
+        return 1;
+    }
+    IpcClient client;
+    IPCResponse response = {};
+    const std::wstring pipe_name = make_user_pipe_name(IPC_PIPE_BASE_NAME, username);
+    return client.connect(pipe_name, 300) && client.ping(&response) &&
+                   response.server_process_id == process_id
+               ? 0
+               : 1;
 }
 
 int print_server_pid(const std::wstring& path) {
