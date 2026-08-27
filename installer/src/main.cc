@@ -20,6 +20,7 @@ constexpr int kExitNoLocks = 0;
 constexpr int kExitLocked = 2;
 constexpr int kExitRebootRequired = 3;
 constexpr int kExitQueryFailed = 4;
+constexpr int kExitLockedAndRebootRequired = 5;
 // NSIS consumes these stable action codes when the helper displays a prompt.
 constexpr int kExitPromptRetry = 10;
 constexpr int kExitPromptDeferUntilRestart = 11;
@@ -164,7 +165,8 @@ int wmain(int argc, wchar_t** argv) {
         return kExitQueryFailed;
     }
     if (result.status == cxxime::installer::LockQueryStatus::kRebootRequired) {
-        return kExitRebootRequired;
+        return result.applications.empty() ? kExitRebootRequired
+                                           : kExitLockedAndRebootRequired;
     }
     return result.applications.empty() ? kExitNoLocks : kExitLocked;
 }

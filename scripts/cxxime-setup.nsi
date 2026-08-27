@@ -61,7 +61,6 @@ VIAddVersionKey /LANG=2052 "ProductVersion" "${VERSION}"
 !define MUI_ICON "cxxime.ico"
 !define MUI_UNICON "cxxime.ico"
 
-Var LaunchSettings
 Var ExistingInstall
 Var RegisteredInstallDir
 Var StageDir
@@ -72,6 +71,10 @@ Var LockReportPath
 Var LockReportText
 Var LockResult
 Var LockPromptOptions
+Var InstallLockNotice
+Var InstallLockDetailsButton
+Var InstallLockDetailsText
+Var InstallLockDetailsVisible
 Var FailureMessage
 Var OldInstallAvailable
 Var OldTsfX64Present
@@ -125,7 +128,11 @@ Var UninstallTsfX86Registered
 !define MUI_PAGE_CUSTOMFUNCTION_LEAVE ValidateInstallDirectory
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
-Page custom FinishPage FinishPageLeave
+!define MUI_FINISHPAGE_NOREBOOTSUPPORT
+!define MUI_FINISHPAGE_RUN "$INSTDIR\cxxime-settings.exe"
+!define MUI_FINISHPAGE_RUN_TEXT "启动 CxxIME 设置"
+!define MUI_FINISHPAGE_RUN_NOTCHECKED
+!define MUI_PAGE_CUSTOMFUNCTION_SHOW FinishPageShow
 !insertmacro MUI_PAGE_FINISH
 !insertmacro MUI_UNPAGE_CONFIRM
 UninstPage custom un.UserDataPage un.UserDataPageLeave
@@ -367,6 +374,7 @@ Section "Install"
         IfFileExists "$BackupDir" 0 install_commit_delete_runtime
             DetailPrint "安装已提交，但未能删除备份目录，将在后续安装时再次清理。"
     install_commit_delete_runtime:
+    Call CollectPreviousVersionLockNotice
     Call CleanupPreviousInstall
     Pop $0
     StrCmp $0 "1" install_old_version_removed
@@ -375,7 +383,6 @@ Section "Install"
     Call WriteInstallLayoutState
     Pop $0
     StrCmp $0 "1" install_layout_state_written
-        StrCpy $LaunchSettings 0
         SetErrorLevel 1
         IfSilent install_layout_state_failed_silent
             MessageBox MB_ICONSTOP \

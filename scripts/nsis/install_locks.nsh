@@ -327,6 +327,56 @@ Function ReadLockReport
     ${EndIf}
 FunctionEnd
 
+Function CollectPreviousVersionLockNotice
+    StrCpy $InstallLockNotice 0
+    StrCpy $LockReportText ""
+    StrCmp $MultiVersionInstall "1" 0 collect_previous_locks_done
+    StrCmp $PreviousInstallDir "" collect_previous_locks_done
+
+    Delete "$LockReportPath"
+    nsExec::ExecToStack /TIMEOUT=3000 \
+        '"$PLUGINSDIR\cxxime-installer-helper.exe" query --report "$LockReportPath" \
+        "$PreviousInstallDir\cxxime_tsf_x64.dll" \
+        "$PreviousInstallDir\cxxime_tsf_x86.dll" \
+        "$PreviousInstallDir\cxxime_ime_x64.ime" \
+        "$PreviousInstallDir\cxxime_ime_x86.ime" \
+        "$PreviousInstallDir\cxxime-resources.dll" \
+        "$PreviousInstallDir\cxxime-server.exe" \
+        "$PreviousInstallDir\cxxime-settings.exe" \
+        "$PreviousInstallDir\cxxime-ime-host-probe-x64.exe" \
+        "$PreviousInstallDir\cxxime-ime-host-probe-x86.exe" \
+        "$PreviousInstallDir\uninstall.exe" \
+        "$WINDIR\System32\cxxime.ime" "$SYSDIR\cxxime.ime"'
+    Pop $0
+    Pop $1
+    StrCmp $0 "2" collect_previous_locks_found
+    StrCmp $0 "3" collect_previous_locks_reboot
+    StrCmp $0 "5" collect_previous_locks_found_and_reboot
+    StrCmp $0 "timeout" collect_previous_locks_timeout
+    StrCmp $0 "0" collect_previous_locks_done
+        DetailPrint "无法读取旧版本文件占用信息，安装继续。"
+        Goto collect_previous_locks_done
+
+    collect_previous_locks_timeout:
+        DetailPrint "检查旧版本文件占用超时，安装继续。"
+        Goto collect_previous_locks_done
+
+    collect_previous_locks_found_and_reboot:
+        SetRebootFlag true
+        Goto collect_previous_locks_found
+
+    collect_previous_locks_reboot:
+        SetRebootFlag true
+        Goto collect_previous_locks_done
+
+    collect_previous_locks_found:
+        StrCpy $InstallLockNotice 1
+        Call ReadLockReport
+        DetailPrint "$LockReportText"
+
+    collect_previous_locks_done:
+FunctionEnd
+
 Function CheckInstallLocks
     StrCmp $MultiVersionInstall "1" install_lock_done
     StrCpy $LockPromptOptions ""

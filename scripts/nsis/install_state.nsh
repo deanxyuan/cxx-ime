@@ -249,8 +249,6 @@ Function CleanupPreviousInstall
     ${If} $PreviousInstallFlat == 0
         RMDir /REBOOTOK "$PreviousInstallDir"
     ${EndIf}
-    IfFileExists "$PreviousInstallDir\cxxime_tsf_x64.dll" 0 +2
-        SetRebootFlag true
     Push 1
     Return
 
