@@ -192,7 +192,7 @@ Function CheckPreviousVersionLimit
 
     previous_version_limit_block:
     StrCpy $FailureMessage \
-        "上一版本仍在被应用程序使用。请重新启动 Windows 完成旧文件清理后再升级。"
+        "当前已存在待清理的 CxxIME 文件。请重新启动 Windows 完成清理后再继续安装。"
     Push 0
     Return
     previous_version_limit_done:
@@ -409,7 +409,13 @@ Function ValidateInstallDirectory
     StrCpy $InstallTargetPrepared 1
     Return
     install_target_conflict:
+    StrCmp $InstallTargetDir $PreviousVersionDir install_target_pending_cleanup
     StrCpy $FailureMessage "目标版本目录已存在。请先完成或清理上一次未完成的安装。"
+    Goto install_target_conflict_show
+    install_target_pending_cleanup:
+    StrCpy $FailureMessage \
+        "当前已存在待清理的 CxxIME 文件。请重新启动 Windows 完成清理后再继续安装。"
+    install_target_conflict_show:
     IfSilent install_target_conflict_silent
         MessageBox MB_ICONSTOP "$FailureMessage"
     install_target_conflict_silent:
