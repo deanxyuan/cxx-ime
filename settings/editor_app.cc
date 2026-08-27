@@ -296,6 +296,7 @@ bool EditorApp::load_config() {
     set_check(hFuzzyPinyin_, config_.fuzzy_pinyin);
     set_check(hWubiAutoCommit_, config_.wubi_auto_commit);
     set_check(hWubiCommitFirstOnFifthKey_, config_.wubi_commit_first_on_fifth_key);
+    set_check(hWubiRestartOnFifthAfterMiss_, config_.wubi_restart_on_fifth_after_miss);
     set_check(hWubiCodeHint_, config_.wubi_code_hint);
     set_check(hCandidateLearning_, config_.candidate_learning);
     set_check(hInitialEnglishPunct_, !config_.initial_chinese_punct);
@@ -326,6 +327,7 @@ void EditorApp::readback(HWND) {
     c.fuzzy_pinyin = get_check(hFuzzyPinyin_);
     c.wubi_auto_commit = get_check(hWubiAutoCommit_);
     c.wubi_commit_first_on_fifth_key = get_check(hWubiCommitFirstOnFifthKey_);
+    c.wubi_restart_on_fifth_after_miss = get_check(hWubiRestartOnFifthAfterMiss_);
     c.wubi_code_hint = get_check(hWubiCodeHint_);
     c.candidate_learning = get_check(hCandidateLearning_);
     c.initial_chinese_punct = !get_check(hInitialEnglishPunct_);

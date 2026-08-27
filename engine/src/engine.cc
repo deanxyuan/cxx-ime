@@ -365,10 +365,20 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
         plain_letter_key && context_.pinyin_buffer.size() == 4 &&
         context_.preedit_cursor() == context_.pinyin_buffer.size() &&
         has_multiple_wubi_candidates;
+    const bool restart_wubi_on_fifth_after_miss =
+        config_->wubi_restart_on_fifth_after_miss && mode_ == InputMode::WUBI &&
+        !SymbolProcessor::is_active(context_) && plain_letter_key &&
+        context_.pinyin_buffer.size() == 4 &&
+        context_.preedit_cursor() == context_.pinyin_buffer.size() &&
+        context_.candidates.total_count == 0 && context_.candidates.candidates.empty();
     if (commit_wubi_before_next_code) {
         committed_code_override = context_.pinyin_buffer;
         committed_candidate_override = context_.candidates.candidates.front();
         has_committed_candidate_override = true;
+        context_.clear_preedit();
+        context_.candidates = {};
+        context_.reset_pagination();
+    } else if (restart_wubi_on_fifth_after_miss) {
         context_.clear_preedit();
         context_.candidates = {};
         context_.reset_pagination();

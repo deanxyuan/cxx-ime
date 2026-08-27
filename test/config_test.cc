@@ -23,6 +23,7 @@ TEST(Config, defaults) {
     ASSERT_TRUE(cfg.theme == "azure");
     ASSERT_TRUE(cfg.wubi_auto_commit);
     ASSERT_TRUE(cfg.wubi_commit_first_on_fifth_key);
+    ASSERT_TRUE(cfg.wubi_restart_on_fifth_after_miss);
     ASSERT_TRUE(!cfg.wubi_code_hint);
     ASSERT_TRUE(!cfg.candidate_learning);
     ASSERT_EQ(cfg.mixed_candidate_preference, cxxime::MixedCandidatePreference::kAuto);
@@ -72,6 +73,7 @@ TEST(Config, load_valid_json) {
         "page_size": 5,
         "wubi_auto_commit": false,
         "wubi_commit_first_on_fifth_key": false,
+        "wubi_restart_on_fifth_after_miss": false,
         "wubi_code_hint": true,
         "candidate_learning": true,
         "mixed_candidate_preference": "wubi"
@@ -93,6 +95,7 @@ TEST(Config, load_valid_json) {
     ASSERT_TRUE(cfg.theme == "dark");
     ASSERT_TRUE(!cfg.wubi_auto_commit);
     ASSERT_TRUE(!cfg.wubi_commit_first_on_fifth_key);
+    ASSERT_TRUE(!cfg.wubi_restart_on_fifth_after_miss);
     ASSERT_TRUE(cfg.wubi_code_hint);
     ASSERT_TRUE(cfg.candidate_learning);
     ASSERT_EQ(cfg.mixed_candidate_preference, cxxime::MixedCandidatePreference::kWubi);
@@ -112,6 +115,7 @@ TEST(Config, json_round_trip_preserves_wubi_options_and_candidate_learning) {
     cxxime::Config saved;
     saved.wubi_auto_commit = false;
     saved.wubi_commit_first_on_fifth_key = false;
+    saved.wubi_restart_on_fifth_after_miss = false;
     saved.wubi_code_hint = true;
     saved.candidate_learning = true;
     saved.mixed_candidate_preference = cxxime::MixedCandidatePreference::kWubi;
@@ -120,6 +124,7 @@ TEST(Config, json_round_trip_preserves_wubi_options_and_candidate_learning) {
     ASSERT_TRUE(loaded.load_json(saved.to_user_json()));
     ASSERT_TRUE(!loaded.wubi_auto_commit);
     ASSERT_TRUE(!loaded.wubi_commit_first_on_fifth_key);
+    ASSERT_TRUE(!loaded.wubi_restart_on_fifth_after_miss);
     ASSERT_TRUE(loaded.wubi_code_hint);
     ASSERT_TRUE(loaded.candidate_learning);
     ASSERT_EQ(loaded.mixed_candidate_preference, cxxime::MixedCandidatePreference::kWubi);
