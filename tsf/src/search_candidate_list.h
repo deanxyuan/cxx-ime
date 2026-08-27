@@ -11,6 +11,7 @@
 class SearchCandidateList final : public ITfCandidateList {
 public:
     explicit SearchCandidateList(std::vector<std::wstring> candidates);
+    ~SearchCandidateList();
 
     // IUnknown
     STDMETHODIMP QueryInterface(REFIID riid, void** ppvObj) override;
@@ -24,7 +25,6 @@ public:
     STDMETHODIMP SetResult(ULONG index, TfCandidateResult result) override;
 
 private:
-    ~SearchCandidateList() = default;
 
     LONG ref_count_ = 1;
     std::vector<std::wstring> candidates_;

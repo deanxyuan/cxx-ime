@@ -44,7 +44,10 @@ add_cxxime_test(layout_test)
 add_cxxime_test(preedit_mode_test)
 add_cxxime_test(preedit_edit_test)
 add_cxxime_test(edit_target_test)
-target_sources(edit_target_test PRIVATE ${CMAKE_SOURCE_DIR}/tsf/src/edit_target.cc)
+target_sources(edit_target_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/tsf/src/edit_target.cc
+    ${CMAKE_SOURCE_DIR}/tsf/src/globals.cpp
+)
 target_link_libraries(edit_target_test PRIVATE ole32 oleaut32 user32)
 add_cxxime_test(effective_edit_target_test)
 target_sources(effective_edit_target_test PRIVATE
