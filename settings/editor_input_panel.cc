@@ -38,13 +38,15 @@ void EditorApp::create_input_panel(HWND panel) {
     make_aligned_label(L"拼音设置:", top + kRowH * 4, panel);
     hFuzzyPinyin_ = make_check(1020, L"模糊拼音", input_x, top + kRowH * 4, S(110), panel);
 
-    make_aligned_label(L"五笔设置:", top + kRowH * 5, panel);
+    make_aligned_label(L"五笔上屏:", top + kRowH * 5, panel);
     hWubiAutoCommit_ = make_check(1022, L"四码唯一上屏", input_x, top + kRowH * 5, S(125), panel);
     hWubiCommitFirstOnFifthKey_ =
         make_check(1028, L"第五码首选上屏", input_x + S(140), top + kRowH * 5, S(155), panel);
 
-    make_aligned_label(L"五笔候选:", top + kRowH * 6, panel);
-    hWubiCodeHint_ = make_check(1026, L"显示最短补码", input_x, top + kRowH * 6, S(150), panel);
+    make_aligned_label(L"五笔编码:", top + kRowH * 6, panel);
+    hWubiCodeHint_ = make_check(1026, L"显示最短补码", input_x, top + kRowH * 6, S(130), panel);
+    hWubiRestartOnFifthAfterMiss_ =
+        make_check(1029, L"第五码作为新编码", input_x + S(140), top + kRowH * 6, S(170), panel);
 
     make_aligned_label(L"候选设置:", top + kRowH * 7, panel);
     hPageSize_ = make_edit(1021, input_x, top + kRowH * 7, S(50), panel);
@@ -94,6 +96,7 @@ void EditorApp::update_input_mode_enabled() {
     EnableWindow(hMixedCandidatePreference_, mixed);
     EnableWindow(hWubiAutoCommit_, wubi || mixed);
     EnableWindow(hWubiCommitFirstOnFifthKey_, wubi || mixed);
+    EnableWindow(hWubiRestartOnFifthAfterMiss_, wubi);
     EnableWindow(hWubiCodeHint_, wubi || mixed);
 }
 

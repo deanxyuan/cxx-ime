@@ -170,6 +170,8 @@ static void apply_config_json(Config& config, nlohmann::json& j) {
         load_bool(e, "wubi_auto_commit", config.wubi_auto_commit);
         load_bool(e, "wubi_commit_first_on_fifth_key",
                   config.wubi_commit_first_on_fifth_key);
+        load_bool(e, "wubi_restart_on_fifth_after_miss",
+                  config.wubi_restart_on_fifth_after_miss);
         load_bool(e, "wubi_code_hint", config.wubi_code_hint);
         load_bool(e, "candidate_learning", config.candidate_learning);
         std::string mixed_candidate_preference =
@@ -414,6 +416,8 @@ static nlohmann::json build_config_json(const Config& config, bool include_diagn
     j["engine"]["wubi_auto_commit"] = config.wubi_auto_commit;
     j["engine"]["wubi_commit_first_on_fifth_key"] =
         config.wubi_commit_first_on_fifth_key;
+    j["engine"]["wubi_restart_on_fifth_after_miss"] =
+        config.wubi_restart_on_fifth_after_miss;
     j["engine"]["wubi_code_hint"] = config.wubi_code_hint;
     j["engine"]["candidate_learning"] = config.candidate_learning;
     j["engine"]["mixed_candidate_preference"] =

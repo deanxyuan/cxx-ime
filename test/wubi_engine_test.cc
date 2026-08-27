@@ -562,6 +562,94 @@ TEST(WubiEngine, engine_wubi_fifth_key_commit_can_be_disabled) {
     DeleteFileA(wubi_user_path.c_str());
 }
 
+TEST(WubiEngine, engine_wubi_fifth_key_restarts_after_four_code_miss) {
+    std::string pinyin_path = make_temp_path("test_wubi_fifth_restart_pinyin.bin");
+    std::string wubi_path = make_temp_path("test_wubi_fifth_restart_wubi.bin");
+
+    ASSERT_TRUE(cxxime::Dict::create_test_dict(pinyin_path, {{"a", "拼", 100}}));
+    ASSERT_TRUE(cxxime::Dict::create_test_dict(wubi_path, {{"e", "新编码", 300}}));
+
+    cxxime::Engine engine;
+    ASSERT_TRUE(engine.initialize(pinyin_path));
+    cxxime::Dict wubi_dict;
+    ASSERT_TRUE(wubi_dict.open(wubi_path));
+    engine.set_wubi_dict(&wubi_dict);
+    engine.switch_mode(cxxime::InputMode::WUBI);
+
+    ASSERT_EQ(engine.process_key(make_key('Z')), cxxime::ProcessResult::ACCEPTED);
+    ASSERT_EQ(engine.process_key(make_key('Z')), cxxime::ProcessResult::ACCEPTED);
+    ASSERT_EQ(engine.process_key(make_key('Z')), cxxime::ProcessResult::ACCEPTED);
+    ASSERT_EQ(engine.process_key(make_key('Z')), cxxime::ProcessResult::ACCEPTED);
+    ASSERT_EQ(engine.context().pinyin_buffer, "zzzz");
+    ASSERT_TRUE(engine.context().candidates.candidates.empty());
+
+    ASSERT_EQ(engine.process_key(make_key('E')), cxxime::ProcessResult::ACCEPTED);
+    ASSERT_EQ(engine.context().pinyin_buffer, "e");
+    ASSERT_EQ(engine.context().candidates.candidates.size(), 1u);
+    ASSERT_EQ(engine.context().candidates.candidates[0].text, "新编码");
+
+    engine.finalize();
+    wubi_dict.close();
+    DeleteFileA(pinyin_path.c_str());
+    DeleteFileA(wubi_path.c_str());
+}
+
+TEST(WubiEngine, engine_wubi_fifth_key_empty_restart_can_be_disabled) {
+    std::string pinyin_path = make_temp_path("test_wubi_fifth_restart_off_pinyin.bin");
+    std::string wubi_path = make_temp_path("test_wubi_fifth_restart_off_wubi.bin");
+
+    ASSERT_TRUE(cxxime::Dict::create_test_dict(pinyin_path, {{"a", "拼", 100}}));
+    ASSERT_TRUE(cxxime::Dict::create_test_dict(wubi_path, {{"e", "新编码", 300}}));
+
+    cxxime::Engine engine;
+    ASSERT_TRUE(engine.initialize(pinyin_path));
+    cxxime::Dict wubi_dict;
+    ASSERT_TRUE(wubi_dict.open(wubi_path));
+    engine.set_wubi_dict(&wubi_dict);
+    engine.switch_mode(cxxime::InputMode::WUBI);
+    cxxime::Config config;
+    config.wubi_restart_on_fifth_after_miss = false;
+    engine.reload_config(config);
+
+    for (int index = 0; index < 4; ++index) {
+        ASSERT_EQ(engine.process_key(make_key('Z')), cxxime::ProcessResult::ACCEPTED);
+    }
+    ASSERT_EQ(engine.process_key(make_key('E')), cxxime::ProcessResult::ACCEPTED);
+    ASSERT_EQ(engine.context().pinyin_buffer, "zzzze");
+    ASSERT_TRUE(engine.context().candidates.candidates.empty());
+
+    engine.finalize();
+    wubi_dict.close();
+    DeleteFileA(pinyin_path.c_str());
+    DeleteFileA(wubi_path.c_str());
+}
+
+TEST(WubiEngine, engine_mixed_fifth_key_does_not_restart_after_empty_four_code) {
+    std::string pinyin_path = make_temp_path("test_mixed_fifth_restart_pinyin.bin");
+    std::string wubi_path = make_temp_path("test_mixed_fifth_restart_wubi.bin");
+
+    ASSERT_TRUE(cxxime::Dict::create_test_dict(pinyin_path, {{"a", "拼", 100}}));
+    ASSERT_TRUE(cxxime::Dict::create_test_dict(wubi_path, {{"e", "新编码", 300}}));
+
+    cxxime::Engine engine;
+    ASSERT_TRUE(engine.initialize(pinyin_path));
+    cxxime::Dict wubi_dict;
+    ASSERT_TRUE(wubi_dict.open(wubi_path));
+    engine.set_wubi_dict(&wubi_dict);
+    engine.switch_mode(cxxime::InputMode::MIXED);
+
+    for (int index = 0; index < 4; ++index) {
+        ASSERT_EQ(engine.process_key(make_key('Z')), cxxime::ProcessResult::ACCEPTED);
+    }
+    ASSERT_EQ(engine.process_key(make_key('E')), cxxime::ProcessResult::ACCEPTED);
+    ASSERT_EQ(engine.context().pinyin_buffer, "zzzze");
+
+    engine.finalize();
+    wubi_dict.close();
+    DeleteFileA(pinyin_path.c_str());
+    DeleteFileA(wubi_path.c_str());
+}
+
 TEST(WubiEngine, engine_wubi_space_without_candidates_clears) {
     std::string pinyin_path = make_temp_path("test_wubi_space_clear_pinyin.bin");
     std::string wubi_path = make_temp_path("test_wubi_space_clear_wubi.bin");

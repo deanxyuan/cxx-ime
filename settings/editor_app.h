@@ -125,6 +125,7 @@ private:
     HWND hFuzzyPinyin_ = nullptr;
     HWND hWubiAutoCommit_ = nullptr;
     HWND hWubiCommitFirstOnFifthKey_ = nullptr;
+    HWND hWubiRestartOnFifthAfterMiss_ = nullptr;
     HWND hWubiCodeHint_ = nullptr;
     HWND hCandidateLearning_ = nullptr;
     HWND hInitialEnglishPunct_ = nullptr;
