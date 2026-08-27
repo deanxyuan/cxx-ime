@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from package_checks.common import forbid_text, require_order, require_text
 
 
@@ -18,6 +20,7 @@ def check_installer_flow(
         "Function CheckFreshInstallBase",
         "Function SecureInstallBase",
         "Function CheckInstallLocks",
+        "Function CollectPreviousVersionLockNotice",
         "Function StartNewServer",
         "Function ReleaseInputProcessor",
         "Function CaptureServerState",
@@ -35,6 +38,9 @@ def check_installer_flow(
         "!define MOVEFILE_DELAY_UNTIL_REBOOT 0x4",
         "!define MOVEFILE_REPLACE_DELAY_UNTIL_REBOOT 0x5",
         "!insertmacro MUI_PAGE_FINISH",
+        "!define MUI_FINISHPAGE_NOREBOOTSUPPORT",
+        "!define MUI_FINISHPAGE_RUN_NOTCHECKED",
+        'StrCpy $LockReportPath "$PLUGINSDIR\\cxxime-locks.txt"',
         'StrCpy $InstallBaseDir "$PROGRAMFILES64\\CxxIME"',
         'StrCpy $PreviousInstallDir $0',
         'StrCpy $ActiveServerDir "$PreviousInstallDir"',
@@ -86,6 +92,7 @@ def check_installer_flow(
             "Call WriteInstallMarker",
             'Delete "$INSTDIR\\${TRANSACTION_MARKER}"',
             "Call CopyNewSystemIme",
+            "Call CollectPreviousVersionLockNotice",
             "Call CleanupPreviousInstall",
             "Call WriteInstallLayoutState",
         ],
@@ -101,6 +108,105 @@ def check_installer_flow(
         ],
         "Legacy install lock source",
     )
+    lock_notice_start = text.find("Function CollectPreviousVersionLockNotice")
+    lock_notice_end = text.find("FunctionEnd", lock_notice_start)
+    lock_notice_block = ""
+    if lock_notice_start < 0 or lock_notice_end < 0:
+        errors.append("Previous version lock notice: missing function")
+    else:
+        lock_notice_block = text[lock_notice_start:lock_notice_end]
+        require_order(
+            errors,
+            lock_notice_block,
+            [
+                'StrCmp $MultiVersionInstall "1"',
+                "nsExec::ExecToStack /TIMEOUT=3000",
+                '"$WINDIR\\System32\\cxxime.ime"',
+                'StrCmp $0 "2" collect_previous_locks_found',
+                'StrCmp $0 "3" collect_previous_locks_reboot',
+                'StrCmp $0 "5" collect_previous_locks_found_and_reboot',
+                "collect_previous_locks_found_and_reboot:",
+                "SetRebootFlag true",
+                "collect_previous_locks_found:",
+                "Call ReadLockReport",
+                'DetailPrint "$LockReportText"',
+            ],
+            "Previous version lock notice",
+        )
+        for forbidden_item in [
+            "--prompt=",
+            "MessageBox",
+            "Abort",
+            "ReleaseInputProcessor",
+            "StopServer",
+        ]:
+            if forbidden_item in lock_notice_block:
+                errors.append(
+                    "Previous version lock notice: forbidden "
+                    f"`{forbidden_item}`"
+                )
+    require_order(
+        errors,
+        text,
+        [
+            "Function ToggleInstallLockDetails",
+            "ShowWindow $InstallLockDetailsText ${SW_SHOW}",
+            "Function FinishPageShow",
+            "StrCpy $InstallLockDetailsVisible 0",
+            '${NSD_CreateButton} 120u 108u 76u 16u "查看占用详情"',
+            "${NSD_OnClick} $InstallLockDetailsButton ToggleInstallLockDetails",
+            "ShowWindow $InstallLockDetailsText ${SW_HIDE}",
+        ],
+        "Install lock details disclosure",
+    )
+    require_order(
+        errors,
+        text,
+        [
+            "!define MUI_FINISHPAGE_NOREBOOTSUPPORT",
+            '!define MUI_FINISHPAGE_RUN "$INSTDIR\\cxxime-settings.exe"',
+            "!define MUI_PAGE_CUSTOMFUNCTION_SHOW FinishPageShow",
+            "!insertmacro MUI_PAGE_FINISH",
+        ],
+        "Single install finish page",
+    )
+    install_pages_start = text.find("!insertmacro MUI_PAGE_INSTFILES")
+    install_pages_end = text.find("!insertmacro MUI_PAGE_FINISH", install_pages_start)
+    if install_pages_start < 0 or install_pages_end < 0:
+        errors.append("Single install finish page: missing page declaration range")
+    elif "Page custom" in text[install_pages_start:install_pages_end]:
+        errors.append("Single install finish page: unexpected custom page")
+
+    combined_reboot_start = lock_notice_block.find(
+        "collect_previous_locks_found_and_reboot:"
+    )
+    reboot_only_start = lock_notice_block.find(
+        "collect_previous_locks_reboot:", combined_reboot_start
+    )
+    lock_found_start = lock_notice_block.find(
+        "collect_previous_locks_found:", reboot_only_start
+    )
+    if min(combined_reboot_start, reboot_only_start, lock_found_start) < 0:
+        errors.append("Previous version lock notice: missing result branch")
+    else:
+        require_order(
+            errors,
+            lock_notice_block[combined_reboot_start:reboot_only_start],
+            ["SetRebootFlag true", "Goto collect_previous_locks_found"],
+            "Previous version combined lock result",
+        )
+        require_order(
+            errors,
+            lock_notice_block[reboot_only_start:lock_found_start],
+            ["SetRebootFlag true", "Goto collect_previous_locks_done"],
+            "Previous version reboot-only result",
+        )
+
+    lock_report_paths = re.findall(r'StrCpy \$LockReportPath "([^"]+)"', text)
+    if not lock_report_paths:
+        errors.append("Lock report path: missing assignment")
+    elif any(path != r"$PLUGINSDIR\cxxime-locks.txt" for path in lock_report_paths):
+        errors.append("Lock report path: must remain under $PLUGINSDIR")
     require_order(
         errors,
         uninstall_text,

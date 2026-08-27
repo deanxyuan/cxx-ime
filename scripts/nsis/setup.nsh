@@ -22,7 +22,9 @@ Function AcquireInstallerMutex
 FunctionEnd
 
 Function .onInit
-    StrCpy $LaunchSettings 0
+    StrCpy $InstallLockNotice 0
+    StrCpy $InstallLockDetailsVisible 0
+    StrCpy $LockReportText ""
     StrCpy $ServerRestartResult 0
     StrCpy $InstallStateVerified 1
     StrCpy $InstallBaseHandle 0
@@ -269,22 +271,49 @@ Function un.onInit
     un_init_ready:
 FunctionEnd
 
-Function .onInstSuccess
-    ${If} $LaunchSettings == ${BST_CHECKED}
-        Exec '"$INSTDIR\cxxime-settings.exe"'
-    ${EndIf}
+Function ToggleInstallLockDetails
+    Pop $0
+    StrCmp $InstallLockDetailsVisible "1" hide_install_lock_details
+
+    ShowWindow $InstallLockDetailsText ${SW_SHOW}
+    ${NSD_SetText} $InstallLockDetailsButton "收起占用详情"
+    StrCpy $InstallLockDetailsVisible 1
+    Return
+
+    hide_install_lock_details:
+        ShowWindow $InstallLockDetailsText ${SW_HIDE}
+        ${NSD_SetText} $InstallLockDetailsButton "查看占用详情"
+        StrCpy $InstallLockDetailsVisible 0
 FunctionEnd
 
-Function FinishPage
-    nsDialogs::Create 1018
-    Pop $1
-    ${NSD_CreateCheckbox} 20u 50u 100% 20u "启动 CxxIME 设置"
-    Pop $1
-    nsDialogs::Show
-FunctionEnd
+Function FinishPageShow
+    StrCpy $InstallLockDetailsVisible 0
+    StrCmp $InstallLockNotice "1" finish_page_occupied
+    IfRebootFlag finish_page_reboot finish_page_done
 
-Function FinishPageLeave
-    ${NSD_GetState} $1 $LaunchSettings
+    finish_page_occupied:
+        IfRebootFlag finish_page_occupied_reboot finish_page_occupied_only
+    finish_page_occupied_reboot:
+        ${NSD_SetText} $mui.FinishPage.Text \
+            "部分应用仍使用上一版本；部分更新将在下次 Windows 重启后生效。"
+        Goto finish_page_create_details
+    finish_page_occupied_only:
+        ${NSD_SetText} $mui.FinishPage.Text \
+            "部分正在运行的应用仍使用上一版本，重新打开后即可切换。"
+    finish_page_create_details:
+        ${NSD_CreateButton} 120u 108u 76u 16u "查看占用详情"
+        Pop $InstallLockDetailsButton
+        ${NSD_OnClick} $InstallLockDetailsButton ToggleInstallLockDetails
+        ${NSD_CreateMLText} 120u 130u 195u 42u "$LockReportText"
+        Pop $InstallLockDetailsText
+        ${NSD_Edit_SetReadOnly} $InstallLockDetailsText 1
+        ShowWindow $InstallLockDetailsText ${SW_HIDE}
+        Goto finish_page_done
+
+    finish_page_reboot:
+        ${NSD_SetText} $mui.FinishPage.Text \
+            "部分更新将在下次 Windows 重启后生效。"
+    finish_page_done:
 FunctionEnd
 
 Function un.UserDataPage
