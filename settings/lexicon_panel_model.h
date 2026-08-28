@@ -30,6 +30,10 @@ struct LexiconPanelEntry {
     bool has_system_source = false;
     bool has_user_source = false;
     bool system_disabled = false;
+    std::string syllables;
+    CandidateOrderReason candidate_order_reason = CandidateOrderReason::kDefault;
+    bool candidate_available = true;
+    bool candidate_position_known = false;
 };
 
 struct LexiconSelectionSummary {

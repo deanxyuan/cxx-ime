@@ -14,6 +14,7 @@ add_library(cxxime-engine STATIC
     src/user_lexicon_state.cc
     src/user_lexicon_query.cc
     src/candidate_preference.cc
+    src/manual_candidate_order.cc
     src/wubi_prefix_index.cc
     src/spellings_index.cc
     src/syllabifier.cc

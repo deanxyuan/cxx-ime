@@ -11,23 +11,13 @@ namespace settings {
 namespace {
 
 constexpr wchar_t kHotProperty[] = L"CxxIME.LexiconViewTabHot";
+constexpr wchar_t kNextProperty[] = L"CxxIME.LexiconViewTabNext";
+constexpr wchar_t kPreviousProperty[] = L"CxxIME.LexiconViewTabPrevious";
 
 void set_tab_stop(HWND tab, bool enabled) {
     LONG_PTR style = GetWindowLongPtrW(tab, GWL_STYLE);
     style = enabled ? style | WS_TABSTOP : style & ~static_cast<LONG_PTR>(WS_TABSTOP);
     SetWindowLongPtrW(tab, GWL_STYLE, style);
-}
-
-void select_peer_tab(HWND tab, HWND peer, WPARAM key) {
-    RECT tab_rect = {};
-    RECT peer_rect = {};
-    GetWindowRect(tab, &tab_rect);
-    GetWindowRect(peer, &peer_rect);
-    const bool peer_is_right = peer_rect.left > tab_rect.left;
-    if ((key == VK_RIGHT && peer_is_right) || (key == VK_LEFT && !peer_is_right)) {
-        SendMessageW(peer, BM_CLICK, 0, 0);
-        SetFocus(peer);
-    }
 }
 
 LRESULT CALLBACK view_tab_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam,
@@ -37,7 +27,12 @@ LRESULT CALLBACK view_tab_proc(HWND window, UINT message, WPARAM wparam, LPARAM 
         return DefSubclassProc(window, message, wparam, lparam) | DLGC_WANTARROWS;
     case WM_KEYDOWN:
         if (wparam == VK_LEFT || wparam == VK_RIGHT) {
-            select_peer_tab(window, reinterpret_cast<HWND>(reference_data), wparam);
+            const wchar_t* property = wparam == VK_RIGHT ? kNextProperty : kPreviousProperty;
+            const HWND peer = reinterpret_cast<HWND>(GetPropW(window, property));
+            if (peer) {
+                SendMessageW(peer, BM_CLICK, 0, 0);
+                SetFocus(peer);
+            }
             return 0;
         }
         break;
@@ -55,6 +50,8 @@ LRESULT CALLBACK view_tab_proc(HWND window, UINT message, WPARAM wparam, LPARAM 
         return 0;
     case WM_NCDESTROY:
         RemovePropW(window, kHotProperty);
+        RemovePropW(window, kNextProperty);
+        RemovePropW(window, kPreviousProperty);
         RemoveWindowSubclass(window, view_tab_proc, subclass_id);
         break;
     default:
@@ -76,36 +73,47 @@ HWND create_view_tab(HWND parent, int id, const wchar_t* text, int x, int y, int
 
 } // namespace
 
-LexiconViewTabs create_lexicon_view_tabs(HWND parent, int entries_id, int preferences_id, int x,
-                                         int y, int width, int height, HFONT font) {
-    const int entries_width = width / 2;
+LexiconViewTabs create_lexicon_view_tabs(HWND parent, int entries_id, int candidate_order_id,
+                                         int preferences_id, int x, int y, int width, int height,
+                                         HFONT font) {
+    const int entries_width = width / 3;
+    const int order_width = width / 3;
     LexiconViewTabs tabs;
     tabs.entries =
         create_view_tab(parent, entries_id, L"词条", x, y, entries_width, height, font, true);
-    tabs.preferences = create_view_tab(parent, preferences_id, L"选词偏好", x + entries_width, y,
-                                       width - entries_width, height, font, false);
-    SetWindowSubclass(tabs.entries, view_tab_proc, 1,
-                      reinterpret_cast<DWORD_PTR>(tabs.preferences));
-    SetWindowSubclass(tabs.preferences, view_tab_proc, 1,
-                      reinterpret_cast<DWORD_PTR>(tabs.entries));
+    tabs.candidate_order = create_view_tab(parent, candidate_order_id, L"候选排序",
+                                           x + entries_width, y, order_width, height, font, false);
+    tabs.preferences = create_view_tab(parent, preferences_id, L"学习记录",
+                                       x + entries_width + order_width, y,
+                                       width - entries_width - order_width, height, font, false);
+    SetPropW(tabs.entries, kPreviousProperty, tabs.preferences);
+    SetPropW(tabs.entries, kNextProperty, tabs.candidate_order);
+    SetPropW(tabs.candidate_order, kPreviousProperty, tabs.entries);
+    SetPropW(tabs.candidate_order, kNextProperty, tabs.preferences);
+    SetPropW(tabs.preferences, kPreviousProperty, tabs.candidate_order);
+    SetPropW(tabs.preferences, kNextProperty, tabs.entries);
+    SetWindowSubclass(tabs.entries, view_tab_proc, 1, 0);
+    SetWindowSubclass(tabs.candidate_order, view_tab_proc, 1, 0);
+    SetWindowSubclass(tabs.preferences, view_tab_proc, 1, 0);
     return tabs;
 }
 
-void select_lexicon_view_tab(const LexiconViewTabs& tabs, bool preferences_selected) {
-    set_tab_stop(tabs.entries, !preferences_selected);
-    set_tab_stop(tabs.preferences, preferences_selected);
+void select_lexicon_view_tab(const LexiconViewTabs& tabs, HWND selected) {
+    set_tab_stop(tabs.entries, selected == tabs.entries);
+    set_tab_stop(tabs.candidate_order, selected == tabs.candidate_order);
+    set_tab_stop(tabs.preferences, selected == tabs.preferences);
     InvalidateRect(tabs.entries, nullptr, FALSE);
+    InvalidateRect(tabs.candidate_order, nullptr, FALSE);
     InvalidateRect(tabs.preferences, nullptr, FALSE);
 }
 
-bool draw_lexicon_view_tab(const DRAWITEMSTRUCT& item, const LexiconViewTabs& tabs,
-                           bool preferences_selected) {
-    if (item.hwndItem != tabs.entries && item.hwndItem != tabs.preferences) {
+bool draw_lexicon_view_tab(const DRAWITEMSTRUCT& item, const LexiconViewTabs& tabs, HWND selected) {
+    if (item.hwndItem != tabs.entries && item.hwndItem != tabs.candidate_order &&
+        item.hwndItem != tabs.preferences) {
         return false;
     }
 
-    const bool selected =
-        preferences_selected ? item.hwndItem == tabs.preferences : item.hwndItem == tabs.entries;
+    const bool is_selected = item.hwndItem == selected;
     const bool hot = GetPropW(item.hwndItem, kHotProperty) != nullptr;
     FillRect(item.hDC, &item.rcItem, GetSysColorBrush(COLOR_BTNFACE));
 
@@ -115,11 +123,12 @@ bool draw_lexicon_view_tab(const DRAWITEMSTRUCT& item, const LexiconViewTabs& ta
     HGDIOBJ old_font = font ? SelectObject(item.hDC, font) : nullptr;
     SetBkMode(item.hDC, TRANSPARENT);
     SetTextColor(item.hDC,
-                 selected || hot ? GetSysColor(COLOR_HIGHLIGHT) : GetSysColor(COLOR_BTNTEXT));
+                 is_selected || hot ? GetSysColor(COLOR_HIGHLIGHT)
+                                    : GetSysColor(COLOR_BTNTEXT));
     RECT text_rect = item.rcItem;
     DrawTextW(item.hDC, text, -1, &text_rect, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
 
-    if (selected) {
+    if (is_selected) {
         const int underline_height = S(2) > 1 ? S(2) : 2;
         RECT underline = {item.rcItem.left + S(8), item.rcItem.bottom - underline_height,
                           item.rcItem.right - S(8), item.rcItem.bottom};

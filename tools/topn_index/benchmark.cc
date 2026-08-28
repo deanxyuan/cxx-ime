@@ -61,7 +61,8 @@ bool parse_args(int argc, char** argv, Paths* paths) {
 
 bool equal_candidate(const cxxime::topn::SourceCandidate& lhs,
                      const cxxime::topn::SourceCandidate& rhs) {
-    return lhs.text == rhs.text && lhs.frequency == rhs.frequency && lhs.score == rhs.score;
+    return lhs.text == rhs.text && lhs.frequency == rhs.frequency && lhs.score == rhs.score &&
+        lhs.syllables == rhs.syllables;
 }
 
 bool verify_index(const cxxime::topn::IntermediateReader& baseline,
@@ -106,6 +107,11 @@ uint64_t touch_candidate(const cxxime::topn::SourceCandidate& candidate) {
     if (!candidate.text.empty()) {
         value ^= static_cast<unsigned char>(candidate.text.front());
         value ^= static_cast<uint64_t>(static_cast<unsigned char>(candidate.text.back())) << 8;
+    }
+    value ^= candidate.syllables.size() << 16;
+    if (!candidate.syllables.empty()) {
+        value ^= static_cast<uint64_t>(static_cast<unsigned char>(candidate.syllables.front()))
+                 << 24;
     }
     return value;
 }

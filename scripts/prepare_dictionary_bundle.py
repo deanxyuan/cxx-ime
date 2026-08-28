@@ -29,6 +29,7 @@ DATA_TOOLS = os.path.join(ROOT, "data", "tools")
 WUBI_RANKING_BASELINE = os.path.join(
     DATA_TOOLS, "dict_builder", "wubi_ranking_baseline.json"
 )
+WUBI_RANKING_OVERRIDES = os.path.join(ROOT, "data", "wubi_ranking_overrides.json")
 SCHEMAS = os.path.join(ROOT, "data", "schemas")
 SCRIPTS = os.path.join(ROOT, "scripts")
 sys.path.insert(0, DATA_TOOLS)
@@ -100,6 +101,7 @@ def run_build_runtime_dictionary(
     wubi_prefix_index: bool = False,
     wubi_ranking_source: str | None = None,
     wubi_ranking_baseline: str | None = None,
+    wubi_ranking_overrides: str | None = None,
 ) -> None:
     """Convert a SQLite dictionary to runtime files."""
     script = os.path.join(DATA_TOOLS, "build_runtime_dictionary.py")
@@ -115,6 +117,8 @@ def run_build_runtime_dictionary(
         cmd.extend(["--wubi-ranking-source", wubi_ranking_source])
         if wubi_ranking_baseline:
             cmd.extend(["--wubi-ranking-baseline", wubi_ranking_baseline])
+        if wubi_ranking_overrides:
+            cmd.extend(["--wubi-ranking-overrides", wubi_ranking_overrides])
     print(f"  Building binary dicts: {os.path.basename(output_prefix)}.*")
     subprocess.run(cmd, check=True, capture_output=False)
 
@@ -182,7 +186,7 @@ def finalize_topn_index(output_dir: str, topn_builder: str) -> str:
         raise RuntimeError("pinyin.topn.bin is too small")
 
     magic = header[:8]
-    if magic == b"CXTOPN\x01\x00":
+    if magic == b"CXTOPN\x02\x00":
         print("  Converting Top-N index to DAT-16...")
         subprocess.run(
             [
@@ -201,10 +205,10 @@ def finalize_topn_index(output_dir: str, topn_builder: str) -> str:
             header = f.read(20)
         magic = header[:8]
 
-    if magic != b"CXTOPN\x02\x00" or len(header) < 20:
-        raise RuntimeError("pinyin.topn.bin is not a CXTOPN v2 file")
+    if magic != b"CXTOPN\x03\x00" or len(header) < 20:
+        raise RuntimeError("pinyin.topn.bin is not a CXTOPN v3 file")
     version, header_size, layout = struct.unpack_from("<III", header, 8)
-    if version != 2 or header_size != 80 or layout != 2:
+    if version != 3 or header_size != 80 or layout != 2:
         raise RuntimeError(
             "pinyin.topn.bin is not the required DAT-16 layout "
             f"(version={version}, header={header_size}, layout={layout})"
@@ -315,6 +319,7 @@ def prepare_wubi_dictionary(data_dir: str, output_dir: str) -> list[str]:
             wubi_prefix_index=True,
             wubi_ranking_source=ranking_source,
             wubi_ranking_baseline=WUBI_RANKING_BASELINE,
+            wubi_ranking_overrides=WUBI_RANKING_OVERRIDES,
         )
         reverse_index_path = output_prefix + ".reverse.idx"
         build_reverse_index(output_prefix + ".dict.bin", reverse_index_path)

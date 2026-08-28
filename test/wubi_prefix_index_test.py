@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import struct
 import subprocess
@@ -273,7 +274,7 @@ def test_visible_ranking_preserves_exact_and_unproven_candidates():
     ) == [16, 17]
 
 
-def test_visible_ranking_does_not_import_deeper_candidates():
+def test_visible_ranking_does_not_import_unreviewed_deeper_candidates():
     entries = [
         (f"abc{index:02d}".encode("ascii"), f"candidate-{index:02d}".encode("ascii"), 10)
         for index in range(12)
@@ -289,6 +290,208 @@ def test_visible_ranking_does_not_import_deeper_candidates():
     )
     assert set(ranked[:10]) == set(source[:10])
     assert ranked[10:] == source[10:]
+
+
+def test_ranking_override_imports_yiy_completion_only():
+    entries = [
+        (b"yiyh", "就让".encode("utf-8"), 10),
+        (b"yiyf", "就读".encode("utf-8"), 10),
+        (b"yiyw", "就座".encode("utf-8"), 20),
+        (b"yiya", "应试".encode("utf-8"), 10),
+        (b"yiyj", "哀鸿遍野".encode("utf-8"), 10),
+        (b"yiyl", "应为".encode("utf-8"), 10),
+        (b"yiym", "应市".encode("utf-8"), 10),
+        (b"yiyo", "应变".encode("utf-8"), 10),
+        (b"yiyq", "就义".encode("utf-8"), 10),
+        (b"yiyr", "应诉".encode("utf-8"), 10),
+        (b"yiyt", "应许".encode("utf-8"), 10),
+        (b"yiyu", "就说".encode("utf-8"), 10),
+        (b"yiyw", "就诊".encode("utf-8"), 10),
+        (b"yiyy", "应该".encode("utf-8"), 10),
+    ]
+    frequencies = {
+        "就让".encode("utf-8"): 133260,
+        "就读".encode("utf-8"): 116305,
+        "就座".encode("utf-8"): 18100,
+        "应试".encode("utf-8"): 91945,
+        "哀鸿遍野".encode("utf-8"): 1725,
+        "应为".encode("utf-8"): 109460,
+        "应市".encode("utf-8"): 2,
+        "应变".encode("utf-8"): 45070,
+        "就义".encode("utf-8"): 4105,
+        "应诉".encode("utf-8"): 46109,
+        "应许".encode("utf-8"): 8085,
+        "就说".encode("utf-8"): 192065,
+        "就诊".encode("utf-8"): 89990,
+        "应该".encode("utf-8"): 501106,
+    }
+    source = list(range(len(entries)))
+    default_ranked = WUBI_RANKING.rerank_visible_candidates(
+        source, entries, 3, frequencies
+    )
+    overrides = {
+        b"yiy": [
+            WUBI_RANKING.RankingOverride(
+                input_code=b"yiy",
+                candidate_text="应该".encode("utf-8"),
+                candidate_code=b"yiyy",
+                target_position=0,
+                reason="test",
+            )
+        ]
+    }
+    ranked, applied = WUBI_RANKING.apply_ranking_overrides(
+        b"yiy", default_ranked, entries, overrides
+    )
+    assert applied
+    assert ranked == [13, *range(13)]
+    assert [entries[index][1].decode("utf-8") for index in ranked[:10]] == [
+        "应该",
+        "就让",
+        "就读",
+        "就座",
+        "应试",
+        "哀鸿遍野",
+        "应为",
+        "应市",
+        "应变",
+        "就义",
+    ]
+
+    audit = WUBI_RANKING.RankingAudit(three_code_prefixes=1000)
+    WUBI_RANKING.audit_ranking_change(
+        source, ranked, entries, 3, frequencies, audit, applied
+    )
+    assert audit.visible_set_changes == 1
+    assert audit.ranking_override_changes == 1
+    assert audit.ranking_override_visible_set_changes == 1
+    assert audit.unsafe_top_changes == 0
+    audit.validate()
+
+
+def test_ranking_override_file_is_strict_and_fingerprint_is_semantic():
+    document = {
+        "format": 1,
+        "overrides": [
+            {
+                "input_code": "yiy",
+                "candidate_text": "应该",
+                "candidate_code": "yiyy",
+                "target_position": 1,
+                "reason": "reviewed",
+            },
+            {
+                "input_code": "abc",
+                "candidate_text": "测试",
+                "candidate_code": "abcd",
+                "target_position": 2,
+                "reason": "second reviewed override",
+            },
+        ],
+    }
+    with tempfile.TemporaryDirectory(prefix="cxxime-wubi-overrides-") as temp_dir:
+        first_path = Path(temp_dir) / "first.json"
+        second_path = Path(temp_dir) / "second.json"
+        first_path.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
+        second_path.write_text(
+            json.dumps(
+                {
+                    "overrides": list(reversed(document["overrides"])),
+                    "format": document["format"],
+                },
+                ensure_ascii=False,
+                indent=4,
+            ),
+            encoding="utf-8",
+        )
+        first = WUBI_RANKING.load_ranking_overrides(str(first_path))
+        second = WUBI_RANKING.load_ranking_overrides(str(second_path))
+        assert WUBI_RANKING.ranking_overrides_fingerprint(
+            first
+        ) == WUBI_RANKING.ranking_overrides_fingerprint(second)
+
+        invalid = dict(document)
+        invalid["unexpected"] = True
+        first_path.write_text(json.dumps(invalid, ensure_ascii=False), encoding="utf-8")
+        try:
+            WUBI_RANKING.load_ranking_overrides(str(first_path))
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("unknown ranking override fields must be rejected")
+
+        duplicate_position = dict(document)
+        duplicate_position["overrides"] = [
+            dict(document["overrides"][0]),
+            {
+                **document["overrides"][0],
+                "candidate_text": "另一个词",
+                "candidate_code": "yiyx",
+            },
+        ]
+        first_path.write_text(
+            json.dumps(duplicate_position, ensure_ascii=False), encoding="utf-8"
+        )
+        try:
+            WUBI_RANKING.load_ranking_overrides(str(first_path))
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("duplicate override target positions must be rejected")
+
+    entries = [(b"abcd", "测试".encode("utf-8"), 1)]
+    no_op = {
+        b"abc": [
+            WUBI_RANKING.RankingOverride(
+                input_code=b"abc",
+                candidate_text="测试".encode("utf-8"),
+                candidate_code=b"abcd",
+                target_position=0,
+                reason="no-op",
+            )
+        ]
+    }
+    try:
+        WUBI_RANKING.apply_ranking_overrides(b"abc", [0], entries, no_op)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("no-op ranking overrides must be rejected")
+
+
+def test_ranking_override_cannot_promote_lower_general_frequency():
+    entries = [
+        (b"abca", b"common", 20),
+        (b"abcb", b"rare", 10),
+    ]
+    frequencies = {b"common": 1000, b"rare": 1}
+    audit = WUBI_RANKING.RankingAudit()
+    WUBI_RANKING.audit_ranking_change(
+        [0, 1], [1, 0], entries, 3, frequencies, audit, True
+    )
+    assert audit.internal_frequency_regressions == 1
+    try:
+        audit.validate()
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("low-frequency override promotion must fail")
+
+
+def test_ranking_override_coverage_rejects_missing_prefix():
+    override = WUBI_RANKING.RankingOverride(
+        input_code=b"abc",
+        candidate_text=b"candidate",
+        candidate_code=b"abcd",
+        target_position=0,
+        reason="test",
+    )
+    try:
+        WUBI_RANKING.validate_ranking_override_coverage({b"abc": [override]}, set())
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("unmatched override prefix must fail")
 
 
 def test_visible_ranking_promotes_reliable_four_code_character():
@@ -465,7 +668,11 @@ if __name__ == "__main__":
     test_complete_ranked_prefix_index()
     test_visible_ranking_guards_short_codes_and_improves_known_completions()
     test_visible_ranking_preserves_exact_and_unproven_candidates()
-    test_visible_ranking_does_not_import_deeper_candidates()
+    test_visible_ranking_does_not_import_unreviewed_deeper_candidates()
+    test_ranking_override_imports_yiy_completion_only()
+    test_ranking_override_file_is_strict_and_fingerprint_is_semantic()
+    test_ranking_override_cannot_promote_lower_general_frequency()
+    test_ranking_override_coverage_rejects_missing_prefix()
     test_visible_ranking_repairs_rare_single_character_blockers()
     test_visible_ranking_promotes_reliable_four_code_character()
     test_visible_ranking_preserves_unproven_four_code_order()

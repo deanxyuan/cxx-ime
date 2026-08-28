@@ -55,6 +55,10 @@ def parse_args():
         "--wubi-ranking-baseline",
         help="Fixed Wubi ranking baseline JSON used for production builds",
     )
+    parser.add_argument(
+        "--wubi-ranking-overrides",
+        help="Reviewed Wubi candidate order overrides used at build time",
+    )
     args = parser.parse_args()
     if args.spellings_only and args.dict_only:
         parser.error("--spellings-only and --dict-only cannot be used together")
@@ -66,6 +70,8 @@ def parse_args():
         parser.error("--wubi-ranking-source requires --wubi-prefix-index")
     if args.wubi_ranking_baseline and not args.wubi_prefix_index:
         parser.error("--wubi-ranking-baseline requires --wubi-prefix-index")
+    if args.wubi_ranking_overrides and not args.wubi_prefix_index:
+        parser.error("--wubi-ranking-overrides requires --wubi-prefix-index")
     return args
 
 
@@ -97,6 +103,7 @@ def main() -> int:
                     args.output + ".dict.idx",
                     ranking_source_path,
                     args.wubi_ranking_baseline,
+                    args.wubi_ranking_overrides,
                 )
             elif not args.skip_idx:
                 build_pinyin_syllable_index(database_path, args.output + ".dict.idx")

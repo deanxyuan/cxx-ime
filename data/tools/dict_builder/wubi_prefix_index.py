@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 import os
 import struct
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 
 from .runtime_dictionary import ENTRY_FORMAT as DICT_ENTRY_FORMAT
 from .runtime_dictionary import ENTRY_SIZE as DICT_ENTRY_SIZE
@@ -15,14 +15,18 @@ from .runtime_dictionary import HEADER_SIZE as DICT_HEADER_SIZE
 from .runtime_dictionary import MAGIC as DICT_MAGIC
 from .wubi_ranking import (
     RankingAudit,
+    apply_ranking_overrides,
     audit_ranking_change,
-    load_general_frequencies,
     dictionary_fingerprint,
     frequency_fingerprint,
+    load_general_frequencies,
+    load_ranking_overrides,
+    ranking_overrides_fingerprint,
     ranking_rules,
     ranking_fingerprint,
     rerank_visible_candidates,
     unique_source_ranking,
+    validate_ranking_override_coverage,
 )
 
 
@@ -91,7 +95,7 @@ def _load_baseline(path: Optional[str]) -> Optional[dict]:
         return None
     with open(path, "r", encoding="utf-8") as source:
         baseline = json.load(source)
-    if baseline.get("schema") != 2:
+    if baseline.get("schema") != 3:
         raise ValueError(f"unsupported Wubi ranking baseline: {path}")
     return baseline
 
@@ -103,6 +107,7 @@ def _validate_baseline(
     source_records,
     ranked_records,
     audit: RankingAudit,
+    overrides,
 ) -> None:
     if baseline is None:
         return
@@ -115,6 +120,7 @@ def _validate_baseline(
     actual = {
         "dictionary": dictionary_fingerprint(entries),
         "general_frequency": frequency_fingerprint(general_frequencies),
+        "ranking_overrides": ranking_overrides_fingerprint(overrides),
         "source_ranking": ranking_fingerprint(source_records),
         "ranked": ranking_fingerprint(ranked_records),
     }
@@ -141,6 +147,7 @@ def build(
     output_path: str,
     ranking_source_path: str,
     baseline_path: Optional[str] = None,
+    overrides_path: Optional[str] = None,
 ) -> int:
     """Build complete ranked postings for every reachable dictionary prefix."""
     entries = _read_dictionary(dict_path)
@@ -148,6 +155,7 @@ def build(
         ranking_source_path, {text for _, text, _ in entries}
     )
     baseline = _load_baseline(baseline_path)
+    overrides = load_ranking_overrides(overrides_path)
     prefixes: Dict[bytes, List[int]] = {}
     skipped_codes = 0
     for entry_index, (code, _, _) in enumerate(entries):
@@ -164,13 +172,19 @@ def build(
     source_records = []
     ranked_records = []
     audit = RankingAudit()
+    applied_override_prefixes: Set[bytes] = set()
     for prefix in sorted(prefixes, key=pack_code):
         source_ranking = unique_source_ranking(
             prefixes[prefix], entries, len(prefix)
         )
-        ranked = rerank_visible_candidates(
+        ranked_without_overrides = rerank_visible_candidates(
             source_ranking, entries, len(prefix), general_frequencies
         )
+        ranked, ranking_override_applied = apply_ranking_overrides(
+            prefix, ranked_without_overrides, entries, overrides
+        )
+        if ranking_override_applied:
+            applied_override_prefixes.add(prefix)
         audit_ranking_change(
             source_ranking,
             ranked,
@@ -178,6 +192,7 @@ def build(
             len(prefix),
             general_frequencies,
             audit,
+            ranking_override_applied,
         )
         source_records.append((prefix, source_ranking))
         ranked_records.append((prefix, ranked))
@@ -185,6 +200,7 @@ def build(
         key_records.append((pack_code(prefix), len(postings), len(ranked)))
         postings.extend(ranked)
 
+    validate_ranking_override_coverage(overrides, applied_override_prefixes)
     audit.validate()
     _validate_baseline(
         baseline,
@@ -193,6 +209,7 @@ def build(
         source_records,
         ranked_records,
         audit,
+        overrides,
     )
 
     keys_offset = HEADER_SIZE
@@ -238,6 +255,9 @@ def build(
         f"four-code top changes={audit.four_code_top_changes}/"
         f"{audit.four_code_prefixes}, "
         f"safe four-code promotions={audit.safe_four_code_promotions}, "
+        f"ranking override changes={audit.ranking_override_changes}, "
+        "ranking override visible set changes="
+        f"{audit.ranking_override_visible_set_changes}, "
         f"unknown exact demotions={audit.unknown_exact_demotions}, "
         f"visible order changes={audit.visible_order_changes}, "
         f"position moves={audit.visible_position_moves}, "

@@ -12,7 +12,7 @@ namespace cxxime::topn {
 
 namespace {
 
-constexpr char kIntermediateMagic[8] = {'C', 'X', 'T', 'O', 'P', 'N', '\x01', '\0'};
+constexpr char kIntermediateMagic[8] = {'C', 'X', 'T', 'O', 'P', 'N', '\x02', '\0'};
 constexpr uint16_t kIntermediatePrefixComplete = 0x0010;
 constexpr uint16_t kIntermediateKnownFlags = 0x001F;
 
@@ -64,8 +64,8 @@ struct IntermediateReader::KeyEntry {
 struct IntermediateReader::CandidateEntry {
     uint32_t text_offset;
     uint32_t text_length;
-    uint32_t comment_offset;
-    uint32_t comment_length;
+    uint32_t syllables_offset;
+    uint32_t syllables_length;
     int32_t frequency;
     int32_t score;
 };
@@ -105,8 +105,8 @@ bool IntermediateReader::load(const std::string& path, std::string* error) {
 
     const auto* header = reinterpret_cast<const Header*>(data_.data());
     if (std::memcmp(header->magic, kIntermediateMagic, sizeof(kIntermediateMagic)) != 0 ||
-        header->version != 1) {
-        set_error(error, "input is not a CXTOPN v1 intermediate");
+        header->version != 2) {
+        set_error(error, "input is not a CXTOPN v2 intermediate");
         data_.clear();
         return false;
     }
@@ -166,13 +166,18 @@ bool IntermediateReader::load(const std::string& path, std::string* error) {
     for (uint32_t i = 0; i < header->candidate_count; ++i) {
         const auto& entry = candidates[i];
         if (!range_inside(entry.text_offset, entry.text_length, header->string_data_size) ||
-            !range_inside(entry.comment_offset, entry.comment_length, header->string_data_size)) {
+            !range_inside(entry.syllables_offset, entry.syllables_length,
+                          header->string_data_size)) {
             set_error(error, "invalid intermediate candidate string");
             data_.clear();
             return false;
         }
-        if (entry.comment_length != 0) {
-            set_error(error, "intermediate candidate comments cannot be represented losslessly");
+        if (entry.text_length == 0 || entry.syllables_length == 0 ||
+            std::string_view(strings + entry.text_offset, entry.text_length).find('\0') !=
+                std::string_view::npos ||
+            std::string_view(strings + entry.syllables_offset, entry.syllables_length)
+                    .find('\0') != std::string_view::npos) {
+            set_error(error, "intermediate candidate has invalid identity");
             data_.clear();
             return false;
         }
@@ -208,7 +213,8 @@ SourceCandidate IntermediateReader::candidate(size_t key_index, size_t candidate
     const auto& key_entry = keys_[key_index];
     const auto& entry = candidates_[key_entry.candidate_offset + candidate_index];
     return {std::string_view(strings_ + entry.text_offset, entry.text_length),
-            entry.frequency, entry.score};
+            entry.frequency, entry.score,
+            std::string_view(strings_ + entry.syllables_offset, entry.syllables_length)};
 }
 
 bool IntermediateReader::find(std::string_view wanted, size_t* key_index) const {

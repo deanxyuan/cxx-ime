@@ -7,6 +7,7 @@
 #include <iostream>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include <windows.h>
@@ -22,12 +23,12 @@ class TestSource final : public cxxime::topn::Source {
 public:
     TestSource()
         : keys_{"1", "a", "ni", "nihao", "zzzzzzzz", "zzzzzzzzmore"},
-          candidates_{{{{"one", 10, 100}}},
-                      {{{"alpha", 20, 90}}},
-                      {{{"shared", 30, 80}, {"second", 25, 70}}},
-                      {{{"shared", 30, 60}, {"hello", 40, 50}}},
-                      {{{"long-prefix", 50, 40}}},
-                      {{{"long-leaf", 60, 30}}}} {}
+          candidates_{{{{"one", 10, 100, "one"}}},
+                      {{{"alpha", 20, 90, "alpha"}}},
+                      {{{"shared", 30, 80, "shared"}, {"second", 25, 70, "second"}}},
+                      {{{"shared", 30, 60, "shared"}, {"hello", 40, 50, "hello"}}},
+                      {{{"long-prefix", 50, 40, "long:prefix"}}},
+                      {{{"long-leaf", 60, 30, "long:leaf"}}}} {}
 
     size_t key_count() const override {
         return keys_.size();
@@ -57,9 +58,29 @@ private:
     std::vector<std::vector<cxxime::topn::SourceCandidate>> candidates_;
 };
 
+class InvalidIdentitySource final : public cxxime::topn::Source {
+public:
+    InvalidIdentitySource(std::string text, std::string syllables)
+        : text_(std::move(text))
+        , syllables_(std::move(syllables)) {}
+
+    size_t key_count() const override { return 1; }
+    std::string_view key(size_t) const override { return "a"; }
+    uint16_t key_flags(size_t) const override { return cxxime::topn::kSourcePrefixComplete; }
+    size_t candidate_count(size_t) const override { return 1; }
+    cxxime::topn::SourceCandidate candidate(size_t, size_t) const override {
+        return {text_, 1, 1, syllables_};
+    }
+
+private:
+    std::string text_;
+    std::string syllables_;
+};
+
 bool equal_candidate(const cxxime::topn::SourceCandidate& lhs,
                      const cxxime::topn::SourceCandidate& rhs) {
-    return lhs.text == rhs.text && lhs.frequency == rhs.frequency && lhs.score == rhs.score;
+    return lhs.text == rhs.text && lhs.frequency == rhs.frequency && lhs.score == rhs.score &&
+           lhs.syllables == rhs.syllables;
 }
 
 bool make_temp_path(std::string* path) {
@@ -192,12 +213,28 @@ bool reject_corruptions(const std::array<std::string, 3>& paths) {
         offsetof(cxxime::TopnPostingList, flags);
     const std::streamoff candidate_offset = dat8_header.postings_offset +
         offsetof(cxxime::TopnPooledPosting, candidate_index);
+    const std::streamoff inline_text_length = dat16_header.postings_offset +
+        offsetof(cxxime::TopnInlinePosting, text_length);
+    const std::streamoff inline_syllables_length = dat16_header.postings_offset +
+        offsetof(cxxime::TopnInlinePosting, syllables_length);
+    const std::streamoff pooled_text_length = dat8_header.candidates_offset +
+        offsetof(cxxime::TopnCandidateRecord, text_length);
+    const std::streamoff pooled_syllables_length = dat8_header.candidates_offset +
+        offsetof(cxxime::TopnCandidateRecord, syllables_length);
     return reject_mutation(paths[1], cxxime::TopnIndexLayout::kDat16, posting_offset,
                            dat16_header.posting_count + 1, "posting range") &&
            reject_mutation(paths[1], cxxime::TopnIndexLayout::kDat16, flags_offset,
                            uint16_t{0x8000}, "posting flags") &&
+           reject_mutation(paths[1], cxxime::TopnIndexLayout::kDat16, inline_text_length,
+                           uint32_t{0}, "inline text identity") &&
+           reject_mutation(paths[1], cxxime::TopnIndexLayout::kDat16, inline_syllables_length,
+                           uint32_t{0}, "inline syllables identity") &&
            reject_mutation(paths[2], cxxime::TopnIndexLayout::kDat8, candidate_offset,
-                           dat8_header.candidate_count, "candidate reference");
+                           dat8_header.candidate_count, "candidate reference") &&
+           reject_mutation(paths[2], cxxime::TopnIndexLayout::kDat8, pooled_text_length,
+                           uint32_t{0}, "pooled text identity") &&
+           reject_mutation(paths[2], cxxime::TopnIndexLayout::kDat8, pooled_syllables_length,
+                           uint32_t{0}, "pooled syllables identity");
 }
 
 } // namespace
@@ -230,6 +267,16 @@ int main() {
                       source, static_cast<cxxime::TopnIndexLayout>(99), paths[0], nullptr,
                       &error)) {
         std::cerr << "unknown output layout was not rejected\n";
+        passed = false;
+    }
+    const InvalidIdentitySource empty_text("", "a");
+    const InvalidIdentitySource empty_syllables("word", "");
+    if (passed &&
+        (cxxime::topn::write_index(empty_text, cxxime::TopnIndexLayout::kDat16, paths[0],
+                                   nullptr, &error) ||
+         cxxime::topn::write_index(empty_syllables, cxxime::TopnIndexLayout::kDat16, paths[0],
+                                   nullptr, &error))) {
+        std::cerr << "empty candidate identity was not rejected\n";
         passed = false;
     }
     for (const auto& path : paths) {

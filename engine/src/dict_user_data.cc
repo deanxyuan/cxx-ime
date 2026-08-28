@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <iterator>
 #include <string_view>
 
 #include <windows.h>
@@ -11,6 +12,7 @@
 
 #include <cxxime/candidate_preference.h>
 #include <cxxime/disabled_system_lexicon.h>
+#include <cxxime/manual_candidate_order.h>
 #include <cxxime/user_lexicon.h>
 
 #include "binary_format.h"
@@ -50,8 +52,9 @@ bool Dict::add_user_entry(const std::string& text, const std::string& code,
 }
 
 std::vector<UserDictEntryInfo> Dict::query_user_entries(const std::string& query, size_t offset,
-                                                        size_t limit, size_t* match_total) const {
-    return user_lexicon_->query_entries(query, offset, limit, match_total);
+                                                        size_t limit, size_t* match_total,
+                                                        bool exact_text) const {
+    return user_lexicon_->query_entries(query, offset, limit, match_total, exact_text);
 }
 
 bool Dict::delete_user_entries(const std::vector<LexiconEntryKey>& entries) {
@@ -244,9 +247,152 @@ bool Dict::clear_candidate_preferences_and_save() {
     return candidate_preference_->clear_and_save();
 }
 
+bool Dict::clear_candidate_preferences_for_code_and_save(const std::string& code) {
+    return candidate_preference_->erase_code_and_save(code);
+}
+
 size_t Dict::candidate_preference_count() const { return candidate_preference_->entry_count(); }
 
 uint64_t Dict::candidate_preference_version() const { return candidate_preference_->version(); }
+
+bool Dict::load_manual_candidate_order(const std::string& path, std::size_t max_code_length) {
+    return manual_candidate_order_->load(path, max_code_length);
+}
+
+bool Dict::resolve_manual_candidate(const ManualCandidateOrderEntry& entry, CandidateSource source,
+                                    Candidate* candidate) const {
+    if (!candidate) {
+        return false;
+    }
+    if (user_lexicon_->contains_candidate_identity(entry.text, entry.code, entry.syllables)) {
+        candidate->text = entry.text;
+        candidate->code = entry.code;
+        candidate->syllables = entry.syllables;
+        candidate->frequency = kFallbackCandidateScore;
+        candidate->source = source;
+        candidate->origin = CandidateOrigin::kUser;
+        return true;
+    }
+    if (!dict_entries_) {
+        return false;
+    }
+
+    const std::string_view target_code =
+        entry.syllables.empty() ? std::string_view(entry.code) : std::string_view(entry.syllables);
+    auto entry_code = [&](std::uint32_t index) {
+        const auto& dictionary_entry = dict_entries_[index];
+        return std::string_view(dict_strings_ + dictionary_entry.syllable_ids_offset,
+                                dictionary_entry.syllable_ids_len);
+    };
+    std::uint32_t lower = 0;
+    std::uint32_t upper = dict_entry_count_;
+    while (lower < upper) {
+        const std::uint32_t middle = lower + (upper - lower) / 2;
+        if (entry_code(middle) < target_code) {
+            lower = middle + 1;
+        } else {
+            upper = middle;
+        }
+    }
+    for (std::uint32_t index = lower;
+         index < dict_entry_count_ && entry_code(index) == target_code; ++index) {
+        const auto& dictionary_entry = dict_entries_[index];
+        if (dictionary_entry.text_len != entry.text.size() ||
+            std::memcmp(dict_strings_ + dictionary_entry.text_offset, entry.text.data(),
+                        dictionary_entry.text_len) != 0) {
+            continue;
+        }
+        fill_system_candidate(index, *candidate, 0);
+        if (candidate->code != entry.code || candidate->syllables != entry.syllables) {
+            continue;
+        }
+        candidate->source = source;
+        return true;
+    }
+    return false;
+}
+
+void Dict::apply_manual_candidate_order(const std::string& code, CandidateSource source,
+                                        std::vector<Candidate>& candidates, int limit) const {
+    if (limit <= 0) {
+        return;
+    }
+    const auto ordered = manual_candidate_order_->entries_for(code);
+    if (ordered.empty()) {
+        return;
+    }
+
+    std::vector<Candidate> fixed;
+    fixed.reserve(ordered.size());
+    for (const auto& entry : ordered) {
+        auto existing = std::find_if(candidates.begin(), candidates.end(), [&](const auto& item) {
+            return item.text == entry.text && item.code == entry.code &&
+                   item.syllables == entry.syllables;
+        });
+        Candidate resolved;
+        if (existing != candidates.end()) {
+            resolved = std::move(*existing);
+            candidates.erase(existing);
+        } else if (!resolve_manual_candidate(entry, source, &resolved)) {
+            continue;
+        }
+        if (is_system_entry_disabled(resolved.text) && resolved.origin != CandidateOrigin::kUser) {
+            continue;
+        }
+        const auto same_identity = [&](const auto& item) {
+            return item.text == resolved.text && item.code == resolved.code &&
+                   item.syllables == resolved.syllables;
+        };
+        if (std::none_of(fixed.begin(), fixed.end(), same_identity)) {
+            candidates.erase(std::remove_if(candidates.begin(), candidates.end(), same_identity),
+                             candidates.end());
+            fixed.push_back(std::move(resolved));
+        }
+    }
+    candidates.insert(candidates.begin(), std::make_move_iterator(fixed.begin()),
+                      std::make_move_iterator(fixed.end()));
+    if (static_cast<int>(candidates.size()) > limit) {
+        candidates.resize(static_cast<std::size_t>(limit));
+    }
+}
+
+std::vector<ManualCandidateOrderEntry> Dict::manual_candidate_order(const std::string& code) const {
+    return manual_candidate_order_->entries_for(code);
+}
+
+bool Dict::replace_manual_candidate_order_and_save(
+    const std::string& code, const std::vector<ManualCandidateOrderEntry>& entries) {
+    return manual_candidate_order_->replace_and_save(code, entries);
+}
+
+bool Dict::replace_manual_candidate_order_if_version(
+    const std::string& code, const std::vector<ManualCandidateOrderEntry>& entries,
+    uint64_t expected_version, bool* version_conflict) {
+    return manual_candidate_order_->replace_and_save_if_version(code, entries, expected_version,
+                                                                version_conflict);
+}
+
+bool Dict::has_manual_candidate_order(const std::string& input_code, const std::string& text,
+                                      const std::string& candidate_code,
+                                      const std::string& syllables) const {
+    return manual_candidate_order_->contains(input_code, text, candidate_code, syllables);
+}
+
+bool Dict::has_candidate_preference(const std::string& text, const std::string& code) const {
+    return candidate_preference_->contains(text, code);
+}
+
+bool Dict::can_resolve_manual_candidate(const ManualCandidateOrderEntry& entry,
+                                        CandidateSource source) const {
+    Candidate candidate;
+    return resolve_manual_candidate(entry, source, &candidate) &&
+           (candidate.origin == CandidateOrigin::kUser ||
+            !is_system_entry_disabled(candidate.text));
+}
+
+uint64_t Dict::manual_candidate_order_version() const {
+    return manual_candidate_order_->version();
+}
 
 bool Dict::load_disabled_system_entries(const std::string& path) {
     return disabled_system_lexicon_->load(path);

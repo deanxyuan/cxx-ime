@@ -252,7 +252,8 @@ std::vector<UserDictEntryInfo> CandidatePreference::query(const std::string& que
                               entry.code.find(query) == std::string::npos)) {
             continue;
         }
-        results.push_back({entry.text, entry.code, entry.frequency, entry.sequence});
+        results.push_back(
+            {entry.text, entry.code, entry.frequency, entry.sequence, entry.syllables});
     }
     std::sort(results.begin(), results.end(),
               [](const UserDictEntryInfo& left, const UserDictEntryInfo& right) {
@@ -373,6 +374,22 @@ bool CandidatePreference::erase_and_save(const std::vector<LexiconEntryKey>& req
         last_update_ms_.store(0, std::memory_order_release);
     }
     return true;
+}
+
+bool CandidatePreference::erase_code_and_save(const std::string& code) {
+    std::vector<LexiconEntryKey> entries;
+    {
+        std::shared_lock<std::shared_mutex> lock(mutex_);
+        const auto found = code_index_.find(code);
+        if (found == code_index_.end()) {
+            return true;
+        }
+        entries.reserve(found->second.size());
+        for (EntryId id : found->second) {
+            entries.push_back({entries_[id].text, entries_[id].code});
+        }
+    }
+    return erase_and_save(entries);
 }
 
 bool CandidatePreference::clear_and_save() {

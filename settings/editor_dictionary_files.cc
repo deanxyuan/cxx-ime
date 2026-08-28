@@ -68,6 +68,9 @@ std::string EditorApp::current_user_dict_path() const {
     if (current_lexicon_resource() == LexiconResource::kCandidatePreference) {
         return user_data_path(wubi ? "learning_wubi.tsv" : "learning_pinyin.tsv");
     }
+    if (current_lexicon_resource() == LexiconResource::kManualCandidateOrder) {
+        return user_data_path(wubi ? "candidate_order_wubi.tsv" : "candidate_order_pinyin.tsv");
+    }
     return user_data_path(wubi ? "user_wubi.tsv" : "user_pinyin.tsv");
 }
 

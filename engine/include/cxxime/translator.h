@@ -61,6 +61,7 @@ private:
         int page_size = 0;
         uint64_t user_dict_version = 0;
         uint64_t candidate_preference_version = 0;
+        uint64_t manual_candidate_order_version = 0;
         uint64_t disabled_system_entry_version = 0;
         uint64_t sequence = 0;
         CandidatePage page;
@@ -68,6 +69,7 @@ private:
     struct QueryCacheVersions {
         uint64_t user_dict = 0;
         uint64_t candidate_preference = 0;
+        uint64_t manual_candidate_order = 0;
         uint64_t disabled_system_entry = 0;
     };
     IndexedFastResult lookup_indexed_fast(const std::string& key, int limit,

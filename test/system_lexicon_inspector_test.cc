@@ -201,6 +201,7 @@ TEST(SystemLexiconInspector, queries_pinyin_by_text_and_compact_code) {
     const auto exact = inspector.query_text("撤单", cxxime::SystemLexiconTextMatch::kExact, 10);
     ASSERT_EQ(exact.size(), static_cast<std::size_t>(1));
     ASSERT_EQ(exact[0].code, "chedan");
+    ASSERT_EQ(exact[0].syllables, "che:dan");
     ASSERT_EQ(exact[0].frequency, 500);
 
     const auto text_prefix =

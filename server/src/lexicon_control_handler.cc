@@ -60,8 +60,15 @@ bool handle_lexicon_control_request(SessionManager& session_manager,
     result.operation = request.operation;
     switch (request.operation) {
         case cxxime::LexiconOperation::kQuery:
+            if (request.exact_text &&
+                (request.resource != cxxime::LexiconResource::kUserLexicon ||
+                 !cxxime::is_valid_user_dict_text(request.query))) {
+                result.error_code = ERROR_INVALID_DATA;
+                break;
+            }
             result.query = session_manager.query_lexicon_entries(
-                request.resource, request.query, request.kind, request.offset, request.limit);
+                request.resource, request.query, request.kind, request.offset, request.limit,
+                request.exact_text);
             result.succeeded = true;
             result.error_code = ERROR_SUCCESS;
             break;
@@ -172,6 +179,69 @@ bool handle_lexicon_control_request(SessionManager& session_manager,
             }
             apply_status(session_manager.restore_system_entry(request.kind, request.text), &result);
             break;
+        case cxxime::LexiconOperation::kQueryCandidateOrder:
+            if (request.resource != cxxime::LexiconResource::kManualCandidateOrder ||
+                !cxxime::is_valid_user_dict_code(request.code)) {
+                result.error_code = ERROR_INVALID_DATA;
+                break;
+            }
+            result.candidate_order =
+                session_manager.query_candidate_order(request.kind, request.code, request.limit);
+            result.succeeded = true;
+            result.error_code = ERROR_SUCCESS;
+            break;
+        case cxxime::LexiconOperation::kSetCandidateOrder: {
+            if (request.resource != cxxime::LexiconResource::kManualCandidateOrder ||
+                !cxxime::is_valid_user_dict_code(request.code)) {
+                result.error_code = ERROR_INVALID_DATA;
+                break;
+            }
+            const bool invalid_entry =
+                std::any_of(request.candidate_order.begin(), request.candidate_order.end(),
+                            [](const cxxime::ManualCandidateOrderEntry& entry) {
+                                return !cxxime::is_valid_user_dict_text(entry.text) ||
+                                       !cxxime::is_valid_user_dict_code(entry.code) ||
+                                       !cxxime::is_valid_user_dict_syllables(entry.syllables);
+                            });
+            if (invalid_entry) {
+                result.error_code = ERROR_INVALID_DATA;
+                break;
+            }
+            bool version_conflict = false;
+            const auto status = session_manager.replace_candidate_order(
+                request.kind, request.code, request.candidate_order, request.expected_version,
+                &version_conflict);
+            if (version_conflict) {
+                result.error_code = ERROR_REVISION_MISMATCH;
+                break;
+            }
+            apply_status(status, &result);
+            if (result.succeeded) {
+                result.candidate_order = session_manager.query_candidate_order(
+                    request.kind, request.code, cxxime::LEXICON_CONTROL_DEFAULT_LIMIT);
+            }
+            break;
+        }
+        case cxxime::LexiconOperation::kClearCandidateOrder: {
+            if (request.resource != cxxime::LexiconResource::kManualCandidateOrder ||
+                !cxxime::is_valid_user_dict_code(request.code)) {
+                result.error_code = ERROR_INVALID_DATA;
+                break;
+            }
+            bool version_conflict = false;
+            const auto status = session_manager.clear_candidate_order(
+                request.kind, request.code, request.expected_version, &version_conflict);
+            if (version_conflict) {
+                result.error_code = ERROR_REVISION_MISMATCH;
+                break;
+            }
+            apply_status(status, &result);
+            if (result.succeeded) {
+                result.candidate_order = session_manager.query_candidate_order(
+                    request.kind, request.code, cxxime::LEXICON_CONTROL_DEFAULT_LIMIT);
+            }
+            break;
+        }
         default:
             return false;
     }
@@ -183,5 +253,8 @@ bool handle_lexicon_control_request(SessionManager& session_manager,
     result.error_code = ERROR_BUFFER_OVERFLOW;
     result.query.entries.clear();
     result.query.has_more = false;
+    result.candidate_order.entries.clear();
+    result.candidate_order.manual_entries.clear();
+    result.candidate_order.has_more = false;
     return cxxime::encode_lexicon_result(result, response_payload);
 }

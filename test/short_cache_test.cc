@@ -151,6 +151,24 @@ TEST(ShortCache, lookup_uses_precomputed_score) {
     DeleteFileA(path.c_str());
 }
 
+TEST(ShortCache, lookup_preserves_canonical_candidate_identity) {
+    const std::string path = make_temp_path("test_topn_identity.bin");
+    cxxime::Candidate candidate;
+    candidate.text = "canonical";
+    candidate.frequency = 500;
+    candidate.syllables = "ni:hao";
+    ASSERT_TRUE(cxxime::test::create_test_topn(path, {{"nh", {candidate}}}));
+
+    cxxime::ShortCodeCache cache;
+    ASSERT_TRUE(cache.load(path));
+    const auto results = cache.lookup("nh", 1);
+    ASSERT_EQ(results.size(), static_cast<std::size_t>(1));
+    ASSERT_EQ(results.front().code, "nihao");
+    ASSERT_EQ(results.front().syllables, "ni:hao");
+
+    DeleteFileA(path.c_str());
+}
+
 TEST(ShortCache, multiple_keys) {
     std::string path = make_temp_path("test_topn_multi.bin");
     std::vector<cxxime::Candidate> c1 = {{"a", "", 100}};
@@ -207,6 +225,52 @@ TEST(ShortCache, legacy_v1_rejected) {
     DWORD written = 0;
     ASSERT_TRUE(WriteFile(file, header, sizeof(header), &written, nullptr));
     ASSERT_EQ(written, sizeof(header));
+    CloseHandle(file);
+
+    cxxime::ShortCodeCache cache;
+    ASSERT_TRUE(!cache.load(path));
+    ASSERT_TRUE(!cache.is_loaded());
+    DeleteFileA(path.c_str());
+}
+
+TEST(ShortCache, legacy_v2_rejected) {
+    std::string path = make_temp_path("test_topn_v2.bin");
+    HANDLE file = CreateFileA(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
+                              FILE_ATTRIBUTE_NORMAL, nullptr);
+    ASSERT_TRUE(file != INVALID_HANDLE_VALUE);
+    char header[80] = {};
+    std::memcpy(header, "CXTOPN\x02\x00", 8);
+    DWORD written = 0;
+    ASSERT_TRUE(WriteFile(file, header, sizeof(header), &written, nullptr));
+    ASSERT_EQ(written, sizeof(header));
+    CloseHandle(file);
+
+    cxxime::ShortCodeCache cache;
+    ASSERT_TRUE(!cache.load(path));
+    ASSERT_TRUE(!cache.is_loaded());
+    DeleteFileA(path.c_str());
+}
+
+TEST(ShortCache, empty_candidate_identity_rejected) {
+    std::string path = make_temp_path("test_topn_empty_identity.bin");
+    std::vector<cxxime::Candidate> candidates = {{"candidate", "", 100}};
+    ASSERT_TRUE(cxxime::test::create_test_topn(path, {{"key", candidates}}));
+
+    HANDLE file = CreateFileA(path.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
+                              OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    ASSERT_TRUE(file != INVALID_HANDLE_VALUE);
+    cxxime::ShortCacheHeader header = {};
+    DWORD bytes_read = 0;
+    ASSERT_TRUE(ReadFile(file, &header, sizeof(header), &bytes_read, nullptr));
+    ASSERT_EQ(bytes_read, sizeof(header));
+    LARGE_INTEGER offset = {};
+    offset.QuadPart =
+        header.postings_offset + offsetof(cxxime::ShortCandidateEntry, syllables_length);
+    ASSERT_TRUE(SetFilePointerEx(file, offset, nullptr, FILE_BEGIN));
+    const uint32_t empty_length = 0;
+    DWORD written = 0;
+    ASSERT_TRUE(WriteFile(file, &empty_length, sizeof(empty_length), &written, nullptr));
+    ASSERT_EQ(written, sizeof(empty_length));
     CloseHandle(file);
 
     cxxime::ShortCodeCache cache;

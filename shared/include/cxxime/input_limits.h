@@ -8,6 +8,7 @@
 namespace cxxime {
 
 constexpr std::size_t kMaxInputCodeLength = 64;
+constexpr std::size_t kMaxWubiCodeLength = 4;
 constexpr std::size_t kCandidateCapacity = 10;
 constexpr std::size_t kCandidateTextCapacity = 256;
 

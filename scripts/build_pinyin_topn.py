@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
-# Build the Pinyin CXTOPN v1 intermediate consumed by topn_builder.
+# Build the Pinyin CXTOPN v2 intermediate consumed by topn_builder.
 #
 # This script owns key generation and ranking. Runtime packages must convert its
 # output to DAT-16 with topn_builder before writing dictionary_manifest.json.
@@ -14,12 +14,13 @@ import zipfile
 from collections import defaultdict
 
 # Binary format constants (must match short_code_cache_format.h)
-TOPN_MAGIC = b"CXTOPN\x01\x00"
+TOPN_MAGIC = b"CXTOPN\x02\x00"
 HEADER_FMT = "<8sIIIIIII"  # 36 bytes
 HEADER_SIZE = struct.calcsize(HEADER_FMT)
 KEY_FMT = "<IIIHH"         # 16 bytes (candidate_offset, candidate_count, key_offset, key_len, flags)
 KEY_SIZE = struct.calcsize(KEY_FMT)
-CAND_FMT = "<IIIIii"       # 24 bytes (text_off, text_len, comment_off, comment_len, freq, score)
+# 24 bytes: text_off, text_len, syllables_off, syllables_len, frequency, score.
+CAND_FMT = "<IIIIii"
 CAND_SIZE = struct.calcsize(CAND_FMT)
 
 MAX_MATERIALIZED_PREFIX_LENGTH = 6
@@ -202,7 +203,7 @@ def build_cache(db_path):
     conn = sqlite3.connect(db_path)
     cursor = conn.execute("SELECT text, code, frequency, syllable_ids FROM dict")
 
-    # key -> list of (text, comment, frequency, score, flags)
+    # key -> list of (text, syllables, frequency, score, flags)
     key_candidates = defaultdict(list)
     seen_keys_text = defaultdict(set)  # key -> set of text (for dedup)
 
@@ -219,7 +220,7 @@ def build_cache(db_path):
             if text in seen_keys_text[key]:
                 continue
             seen_keys_text[key].add(text)
-            key_candidates[key].append((text, "", frequency, score, flags))
+            key_candidates[key].append((text, syllable_ids, frequency, score, flags))
 
         count += 1
         if count % 100000 == 0:
@@ -261,7 +262,7 @@ def serialize(key_candidates, output_path):
     # Build string data buffer and collect entries
     strings = bytearray()
     key_entries = []   # (key_offset, key_len, flags, cand_start_idx, cand_count)
-    cand_entries = []  # (text_off, text_len, comment_off, comment_len, freq, score)
+    cand_entries = []  # (text_off, text_len, syllables_off, syllables_len, freq, score)
 
     def intern_str(s):
         off = len(strings)
@@ -281,13 +282,12 @@ def serialize(key_candidates, output_path):
             flags |= SHORT_KEY_PREFIX_COMPLETE
 
         cand_start = len(cand_entries)
-        for text, comment, freq, score, _ in cands:
+        for text, syllables, freq, score, _ in cands:
             text_off, text_len = intern_str(text)
-            if comment:
-                comment_off, comment_len = intern_str(comment)
-            else:
-                comment_off, comment_len = 0, 0
-            cand_entries.append((text_off, text_len, comment_off, comment_len, freq, score))
+            syllables_off, syllables_len = intern_str(syllables)
+            cand_entries.append(
+                (text_off, text_len, syllables_off, syllables_len, freq, score)
+            )
 
         key_entries.append((key_off, key_len, flags, cand_start, len(cands)))
 
@@ -302,7 +302,7 @@ def serialize(key_candidates, output_path):
     with open(output_path, "wb") as f:
         # Header
         hdr = struct.pack(HEADER_FMT,
-                          TOPN_MAGIC, 1, key_count, cand_count,
+                          TOPN_MAGIC, 2, key_count, cand_count,
                           string_data_size, keys_offset, cand_offset, string_offset)
         f.write(hdr)
 
@@ -311,8 +311,18 @@ def serialize(key_candidates, output_path):
             f.write(struct.pack(KEY_FMT, cand_start, cand_count_entry, key_off, key_len, flags))
 
         # Candidate entries
-        for text_off, text_len, comment_off, comment_len, freq, score in cand_entries:
-            f.write(struct.pack(CAND_FMT, text_off, text_len, comment_off, comment_len, freq, score))
+        for text_off, text_len, syllables_off, syllables_len, freq, score in cand_entries:
+            f.write(
+                struct.pack(
+                    CAND_FMT,
+                    text_off,
+                    text_len,
+                    syllables_off,
+                    syllables_len,
+                    freq,
+                    score,
+                )
+            )
 
         # String data
         f.write(bytes(strings))

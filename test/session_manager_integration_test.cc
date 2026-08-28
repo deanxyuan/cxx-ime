@@ -202,6 +202,8 @@ static void create_test_dictionary_bundle(const std::string& dict_path,
         cxxime::Candidate candidate;
         candidate.text = std::get<1>(entry);
         candidate.frequency = std::get<2>(entry);
+candidate.code = std::get<0>(entry);
+candidate.syllables = std::get<0>(entry);
         topn.push_back({key, {candidate}});
     }
     ASSERT_TRUE(cxxime::SpellingsIndex::create_test_trie(spellings_path, spellings));
@@ -1008,6 +1010,253 @@ TEST(SessionIntegration, lexicon_control_mutations_and_pagination) {
     DeleteFileA(preference_path.c_str());
 }
 
+TEST(SessionIntegration, candidate_order_control_updates_effective_server_order) {
+    const std::string user_path = test_user_data_dir + "\\user_pinyin.tsv";
+    const std::string learning_path = test_user_data_dir + "\\learning_pinyin.tsv";
+    const std::string order_path = test_user_data_dir + "\\candidate_order_pinyin.tsv";
+    DeleteFileA(user_path.c_str());
+    DeleteFileA(learning_path.c_str());
+    DeleteFileA(order_path.c_str());
+
+    SessionManager manager;
+    ASSERT_TRUE(manager.initialize(setup_test_dict()));
+    ASSERT_EQ(manager.add_user_entry(cxxime::UserDictKind::PINYIN, "manual-choice", "nihao"),
+              cxxime::IPCStatus::OK);
+
+    auto execute = [&](const cxxime::LexiconControlRequest& request,
+                       cxxime::LexiconControlResult* result) {
+        std::string request_payload;
+        std::string response_payload;
+        return cxxime::encode_lexicon_request(request, &request_payload) &&
+               handle_lexicon_control_request(manager, request_payload, &response_payload) &&
+               cxxime::decode_lexicon_result(response_payload, result);
+    };
+
+    cxxime::LexiconControlRequest request;
+    request.operation = cxxime::LexiconOperation::kQuery;
+    request.kind = cxxime::UserDictKind::PINYIN;
+    request.resource = cxxime::LexiconResource::kUserLexicon;
+    request.query = "manual-choice";
+    request.exact_text = true;
+    request.limit = 16;
+    cxxime::LexiconControlResult result;
+    ASSERT_TRUE(execute(request, &result));
+    ASSERT_TRUE(result.succeeded);
+    ASSERT_EQ(result.query.match_total, static_cast<std::size_t>(1));
+    ASSERT_EQ(result.query.entries.front().code, "nihao");
+
+    request = {};
+    request.operation = cxxime::LexiconOperation::kQueryCandidateOrder;
+    request.kind = cxxime::UserDictKind::PINYIN;
+    request.resource = cxxime::LexiconResource::kManualCandidateOrder;
+    request.code = "nihao";
+    request.limit = 16;
+    ASSERT_TRUE(execute(request, &result));
+    ASSERT_TRUE(result.succeeded);
+    const std::uint64_t initial_version = result.candidate_order.version;
+
+    request.operation = cxxime::LexiconOperation::kSetCandidateOrder;
+    request.expected_version = initial_version;
+    request.candidate_order = {{"manual-choice", "nihao", ""}};
+    ASSERT_TRUE(execute(request, &result));
+    ASSERT_TRUE(result.succeeded);
+    ASSERT_TRUE(!result.candidate_order.entries.empty());
+    ASSERT_EQ(result.candidate_order.entries.front().text, "manual-choice");
+    ASSERT_EQ(result.candidate_order.entries.front().reason,
+              cxxime::CandidateOrderReason::kManual);
+    const std::uint64_t pinned_version = result.candidate_order.version;
+
+    ASSERT_TRUE(execute(request, &result));
+    ASSERT_TRUE(!result.succeeded);
+    ASSERT_EQ(result.error_code, static_cast<std::uint32_t>(ERROR_REVISION_MISMATCH));
+
+    request.operation = cxxime::LexiconOperation::kClearCandidateOrder;
+    request.expected_version = pinned_version;
+    request.candidate_order.clear();
+    ASSERT_TRUE(execute(request, &result));
+    ASSERT_TRUE(result.succeeded);
+    ASSERT_TRUE(std::none_of(result.candidate_order.entries.begin(),
+                             result.candidate_order.entries.end(),
+                             [](const auto& entry) {
+                                 return entry.reason == cxxime::CandidateOrderReason::kManual;
+                             }));
+
+    DeleteFileA(user_path.c_str());
+    DeleteFileA(learning_path.c_str());
+    DeleteFileA(order_path.c_str());
+}
+
+TEST(SessionIntegration, topn_candidate_order_uses_canonical_pinyin_identity) {
+    const std::string dict_path = make_temp_path("test_topn_candidate_order.bin");
+    create_test_dictionary_bundle(dict_path, {{"ni:hao", "topn-canonical", 900}});
+    const std::string order_path = test_user_data_dir + "\\candidate_order_pinyin.tsv";
+    DeleteFileA(order_path.c_str());
+
+    SessionManager manager;
+    ASSERT_TRUE(manager.initialize(dict_path));
+    const auto queried = manager.query_candidate_order(cxxime::UserDictKind::PINYIN, "nihao", 16);
+    ASSERT_EQ(queried.entries.size(), static_cast<std::size_t>(1));
+    ASSERT_EQ(queried.entries.front().code, "nihao");
+    ASSERT_EQ(queried.entries.front().syllables, "ni:hao");
+
+    bool version_conflict = false;
+    const std::vector<cxxime::ManualCandidateOrderEntry> order = {
+        {"topn-canonical", "nihao", "ni:hao"}};
+    ASSERT_EQ(manager.replace_candidate_order(cxxime::UserDictKind::PINYIN, "nihao", order,
+                                              queried.version, &version_conflict),
+              cxxime::IPCStatus::OK);
+    ASSERT_TRUE(!version_conflict);
+    const auto saved = manager.query_candidate_order(cxxime::UserDictKind::PINYIN, "nihao", 1);
+    ASSERT_EQ(saved.entries.front().text, "topn-canonical");
+    ASSERT_EQ(saved.entries.front().reason, cxxime::CandidateOrderReason::kManual);
+
+    DeleteFileA(order_path.c_str());
+    delete_test_dictionary_bundle(dict_path);
+}
+
+TEST(SessionIntegration, candidate_order_marks_pinned_entries_beyond_page_available) {
+    const std::string user_path = test_user_data_dir + "\\user_pinyin.tsv";
+    const std::string order_path = test_user_data_dir + "\\candidate_order_pinyin.tsv";
+    DeleteFileA(user_path.c_str());
+    DeleteFileA(order_path.c_str());
+
+    SessionManager manager;
+    ASSERT_TRUE(manager.initialize(setup_test_dict()));
+    ASSERT_EQ(manager.add_user_entry(cxxime::UserDictKind::PINYIN, "first-candidate", "nihao"),
+              cxxime::IPCStatus::OK);
+    ASSERT_EQ(manager.add_user_entry(cxxime::UserDictKind::PINYIN, "second-candidate", "nihao"),
+              cxxime::IPCStatus::OK);
+    const auto queried = manager.query_candidate_order(cxxime::UserDictKind::PINYIN, "nihao", 2);
+    bool version_conflict = false;
+    const std::vector<cxxime::ManualCandidateOrderEntry> order = {
+        {"first-candidate", "nihao", ""}, {"second-candidate", "nihao", ""}};
+    ASSERT_EQ(manager.replace_candidate_order(cxxime::UserDictKind::PINYIN, "nihao", order,
+                                              queried.version, &version_conflict),
+              cxxime::IPCStatus::OK);
+
+    const auto limited = manager.query_candidate_order(cxxime::UserDictKind::PINYIN, "nihao", 1);
+    const auto second =
+        std::find_if(limited.entries.begin(), limited.entries.end(),
+                     [](const auto& entry) { return entry.text == "second-candidate"; });
+    ASSERT_TRUE(second != limited.entries.end());
+    ASSERT_EQ(second->reason, cxxime::CandidateOrderReason::kManual);
+    ASSERT_TRUE(second->available);
+
+    DeleteFileA(user_path.c_str());
+    DeleteFileA(order_path.c_str());
+}
+
+TEST(SessionIntegration, candidate_order_marks_hidden_pinned_entry_unavailable) {
+    const std::string user_path = test_user_data_dir + "\\user_pinyin.tsv";
+    const std::string order_path = test_user_data_dir + "\\candidate_order_pinyin.tsv";
+    const std::string disabled_path = test_user_data_dir + "\\disabled_pinyin.tsv";
+    DeleteFileA(user_path.c_str());
+    DeleteFileA(order_path.c_str());
+    DeleteFileA(disabled_path.c_str());
+
+    SessionManager manager;
+    ASSERT_TRUE(manager.initialize(setup_test_dict()));
+    const auto initial = manager.query_candidate_order(cxxime::UserDictKind::PINYIN, "nihao", 16);
+    const auto system =
+        std::find_if(initial.entries.begin(), initial.entries.end(), [](const auto& entry) {
+            return entry.available && entry.reason == cxxime::CandidateOrderReason::kDefault;
+        });
+    ASSERT_TRUE(system != initial.entries.end());
+    const cxxime::ManualCandidateOrderEntry pinned = {system->text, system->code,
+                                                      system->syllables};
+    bool version_conflict = false;
+    ASSERT_EQ(manager.replace_candidate_order(cxxime::UserDictKind::PINYIN, "nihao", {pinned},
+                                              initial.version, &version_conflict),
+              cxxime::IPCStatus::OK);
+    ASSERT_TRUE(!version_conflict);
+    ASSERT_EQ(manager.disable_system_entry(cxxime::UserDictKind::PINYIN, pinned.text),
+              cxxime::IPCStatus::OK);
+    ASSERT_EQ(manager.add_user_entry(cxxime::UserDictKind::PINYIN, "visible-user", "nihao"),
+              cxxime::IPCStatus::OK);
+
+    const auto limited = manager.query_candidate_order(cxxime::UserDictKind::PINYIN, "nihao", 1);
+    const auto hidden =
+        std::find_if(limited.entries.begin(), limited.entries.end(), [&](const auto& entry) {
+            return entry.text == pinned.text && entry.code == pinned.code &&
+                   entry.syllables == pinned.syllables;
+        });
+    ASSERT_TRUE(hidden != limited.entries.end());
+    ASSERT_EQ(hidden->reason, cxxime::CandidateOrderReason::kManual);
+    ASSERT_TRUE(!hidden->available);
+
+    DeleteFileA(user_path.c_str());
+    DeleteFileA(order_path.c_str());
+    DeleteFileA(disabled_path.c_str());
+}
+
+TEST(SessionIntegration, composed_candidate_order_entry_is_not_available) {
+    const std::string dict_path = make_temp_path("test_composed_candidate_order.bin");
+    create_test_dictionary_bundle(dict_path, {{"a", "piece", 900}});
+    const std::string learning_path = test_user_data_dir + "\\learning_pinyin.tsv";
+    const std::string order_path = test_user_data_dir + "\\candidate_order_pinyin.tsv";
+    DeleteFileA(learning_path.c_str());
+    DeleteFileA(order_path.c_str());
+
+    SessionManager manager;
+    ASSERT_TRUE(manager.initialize(dict_path));
+    const auto queried =
+        manager.query_candidate_order(cxxime::UserDictKind::PINYIN, "aaaaaaa", 16);
+    const auto composed =
+        std::find_if(queried.entries.begin(), queried.entries.end(), [](const auto& entry) {
+            return entry.text == "piecepiecepiecepiecepiecepiecepiece";
+        });
+    ASSERT_TRUE(composed != queried.entries.end());
+    ASSERT_TRUE(!composed->available);
+
+    bool version_conflict = false;
+    const std::vector<cxxime::ManualCandidateOrderEntry> order = {
+        {composed->text, composed->code, composed->syllables}};
+    ASSERT_TRUE(manager.replace_candidate_order(cxxime::UserDictKind::PINYIN, "aaaaaaa", order,
+                                                queried.version,
+                                                &version_conflict) != cxxime::IPCStatus::OK);
+    ASSERT_TRUE(!version_conflict);
+
+    DeleteFileA(learning_path.c_str());
+    DeleteFileA(order_path.c_str());
+    delete_test_dictionary_bundle(dict_path);
+}
+
+TEST(SessionIntegration, stale_learned_candidate_order_entry_is_not_available) {
+    const std::string dict_path = make_temp_path("test_stale_learned_candidate_order.bin");
+    create_test_dictionary_bundle(dict_path, {{"ni:hao", "valid-candidate", 900}});
+    const std::string learning_path = test_user_data_dir + "\\learning_pinyin.tsv";
+    const std::string order_path = test_user_data_dir + "\\candidate_order_pinyin.tsv";
+    DeleteFileA(order_path.c_str());
+    {
+        std::ofstream output(learning_path, std::ios::binary | std::ios::trunc);
+        output << "stale-candidate\tnihao\tnihao\t1\t1\tni:hao\n";
+    }
+
+    auto config = std::make_shared<cxxime::Config>();
+    config->candidate_learning = true;
+    SessionManager manager;
+    ASSERT_TRUE(manager.initialize(dict_path, config));
+    const auto queried = manager.query_candidate_order(cxxime::UserDictKind::PINYIN, "nihao", 16);
+    const auto stale =
+        std::find_if(queried.entries.begin(), queried.entries.end(),
+                     [](const auto& entry) { return entry.text == "stale-candidate"; });
+    ASSERT_TRUE(stale != queried.entries.end());
+    ASSERT_EQ(stale->reason, cxxime::CandidateOrderReason::kLearned);
+    ASSERT_TRUE(!stale->available);
+
+    bool version_conflict = false;
+    const std::vector<cxxime::ManualCandidateOrderEntry> order = {
+        {stale->text, stale->code, stale->syllables}};
+    ASSERT_TRUE(manager.replace_candidate_order(cxxime::UserDictKind::PINYIN, "nihao", order,
+                                                queried.version,
+                                                &version_conflict) != cxxime::IPCStatus::OK);
+    ASSERT_TRUE(!version_conflict);
+
+    DeleteFileA(learning_path.c_str());
+    DeleteFileA(order_path.c_str());
+    delete_test_dictionary_bundle(dict_path);
+}
+
 TEST(SessionIntegration, user_lexicon_save_failure_keeps_memory_unchanged) {
     SessionManager manager;
     ASSERT_TRUE(manager.initialize(setup_test_dict()));
@@ -1350,6 +1599,8 @@ int main() {
     DeleteFileA((test_user_data_dir + "\\user_wubi.tsv").c_str());
     DeleteFileA((test_user_data_dir + "\\disabled_pinyin.tsv").c_str());
     DeleteFileA((test_user_data_dir + "\\disabled_wubi.tsv").c_str());
+    DeleteFileA((test_user_data_dir + "\\candidate_order_pinyin.tsv").c_str());
+    DeleteFileA((test_user_data_dir + "\\candidate_order_wubi.tsv").c_str());
 
     cxxime::set_data_dir(CXXIME_DATA_DIR);
     cxxime::set_user_data_dir(test_user_data_dir);
@@ -1360,6 +1611,8 @@ int main() {
     DeleteFileA((test_user_data_dir + "\\user_wubi.tsv").c_str());
     DeleteFileA((test_user_data_dir + "\\disabled_pinyin.tsv").c_str());
     DeleteFileA((test_user_data_dir + "\\disabled_wubi.tsv").c_str());
+    DeleteFileA((test_user_data_dir + "\\candidate_order_pinyin.tsv").c_str());
+    DeleteFileA((test_user_data_dir + "\\candidate_order_wubi.tsv").c_str());
     RemoveDirectoryA(test_user_data_dir.c_str());
     return result;
 }

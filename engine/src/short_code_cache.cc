@@ -104,7 +104,10 @@ bool parse_short_cache(const char* data, size_t size, ShortCacheView* view,
     }
     for (uint32_t i = 0; i < header->posting_count; ++i) {
         const auto& candidate = candidates[i];
-        if (!range_inside(candidate.text_offset, candidate.text_length,
+        if (candidate.text_length == 0 || candidate.syllables_length == 0 ||
+            !range_inside(candidate.text_offset, candidate.text_length,
+                          header->candidate_string_size) ||
+            !range_inside(candidate.syllables_offset, candidate.syllables_length,
                           header->candidate_string_size)) {
             return fail("invalid DAT-16 candidate string");
         }
@@ -243,7 +246,13 @@ std::vector<Candidate> ShortCodeCache::lookup(const std::string& key, int limit,
         const auto& ce = candidates_[list.posting_offset + i];
         Candidate c;
         c.text.assign(strings_ + ce.text_offset, ce.text_length);
-        c.code = key;
+        c.syllables.assign(strings_ + ce.syllables_offset, ce.syllables_length);
+        c.code.reserve(c.syllables.size());
+        for (char character : c.syllables) {
+            if (character != ':') {
+                c.code.push_back(character);
+            }
+        }
         c.frequency = ce.score;
         c.origin = CandidateOrigin::kCache;
         c.source_frequency = ce.frequency;

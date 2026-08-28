@@ -574,8 +574,13 @@ LRESULT CALLBACK EditorApp::wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     }
     case WM_DRAWITEM: {
         LPDRAWITEMSTRUCT dis = (LPDRAWITEMSTRUCT)lp;
-        if (draw_lexicon_view_tab(*dis, a->lexiconViewTabs_,
-                                  a->lexiconResource_ == LexiconResource::kCandidatePreference)) {
+        const HWND selected_lexicon_tab =
+            a->lexiconResource_ == LexiconResource::kCandidatePreference
+                ? a->lexiconViewTabs_.preferences
+                : a->lexiconResource_ == LexiconResource::kManualCandidateOrder
+                      ? a->lexiconViewTabs_.candidate_order
+                      : a->lexiconViewTabs_.entries;
+        if (draw_lexicon_view_tab(*dis, a->lexiconViewTabs_, selected_lexicon_tab)) {
             return TRUE;
         }
         if (dis->CtlID != 1) break;

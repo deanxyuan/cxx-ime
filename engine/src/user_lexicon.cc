@@ -384,15 +384,20 @@ bool UserLexicon::import_file(const std::string& source_path) {
 
 std::vector<UserDictEntryInfo> UserLexicon::query_entries(const std::string& query,
                                                           std::size_t offset, std::size_t limit,
-                                                          std::size_t* match_total) const {
+                                                          std::size_t* match_total,
+                                                          bool exact_text) const {
     std::vector<UserDictEntryInfo> results;
     std::shared_lock<std::shared_mutex> lock(mutex_);
     for (const auto& entry : entries_) {
-        if (entry.deleted || (!query.empty() && entry.text.find(query) == std::string::npos &&
-             entry.code.find(query) == std::string::npos)) {
+        const bool matches = exact_text
+                                 ? !query.empty() && entry.text == query
+                                 : query.empty() || entry.text.find(query) != std::string::npos ||
+                                       entry.code.find(query) != std::string::npos;
+        if (entry.deleted || !matches) {
             continue;
         }
-        results.push_back({entry.text, entry.code, entry.frequency, entry.sequence});
+        results.push_back(
+            {entry.text, entry.code, entry.frequency, entry.sequence, entry.syllables});
     }
     std::sort(results.begin(), results.end(),
               [](const UserDictEntryInfo& left, const UserDictEntryInfo& right) {
@@ -452,6 +457,19 @@ bool UserLexicon::contains_candidate(const std::string& text, const std::string&
         }
     }
     return false;
+}
+
+bool UserLexicon::contains_candidate_identity(const std::string& text, const std::string& code,
+                                              const std::string& syllables) const {
+    std::shared_lock<std::shared_mutex> lock(mutex_);
+    const auto found = text_index_.find(text);
+    if (found == text_index_.end()) {
+        return false;
+    }
+    return std::any_of(found->second.begin(), found->second.end(), [&](EntryId id) {
+        const Entry& entry = entries_[id];
+        return !entry.deleted && entry.code == code && entry.syllables == syllables;
+    });
 }
 
 std::size_t UserLexicon::entry_count() const {

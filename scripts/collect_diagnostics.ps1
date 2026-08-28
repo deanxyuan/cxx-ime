@@ -320,6 +320,8 @@ $userFiles = @(
     "user_wubi.tsv",
     "learning_pinyin.tsv",
     "learning_wubi.tsv",
+    "candidate_order_pinyin.tsv",
+    "candidate_order_wubi.tsv",
     "disabled_pinyin.tsv",
     "disabled_wubi.tsv"
 )
@@ -413,7 +415,8 @@ Optional:
 - Use -IncludeLogs to copy %USERPROFILE%\cxxime\logs. Trace logs may contain raw input codes.
 - Use -IncludeUserConfig to copy user configuration files.
 - Use -IncludeUserDict to copy user dictionary files. User dictionaries contain personal phrases.
-- Use -IncludeCandidatePreferences to copy candidate preference files. These files reflect input habits.
+- Use -IncludeCandidatePreferences to copy candidate preference and manual order files.
+  These files reflect input habits and explicit candidate choices.
 - Use -IncludeDisabledSystemLexicon to copy disabled system word files.
   These files reflect words hidden by the user.
 "@
@@ -442,6 +445,8 @@ if ($IncludeCandidatePreferences) {
     $dst = Join-Path $root "candidate-preferences"
     Copy-IfExists (Join-Path $userDir "learning_pinyin.tsv") $dst
     Copy-IfExists (Join-Path $userDir "learning_wubi.tsv") $dst
+    Copy-IfExists (Join-Path $userDir "candidate_order_pinyin.tsv") $dst
+    Copy-IfExists (Join-Path $userDir "candidate_order_wubi.tsv") $dst
 }
 
 if ($IncludeDisabledSystemLexicon) {

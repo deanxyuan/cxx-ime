@@ -15,6 +15,7 @@ struct SourceCandidate {
     std::string_view text;
     int32_t frequency = 0;
     int32_t score = 0;
+    std::string_view syllables;
 };
 
 class Source {

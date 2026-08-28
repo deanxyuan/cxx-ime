@@ -32,6 +32,7 @@ private:
     std::vector<Candidate> snapshot_candidates_;
     uint64_t snapshot_user_dict_version_ = 0;
     uint64_t snapshot_candidate_preference_version_ = 0;
+    uint64_t snapshot_manual_candidate_order_version_ = 0;
     uint64_t snapshot_disabled_system_entry_version_ = 0;
     int snapshot_query_limit_ = 0;
     bool snapshot_exhausted_ = false;

@@ -49,8 +49,8 @@ void EditorApp::create_dictionary_panel(HWND panel, int panel_width) {
     SetWindowSubclass(panel, PanelForwardProc, 4000, reinterpret_cast<DWORD_PTR>(hwnd_));
     lexiconQueryService_ = std::make_shared<LexiconQueryService>();
 
-    lexiconViewTabs_ = create_lexicon_view_tabs(panel, 4014, 4018, kPanelPadLeft, top, S(180),
-                                                kCtrlH, get_font());
+    lexiconViewTabs_ = create_lexicon_view_tabs(panel, 4014, 4019, 4018, kPanelPadLeft, top,
+                                                S(270), kCtrlH, get_font());
 
     const int content_right = panel_width - S(10);
     const int query_y = top + kRowH;
@@ -139,6 +139,20 @@ void EditorApp::create_dictionary_panel(HWND panel, int panel_width) {
         make_button(4015, L"清空全部偏好", kPanelPadLeft + S(94), action_y, S(112));
     ShowWindow(hLexiconPreferenceDelete_, SW_HIDE);
     ShowWindow(hLexiconPreferenceClear_, SW_HIDE);
+    hCandidateOrderFirst_ = make_button(4020, L"固定到首位", kPanelPadLeft, action_y, S(92));
+    hCandidateOrderAppend_ =
+        make_button(4025, L"加入固定", kPanelPadLeft + S(100), action_y, S(78));
+    hCandidateOrderUp_ = make_button(4021, L"↑", kPanelPadLeft + S(186), action_y, S(36));
+    hCandidateOrderDown_ =
+        make_button(4022, L"↓", kPanelPadLeft + S(228), action_y, S(36));
+    hCandidateOrderUnpin_ =
+        make_button(4023, L"取消固定", kPanelPadLeft + S(272), action_y, S(78));
+    hCandidateOrderReset_ =
+        make_button(4024, L"恢复默认", kPanelPadLeft + S(358), action_y, S(92));
+    for (HWND control : {hCandidateOrderFirst_, hCandidateOrderAppend_, hCandidateOrderUp_,
+                         hCandidateOrderDown_, hCandidateOrderUnpin_, hCandidateOrderReset_}) {
+        ShowWindow(control, SW_HIDE);
+    }
 
     hLexiconOpenDirectory_ = make_button(4012, L"打开目录", kPanelPadLeft, file_y, S(86));
     hLexiconImport_ = make_button(4010, L"导入", kPanelPadLeft + S(94), file_y, S(64));
@@ -174,6 +188,12 @@ bool EditorApp::handle_dictionary_command(int control_id, int notification) {
         }
         return true;
     case 4005:
+        if (current_lexicon_resource() == LexiconResource::kManualCandidateOrder) {
+            if (notification == CBN_SELCHANGE && !updatingLexiconForm_) {
+                query_lexicon_entries(false);
+            }
+            return true;
+        }
         if ((notification == CBN_EDITCHANGE || notification == CBN_SELCHANGE) &&
             !updatingLexiconForm_) {
             lexiconCodeManuallyEdited_ = true;
@@ -205,19 +225,26 @@ bool EditorApp::handle_dictionary_command(int control_id, int notification) {
         }
         return true;
     case 4014:
+    case 4019:
     case 4018: {
         if (notification != BN_CLICKED) {
             return true;
         }
-        const LexiconResource resource =
-            control_id == 4018 ? LexiconResource::kCandidatePreference
-                               : LexiconResource::kUserLexicon;
+        const LexiconResource resource = control_id == 4018
+                                             ? LexiconResource::kCandidatePreference
+                                             : control_id == 4019
+                                                   ? LexiconResource::kManualCandidateOrder
+                                                   : LexiconResource::kUserLexicon;
         if (resource == lexiconResource_) {
             return true;
         }
         lexiconResource_ = resource;
-        select_lexicon_view_tab(lexiconViewTabs_,
-                                resource == LexiconResource::kCandidatePreference);
+        const HWND selected = resource == LexiconResource::kCandidatePreference
+                                  ? lexiconViewTabs_.preferences
+                                  : resource == LexiconResource::kManualCandidateOrder
+                                        ? lexiconViewTabs_.candidate_order
+                                        : lexiconViewTabs_.entries;
+        select_lexicon_view_tab(lexiconViewTabs_, selected);
         clear_lexicon_entry_form();
         update_lexicon_entry_actions();
         query_lexicon_entries(false);
@@ -231,6 +258,24 @@ bool EditorApp::handle_dictionary_command(int control_id, int notification) {
         return true;
     case 4017:
         delete_lexicon_entries();
+        return true;
+    case 4020:
+        pin_candidate_order_first();
+        return true;
+    case 4025:
+        append_candidate_order_pin();
+        return true;
+    case 4021:
+        move_candidate_order(-1);
+        return true;
+    case 4022:
+        move_candidate_order(1);
+        return true;
+    case 4023:
+        remove_candidate_order_pin();
+        return true;
+    case 4024:
+        reset_candidate_order();
         return true;
     default:
         return false;
@@ -256,7 +301,11 @@ bool EditorApp::handle_dictionary_notify(LPARAM notification) {
             return true;
         }
         if (key->wVKey == VK_DELETE) {
-            delete_lexicon_entries();
+            if (current_lexicon_resource() == LexiconResource::kManualCandidateOrder) {
+                remove_candidate_order_pin();
+            } else {
+                delete_lexicon_entries();
+            }
             return true;
         }
     }

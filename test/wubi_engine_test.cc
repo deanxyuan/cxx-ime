@@ -9,6 +9,7 @@
 #include <windows.h>
 
 #include <cxxime/engine.h>
+#include <cxxime/input_limits.h>
 #include <cxxime/mixed_translator.h>
 #include <cxxime/syllabifier.h>
 #include <cxxime/wubi_processor.h>
@@ -319,6 +320,172 @@ TEST(WubiEngine, mixed_order_is_independent_of_page_query_limit) {
     DeleteFileA(wubi_index_path.c_str());
     DeleteFileA(pinyin_user_path.c_str());
     DeleteFileA(wubi_user_path.c_str());
+}
+
+TEST(WubiEngine, mixed_order_places_manually_pinned_candidate_first) {
+    const std::string pinyin_path = make_temp_path("test_mixed_manual_pinyin.bin");
+    const std::string wubi_path = make_temp_path("test_mixed_manual_wubi.bin");
+    const std::string wubi_index_path = wubi_path + ".idx";
+    const std::string pinyin_user_path = pinyin_path + ".user.tsv";
+    const std::string wubi_user_path = wubi_path + ".user.tsv";
+    const std::string pinyin_order_path = pinyin_path + ".order.tsv";
+    const std::vector<std::tuple<std::string, std::string, int>> pinyin_entries = {
+        {"a", "pinyin-one", 900},
+        {"a", "pinyin-two", 800},
+    };
+    const std::vector<std::tuple<std::string, std::string, int>> wubi_entries = {
+        {"a", "wubi-one", 1000},
+        {"aa", "wubi-two", 700},
+    };
+    ASSERT_TRUE(cxxime::Dict::create_test_dict(pinyin_path, pinyin_entries));
+    ASSERT_TRUE(cxxime::Dict::create_test_dict(wubi_path, wubi_entries));
+    ASSERT_TRUE(cxxime::test::create_test_wubi_index(wubi_index_path, wubi_entries));
+    DeleteFileA(pinyin_user_path.c_str());
+    DeleteFileA(wubi_user_path.c_str());
+    DeleteFileA(pinyin_order_path.c_str());
+
+    cxxime::Dict pinyin_dict;
+    cxxime::Dict wubi_dict;
+    ASSERT_TRUE(pinyin_dict.open(pinyin_path, pinyin_user_path));
+    ASSERT_TRUE(wubi_dict.open_wubi_bundle(wubi_path, wubi_user_path, wubi_index_path));
+    ASSERT_TRUE(
+        pinyin_dict.load_manual_candidate_order(pinyin_order_path, cxxime::kMaxInputCodeLength));
+    ASSERT_TRUE(pinyin_dict.replace_manual_candidate_order_and_save(
+        "a", {{"pinyin-two", "a", "a"}}));
+
+    cxxime::MixedTranslator translator;
+    translator.set_pinyin_dict(&pinyin_dict);
+    translator.set_wubi_dict(&wubi_dict);
+    translator.set_candidate_preference(cxxime::MixedCandidatePreference::kWubi);
+    const auto page = translator.translate("a", 0, 4);
+
+    ASSERT_EQ(page.candidates.size(), 4u);
+    ASSERT_EQ(page.candidates[0].text, "pinyin-two");
+    ASSERT_EQ(page.candidates[1].text, "wubi-one");
+
+    pinyin_dict.close();
+    wubi_dict.close();
+    DeleteFileA(pinyin_path.c_str());
+    DeleteFileA(wubi_path.c_str());
+    DeleteFileA(wubi_index_path.c_str());
+    DeleteFileA(pinyin_user_path.c_str());
+    DeleteFileA(wubi_user_path.c_str());
+    DeleteFileA(pinyin_order_path.c_str());
+}
+
+TEST(WubiEngine, mixed_order_preserves_pinned_identity_across_text_deduplication) {
+    const std::string pinyin_path = make_temp_path("test_mixed_dedup_pinyin.bin");
+    const std::string wubi_path = make_temp_path("test_mixed_dedup_wubi.bin");
+    const std::string wubi_index_path = wubi_path + ".idx";
+    const std::string pinyin_user_path = pinyin_path + ".user.tsv";
+    const std::string wubi_user_path = wubi_path + ".user.tsv";
+    const std::string pinyin_order_path = pinyin_path + ".order.tsv";
+    const std::string wubi_order_path = wubi_path + ".order.tsv";
+    const std::vector<std::tuple<std::string, std::string, int>> pinyin_entries = {
+        {"a", "shared-text", 900},
+        {"a", "shared-second", 800},
+    };
+    const std::vector<std::tuple<std::string, std::string, int>> wubi_entries = {
+        {"a", "shared-second", 1000},
+        {"a", "shared-text", 700},
+    };
+    ASSERT_TRUE(cxxime::Dict::create_test_dict(pinyin_path, pinyin_entries));
+    ASSERT_TRUE(cxxime::Dict::create_test_dict(wubi_path, wubi_entries));
+    ASSERT_TRUE(cxxime::test::create_test_wubi_index(wubi_index_path, wubi_entries));
+    DeleteFileA(pinyin_user_path.c_str());
+    DeleteFileA(wubi_user_path.c_str());
+    DeleteFileA(pinyin_order_path.c_str());
+    DeleteFileA(wubi_order_path.c_str());
+
+    cxxime::Dict pinyin_dict;
+    cxxime::Dict wubi_dict;
+    ASSERT_TRUE(pinyin_dict.open(pinyin_path, pinyin_user_path));
+    ASSERT_TRUE(wubi_dict.open_wubi_bundle(wubi_path, wubi_user_path, wubi_index_path));
+    ASSERT_TRUE(
+        pinyin_dict.load_manual_candidate_order(pinyin_order_path, cxxime::kMaxInputCodeLength));
+    ASSERT_TRUE(wubi_dict.load_manual_candidate_order(wubi_order_path, cxxime::kMaxWubiCodeLength));
+    ASSERT_TRUE(pinyin_dict.replace_manual_candidate_order_and_save(
+        "a", {{"shared-text", "a", "a"}, {"shared-second", "a", "a"}}));
+
+    cxxime::MixedTranslator translator;
+    translator.set_pinyin_dict(&pinyin_dict);
+    translator.set_wubi_dict(&wubi_dict);
+    translator.set_candidate_preference(cxxime::MixedCandidatePreference::kWubi);
+    const auto page = translator.translate("a", 0, 4);
+
+    ASSERT_GE(page.candidates.size(), static_cast<std::size_t>(2));
+    ASSERT_EQ(page.candidates[0].text, "shared-text");
+    ASSERT_EQ(page.candidates[0].source, cxxime::CandidateSource::kPinyin);
+    ASSERT_EQ(page.candidates[1].text, "shared-second");
+    ASSERT_EQ(page.candidates[1].source, cxxime::CandidateSource::kPinyin);
+
+    ASSERT_TRUE(
+        wubi_dict.replace_manual_candidate_order_and_save("a", {{"shared-text", "a", "a"}}));
+    translator.set_candidate_preference(cxxime::MixedCandidatePreference::kAuto);
+    const auto both_pinned = translator.translate("a", 0, 4);
+    ASSERT_TRUE(!both_pinned.candidates.empty());
+    ASSERT_EQ(both_pinned.candidates[0].text, "shared-text");
+    ASSERT_EQ(both_pinned.candidates[0].source, cxxime::CandidateSource::kWubi);
+
+    pinyin_dict.close();
+    wubi_dict.close();
+    DeleteFileA(pinyin_path.c_str());
+    DeleteFileA(wubi_path.c_str());
+    DeleteFileA(wubi_index_path.c_str());
+    DeleteFileA(pinyin_user_path.c_str());
+    DeleteFileA(wubi_user_path.c_str());
+    DeleteFileA(pinyin_order_path.c_str());
+    DeleteFileA(wubi_order_path.c_str());
+}
+
+TEST(WubiEngine, mixed_order_ignores_stale_manual_entry_from_other_profile) {
+    const std::string pinyin_path = make_temp_path("test_mixed_stale_pinyin.bin");
+    const std::string wubi_path = make_temp_path("test_mixed_stale_wubi.bin");
+    const std::string wubi_index_path = wubi_path + ".idx";
+    const std::string pinyin_user_path = pinyin_path + ".user.tsv";
+    const std::string wubi_user_path = wubi_path + ".user.tsv";
+    const std::string pinyin_order_path = pinyin_path + ".order.tsv";
+    const std::vector<std::tuple<std::string, std::string, int>> pinyin_entries = {
+        {"a", "pinyin-first", 900},
+    };
+    const std::vector<std::tuple<std::string, std::string, int>> wubi_entries = {
+        {"a", "shared-text", 800},
+    };
+    ASSERT_TRUE(cxxime::Dict::create_test_dict(pinyin_path, pinyin_entries));
+    ASSERT_TRUE(cxxime::Dict::create_test_dict(wubi_path, wubi_entries));
+    ASSERT_TRUE(cxxime::test::create_test_wubi_index(wubi_index_path, wubi_entries));
+    DeleteFileA(pinyin_user_path.c_str());
+    DeleteFileA(wubi_user_path.c_str());
+    DeleteFileA(pinyin_order_path.c_str());
+
+    cxxime::Dict pinyin_dict;
+    cxxime::Dict wubi_dict;
+    ASSERT_TRUE(pinyin_dict.open(pinyin_path, pinyin_user_path));
+    ASSERT_TRUE(wubi_dict.open_wubi_bundle(wubi_path, wubi_user_path, wubi_index_path));
+    ASSERT_TRUE(
+        pinyin_dict.load_manual_candidate_order(pinyin_order_path, cxxime::kMaxInputCodeLength));
+    ASSERT_TRUE(
+        pinyin_dict.replace_manual_candidate_order_and_save("a", {{"shared-text", "a", "a"}}));
+
+    cxxime::MixedTranslator translator;
+    translator.set_pinyin_dict(&pinyin_dict);
+    translator.set_wubi_dict(&wubi_dict);
+    const auto page = translator.translate("a", 0, 2);
+
+    ASSERT_EQ(page.candidates.size(), 2u);
+    ASSERT_EQ(page.candidates[0].text, "pinyin-first");
+    ASSERT_EQ(page.candidates[0].source, cxxime::CandidateSource::kPinyin);
+    ASSERT_EQ(page.candidates[1].text, "shared-text");
+    ASSERT_EQ(page.candidates[1].source, cxxime::CandidateSource::kWubi);
+
+    pinyin_dict.close();
+    wubi_dict.close();
+    DeleteFileA(pinyin_path.c_str());
+    DeleteFileA(wubi_path.c_str());
+    DeleteFileA(wubi_index_path.c_str());
+    DeleteFileA(pinyin_user_path.c_str());
+    DeleteFileA(wubi_user_path.c_str());
+    DeleteFileA(pinyin_order_path.c_str());
 }
 
 TEST(WubiEngine, translator_empty_code) {

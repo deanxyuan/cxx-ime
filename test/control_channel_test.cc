@@ -431,6 +431,67 @@ TEST(ControlChannel, lexicon_codec_rejects_invalid_requests) {
     ASSERT_TRUE(payload.empty());
 }
 
+TEST(ControlChannel, lexicon_codec_accepts_baseline_query_without_appended_fields) {
+    cxxime::LexiconControlRequest request;
+    ASSERT_TRUE(cxxime::decode_lexicon_request(
+        R"({"operation":"query","kind":"pinyin","resource":"user_lexicon",)"
+        R"("query":"ni","offset":0,"limit":16})",
+        &request));
+    ASSERT_TRUE(!request.exact_text);
+
+    cxxime::LexiconControlResult result;
+    ASSERT_TRUE(cxxime::decode_lexicon_result(
+        R"({"operation":"query","succeeded":true,"error_code":0,)"
+        R"("resource_total":1,"match_total":1,"offset":0,"has_more":false,)"
+        R"("entries":[{"text":"baseline","code":"baseline","frequency":1,)"
+        R"("sequence":0}]})",
+        &result));
+    ASSERT_EQ(result.query.entries.size(), static_cast<std::size_t>(1));
+    ASSERT_TRUE(result.query.entries.front().syllables.empty());
+
+    ASSERT_TRUE(!cxxime::decode_lexicon_request(
+        R"({"operation":"query","kind":"pinyin","resource":"user_lexicon",)"
+        R"("query":"ni","exact_text":"false","offset":0,"limit":16})",
+        &request));
+}
+
+TEST(ControlChannel, candidate_order_codec_preserves_entries_and_version) {
+    cxxime::LexiconControlRequest request;
+    request.operation = cxxime::LexiconOperation::kSetCandidateOrder;
+    request.kind = cxxime::UserDictKind::WUBI;
+    request.resource = cxxime::LexiconResource::kManualCandidateOrder;
+    request.code = "yiy";
+    request.expected_version = 17;
+    request.candidate_order = {{"应该", "yiyy", ""}, {"就让", "yiya", ""}};
+
+    std::string payload;
+    ASSERT_TRUE(cxxime::encode_lexicon_request(request, &payload));
+    cxxime::LexiconControlRequest decoded;
+    ASSERT_TRUE(cxxime::decode_lexicon_request(payload, &decoded));
+    ASSERT_EQ(decoded.operation, cxxime::LexiconOperation::kSetCandidateOrder);
+    ASSERT_EQ(decoded.resource, cxxime::LexiconResource::kManualCandidateOrder);
+    ASSERT_EQ(decoded.code, "yiy");
+    ASSERT_EQ(decoded.expected_version, 17ULL);
+    ASSERT_EQ(decoded.candidate_order.size(), static_cast<std::size_t>(2));
+    ASSERT_EQ(decoded.candidate_order[1].text, "就让");
+
+    cxxime::LexiconControlResult result;
+    result.operation = cxxime::LexiconOperation::kQueryCandidateOrder;
+    result.succeeded = true;
+    result.candidate_order.input_code = "yiy";
+    result.candidate_order.version = 18;
+    result.candidate_order.has_more = true;
+    result.candidate_order.entries.push_back(
+        {"应该", "yiyy", "", cxxime::CandidateOrderReason::kManual});
+    ASSERT_TRUE(cxxime::encode_lexicon_result(result, &payload));
+    cxxime::LexiconControlResult decoded_result;
+    ASSERT_TRUE(cxxime::decode_lexicon_result(payload, &decoded_result));
+    ASSERT_EQ(decoded_result.candidate_order.version, 18ULL);
+    ASSERT_TRUE(decoded_result.candidate_order.has_more);
+    ASSERT_EQ(decoded_result.candidate_order.entries.front().reason,
+              cxxime::CandidateOrderReason::kManual);
+}
+
 TEST(ControlChannel, lexicon_client_supports_all_operations) {
     const std::wstring pipe_name = test_pipe_name();
     std::atomic<int> request_count{0};
@@ -449,9 +510,15 @@ TEST(ControlChannel, lexicon_client_supports_all_operations) {
             result.error_code = ERROR_SUCCESS;
             if (request.operation == cxxime::LexiconOperation::kQuery) {
                 ASSERT_EQ(request.kind, cxxime::UserDictKind::WUBI);
-                ASSERT_TRUE(request.query == "ni");
-                ASSERT_EQ(request.offset, static_cast<std::size_t>(2));
-                ASSERT_EQ(request.limit, static_cast<std::size_t>(3));
+                if (request.exact_text) {
+                    ASSERT_TRUE(request.query == "你好");
+                    ASSERT_EQ(request.offset, static_cast<std::size_t>(0));
+                    ASSERT_EQ(request.limit, static_cast<std::size_t>(16));
+                } else {
+                    ASSERT_TRUE(request.query == "ni");
+                    ASSERT_EQ(request.offset, static_cast<std::size_t>(2));
+                    ASSERT_EQ(request.limit, static_cast<std::size_t>(3));
+                }
                 result.query.resource_total = 9;
                 result.query.match_total = 4;
                 result.query.offset = request.offset;
@@ -467,6 +534,12 @@ TEST(ControlChannel, lexicon_client_supports_all_operations) {
                 ASSERT_EQ(request.source_path, "C:\\temp\\user_pinyin.tsv");
             } else if (request.operation == cxxime::LexiconOperation::kDelete) {
                 ASSERT_EQ(request.entries.size(), static_cast<std::size_t>(2));
+            } else if (request.operation == cxxime::LexiconOperation::kQueryCandidateOrder ||
+                       request.operation == cxxime::LexiconOperation::kSetCandidateOrder ||
+                       request.operation == cxxime::LexiconOperation::kClearCandidateOrder) {
+                ASSERT_EQ(request.code, "yiy");
+                result.candidate_order.input_code = request.code;
+                result.candidate_order.version = request.expected_version + 1;
             }
             return cxxime::encode_lexicon_result(result, response_payload);
         },
@@ -493,6 +566,8 @@ TEST(ControlChannel, lexicon_client_supports_all_operations) {
                              cxxime::UserDictKind::WUBI, "ni", 2, 3, &result));
     ASSERT_TRUE(client.query(cxxime::LexiconResource::kDisabledSystemLexicon,
                              cxxime::UserDictKind::WUBI, "ni", 2, 3, &result));
+    ASSERT_TRUE(client.query_exact_user_entries(cxxime::UserDictKind::WUBI, "你好", 16,
+                                                &result));
     ASSERT_TRUE(client.delete_preferences(cxxime::UserDictKind::PINYIN,
                                           {{"你好", "nihao"}, {"您好", "ninhao"}}, &result));
     ASSERT_TRUE(client.clear_preferences(cxxime::UserDictKind::PINYIN, &result));
@@ -503,7 +578,11 @@ TEST(ControlChannel, lexicon_client_supports_all_operations) {
     ASSERT_EQ(result.query.entries[0].text, "你好");
     ASSERT_TRUE(client.disable_system_entry(cxxime::UserDictKind::PINYIN, "你好", &result));
     ASSERT_TRUE(client.restore_system_entry(cxxime::UserDictKind::PINYIN, "你好", &result));
-    ASSERT_EQ(request_count.load(), 14);
+    ASSERT_TRUE(client.query_candidate_order(cxxime::UserDictKind::WUBI, "yiy", 64, &result));
+    ASSERT_TRUE(client.set_candidate_order(cxxime::UserDictKind::WUBI, "yiy",
+                                           {{"应该", "yiyy", ""}}, 3, &result));
+    ASSERT_TRUE(client.clear_candidate_order(cxxime::UserDictKind::WUBI, "yiy", 4, &result));
+    ASSERT_EQ(request_count.load(), 18);
     server.stop();
 }
 

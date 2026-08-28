@@ -1,0 +1,12 @@
+{
+    "format": 1,
+    "overrides": [
+        {
+            "input_code": "yiy",
+            "candidate_text": "应该",
+            "candidate_code": "yiyy",
+            "target_position": 1,
+            "reason": "常用完整词在源排序第 14 位，默认首屏不可见"
+        }
+    ]
+}

@@ -167,6 +167,10 @@ PinyinTranslator::IndexedFastResult PinyinTranslator::lookup_indexed_fast(
     sort_candidates_by_score(result.candidates);
     if ((int)result.candidates.size() > limit)
         result.candidates.resize(limit);
+    if (dict_) {
+        dict_->apply_manual_candidate_order(key, CandidateSource::kPinyin, result.candidates,
+                                            limit);
+    }
     result.hit = !result.candidates.empty();
     return result;
 }
@@ -177,6 +181,7 @@ PinyinTranslator::QueryCacheVersions PinyinTranslator::query_cache_versions() co
         versions.user_dict = dict_->user_dict_version();
         versions.candidate_preference =
             candidate_learning_enabled_ ? dict_->candidate_preference_version() : 0;
+        versions.manual_candidate_order = dict_->manual_candidate_order_version();
         versions.disabled_system_entry = dict_->disabled_system_entry_version();
     }
     return versions;
@@ -196,6 +201,7 @@ bool PinyinTranslator::lookup_query_cache(const std::string& input, int page_ind
             entry.page_size == page_size &&
             entry.user_dict_version == versions.user_dict &&
             entry.candidate_preference_version == versions.candidate_preference &&
+            entry.manual_candidate_order_version == versions.manual_candidate_order &&
             entry.disabled_system_entry_version == versions.disabled_system_entry) {
             entry.sequence = ++query_cache_sequence_;
             page = entry.page;
@@ -232,6 +238,7 @@ void PinyinTranslator::store_query_cache(const std::string& input, int page_inde
     const QueryCacheVersions current_versions = query_cache_versions();
     if (current_versions.user_dict != versions.user_dict ||
         current_versions.candidate_preference != versions.candidate_preference ||
+        current_versions.manual_candidate_order != versions.manual_candidate_order ||
         current_versions.disabled_system_entry != versions.disabled_system_entry) {
         return;
     }
@@ -242,6 +249,7 @@ void PinyinTranslator::store_query_cache(const std::string& input, int page_inde
             entry.page_size == page_size &&
             entry.user_dict_version == versions.user_dict &&
             entry.candidate_preference_version == versions.candidate_preference &&
+            entry.manual_candidate_order_version == versions.manual_candidate_order &&
             entry.disabled_system_entry_version == versions.disabled_system_entry) {
             entry.page = page;
             entry.sequence = ++query_cache_sequence_;
@@ -265,6 +273,7 @@ void PinyinTranslator::store_query_cache(const std::string& input, int page_inde
     entry.page_size = page_size;
     entry.user_dict_version = versions.user_dict;
     entry.candidate_preference_version = versions.candidate_preference;
+    entry.manual_candidate_order_version = versions.manual_candidate_order;
     entry.disabled_system_entry_version = versions.disabled_system_entry;
     entry.sequence = ++query_cache_sequence_;
     entry.page = page;
@@ -608,6 +617,7 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
         dict_->apply_candidate_preferences(pinyin, CandidateSource::kPinyin, sorted, need);
     }
     dict_->filter_disabled_system_candidates(sorted);
+    dict_->apply_manual_candidate_order(pinyin, CandidateSource::kPinyin, sorted, need);
 
     // total_count before pagination (includes extra one for next-page detection)
     page.total_count = (int)sorted.size();

@@ -22,21 +22,27 @@ namespace {
 
 struct CandidateKey {
     std::string_view text;
+    std::string_view syllables;
     int32_t frequency;
 };
 
 struct CandidateKeyHash {
     size_t operator()(const CandidateKey& key) const {
         const size_t text_hash = std::hash<std::string_view>{}(key.text);
+        const size_t syllables_hash = std::hash<std::string_view>{}(key.syllables);
         const size_t frequency_hash = std::hash<int32_t>{}(key.frequency);
-        return text_hash ^ (frequency_hash + static_cast<size_t>(0x9e3779b9) +
-                            (text_hash << 6) + (text_hash >> 2));
+        const size_t identity_hash =
+            text_hash ^ (syllables_hash + static_cast<size_t>(0x9e3779b9) +
+                         (text_hash << 6) + (text_hash >> 2));
+        return identity_hash ^ (frequency_hash + static_cast<size_t>(0x9e3779b9) +
+                                (identity_hash << 6) + (identity_hash >> 2));
     }
 };
 
 struct CandidateKeyEqual {
     bool operator()(const CandidateKey& lhs, const CandidateKey& rhs) const {
-        return lhs.frequency == rhs.frequency && lhs.text == rhs.text;
+        return lhs.frequency == rhs.frequency && lhs.text == rhs.text &&
+               lhs.syllables == rhs.syllables;
     }
 };
 
@@ -147,6 +153,16 @@ bool validate_source(const Source& source, std::string* error) {
                 *error = "candidate list exceeds uint16_t";
             }
             return false;
+        }
+        for (size_t candidate_index = 0; candidate_index < source.candidate_count(i);
+             ++candidate_index) {
+            const SourceCandidate candidate = source.candidate(i, candidate_index);
+            if (candidate.text.empty() || candidate.syllables.empty()) {
+                if (error != nullptr) {
+                    *error = "candidate identity must contain text and syllables";
+                }
+                return false;
+            }
         }
         previous = current;
     }
@@ -273,15 +289,17 @@ bool write_index(const Source& source, TopnIndexLayout layout, const std::string
 
         for (size_t candidate_index = 0; candidate_index < count; ++candidate_index) {
             const SourceCandidate candidate = source.candidate(key_index, candidate_index);
-            if (candidate.text.size() > std::numeric_limits<uint32_t>::max()) {
+            if (candidate.text.size() > std::numeric_limits<uint32_t>::max() ||
+                candidate.syllables.size() > std::numeric_limits<uint32_t>::max()) {
                 if (error != nullptr) {
-                    *error = "candidate text exceeds uint32_t";
+                    *error = "candidate identity exceeds uint32_t";
                 }
                 return false;
             }
 
             if (layout == TopnIndexLayout::kDat8) {
-                const CandidateKey candidate_key = {candidate.text, candidate.frequency};
+                const CandidateKey candidate_key = {
+                    candidate.text, candidate.syllables, candidate.frequency};
                 auto found = candidate_ids.find(candidate_key);
                 uint32_t id = 0;
                 if (found == candidate_ids.end()) {
@@ -293,12 +311,15 @@ bool write_index(const Source& source, TopnIndexLayout layout, const std::string
                         return false;
                     }
                     uint32_t text_offset = 0;
-                    if (!candidate_strings.intern(candidate.text, &text_offset, error)) {
+                    uint32_t syllables_offset = 0;
+                    if (!candidate_strings.intern(candidate.text, &text_offset, error) ||
+                        !candidate_strings.intern(candidate.syllables, &syllables_offset, error)) {
                         return false;
                     }
                     id = static_cast<uint32_t>(candidate_records.size());
                     candidate_records.push_back(
                         {text_offset, static_cast<uint32_t>(candidate.text.size()),
+                         syllables_offset, static_cast<uint32_t>(candidate.syllables.size()),
                          candidate.frequency});
                     candidate_ids.emplace(candidate_key, id);
                 } else {
@@ -307,11 +328,14 @@ bool write_index(const Source& source, TopnIndexLayout layout, const std::string
                 pooled_postings.push_back({id, candidate.score});
             } else {
                 uint32_t text_offset = 0;
-                if (!candidate_strings.intern(candidate.text, &text_offset, error)) {
+                uint32_t syllables_offset = 0;
+                if (!candidate_strings.intern(candidate.text, &text_offset, error) ||
+                    !candidate_strings.intern(candidate.syllables, &syllables_offset, error)) {
                     return false;
                 }
                 inline_postings.push_back(
                     {text_offset, static_cast<uint32_t>(candidate.text.size()),
+                     syllables_offset, static_cast<uint32_t>(candidate.syllables.size()),
                      candidate.frequency, candidate.score});
             }
         }
