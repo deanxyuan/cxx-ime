@@ -27,7 +27,7 @@
 | `truncated` | 默认 1% | 被截断的查询（采样） |
 | 其他正常查询 | 默认关闭 | 普通快速输入默认不采样 |
 
-采样函数 `should_sample(session_id, revision, rate)` 使用 mix64 哈希，同输入同结果（确定性）。
+采样函数 `should_sample(session_id, revision, query_id, rate)` 使用 mix64 哈希，同输入同结果（确定性）。
 
 
 ### diagnostics 配置

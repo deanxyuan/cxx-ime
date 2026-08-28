@@ -7,7 +7,7 @@
 | 指标 | 数值 | 说明 |
 |------|------|------|
 | 安装包 | ~72 MB | 单文件 NSIS 安装器，含全部词典数据 |
-| Server 常驻内存 | ~470 MB 量级 | 词典数据全量堆载（~332 MB）为主：dict.bin 69.5 + dict.idx 46.2 + topn.bin ~211.5 + wubi ~4.8 + spellings ~0.03 + darts trie + 用户词索引 |
+| Server 常驻内存 | ~420 MB 量级 | 词典数据全量堆载为主：dict.bin 69.5 + dict.idx 46.2 + topn.bin ~290.2 + wubi ~4.8 + spellings ~0.03 + reverse idx ~7.6 + darts trie + 用户词索引 |
 | IPC 往返延迟 | < 1 ms | 实测 preedit avg ~50us（见 [IPC 架构设计](ipc-architecture.md)） |
 | 启动 | 词典一次性读入 | 无 mmap 换页延迟，代价是启动时的顺序读盘 |
 
@@ -72,12 +72,12 @@
 | **AsciiComposer** | 可配置中英文切换，CapsLock overlay | `AsciiComposer` |
 | **OutputComposer** | 输出合成（全角/CapsLock/按键拦截） | `OutputComposer` |
 | **ShortCodeCache** | 短码候选缓存（DAT-16 Top-N 索引，Darts trie 查找，短输入快速路径） | `ShortCodeCache` |
-| **Dict** | 词典加载与查询 | 二进制加载主词典 + 内存用户词库与候选偏好 |
+| **Dict** | 词典加载与查询 | 二进制加载主词典 + 内存用户词库 / 候选偏好 / 手动候选顺序 |
 | **Config** | 配置加载 | JSON（nlohmann/json） |
 
 **数据存储：**
 - **主词典：** 二进制堆加载词典 + Patricia trie 拼写索引（一次性读入），详见 [词典系统设计](dictionary.md)
-- **用户数据：** 用户词库（手工词条，多路索引）与候选偏好（学习记录），TSV 文件持久化，详见 [用户词库与候选偏好](user-dictionary.md)
+- **用户数据：** 用户词库（手工词条，多路索引）、候选偏好（学习记录）与手动候选顺序，TSV 文件持久化，详见 [用户词库与候选偏好](user-dictionary.md)
 
 ### 3.2 TSF DLL（输入法前端）
 
@@ -118,7 +118,7 @@ ITfThreadFocusSink          — 线程焦点通知
 
 - **渲染后端：** Direct2D + DirectWrite（默认），GDI 可选（`render_backend` 配置）
 - **布局：** 横排（默认）/ 竖排，跟随光标定位，屏幕边缘 clamp，DPI 感知，圆角窗口
-- **主题：** 14 套配色预设（`themes.json`，兼容 Weasel 配色格式）
+- **主题：** 12 套配色预设（`themes.json`，兼容 Weasel 配色格式）
 - **状态窗口：** 中英文/大小写等状态显示，与语言栏图标联动
 
 ### 3.5 IPC 层
@@ -202,7 +202,7 @@ cxx-ime/
 |------|------|------|
 | `pinyin.dict.bin` | ~69.5 MB | 拼音主词典（按 syllable_ids 排序） |
 | `pinyin.dict.idx` | ~46.2 MB | 拼音整数 ID 索引（音节→词条映射） |
-| `pinyin.topn.bin` | ~211.5 MB | 拼音 Top-N 候选索引（DAT-16 格式，Darts trie 查找） |
+| `pinyin.topn.bin` | ~290.2 MB | 拼音 Top-N 候选索引（CXTOPN v3 DAT-16，Darts trie 查找） |
 | `pinyin.spellings.bin` | ~0.03 MB (30 KB) | Patricia trie 拼写索引 |
 | `pinyin.reverse.idx` | — | 拼音词语反查索引（Settings 反查） |
 | `wubi86.dict.bin` | ~2.5 MB | 五笔主词典 |
@@ -213,6 +213,7 @@ cxx-ime/
 
 ## 7. 相关文档
 
+- [候选排序设计](candidate-ordering.md) — 手动固定 / 学习偏好 / 默认排序 / 分页的四层优先级
 - [候选词选词算法](candidate-selection.md) — 查询管道与路径枚举
 - [查询预算与候选收集](query-control.md) — QueryBudget、TopKCollector、扫描限制、超时检查点
 - [中英文切换机制](ascii-composer.md) — AsciiComposer 配置与状态同步链路
@@ -225,4 +226,4 @@ cxx-ime/
 - [安装与卸载](installation.md) — 构建、打包、注册
 - [设置指南](settings-guide.md) — 配置项与设置界面
 - [性能基准记录](benchmark-data.md) — 各阶段优化的历史数据
-- [路径解析](path_resolution.md) — 数据目录与脚本路径规则
+- [路径解析](path-resolution.md) — 数据目录、多版本安装布局与脚本路径规则

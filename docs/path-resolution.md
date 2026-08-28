@@ -4,25 +4,42 @@ CxxIME 的数据文件分布在两个位置：安装目录（只读共享数据�
 
 ## 目录布局
 
-### 安装目录 `%ProgramFiles%\CxxIME\`
+### 安装基目录 `%ProgramFiles%\CxxIME\`
+
+当前分支采用**多版本安装**布局：安装基目录下每个版本独占一个子目录，升级/降级不再覆盖旧版本目录，而是安装到新版本目录并把新版本注册为活动版本；旧版本保留到系统重启清理。
 
 ```
-C:\Program Files\CxxIME\
-├── cxxime_tsf.dll
-├── cxxime-server.exe
-├── cxxime-settings.exe
-└── data\
-    ├── default.json          默认配置
-    ├── themes.json           颜色主题（14 套）
-    ├── pinyin.dict.bin       拼音二进制词典（运行时）
-    ├── pinyin.dict.idx       音节索引（运行时）
-    ├── pinyin.spellings.bin  拼写 trie（运行时）
-    ├── pinyin.topn.bin       短码缓存（运行时）
-    ├── pinyin.reverse.idx    词语反查索引（Settings 拼音反查）
-    ├── wubi86.dict.bin       五笔词典（运行时）
-    ├── wubi86.dict.idx       五笔完整前缀索引（运行时）
-    └── wubi86.reverse.idx    词语反查索引（Settings 五笔反查）
+C:\Program Files\CxxIME\             安装基目录（首次安装时选择，默认 Program Files）
+├── <version>\                      活动版本目录（如 0.4.0\），每个版本自包含完整程序与 data\
+│   ├── cxxime_tsf_x64.dll / cxxime_tsf_x86.dll
+│   ├── cxxime_ime_x64.ime / cxxime_ime_x86.ime
+│   ├── cxxime-server.exe / cxxime-settings.exe
+│   ├── cxxime-resources.dll
+│   ├── collect_diagnostics.ps1
+│   ├── uninstall.exe
+│   └── data\
+│       ├── default.json            默认配置
+│       ├── themes.json             颜色主题（12 套）
+│       ├── settings_presets.json / punctuation.json / symbols.json
+│       ├── dictionary_manifest.json 词典清单
+│       ├── pinyin.dict.bin / pinyin.dict.idx / pinyin.spellings.bin
+│       ├── pinyin.topn.bin         拼音 Top-N 短码索引（CXTOPN v3）
+│       ├── wubi86.dict.bin / wubi86.dict.idx
+│       └── pinyin.reverse.idx / wubi86.reverse.idx
+├── update\                         安装暂存目录（stage）
+├── .cxxime-backup\                 安装备份/回滚目录
+└── .cxxime-install-* / .cxxime-runtime / .cxxime-ime-*.pending  安装事务与系统 IME 更新标记
 ```
+
+同一个版本升级时使用 `<version>.next` 临时目录完成替换，避免与已注册的活动版本目录冲突。安装状态通过注册表记录：
+
+| 注册表值（`HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\CxxIME`） | 含义 |
+|------|------|
+| `InstallLocation` | 活动版本目录（当前生效的程序 + data） |
+| `InstallBaseLocation` | 安装基目录 |
+| `PreviousInstallLocation` | 待清理的上一版本目录（存在时阻塞新的安装） |
+
+`data_dir()` 与活动版本无关——每个版本目录内的 exe 都按自身目录解析 `data\`，登录自启动的 `CxxIMEServer` 指向当前活动版本的 `cxxime-server.exe`。
 
 ### 用户目录 `%USERPROFILE%\cxxime\`
 
@@ -30,15 +47,18 @@ C:\Program Files\CxxIME\
 C:\Users\<username>\cxxime\
 ├── default.json              用户配置覆盖（可选）
 ├── themes.json               用户主题覆盖（可选）
+├── punctuation.json          标点映射覆盖（可选）
 ├── user_pinyin.tsv           用户词库（拼音）
 ├── user_wubi.tsv             用户词库（五笔）
 ├── learning_pinyin.tsv       选词偏好（拼音）
 ├── learning_wubi.tsv         选词偏好（五笔）
+├── candidate_order_pinyin.tsv 手动候选顺序（拼音）
+├── candidate_order_wubi.tsv   手动候选顺序（五笔）
 ├── disabled_pinyin.tsv       系统词隐藏列表（拼音）
 └── disabled_wubi.tsv         系统词隐藏列表（五笔）
 ```
 
-由 `user_data_dir()` 首次调用时自动创建。
+用户目录跨版本共享，由 `user_data_dir()` 首次调用时自动创建；多版本并存时用户数据不随版本切换而改变。
 
 ## 路径解析函数
 
@@ -142,7 +162,7 @@ Python 脚本分布在两个目录，职责不同：
 
 | 目录 | 定位 | 脚本 |
 |------|------|------|
-| `scripts/` | **主入口脚本**：打包、词典准备、校验、基准回归 | `package.py`、`prepare_dictionary_bundle.py`、`build_pinyin_topn.py`、`verify_dictionary_bundle.py`、`verify_package.py`、`check_query_bench.py` |
+| `scripts/` | **主入口脚本**：打包、词典准备、校验、基准回归、诊断 | `package.py`、`prepare_dictionary_bundle.py`、`build_pinyin_topn.py`、`verify_dictionary_bundle.py`、`verify_package.py`、`check_query_bench.py`、`collect_diagnostics.ps1`、`benchmark.bat`、`benchmark_topn.ps1`、`run_sync_regression.bat/ps1`、`gen_theme_previews.py` |
 | `data/tools/` | **词典数据处理工具**：由 `scripts/` 入口调用，也可独立运行 | `fetch_pinyin_dictionary.py`、`fetch_wubi_dictionary.py`、`convert_rime_dictionary.py`、`build_runtime_dictionary.py`、`generate_pinyin_spellings.py`、`generate_pinyin_syllable_ids.py`、`split_wubi_symbols.py`，以及 `dict_builder/` 实现包 |
 
 脚本通过 `--input`/`--output` 参数接收路径，不依赖环境变量。`scripts/package.py` 经 `scripts/prepare_dictionary_bundle.py` 调用 `data/tools/` 下的词典工具时传入绝对路径：

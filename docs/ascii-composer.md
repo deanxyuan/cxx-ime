@@ -247,13 +247,15 @@ TSF 的 `_chinese_mode` 在 `_sync_ime_status()` 中从 `ImeStatus.chinese_mode`
 
 ## 5. 测试覆盖
 
-无独立的 AsciiComposer 单元测试文件。AsciiComposer 的 CapsLock overlay 行为通过集成测试 `session_manager_status_test.cc` 覆盖，包括：
+AsciiComposer 无独立测试文件，但 `engine_test.cc` 内置 **AsciiComposer 套件**，覆盖 Shift / Alt / Super / CapsLock 的切换与 overlay 行为（如 `shift_l_code_toggles_and_commits`、`capslock_clear_resets_pinyin`、`shift_held_capslock_no_double_toggle` 等）。
+
+CapsLock overlay 的跨 session 行为通过集成测试 `session_manager_status_test.cc` 覆盖，包括：
 
 - `sync_caps_lock_sets_current_state` — CapsLock 状态同步
 - `sync_caps_lock_enables_ascii_overlay` — CapsLock 激活后字母直接上屏
 - `first_key_with_caps_lock_on_enables_ascii_overlay` — 首次按键时 CapsLock 已开
 - `caps_lock_key_off_restores_chinese_overlay` — CapsLock 关灯恢复中文
 - `caps_lock_key_up_does_not_override_key_down_state` — key-up 不覆盖 key-down 状态
-- `caps_lock_global_overlay_restores_base_mode` — 跨 session 的 CapsLock 同步
+- `caps_lock_overlay_restores_each_session_base_mode` — 跨 session 的 CapsLock 同步
 
 普通 Shift/Ctrl 切换行为通过 `session_manager_integration_test.cc` 覆盖（组合中的键处理结果验证）。
