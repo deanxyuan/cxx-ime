@@ -139,16 +139,17 @@ void EditorApp::create_dictionary_panel(HWND panel, int panel_width) {
         make_button(4015, L"清空全部偏好", kPanelPadLeft + S(94), action_y, S(112));
     ShowWindow(hLexiconPreferenceDelete_, SW_HIDE);
     ShowWindow(hLexiconPreferenceClear_, SW_HIDE);
-    hCandidateOrderFirst_ = make_button(4020, L"固定到首位", kPanelPadLeft, action_y, S(92));
+    hCandidateOrderFirst_ = make_button(4020, L"固定到首位", kPanelPadLeft, action_y, S(88));
     hCandidateOrderAppend_ =
-        make_button(4025, L"加入固定", kPanelPadLeft + S(100), action_y, S(78));
-    hCandidateOrderUp_ = make_button(4021, L"↑", kPanelPadLeft + S(186), action_y, S(36));
+        make_button(4025, L"追加固定", kPanelPadLeft + S(94), action_y, S(72));
+    hCandidateOrderUp_ =
+        make_button(4021, L"固定上移", kPanelPadLeft + S(172), action_y, S(70));
     hCandidateOrderDown_ =
-        make_button(4022, L"↓", kPanelPadLeft + S(228), action_y, S(36));
+        make_button(4022, L"固定下移", kPanelPadLeft + S(248), action_y, S(70));
     hCandidateOrderUnpin_ =
-        make_button(4023, L"取消固定", kPanelPadLeft + S(272), action_y, S(78));
+        make_button(4023, L"取消固定", kPanelPadLeft + S(324), action_y, S(72));
     hCandidateOrderReset_ =
-        make_button(4024, L"恢复默认", kPanelPadLeft + S(358), action_y, S(92));
+        make_button(4024, L"恢复默认", kPanelPadLeft + S(402), action_y, S(78));
     for (HWND control : {hCandidateOrderFirst_, hCandidateOrderAppend_, hCandidateOrderUp_,
                          hCandidateOrderDown_, hCandidateOrderUnpin_, hCandidateOrderReset_}) {
         ShowWindow(control, SW_HIDE);
