@@ -58,7 +58,9 @@ public:
     topn::SourceCandidate candidate(size_t key_index,
                                      size_t candidate_index) const override {
         const auto& candidate = entries_[key_index].second[candidate_index];
-        return {candidate.text, candidate.frequency, candidate.frequency};
+        const auto& key = entries_[key_index].first;
+        return {candidate.text, candidate.frequency, candidate.frequency,
+                candidate.syllables.empty() ? key : candidate.syllables};
     }
 
 private:
