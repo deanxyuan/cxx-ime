@@ -25,6 +25,8 @@ class LexiconQueryService {
 public:
     SystemLexiconQueryResult query(SystemLexiconType type, LexiconSearchKind search_kind,
                                    std::string_view query, std::size_t limit);
+    SystemLexiconQueryResult query_exact_text(SystemLexiconType type, std::string_view text,
+                                              std::size_t limit);
     std::vector<std::string> suggest_codes(SystemLexiconType type, std::string_view text,
                                            std::size_t limit, std::string* error);
 

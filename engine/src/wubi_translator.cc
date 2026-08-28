@@ -17,6 +17,7 @@ void WubiTranslator::reset_query_snapshot() {
     snapshot_candidates_.clear();
     snapshot_user_dict_version_ = 0;
     snapshot_candidate_preference_version_ = 0;
+    snapshot_manual_candidate_order_version_ = 0;
     snapshot_disabled_system_entry_version_ = 0;
     snapshot_query_limit_ = 0;
     snapshot_exhausted_ = false;
@@ -44,6 +45,7 @@ std::vector<Candidate> WubiTranslator::lookup_candidates(const std::string& code
     if (candidate_learning_enabled_) {
         dict_->apply_candidate_preferences(code, CandidateSource::kWubi, dict_results, limit);
     }
+    dict_->apply_manual_candidate_order(code, CandidateSource::kWubi, dict_results, limit);
     for (auto& candidate : dict_results) {
         if ((int)results.size() >= limit) {
             break;
@@ -78,14 +80,17 @@ CandidatePage WubiTranslator::translate(const std::string& code, int page_index,
     uint64_t preference_version = candidate_learning_enabled_
                                       ? dict_->candidate_preference_version()
                                       : 0;
+    const uint64_t manual_order_version = dict_->manual_candidate_order_version();
     const uint64_t disabled_version = dict_->disabled_system_entry_version();
     if (snapshot_code_ != code || snapshot_user_dict_version_ != user_dict_version ||
         snapshot_candidate_preference_version_ != preference_version ||
+        snapshot_manual_candidate_order_version_ != manual_order_version ||
         snapshot_disabled_system_entry_version_ != disabled_version) {
         reset_query_snapshot();
         snapshot_code_ = code;
         snapshot_user_dict_version_ = user_dict_version;
         snapshot_candidate_preference_version_ = preference_version;
+        snapshot_manual_candidate_order_version_ = manual_order_version;
         snapshot_disabled_system_entry_version_ = disabled_version;
     }
 

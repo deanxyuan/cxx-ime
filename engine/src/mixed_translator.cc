@@ -104,10 +104,12 @@ void append_interleaved(std::vector<Candidate>& output, std::unordered_set<std::
 } // namespace
 
 void MixedTranslator::set_pinyin_dict(Dict* dict) {
+    pinyin_dict_ = dict;
     pinyin_translator_.set_dict(dict);
 }
 
 void MixedTranslator::set_wubi_dict(Dict* dict) {
+    wubi_dict_ = dict;
     wubi_translator_.set_dict(dict);
 }
 
@@ -147,10 +149,11 @@ CandidatePage MixedTranslator::translate(const std::string& input, int page_inde
     merged.reserve(py.size() + wb.size());
     std::unordered_set<std::string> seen;
 
+    const MixedOrder mixed_order = choose_order(input, py, wb);
     if (candidate_preference_ == MixedCandidatePreference::kWubi) {
         append_interleaved(merged, seen, wb, py, CandidateSource::kWubi);
     } else {
-        switch (choose_order(input, py, wb)) {
+        switch (mixed_order) {
         case MixedOrder::kWubiFirst:
             append_all(merged, seen, wb);
             append_all(merged, seen, py);
@@ -164,6 +167,67 @@ CandidatePage MixedTranslator::translate(const std::string& input, int page_inde
             break;
         }
     }
+
+    std::vector<Candidate> manual;
+    std::unordered_set<std::string> manual_texts;
+    auto append_manual = [&](const Candidate& candidate, bool update_duplicate,
+                             CandidateSource preferred_source) {
+        if (!manually_ordered(input, candidate)) {
+            return;
+        }
+        if (manual_texts.insert(candidate.text).second) {
+            manual.push_back(candidate);
+        } else if (update_duplicate && candidate.source == preferred_source) {
+            auto existing = std::find_if(manual.begin(), manual.end(), [&](const auto& item) {
+                return item.text == candidate.text;
+            });
+            if (existing != manual.end()) {
+                *existing = candidate;
+            }
+        }
+    };
+    auto append_all_manual = [&](const std::vector<Candidate>& candidates) {
+        for (const auto& candidate : candidates) {
+            append_manual(candidate, false, CandidateSource::kPinyin);
+        }
+    };
+    auto append_interleaved_manual = [&](const std::vector<Candidate>& first,
+                                         const std::vector<Candidate>& second,
+                                         CandidateSource preferred_source) {
+        std::size_t first_index = 0;
+        std::size_t second_index = 0;
+        while (first_index < first.size() || second_index < second.size()) {
+            if (first_index < first.size()) {
+                append_manual(first[first_index++], false, preferred_source);
+            }
+            if (second_index < second.size()) {
+                append_manual(second[second_index++], true, preferred_source);
+            }
+        }
+    };
+
+    if (candidate_preference_ == MixedCandidatePreference::kWubi) {
+        append_interleaved_manual(wb, py, CandidateSource::kWubi);
+    } else {
+        switch (mixed_order) {
+        case MixedOrder::kWubiFirst:
+            append_all_manual(wb);
+            append_all_manual(py);
+            break;
+        case MixedOrder::kAmbiguousInterleave:
+            append_interleaved_manual(py, wb, CandidateSource::kWubi);
+            break;
+        case MixedOrder::kPinyinFirst:
+            append_all_manual(py);
+            append_all_manual(wb);
+            break;
+        }
+    }
+    merged.erase(std::remove_if(merged.begin(), merged.end(), [&](const auto& candidate) {
+                     return manual_texts.count(candidate.text) != 0;
+                 }),
+                 merged.end());
+    merged.insert(merged.begin(), manual.begin(), manual.end());
 
     // Paginate
     CandidatePage result;
@@ -181,6 +245,26 @@ CandidatePage MixedTranslator::translate(const std::string& input, int page_inde
         result.highlighted = 0;
 
     return result;
+}
+
+bool MixedTranslator::manually_ordered(const std::string& input, const Candidate& candidate) const {
+    Dict* dictionary = nullptr;
+    if (candidate.source == CandidateSource::kPinyin) {
+        dictionary = pinyin_dict_;
+    } else if (candidate.source == CandidateSource::kWubi) {
+        dictionary = wubi_dict_;
+    }
+    if (!dictionary) {
+        return false;
+    }
+
+    const auto entries = dictionary->manual_candidate_order(input);
+    const auto found = std::find_if(entries.begin(), entries.end(), [&](const auto& entry) {
+        return entry.text == candidate.text && entry.code == candidate.code &&
+               entry.syllables == candidate.syllables;
+    });
+    return found != entries.end() &&
+           dictionary->can_resolve_manual_candidate(*found, candidate.source);
 }
 
 void MixedTranslator::clear_query_cache() {

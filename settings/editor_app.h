@@ -69,6 +69,12 @@ private:
     void save_lexicon_entry();
     void delete_lexicon_entries();
     void disable_or_restore_system_entry();
+    void pin_candidate_order_first();
+    void append_candidate_order_pin();
+    void move_candidate_order(int direction);
+    void remove_candidate_order_pin();
+    void reset_candidate_order();
+    bool save_candidate_order(const std::vector<ManualCandidateOrderEntry>& entries);
     void request_lexicon_code_suggestions();
     void clear_candidate_preferences();
     void import_user_dict();
@@ -187,6 +193,12 @@ private:
     HWND hLexiconPreferenceDelete_ = nullptr;
     HWND hLexiconSystemAction_ = nullptr;
     HWND hLexiconPreferenceClear_ = nullptr;
+    HWND hCandidateOrderFirst_ = nullptr;
+    HWND hCandidateOrderAppend_ = nullptr;
+    HWND hCandidateOrderUp_ = nullptr;
+    HWND hCandidateOrderDown_ = nullptr;
+    HWND hCandidateOrderUnpin_ = nullptr;
+    HWND hCandidateOrderReset_ = nullptr;
     HWND hLexiconImport_ = nullptr;
     HWND hLexiconExport_ = nullptr;
     HWND hLexiconOpenDirectory_ = nullptr;
@@ -214,6 +226,9 @@ private:
     bool lexiconDisabledStateAvailable_ = false;
     bool updatingLexiconForm_ = false;
     bool lexiconCodeManuallyEdited_ = false;
+    std::uint64_t candidateOrderVersion_ = 0;
+    std::vector<ManualCandidateOrderEntry> candidateOrderPins_;
+    std::string candidateOrderCode_;
     cxxime::LexiconResource lexiconResource_ = cxxime::LexiconResource::kUserLexicon;
     cxxime::UserDictKind current_user_dict_kind() const;
     cxxime::LexiconResource current_lexicon_resource() const;

@@ -41,6 +41,25 @@ SystemLexiconQueryResult LexiconQueryService::query(SystemLexiconType type,
     return result;
 }
 
+SystemLexiconQueryResult LexiconQueryService::query_exact_text(SystemLexiconType type,
+                                                               std::string_view text,
+                                                               std::size_t limit) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    SystemLexiconQueryResult result;
+    if (!ensure_open(type)) {
+        result.error = inspector_.last_error();
+        return result;
+    }
+    result.available = true;
+    result.entries = inspector_.query_text(text, SystemLexiconTextMatch::kExact, limit);
+    if (!inspector_.last_error().empty()) {
+        result.available = false;
+        result.error = inspector_.last_error();
+        result.entries.clear();
+    }
+    return result;
+}
+
 std::vector<std::string> LexiconQueryService::suggest_codes(SystemLexiconType type,
                                                             std::string_view text,
                                                             std::size_t limit, std::string* error) {

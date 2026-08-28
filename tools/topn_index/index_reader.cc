@@ -80,7 +80,7 @@ bool IndexReader::load(const std::string& path, TopnIndexLayout expected_layout,
         header_->version != kTopnIndexVersion ||
         header_->header_size != sizeof(TopnIndexHeader) ||
         header_->file_size != data_.size() || header_->reserved != 0) {
-        set_error(error, "invalid CXTOPN v2 header");
+        set_error(error, "invalid CXTOPN v3 header");
         data_.clear();
         header_ = nullptr;
         return false;
@@ -201,7 +201,10 @@ bool IndexReader::validate(std::string* error) {
     if (current_layout == TopnIndexLayout::kDat8) {
         for (uint32_t i = 0; i < header_->candidate_count; ++i) {
             const auto& candidate = candidates_[i];
-            if (!range_inside(candidate.text_offset, candidate.text_length,
+            if (candidate.text_length == 0 || candidate.syllables_length == 0 ||
+                !range_inside(candidate.text_offset, candidate.text_length,
+                              header_->candidate_string_size) ||
+                !range_inside(candidate.syllables_offset, candidate.syllables_length,
                               header_->candidate_string_size)) {
                 set_error(error, "invalid candidate record");
                 return false;
@@ -216,7 +219,10 @@ bool IndexReader::validate(std::string* error) {
     } else {
         for (uint32_t i = 0; i < header_->posting_count; ++i) {
             const auto& posting = inline_postings_[i];
-            if (!range_inside(posting.text_offset, posting.text_length,
+            if (posting.text_length == 0 || posting.syllables_length == 0 ||
+                !range_inside(posting.text_offset, posting.text_length,
+                              header_->candidate_string_size) ||
+                !range_inside(posting.syllables_offset, posting.syllables_length,
                               header_->candidate_string_size)) {
                 set_error(error, "inline posting references an invalid string");
                 return false;
@@ -304,12 +310,16 @@ SourceCandidate IndexReader::candidate(const IndexMatch& match, size_t candidate
         const auto& candidate = candidates_[posting.candidate_index];
         return {std::string_view(candidate_strings_ + candidate.text_offset,
                                  candidate.text_length),
-                candidate.frequency, posting.score};
+                candidate.frequency, posting.score,
+                std::string_view(candidate_strings_ + candidate.syllables_offset,
+                                 candidate.syllables_length)};
     }
     const auto& posting = inline_postings_[posting_index];
     return {std::string_view(candidate_strings_ + posting.text_offset,
                              posting.text_length),
-            posting.frequency, posting.score};
+            posting.frequency, posting.score,
+            std::string_view(candidate_strings_ + posting.syllables_offset,
+                             posting.syllables_length)};
 }
 
 size_t IndexReader::key_count() const {

@@ -46,7 +46,8 @@ public:
 
     std::vector<UserDictEntryInfo> query_entries(const std::string& query, std::size_t offset,
                                                  std::size_t limit,
-                                                 std::size_t* match_total = nullptr) const;
+                                                 std::size_t* match_total = nullptr,
+                                                 bool exact_text = false) const;
     std::vector<Candidate> lookup_exact(const std::string& code, int limit,
                                         const QueryBudget& budget, QueryTrace* trace,
                                         UserLookupStats* stats) const;
@@ -61,6 +62,8 @@ public:
     int count_prefix(const std::string& prefix, QueryTrace* trace) const;
     bool contains_candidate(const std::string& text, const std::string& code,
                             const std::string& syllables) const;
+    bool contains_candidate_identity(const std::string& text, const std::string& code,
+                                     const std::string& syllables) const;
     bool contains_text(const std::string& text) const;
     std::size_t entry_count() const;
     std::uint64_t version() const;

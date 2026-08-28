@@ -397,6 +397,7 @@ private:
         }
         result->text.assign(text);
         result->code = compact_code(code);
+        result->syllables.assign(code);
         result->frequency = source->frequency;
         result->entry_id = entry_id;
         return true;

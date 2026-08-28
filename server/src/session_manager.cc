@@ -12,8 +12,11 @@
 #include <cxxime/data_path.h>
 #include <cxxime/diagnostics_config.h>
 #include <cxxime/dictionary_manifest.h>
+#include <cxxime/input_limits.h>
 #include <cxxime/logging.h>
 #include <cxxime/query_trace.h>
+#include <cxxime/translator.h>
+#include <cxxime/wubi_translator.h>
 
 namespace {
 
@@ -37,6 +40,12 @@ std::string candidate_preference_path_for(cxxime::UserDictKind kind) {
     return cxxime::user_data_path(kind == cxxime::UserDictKind::WUBI
                                   ? "learning_wubi.tsv"
                                   : "learning_pinyin.tsv");
+}
+
+std::string manual_candidate_order_path_for(cxxime::UserDictKind kind) {
+    return cxxime::user_data_path(kind == cxxime::UserDictKind::WUBI
+                                      ? "candidate_order_wubi.tsv"
+                                      : "candidate_order_pinyin.tsv");
 }
 
 std::string disabled_system_lexicon_path_for(cxxime::UserDictKind kind) {
@@ -149,6 +158,12 @@ bool load_dictionary_resources(const std::string& manifest_path, DictionaryResou
         CXXIME_LOG(L"SharedResources: pinyin candidate preferences load FAILED");
         return false;
     }
+    if (!loaded_dict->load_manual_candidate_order(
+            manual_candidate_order_path_for(cxxime::UserDictKind::PINYIN),
+            cxxime::kMaxInputCodeLength)) {
+        CXXIME_LOG(L"SharedResources: pinyin manual candidate order load FAILED");
+        return false;
+    }
     if (!loaded_dict->load_disabled_system_entries(
             disabled_system_lexicon_path_for(cxxime::UserDictKind::PINYIN))) {
         CXXIME_LOG(L"SharedResources: disabled pinyin entries load FAILED");
@@ -175,6 +190,12 @@ bool load_dictionary_resources(const std::string& manifest_path, DictionaryResou
     if (!loaded_wubi_dict->load_candidate_preferences(
             candidate_preference_path_for(cxxime::UserDictKind::WUBI))) {
         CXXIME_LOG(L"SharedResources: Wubi candidate preferences load FAILED");
+        return false;
+    }
+    if (!loaded_wubi_dict->load_manual_candidate_order(
+            manual_candidate_order_path_for(cxxime::UserDictKind::WUBI),
+            cxxime::kMaxWubiCodeLength)) {
+        CXXIME_LOG(L"SharedResources: Wubi manual candidate order load FAILED");
         return false;
     }
     if (!loaded_wubi_dict->load_disabled_system_entries(
@@ -552,7 +573,7 @@ cxxime::UserDictQueryResult SharedResources::query_user_entries(
 
 cxxime::UserDictQueryResult SharedResources::query_lexicon_entries(
     cxxime::LexiconResource resource, const std::string& query, cxxime::UserDictKind kind,
-    size_t offset, size_t limit) {
+    size_t offset, size_t limit, bool exact_text) {
     auto dict = dict_for_kind(kind);
     cxxime::UserDictQueryResult result;
     result.offset = offset;
@@ -567,7 +588,8 @@ cxxime::UserDictQueryResult SharedResources::query_lexicon_entries(
                 dict->query_disabled_system_entries(query, offset, limit, &result.match_total);
         } else {
             result.resource_total = dict->user_entry_count();
-            result.entries = dict->query_user_entries(query, offset, limit, &result.match_total);
+            result.entries =
+                dict->query_user_entries(query, offset, limit, &result.match_total, exact_text);
         }
         result.has_more = offset < result.match_total &&
                           result.entries.size() < result.match_total - offset;
@@ -656,6 +678,127 @@ cxxime::IPCStatus SharedResources::save_candidate_preferences(cxxime::UserDictKi
     return dict->save_candidate_preferences()
         ? cxxime::IPCStatus::OK
         : cxxime::IPCStatus::ERR_UNKNOWN_COMMAND;
+}
+
+cxxime::CandidateOrderQueryResult SharedResources::query_candidate_order(
+    cxxime::UserDictKind kind, const std::string& code, std::size_t limit) {
+    cxxime::CandidateOrderQueryResult result;
+    result.input_code = code;
+    auto dictionary = dict_for_kind(kind);
+    if (!dictionary || !dictionary->is_open() || limit == 0) {
+        return result;
+    }
+
+    cxxime::CandidatePage page;
+    const auto resources = snapshot();
+    const bool learning_enabled = resources.config && resources.config->candidate_learning;
+    if (kind == cxxime::UserDictKind::WUBI) {
+        cxxime::WubiTranslator translator;
+        translator.set_dict(dictionary.get());
+        translator.set_candidate_learning_enabled(learning_enabled);
+        page = translator.translate(code, 0, static_cast<int>(limit));
+    } else {
+        cxxime::PinyinTranslator translator;
+        translator.set_dict(dictionary.get());
+        translator.set_syllabifier(resources.syllabifier.get());
+        translator.set_short_cache(&dictionary->short_cache());
+        translator.set_candidate_learning_enabled(learning_enabled);
+        page = translator.translate(code, 0, static_cast<int>(limit));
+    }
+
+    result.version = dictionary->manual_candidate_order_version();
+    result.manual_entries = dictionary->manual_candidate_order(code);
+    result.has_more = page.total_count > static_cast<int>(page.candidates.size());
+    result.entries.reserve(page.candidates.size());
+    const auto source = kind == cxxime::UserDictKind::WUBI ? cxxime::CandidateSource::kWubi
+                                                           : cxxime::CandidateSource::kPinyin;
+    for (const auto& candidate : page.candidates) {
+        cxxime::CandidateOrderEntryInfo entry;
+        entry.text = candidate.text;
+        entry.code = candidate.code;
+        entry.syllables = candidate.syllables;
+        entry.available = dictionary->can_resolve_manual_candidate(
+            {candidate.text, candidate.code, candidate.syllables}, source);
+        if (dictionary->has_manual_candidate_order(code, candidate.text, candidate.code,
+                                                   candidate.syllables)) {
+            entry.reason = cxxime::CandidateOrderReason::kManual;
+        } else if (learning_enabled &&
+                   dictionary->has_candidate_preference(candidate.text, code)) {
+            entry.reason = cxxime::CandidateOrderReason::kLearned;
+        } else if (candidate.origin == cxxime::CandidateOrigin::kUser) {
+            entry.reason = cxxime::CandidateOrderReason::kUserLexicon;
+        }
+        result.entries.push_back(std::move(entry));
+    }
+    for (const auto& manual : result.manual_entries) {
+        const bool present =
+            std::any_of(result.entries.begin(), result.entries.end(), [&](const auto& entry) {
+                return entry.text == manual.text && entry.code == manual.code &&
+                       entry.syllables == manual.syllables;
+            });
+        if (!present) {
+            cxxime::CandidateOrderEntryInfo entry;
+            entry.text = manual.text;
+            entry.code = manual.code;
+            entry.syllables = manual.syllables;
+            entry.reason = cxxime::CandidateOrderReason::kManual;
+            entry.available = dictionary->can_resolve_manual_candidate(manual, source);
+            result.entries.push_back(std::move(entry));
+        }
+    }
+    return result;
+}
+
+cxxime::IPCStatus SharedResources::replace_candidate_order(
+    cxxime::UserDictKind kind, const std::string& code,
+    const std::vector<cxxime::ManualCandidateOrderEntry>& entries, std::uint64_t expected_version,
+    bool* version_conflict) {
+    auto dictionary = dict_for_kind(kind);
+    if (!dictionary || !dictionary->is_open()) {
+        return cxxime::IPCStatus::ERR_ENGINE_NOT_INITIALIZED;
+    }
+    const auto source = kind == cxxime::UserDictKind::WUBI ? cxxime::CandidateSource::kWubi
+                                                           : cxxime::CandidateSource::kPinyin;
+    const auto previous_order = dictionary->manual_candidate_order(code);
+    if (std::any_of(entries.begin(), entries.end(), [&](const auto& entry) {
+            if (dictionary->can_resolve_manual_candidate(entry, source)) {
+                return false;
+            }
+            return std::none_of(
+                previous_order.begin(), previous_order.end(), [&](const auto& previous) {
+                    return previous.text == entry.text && previous.code == entry.code &&
+                           previous.syllables == entry.syllables;
+                });
+        })) {
+        if (version_conflict) {
+            *version_conflict = false;
+        }
+        return cxxime::IPCStatus::ERR_UNKNOWN_COMMAND;
+    }
+    return dictionary->replace_manual_candidate_order_if_version(code, entries, expected_version,
+                                                                 version_conflict)
+               ? cxxime::IPCStatus::OK
+               : cxxime::IPCStatus::ERR_UNKNOWN_COMMAND;
+}
+
+cxxime::IPCStatus SharedResources::clear_candidate_order(cxxime::UserDictKind kind,
+                                                         const std::string& code,
+                                                         std::uint64_t expected_version,
+                                                         bool* version_conflict) {
+    auto dictionary = dict_for_kind(kind);
+    if (!dictionary || !dictionary->is_open()) {
+        return cxxime::IPCStatus::ERR_ENGINE_NOT_INITIALIZED;
+    }
+    const auto previous_order = dictionary->manual_candidate_order(code);
+    if (!dictionary->replace_manual_candidate_order_if_version(code, {}, expected_version,
+                                                               version_conflict)) {
+        return cxxime::IPCStatus::ERR_UNKNOWN_COMMAND;
+    }
+    if (dictionary->clear_candidate_preferences_for_code_and_save(code)) {
+        return cxxime::IPCStatus::OK;
+    }
+    dictionary->replace_manual_candidate_order_and_save(code, previous_order);
+    return cxxime::IPCStatus::ERR_UNKNOWN_COMMAND;
 }
 
 cxxime::IPCStatus SharedResources::delete_user_entries(
@@ -1202,9 +1345,9 @@ cxxime::UserDictQueryResult SessionManager::query_user_entries(
 
 cxxime::UserDictQueryResult SessionManager::query_lexicon_entries(
     cxxime::LexiconResource resource, const std::string& query, cxxime::UserDictKind kind,
-    size_t offset, size_t limit) {
+    size_t offset, size_t limit, bool exact_text) {
     std::lock_guard<std::mutex> reload_lock(reload_mutex_);
-    return shared_.query_lexicon_entries(resource, query, kind, offset, limit);
+    return shared_.query_lexicon_entries(resource, query, kind, offset, limit, exact_text);
 }
 
 cxxime::UserDictQueryResult SessionManager::query_disabled_system_entry_status(
@@ -1265,6 +1408,29 @@ cxxime::IPCStatus SessionManager::clear_candidate_preferences(cxxime::UserDictKi
 cxxime::IPCStatus SessionManager::save_candidate_preferences(cxxime::UserDictKind kind) {
     std::lock_guard<std::mutex> reload_lock(reload_mutex_);
     return shared_.save_candidate_preferences(kind);
+}
+
+cxxime::CandidateOrderQueryResult SessionManager::query_candidate_order(
+    cxxime::UserDictKind kind, const std::string& code, std::size_t limit) {
+    std::lock_guard<std::mutex> reload_lock(reload_mutex_);
+    return shared_.query_candidate_order(kind, code, limit);
+}
+
+cxxime::IPCStatus SessionManager::replace_candidate_order(
+    cxxime::UserDictKind kind, const std::string& code,
+    const std::vector<cxxime::ManualCandidateOrderEntry>& entries,
+    std::uint64_t expected_version, bool* version_conflict) {
+    std::lock_guard<std::mutex> reload_lock(reload_mutex_);
+    return shared_.replace_candidate_order(kind, code, entries, expected_version,
+                                           version_conflict);
+}
+
+cxxime::IPCStatus SessionManager::clear_candidate_order(cxxime::UserDictKind kind,
+                                                        const std::string& code,
+                                                        std::uint64_t expected_version,
+                                                        bool* version_conflict) {
+    std::lock_guard<std::mutex> reload_lock(reload_mutex_);
+    return shared_.clear_candidate_order(kind, code, expected_version, version_conflict);
 }
 
 bool SessionManager::save_candidate_preferences(bool force) {

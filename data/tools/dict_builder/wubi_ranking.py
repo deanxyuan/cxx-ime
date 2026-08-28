@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+import json
 import sqlite3
 import struct
-from typing import Dict, List, Sequence, Set, Tuple
+from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 
 VISIBLE_CANDIDATE_CAPACITY = 10
@@ -37,6 +38,130 @@ def ranking_rules() -> Dict[str, int]:
             MAX_BLOCKED_COMPLETION_PROMOTION_PERMILLE
         ),
     }
+
+
+@dataclass(frozen=True)
+class RankingOverride:
+    input_code: bytes
+    candidate_text: bytes
+    candidate_code: bytes
+    target_position: int
+    reason: str
+
+
+def _parse_wubi_code(value: object, field: str) -> bytes:
+    if not isinstance(value, str):
+        raise ValueError(f"Wubi ranking override {field} must be a string")
+    try:
+        encoded = value.encode("ascii")
+    except UnicodeEncodeError as error:
+        raise ValueError(f"Wubi ranking override {field} must be ASCII") from error
+    if (
+        not encoded
+        or len(encoded) > 4
+        or any(ch < ord("a") or ch > ord("z") for ch in encoded)
+    ):
+        raise ValueError(f"invalid Wubi ranking override {field}: {value!r}")
+    return encoded
+
+
+def load_ranking_overrides(path: Optional[str]) -> Dict[bytes, List[RankingOverride]]:
+    if path is None:
+        return {}
+    with open(path, "r", encoding="utf-8") as source:
+        document = json.load(source)
+    if (
+        not isinstance(document, dict)
+        or set(document) != {"format", "overrides"}
+        or document.get("format") != 1
+    ):
+        raise ValueError(f"unsupported Wubi ranking overrides: {path}")
+    records = document.get("overrides")
+    if not isinstance(records, list):
+        raise ValueError("Wubi ranking overrides must contain an overrides array")
+
+    result: Dict[bytes, List[RankingOverride]] = {}
+    identities = set()
+    positions = set()
+    for record in records:
+        if not isinstance(record, dict):
+            raise ValueError("Wubi ranking override entries must be objects")
+        required_fields = {
+            "input_code",
+            "candidate_text",
+            "candidate_code",
+            "target_position",
+            "reason",
+        }
+        if set(record) != required_fields:
+            raise ValueError("Wubi ranking override entry fields do not match format 1")
+        input_code = _parse_wubi_code(record.get("input_code"), "input_code")
+        candidate_code = _parse_wubi_code(record.get("candidate_code"), "candidate_code")
+        candidate_text = record.get("candidate_text")
+        target_position = record.get("target_position")
+        reason = record.get("reason")
+        if (
+            not isinstance(candidate_text, str)
+            or not candidate_text
+            or "\t" in candidate_text
+            or "\r" in candidate_text
+            or "\n" in candidate_text
+        ):
+            raise ValueError("invalid Wubi ranking override candidate_text")
+        if (
+            not isinstance(target_position, int)
+            or isinstance(target_position, bool)
+            or target_position < 1
+        ):
+            raise ValueError("Wubi ranking override target_position must be a positive integer")
+        if not isinstance(reason, str) or not reason.strip():
+            raise ValueError("Wubi ranking override reason must not be empty")
+        if not candidate_code.startswith(input_code):
+            raise ValueError("Wubi ranking override candidate_code must start with input_code")
+
+        identity = (input_code, candidate_text, candidate_code)
+        position = (input_code, target_position)
+        if identity in identities:
+            raise ValueError("duplicate Wubi ranking override candidate")
+        if position in positions:
+            raise ValueError("duplicate Wubi ranking override target_position")
+        identities.add(identity)
+        positions.add(position)
+        result.setdefault(input_code, []).append(
+            RankingOverride(
+                input_code=input_code,
+                candidate_text=candidate_text.encode("utf-8"),
+                candidate_code=candidate_code,
+                target_position=target_position - 1,
+                reason=reason.strip(),
+            )
+        )
+    for overrides in result.values():
+        overrides.sort(key=lambda item: item.target_position)
+    return result
+
+
+def ranking_overrides_fingerprint(
+    overrides: Dict[bytes, List[RankingOverride]],
+) -> str:
+    digest = hashlib.sha256()
+    for input_code in sorted(overrides):
+        for item in overrides[input_code]:
+            digest.update(
+                struct.pack(
+                    "<IIIII",
+                    len(item.input_code),
+                    len(item.candidate_text),
+                    len(item.candidate_code),
+                    item.target_position,
+                    len(item.reason.encode("utf-8")),
+                )
+            )
+            digest.update(item.input_code)
+            digest.update(item.candidate_text)
+            digest.update(item.candidate_code)
+            digest.update(item.reason.encode("utf-8"))
+    return digest.hexdigest()
 
 
 def dictionary_fingerprint(entries: Sequence[DictionaryEntry]) -> str:
@@ -80,6 +205,8 @@ class RankingAudit:
     four_code_top_changes: int = 0
     safe_four_code_promotions: int = 0
     blocked_completion_promotions: int = 0
+    ranking_override_changes: int = 0
+    ranking_override_visible_set_changes: int = 0
     unknown_exact_demotions: int = 0
     visible_order_changes: int = 0
     visible_position_moves: int = 0
@@ -89,8 +216,14 @@ class RankingAudit:
         errors = []
         if self.short_prefix_changes:
             errors.append(f"short prefix changes: {self.short_prefix_changes}")
-        if self.visible_set_changes:
-            errors.append(f"visible candidate set changes: {self.visible_set_changes}")
+        unreviewed_visible_set_changes = (
+            self.visible_set_changes - self.ranking_override_visible_set_changes
+        )
+        if unreviewed_visible_set_changes:
+            errors.append(
+                "unreviewed visible candidate set changes: "
+                f"{unreviewed_visible_set_changes}"
+            )
         if self.internal_frequency_regressions:
             errors.append(
                 "visible candidate frequency regressions: "
@@ -431,6 +564,58 @@ def rerank_visible_candidates(
     )
 
 
+def apply_ranking_overrides(
+    prefix: bytes,
+    ranked: Sequence[int],
+    entries: Sequence[DictionaryEntry],
+    overrides: Dict[bytes, List[RankingOverride]],
+) -> Tuple[List[int], bool]:
+    selected = overrides.get(prefix)
+    if not selected:
+        return list(ranked), False
+
+    entry_indexes = []
+    for item in selected:
+        matches = [
+            entry_index
+            for entry_index in ranked
+            if entries[entry_index][0] == item.candidate_code
+            and entries[entry_index][1] == item.candidate_text
+        ]
+        if len(matches) != 1:
+            raise ValueError(
+                "Wubi ranking override candidate must match exactly once: "
+                f"{item.input_code.decode('ascii')} -> "
+                f"{item.candidate_text.decode('utf-8')} ({item.candidate_code.decode('ascii')})"
+            )
+        if item.target_position >= len(ranked):
+            raise ValueError("Wubi ranking override target_position exceeds candidate count")
+        entry_indexes.append(matches[0])
+
+    moved = set(entry_indexes)
+    result = [entry_index for entry_index in ranked if entry_index not in moved]
+    for item, entry_index in zip(selected, entry_indexes):
+        result.insert(item.target_position, entry_index)
+    if result == list(ranked):
+        raise ValueError(
+            "Wubi ranking override has no effect: "
+            f"{prefix.decode('ascii')}"
+        )
+    return result, True
+
+
+def validate_ranking_override_coverage(
+    overrides: Dict[bytes, List[RankingOverride]],
+    applied_prefixes: Set[bytes],
+) -> None:
+    missing = sorted(set(overrides) - applied_prefixes)
+    if missing:
+        raise ValueError(
+            "Wubi ranking overrides did not match dictionary prefixes: "
+            + ", ".join(prefix.decode("ascii") for prefix in missing)
+        )
+
+
 def audit_ranking_change(
     source_ranking: Sequence[int],
     ranked: Sequence[int],
@@ -438,6 +623,7 @@ def audit_ranking_change(
     prefix_length: int,
     general_frequencies: Dict[bytes, int],
     audit: RankingAudit,
+    ranking_override_applied: bool = False,
 ) -> None:
     audit.prefix_count += 1
     if prefix_length == 3:
@@ -451,6 +637,10 @@ def audit_ranking_change(
     ranked_visible = ranked[:VISIBLE_CANDIDATE_CAPACITY]
     if set(source_visible) != set(ranked_visible):
         audit.visible_set_changes += 1
+        if ranking_override_applied:
+            audit.ranking_override_visible_set_changes += 1
+    if ranking_override_applied:
+        audit.ranking_override_changes += 1
     if list(source_visible) != list(ranked_visible):
         audit.visible_order_changes += 1
         source_positions = {
@@ -466,16 +656,34 @@ def audit_ranking_change(
             abs(source_positions[entry_index] - ranked_positions[entry_index])
             for entry_index in common_entries
         )
-        if common_entries == set(source_positions) == set(ranked_positions):
+        for right_position, right_entry in enumerate(ranked_visible):
+            right_source_position = source_positions.get(right_entry)
+            if right_source_position is None:
+                try:
+                    right_source_position = source_ranking.index(right_entry)
+                except ValueError:
+                    continue
+            right_frequency = general_frequencies.get(entries[right_entry][1], 0)
             for left_position, left_entry in enumerate(source_visible):
-                left_frequency = general_frequencies.get(entries[left_entry][1], 0)
-                for right_entry in source_visible[left_position + 1 :]:
-                    if (
-                        ranked_positions[left_entry] > ranked_positions[right_entry]
-                        and general_frequencies.get(entries[right_entry][1], 0)
-                        < left_frequency
-                    ):
-                        audit.internal_frequency_regressions += 1
+                if left_position >= right_source_position:
+                    continue
+                left_ranked_position = ranked_positions.get(left_entry)
+                if (
+                    (
+                        left_ranked_position is None
+                        or left_ranked_position > right_position
+                    )
+                    and right_frequency
+                    < general_frequencies.get(entries[left_entry][1], 0)
+                ):
+                    audit.internal_frequency_regressions += 1
+    if ranking_override_applied:
+        if source_ranking and ranked and source_ranking[0] != ranked[0]:
+            if prefix_length == 3:
+                audit.three_code_top_changes += 1
+            elif prefix_length == 4:
+                audit.four_code_top_changes += 1
+        return
     if not source_ranking or not ranked or source_ranking[0] == ranked[0]:
         return
 

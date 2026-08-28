@@ -12,6 +12,7 @@
 #include <cxxime/config.h>
 #include <cxxime/dict.h>
 #include <cxxime/engine.h>
+#include <cxxime/input_limits.h>
 #include <cxxime/key_event.h>
 #include <cxxime/spellings_index.h>
 #include <cxxime/syllabifier.h>
@@ -150,6 +151,163 @@ TEST(UserDataSeparation, preference_key_keeps_same_text_under_distinct_codes) {
     ASSERT_TRUE(entries[0].code != entries[1].code);
     dictionary.close();
     DeleteFileA(preference_path.c_str());
+}
+
+TEST(UserDataSeparation, exact_text_query_does_not_return_prefix_or_code_matches) {
+    const std::string user_path = make_temp_path("ude");
+    cxxime::Dict dictionary;
+    ASSERT_TRUE(dictionary.load_user_dict(user_path));
+    ASSERT_TRUE(dictionary.add_user_entry("target", "codea"));
+    ASSERT_TRUE(dictionary.add_user_entry("target-long", "target"));
+    ASSERT_TRUE(dictionary.add_user_entry("other", "target"));
+
+    std::size_t total = 0;
+    const auto entries = dictionary.query_user_entries("target", 0, 16, &total, true);
+    ASSERT_EQ(total, static_cast<std::size_t>(1));
+    ASSERT_EQ(entries.size(), static_cast<std::size_t>(1));
+    ASSERT_EQ(entries.front().text, "target");
+    ASSERT_EQ(entries.front().code, "codea");
+
+    dictionary.close();
+    DeleteFileA(user_path.c_str());
+}
+
+TEST(UserDataSeparation, manual_candidate_order_enforces_profile_code_length) {
+    const std::string order_path = make_temp_path("udw");
+    cxxime::Dict dictionary;
+    ASSERT_TRUE(
+        dictionary.load_manual_candidate_order(order_path, cxxime::kMaxWubiCodeLength));
+    ASSERT_TRUE(!dictionary.replace_manual_candidate_order_and_save(
+        "abcde", {{"word", "abcd", ""}}));
+    ASSERT_TRUE(!dictionary.replace_manual_candidate_order_and_save(
+        "abcd", {{"word", "abcde", ""}}));
+    ASSERT_TRUE(dictionary.replace_manual_candidate_order_and_save(
+        "abcd", {{"word", "abcd", ""}}));
+
+    dictionary.close();
+    DeleteFileA(order_path.c_str());
+}
+
+TEST(UserDataSeparation, manual_candidate_order_rejects_oversized_file_before_reading) {
+    const std::string order_path = make_temp_path("udm");
+    HANDLE file = CreateFileA(order_path.c_str(), GENERIC_WRITE, 0, nullptr, OPEN_EXISTING,
+                              FILE_ATTRIBUTE_NORMAL, nullptr);
+    ASSERT_TRUE(file != INVALID_HANDLE_VALUE);
+    LARGE_INTEGER size = {};
+    size.QuadPart = 16LL * 1024 * 1024 + 1;
+    ASSERT_TRUE(SetFilePointerEx(file, size, nullptr, FILE_BEGIN));
+    ASSERT_TRUE(SetEndOfFile(file));
+    CloseHandle(file);
+
+    cxxime::Dict dictionary;
+    ASSERT_TRUE(!dictionary.load_manual_candidate_order(order_path, cxxime::kMaxInputCodeLength));
+    DeleteFileA(order_path.c_str());
+}
+
+TEST(UserDataSeparation, manual_candidate_order_is_atomic_and_overrides_learning) {
+    const std::string dictionary_path = make_temp_path("udo");
+    const std::string preference_path = make_temp_path("udp");
+    const std::string order_path = make_temp_path("udm");
+    ASSERT_TRUE(cxxime::Dict::create_test_dict(
+        dictionary_path, {{"yi:y", "默认词", 1000}, {"yi:y", "固定词", 100}}));
+
+    cxxime::Dict dictionary;
+    ASSERT_TRUE(dictionary.open_dict(dictionary_path));
+    ASSERT_TRUE(dictionary.load_candidate_preferences(preference_path));
+    ASSERT_TRUE(
+        dictionary.load_manual_candidate_order(order_path, cxxime::kMaxInputCodeLength));
+    ASSERT_TRUE(dictionary.record_candidate_preference(make_candidate("默认词", "yiy"), "yiy"));
+
+    const std::uint64_t version = dictionary.manual_candidate_order_version();
+    bool conflict = false;
+    ASSERT_TRUE(dictionary.replace_manual_candidate_order_if_version(
+        "yiy", {{"固定词", "yiy", "yi:y"}}, version, &conflict));
+    ASSERT_TRUE(!conflict);
+    ASSERT_TRUE(!dictionary.replace_manual_candidate_order_if_version(
+        "yiy", {{"默认词", "yiy", "yi:y"}}, version, &conflict));
+    ASSERT_TRUE(conflict);
+
+    std::vector<cxxime::Candidate> candidates = {make_candidate("默认词", "yiy", 1000)};
+    dictionary.apply_candidate_preferences("yiy", cxxime::CandidateSource::kPinyin, candidates,
+                                           10);
+    dictionary.apply_manual_candidate_order("yiy", cxxime::CandidateSource::kPinyin, candidates,
+                                            10);
+    ASSERT_EQ(candidates.front().text, "固定词");
+    ASSERT_TRUE(read_file(order_path).find("yiy\t固定词\tyiy\tyi:y\t1") != std::string::npos);
+    ASSERT_TRUE(dictionary.clear_candidate_preferences_for_code_and_save("yiy"));
+    ASSERT_TRUE(dictionary.query_candidate_preferences("yiy", 0, 10).empty());
+
+    dictionary.close();
+    DeleteFileA(dictionary_path.c_str());
+    DeleteFileA(preference_path.c_str());
+    DeleteFileA(order_path.c_str());
+}
+
+TEST(UserDataSeparation, manual_candidate_order_uses_complete_pinyin_identity) {
+    const std::string dictionary_path = make_temp_path("udd");
+    const std::string order_path = make_temp_path("udi");
+    const std::string user_path = make_temp_path("udu");
+    ASSERT_TRUE(cxxime::Dict::create_test_dict(dictionary_path, {{"xi:an", "系统词", 1000}}));
+    cxxime::Dict dictionary;
+    ASSERT_TRUE(dictionary.open_dict(dictionary_path));
+    ASSERT_TRUE(dictionary.load_user_dict(user_path));
+    ASSERT_TRUE(dictionary.load_manual_candidate_order(order_path, cxxime::kMaxInputCodeLength));
+    ASSERT_TRUE(dictionary.replace_manual_candidate_order_and_save(
+        "xian", {{"相同词", "xian", "xi:an"}, {"相同词", "xian", "xian"}}));
+
+    cxxime::Candidate whole = make_candidate("相同词", "xian", 1000);
+    whole.syllables = "xian";
+    cxxime::Candidate split = make_candidate("相同词", "xian", 100);
+    split.syllables = "xi:an";
+    std::vector<cxxime::Candidate> candidates = {whole, split};
+    dictionary.apply_manual_candidate_order("xian", cxxime::CandidateSource::kPinyin, candidates,
+                                            10);
+
+    ASSERT_EQ(candidates.size(), static_cast<std::size_t>(2));
+    ASSERT_EQ(candidates[0].syllables, "xi:an");
+    ASSERT_EQ(candidates[1].syllables, "xian");
+    ASSERT_TRUE(dictionary.has_manual_candidate_order("xian", "相同词", "xian", "xi:an"));
+    ASSERT_TRUE(dictionary.has_manual_candidate_order("xian", "相同词", "xian", "xian"));
+    ASSERT_TRUE(dictionary.add_user_entry("用户词", "xian", "xi:an"));
+    ASSERT_TRUE(dictionary.can_resolve_manual_candidate({"用户词", "xian", "xi:an"},
+                                                        cxxime::CandidateSource::kPinyin));
+    ASSERT_TRUE(!dictionary.can_resolve_manual_candidate({"用户词", "xian", "xian"},
+                                                         cxxime::CandidateSource::kPinyin));
+    ASSERT_TRUE(!dictionary.can_resolve_manual_candidate({"用户词", "xian", ""},
+                                                         cxxime::CandidateSource::kPinyin));
+    ASSERT_TRUE(dictionary.can_resolve_manual_candidate({"系统词", "xian", "xi:an"},
+                                                        cxxime::CandidateSource::kPinyin));
+    ASSERT_TRUE(!dictionary.can_resolve_manual_candidate({"系统词", "xian", ""},
+                                                         cxxime::CandidateSource::kPinyin));
+
+    dictionary.close();
+    DeleteFileA(dictionary_path.c_str());
+    DeleteFileA(order_path.c_str());
+    DeleteFileA(user_path.c_str());
+}
+
+TEST(UserDataSeparation, manual_candidate_order_rejects_stale_version_after_reload) {
+    const std::string order_path = make_temp_path("udr");
+    const std::vector<cxxime::ManualCandidateOrderEntry> first = {{"first", "code", "code"}};
+    const std::vector<cxxime::ManualCandidateOrderEntry> second = {{"second", "code", "code"}};
+
+    cxxime::Dict writer;
+    ASSERT_TRUE(writer.load_manual_candidate_order(order_path, cxxime::kMaxInputCodeLength));
+    ASSERT_TRUE(writer.replace_manual_candidate_order_and_save("code", first));
+    const std::uint64_t stale_version = writer.manual_candidate_order_version();
+    ASSERT_TRUE(writer.replace_manual_candidate_order_and_save("code", second));
+    const std::uint64_t current_version = writer.manual_candidate_order_version();
+    ASSERT_NE(stale_version, current_version);
+
+    cxxime::Dict reloaded;
+    ASSERT_TRUE(reloaded.load_manual_candidate_order(order_path, cxxime::kMaxInputCodeLength));
+    ASSERT_EQ(reloaded.manual_candidate_order_version(), current_version);
+    bool version_conflict = false;
+    ASSERT_TRUE(!reloaded.replace_manual_candidate_order_if_version("code", first, stale_version,
+                                                                    &version_conflict));
+    ASSERT_TRUE(version_conflict);
+
+    DeleteFileA(order_path.c_str());
 }
 
 TEST(UserDataSeparation, user_lexicon_rejects_non_current_column_counts) {

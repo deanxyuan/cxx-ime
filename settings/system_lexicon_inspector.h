@@ -27,6 +27,8 @@ struct SystemLexiconEntry {
     std::string code;
     int32_t frequency = 0;
     uint32_t entry_id = 0;
+    std::string syllables;
+    bool user_source = false;
 };
 
 // Read-only dictionary view used only by Settings and its focused tests.

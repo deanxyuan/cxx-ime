@@ -35,6 +35,7 @@ public:
     bool erase(const std::vector<LexiconEntryKey>& entries);
     bool clear();
     bool erase_and_save(const std::vector<LexiconEntryKey>& entries);
+    bool erase_code_and_save(const std::string& code);
     bool clear_and_save();
     bool contains(const std::string& text, const std::string& code) const;
     std::size_t entry_count() const;

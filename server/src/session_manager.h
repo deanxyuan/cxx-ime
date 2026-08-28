@@ -63,7 +63,7 @@ struct SharedResources {
                                                    size_t offset, size_t limit);
     cxxime::UserDictQueryResult query_lexicon_entries(
         cxxime::LexiconResource resource, const std::string& query,
-        cxxime::UserDictKind kind, size_t offset, size_t limit);
+        cxxime::UserDictKind kind, size_t offset, size_t limit, bool exact_text = false);
     cxxime::UserDictQueryResult query_disabled_system_entry_status(
         cxxime::UserDictKind kind, const std::vector<std::string>& texts);
     cxxime::IPCStatus delete_user_entries(
@@ -84,6 +84,17 @@ struct SharedResources {
         cxxime::UserDictKind kind, const std::vector<cxxime::LexiconEntryKey>& entries);
     cxxime::IPCStatus clear_candidate_preferences(cxxime::UserDictKind kind);
     cxxime::IPCStatus save_candidate_preferences(cxxime::UserDictKind kind);
+    cxxime::CandidateOrderQueryResult query_candidate_order(cxxime::UserDictKind kind,
+                                                            const std::string& code,
+                                                            std::size_t limit);
+    cxxime::IPCStatus replace_candidate_order(
+        cxxime::UserDictKind kind, const std::string& code,
+        const std::vector<cxxime::ManualCandidateOrderEntry>& entries,
+        std::uint64_t expected_version, bool* version_conflict);
+    cxxime::IPCStatus clear_candidate_order(cxxime::UserDictKind kind,
+                                            const std::string& code,
+                                            std::uint64_t expected_version,
+                                            bool* version_conflict);
     bool save_candidate_preferences(bool force);
 };
 
@@ -152,7 +163,7 @@ public:
                                                    size_t offset, size_t limit);
     cxxime::UserDictQueryResult query_lexicon_entries(
         cxxime::LexiconResource resource, const std::string& query,
-        cxxime::UserDictKind kind, size_t offset, size_t limit);
+        cxxime::UserDictKind kind, size_t offset, size_t limit, bool exact_text = false);
     cxxime::UserDictQueryResult query_disabled_system_entry_status(
         cxxime::UserDictKind kind, const std::vector<std::string>& texts);
     cxxime::IPCStatus delete_user_entries(
@@ -171,6 +182,17 @@ public:
         cxxime::UserDictKind kind, const std::vector<cxxime::LexiconEntryKey>& entries);
     cxxime::IPCStatus clear_candidate_preferences(cxxime::UserDictKind kind);
     cxxime::IPCStatus save_candidate_preferences(cxxime::UserDictKind kind);
+    cxxime::CandidateOrderQueryResult query_candidate_order(cxxime::UserDictKind kind,
+                                                            const std::string& code,
+                                                            std::size_t limit);
+    cxxime::IPCStatus replace_candidate_order(
+        cxxime::UserDictKind kind, const std::string& code,
+        const std::vector<cxxime::ManualCandidateOrderEntry>& entries,
+        std::uint64_t expected_version, bool* version_conflict);
+    cxxime::IPCStatus clear_candidate_order(cxxime::UserDictKind kind,
+                                            const std::string& code,
+                                            std::uint64_t expected_version,
+                                            bool* version_conflict);
     bool save_candidate_preferences(bool force);
     bool freeze_and_save_candidate_preferences();
 

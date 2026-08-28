@@ -25,6 +25,7 @@ struct QueryDeadline;
 struct UserLookupStats;
 class CandidatePreference;
 class DisabledSystemLexicon;
+class ManualCandidateOrder;
 class UserLexicon;
 class WubiPrefixIndex;
 
@@ -109,7 +110,8 @@ public:
     std::vector<UserDictEntryInfo> query_user_entries(const std::string& query,
                                                       size_t offset,
                                                       size_t limit,
-                                                      size_t* match_total = nullptr) const;
+                                                      size_t* match_total = nullptr,
+                                                      bool exact_text = false) const;
     bool delete_user_entries(const std::vector<LexiconEntryKey>& entries);
     bool replace_user_entry(const std::string& old_text, const std::string& old_code,
                             const std::string& new_text, const std::string& new_code);
@@ -138,8 +140,27 @@ public:
     bool clear_candidate_preferences();
     bool delete_candidate_preferences_and_save(const std::vector<LexiconEntryKey>& entries);
     bool clear_candidate_preferences_and_save();
+    bool clear_candidate_preferences_for_code_and_save(const std::string& code);
     size_t candidate_preference_count() const;
     uint64_t candidate_preference_version() const;
+    bool load_manual_candidate_order(const std::string& path, std::size_t max_code_length);
+    void apply_manual_candidate_order(const std::string& code, CandidateSource source,
+                                      std::vector<Candidate>& candidates, int limit) const;
+    std::vector<ManualCandidateOrderEntry> manual_candidate_order(
+        const std::string& code) const;
+    bool replace_manual_candidate_order_and_save(
+        const std::string& code, const std::vector<ManualCandidateOrderEntry>& entries);
+    bool replace_manual_candidate_order_if_version(
+        const std::string& code, const std::vector<ManualCandidateOrderEntry>& entries,
+        uint64_t expected_version, bool* version_conflict);
+    bool has_manual_candidate_order(const std::string& input_code,
+                                    const std::string& text,
+                                    const std::string& candidate_code,
+                                    const std::string& syllables) const;
+    bool has_candidate_preference(const std::string& text, const std::string& code) const;
+    bool can_resolve_manual_candidate(const ManualCandidateOrderEntry& entry,
+                                      CandidateSource source) const;
+    uint64_t manual_candidate_order_version() const;
     bool load_disabled_system_entries(const std::string& path);
     bool save_disabled_system_entries();
     bool disable_system_entry(const std::string& text);
@@ -195,6 +216,8 @@ private:
                                int frequency_boost) const;
     bool preference_candidate_available(const Candidate& candidate,
                                         CandidateSource source) const;
+    bool resolve_manual_candidate(const ManualCandidateOrderEntry& entry,
+                                  CandidateSource source, Candidate* candidate) const;
 
     char* dict_data_ = nullptr;         // heap-allocated buffer
     size_t dict_data_size_ = 0;
@@ -219,6 +242,7 @@ private:
 
     std::unique_ptr<UserLexicon> user_lexicon_;
     std::unique_ptr<CandidatePreference> candidate_preference_;
+    std::unique_ptr<ManualCandidateOrder> manual_candidate_order_;
     std::unique_ptr<DisabledSystemLexicon> disabled_system_lexicon_;
 
 };

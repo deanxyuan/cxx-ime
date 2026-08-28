@@ -200,6 +200,8 @@ static void create_pinyin_bundle_files(const std::string& dict_path,
         cxxime::Candidate candidate;
         candidate.text = std::get<1>(entry);
         candidate.frequency = std::get<2>(entry);
+        candidate.code = std::get<0>(entry);
+        candidate.syllables = std::get<0>(entry);
         topn.push_back({key, {candidate}});
     }
     ASSERT_TRUE(cxxime::SpellingsIndex::create_test_trie(dict_path + ".spellings.bin",

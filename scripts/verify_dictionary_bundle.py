@@ -67,10 +67,12 @@ WUBI_INDEX_KEY_SIZE = struct.calcsize(WUBI_INDEX_KEY_FORMAT)
 WUBI_INDEX_MAX_CODE_LENGTH = 4
 SPELLINGS_MAGIC_V2 = b"CXSPL\x02\x00\x00"
 SPELLINGS_VERSION = 2
-TOPN_MAGIC = b"CXTOPN\x02\x00"
+TOPN_MAGIC = b"CXTOPN\x03\x00"
+TOPN_VERSION = 3
 TOPN_HEADER_FORMAT = "<8s18I"
 TOPN_HEADER_SIZE = struct.calcsize(TOPN_HEADER_FORMAT)
 TOPN_LAYOUT_DAT16 = 2
+TOPN_INLINE_POSTING_SIZE = 24
 TOPN_POSTING_PREFIX_COMPLETE = 0x0001
 TOPN_POSTING_KNOWN_FLAGS = TOPN_POSTING_PREFIX_COMPLETE
 
@@ -267,6 +269,40 @@ def find_topn_key(units, unit_count, key):
     return leaf_unit & ((1 << 31) - 1)
 
 
+def check_topn_candidate_postings(source, postings_offset, posting_count,
+                                  candidate_string_size, errors):
+    """Validate text and syllable ranges in DAT-16 inline postings."""
+    source.seek(postings_offset)
+    posting_index = 0
+    while posting_index < posting_count:
+        chunk_count = min(65536, posting_count - posting_index)
+        postings = source.read(chunk_count * TOPN_INLINE_POSTING_SIZE)
+        if len(postings) != chunk_count * TOPN_INLINE_POSTING_SIZE:
+            errors.append("pinyin.topn.bin: truncated postings")
+            return False
+        for chunk_index in range(chunk_count):
+            text_offset, text_length, syllables_offset, syllables_length, _, _ = (
+                struct.unpack_from(
+                    "<IIIIii", postings, chunk_index * TOPN_INLINE_POSTING_SIZE
+                )
+            )
+            if (
+                text_length == 0
+                or syllables_length == 0
+                or text_offset > candidate_string_size
+                or text_length > candidate_string_size - text_offset
+                or syllables_offset > candidate_string_size
+                or syllables_length > candidate_string_size - syllables_offset
+            ):
+                errors.append(
+                    "pinyin.topn.bin: invalid candidate posting at index "
+                    f"{posting_index + chunk_index}"
+                )
+                return False
+        posting_index += chunk_count
+    return True
+
+
 def check_topn_bin(data_dir, errors):
     """Validate the runtime DAT-16 index and required keys."""
     path = os.path.join(data_dir, "pinyin.topn.bin")
@@ -285,7 +321,7 @@ def check_topn_bin(data_dir, errors):
     if magic != TOPN_MAGIC:
         errors.append(f"pinyin.topn.bin: bad magic {magic!r}")
         return False
-    if version != 2 or header_size != TOPN_HEADER_SIZE:
+    if version != TOPN_VERSION or header_size != TOPN_HEADER_SIZE:
         errors.append(
             "pinyin.topn.bin: unsupported header "
             f"(version={version}, size={header_size})"
@@ -306,7 +342,7 @@ def check_topn_bin(data_dir, errors):
     sections = [
         (code_index_offset, code_index_count * 4),
         (posting_lists_offset, posting_list_count * 8),
-        (postings_offset, posting_count * 16),
+        (postings_offset, posting_count * TOPN_INLINE_POSTING_SIZE),
         (candidates_offset, 0),
         (key_strings_offset, 0),
         (candidate_strings_offset, candidate_string_size),
@@ -341,6 +377,11 @@ def check_topn_bin(data_dir, errors):
                     candidate_count_for_key > posting_count - posting_offset):
                 errors.append(f"pinyin.topn.bin: invalid posting list at index {index}")
                 return False
+
+        if not check_topn_candidate_postings(
+            f, postings_offset, posting_count, candidate_string_size, errors
+        ):
+            return False
 
         missing = []
         for key in REQUIRED_TOPN_KEYS:

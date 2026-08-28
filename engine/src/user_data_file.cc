@@ -103,6 +103,10 @@ bool read_user_data_file(const std::string& path, std::string* contents) {
                                     contents);
 }
 
+bool read_user_data_file(const std::string& path, std::uint64_t max_size, std::string* contents) {
+    return read_user_data_file_impl(path, true, max_size, contents);
+}
+
 bool read_existing_user_data_file(const std::string& path, std::uint64_t max_size,
                                   std::string* contents) {
     return read_user_data_file_impl(path, false, max_size, contents);

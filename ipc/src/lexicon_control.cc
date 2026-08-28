@@ -39,6 +39,12 @@ const char* operation_name(LexiconOperation operation) {
             return "disable_system_entry";
         case LexiconOperation::kRestoreSystemEntry:
             return "restore_system_entry";
+        case LexiconOperation::kQueryCandidateOrder:
+            return "query_candidate_order";
+        case LexiconOperation::kSetCandidateOrder:
+            return "set_candidate_order";
+        case LexiconOperation::kClearCandidateOrder:
+            return "clear_candidate_order";
         default:
             return "unknown";
     }
@@ -75,6 +81,15 @@ LexiconOperation parse_operation(const std::string& operation) {
     if (operation == "restore_system_entry") {
         return LexiconOperation::kRestoreSystemEntry;
     }
+    if (operation == "query_candidate_order") {
+        return LexiconOperation::kQueryCandidateOrder;
+    }
+    if (operation == "set_candidate_order") {
+        return LexiconOperation::kSetCandidateOrder;
+    }
+    if (operation == "clear_candidate_order") {
+        return LexiconOperation::kClearCandidateOrder;
+    }
     return LexiconOperation::kUnknown;
 }
 
@@ -101,6 +116,8 @@ const char* resource_name(LexiconResource resource) {
             return "candidate_preference";
         case LexiconResource::kDisabledSystemLexicon:
             return "disabled_system_lexicon";
+        case LexiconResource::kManualCandidateOrder:
+            return "manual_candidate_order";
         case LexiconResource::kUserLexicon:
         default:
             return "user_lexicon";
@@ -123,6 +140,10 @@ bool parse_resource(const std::string& value, LexiconResource* resource) {
         *resource = LexiconResource::kDisabledSystemLexicon;
         return true;
     }
+    if (value == "manual_candidate_order") {
+        *resource = LexiconResource::kManualCandidateOrder;
+        return true;
+    }
     return false;
 }
 
@@ -138,6 +159,38 @@ bool read_size(const json& object, const char* key, std::size_t* value) {
     return true;
 }
 
+const char* candidate_order_reason_name(CandidateOrderReason reason) {
+    switch (reason) {
+        case CandidateOrderReason::kManual:
+            return "manual";
+        case CandidateOrderReason::kLearned:
+            return "learned";
+        case CandidateOrderReason::kUserLexicon:
+            return "user_lexicon";
+        case CandidateOrderReason::kDefault:
+        default:
+            return "default";
+    }
+}
+
+bool parse_candidate_order_reason(const std::string& value, CandidateOrderReason* reason) {
+    if (!reason) {
+        return false;
+    }
+    if (value == "manual") {
+        *reason = CandidateOrderReason::kManual;
+    } else if (value == "learned") {
+        *reason = CandidateOrderReason::kLearned;
+    } else if (value == "user_lexicon") {
+        *reason = CandidateOrderReason::kUserLexicon;
+    } else if (value == "default") {
+        *reason = CandidateOrderReason::kDefault;
+    } else {
+        return false;
+    }
+    return true;
+}
+
 bool dump_json(const json& object, std::string* payload) {
     try {
         *payload = object.dump();
@@ -146,6 +199,33 @@ bool dump_json(const json& object, std::string* payload) {
         payload->clear();
         return false;
     }
+}
+
+bool decode_candidate_order_entries(const json& object,
+                                    std::vector<ManualCandidateOrderEntry>* entries) {
+    if (!entries || !object.is_array() || object.size() > LEXICON_CONTROL_MAX_LIMIT) {
+        return false;
+    }
+    for (const auto& item : object) {
+        if (!item.is_object() || !item.contains("text") || !item["text"].is_string() ||
+            !item.contains("code") || !item["code"].is_string() ||
+            !item.contains("syllables") || !item["syllables"].is_string()) {
+            return false;
+        }
+        entries->push_back({item["text"].get<std::string>(), item["code"].get<std::string>(),
+                            item["syllables"].get<std::string>()});
+    }
+    return true;
+}
+
+json encode_candidate_order_entries(const std::vector<ManualCandidateOrderEntry>& entries) {
+    json encoded = json::array();
+    for (const auto& entry : entries) {
+        encoded.push_back({{"text", entry.text},
+                           {"code", entry.code},
+                           {"syllables", entry.syllables}});
+    }
+    return encoded;
 }
 
 } // namespace
@@ -161,6 +241,7 @@ bool encode_lexicon_request(const LexiconControlRequest& request, std::string* p
     switch (request.operation) {
         case LexiconOperation::kQuery:
             object["query"] = request.query;
+            object["exact_text"] = request.exact_text;
             object["offset"] = request.offset;
             object["limit"] = request.limit;
             break;
@@ -196,6 +277,19 @@ bool encode_lexicon_request(const LexiconControlRequest& request, std::string* p
         case LexiconOperation::kSave:
         case LexiconOperation::kClear:
             break;
+        case LexiconOperation::kQueryCandidateOrder:
+            object["code"] = request.code;
+            object["limit"] = request.limit;
+            break;
+        case LexiconOperation::kSetCandidateOrder:
+            object["code"] = request.code;
+            object["expected_version"] = request.expected_version;
+            object["entries"] = encode_candidate_order_entries(request.candidate_order);
+            break;
+        case LexiconOperation::kClearCandidateOrder:
+            object["code"] = request.code;
+            object["expected_version"] = request.expected_version;
+            break;
         default:
             return false;
     }
@@ -226,12 +320,16 @@ bool decode_lexicon_request(const std::string& payload, LexiconControlRequest* r
         switch (parsed.operation) {
             case LexiconOperation::kQuery:
                 if (!object.contains("query") || !object["query"].is_string() ||
+                    (object.contains("exact_text") && !object["exact_text"].is_boolean()) ||
                     !read_size(object, "offset", &parsed.offset) ||
                     !read_size(object, "limit", &parsed.limit) || parsed.limit == 0 ||
                     parsed.limit > LEXICON_CONTROL_MAX_LIMIT) {
                     return false;
                 }
                 parsed.query = object["query"].get<std::string>();
+                if (object.contains("exact_text")) {
+                    parsed.exact_text = object["exact_text"].get<bool>();
+                }
                 break;
             case LexiconOperation::kAdd:
                 if (!object.contains("text") || !object["text"].is_string() ||
@@ -298,6 +396,34 @@ bool decode_lexicon_request(const std::string& payload, LexiconControlRequest* r
             case LexiconOperation::kSave:
             case LexiconOperation::kClear:
                 break;
+            case LexiconOperation::kQueryCandidateOrder:
+                if (!object.contains("code") || !object["code"].is_string() ||
+                    !read_size(object, "limit", &parsed.limit) || parsed.limit == 0 ||
+                    parsed.limit > LEXICON_CONTROL_MAX_LIMIT) {
+                    return false;
+                }
+                parsed.code = object["code"].get<std::string>();
+                break;
+            case LexiconOperation::kSetCandidateOrder:
+                if (!object.contains("code") || !object["code"].is_string() ||
+                    !object.contains("expected_version") ||
+                    !object["expected_version"].is_number_unsigned() ||
+                    !object.contains("entries") ||
+                    !decode_candidate_order_entries(object["entries"], &parsed.candidate_order)) {
+                    return false;
+                }
+                parsed.code = object["code"].get<std::string>();
+                parsed.expected_version = object["expected_version"].get<std::uint64_t>();
+                break;
+            case LexiconOperation::kClearCandidateOrder:
+                if (!object.contains("code") || !object["code"].is_string() ||
+                    !object.contains("expected_version") ||
+                    !object["expected_version"].is_number_unsigned()) {
+                    return false;
+                }
+                parsed.code = object["code"].get<std::string>();
+                parsed.expected_version = object["expected_version"].get<std::uint64_t>();
+                break;
             default:
                 return false;
         }
@@ -329,7 +455,24 @@ bool encode_lexicon_result(const LexiconControlResult& result, std::string* payl
                 {{"text", entry.text},
                  {"code", entry.code},
                  {"frequency", entry.frequency},
-                 {"sequence", entry.sequence}});
+                 {"sequence", entry.sequence},
+                 {"syllables", entry.syllables}});
+        }
+    } else if (result.operation == LexiconOperation::kQueryCandidateOrder ||
+               result.operation == LexiconOperation::kSetCandidateOrder ||
+               result.operation == LexiconOperation::kClearCandidateOrder) {
+        object["input_code"] = result.candidate_order.input_code;
+        object["version"] = result.candidate_order.version;
+        object["has_more"] = result.candidate_order.has_more;
+        object["manual_entries"] =
+            encode_candidate_order_entries(result.candidate_order.manual_entries);
+        object["entries"] = json::array();
+        for (const auto& entry : result.candidate_order.entries) {
+            object["entries"].push_back({{"text", entry.text},
+                                         {"code", entry.code},
+                                         {"syllables", entry.syllables},
+                                         {"reason", candidate_order_reason_name(entry.reason)},
+                                         {"available", entry.available}});
         }
     }
     return dump_json(object, payload) && payload->size() <= CONTROL_MAX_PAYLOAD;
@@ -369,7 +512,8 @@ bool decode_lexicon_result(const std::string& payload, LexiconControlResult* res
                 if (!item.is_object() || !item.contains("text") || !item["text"].is_string() ||
                     !item.contains("code") || !item["code"].is_string() ||
                     !item.contains("frequency") || !item["frequency"].is_number_integer() ||
-                    !item.contains("sequence") || !item["sequence"].is_number_unsigned()) {
+                    !item.contains("sequence") || !item["sequence"].is_number_unsigned() ||
+                    (item.contains("syllables") && !item["syllables"].is_string())) {
                     return false;
                 }
                 UserDictEntryInfo entry;
@@ -377,7 +521,42 @@ bool decode_lexicon_result(const std::string& payload, LexiconControlResult* res
                 entry.code = item["code"].get<std::string>();
                 entry.frequency = item["frequency"].get<int>();
                 entry.sequence = item["sequence"].get<std::uint64_t>();
+                if (item.contains("syllables")) {
+                    entry.syllables = item["syllables"].get<std::string>();
+                }
                 parsed.query.entries.push_back(std::move(entry));
+            }
+        } else if (parsed.operation == LexiconOperation::kQueryCandidateOrder ||
+                   parsed.operation == LexiconOperation::kSetCandidateOrder ||
+                   parsed.operation == LexiconOperation::kClearCandidateOrder) {
+            if (!object.contains("input_code") || !object["input_code"].is_string() ||
+                !object.contains("version") || !object["version"].is_number_unsigned() ||
+                !object.contains("has_more") || !object["has_more"].is_boolean() ||
+                !object.contains("manual_entries") ||
+                !decode_candidate_order_entries(object["manual_entries"],
+                                                &parsed.candidate_order.manual_entries) ||
+                !object.contains("entries") || !object["entries"].is_array()) {
+                return false;
+            }
+            parsed.candidate_order.input_code = object["input_code"].get<std::string>();
+            parsed.candidate_order.version = object["version"].get<std::uint64_t>();
+            parsed.candidate_order.has_more = object["has_more"].get<bool>();
+            for (const auto& item : object["entries"]) {
+                CandidateOrderEntryInfo entry;
+                if (!item.is_object() || !item.contains("text") || !item["text"].is_string() ||
+                    !item.contains("code") || !item["code"].is_string() ||
+                    !item.contains("syllables") || !item["syllables"].is_string() ||
+                    !item.contains("reason") || !item["reason"].is_string() ||
+                    !item.contains("available") || !item["available"].is_boolean() ||
+                    !parse_candidate_order_reason(item["reason"].get<std::string>(),
+                                                  &entry.reason)) {
+                    return false;
+                }
+                entry.text = item["text"].get<std::string>();
+                entry.code = item["code"].get<std::string>();
+                entry.syllables = item["syllables"].get<std::string>();
+                entry.available = item["available"].get<bool>();
+                parsed.candidate_order.entries.push_back(std::move(entry));
             }
         }
         *result = std::move(parsed);
@@ -548,6 +727,57 @@ bool LexiconControlClient::restore_system_entry(UserDictKind kind, const std::st
     request.kind = kind;
     request.resource = LexiconResource::kDisabledSystemLexicon;
     request.text = text;
+    return execute(request, result);
+}
+
+bool LexiconControlClient::query_exact_user_entries(UserDictKind kind, const std::string& text,
+                                                    std::size_t limit,
+                                                    LexiconControlResult* result) const {
+    LexiconControlRequest request;
+    request.operation = LexiconOperation::kQuery;
+    request.kind = kind;
+    request.resource = LexiconResource::kUserLexicon;
+    request.query = text;
+    request.exact_text = true;
+    request.limit = limit;
+    return execute(request, result);
+}
+
+bool LexiconControlClient::query_candidate_order(UserDictKind kind, const std::string& code,
+                                                 std::size_t limit,
+                                                 LexiconControlResult* result) const {
+    LexiconControlRequest request;
+    request.operation = LexiconOperation::kQueryCandidateOrder;
+    request.kind = kind;
+    request.resource = LexiconResource::kManualCandidateOrder;
+    request.code = code;
+    request.limit = limit;
+    return execute(request, result);
+}
+
+bool LexiconControlClient::set_candidate_order(
+    UserDictKind kind, const std::string& code,
+    const std::vector<ManualCandidateOrderEntry>& entries, std::uint64_t expected_version,
+    LexiconControlResult* result) const {
+    LexiconControlRequest request;
+    request.operation = LexiconOperation::kSetCandidateOrder;
+    request.kind = kind;
+    request.resource = LexiconResource::kManualCandidateOrder;
+    request.code = code;
+    request.candidate_order = entries;
+    request.expected_version = expected_version;
+    return execute(request, result);
+}
+
+bool LexiconControlClient::clear_candidate_order(UserDictKind kind, const std::string& code,
+                                                 std::uint64_t expected_version,
+                                                 LexiconControlResult* result) const {
+    LexiconControlRequest request;
+    request.operation = LexiconOperation::kClearCandidateOrder;
+    request.kind = kind;
+    request.resource = LexiconResource::kManualCandidateOrder;
+    request.code = code;
+    request.expected_version = expected_version;
     return execute(request, result);
 }
 

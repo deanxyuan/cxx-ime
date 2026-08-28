@@ -10,6 +10,7 @@
 #include <cxxime/candidate_preference.h>
 #include <cxxime/disabled_system_lexicon.h>
 #include <cxxime/logging.h>
+#include <cxxime/manual_candidate_order.h>
 #include <cxxime/query_budget.h>
 #include <cxxime/query_trace.h>
 #include <cxxime/topk_collector.h>
@@ -67,6 +68,7 @@ static void set_candidate_code(Candidate& candidate, const char* syllable_ids, u
 Dict::Dict()
     : user_lexicon_(std::make_unique<UserLexicon>())
     , candidate_preference_(std::make_unique<CandidatePreference>())
+    , manual_candidate_order_(std::make_unique<ManualCandidateOrder>())
     , disabled_system_lexicon_(std::make_unique<DisabledSystemLexicon>()) {}
 
 Dict::~Dict() { unload_dict(); }

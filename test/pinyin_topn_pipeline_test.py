@@ -84,7 +84,7 @@ def read_keys(output_path):
 
 
 def read_key_flags(output_path):
-    """Read the v1 key flags by key."""
+    """Read the v2 intermediate key flags by key."""
     with open(output_path, "rb") as f:
         data = f.read()
 
@@ -248,7 +248,41 @@ def main():
                 print("OK")
 
         if ok:
-            print("Test 8: v1 intermediate converts to runtime DAT-16 ...", end=" ")
+            print("Test 8: v2 intermediate rejects empty candidate identity ...", end=" ")
+            with open(out_db, "rb") as source:
+                intermediate = bytearray(source.read())
+            intermediate_header = struct.unpack_from("<8s7I", intermediate, 0)
+            candidates_offset = intermediate_header[6]
+            rejected = True
+            for field_offset in (4, 12):
+                invalid_intermediate = os.path.join(
+                    tmpdir, f"pinyin.topn.empty-{field_offset}.bin"
+                )
+                invalid_runtime = invalid_intermediate + ".runtime"
+                corrupted = bytearray(intermediate)
+                struct.pack_into("<I", corrupted, candidates_offset + field_offset, 0)
+                with open(invalid_intermediate, "wb") as output:
+                    output.write(corrupted)
+                completed = subprocess.run(
+                    [
+                        os.path.abspath(args.topn_builder),
+                        "--input", invalid_intermediate,
+                        "--output", invalid_runtime,
+                        "--format", "dat16",
+                    ],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=False,
+                )
+                rejected = rejected and completed.returncode != 0
+            if not rejected:
+                print("FAIL (empty intermediate identity accepted)")
+                ok = False
+            else:
+                print("OK")
+
+        if ok:
+            print("Test 9: v2 intermediate converts to runtime DAT-16 ...", end=" ")
             runtime_topn = os.path.join(tmpdir, "pinyin.topn.bin")
             with open(out_db, "rb") as source, open(runtime_topn, "wb") as destination:
                 destination.write(source.read())
@@ -258,7 +292,7 @@ def main():
                 header = f.read(20)
             magic = header[:8]
             version, header_size, layout = struct.unpack_from("<III", header, 8)
-            if magic != b"CXTOPN\x02\x00" or (version, header_size, layout) != (2, 80, 2):
+            if magic != b"CXTOPN\x03\x00" or (version, header_size, layout) != (3, 80, 2):
                 print(
                     "FAIL "
                     f"(magic={magic!r}, version={version}, header={header_size}, layout={layout})"
@@ -266,6 +300,44 @@ def main():
                 ok = False
             else:
                 print("OK")
+
+        if ok:
+            print("Test 10: runtime verifier rejects invalid candidate identity ...", end=" ")
+            import verify_dictionary_bundle as verifier
+
+            with open(runtime_topn, "rb") as runtime:
+                header = struct.unpack("<8s18I", runtime.read(80))
+                candidate_string_size = header[11]
+                posting_count = header[8]
+                postings_offset = header[14]
+                errors = []
+                valid = verifier.check_topn_candidate_postings(
+                    runtime, postings_offset, posting_count, candidate_string_size, errors
+                )
+                runtime.seek(postings_offset)
+                original_posting = runtime.read(24)
+            if not valid:
+                print(f"FAIL (valid postings rejected: {errors})")
+                ok = False
+            else:
+                rejected = True
+                for field_offset in (4, 12):
+                    corrupted = bytearray(original_posting)
+                    struct.pack_into("<I", corrupted, field_offset, 0)
+                    with open(runtime_topn, "r+b") as runtime:
+                        runtime.seek(postings_offset)
+                        runtime.write(corrupted)
+                    with open(runtime_topn, "rb") as runtime:
+                        errors = []
+                        rejected = rejected and not verifier.check_topn_candidate_postings(
+                            runtime, postings_offset, posting_count,
+                            candidate_string_size, errors
+                        )
+                if not rejected:
+                    print("FAIL (empty candidate identity accepted)")
+                    ok = False
+                else:
+                    print("OK")
 
     if ok:
         print("\nAll tests passed.")

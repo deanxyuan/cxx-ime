@@ -27,8 +27,12 @@ enum class LexiconOperation {
     kQuerySystemEntryStatus,
     kDisableSystemEntry,
     kRestoreSystemEntry,
+    kQueryCandidateOrder,
+    kSetCandidateOrder,
+    kClearCandidateOrder,
 };
 
+// JSON is encoded by name; append future optional members and accept absent or unknown fields.
 struct LexiconControlRequest {
     LexiconOperation operation = LexiconOperation::kUnknown;
     UserDictKind kind = UserDictKind::PINYIN;
@@ -43,6 +47,10 @@ struct LexiconControlRequest {
     std::string source_path;
     std::vector<std::string> texts;
     std::vector<LexiconEntryKey> entries;
+    std::vector<ManualCandidateOrderEntry> candidate_order;
+    std::uint64_t expected_version = 0;
+    // Optional JSON modifier for kQuery; absent values retain the default behavior.
+    bool exact_text = false;
 };
 
 struct LexiconControlResult {
@@ -50,6 +58,7 @@ struct LexiconControlResult {
     bool succeeded = false;
     std::uint32_t error_code = 0;
     UserDictQueryResult query;
+    CandidateOrderQueryResult candidate_order;
 };
 
 bool encode_lexicon_request(const LexiconControlRequest& request, std::string* payload);
@@ -85,6 +94,18 @@ public:
                               LexiconControlResult* result) const;
     bool restore_system_entry(UserDictKind kind, const std::string& text,
                               LexiconControlResult* result) const;
+    // Keep future client operations appended to preserve the 0.4 API order.
+    bool query_exact_user_entries(UserDictKind kind, const std::string& text, std::size_t limit,
+                                  LexiconControlResult* result) const;
+    bool query_candidate_order(UserDictKind kind, const std::string& code, std::size_t limit,
+                               LexiconControlResult* result) const;
+    bool set_candidate_order(UserDictKind kind, const std::string& code,
+                             const std::vector<ManualCandidateOrderEntry>& entries,
+                             std::uint64_t expected_version,
+                             LexiconControlResult* result) const;
+    bool clear_candidate_order(UserDictKind kind, const std::string& code,
+                               std::uint64_t expected_version,
+                               LexiconControlResult* result) const;
 
 private:
     bool execute(const LexiconControlRequest& request, LexiconControlResult* result,

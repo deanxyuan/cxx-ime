@@ -29,8 +29,12 @@ public:
     void set_candidate_learning_enabled(bool enabled) override;
 
 private:
+    bool manually_ordered(const std::string& input, const Candidate& candidate) const;
+
     PinyinTranslator pinyin_translator_;
     WubiTranslator wubi_translator_;
+    Dict* pinyin_dict_ = nullptr;
+    Dict* wubi_dict_ = nullptr;
     MixedCandidatePreference candidate_preference_ = MixedCandidatePreference::kAuto;
 };
 
