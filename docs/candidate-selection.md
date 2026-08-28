@@ -1,6 +1,15 @@
 # 候选词选词算法
 
-## 整体流程
+## 概述
+
+本文档描述**随包默认排序**层（[候选排序设计](candidate-ordering.md) 的第 3 层）的选词算法：给定输入，如何从词典中找到候选并排出默认顺序。两种模式各自独立：
+
+- **拼音**：拼写图 + 路径枚举 + ID 索引查找 + 频率排序；短输入另有 Top-N 快速路径（见 [短输入快速路径](short-input-fast-path.md)）。
+- **五笔**：完整前缀索引（`wubi86.dict.idx`）二分定位 + 直接读取构建期预排序 postings，不做实时评分。
+
+默认排序之后，翻译结果还会依次应用学习偏好与手动固定（第 2、1 层），最后分页（第 4 层）；本层只负责产出"无个性化数据时的顺序"。
+
+## 拼音选词管线
 
 ```
 用户输入 → TSF → IPC → Engine::process_key → PinyinProcessor → PinyinTranslator → 候选词列表
@@ -53,9 +62,7 @@
 **关键优化：**
 
 - **信度排序**：DFS 前将每条边的候选音节按信度降序排列。正常拼写（信度 0）优先，缩写中信度越高（越常见）越优先。这确保好路径在截断前被枚举到。
-
 - **枚举上限**：最多枚举 256 条路径（`kMaxPaths = 256`）。超过则 DFS 提前退出。translator 只取前 64 条路径（`PinyinTranslator::kMaxPaths = 64`），256 条已留出 4 倍余量。密集缩写图（如 11 字符全拼产生 154 条边）在无上限时可生成 10,000+ 条路径，降至 256 后同一输入 <1ms 完成。
-
 - **提前退出**：DFS 每层检查 `results.size() >= kMaxPaths`，达成即返回。避免穷举 5^N 条路径后才发现超限。
 
 ### 3. 路径过滤（has_prefix）
@@ -81,7 +88,7 @@ id_index_ 前缀匹配: "shui:dian" → entries[...]
 
 同时查询用户词库索引（`lookup_user_exact` / `lookup_user_prefix`），补充个性化候选。用户词候选按 `score_user_match()` 分层评分（精确/缩写高基数，前缀按接近程度分档，详见 [用户词库与候选偏好](user-dictionary.md)），插入到结果中。
 
-所有路径的结果合并去重，按频率降序排列，分页返回。
+所有路径的结果合并去重，按频率降序排列（`sort_candidates_by_score`：frequency desc → 文本长度 asc → 文本字典序），再进入偏好/手动固定层，最后分页返回。
 
 ### 完整示例：输入 `"sdf"`
 
@@ -98,9 +105,36 @@ id_index_ 前缀匹配: "shui:dian" → entries[...]
    ...
 ```
 
+## 五笔选词管线
+
+五笔编码固定 1–4 码，无歧义切分，因此不走拼写图/路径枚举，直接以码查询：
+
+### 1. 前缀索引定位
+
+`Dict::lookup(code)` 对 `wubi86.dict.idx`（CXWIDX v1）的 `packed_code` 做二分查找（O(log P)），定位到该编码前缀的 posting 区间。
+
+### 2. 预排序 postings 读取
+
+postings 是 `dict.bin` 词条索引数组，构建期已按 **精确匹配 → 码长升序 → 词频降序 → 码序 → 文本长度 → 文本字典序** 排序并按文本去重。运行时线性读取（O(K)）即可得到默认顺序，不做实时评分。
+
+### 3. 排序规则摘要
+
+五笔默认排序由 `wubi_ranking.py` 构建期审计约束（如三码补全提升预算、前 10 候选集合不变、频率不倒退等），完整规则见 [五笔候选质量排序](wubi-candidate-ranking.md)。
+
+### 示例：`qdr`
+
+```
+Dict::lookup("qdr") → WubiPrefixIndex::find(packed_code(qdr))
+  预排序 postings: [然后(freq高), 厃(freq低, 罕见精确字), ...]
+```
+
+构建期审计把"然后"提升为首选（覆盖 `qdr → 然后` 回归用例）。
+
+查询结果随后依次应用学习偏好与手动固定（见 [候选排序设计](candidate-ordering.md)），按 text 去重并标记 `source = kWubi`。
+
 ## 用户词典查询
 
-用户词典在查询管道中通过多路索引（exact / prefix / abbr / mixed）查询，与系统词典结果合并：
+用户词典在查询管道中通过多路索引（exact / prefix / abbr / mixed）查询，与系统词典结果合并（拼音与五笔共用同一套用户词机制）：
 
 | 查询方法 | 触发条件 | 索引 |
 |----------|---------|------|
@@ -152,11 +186,33 @@ score = base + bounded_frequency + recent_bonus
 
 用户词查询遵守 `QueryBudget::max_user_scan`（默认 256）。`user_scan_count` 只反映命中 bucket 或二分范围内的实际检查次数，不随用户词总量增长。
 
-### 候选偏好应用
+## 默认排序规则汇总
 
-启用候选学习后，选中的候选会记录为候选偏好（`origin = kLearned`）。翻译结果合并后，`apply_candidate_preferences()` 按输入码应用偏好：命中项获得 `kPreferenceBaseScore` 级别的超高加分（高于普通用户词），并在分页前完成排序，保证学过的候选稳定置前且不产生重复项。候选偏好独立于用户词库，清空偏好即恢复系统排序。
+### 拼音
 
-详见 [用户词库与候选偏好](user-dictionary.md)。
+| 来源 | 排序依据 |
+|------|---------|
+| 普通管道 | 合并去重后按 frequency 降序（同频按文本长度/字典序） |
+| Top-N 快速路径 | 构建期 score（精确 > 缩写 > 混合，完整 > 前缀，见 [短输入快速路径](short-input-fast-path.md)） |
+| 用户词 | `score_user_match()` 分档（见上），远高于系统前缀匹配 |
+
+### 五笔
+
+| 来源 | 排序依据 |
+|------|---------|
+| 前缀索引 | 构建期预排序 postings（精确 → 码长 → 词频 → 码序 → 文本长度 → 文本字典序） |
+| 用户词 | 五笔档弱加分（`kWeakPrefixBase = 4000`），保护系统简码词序 |
+
+## 排序后的个性化层
+
+默认排序结果合并后，按 [候选排序设计](candidate-ordering.md) 的优先级依次处理：
+
+1. `apply_candidate_preferences()`（第 2 层，学习偏好；仅候选学习启用时）——命中项按 `kPreferenceBaseScore = 210000000` 加分并标记 `origin = kLearned`；
+2. 重新按最终分数排序；
+3. `apply_manual_candidate_order()`（第 1 层，手动固定）——固定项按用户指定顺序前置，未固定候选保持相对顺序；
+4. 分页返回（第 4 层）。
+
+学习偏好独立于用户词库，清空偏好即恢复默认排序；手动固定可逐编码恢复默认。
 
 ## Candidate 结构
 
@@ -180,11 +236,11 @@ struct Candidate {
 | `origin` | `kSystem`（系统词典）、`kUser`（用户词库）、`kLearned`（候选偏好命中）、`kCache`（查询页缓存命中）、`kComposed`（组合候选） |
 | `source` | `kPinyin`（拼音模式查询）、`kWubi`（五笔模式查询） |
 
-`origin` 和 `source` 用于日志追踪和调试，不影响排序逻辑（排序仅依赖 `frequency`）。
+`text + code + syllables` 构成**完整候选身份**，手动固定与学习偏好均按身份匹配（见 [候选排序设计](candidate-ordering.md)）。`origin` 和 `source` 还用于日志追踪、设置界面的排序原因展示。
 
 ## 长输入查询页缓存
 
-> 作为短输入快速路径的姊妹机制，用于 >6 字符的长拼音查询。
+作为短输入快速路径的姊妹机制，用于 >6 字符的长拼音查询。
 
 标准管道在 `PinyinTranslator::translate()` 返回页面前，将结果存入 LRU 缓存：
 
@@ -196,15 +252,17 @@ if (!deadline_hit && !(trace && trace->deadline_exceeded))
 
 | 属性 | 值 |
 |------|-----|
-| 触发条件 | `input.size() > 6`（短输入走 `lookup_short_fast`，不触发此缓存） |
+| 触发条件 | `input.size() > 6`（短输入走 `lookup_indexed_fast`，不触发此缓存） |
 | 容量 | LRU 64 条（`kMaxQueryCacheEntries = 64`），`sequence` 递增序号实现淘汰 |
-| 命中条件 | input + page_index + page_size + `user_dict_version` 全匹配 |
-| 失效 | `user_dict_version` 变化（用户词典增删改）后全部缓存自动失效 |
+| 命中条件 | input + page_index + page_size + 用户词/偏好/手动排序/禁用词版本全匹配 |
+| 失效 | 任一相关版本变化后全部缓存自动失效 |
 | 非缓存场景 | deadline 命中或 deadline_exceeded 时不写入缓存，避免缓存过期/不完整结果 |
 
 `lookup_query_cache()` 命中时设置 `trace->cache_hit = true` 并清零 trace 计数字段（exact/prefix/user_scan = 0），语义与短输入快速路径的 cache hit 一致。
 
 ## 性能特征
+
+### 拼音
 
 | 输入长度 | 路径数 | 延迟 | 说明 |
 |---------|--------|------|------|
@@ -214,7 +272,15 @@ if (!deadline_hit && !(trace && trace->deadline_exceeded))
 | 4 字符（全拼） | 封顶 256 | < 1ms | 如 shui，多数位置只有精确匹配 |
 | 11 字符（全拼） | 封顶 256 | < 1ms | 如 nihaoshijie，154 条边密集图，DFS 上限截断 |
 
+### 五笔
+
+| 输入 | 路径 | 延迟 | 说明 |
+|------|------|------|------|
+| 1–4 码 | 前缀索引二分 + 读 postings | < 0.1ms | O(log P + K)，无歧义切分，无实时评分 |
+
 ## Pipeline 架构
+
+### 拼音
 
 ```
 Syllabifier(拼写图) → Segmentor(切分) → Translator(查词+排序)
@@ -222,9 +288,15 @@ Syllabifier(拼写图) → Segmentor(切分) → Translator(查词+排序)
 
 - **Syllabifier**：BFS 构建音节图，基于 Patricia trie 前缀搜索，DFS 枚举全路径（信度排序+上限截断）
 - **Segmentor**：内置完整拼音音节表，贪婪最长匹配
-- **Translator**：基于音节 ID 的词典二分查找 + 用户词索引查询 + 频率排序
+- **Translator**：基于音节 ID 的词典二分查找 + 用户词索引查询 + 频率排序 + 偏好/手动固定
 - Filter/Formatter 层未实现（目前不需要繁简转换、注释等）
-- 候选按 `score_user_match()` 评分降序排列（exact/pattern/prefix分档 + bounded frequency + recent_bonus，分 kPinyin/kWubi 两档）
+
+### 五笔
+
+```
+WubiTranslator → Dict::lookup → WubiPrefixIndex::find(packed_code 二分)
+               → 预排序 postings → 偏好/手动固定 → 去重 → 快照缓存 → 分页
+```
 
 ## 查询预算
 

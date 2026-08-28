@@ -49,10 +49,11 @@
 | `reload_dictionaries()` | 重新加载字典（先保存用户词库与候选偏好，再加载新版本） |
 | `add_user_entry` / `query_user_entries` / `delete_user_entry` / `replace_user_entry` | 用户词库 CRUD |
 | `import_user_dict` / `save_user_dict` | 用户词库导入与持久化 |
-| `query_lexicon_entries` | 按资源（用户词库 / 候选偏好）查询条目 |
+| `query_lexicon_entries` | 按资源（用户词库 / 候选偏好 / 系统词隐藏 / 手动候选顺序）查询条目 |
 | `delete_candidate_preference` / `clear_candidate_preferences` / `save_candidate_preferences` | 候选偏好管理 |
 | `save_candidate_preferences(force)` / `freeze_and_save_candidate_preferences` | 偏好合并落盘与关闭前冻结保存 |
 | `disable_system_entry` / `restore_system_entry` | 系统词隐藏/恢复（含 `*_and_save` 原子落盘变体） |
+| `query_candidate_order` / `replace_candidate_order` / `clear_candidate_order` | 手动候选顺序查询/写入/清空（含版本冲突控制） |
 
 ### SharedResourceSnapshot
 
@@ -196,6 +197,9 @@ struct ProcessKeyResult {
 - 用户词库：`add_user_entry` / `query_user_entries` / `delete_user_entry` / `replace_user_entry` / `import_user_dict` / `save_user_dict`
 - 候选偏好：`query_lexicon_entries`（资源化查询）/ `delete_candidate_preference` / `clear_candidate_preferences` / `save_candidate_preferences`
 - 系统词隐藏：`disable_system_entry` / `restore_system_entry`（持久化到 `disabled_pinyin.tsv` / `disabled_wubi.tsv`）
+- 手动候选顺序：`query_candidate_order` / `replace_candidate_order` / `clear_candidate_order`（持久化到 `candidate_order_pinyin.tsv` / `candidate_order_wubi.tsv`，`expected_version` 乐观并发控制）
+
+拼音与五笔资源在加载时都会载入对应的用户词库、候选偏好、手动候选顺序与系统词隐藏文件；`SharedResources::load()` 任一类用户数据加载失败都会使服务启动失败。手动候选顺序的语义与优先级见 [候选排序设计](candidate-ordering.md)。
 
 ---
 
@@ -294,31 +298,31 @@ Engine 持有指针引用外部资源（`pinyin_dict_`, `spellings_`, `syllabifi
 
 ## 6. 测试覆盖
 
-共享资源相关覆盖共 **22 个 C++ 测试可执行文件 + 1 个 Python 测试**（23 个 ctest 条目），合计 **446 个测试用例**（`TEST()` 宏计数）；完整测试套件由 CMake 自动注册（Release 构建当前 44 个 ctest 条目），运行方式见项目 README。
+下表只列出**与本模块相关的**核心测试文件与覆盖内容；完整测试套件由 CMake 自动注册，运行方式见项目 README。
 
-| 文件 | 用例数 | 覆盖内容 |
-|------|--------|---------|
-| `engine_test.cc` | 72 | Engine 核心逻辑 |
-| `output_composer_test.cc` | 45 | 文本输出组合 |
-| `ipc_test.cc` | 33 | IPC 通信协议 |
-| `dict_test.cc` | 26 | 字典操作 |
-| `wubi_engine_test.cc` | 31 | 五笔 Engine |
-| `engine_source_test.cc` | 22 | 源码级 Engine 行为 |
-| `trace_test.cc` | 22 | 查询追踪 |
-| `session_manager_status_test.cc` | 22 | 全局状态同步（含 CapsLock） |
-| `status_window_test.cc` | 21 | 状态窗口 |
-| `benchmark_test.cc` | 16 | 性能基准 |
-| `config_test.cc` | 29 | 配置解析 |
-| `candidate_window_test.cc` | 9 | 候选窗口 |
-| `config_write_coordinator_test.cc` | 7 | 配置写入协调（预检/提交/取消） |
-| `short_cache_test.cc` | 16 | 短输入缓存 |
-| `wubi_test.cc` | 7 | 五笔翻译器 |
-| `layout_test.cc` | 13 | 布局计算 |
-| `segmentor_test.cc` | 5 | 拼音切分 |
-| `preedit_mode_test.cc` | 8 | 预编辑模式 |
-| `mpscq_test.cc` | 3 | MPSC 队列 |
-| `dictionary_monitor_test.cc` | 3 | 字典监视器 |
-| `session_manager_integration_test.cc` | 34 | 集成测试（含 process_key/select 等） |
-| `candidate_quality_test.cc` | 2 | 候选质量 |
+| 文件 | 覆盖内容 |
+|------|---------|
+| `engine_test.cc` | Engine 核心逻辑 |
+| `output_composer_test.cc` | 文本输出组合 |
+| `ipc_test.cc` | IPC 通信协议 |
+| `dict_test.cc` | 字典操作 |
+| `wubi_engine_test.cc` | 五笔 Engine |
+| `engine_source_test.cc` | 源码级 Engine 行为 |
+| `trace_test.cc` | 查询追踪 |
+| `session_manager_status_test.cc` | 全局状态同步（含 CapsLock） |
+| `status_window_test.cc` | 状态窗口 |
+| `benchmark_test.cc` | 性能基准 |
+| `config_test.cc` | 配置解析 |
+| `candidate_window_test.cc` | 候选窗口 |
+| `config_write_coordinator_test.cc` | 配置写入协调（预检/提交/取消） |
+| `short_cache_test.cc` | 短输入缓存（Top-N v3 候选身份） |
+| `wubi_test.cc` | 五笔翻译器 |
+| `layout_test.cc` | 布局计算 |
+| `segmentor_test.cc` | 拼音切分 |
+| `preedit_mode_test.cc` | 预编辑模式 |
+| `mpscq_test.cc` | MPSC 队列 |
+| `dictionary_monitor_test.cc` | 字典监视器 |
+| `session_manager_integration_test.cc` | 集成测试（含 process_key/select、候选顺序控制、热重载等） |
+| `candidate_quality_test.cc` | 候选质量 |
 
 此外 `test/util/testutil.h` 提供轻量测试框架（`TEST()` / `ASSERT_*` 宏，无 EXPECT 风格断言）。

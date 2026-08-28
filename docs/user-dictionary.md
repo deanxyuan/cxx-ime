@@ -2,12 +2,15 @@
 
 ## 概述
 
-用户个性化数据拆分为两个独立资源，分别由 `UserLexicon` 与 `CandidatePreference` 维护：
+用户个性化数据拆分为多个独立资源，分别由 `UserLexicon`、`CandidatePreference` 与 `ManualCandidateOrder` 维护：
 
 - **用户词库（user lexicon）**：手工添加的词条（文本、编码、音节），用于精确命中与个性化候选排序。持久化为 `user_pinyin.tsv` / `user_wubi.tsv`。
 - **候选偏好（candidate preference）**：候选学习记录（选中的候选及其输入码），用于在翻译结果上做本地排序提升。持久化为 `learning_pinyin.tsv` / `learning_wubi.tsv`。
+- **手动候选顺序（manual candidate order）**：用户为某个编码显式固定的候选顺序，优先级高于学习偏好。持久化为 `candidate_order_pinyin.tsv` / `candidate_order_wubi.tsv`。
 
-两者数据量都极小（几百到几千条，< 1MB），全部驻留内存，通过 TSV 文件持久化。服务端启动时加载，运行中按需合并保存，关闭时冻结并强制落盘。
+三者数据量都极小（几百到几千条，< 1MB），全部驻留内存，通过 TSV 文件持久化。服务端启动时加载，运行中按需合并保存，关闭时冻结并强制落盘。
+
+这三层与随包默认排序、分页共同构成完整候选顺序，优先级与端到端链路见 [候选排序设计](candidate-ordering.md)。
 
 ## 用户词库：内存多路索引
 
@@ -187,16 +190,67 @@ recency = (当前序号 - 条目序号 <= 1000) ? 1000 - 差值 : 0
 - `freeze()` 后拒绝记录/删除/清空，但允许保存既有数据
 - 文件：`%USERPROFILE%\cxxime\learning_pinyin.tsv`、`%USERPROFILE%\cxxime\learning_wubi.tsv`
 
+## 手动候选顺序（固定排序）
+
+### 数据结构
+
+```cpp
+// shared/include/cxxime/user_dict.h
+struct ManualCandidateOrderEntry {
+    std::string text;       // 候选文本
+    std::string code;       // 候选编码
+    std::string syllables;  // 冒号分隔音节（拼音），五笔可空串
+};
+```
+
+`ManualCandidateOrder`（`engine/src/manual_candidate_order.cc`）以输入编码为键保存固定项列表：
+
+- 每编码最多 16 条固定项（`MANUAL_CANDIDATE_ORDER_MAX_ENTRIES = 16`），全局最多 100,000 条（`kMaxEntries`）；
+- 加载/写入前校验：文本、编码、音节格式合法；编码长度不超过模式上限（拼音 64、五笔 4）；同一编码内不允许重复身份；
+- `version()` 为序列化内容的哈希（`version_token(serialize(...))`），任何修改都会使版本变化，供设置页与 IPC 乐观并发控制。
+
+### 语义
+
+固定项按完整身份 `{text, code, syllables}` 匹配，在翻译结果中按用户指定顺序整体前置；未固定的候选保持原相对顺序。应用顺序为：默认排序 → 学习偏好 → 手动固定 → 分页，详见 [候选排序设计](candidate-ordering.md)。
+
+### 持久化
+
+- 文件头 `# cxxime-candidate-order format=1` + 每行 5 列 TSV：`input_code<TAB>text<TAB>candidate_code<TAB>syllables<TAB>position`（position 从 1 开始）；
+- 写盘采用原子替换；写盘失败时内存状态保持不变；
+- 文件：`%USERPROFILE%\cxxime\candidate_order_pinyin.tsv`、`%USERPROFILE%\cxxime\candidate_order_wubi.tsv`。
+
+### 查询与修改接口
+
+`Dict` 暴露以下 API（`engine/src/dict_user_data.cc`）：
+
+```cpp
+std::vector<ManualCandidateOrderEntry> manual_candidate_order(const std::string& code) const;
+bool replace_manual_candidate_order_and_save(const std::string& code,
+                                             const std::vector<ManualCandidateOrderEntry>& entries);
+bool replace_manual_candidate_order_if_version(const std::string& code,
+                                               const std::vector<ManualCandidateOrderEntry>& entries,
+                                               std::uint64_t expected_version,
+                                               bool* version_conflict);
+bool has_manual_candidate_order(const std::string& input_code, const std::string& text,
+                                const std::string& candidate_code,
+                                const std::string& syllables) const;
+std::uint64_t manual_candidate_order_version() const;
+```
+
+设置页通过 IPC 的 `kQueryCandidateOrder` / `kSetCandidateOrder` / `kClearCandidateOrder` 操作访问（`lexicon_control.h`），写入携带 `expected_version`；版本不一致返回 `ERROR_REVISION_MISMATCH`，界面提示刷新重试。设置界面操作方式见 [设置指南 — 词库管理](settings-guide.md)。
+
 ## Cache 失效
 
 - **用户词库**：以 `UserLexicon::version()` 判定新鲜度。长拼音查询页缓存键包含该版本，版本不一致的条目不会命中，由 LRU 自然淘汰；Session recent cache 在版本变化后扫描时过滤已删除或已不存在的词条。
 - **候选偏好**：偏好只影响候选排序，不进入查询索引；`apply_candidate_preferences` 在每次翻译时应用。其版本（`CandidatePreference::version()`）用于设置页等服务端查询的数据新鲜度判断。
+- **手动候选顺序**：`ManualCandidateOrder::version()` 同样参与查询页缓存与 Translator 快照的失效判断；任何固定项变更都会使旧缓存失效。
 - 系统短码缓存 `pinyin.topn.bin` 只含系统词，不受用户数据影响。
 
 ## 并发策略
 
 - 用户词库：`shared_mutex`（查询持有 shared 锁）+ `transaction_mutex_`（加载/添加/删除/导入串行化）+ `save_mutex` 串行化落盘；删除使用 `deleted` 软标记，不从容器物理移除。
 - 候选偏好：`shared_mutex` + `save_mutex`；`save_if_due` 按最后更新时间合并；`freeze` 后拒绝变更。
+- 手动候选顺序：`shared_mutex`（读）+ `mutation_mutex_`（替换/落盘串行化）；原子替换写盘。
 - 服务端以 `reload_mutex_` 串行化词典重载与会话生命周期（创建/销毁/清理），关闭流程先冻结偏好再强制保存，避免运行中操作与落盘相互冲突。
 
 ## 系统词隐藏

@@ -2,9 +2,16 @@
 
 ## 概述
 
-短输入（1–6 小写字母，如 `s`、`sd`、`bj`、`srf`、`nihao`）是生产输入法中最常见的场景。标准查询管道需要 Syllabifier 路径枚举 + 多次 dict scan，延迟在毫秒级。快速路径在 Syllabifier 之前插入三层内存查询，命中时完全跳过路径枚举和词典扫描，将延迟降至个位数微秒。
+短输入（拼音 1–6 小写字母，五笔 1–4 码）是生产输入法中最常见的场景。标准拼音管道需要 Syllabifier 路径枚举 + 多次 dict scan，延迟在毫秒级；两个模式各有专属的快速路径，把常用查询降到微秒级：
+
+- **拼音**：在 Syllabifier 之前插入三层内存查询，命中时完全跳过路径枚举和词典扫描。
+- **五笔**：无独立 Top-N 文件，快速路径由构建期预排序的完整前缀索引（`wubi86.dict.idx`）承担——运行时二分定位后直接读取排序好的 postings，不实时评分、不扫描全表；查询结果在 `WubiTranslator` 内以快照缓存复用。
+
+快速路径只改变**获取与合并**方式，不改变 [候选排序设计](candidate-ordering.md) 的四层优先级：默认排序 → 学习偏好 → 手动固定 → 分页。
 
 ## 架构
+
+### 拼音
 
 ```
 Engine::process_key()
@@ -24,7 +31,7 @@ PinyinTranslator::translate()
   │       ├─ 2. User Dict Short Index (内存多路索引)
   │       │     用户词 exact/prefix/abbr/mixed 索引查询
   │       │
-  │       └─ 3. ShortCodeCache (pinyin.topn.bin, DAT-16)
+  │       └─ 3. ShortCodeCache (pinyin.topn.bin, CXTOPN v3 DAT-16)
   │             Darts-clone 双数组 Trie 查找, O(k)
   │       │
   │       ▼
@@ -35,17 +42,35 @@ PinyinTranslator::translate()
   └─ 标准管道 (Syllabifier + Dict), 用缓存候选 seed TopKCollector
 ```
 
-## Short Code Cache
+### 五笔
 
-### 二进制格式 (`pinyin.topn.bin`, CXTOPN v2 DAT-16)
+```
+WubiTranslator::translate(code)
+  │
+  ├─ Dict::lookup(code) ── WubiPrefixIndex::find()   (CXWIDX v1, O(log P + K))
+  │     直接读取构建期预排序 postings, 无实时评分
+  │
+  ├─ apply_candidate_preferences()      (候选学习启用时)
+  ├─ apply_manual_candidate_order()     (手动固定前置)
+  ├─ 按 text 去重, 标记 source = kWubi
+  │
+  ├─ WubiTranslator snapshot 查询缓存   (按需加倍 limit 扩大快照)
+  │     code / user_dict / preference / manual_order / disabled 版本变化时重建
+  │
+  └─ 分页返回
+```
 
-与 `pinyin.dict.bin` 放在同一目录，文件整体读入堆内存。格式为 **DAT-16**（magic `CXTOPN\x02\x00`，version=2，layout=2）。键查找基于 **Darts-clone** 双数组 Trie（O(k)），候选条目内联存储（16 字节/条）。
+## 拼音 Short Code Cache
+
+### 二进制格式 (`pinyin.topn.bin`, CXTOPN v3 DAT-16)
+
+与 `pinyin.dict.bin` 放在同一目录，文件整体读入堆内存。运行时格式为 **DAT-16**（magic `CXTOPN\x03\x00`，version=3，layout=2），是 0.4 磁盘基线：候选条目内联存储（24 字节/条），除文本外还保存**规范音节**作为候选身份。键查找基于 **Darts-clone** 双数组 Trie（O(k)）。
 
 ```
 ┌────────────────────────────────────────────┐
 │ ShortCacheHeader (80 bytes)                │
-│   magic[8]      = "CXTOPN\x02\0"          │
-│   version       = 2                        │
+│   magic[8]      = "CXTOPN\x03\0"          │
+│   version       = 3                        │
 │   header_size   = 80                       │
 │   layout        = 2 (kDat16)               │
 │   file_size                                │
@@ -61,7 +86,7 @@ PinyinTranslator::translate()
 │   postings_offset        (→ ShortCandidateEntry[])│
 │   candidates_offset      (未使用)         │
 │   key_strings_offset     (未使用)         │
-│   candidate_strings_offset (→ packed text) │
+│   candidate_strings_offset (→ packed text+syllables) │
 ├────────────────────────────────────────────┤
 │ Darts units[code_index_count] (uint32)     │ ← Darts-clone Double Array Trie
 │   键索引，支持 O(k) exactMatchSearch       │
@@ -72,13 +97,16 @@ PinyinTranslator::translate()
 │   flags           (uint16)                 │
 │     kShortPostingPrefixComplete = 0x0001   │
 ├────────────────────────────────────────────┤
-│ ShortCandidateEntry[posting_count]         │ ← 16 bytes each (inline)
+│ ShortCandidateEntry[posting_count]         │ ← 24 bytes each (inline)
 │   text_offset, text_length  (uint32 each)  │
+│   syllables_offset, syllables_length       │ ← v3 新增: 规范音节身份
 │   frequency, score          (int32 each)   │
 ├────────────────────────────────────────────┤
-│ candidate_strings (packed UTF-8)            │
+│ candidate_strings (packed UTF-8)           │
 └────────────────────────────────────────────┘
 ```
+
+> 格式约束：v3 是 0.4 磁盘基线，结构体字段禁止重排，未来只能追加字段。v2（`CXTOPN\x02\x00`）仅作为**中间格式**存在，由 `topn_builder` 转换为运行时 v3。
 
 ### Key 生成策略
 
@@ -110,16 +138,16 @@ score = frequency  (最大 100,000,000 基数)
 ### 构建流程
 
 ```cmd
-# 1. Python 生成候选键与评分
+# 1. Python 生成候选键、规范音节与评分 → CXTOPN v2 中间文件
 python scripts/build_pinyin_topn.py --input data/pinyin.dict.db --output data/pinyin.topn.intermediate.bin
 
-# 2. topn_builder 转换中间文件为 DAT-16（构建 Darts-clone Trie）
+# 2. topn_builder 转换中间文件为运行时 DAT-16（CXTOPN v3，构建 Darts-clone Trie）
 build\tools\topn_index\Release\topn_builder.exe --input data/pinyin.topn.intermediate.bin --output data/pinyin.topn.bin --format dat16
 ```
 
 `prepare_dictionary_bundle.py` 自动完成上述两步，产出最终 `pinyin.topn.bin`。
 
-数据流：`pinyin.dict.db` (SQLite) → `build_pinyin_topn.py`（键生成 + 评分排序）→ `topn_builder --format dat16`（Darts-clone Trie 构建 + 写入 DAT-16）。键隐式存储于 Trie 结构中，候选文本共享字符串池并内联写入。
+数据流：`pinyin.dict.db` (SQLite) → `build_pinyin_topn.py`（键生成 + 身份 + 评分排序）→ `topn_builder --format dat16`（Darts-clone Trie 构建 + 写入 v3 DAT-16）。键隐式存储于 Trie 结构中，候选文本与规范音节共享字符串池并内联写入。
 
 ### C++ 类
 
@@ -137,11 +165,38 @@ public:
 };
 ```
 
-`parse_short_cache()` 验证 header 为 `CXTOPN\x02\x00`，layout 必须为 `kDat16`（=2）。`lookup()` 通过 `darts_offset()` 解码 trie 单元，沿 key 字符遍历 Darts 状态转移，到达叶节点后读取 `ShortPostingList`，返回内联 `ShortCandidateEntry` 数组。
+`parse_short_cache()` 验证 header 为 `CXTOPN\x03\x00`，layout 必须为 `kDat16`（=2）。`lookup()` 通过 `darts_offset()` 解码 trie 单元，沿 key 字符遍历 Darts 状态转移，到达叶节点后读取 `ShortPostingList`，返回内联 `ShortCandidateEntry` 数组（含 text + syllables 身份）。
 
 `Dict::open_dict()` 在加载 `pinyin.dict.bin` 后自动尝试加载同目录的 `pinyin.topn.bin`。在 `open_bundle()`（Server 路径）中，Top-N 文件缺失是致命错误；独立模式下缺失时静默回退。
 
-## Session Recent Cache
+## 五笔快速路径（wubi86.dict.idx）
+
+五笔没有单独的 `.topn.bin`。其"Top-N"能力在**构建期**固化进完整前缀索引 `wubi86.dict.idx`（CXWIDX v1）：
+
+### 格式
+
+```text
+Header (48 bytes): magic "CXWIDX\x01\x00", version=1, dict_entry_count,
+                   key_count, posting_count, keys_offset, postings_offset,
+                   max_code_length=4
+Key[key_count]     (12 bytes/条): packed_code(5 bit/字符, a=1..z=26) +
+                                  posting_offset + posting_count
+Postings[posting_count] (uint32/条): dict.bin 词条索引, 按排名预排序
+```
+
+### 预排序规则
+
+postings 排名：**精确匹配 → 码长升序 → 词频降序 → 码序 → 文本长度 → 文本字典序**，并按文本去重。质量约束与审计（前三码候选提升预算、前 10 集合不变、频率不倒退等）见 [五笔候选质量排序](wubi-candidate-ranking.md)。
+
+### 运行时查询
+
+`Dict::open_wubi_bundle()` 加载 `wubi86.dict.bin` + `wubi86.dict.idx`；`Dict::lookup()` 优先走 `WubiPrefixIndex::find()`（对 packed_code 二分查找，O(log P + K)），直接返回预排序 postings，避免全表扫描。`wubi86.dict.idx` 是必需文件：缺失或加载失败时 `open_wubi_bundle()` 失败，服务端启动即报错。
+
+### WubiTranslator 快照缓存
+
+`WubiTranslator::translate()` 对同一输入码维护候选快照：首次查询按 `max(required, doubled_limit)` 扩大查询量，后续翻页直接复用快照，不再触发词典查询。快照在 `code` / `user_dict_version` / `candidate_preference_version` / `manual_candidate_order_version` / `disabled_system_entry_version` 任一变化时重建。该机制承担五笔模式的"会话级快速路径"，避免逐页重复二分。
+
+## Session Recent Cache（拼音）
 
 Engine 持有每 session 的最近候选缓存，记录用户选词和提交行为：
 
@@ -176,9 +231,13 @@ struct RecentCandidate {
 3. ShortCodeCache（DAT-16 Top-N，Darts trie 查找）
 4. 按 text 去重, 合并为候选列表
 
+## User Dict Short Index（拼音）
+
+用户词按 `code` 建立 exact / prefix / abbr / mixed 四路索引，其中 abbr / mixed 与 1..6 前缀专供短输入快速路径查询；`lookup_user_short()` 按 exact → prefix → abbr → mixed 顺序收集，按 `score_user_match()` 评分排序。详细结构见 [用户词库与候选偏好](user-dictionary.md)。
+
 ## Translator 集成
 
-### 快速路径入口
+### 拼音快速路径入口
 
 ```cpp
 // pinyin_translator.cc — translate() 开头
@@ -202,27 +261,25 @@ bool is_indexable_key(const std::string& pinyin) {
 }
 ```
 
-### 翻页行为
+### 拼音翻页行为
 
 - `page_index == 0`：缓存通常足够，直接返回
 - `page_index > 0`：同样尝试缓存；缓存不足时回退标准管道，缓存候选 seed 到 TopKCollector 避免重复查询
 
-### 合并规则
+### 拼音合并规则
 
 1. Session recent 候选优先
-2. User dict short index 候选（按 `score_user_match()` 分层评分：精确/缩写/混合键高基数，前缀按接近程度分档，详见 [用户词库与候选偏好](user-dictionary.md)）
+2. User dict short index 候选（按 `score_user_match()` 分层评分）
 3. ShortCodeCache 候选按构建时 score 排序
 4. 标准管道 (bounded dict lookup) 只用于补足缺失候选
 5. 按 `Candidate.text` 去重
 6. 缓存候选超过当前页时设置 `truncated=true`
 
-### 用户词版本过滤
+快速路径命中后，拼音仍按统一顺序应用学习偏好与手动固定（见 [候选排序设计](candidate-ordering.md)）。
 
-Session recent cache 中的用户词候选在以下情况被过滤：
-- `user_dict_version` 发生变化（用户词库被重新加载或更新）
-- 候选 text 在当前用户词库中已不存在或被标记 `deleted`（`has_user_entry()` 返回 false）
+### 五笔集成
 
-过滤在 `lookup_indexed_fast()` 扫描 recent 缓存时执行，确保 stale 用户词不会出现在候选列表中。
+`WubiTranslator::lookup_candidates()`：`Dict::lookup()`（前缀索引预排序）→ `apply_candidate_preferences()`（学习启用时）→ `apply_manual_candidate_order()` → 按 text 去重并标记 `source = kWubi`；`translate()` 通过快照缓存复用结果、按页切分。
 
 ## Trace 语义
 
@@ -247,6 +304,8 @@ syllable_path_count = 0    (Syllabifier 未调用)
 live_path_count = 0
 ```
 
+五笔查询不经过 Syllabifier，trace 中 `syllable_path_count / live_path_count` 恒为 0。
+
 ### truncated
 
 | 场景 | truncated |
@@ -258,33 +317,37 @@ live_path_count = 0
 
 | 文件 | 职责 |
 |------|------|
-| `engine/src/short_code_cache_format.h` | DAT-16 二进制格式结构体定义（ShortCacheHeader 80B, ShortPostingList 8B, ShortCandidateEntry 16B） |
+| `engine/src/short_code_cache_format.h` | CXTOPN v3 二进制格式结构体定义（ShortCacheHeader 80B, ShortPostingList 8B, ShortCandidateEntry 24B） |
 | `engine/include/cxxime/short_code_cache.h` | ShortCodeCache 类声明 |
 | `engine/src/short_code_cache.cc` | 加载、校验 DAT-16 header, Darts trie 查找（darts_offset 解码）, create_test_cache |
 | `tools/topn_index/topn_index_format.h` | Top-N 三种布局枚举（kFlat16/kDat16/kDat8）及格式结构体 |
 | `tools/topn_index/index_writer.cc` | write_index(): Darts::DoubleArray::build() 构建 trie, 写入 DAT-16 |
 | `tools/topn_index/index_reader.cc` | IndexReader: DAT trie 遍历查找, 候选读取 |
 | `tools/topn_index/intermediate_reader.cc` | IntermediateReader: 读取 Top-N 中间文件格式 |
-| `tools/topn_index/main.cc` | topn_builder 入口: 中间文件 → DAT-16 转换 |
+| `tools/topn_index/main.cc` | topn_builder 入口: 中间文件 → 运行时 DAT-16 转换 |
 | `tools/topn_index/benchmark.cc` | topn_benchmark 工具: 跨格式延迟/QPS 对比 |
 | `third_party/darts-clone/include/darts.h` | Darts-clone Double Array Trie 库（构建 + 查找） |
-| `scripts/build_pinyin_topn.py` | 离线生成 Top-N 候选键与评分 |
+| `scripts/build_pinyin_topn.py` | 离线生成 Top-N 候选键、规范音节与评分（v2 中间文件） |
 | `scripts/benchmark_topn.ps1` | 跨格式 benchmark 脚本 |
+| `data/tools/dict_builder/wubi_prefix_index.py` | 五笔完整前缀索引构建（CXWIDX v1，预排序 postings） |
+| `engine/src/wubi_prefix_index.cc` | WubiPrefixIndex 加载与二分查询 |
 | `engine/include/cxxime/dict.h` | ShortCodeCache 成员 + getter, 用户词索引结构 |
-| `engine/src/dict.cc` | open_dict() / open_bundle() 加载 topn.bin, 用户词索引构建与查询 |
+| `engine/src/dict.cc` | open_dict() / open_bundle() 加载 topn.bin 与 wubi idx, 用户词索引构建与查询 |
 | `engine/include/cxxime/translator.h` | RecentCandidate 结构体, update_recent(), is_short_key() |
-| `engine/src/pinyin_translator.cc` | 快速路径入口, 合并逻辑, session recent 管理, 用户词版本过滤 |
+| `engine/src/pinyin_translator.cc` | 拼音快速路径入口, 合并逻辑, session recent 管理, 用户词版本过滤 |
+| `engine/src/wubi_translator.cc` | 五笔查询（前缀索引 + 偏好/手动排序 + 快照缓存） |
 | `engine/src/engine.cc` | select/commit 时更新 recent cache |
-| `test/short_cache_test.cc` | ShortCodeCache 单元测试 (16 cases) |
+| `test/short_cache_test.cc` | ShortCodeCache 单元测试（Top-N v3 加载/查找/损坏拒绝） |
+| `test/wubi_prefix_query_test.cc` | 五笔前缀索引查询/排序验证 |
 | `test/util/topn_test_data.h` / `.cc` | Top-N 测试数据辅助函数 |
 
 ## 长输入的查询页缓存
 
-作为短输入快速路径的姊妹机制，`PinyinTranslator` 为 >6 字符的长拼音查询提供了独立的查询页缓存：
+作为短输入快速路径的姊妹机制，`PinyinTranslator` 为 >6 字符的长拼音查询提供独立的查询页缓存：
 
-- **触发条件**：`input.size() > 6`，短输入走 `lookup_short_fast` 不触发此缓存
+- **触发条件**：`input.size() > 6`，短输入走 `lookup_indexed_fast` 不触发此缓存
 - **容量**：LRU 64 条（`kMaxQueryCacheEntries = 64`），`sequence` 递增序号实现淘汰
-- **失效**：`user_dict_version` 变化后全部缓存自动失效
+- **失效**：`user_dict_version` / 偏好 / 手动排序 / 禁用词版本变化后全部缓存自动失效
 - **非缓存场景**：deadline 命中或 deadline_exceeded 时不写入
 
 详细机制见 [候选词选词算法 — 长输入查询页缓存](candidate-selection.md#长输入查询页缓存)。

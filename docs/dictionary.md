@@ -337,7 +337,7 @@ Python 格式: `"<IIIIi"`
 | dict v2 | `43 58 44 49 43 02 00 00` / `CXDIC\x02\x00\x00` | 平坦排序数组 |
 | dict.idx v3 | `43 58 49 44 58 00 00 00 00` / `CXIDX\0\0\0\0` | 整数 ID 索引（音节→词条，zero-copy） |
 | wubi idx v1 | `43 58 57 49 44 58 01 00` / `CXWIDX\x01\x00` | 五笔完整前缀索引（packed code → 排序 postings） |
-| topn.bin v2 | `43 58 54 4F 50 4E 02 00` / `CXTOPN\x02\0` | DAT-16 格式：Darts-clone 双数组 Trie 键索引 + 内联 16 字节候选条目 |
+| topn.bin v3 | `43 58 54 4F 50 4E 03 00` / `CXTOPN\x03\0` | DAT-16 格式：Darts-clone 双数组 Trie 键索引 + 内联 24 字节候选条目（text + 规范音节身份） |
 
 ## 4. 数据存储方案
 
@@ -355,7 +355,7 @@ Python 格式: `"<IIIIi"`
 |------|-------------|----------------------|-------------|
 | pinyin 主词典 | 146 MB | 69.5 MB (dict.bin) | 64.3 MB |
 | pinyin 整数 ID 索引 | — | 46.2 MB (dict.idx) | — |
-| pinyin Top-N 候选索引 | — | 211.5 MB (topn.bin, DAT-16) | — |
+| pinyin Top-N 候选索引 | — | 290.2 MB (topn.bin, CXTOPN v3 DAT-16) | — |
 | pinyin 拼写索引 | — | 0.03 MB (spellings.bin) | — |
 | wubi86 主词典 | 3.2 MB | 2.5 MB (dict.bin) | 2.0 MB |
 | wubi86 完整前缀索引 | — | 2.3 MB (dict.idx) | — |
@@ -446,13 +446,13 @@ fetch_pinyin_dictionary.py / fetch_wubi_dictionary.py    从网络获取词典�
    pinyin.dict.bin                 运行时内存加载
    pinyin.dict.idx                 整数 ID 索引
 
-  build_pinyin_topn.py            SQLite → Top-N 候选键与评分
+  build_pinyin_topn.py            SQLite → Top-N 候选键、规范音节与评分（CXTOPN v2 中间文件）
         │
         ▼
-  topn_builder --format dat16     中间文件 → DAT-16 索引
+  topn_builder --format dat16     中间文件 → 运行时 DAT-16（CXTOPN v3）
         │
         ▼
-   pinyin.topn.bin                运行时内存加载（Darts trie + 内联候选）
+   pinyin.topn.bin                运行时内存加载（Darts trie + 24 字节内联候选身份）
 
   fetch_wubi_dictionary.py / split_wubi_symbols.py   五笔源数据 → symbols.json + 过滤后词典
         │
@@ -493,12 +493,13 @@ SQLite spellings 表          Patricia Trie              spellings.bin
 
 ## 6. 用户数据（用户词库与候选偏好）
 
-用户个性化数据分为两个独立资源：
+用户个性化数据分为三个独立资源：
 
 - **用户词库（user lexicon）**：手工添加的词条，采用多路内存索引（exact / prefix / abbr / mixed）+ TSV 持久化（`user_pinyin.tsv` / `user_wubi.tsv`）。词条存储 `text`、`code`、`syllables`（冒号分隔音节键）、`abbr_code`、`mixed_keys`，支持 `frequency`、`sequence`（版本计数）、`deleted`（软删除）。
 - **候选偏好（candidate preference）**：候选学习记录，按 code 索引 + 6 列 TSV 持久化（`learning_pinyin.tsv` / `learning_wubi.tsv`），在翻译结果上应用以提升命中候选（`origin = kLearned`）。
+- **手动候选顺序（manual candidate order）**：用户为编码显式固定的候选顺序，按输入码索引 + 5 列 TSV 持久化（`candidate_order_pinyin.tsv` / `candidate_order_wubi.tsv`），优先级高于候选偏好。
 
-用户词评分分双档：`kPinyin` 和 `kWubi`，通过 `set_user_scoring_profile()` 设置；候选偏好得分（`kPreferenceBaseScore`）高于普通用户词，用于把学过的候选稳定置前。
+用户词评分分双档：`kPinyin` 和 `kWubi`，通过 `set_user_scoring_profile()` 设置；候选偏好得分（`kPreferenceBaseScore`）高于普通用户词，用于把学过的候选稳定置前；手动候选顺序在偏好之上直接前置固定项。完整优先级见 [候选排序设计](candidate-ordering.md)。
 
 详见 [用户词库与候选偏好](user-dictionary.md)。
 
@@ -543,25 +544,25 @@ RUN_ALL_TESTS()                            // main 入口，自动发现并运�
 
 ### 8.2 测试覆盖
 
-词典相关覆盖共 10 个 C++ 测试 + 4 个 Python 测试，合计 186 个 `TEST()` 用例；完整测试套件由 CMake 自动注册，运行方式见项目 README。
+与本模块相关的测试覆盖如下（完整测试套件由 CMake 自动注册，运行方式见项目 README）：
 
-| 测试文件 | 用例数 | 测试内容 |
-|----------|--------|----------|
-| `dict_test` | 26 | 词典打开/前缀查找/音节查找/空查询/反查/用户词频更新 |
-| `dictionary_format_test` | 4 | 当前格式可加载；dict v1 / spellings v1 / dict.idx v2 被拒绝 |
-| `wubi_test` | 7 | Wubi86 基本查找/前缀匹配/去重 |
-| `wubi_prefix_query_test` | 1 | 五笔完整前缀索引查询排序 |
-| `short_cache_test` | 16 | 短码缓存查询（Top-N 索引） |
-| `dictionary_monitor_test` | 3 | 词典 manifest 监控 |
-| `symbol_table_test` | 4 | symbols.json 符号表加载/分类/分页 |
-| `wubi_engine_test` | 31 | 五笔引擎集成（词典查询路径） |
-| `engine_source_test` | 22 | 引擎源码级测试（词典加载/查询） |
-| `engine_test` | 72 | 引擎集成翻译路径（词典为数据源） |
-| `wubi_symbol_pipeline_test` | (Python) | 五笔符号拆分流水线验证 |
-| `wubi_prefix_index_test` | (Python) | 五笔完整前缀索引构建验证 |
-| `pinyin_topn_pipeline_test` | (Python) | Top-N 键生成与 DAT-16 转换验证 |
-| `dictionary_format_verifier_test` | (Python) | 构建校验器对当前格式 magic/version 的检查 |
-| **合计** | **186** | |
+| 测试文件 | 测试内容 |
+|----------|----------|
+| `dict_test` | 词典打开/前缀查找/音节查找/空查询/反查/用户词频更新 |
+| `dictionary_format_test` | 当前格式可加载；dict v1 / spellings v1 / dict.idx v2 被拒绝 |
+| `wubi_test` | Wubi86 基本查找/前缀匹配/去重 |
+| `wubi_prefix_query_test` | 五笔完整前缀索引查询排序 |
+| `short_cache_test` | 短码缓存查询（Top-N v3 索引与候选身份） |
+| `dictionary_monitor_test` | 词典 manifest 监控 |
+| `symbol_table_test` | symbols.json 符号表加载/分类/分页 |
+| `wubi_engine_test` | 五笔引擎集成（词典查询路径） |
+| `engine_source_test` | 引擎源码级测试（词典加载/查询） |
+| `engine_test` | 引擎集成翻译路径（词典为数据源） |
+| `wubi_symbol_pipeline_test` | 五笔符号拆分流水线验证（Python） |
+| `wubi_prefix_index_test` | 五笔完整前缀索引构建验证（Python） |
+| `pinyin_topn_pipeline_test` | Top-N 键生成与 DAT-16 转换验证（Python） |
+| `reverse_index_pipeline_test` | 反查索引流水线验证（Python） |
+| `dictionary_format_verifier_test` | 构建校验器对当前格式 magic/version 的检查（Python） |
 
 ### 8.3 运行测试
 
