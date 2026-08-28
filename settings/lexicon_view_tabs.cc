@@ -83,7 +83,7 @@ LexiconViewTabs create_lexicon_view_tabs(HWND parent, int entries_id, int candid
         create_view_tab(parent, entries_id, L"词条", x, y, entries_width, height, font, true);
     tabs.candidate_order = create_view_tab(parent, candidate_order_id, L"候选排序",
                                            x + entries_width, y, order_width, height, font, false);
-    tabs.preferences = create_view_tab(parent, preferences_id, L"学习记录",
+    tabs.preferences = create_view_tab(parent, preferences_id, L"选词偏好",
                                        x + entries_width + order_width, y,
                                        width - entries_width - order_width, height, font, false);
     SetPropW(tabs.entries, kPreviousProperty, tabs.preferences);
