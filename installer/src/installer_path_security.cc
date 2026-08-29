@@ -260,9 +260,13 @@ int secure_install_root(const std::wstring& path) {
     }
 
     PSECURITY_DESCRIPTOR descriptor = nullptr;
+    // AppContainer processes use a restricted-token access check. BUILTIN\Users alone is not
+    // sufficient after inheritance is disabled, so preserve read/execute access for packaged
+    // input hosts through ALL APPLICATION PACKAGES.
     if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(
-            L"O:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;GRGX;;;BU)", SDDL_REVISION_1,
-            &descriptor, nullptr)) {
+            L"O:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;GRGX;;;BU)"
+            L"(A;OICI;GRGX;;;AC)",
+            SDDL_REVISION_1, &descriptor, nullptr)) {
         return 1;
     }
     BOOL owner_defaulted = FALSE;
