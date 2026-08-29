@@ -292,11 +292,193 @@ static bool candidate_contains(const cxxime::CandidatePage& page, const std::str
     return false;
 }
 
+TEST(SessionIntegration, shape_and_punctuation_toggles_preserve_composition) {
+    SessionManager manager;
+    manager.initialize(setup_test_dict());
+    const uint32_t id = manager.create_session();
+
+    ASSERT_EQ(manager.process_key(id, make_key('N')).result, cxxime::ProcessResult::ACCEPTED);
+    const ProcessKeyResult initial = manager.process_key(id, make_key('I'));
+    ASSERT_TRUE(initial.composing);
+    ASSERT_EQ(initial.preedit, "ni");
+    ASSERT_TRUE(!initial.candidates.candidates.empty());
+
+    const ProcessKeyResult shape = manager.process_key(id, make_key(VK_SPACE, true));
+    ASSERT_EQ(shape.result, cxxime::ProcessResult::TOGGLE_SHAPE);
+    ASSERT_TRUE(shape.composing);
+    ASSERT_EQ(shape.preedit, initial.preedit);
+    ASSERT_EQ(shape.preedit_cursor, initial.preedit_cursor);
+    ASSERT_EQ(shape.candidates.candidates.size(), initial.candidates.candidates.size());
+    ASSERT_TRUE(shape.ime_status.full_shape());
+
+    cxxime::KeyEvent punctuation = make_key(VK_OEM_PERIOD);
+    punctuation.set_ctrl();
+    const ProcessKeyResult punct = manager.process_key(id, punctuation);
+    ASSERT_EQ(punct.result, cxxime::ProcessResult::TOGGLE_PUNCT);
+    ASSERT_TRUE(punct.composing);
+    ASSERT_EQ(punct.preedit, initial.preedit);
+    ASSERT_EQ(punct.preedit_cursor, initial.preedit_cursor);
+    ASSERT_EQ(punct.candidates.candidates.size(), initial.candidates.candidates.size());
+    ASSERT_TRUE(!punct.ime_status.chinese_punct());
+}
+
+TEST(SessionIntegration, inline_ascii_is_returned_as_uncommitted_preedit) {
+    SessionManager manager;
+    manager.initialize(setup_test_dict());
+    const uint32_t id = manager.create_session();
+
+    ASSERT_EQ(manager.process_key(id, make_key('N')).result, cxxime::ProcessResult::ACCEPTED);
+    const ProcessKeyResult initial = manager.process_key(id, make_key('I'));
+    ASSERT_TRUE(initial.composing);
+    ASSERT_TRUE(!initial.candidates.candidates.empty());
+
+    const ProcessKeyResult plus = manager.process_key(id, make_key(VK_OEM_PLUS, true));
+    ASSERT_EQ(plus.result, cxxime::ProcessResult::ACCEPTED);
+    ASSERT_TRUE(plus.composing);
+    ASSERT_EQ(plus.preedit, "ni+");
+    ASSERT_EQ(plus.preedit_cursor, static_cast<size_t>(3));
+    ASSERT_TRUE(plus.candidates.candidates.empty());
+    ASSERT_TRUE(plus.commit_text.empty());
+}
+
+TEST(SessionIntegration, inline_ascii_binding_restores_chinese_mode_after_commit) {
+    auto config = std::make_shared<cxxime::Config>();
+    config->ascii_switch_key["Shift_L"] = "inline_ascii";
+    SessionManager manager;
+    ASSERT_TRUE(manager.initialize(setup_test_dict(), config));
+    const uint32_t id = manager.create_session();
+
+    ASSERT_EQ(manager.process_key(id, make_key('N')).result, cxxime::ProcessResult::ACCEPTED);
+    const ProcessKeyResult initial = manager.process_key(id, make_key('I'));
+    ASSERT_TRUE(initial.composing);
+    ASSERT_TRUE(initial.ime_status.chinese_mode());
+
+    ASSERT_EQ(manager.process_key(id, make_key(VK_LSHIFT, true)).result,
+              cxxime::ProcessResult::REJECTED);
+    cxxime::KeyEvent shift_up = make_key(VK_LSHIFT);
+    shift_up.is_key_up = true;
+    const ProcessKeyResult converted = manager.process_key(id, shift_up);
+    ASSERT_EQ(converted.result, cxxime::ProcessResult::ACCEPTED);
+    ASSERT_TRUE(converted.composing);
+    ASSERT_EQ(converted.preedit, "ni");
+    ASSERT_TRUE(converted.candidates.candidates.empty());
+    ASSERT_TRUE(converted.ime_status.chinese_mode());
+
+    const ProcessKeyResult committed = manager.process_key(id, make_key(VK_RETURN));
+    ASSERT_EQ(committed.result, cxxime::ProcessResult::COMMITTED);
+    ASSERT_EQ(committed.commit_text, "ni");
+    ASSERT_TRUE(committed.ime_status.chinese_mode());
+
+    const ProcessKeyResult resumed = manager.process_key(id, make_key('N'));
+    ASSERT_TRUE(resumed.composing);
+    ASSERT_TRUE(!resumed.candidates.candidates.empty());
+    ASSERT_TRUE(resumed.ime_status.chinese_mode());
+}
+
+TEST(SessionIntegration, inline_ascii_binding_restores_chinese_mode_after_clear) {
+    auto config = std::make_shared<cxxime::Config>();
+    config->ascii_switch_key["Shift_L"] = "inline_ascii";
+    SessionManager manager;
+    ASSERT_TRUE(manager.initialize(setup_test_dict(), config));
+    const uint32_t id = manager.create_session();
+
+    ASSERT_EQ(manager.process_key(id, make_key('N')).result, cxxime::ProcessResult::ACCEPTED);
+    ASSERT_EQ(manager.process_key(id, make_key('I')).result, cxxime::ProcessResult::ACCEPTED);
+    ASSERT_EQ(manager.process_key(id, make_key(VK_LSHIFT, true)).result,
+              cxxime::ProcessResult::REJECTED);
+    cxxime::KeyEvent shift_up = make_key(VK_LSHIFT);
+    shift_up.is_key_up = true;
+    ASSERT_EQ(manager.process_key(id, shift_up).result, cxxime::ProcessResult::ACCEPTED);
+
+    ASSERT_EQ(manager.clear_composition(id), cxxime::IPCStatus::OK);
+    const ProcessKeyResult resumed = manager.process_key(id, make_key('N'));
+    ASSERT_TRUE(resumed.composing);
+    ASSERT_TRUE(!resumed.candidates.candidates.empty());
+    ASSERT_TRUE(resumed.ime_status.chinese_mode());
+}
+
+TEST(SessionIntegration, inline_ascii_binding_restores_chinese_mode_after_focus_out) {
+    auto config = std::make_shared<cxxime::Config>();
+    config->ascii_switch_key["Shift_L"] = "inline_ascii";
+    SessionManager manager;
+    ASSERT_TRUE(manager.initialize(setup_test_dict(), config));
+    const uint32_t id = manager.create_session();
+
+    ASSERT_EQ(manager.process_key(id, make_key('N')).result, cxxime::ProcessResult::ACCEPTED);
+    ASSERT_EQ(manager.process_key(id, make_key('I')).result, cxxime::ProcessResult::ACCEPTED);
+    ASSERT_EQ(manager.process_key(id, make_key(VK_LSHIFT, true)).result,
+              cxxime::ProcessResult::REJECTED);
+    cxxime::KeyEvent shift_up = make_key(VK_LSHIFT);
+    shift_up.is_key_up = true;
+    ASSERT_EQ(manager.process_key(id, shift_up).result, cxxime::ProcessResult::ACCEPTED);
+
+    ASSERT_EQ(manager.focus_out(id), cxxime::IPCStatus::OK);
+    const ProcessKeyResult resumed = manager.process_key(id, make_key('N'));
+    ASSERT_TRUE(resumed.composing);
+    ASSERT_TRUE(!resumed.candidates.candidates.empty());
+    ASSERT_TRUE(resumed.ime_status.chinese_mode());
+}
+
+TEST(SessionIntegration, clear_binding_cancels_composition_on_modifier_key_up) {
+    auto config = std::make_shared<cxxime::Config>();
+    config->ascii_switch_key["Shift_L"] = "clear";
+    SessionManager manager;
+    ASSERT_TRUE(manager.initialize(setup_test_dict(), config));
+    const uint32_t id = manager.create_session();
+
+    ASSERT_EQ(manager.process_key(id, make_key('N')).result, cxxime::ProcessResult::ACCEPTED);
+    ASSERT_EQ(manager.process_key(id, make_key('I')).result, cxxime::ProcessResult::ACCEPTED);
+    ASSERT_EQ(manager.process_key(id, make_key(VK_LSHIFT, true)).result,
+              cxxime::ProcessResult::REJECTED);
+    cxxime::KeyEvent shift_up = make_key(VK_LSHIFT);
+    shift_up.is_key_up = true;
+    const ProcessKeyResult cleared = manager.process_key(id, shift_up);
+    ASSERT_EQ(cleared.status, cxxime::IPCStatus::OK);
+    ASSERT_EQ(cleared.result, cxxime::ProcessResult::REJECTED);
+    ASSERT_TRUE(!cleared.composing);
+    ASSERT_TRUE(!cleared.ime_status.chinese_mode());
+}
+
+TEST(SessionIntegration, inline_ascii_binding_restores_chinese_mode_after_deleting_preedit) {
+    auto config = std::make_shared<cxxime::Config>();
+    config->ascii_switch_key["Shift_L"] = "inline_ascii";
+    SessionManager manager;
+    ASSERT_TRUE(manager.initialize(setup_test_dict(), config));
+
+    for (bool use_delete : {false, true}) {
+        const uint32_t id = manager.create_session();
+        ASSERT_EQ(manager.process_key(id, make_key('N')).result, cxxime::ProcessResult::ACCEPTED);
+        ASSERT_EQ(manager.process_key(id, make_key(VK_LSHIFT, true)).result,
+                  cxxime::ProcessResult::REJECTED);
+        cxxime::KeyEvent shift_up = make_key(VK_LSHIFT);
+        shift_up.is_key_up = true;
+        ASSERT_EQ(manager.process_key(id, shift_up).result, cxxime::ProcessResult::ACCEPTED);
+
+        if (use_delete) {
+            ASSERT_EQ(manager.process_key(id, make_key(VK_LEFT)).result,
+                      cxxime::ProcessResult::ACCEPTED);
+        }
+        const ProcessKeyResult cleared =
+            manager.process_key(id, make_key(use_delete ? VK_DELETE : VK_BACK));
+        ASSERT_TRUE(!cleared.composing);
+        ASSERT_TRUE(cleared.ime_status.chinese_mode());
+
+        const ProcessKeyResult resumed = manager.process_key(id, make_key('N'));
+        ASSERT_TRUE(resumed.composing);
+        ASSERT_TRUE(resumed.ime_status.chinese_mode());
+        const ProcessKeyResult candidates = manager.process_key(id, make_key('I'));
+        ASSERT_TRUE(candidates.composing);
+        ASSERT_TRUE(!candidates.candidates.candidates.empty())
+            << "delete=" << use_delete << " preedit=" << candidates.preedit
+            << " total=" << candidates.candidates.total_count;
+        ASSERT_TRUE(candidates.ime_status.chinese_mode());
+    }
+}
+
 static bool wait_for_count(std::atomic<int>& value, int expected, int timeout_ms) {
     auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
     while (value.load() < expected) {
-        if (std::chrono::steady_clock::now() >= deadline)
-            return false;
+        if (std::chrono::steady_clock::now() >= deadline) return false;
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
     return true;

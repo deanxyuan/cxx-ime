@@ -67,20 +67,6 @@ ProcessResult PinyinProcessor::process_key(const KeyEvent& event, Context& conte
         return ProcessResult::REJECTED;
     }
 
-    // Enter: commit pinyin as raw text
-    if (vk == VK_RETURN) {
-        if (context.is_composing()) {
-            context.committed_text = context.pinyin_buffer;
-            if (context.commit_source() == CommitSource::kRawCodePreserveCase ||
-                (event.is_caps_lock() && context.caps_lock_style == AsciiModeSwitchStyle::APPEND))
-                context.set_commit_source(CommitSource::kRawCodePreserveCase);
-            context.clear_preedit();
-            context.candidates = {};
-            return ProcessResult::COMMITTED;
-        }
-        return ProcessResult::REJECTED;
-    }
-
     // Number keys 1-9: select candidate by index
     if (is_digit_key(vk) && vk >= '1' && vk <= '9') {
         if (context.is_composing() && !context.candidates.candidates.empty()) {

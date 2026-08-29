@@ -2,13 +2,14 @@
 
 #include <cxxime/ascii_composer.h>
 
+#include <optional>
+
 #include <windows.h>
 
 #include <cxxime/config.h>
 #include <cxxime/context.h>
 #include <cxxime/key_event.h>
 #include <cxxime/logging.h>
-#include <cxxime/punct_types.h>
 
 namespace cxxime {
 
@@ -26,28 +27,6 @@ static bool is_alt_key(uint32_t vk) {
 
 static bool is_win_key(uint32_t vk) {
     return vk == VK_LWIN || vk == VK_RWIN;
-}
-
-static bool is_modifier_key(uint32_t vk) {
-    return is_shift_key(vk) || is_ctrl_key(vk) || is_alt_key(vk) || is_win_key(vk);
-}
-
-static char temporary_ascii_char(const KeyEvent& event) {
-    if (is_letter_key(event.keycode)) {
-        char ch = static_cast<char>(event.keycode);
-        bool upper = event.is_shift() != event.is_caps_lock();
-        return upper ? ch : static_cast<char>(ch - 'A' + 'a');
-    }
-    return vk_to_char(event.keycode, event.is_shift());
-}
-
-static void commit_temporary_ascii(Context& ctx) {
-    ctx.committed_text = ctx.pinyin_buffer;
-    ctx.clear_preedit();
-    ctx.candidates = {};
-    ctx.reset_pagination();
-    ctx.temporary_ascii_composition = false;
-    ctx.set_commit_source(CommitSource::kRawCodePreserveCase);
 }
 
 static AsciiModeSwitchStyle parse_style(const std::string& s) {
@@ -148,12 +127,18 @@ bool AsciiComposer::process_key(uint32_t key_code, bool is_key_up, Context& ctx,
         if (is_key_up) {
             CXXIME_LOG(L"AsciiComposer::process_key: modifier key up, shift_pressed_=%d", shift_pressed_);
             if (shift_pressed_ || ctrl_pressed_ || alt_pressed_ || win_pressed_) {
-                CXXIME_LOG(L"AsciiComposer::process_key: calling toggle_mode");
-                toggle_mode(key_code, ctx);
+                const AsciiModeSwitchStyle style = get_binding(key_code);
+                const bool binding_applied = style != AsciiModeSwitchStyle::NOOP &&
+                                             style != AsciiModeSwitchStyle::APPEND;
+                if (binding_applied) {
+                    CXXIME_LOG(L"AsciiComposer::process_key: calling toggle_mode");
+                    toggle_mode(key_code, ctx);
+                }
                 shift_pressed_ = false;
                 ctrl_pressed_ = false;
                 alt_pressed_ = false;
                 win_pressed_ = false;
+                return binding_applied;
             }
         } else {
             CXXIME_LOG(L"AsciiComposer::process_key: modifier key down");
@@ -175,50 +160,62 @@ bool AsciiComposer::process_key(uint32_t key_code, bool is_key_up, Context& ctx,
     return false;
 }
 
-bool AsciiComposer::process_temporary_ascii_composition(const KeyEvent& event, Context& ctx,
-                                                         bool chinese_mode) {
+InlineAsciiResult AsciiComposer::process_inline_ascii_composition(const KeyEvent& event,
+                                                                  Context& ctx,
+                                                                  bool chinese_mode) {
     if (event.is_key_up || event.is_ctrl() || event.is_alt()) {
-        return false;
+        return InlineAsciiResult::kNotHandled;
     }
 
-    if (ctx.temporary_ascii_composition) {
+    if (ctx.composition_kind() == CompositionKind::kInlineAscii) {
         if (event.keycode == VK_ESCAPE) {
             ctx.reset();
-            return true;
+            finish_temporary_ascii();
+            return InlineAsciiResult::kAccepted;
         }
-        if (ctx.edit_preedit(event)) {
-            if (ctx.pinyin_buffer.empty()) {
-                ctx.reset();
-            }
-            return true;
-        }
-        if (event.keycode == VK_SPACE || event.keycode == VK_RETURN) {
-            commit_temporary_ascii(ctx);
-            return true;
+        if (event.keycode == VK_SPACE) {
+            ctx.reset();
+            finish_temporary_ascii();
+            return InlineAsciiResult::kAccepted;
         }
 
-        char ch = temporary_ascii_char(event);
-        if (ch != '\0') {
-            ctx.insert_preedit(ch);
+        const uint64_t revision_before = ctx.preedit_revision();
+        if (ctx.edit_preedit(event)) {
+            if (!ctx.is_composing()) {
+                ctx.reset();
+                finish_temporary_ascii();
+                return InlineAsciiResult::kAccepted;
+            }
+            if (ctx.preedit_revision() != revision_before && ctx.restore_composition_origin()) {
+                finish_temporary_ascii();
+                return InlineAsciiResult::kResumeOrigin;
+            }
+            return InlineAsciiResult::kAccepted;
+        }
+        const std::optional<char> normalized = normalize_ascii_key(event);
+        if (normalized) {
+            ctx.insert_preedit(*normalized);
             ctx.candidates = {};
             ctx.reset_pagination();
             ctx.set_commit_source(CommitSource::kRawCodePreserveCase);
-            return true;
+            return InlineAsciiResult::kAccepted;
         }
-        return false;
+        return InlineAsciiResult::kNotHandled;
     }
 
     if (!chinese_mode || ascii_mode_ || ctx.is_composing() || event.is_caps_lock() ||
         !event.is_shift() || !is_letter_key(event.keycode)) {
-        return false;
+        return InlineAsciiResult::kNotHandled;
     }
 
-    ctx.set_preedit(std::string(1, static_cast<char>(event.keycode)));
+    const std::optional<char> normalized = normalize_ascii_key(event);
+    if (!normalized ||
+        !ctx.start_composition(CompositionKind::kInlineAscii, std::string(1, *normalized), 1)) {
+        return InlineAsciiResult::kNotHandled;
+    }
     ctx.candidates = {};
     ctx.reset_pagination();
-    ctx.temporary_ascii_composition = true;
-    ctx.set_commit_source(CommitSource::kRawCodePreserveCase);
-    return true;
+    return InlineAsciiResult::kAccepted;
 }
 
 AsciiModeSwitchStyle AsciiComposer::get_binding(uint32_t key_code) const {
@@ -240,11 +237,6 @@ AsciiModeSwitchStyle AsciiComposer::get_binding(uint32_t key_code) const {
 
 void AsciiComposer::toggle_mode(uint32_t key_code, Context& ctx) {
     auto style = get_binding(key_code);
-    if (is_shift_key(key_code) && ctx.temporary_ascii_composition &&
-        style != AsciiModeSwitchStyle::NOOP && style != AsciiModeSwitchStyle::APPEND) {
-        commit_temporary_ascii(ctx);
-    }
-
     bool composing = ctx.is_composing();
 
     CXXIME_LOG(L"AsciiComposer::toggle_mode: vk=%u, style=%d, composing=%d, pinyin_buffer='%S'",
@@ -255,6 +247,11 @@ void AsciiComposer::toggle_mode(uint32_t key_code, Context& ctx) {
         return;
 
     case AsciiModeSwitchStyle::SET_ASCII_MODE:
+        if (composing && ctx.composition_kind() != CompositionKind::kInlineAscii) {
+            ctx.enter_inline_ascii(false);
+            ctx.candidates = {};
+            ctx.reset_pagination();
+        }
         set_ascii_mode_from_switch(true);
         return;
 
@@ -263,19 +260,24 @@ void AsciiComposer::toggle_mode(uint32_t key_code, Context& ctx) {
         return;
 
     case AsciiModeSwitchStyle::INLINE_ASCII:
+        if (composing) {
+            if (ctx.composition_kind() != CompositionKind::kInlineAscii) {
+                ctx.enter_inline_ascii(true);
+                ctx.candidates = {};
+                ctx.reset_pagination();
+                if (!ascii_mode_) {
+                    set_ascii_mode_from_switch(true);
+                    temporary_ascii_ = true;
+                }
+            }
+            return;
+        }
         set_ascii_mode_from_switch(!ascii_mode_);
-        temporary_ascii_ = ascii_mode_ && composing;
         return;
 
     case AsciiModeSwitchStyle::CODE:
         if (composing) {
-            ctx.committed_text = ctx.pinyin_buffer;
-            ctx.set_commit_source(CommitSource::kRawCodePreserveCase);
-            CXXIME_LOG(L"AsciiComposer::toggle_mode: CODE, committed_text='%S'", ctx.committed_text.c_str());
-            ctx.clear_preedit();
-            ctx.candidates = {};
-            ctx.reset_pagination();
-            ctx.temporary_ascii_composition = false;
+            commit_raw_composition(ctx);
         } else {
             CXXIME_LOG(L"AsciiComposer::toggle_mode: CODE, not composing");
         }
@@ -290,16 +292,7 @@ void AsciiComposer::toggle_mode(uint32_t key_code, Context& ctx) {
 
     case AsciiModeSwitchStyle::CANDIDATE:
         if (composing) {
-            if (!ctx.candidates.candidates.empty()) {
-                ctx.committed_text = ctx.candidates.candidates[0].text;
-                // Mode switching commits the first candidate for output semantics only. It is
-                // not an explicit user selection, so no candidate snapshot is recorded.
-                ctx.set_commit_source(CommitSource::kCandidate);
-            }
-            ctx.clear_preedit();
-            ctx.candidates = {};
-            ctx.reset_pagination();
-            ctx.temporary_ascii_composition = false;
+            commit_candidate_or_raw(ctx);
         }
         set_ascii_mode_from_switch(!ascii_mode_);
         return;
@@ -309,6 +302,37 @@ void AsciiComposer::toggle_mode(uint32_t key_code, Context& ctx) {
         // letter handling is deferred to PinyinProcessor.
         return;
     }
+}
+
+void AsciiComposer::finish_temporary_ascii() {
+    if (temporary_ascii_) {
+        set_ascii_mode_from_switch(false);
+    }
+}
+
+void AsciiComposer::commit_raw_composition(Context& ctx) {
+    ctx.committed_text = ctx.pinyin_buffer;
+    ctx.set_commit_source(CommitSource::kRawCodePreserveCase);
+    ctx.clear_preedit();
+    ctx.candidates = {};
+    ctx.reset_pagination();
+}
+
+void AsciiComposer::commit_candidate_or_raw(Context& ctx) {
+    if (ctx.composition_kind() != CompositionKind::kInlineAscii &&
+        !ctx.candidates.candidates.empty()) {
+        int index = ctx.candidates.highlighted;
+        if (index < 0 || index >= ctx.selectable_candidate_count()) {
+            index = 0;
+        }
+        ctx.committed_text = ctx.candidates.candidates[static_cast<size_t>(index)].text;
+        ctx.set_commit_source(CommitSource::kCandidate);
+        ctx.clear_preedit();
+        ctx.candidates = {};
+        ctx.reset_pagination();
+        return;
+    }
+    commit_raw_composition(ctx);
 }
 
 void AsciiComposer::set_ascii_mode_from_switch(bool mode) {
@@ -336,12 +360,7 @@ void AsciiComposer::apply_caps_lock_overlay(bool caps_lock, Context& ctx) {
                 break;
             case AsciiModeSwitchStyle::CODE:
                 if (composing) {
-                    ctx.committed_text = ctx.pinyin_buffer;
-                    ctx.set_commit_source(CommitSource::kRawCodePreserveCase);
-                    ctx.clear_preedit();
-                    ctx.candidates = {};
-                    ctx.reset_pagination();
-                    ctx.temporary_ascii_composition = false;
+                    commit_raw_composition(ctx);
                 }
                 break;
             case AsciiModeSwitchStyle::CLEAR:
@@ -350,14 +369,7 @@ void AsciiComposer::apply_caps_lock_overlay(bool caps_lock, Context& ctx) {
                 break;
             case AsciiModeSwitchStyle::CANDIDATE:
                 if (composing) {
-                    if (!ctx.candidates.candidates.empty()) {
-                        ctx.committed_text = ctx.candidates.candidates[0].text;
-                        ctx.set_commit_source(CommitSource::kCandidate);
-                    }
-                    ctx.clear_preedit();
-                    ctx.candidates = {};
-                    ctx.reset_pagination();
-                    ctx.temporary_ascii_composition = false;
+                    commit_candidate_or_raw(ctx);
                 }
                 break;
             default:

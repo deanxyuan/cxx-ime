@@ -12,6 +12,7 @@
 
 #include <cxxime/engine.h>
 #include <cxxime/input_limits.h>
+#include <cxxime/key_event.h>
 #include <cxxime/query_budget.h>
 #include <cxxime/query_trace.h>
 #include <cxxime/spellings_index.h>
@@ -77,6 +78,86 @@ TEST(Engine, input_code_stops_at_shared_limit) {
     ASSERT_EQ(context.pinyin_buffer.size(), cxxime::kMaxInputCodeLength - 1);
     ASSERT_EQ(processor.process_key(letter, context), cxxime::ProcessResult::ACCEPTED);
     ASSERT_EQ(context.pinyin_buffer.size(), cxxime::kMaxInputCodeLength);
+}
+
+TEST(Engine, normalizes_printable_ascii_keys) {
+    struct Case {
+        uint32_t keycode;
+        bool shift;
+        char expected;
+    };
+    const Case cases[] = {
+        {'A', false, 'a'},
+        {'A', true, 'A'},
+        {'0', false, '0'},
+        {'0', true, ')'},
+        {'1', true, '!'},
+        {'2', true, '@'},
+        {'3', true, '#'},
+        {'4', true, '$'},
+        {'5', true, '%'},
+        {'6', true, '^'},
+        {'7', true, '&'},
+        {'8', true, '*'},
+        {'9', true, '('},
+        {VK_SPACE, false, ' '},
+        {VK_OEM_PERIOD, false, '.'},
+        {VK_OEM_PERIOD, true, '>'},
+        {VK_OEM_COMMA, false, ','},
+        {VK_OEM_COMMA, true, '<'},
+        {VK_OEM_1, false, ';'},
+        {VK_OEM_1, true, ':'},
+        {VK_OEM_2, false, '/'},
+        {VK_OEM_2, true, '?'},
+        {VK_OEM_3, false, '`'},
+        {VK_OEM_3, true, '~'},
+        {VK_OEM_4, false, '['},
+        {VK_OEM_4, true, '{'},
+        {VK_OEM_5, false, '\\'},
+        {VK_OEM_5, true, '|'},
+        {VK_OEM_6, false, ']'},
+        {VK_OEM_6, true, '}'},
+        {VK_OEM_7, false, '\''},
+        {VK_OEM_7, true, '"'},
+        {VK_OEM_MINUS, false, '-'},
+        {VK_OEM_MINUS, true, '_'},
+        {VK_OEM_PLUS, false, '='},
+        {VK_OEM_PLUS, true, '+'},
+        {VK_NUMPAD0, false, '0'},
+        {VK_NUMPAD9, false, '9'},
+        {VK_ADD, false, '+'},
+        {VK_SUBTRACT, false, '-'},
+        {VK_MULTIPLY, false, '*'},
+        {VK_DIVIDE, false, '/'},
+        {VK_DECIMAL, false, '.'},
+    };
+    for (const Case& item : cases) {
+        cxxime::KeyEvent event;
+        event.keycode = item.keycode;
+        if (item.shift) {
+            event.set_shift();
+        }
+        ASSERT_TRUE(cxxime::normalize_ascii_key(event).has_value());
+        ASSERT_EQ(*cxxime::normalize_ascii_key(event), item.expected);
+    }
+
+    cxxime::KeyEvent caps;
+    caps.keycode = 'A';
+    caps.set_caps_lock();
+    ASSERT_EQ(*cxxime::normalize_ascii_key(caps), 'A');
+    caps.set_shift();
+    ASSERT_EQ(*cxxime::normalize_ascii_key(caps), 'a');
+
+    cxxime::KeyEvent shortcut;
+    shortcut.keycode = 'A';
+    shortcut.set_ctrl();
+    ASSERT_TRUE(!cxxime::normalize_ascii_key(shortcut).has_value());
+    shortcut.modifiers = 0;
+    shortcut.set_alt();
+    ASSERT_TRUE(!cxxime::normalize_ascii_key(shortcut).has_value());
+    shortcut.modifiers = 0;
+    shortcut.is_key_up = true;
+    ASSERT_TRUE(!cxxime::normalize_ascii_key(shortcut).has_value());
 }
 
 TEST(Engine, translator_excludes_candidate_text_over_shared_capacity) {
@@ -814,6 +895,87 @@ TEST(AsciiComposer, shift_r_set_ascii_mode_toggles_no_commit) {
     ASSERT_TRUE(ctx.committed_text.empty());
 }
 
+TEST(AsciiComposer, inline_ascii_binding_preserves_ime_origin) {
+    cxxime::Config config;
+    config.ascii_switch_key["Shift_L"] = "inline_ascii";
+
+    cxxime::AsciiComposer composer;
+    composer.load_config(config);
+    cxxime::Context context;
+    ASSERT_TRUE(context.start_composition(cxxime::CompositionKind::kIme, "ni", 1));
+
+    composer.process_key(VK_LSHIFT, false, context);
+    composer.process_key(VK_LSHIFT, true, context);
+
+    ASSERT_TRUE(composer.is_ascii_mode());
+    ASSERT_TRUE(composer.is_temporary_ascii());
+    ASSERT_EQ(context.composition_kind(), cxxime::CompositionKind::kInlineAscii);
+    ASSERT_TRUE(context.composition_origin().has_value());
+    ASSERT_EQ(context.composition_origin()->kind, cxxime::CompositionKind::kIme);
+    ASSERT_EQ(context.composition_origin()->code, "ni");
+    ASSERT_EQ(context.composition_origin()->cursor, static_cast<size_t>(1));
+}
+
+TEST(AsciiComposer, inline_ascii_binding_keeps_active_inline_mode_stable) {
+    cxxime::Config config;
+    config.ascii_switch_key["Shift_L"] = "inline_ascii";
+
+    cxxime::AsciiComposer composer;
+    composer.load_config(config);
+    cxxime::Context context;
+    ASSERT_TRUE(context.start_composition(cxxime::CompositionKind::kInlineAscii, "c++", 3));
+    composer.set_ascii_mode(true);
+
+    composer.process_key(VK_LSHIFT, false, context);
+    composer.process_key(VK_LSHIFT, true, context);
+
+    ASSERT_TRUE(composer.is_ascii_mode());
+    ASSERT_TRUE(!composer.is_temporary_ascii());
+    ASSERT_EQ(context.composition_kind(), cxxime::CompositionKind::kInlineAscii);
+    ASSERT_EQ(context.pinyin_buffer, "c++");
+}
+
+TEST(AsciiComposer, inline_ascii_origin_survives_cursor_navigation) {
+    cxxime::Config config;
+    config.ascii_switch_key["Shift_L"] = "inline_ascii";
+
+    cxxime::AsciiComposer composer;
+    composer.load_config(config);
+    cxxime::Context context;
+    ASSERT_TRUE(context.start_composition(cxxime::CompositionKind::kIme, "ni", 2));
+
+    composer.process_key(VK_LSHIFT, false, context);
+    composer.process_key(VK_LSHIFT, true, context);
+    cxxime::KeyEvent left;
+    left.keycode = VK_LEFT;
+    ASSERT_EQ(composer.process_inline_ascii_composition(left, context, true),
+              cxxime::InlineAsciiResult::kAccepted);
+
+    ASSERT_EQ(context.composition_kind(), cxxime::CompositionKind::kInlineAscii);
+    ASSERT_TRUE(context.composition_origin().has_value());
+    ASSERT_EQ(context.preedit_cursor(), static_cast<size_t>(1));
+}
+
+TEST(AsciiComposer, set_ascii_mode_binding_does_not_create_origin) {
+    cxxime::Config config;
+    config.ascii_switch_key["Shift_R"] = "set_ascii_mode";
+
+    cxxime::AsciiComposer composer;
+    composer.load_config(config);
+    cxxime::Context context;
+    ASSERT_TRUE(context.start_composition(cxxime::CompositionKind::kSymbol, "/bd", 2));
+
+    composer.process_key(VK_RSHIFT, false, context);
+    composer.process_key(VK_RSHIFT, true, context);
+
+    ASSERT_TRUE(composer.is_ascii_mode());
+    ASSERT_TRUE(!composer.is_temporary_ascii());
+    ASSERT_EQ(context.composition_kind(), cxxime::CompositionKind::kInlineAscii);
+    ASSERT_TRUE(!context.composition_origin().has_value());
+    ASSERT_EQ(context.pinyin_buffer, "/bd");
+    ASSERT_EQ(context.preedit_cursor(), static_cast<size_t>(2));
+}
+
 TEST(AsciiComposer, shift_no_binding_does_nothing) {
     cxxime::Config config;
     // No Shift bindings
@@ -1263,12 +1425,13 @@ TEST(AsciiComposer, capslock_candidate_no_candidates_toggles) {
     ctx.pinyin_buffer = "zzz";  // no valid candidates
     ASSERT_TRUE(ctx.is_composing());
 
-    // Press CapsLock — no candidates, just toggle
+    // Press CapsLock - no candidates, commit raw text and toggle
     ac.process_key(0x14, false, ctx, true);  // VK_CAPITAL down, CapsLock ON
 
     ASSERT_TRUE(ac.is_ascii_mode());
     ASSERT_TRUE(ctx.pinyin_buffer.empty());
-    ASSERT_TRUE(ctx.committed_text.empty());
+    ASSERT_EQ(ctx.committed_text, "zzz");
+    ASSERT_EQ(ctx.commit_source(), cxxime::CommitSource::kRawCodePreserveCase);
 }
 
 TEST(AsciiComposer, capslock_code_commits_buffer) {

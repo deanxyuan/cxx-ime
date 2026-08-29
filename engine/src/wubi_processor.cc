@@ -54,17 +54,6 @@ ProcessResult WubiProcessor::process_key(const KeyEvent& event, Context& context
         return ProcessResult::REJECTED;
     }
 
-    // Enter: commit raw code as text
-    if (vk == VK_RETURN) {
-        if (context.is_composing()) {
-            context.committed_text = context.pinyin_buffer;
-            context.clear_preedit();
-            context.candidates = {};
-            return ProcessResult::COMMITTED;
-        }
-        return ProcessResult::REJECTED;
-    }
-
     // Number keys 1-9: select candidate by index
     if (vk >= '1' && vk <= '9') {
         if (context.is_composing() && !context.candidates.candidates.empty()) {

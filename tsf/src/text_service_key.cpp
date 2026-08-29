@@ -642,6 +642,7 @@ bool TextService::_ProcessKeyUp(WPARAM wParam, LPARAM lParam) {
                ok, response.ascii_mode, response.commit_text, response.composing);
 
     bool committed = false;
+    bool cleared = false;
     if (ok) {
         if (response.status == cxxime::IPCStatus::OK ||
             response.status == cxxime::IPCStatus::ERR_ENGINE_PROCESS_FAILED) {
@@ -666,7 +667,75 @@ bool TextService::_ProcessKeyUp(WPARAM wParam, LPARAM lParam) {
                 _end_reading_ui_element("hide:key_up_commit_reading");
                 committed = true;
             }
-        }
+            } else if (_candidatePresentation.has_candidates() && response.composing &&
+                       response.preedit[0] != '\0' && response.candidate_count == 0) {
+                // A modifier binding can convert an active IME/Symbol preedit to inline ASCII on
+                // key-up. Reapply the normal preedit policy while removing stale candidates.
+                const std::wstring preedit = utf8_to_wstring(response.preedit);
+                const size_t preedit_cursor =
+                    cxxime_tsf::clamp_preedit_cursor(response.preedit_cursor, preedit.size());
+                const std::vector<std::wstring> candidate_texts;
+                const auto decision = cxxime_tsf::decide_preedit(
+                    _config.inline_preedit, _config.preedit_type, preedit,
+                    preedit_cursor, candidate_texts);
+                const bool ui_element_only =
+                    (_activateFlags & TF_TMF_UIELEMENTENABLEDONLY) != 0;
+                const std::string popup_preedit =
+                    ui_element_only || decision.show_preedit_in_popup ? response.preedit : "";
+                cxxime_tsf::UiPresentationBatch ui_presentation_batch(*this);
+                _candidatePresentation.update_content(
+                    cxxime::CandidatePage(), popup_preedit, response.preedit_cursor, 0, 0);
+                _sync_candidate_ui_element_snapshot();
+
+                ITfContext* context = _current_edit_context_for_composition();
+                bool show_external = true;
+                if (ui_element_only) {
+                    _end_reading_ui_element("hide:key_up_inline_ascii_reading");
+                    show_external = _publish_candidate_ui_element();
+                    if (context) {
+                        update_composition(context, preedit, preedit_cursor, true, TF_ES_SYNC);
+                    }
+                } else {
+                    _update_reading_ui_element(context, preedit);
+                    if (context) {
+                        if (decision.start_composition) {
+                            update_composition(context, decision.inline_text,
+                                               decision.inline_cursor,
+                                               true, TF_ES_SYNC);
+                        } else {
+                            update_composition(context, L"", 0, true, TF_ES_SYNC);
+                        }
+                    }
+                    show_external = _publish_candidate_ui_element();
+                }
+                if (show_external) {
+                    _show_candidate_window("show:key_up_inline_ascii");
+                    if (context) {
+                        _request_candidate_position_update(
+                            context, "show:key_up_inline_ascii_layout_follow");
+                    }
+                }
+                if (context) {
+                    context->Release();
+                }
+            } else if (response.status == cxxime::IPCStatus::OK && _composing &&
+                       !response.composing) {
+                // CLEAR bindings run on modifier key-up. Mirror the normal key-down clear path so
+                // the TSF composition and its UI do not outlive the server-side composition.
+                _hide_candidate_window("hide:key_up_clear");
+                _end_reading_ui_element("hide:key_up_clear_reading");
+                ITfContext* context = _current_edit_context_for_composition();
+                if (context) {
+                    if (_composition) {
+                        update_composition(context, L"", 0);
+                    }
+                    _end_composition(context);
+                    context->Release();
+                }
+                _composing = false;
+                _lastInlineCompositionText.clear();
+                cleared = true;
+            }
     }
 
     const bool handled = ok && response.status == cxxime::IPCStatus::OK &&
@@ -674,11 +743,11 @@ bool TextService::_ProcessKeyUp(WPARAM wParam, LPARAM lParam) {
     cxxime_tsf::trace_key_result(
         trace_input_id(), trace_composition_id(), static_cast<uint32_t>(wParam), handled,
         response.preedit[0] ? strlen(response.preedit) : 0, response.preedit_cursor,
-        response.candidate_count,
-        response.commit_text[0] ? strlen(response.commit_text) : 0,
-        committed ? "key_up_commit" : (ok ? "key_up" : "key_up_failed"));
-    if (committed) {
-        _reset_trace_composition("key_up_commit");
+        response.candidate_count, response.commit_text[0] ? strlen(response.commit_text) : 0,
+        committed ? "key_up_commit"
+                  : (cleared ? "key_up_clear" : (ok ? "key_up" : "key_up_failed")));
+    if (committed || cleared) {
+        _reset_trace_composition(committed ? "key_up_commit" : "key_up_clear");
     }
     return handled;
 }

@@ -574,12 +574,12 @@ void CandidateWindow::update(const CandidatePage& page) {
         if (IsWindowVisible(hwnd_) && has_last_caret_rect_ &&
             calculate_target_position(last_caret_rect_, lr.width, lr.height, target)) {
             SetWindowPos(hwnd_, nullptr, target.x, target.y, lr.width, lr.height,
-                         SWP_NOZORDER | SWP_NOACTIVATE);
+                         SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS);
             moved_with_resize = true;
         }
         if (!moved_with_resize) {
             SetWindowPos(hwnd_, nullptr, 0, 0, lr.width, lr.height,
-                         SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+                         SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS);
         }
     }
     if (d2d_renderer_) d2d_renderer_->resize(lr.width, lr.height);
@@ -659,6 +659,7 @@ LRESULT CALLBACK CandidateWindow::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM
             return {};
         };
         old_r = find_rect(old_target, old_candidate_index);
+
         if (PtInRect(&self->render_ctx_.prev_button_rect, pt)) {
             hovered_target = CandidateHoverTarget::PreviousPage;
             new_r = self->render_ctx_.prev_button_rect;
@@ -675,6 +676,7 @@ LRESULT CALLBACK CandidateWindow::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM
                 }
             }
         }
+
         if (hovered_target != old_target || hovered_candidate_index != old_candidate_index) {
             self->render_ctx_.hovered_target = hovered_target;
             self->render_ctx_.hovered_candidate_index = hovered_candidate_index;

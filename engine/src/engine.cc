@@ -5,9 +5,12 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <cstring>
+#include <optional>
 
 #include <windows.h>
 
+#include <cxxime/input_limits.h>
 #include <cxxime/logging.h>
 #include <cxxime/mixed_translator.h>
 #include <cxxime/output_composer.h>
@@ -48,6 +51,30 @@ static bool record_candidate_preference(Dict* dict, const Candidate* candidate,
                                         const std::string& typed_code) {
     return dict && candidate && !typed_code.empty() &&
            dict->record_candidate_preference(*candidate, typed_code);
+}
+
+static bool is_main_candidate_command(const KeyEvent& event, const Context& context) {
+    if (context.candidates.candidates.empty() || event.is_shift() || event.is_ctrl() ||
+        event.is_alt()) {
+        return false;
+    }
+    return (event.keycode >= '1' && event.keycode <= '9') || event.keycode == VK_OEM_MINUS ||
+           event.keycode == VK_OEM_PLUS;
+}
+
+static bool is_numpad_text_key(uint32_t keycode) {
+    return (keycode >= VK_NUMPAD0 && keycode <= VK_NUMPAD9) || keycode == VK_ADD ||
+           keycode == VK_SUBTRACT || keycode == VK_MULTIPLY || keycode == VK_DIVIDE ||
+           keycode == VK_DECIMAL;
+}
+
+static bool is_inline_ascii_character(char ch) {
+    static constexpr char kInlineCharacters[] = "`~@#$%^&*_+{}|/";
+    return std::strchr(kInlineCharacters, ch) != nullptr;
+}
+
+static bool is_ascii_digit_or_symbol(char ch) {
+    return ch >= 0x21 && ch <= 0x7e && !std::isalpha(static_cast<unsigned char>(ch));
 }
 
 // Static member for global query ID generation
@@ -95,8 +122,7 @@ void Engine::finalize() {
     if (pinyin_dict_ == &owned_dict_) {
         owned_dict_.close();
     }
-    context_.reset();
-    commit_continues_composition_ = false;
+    reset_composition_state();
     handled_shortcut_key_ = 0;
 }
 
@@ -185,7 +211,9 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
     QueryDeadline per_query_deadline = QueryDeadline::from_now(query_deadline_ms_);
 
     // Let AsciiComposer track modifier key state and update ascii_mode when needed.
-    ascii_composer_.process_key(event.keycode, event.is_key_up, context_, event.is_caps_lock());
+    const bool modifier_binding_applied =
+        ascii_composer_.process_key(event.keycode, event.is_key_up, context_,
+                                    event.is_caps_lock());
 
     CXXIME_LOG(L"Engine::process_key: after ascii_composer, committed_text='%S'", context_.committed_text.c_str());
 
@@ -202,21 +230,12 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
     if (!event.is_key_up && input_mode_switch_shortcut_.matches(event)) {
         if (handled_shortcut_key_ == 0) {
             handled_shortcut_key_ = event.keycode;
-            context_.reset();
-            commit_continues_composition_ = false;
+            reset_composition_state();
             record_total_us(trace_, total_start, trace_enabled_);
             return ProcessResult::SWITCH_INPUT_MODE;
         }
         record_total_us(trace_, total_start, trace_enabled_);
         return ProcessResult::INPUT_MODE_SHORTCUT_HANDLED;
-    }
-
-    if (ascii_composer_.process_temporary_ascii_composition(
-            event, context_, opts.chinese_mode)) {
-        record_total_us(trace_, total_start, trace_enabled_);
-        return context_.committed_text.empty()
-            ? ProcessResult::ACCEPTED
-            : ProcessResult::COMMITTED;
     }
 
     // Handle keyboard shortcuts for mode toggles.
@@ -245,6 +264,35 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
         return ProcessResult::COMMITTED;
     }
 
+    // Keep modifier key-up available to the host while allowing the server to return the
+    // composition snapshot after a binding converts IME/Symbol input to inline ASCII.
+    if (event.is_key_up && modifier_binding_applied && context_.is_composing()) {
+        record_total_us(trace_, total_start, trace_enabled_);
+        return ProcessResult::ACCEPTED;
+    }
+
+    // Enter always submits the exact active preedit without changing the persistent mode.
+    if (!event.is_key_up && event.keycode == VK_RETURN && context_.is_composing()) {
+        context_.committed_text = context_.pinyin_buffer;
+        context_.set_commit_source(CommitSource::kRawCodePreserveCase);
+        context_.clear_preedit();
+        context_.candidates = {};
+        context_.reset_pagination();
+        ascii_composer_.finish_temporary_ascii();
+        record_total_us(trace_, total_start, trace_enabled_);
+        return ProcessResult::COMMITTED;
+    }
+
+    const InlineAsciiResult inline_result =
+        ascii_composer_.process_inline_ascii_composition(event, context_, opts.chinese_mode);
+    if (inline_result != InlineAsciiResult::kNotHandled) {
+        if (inline_result == InlineAsciiResult::kResumeOrigin && context_.is_composing()) {
+            context_.update_candidates(translate_current_composition(per_query_deadline));
+        }
+        record_total_us(trace_, total_start, trace_enabled_);
+        return ProcessResult::ACCEPTED;
+    }
+
     // Propagate CapsLock style to Context for PinyinProcessor
     context_.caps_lock_style = ascii_composer_.get_binding(VK_CAPITAL);
 
@@ -268,14 +316,15 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
     }
 
     // Intercept digit keys in English full-width mode.
-    if (OutputComposer::intercept_key(event, opts, context_.committed_text)) {
+    if (!context_.is_composing() &&
+        OutputComposer::intercept_key(event, opts, context_.committed_text)) {
         context_.set_commit_source(CommitSource::kRawCode);
         record_total_us(trace_, total_start, trace_enabled_);
         return ProcessResult::COMMITTED;
     }
 
     // If in ASCII mode, handle letters/space directly
-    if (ascii_composer_.is_ascii_mode() && !event.is_key_up) {
+    if (ascii_composer_.is_ascii_mode() && !context_.is_composing() && !event.is_key_up) {
         uint32_t vk = event.keycode;
 
         // Letter keys (A-Z): commit as single ASCII char, respect Shift and CapsLock
@@ -347,11 +396,39 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
     Candidate committed_candidate_override;
     bool has_committed_candidate_override = false;
     const bool symbol_trigger_enabled = symbol_input_enabled(opts);
-    const bool symbol_trigger = symbol_trigger_enabled && SymbolProcessor::is_trigger(event);
-    const bool symbol_started_after_commit =
-        symbol_trigger && start_symbol_input_after_commit(
-            committed_code_override, committed_candidate_override,
-            has_committed_candidate_override);
+    const bool symbol_trigger = symbol_trigger_enabled && !context_.is_composing() &&
+                                SymbolProcessor::is_trigger(event);
+    const std::optional<char> normalized = normalize_ascii_key(event);
+    const bool plain_main_zero = event.keycode == '0' && !event.is_shift();
+    std::optional<ProcessResult> routed_result;
+
+    if (context_.composition_kind() == CompositionKind::kIme && context_.is_composing() &&
+        normalized && is_ascii_digit_or_symbol(*normalized) &&
+        !is_main_candidate_command(event, context_)) {
+        const bool has_candidates = !context_.candidates.candidates.empty();
+        const bool start_inline = is_inline_ascii_character(*normalized) ||
+                                  plain_main_zero || is_numpad_text_key(event.keycode) ||
+                                  !has_candidates;
+        if (opts.full_shape) {
+            if (handle_full_shape(event, context_, opts)) {
+                routed_result = ProcessResult::COMMITTED;
+            }
+        } else if (start_inline) {
+            if (context_.pinyin_buffer.size() < kMaxInputCodeLength) {
+                context_.enter_inline_ascii(true);
+                context_.insert_preedit(*normalized);
+                context_.candidates = {};
+                context_.reset_pagination();
+            }
+            routed_result = ProcessResult::ACCEPTED;
+        } else {
+            if (!handle_punctuation(event, context_, opts)) {
+                commit_with_punctuation(context_, std::string(1, *normalized));
+            }
+            routed_result = ProcessResult::COMMITTED;
+        }
+    }
+
     const bool plain_letter_key = !event.is_key_up && !event.is_shift() && !event.is_ctrl() &&
                                   !event.is_alt() && !event.is_caps_lock() &&
                                   event.keycode >= 'A' && event.keycode <= 'Z';
@@ -367,21 +444,24 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
         has_multiple_wubi_candidates;
     const bool restart_wubi_on_fifth_after_miss =
         config_->wubi_restart_on_fifth_after_miss && mode_ == InputMode::WUBI &&
-        !SymbolProcessor::is_active(context_) && plain_letter_key &&
+        context_.composition_kind() == CompositionKind::kIme && plain_letter_key &&
         context_.pinyin_buffer.size() == 4 &&
         context_.preedit_cursor() == context_.pinyin_buffer.size() &&
         context_.candidates.total_count == 0 && context_.candidates.candidates.empty();
-    if (commit_wubi_before_next_code) {
+    if (!routed_result && commit_wubi_before_next_code) {
         committed_code_override = context_.pinyin_buffer;
         committed_candidate_override = context_.candidates.candidates.front();
         has_committed_candidate_override = true;
         context_.clear_preedit();
         context_.candidates = {};
         context_.reset_pagination();
-    } else if (restart_wubi_on_fifth_after_miss) {
-        context_.clear_preedit();
+    } else if (!routed_result && restart_wubi_on_fifth_after_miss) {
+        const char restarted_code = static_cast<char>(event.keycode - 'A' + 'a');
+        context_.start_composition(
+            CompositionKind::kIme, std::string(1, restarted_code), 1);
         context_.candidates = {};
         context_.reset_pagination();
+        routed_result = ProcessResult::ACCEPTED;
     }
 
     // Process pinyin and Wubi input.
@@ -390,12 +470,38 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
         t0 = std::chrono::steady_clock::now();
     }
     ProcessResult result;
-    if (symbol_started_after_commit) {
-        result = ProcessResult::ACCEPTED;
+    if (routed_result) {
+        result = *routed_result;
     } else if (SymbolProcessor::is_active(context_) || symbol_trigger) {
         result = symbol_processor_.process_key(event, context_, symbol_trigger_enabled);
     } else {
         result = processor_->process_key(event, context_);
+    }
+
+    if (result == ProcessResult::REJECTED &&
+        context_.composition_kind() == CompositionKind::kSymbol && normalized &&
+        is_ascii_digit_or_symbol(*normalized)) {
+        const bool has_candidates = !context_.candidates.candidates.empty();
+        const bool start_inline = is_inline_ascii_character(*normalized) ||
+                                  plain_main_zero || is_numpad_text_key(event.keycode);
+        if (opts.full_shape) {
+            if (handle_full_shape(event, context_, opts)) {
+                result = ProcessResult::COMMITTED;
+            }
+        } else if (has_candidates && !start_inline) {
+            if (!handle_punctuation(event, context_, opts)) {
+                commit_with_punctuation(context_, std::string(1, *normalized));
+            }
+            result = ProcessResult::COMMITTED;
+        } else {
+            if (context_.pinyin_buffer.size() < kMaxInputCodeLength) {
+                context_.enter_inline_ascii(true);
+                context_.insert_preedit(*normalized);
+                context_.candidates = {};
+                context_.reset_pagination();
+            }
+            result = ProcessResult::ACCEPTED;
+        }
     }
     const bool input_changed = context_.preedit_revision() != input_revision_before;
     if (input_changed) {
@@ -423,8 +529,7 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
     // when candidates.highlighted is valid.
     // Skip if already set (e.g. append mode or engine-prepared ASCII output).
     if (result == ProcessResult::COMMITTED &&
-        context_.commit_source() != CommitSource::kRawCodePreserveCase &&
-        context_.commit_source() != CommitSource::kRawCodePretransformed) {
+        context_.commit_source() == CommitSource::kRawCode) {
         if (context_.pinyin_buffer.empty()) {
             context_.set_commit_source(CommitSource::kRawCode);
         } else {
@@ -434,7 +539,7 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
 
     // Auto-restore from temporary inline_ascii when composition ends
     if (result == ProcessResult::COMMITTED && ascii_composer_.is_temporary_ascii()) {
-        ascii_composer_.set_ascii_mode(false);
+        ascii_composer_.finish_temporary_ascii();
     }
 
     // Handle punctuation and full-width input only when the input processor rejects the key.
@@ -464,7 +569,8 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
             trace_.page_index = context_.page_index;
             trace_.page_size = config_->page_size;
         }
-        bool append_raw = context_.commit_source() == CommitSource::kRawCodePreserveCase;
+        bool append_raw = context_.composition_kind() == CompositionKind::kInlineAscii ||
+                          context_.commit_source() == CommitSource::kRawCodePreserveCase;
         const bool refresh_candidates = input_changed || pagination_changed;
         if (refresh_candidates) {
             // Skip translate if deadline already expired (e.g. slow ascii_composer/processor)
@@ -477,24 +583,8 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
                 context_.candidates = {};
                 context_.reset_pagination();
             } else {
-                CandidatePage page;
-                if (SymbolProcessor::is_active(context_)) {
-                    page = translate_symbol_page();
-                } else {
-                    // Create a budget tuned for this input length, with per-query deadline
-                    QueryBudget effective_budget =
-                        make_budget((int)context_.pinyin_buffer.size(), config_->page_size);
-                    effective_budget.deadline = per_query_deadline;
-                    page = translator_->translate(context_.pinyin_buffer, context_.page_index,
-                                                  config_->page_size,
-                                                  trace_enabled_ ? &trace_ : nullptr,
-                                                  &effective_budget, &scratch_,
-                                                  context_.page_offset);
-                    if (config_->wubi_code_hint) {
-                        add_wubi_code_hints(context_.pinyin_buffer, page);
-                    }
-                }
-                context_.update_candidates(std::move(page));
+                context_.update_candidates(
+                    translate_current_composition(per_query_deadline));
             }
         }
         if (trace_enabled_) {
@@ -522,11 +612,6 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
         context_.is_composing()) {
         context_.committed_text = committed_candidate_override.text;
         context_.set_commit_source(CommitSource::kCandidate);
-        commit_continues_composition_ = true;
-        result = ProcessResult::COMMITTED;
-    }
-    if (symbol_started_after_commit && result == ProcessResult::ACCEPTED &&
-        context_.is_composing()) {
         commit_continues_composition_ = true;
         result = ProcessResult::COMMITTED;
     }
@@ -564,24 +649,31 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
     return result;
 }
 
-void Engine::commit_with_punctuation(Context& context, const std::string& output,
-                                     const std::vector<std::string>*, int) {
-    if (context.is_composing() && !context.candidates.candidates.empty() &&
-        context.candidates.highlighted >= 0 &&
-        context.candidates.highlighted < (int)context.candidates.candidates.size()) {
-        context.commit_candidate(context.candidates.highlighted);
+void Engine::commit_with_punctuation(Context& context, const std::string& output) {
+    const int selectable_count = context.selectable_candidate_count();
+    if (context.is_composing() && selectable_count > 0) {
+        int index = context.candidates.highlighted;
+        if (index < 0 || index >= selectable_count) {
+            index = 0;
+        }
+        context.commit_candidate(index);
         context.committed_text += output;
+        context.set_commit_source(CommitSource::kCandidate);
+    } else if (context.is_composing()) {
+        context.committed_text = context.pinyin_buffer + output;
+        context.set_commit_source(CommitSource::kRawCodePreserveCase);
     } else {
         context.committed_text = output;
+        context.set_commit_source(CommitSource::kRawCodePretransformed);
     }
     context.clear_preedit();
     context.candidates = {};
     context.reset_pagination();
-    context.set_commit_source(CommitSource::kCandidate);
     context.last_committed_char = output.back();
 }
 
-bool Engine::handle_punctuation(const KeyEvent& event, Context& context, const OutputOptions& opts) {
+bool Engine::handle_punctuation(const KeyEvent& event, Context& context,
+                                const OutputOptions& opts) {
     // Guard: key-up
     if (event.is_key_up)
         return false;
@@ -597,9 +689,10 @@ bool Engine::handle_punctuation(const KeyEvent& event, Context& context, const O
         return false;
 
     // Step 1: convert virtual key to character.
-    char ch = vk_to_char(event.keycode, event.is_shift());
-    if (ch == '\0')
+    const std::optional<char> normalized = normalize_ascii_key(event);
+    if (!normalized)
         return false;
+    const char ch = *normalized;
 
     // Step 2: check punct_mapping
     if (!opts.punct_mapping)
@@ -651,7 +744,7 @@ bool Engine::handle_punctuation(const KeyEvent& event, Context& context, const O
     }
 
     // Step 7: commit
-    commit_with_punctuation(context, output, nullptr, 0);
+    commit_with_punctuation(context, output);
     CXXIME_LOG(L"handle_punctuation: key='%c' -> '%S'", ch, output.c_str());
     return true;
 }
@@ -670,18 +763,10 @@ bool Engine::handle_full_shape(const KeyEvent& event, Context& context, const Ou
         return false;
 
     // Step 1: convert virtual key to character.
-    char ch = vk_to_char(event.keycode, event.is_shift());
-    if (ch == '\0') {
-        // vk_to_char handles OEM punctuation + digit keys; only letters remain
-        uint32_t vk = event.keycode;
-        if (vk >= 'A' && vk <= 'Z') {
-            ch = event.is_shift()
-                ? static_cast<char>(vk)
-                : static_cast<char>(vk + 32);  // to lowercase
-        } else {
-            return false;
-        }
-    }
+    const std::optional<char> normalized = normalize_ascii_key(event);
+    if (!normalized)
+        return false;
+    const char ch = *normalized;
 
     // Step 2: range check
     if (static_cast<unsigned char>(ch) < 0x20 || static_cast<unsigned char>(ch) > 0x7e)
@@ -691,7 +776,7 @@ bool Engine::handle_full_shape(const KeyEvent& event, Context& context, const Ou
     std::string output = OutputComposer::to_full_width(ch);
 
     // Step 4: commit
-    commit_with_punctuation(context, output, nullptr, 0);
+    commit_with_punctuation(context, output);
     CXXIME_LOG(L"handle_full_shape: '%c' -> full-width", ch);
     return true;
 }
@@ -725,8 +810,7 @@ bool Engine::select_candidate(int index) {
 
 std::string Engine::get_commit_text() {
     std::string text = context_.committed_text;
-    context_.reset();
-    commit_continues_composition_ = false;
+    reset_composition_state();
     return text;
 }
 
@@ -737,34 +821,55 @@ std::pair<std::string, CommitSource> Engine::take_commit_text_with_source() {
         context_.set_commit_source(CommitSource::kRawCode);
         commit_continues_composition_ = false;
     } else {
-        context_.reset();
+        reset_composition_state();
     }
     return result;
 }
 
 std::pair<std::string, CommitSource> Engine::commit_composition_with_source() {
     auto result = context_.commit_with_source();
+    ascii_composer_.finish_temporary_ascii();
     commit_continues_composition_ = false;
     return result;
 }
 
 std::string Engine::commit_raw_composition() {
     std::string raw = std::move(context_.pinyin_buffer);
-    context_.reset();
-    commit_continues_composition_ = false;
+    reset_composition_state();
     return raw;
 }
 
 void Engine::clear() {
-    context_.reset();
-    commit_continues_composition_ = false;
+    reset_composition_state();
     handled_shortcut_key_ = 0;
 }
 
 void Engine::clear_composition() {
-    context_.reset();
-    commit_continues_composition_ = false;
+    reset_composition_state();
     handled_shortcut_key_ = 0;
+}
+
+void Engine::reset_composition_state() {
+    context_.reset();
+    ascii_composer_.finish_temporary_ascii();
+    commit_continues_composition_ = false;
+}
+
+CandidatePage Engine::translate_current_composition(const QueryDeadline& deadline) {
+    if (SymbolProcessor::is_active(context_)) {
+        return translate_symbol_page();
+    }
+
+    QueryBudget effective_budget =
+        make_budget(static_cast<int>(context_.pinyin_buffer.size()), config_->page_size);
+    effective_budget.deadline = deadline;
+    CandidatePage page = translator_->translate(
+        context_.pinyin_buffer, context_.page_index, config_->page_size,
+        trace_enabled_ ? &trace_ : nullptr, &effective_budget, &scratch_, context_.page_offset);
+    if (config_->wubi_code_hint) {
+        add_wubi_code_hints(context_.pinyin_buffer, page);
+    }
+    return page;
 }
 
 void Engine::set_sentence_composition_enabled(bool enabled) {
@@ -802,8 +907,7 @@ void Engine::rebuild_pipeline(InputMode mode, bool force) {
 
     if (!force && mode == mode_) return;
 
-    context_.reset();
-    commit_continues_composition_ = false;
+    reset_composition_state();
 
     mode_ = mode;
     if (mode == InputMode::WUBI) {

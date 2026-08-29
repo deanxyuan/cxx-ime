@@ -4,6 +4,7 @@
 #define CXXIME_KEY_EVENT_H_
 
 #include <cstdint>
+#include <optional>
 
 namespace cxxime {
 
@@ -38,6 +39,10 @@ bool is_letter_key(uint32_t vk_code);
 
 // Check if a key is a digit (0-9)
 bool is_digit_key(uint32_t vk_code);
+
+// Map a key event to its US QWERTY printable ASCII character. Ctrl/Alt combinations and
+// key-up events are application commands, not text input.
+std::optional<char> normalize_ascii_key(const KeyEvent& event);
 
 } // namespace cxxime
 

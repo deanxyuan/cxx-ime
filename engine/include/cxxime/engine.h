@@ -103,11 +103,10 @@ public:
 
 private:
     void init_per_session(const Config& config);
+    void reset_composition_state();
     void rebuild_pipeline(InputMode mode, bool force = false);
     bool symbol_input_enabled(const OutputOptions& opts) const;
-    bool start_symbol_input_after_commit(std::string& committed_code,
-                                         Candidate& committed_candidate,
-                                         bool& has_committed_candidate);
+    CandidatePage translate_current_composition(const QueryDeadline& deadline);
     CandidatePage translate_symbol_page() const;
 
     std::unique_ptr<IProcessor> processor_;
@@ -153,8 +152,7 @@ private:
     // Punctuation handling
     bool handle_punctuation(const KeyEvent& event, Context& context, const OutputOptions& opts);
     bool handle_full_shape(const KeyEvent& event, Context& context, const OutputOptions& opts);
-    void commit_with_punctuation(Context& context, const std::string& output,
-                                 const std::vector<std::string>* candidates, int highlighted);
+    void commit_with_punctuation(Context& context, const std::string& output);
 };
 
 } // namespace cxxime

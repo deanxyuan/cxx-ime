@@ -20,8 +20,14 @@ enum class AsciiModeSwitchStyle {
     CLEAR,
     SET_ASCII_MODE,
     UNSET_ASCII_MODE,
-    CANDIDATE,     // commit first candidate + toggle
+    CANDIDATE,     // commit highlighted/first candidate + toggle
     APPEND,        // CapsLock modifies letters in buffer, no mode switch
+};
+
+enum class InlineAsciiResult {
+    kNotHandled,
+    kAccepted,
+    kResumeOrigin,
 };
 
 class AsciiComposer {
@@ -29,18 +35,20 @@ public:
     void load_config(const Config& config);
 
     // Process a key event for modifier tracking and mode toggle.
-    // Does NOT consume the event — always returns false.
+    // Returns true when a configured modifier binding is applied on key-up.
     // caps_lock is accepted for existing call sites; mode switching is based on key events.
     bool process_key(uint32_t key_code, bool is_key_up, Context& ctx, bool caps_lock = false);
-    bool process_temporary_ascii_composition(const KeyEvent& event, Context& ctx,
-                                             bool chinese_mode);
+    InlineAsciiResult process_inline_ascii_composition(const KeyEvent& event, Context& ctx,
+                                                       bool chinese_mode);
 
     bool is_ascii_mode() const { return ascii_mode_; }
     void set_ascii_mode(bool mode) {
         ascii_mode_ = mode;
+        temporary_ascii_ = false;
         caps_lock_overlay_active_ = false;
     }
     bool is_temporary_ascii() const { return temporary_ascii_; }
+    void finish_temporary_ascii();
     void sync_caps_lock(bool caps_lock, Context& ctx) { apply_caps_lock_overlay(caps_lock, ctx); }
 
     AsciiModeSwitchStyle get_binding(uint32_t key_code) const;
@@ -49,6 +57,8 @@ private:
     void toggle_mode(uint32_t key_code, Context& ctx);
     void set_ascii_mode_from_switch(bool mode);
     void apply_caps_lock_overlay(bool caps_lock, Context& ctx);
+    static void commit_raw_composition(Context& ctx);
+    static void commit_candidate_or_raw(Context& ctx);
 
     std::unordered_map<uint32_t, AsciiModeSwitchStyle> bindings_;
     bool ascii_mode_ = false;
