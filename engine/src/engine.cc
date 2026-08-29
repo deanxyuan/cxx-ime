@@ -69,7 +69,7 @@ static bool is_numpad_text_key(uint32_t keycode) {
 }
 
 static bool is_inline_ascii_character(char ch) {
-    static constexpr char kInlineCharacters[] = "`~@#$%^&*_+{}|/";
+    static constexpr char kInlineCharacters[] = "`~@#$%^&*_+{}|";
     return std::strchr(kInlineCharacters, ch) != nullptr;
 }
 

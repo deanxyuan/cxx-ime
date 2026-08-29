@@ -34,7 +34,9 @@ bool SymbolTable::load(const std::string& path) {
 
     try {
         const nlohmann::json root = nlohmann::json::parse(file);
-        if (!root.is_object() || root.value("version", 0) != 1 || !root.contains("categories") ||
+        if (!root.is_object() ||
+            root.value("version", 0) != 1 ||
+            !root.contains("categories") ||
             !root["categories"].is_array()) {
             return false;
         }
@@ -115,7 +117,7 @@ CandidatePage SymbolTable::translate(const std::string& code, int page_index, in
             }
             Candidate candidate;
             candidate.text = category->second.name;
-            candidate.comment = "/" + category_code;
+            candidate.comment = std::string(1, kSymbolPrefix) + category_code;
             candidate.source = CandidateSource::kSymbol;
             candidate.code = candidate.comment;
             page.candidates.push_back(std::move(candidate));
@@ -146,7 +148,7 @@ CandidatePage SymbolTable::translate(const std::string& code, int page_index, in
         Candidate candidate;
         candidate.text = category->second.candidates[index];
         candidate.source = CandidateSource::kSymbol;
-        candidate.code = "/" + code;
+        candidate.code = std::string(1, kSymbolPrefix) + code;
         page.candidates.push_back(std::move(candidate));
     }
     if (!page.candidates.empty()) {

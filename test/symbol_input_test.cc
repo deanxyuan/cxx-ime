@@ -41,7 +41,8 @@ public:
         DeleteFileA(dict_path_.c_str());
         DeleteFileA(user_path_.c_str());
 
-        if (!cxxime::Dict::create_test_dict(dict_path_, {{"a", "阿", 100}}) ||
+        if (!cxxime::Dict::create_test_dict(
+                dict_path_, {{"a", "first", 100}, {"a", "second", 90}}) ||
             !dict_.open(dict_path_, user_path_) ||
             !symbols_.load(std::string(CXXIME_DATA_DIR) + "symbols.json")) {
             return false;
@@ -80,11 +81,18 @@ private:
 
 void type_symbol_code(cxxime::Engine& engine, const char* code,
                       const cxxime::OutputOptions& options = {}) {
-    ASSERT_EQ(engine.process_key(make_key(VK_OEM_2), options), cxxime::ProcessResult::ACCEPTED);
+    ASSERT_EQ(engine.process_key(make_key(VK_OEM_5), options), cxxime::ProcessResult::ACCEPTED);
     for (const char* ch = code; *ch; ++ch) {
         ASSERT_EQ(engine.process_key(make_key(static_cast<uint32_t>(*ch - 'a' + 'A')), options),
                   cxxime::ProcessResult::ACCEPTED);
     }
+}
+
+cxxime::PunctMapping make_enumeration_punctuation() {
+    cxxime::PunctMapping punctuation;
+    punctuation.half_shape["/"] = {cxxime::PunctType::COMMIT, "\xe3\x80\x81", {}, {}};
+    punctuation.half_shape["\\"] = {cxxime::PunctType::COMMIT, "\xe3\x80\x81", {}, {}};
+    return punctuation;
 }
 
 } // namespace
@@ -102,7 +110,7 @@ TEST(SymbolInput, works_in_all_input_modes) {
         fixture.engine().clear();
         fixture.engine().switch_mode(mode);
         type_symbol_code(fixture.engine(), "bd");
-        ASSERT_EQ(fixture.engine().context().pinyin_buffer, "/bd");
+        ASSERT_EQ(fixture.engine().context().pinyin_buffer, "\\bd");
         ASSERT_EQ(fixture.engine().context().composition_kind(),
                   cxxime::CompositionKind::kSymbol);
         ASSERT_TRUE(!fixture.engine().context().candidates.candidates.empty());
@@ -118,7 +126,7 @@ TEST(SymbolInput, enter_commits_raw_trigger) {
 
     ASSERT_EQ(fixture.engine().process_key(make_key(VK_RETURN)), cxxime::ProcessResult::COMMITTED);
     const auto committed = fixture.engine().take_commit_text_with_source();
-    ASSERT_EQ(committed.first, "/");
+    ASSERT_EQ(committed.first, "\\");
     ASSERT_EQ(committed.second, cxxime::CommitSource::kRawCodePreserveCase);
 }
 
@@ -130,17 +138,17 @@ TEST(SymbolInput, bare_trigger_navigates_categories_without_committing) {
     const auto& categories = fixture.engine().context().candidates;
     ASSERT_EQ(categories.total_count, 14);
     ASSERT_EQ(categories.candidates[0].text, "标点");
-    ASSERT_EQ(categories.candidates[0].comment, "/bd");
+    ASSERT_EQ(categories.candidates[0].comment, "\\bd");
 
     ASSERT_EQ(fixture.engine().process_key(make_key('1')), cxxime::ProcessResult::ACCEPTED);
-    ASSERT_EQ(fixture.engine().context().pinyin_buffer, "/bd");
+    ASSERT_EQ(fixture.engine().context().pinyin_buffer, "\\bd");
     ASSERT_TRUE(fixture.engine().context().committed_text.empty());
     ASSERT_EQ(fixture.engine().context().candidates.candidates[0].text, "。");
 
     fixture.engine().clear();
     type_symbol_code(fixture.engine(), "");
     ASSERT_EQ(fixture.engine().process_key(make_key(VK_SPACE)), cxxime::ProcessResult::ACCEPTED);
-    ASSERT_EQ(fixture.engine().context().pinyin_buffer, "/bd");
+    ASSERT_EQ(fixture.engine().context().pinyin_buffer, "\\bd");
 }
 
 TEST(SymbolInput, shift_commits_raw_trigger_and_switches_to_english) {
@@ -152,44 +160,171 @@ TEST(SymbolInput, shift_commits_raw_trigger_and_switches_to_english) {
     ASSERT_EQ(fixture.engine().process_key(make_key(VK_LSHIFT, true)),
               cxxime::ProcessResult::COMMITTED);
     const auto committed = fixture.engine().take_commit_text_with_source();
-    ASSERT_EQ(committed.first, "/");
+    ASSERT_EQ(committed.first, "\\");
     ASSERT_TRUE(fixture.engine().ascii_composer().is_ascii_mode());
 }
 
 TEST(SymbolInput, disabled_state_passes_trigger_to_application) {
+    const uint32_t keys[] = {VK_OEM_2, VK_OEM_5};
+    for (uint32_t key : keys) {
+        SymbolEngineFixture fixture;
+        ASSERT_TRUE(fixture.initialize());
+
+        cxxime::OutputOptions options;
+        options.chinese_punct = false;
+        ASSERT_EQ(fixture.engine().process_key(make_key(key), options),
+                  cxxime::ProcessResult::REJECTED);
+        ASSERT_TRUE(!fixture.engine().context().is_composing());
+
+        options.chinese_mode = false;
+        options.chinese_punct = true;
+        ASSERT_EQ(fixture.engine().process_key(make_key(key), options),
+                  cxxime::ProcessResult::REJECTED);
+        ASSERT_TRUE(!fixture.engine().context().is_composing());
+    }
+}
+
+TEST(SymbolInput, slash_commits_enumeration_comma_while_idle) {
     SymbolEngineFixture fixture;
     ASSERT_TRUE(fixture.initialize());
-
+    const cxxime::PunctMapping punctuation = make_enumeration_punctuation();
     cxxime::OutputOptions options;
-    options.chinese_punct = false;
-    ASSERT_EQ(fixture.engine().process_key(make_key(VK_OEM_2), options),
-              cxxime::ProcessResult::REJECTED);
-    ASSERT_TRUE(!fixture.engine().context().is_composing());
+    options.punct_mapping = &punctuation;
 
-    options.chinese_mode = false;
-    options.chinese_punct = true;
     ASSERT_EQ(fixture.engine().process_key(make_key(VK_OEM_2), options),
-              cxxime::ProcessResult::REJECTED);
+              cxxime::ProcessResult::COMMITTED);
+    ASSERT_EQ(fixture.engine().take_commit_text_with_source().first, "\xe3\x80\x81");
     ASSERT_TRUE(!fixture.engine().context().is_composing());
 }
 
-TEST(SymbolInput, slash_extends_existing_ime_preedit_as_inline_ascii) {
+TEST(SymbolInput, backslash_starts_symbol_input_before_idle_punctuation) {
     SymbolEngineFixture fixture;
     ASSERT_TRUE(fixture.initialize());
+    const cxxime::PunctMapping punctuation = make_enumeration_punctuation();
+    cxxime::OutputOptions options;
+    options.punct_mapping = &punctuation;
 
-    ASSERT_EQ(fixture.engine().process_key(make_key('A')), cxxime::ProcessResult::ACCEPTED);
+    ASSERT_EQ(fixture.engine().process_key(make_key(VK_OEM_5), options),
+              cxxime::ProcessResult::ACCEPTED);
+    ASSERT_EQ(fixture.engine().context().pinyin_buffer, "\\");
+    ASSERT_EQ(fixture.engine().context().composition_kind(), cxxime::CompositionKind::kSymbol);
     ASSERT_TRUE(!fixture.engine().context().candidates.candidates.empty());
-    ASSERT_EQ(fixture.engine().process_key(make_key(VK_OEM_2)), cxxime::ProcessResult::ACCEPTED);
-    ASSERT_EQ(fixture.engine().context().pinyin_buffer, "a/");
-    ASSERT_EQ(fixture.engine().context().composition_kind(), cxxime::CompositionKind::kInlineAscii);
-    ASSERT_TRUE(fixture.engine().context().composition_origin().has_value());
-    ASSERT_EQ(fixture.engine().context().composition_origin()->code, "a");
-    ASSERT_TRUE(fixture.engine().context().committed_text.empty());
+}
 
-    ASSERT_EQ(fixture.engine().process_key(make_key(VK_RETURN)), cxxime::ProcessResult::COMMITTED);
-    const auto committed = fixture.engine().take_commit_text_with_source();
-    ASSERT_EQ(committed.first, "a/");
-    ASSERT_EQ(committed.second, cxxime::CommitSource::kRawCodePreserveCase);
+TEST(SymbolInput, slash_and_backslash_commit_ime_candidate_with_enumeration_comma) {
+    const uint32_t keys[] = {VK_OEM_2, VK_OEM_5};
+    for (uint32_t key : keys) {
+        SymbolEngineFixture fixture;
+        ASSERT_TRUE(fixture.initialize());
+
+        const cxxime::PunctMapping punctuation = make_enumeration_punctuation();
+        cxxime::OutputOptions options;
+        options.punct_mapping = &punctuation;
+
+        ASSERT_EQ(fixture.engine().process_key(make_key('A'), options),
+                  cxxime::ProcessResult::ACCEPTED);
+        ASSERT_GE(fixture.engine().context().candidates.candidates.size(), 2u);
+        fixture.engine().context().candidates.highlighted = 1;
+        const std::string expected =
+            fixture.engine().context().candidates.candidates[1].text + "\xe3\x80\x81";
+        ASSERT_EQ(fixture.engine().process_key(make_key(key), options),
+                  cxxime::ProcessResult::COMMITTED);
+        const auto committed = fixture.engine().take_commit_text_with_source();
+        ASSERT_EQ(committed.first, expected);
+        ASSERT_EQ(committed.second, cxxime::CommitSource::kCandidate);
+    }
+}
+
+TEST(SymbolInput, slash_and_backslash_extend_ime_preedit_without_candidates) {
+    const struct {
+        uint32_t key;
+        const char* expected;
+    } cases[] = {
+        {VK_OEM_2, "z/"},
+        {VK_OEM_5, "z\\"},
+    };
+    for (const auto& test_case : cases) {
+        SymbolEngineFixture fixture;
+        ASSERT_TRUE(fixture.initialize());
+        const cxxime::PunctMapping punctuation = make_enumeration_punctuation();
+        cxxime::OutputOptions options;
+        options.punct_mapping = &punctuation;
+
+        ASSERT_EQ(fixture.engine().process_key(make_key('Z'), options),
+                  cxxime::ProcessResult::ACCEPTED);
+        ASSERT_TRUE(fixture.engine().context().candidates.candidates.empty());
+        ASSERT_EQ(fixture.engine().process_key(make_key(test_case.key), options),
+                  cxxime::ProcessResult::ACCEPTED);
+        ASSERT_EQ(fixture.engine().context().pinyin_buffer, test_case.expected);
+        ASSERT_EQ(fixture.engine().context().composition_kind(),
+                  cxxime::CompositionKind::kInlineAscii);
+        ASSERT_TRUE(fixture.engine().context().committed_text.empty());
+    }
+}
+
+TEST(SymbolInput, slash_and_backslash_preserve_full_shape_composition_behavior) {
+    const struct {
+        uint32_t key;
+        const char* full_width;
+    } cases[] = {
+        {VK_OEM_2, "\xef\xbc\x8f"},
+        {VK_OEM_5, "\xef\xbc\xbc"},
+    };
+    for (const auto& test_case : cases) {
+        SymbolEngineFixture candidate_fixture;
+        ASSERT_TRUE(candidate_fixture.initialize());
+        cxxime::OutputOptions options;
+        options.full_shape = true;
+
+        ASSERT_EQ(candidate_fixture.engine().process_key(make_key('A'), options),
+                  cxxime::ProcessResult::ACCEPTED);
+        ASSERT_GE(candidate_fixture.engine().context().candidates.candidates.size(), 2u);
+        candidate_fixture.engine().context().candidates.highlighted = 1;
+        const std::string expected_candidate =
+            candidate_fixture.engine().context().candidates.candidates[1].text +
+            test_case.full_width;
+        ASSERT_EQ(candidate_fixture.engine().process_key(make_key(test_case.key), options),
+                  cxxime::ProcessResult::COMMITTED);
+        ASSERT_EQ(candidate_fixture.engine().take_commit_text_with_source().first,
+                  expected_candidate);
+
+        SymbolEngineFixture raw_fixture;
+        ASSERT_TRUE(raw_fixture.initialize());
+        ASSERT_EQ(raw_fixture.engine().process_key(make_key('Z'), options),
+                  cxxime::ProcessResult::ACCEPTED);
+        ASSERT_TRUE(raw_fixture.engine().context().candidates.candidates.empty());
+        ASSERT_EQ(raw_fixture.engine().process_key(make_key(test_case.key), options),
+                  cxxime::ProcessResult::COMMITTED);
+        ASSERT_EQ(raw_fixture.engine().take_commit_text_with_source().first,
+                  std::string("z") + test_case.full_width);
+    }
+}
+
+TEST(SymbolInput, slash_and_backslash_finish_composition_with_english_punctuation) {
+    const struct {
+        uint32_t key;
+        const char* text;
+    } cases[] = {
+        {VK_OEM_2, "/"},
+        {VK_OEM_5, "\\"},
+    };
+    for (const auto& test_case : cases) {
+        SymbolEngineFixture fixture;
+        ASSERT_TRUE(fixture.initialize());
+        cxxime::OutputOptions options;
+        options.chinese_punct = false;
+
+        ASSERT_EQ(fixture.engine().process_key(make_key('A'), options),
+                  cxxime::ProcessResult::ACCEPTED);
+        ASSERT_GE(fixture.engine().context().candidates.candidates.size(), 2u);
+        fixture.engine().context().candidates.highlighted = 1;
+        const std::string expected =
+            fixture.engine().context().candidates.candidates[1].text + test_case.text;
+        ASSERT_EQ(fixture.engine().process_key(make_key(test_case.key), options),
+                  cxxime::ProcessResult::COMMITTED);
+        ASSERT_EQ(fixture.engine().take_commit_text_with_source().first, expected);
+        ASSERT_TRUE(!fixture.engine().context().is_composing());
+    }
 }
 
 TEST(SymbolInput, rejected_printable_restores_symbol_origin_after_delete) {
@@ -200,12 +335,12 @@ TEST(SymbolInput, rejected_printable_restores_symbol_origin_after_delete) {
 
     ASSERT_EQ(fixture.engine().process_key(make_shift_key(VK_OEM_PLUS)),
               cxxime::ProcessResult::ACCEPTED);
-    ASSERT_EQ(fixture.engine().context().pinyin_buffer, "/bd+");
+    ASSERT_EQ(fixture.engine().context().pinyin_buffer, "\\bd+");
     ASSERT_EQ(fixture.engine().context().composition_kind(), cxxime::CompositionKind::kInlineAscii);
     ASSERT_TRUE(fixture.engine().context().candidates.candidates.empty());
 
     ASSERT_EQ(fixture.engine().process_key(make_key(VK_BACK)), cxxime::ProcessResult::ACCEPTED);
-    ASSERT_EQ(fixture.engine().context().pinyin_buffer, "/bd");
+    ASSERT_EQ(fixture.engine().context().pinyin_buffer, "\\bd");
     ASSERT_EQ(fixture.engine().context().composition_kind(), cxxime::CompositionKind::kSymbol);
     ASSERT_TRUE(!fixture.engine().context().candidates.candidates.empty());
 }
@@ -260,7 +395,7 @@ TEST(SymbolInput, supports_navigation_pagination_editing_and_cancel) {
     ASSERT_NE(fixture.engine().context().candidates.candidates[0].text, first);
 
     ASSERT_EQ(fixture.engine().process_key(make_key(VK_BACK)), cxxime::ProcessResult::ACCEPTED);
-    ASSERT_EQ(fixture.engine().context().pinyin_buffer, "/s");
+    ASSERT_EQ(fixture.engine().context().pinyin_buffer, "\\s");
     ASSERT_TRUE(fixture.engine().context().candidates.candidates.empty());
     ASSERT_EQ(fixture.engine().process_key(make_key(VK_ESCAPE)), cxxime::ProcessResult::ACCEPTED);
     ASSERT_TRUE(!fixture.engine().context().is_composing());
@@ -274,7 +409,7 @@ TEST(SymbolInput, ignores_wubi_auto_commit_rules) {
 
     ASSERT_EQ(fixture.engine().process_key(make_key('X')), cxxime::ProcessResult::ACCEPTED);
     ASSERT_EQ(fixture.engine().process_key(make_key('A')), cxxime::ProcessResult::ACCEPTED);
-    ASSERT_EQ(fixture.engine().context().pinyin_buffer, "/bdxa");
+    ASSERT_EQ(fixture.engine().context().pinyin_buffer, "\\bdxa");
     ASSERT_TRUE(fixture.engine().context().committed_text.empty());
 }
 
