@@ -170,15 +170,15 @@ TEST(PreeditEdit, inline_ascii_restores_origin_kind_and_cursor) {
 
     for (size_t cursor : {static_cast<size_t>(1), static_cast<size_t>(2), static_cast<size_t>(3)}) {
         cxxime::Context context;
-        ASSERT_TRUE(context.start_composition(cxxime::CompositionKind::kSymbol, "/bd", cursor));
+        ASSERT_TRUE(context.start_composition(cxxime::CompositionKind::kSymbol, "\\bd", cursor));
         ASSERT_TRUE(context.enter_inline_ascii(true));
         ASSERT_TRUE(context.insert_preedit('+'));
         ASSERT_EQ(composer.process_inline_ascii_composition(make_key(VK_BACK), context, true),
                   cxxime::InlineAsciiResult::kResumeOrigin);
         ASSERT_EQ(context.composition_kind(), cxxime::CompositionKind::kSymbol);
-        ASSERT_EQ(context.pinyin_buffer, "/bd");
+        ASSERT_EQ(context.pinyin_buffer, "\\bd");
         ASSERT_EQ(context.preedit_cursor(), cursor);
-        ASSERT_EQ(context.pinyin_buffer.front(), '/');
+        ASSERT_EQ(context.pinyin_buffer.front(), '\\');
     }
 }
 

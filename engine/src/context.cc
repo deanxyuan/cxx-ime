@@ -6,8 +6,9 @@
 
 #include <windows.h>
 
-#include <cxxime/key_event.h>
 #include <cxxime/input_limits.h>
+#include <cxxime/key_event.h>
+#include <cxxime/symbol_table.h>
 
 namespace cxxime {
 
@@ -50,7 +51,8 @@ bool Context::set_preedit(std::string text) {
 
 bool Context::start_composition(CompositionKind kind, std::string text, size_t cursor) {
     if (text.empty() || cursor > text.size() ||
-        (kind == CompositionKind::kSymbol && (text.front() != '/' || cursor == 0)) ||
+        (kind == CompositionKind::kSymbol &&
+        (text.front() != kSymbolPrefix || cursor == 0)) ||
         !set_preedit(std::move(text))) {
         return false;
     }

@@ -11,6 +11,8 @@
 
 namespace cxxime {
 
+inline constexpr char kSymbolPrefix = '\\';
+
 class SymbolTable {
 public:
     bool load(const std::string& path);

@@ -4,6 +4,8 @@
 
 #include <windows.h>
 
+#include <cxxime/symbol_table.h>
+
 namespace cxxime {
 
 bool SymbolProcessor::is_active(const Context& context) {
@@ -12,7 +14,7 @@ bool SymbolProcessor::is_active(const Context& context) {
 
 bool SymbolProcessor::is_trigger(const KeyEvent& event) {
     return !event.is_key_up &&
-           event.keycode == VK_OEM_2 &&
+           event.keycode == VK_OEM_5 &&
            !event.is_shift() &&
            !event.is_ctrl() &&
            !event.is_alt();
@@ -56,8 +58,9 @@ ProcessResult SymbolProcessor::select_candidate(Context& context, int index) {
     }
 
     const Candidate& candidate = context.candidates.candidates[index];
-    if (context.pinyin_buffer == "/" && candidate.source == CandidateSource::kSymbol &&
-        candidate.code.size() > 1 && candidate.code.front() == '/') {
+    if (context.pinyin_buffer == std::string(1, kSymbolPrefix) &&
+        candidate.source == CandidateSource::kSymbol &&
+        candidate.code.size() > 1 && candidate.code.front() == kSymbolPrefix) {
         context.set_preedit(candidate.code);
         context.candidates = {};
         context.reset_pagination();
@@ -79,7 +82,8 @@ ProcessResult SymbolProcessor::process_key(const KeyEvent& event, Context& conte
         if (!allow_trigger || !is_trigger(event) || context.is_composing()) {
             return ProcessResult::REJECTED;
         }
-        context.start_composition(CompositionKind::kSymbol, "/", 1);
+        context.start_composition(
+            CompositionKind::kSymbol, std::string(1, kSymbolPrefix), 1);
         context.candidates = {};
         context.reset_pagination();
         return ProcessResult::ACCEPTED;

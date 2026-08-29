@@ -30,7 +30,7 @@ TEST(SymbolTable, loads_categories_and_paginates) {
     ASSERT_EQ(first.total_count, 46);
     ASSERT_EQ(first.candidates.size(), 7u);
     ASSERT_EQ(first.candidates[0].text, "。");
-    ASSERT_EQ(first.candidates[0].code, "/bd");
+    ASSERT_EQ(first.candidates[0].code, "\\bd");
     ASSERT_EQ(first.candidates[0].source, cxxime::CandidateSource::kSymbol);
 
     cxxime::CandidatePage second = table.translate("bd", 1, 7);
@@ -48,16 +48,16 @@ TEST(SymbolTable, lists_category_navigation_in_source_order) {
     ASSERT_EQ(first.total_count, 14);
     ASSERT_EQ(first.candidates.size(), 7u);
     ASSERT_EQ(first.candidates[0].text, "标点");
-    ASSERT_EQ(first.candidates[0].comment, "/bd");
-    ASSERT_EQ(first.candidates[0].code, "/bd");
+    ASSERT_EQ(first.candidates[0].comment, "\\bd");
+    ASSERT_EQ(first.candidates[0].code, "\\bd");
     ASSERT_EQ(first.candidates[1].text, "数字序号");
-    ASSERT_EQ(first.candidates[1].comment, "/sz");
+    ASSERT_EQ(first.candidates[1].comment, "\\sz");
 
     cxxime::CandidatePage second = table.translate("", 1, 7);
     ASSERT_EQ(second.page_offset, 7);
     ASSERT_EQ(second.candidates.size(), 7u);
     ASSERT_EQ(second.candidates[0].text, "电脑符号");
-    ASSERT_EQ(second.candidates[0].comment, "/dn");
+    ASSERT_EQ(second.candidates[0].comment, "\\dn");
 
     cxxime::CandidatePage capped = table.translate("", 0, 10);
     ASSERT_EQ(capped.page_size, 9);
