@@ -49,6 +49,8 @@ def check_installer_flow(
         '${If} $InstallTargetPrepared == 0',
         'StrCpy $InstallBaseDir "$INSTDIR"',
         'StrCpy $InstallTargetPrepared 1',
+        'IfFileExists "$RegisteredInstallDir\\${INSTALL_MARKER}"',
+        'IfFileExists "$InstallTargetDir\\${UNINSTALL_TRANSACTION_MARKER}"',
         'StrCpy $StageDir "$InstallBaseDir\\update"',
         'StrCpy $InstallTargetDir "$InstallBaseDir\\${VERSION}.next"',
         'WriteRegStr HKLM "${UNINSTALL_KEY}" "InstallBaseLocation" "$InstallBaseDir"',
@@ -59,6 +61,8 @@ def check_installer_flow(
         'secure-install-root "$InstallBaseDir"',
         'validate-install-directory "$StageDir"',
         'Delete /REBOOTOK "$PreviousInstallDir\\cxxime_tsf_x64.dll"',
+        'RMDir /r /REBOOTOK "$PreviousInstallDir\\${UNINSTALL_ROLLBACK_DIR}"',
+        'Delete /REBOOTOK "$PreviousInstallDir\\${UNINSTALL_TRANSACTION_MARKER}"',
         'WriteINIStr "$InstallBaseDir\\${SYSTEM_IME_UPDATE_MARKER}"',
     ]
     for item in required:
@@ -219,6 +223,82 @@ def check_installer_flow(
         ],
         "Uninstall flow",
     )
+    staged_delete_start = uninstall_text.find("Call un.DeleteStagedFiles")
+    staged_delete_end = uninstall_text.find("Call un.BeginDeferredUninstall")
+    if staged_delete_start < 0 or staged_delete_end < 0:
+        errors.append("Staged uninstall deletion fallback: missing flow")
+    else:
+        staged_delete_block = uninstall_text[staged_delete_start:staged_delete_end]
+        require_order(
+            errors,
+            staged_delete_block,
+            [
+                "Call un.DeleteStagedFiles",
+                "StrCpy $UninstallDeferred 1",
+                "Goto un_deferred_schedule",
+                "un_deferred_schedule:",
+            ],
+            "Staged uninstall deletion fallback",
+        )
+        for forbidden_item in ["Call un.FailIncomplete", "Abort"]:
+            if forbidden_item in staged_delete_block:
+                errors.append(
+                    "Staged uninstall deletion fallback: forbidden "
+                    f"`{forbidden_item}`"
+                )
+    delete_staged_start = text.find("Function un.DeleteStagedFiles")
+    delete_staged_end = text.find("FunctionEnd", delete_staged_start)
+    if delete_staged_start < 0 or delete_staged_end < 0:
+        errors.append("Staged uninstall deletion retry: missing function")
+    else:
+        require_order(
+            errors,
+            text[delete_staged_start:delete_staged_end],
+            [
+                "un_delete_staged_files_retry:",
+                'RMDir /r "$UninstallRollbackDir"',
+                "IntCmp $2 10",
+                "Sleep 100",
+                "Goto un_delete_staged_files_retry",
+                "un_delete_staged_files_failed:",
+            ],
+            "Staged uninstall deletion retry",
+        )
+    cleanup_previous_start = text.find("Function CleanupPreviousInstall")
+    cleanup_previous_end = text.find("FunctionEnd", cleanup_previous_start)
+    if cleanup_previous_start < 0 or cleanup_previous_end < 0:
+        errors.append("Obsolete uninstall transaction cleanup: missing function")
+    else:
+        require_order(
+            errors,
+            text[cleanup_previous_start:cleanup_previous_end],
+            [
+                'RMDir /r /REBOOTOK "$PreviousInstallDir\\${UNINSTALL_ROLLBACK_DIR}"',
+                "IfErrors cleanup_previous_install_failed",
+                'Delete /REBOOTOK "$PreviousInstallDir\\${UNINSTALL_TRANSACTION_MARKER}"',
+                "cleanup_previous_install_failed:",
+                "Push 0",
+            ],
+            "Obsolete uninstall transaction cleanup",
+        )
+    cleanup_known_start = text.find("Function un.CleanupKnownVersion")
+    cleanup_known_end = text.find("FunctionEnd", cleanup_known_start)
+    if cleanup_known_start < 0 or cleanup_known_end < 0:
+        errors.append("Known obsolete version cleanup: missing function")
+    else:
+        require_order(
+            errors,
+            text[cleanup_known_start:cleanup_known_end],
+            [
+                'RMDir /r /REBOOTOK "$2\\${UNINSTALL_ROLLBACK_DIR}"',
+                "IfErrors un_cleanup_known_version_preserve_uninstall_markers",
+                'Delete /REBOOTOK "$2\\${UNINSTALL_TRANSACTION_MARKER}"',
+                "Goto un_cleanup_known_version_data",
+                "un_cleanup_known_version_preserve_uninstall_markers:",
+                "un_cleanup_known_version_data:",
+            ],
+            "Known obsolete version cleanup",
+        )
     require_order(
         errors,
         text,
@@ -237,10 +317,32 @@ def check_installer_flow(
             "Function RecoverInterruptedInstall",
             'IfFileExists "$INSTDIR\\${TRANSACTION_MARKER}" recover_target_transaction',
             'IfFileExists "$StageDir\\${TRANSACTION_MARKER}" recover_stage_transaction',
+            'IfFileExists "$PreviousInstallDir\\${UNINSTALL_TRANSACTION_MARKER}"',
             'IfFileExists "$PreviousInstallDir\\${INSTALL_MARKER}"',
         ],
         "Interrupted transaction recovery priority",
     )
+    validate_directory_start = text.find("Function ValidateInstallDirectory")
+    validate_directory_end = text.find("FunctionEnd", validate_directory_start)
+    if validate_directory_start < 0 or validate_directory_end < 0:
+        errors.append("Obsolete uninstall recovery target: missing validation function")
+    else:
+        require_order(
+            errors,
+            text[validate_directory_start:validate_directory_end],
+            [
+                "install_target_conflict:",
+                "StrCmp $InstallTargetDir $PreviousVersionDir",
+                'IfFileExists "$RegisteredInstallDir\\${INSTALL_MARKER}"',
+                'IfFileExists "$InstallTargetDir\\${UNINSTALL_TRANSACTION_MARKER}"',
+                "StrCpy $INSTDIR $InstallTargetDir",
+                "StrCpy $InstallTargetPrepared 1",
+                "Push 1",
+                "Return",
+                "install_target_conflict_generic:",
+            ],
+            "Obsolete uninstall recovery target",
+        )
     require_order(
         errors,
         text,

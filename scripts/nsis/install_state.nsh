@@ -229,6 +229,15 @@ Function CleanupPreviousInstall
     Delete /REBOOTOK "$PreviousInstallDir\${INSTALL_MARKER}"
     Delete /REBOOTOK "$PreviousInstallDir\${TRANSACTION_MARKER}"
     Delete /REBOOTOK "$PreviousInstallDir\${TRANSACTION_TEMP}"
+    ; A committed replacement makes the obsolete version's uninstall rollback disposable.
+    ClearErrors
+    RMDir /r /REBOOTOK "$PreviousInstallDir\${UNINSTALL_ROLLBACK_DIR}"
+    IfErrors cleanup_previous_install_failed
+    ClearErrors
+    Delete /REBOOTOK "$PreviousInstallDir\${UNINSTALL_TRANSACTION_MARKER}"
+    IfErrors cleanup_previous_install_failed
+    Delete /REBOOTOK "$PreviousInstallDir\${UNINSTALL_TRANSACTION_TEMP}"
+    Delete /REBOOTOK "$PreviousInstallDir\${UNINSTALL_DEFERRED_MARKER}"
     Delete /REBOOTOK "$PreviousInstallDir\data\default.json"
     Delete /REBOOTOK "$PreviousInstallDir\data\settings_presets.json"
     Delete /REBOOTOK "$PreviousInstallDir\data\themes.json"
@@ -250,6 +259,11 @@ Function CleanupPreviousInstall
         RMDir /REBOOTOK "$PreviousInstallDir"
     ${EndIf}
     Push 1
+    Return
+
+    cleanup_previous_install_failed:
+    StrCpy $FailureMessage "无法安排清理旧版本的卸载事务。"
+    Push 0
     Return
 
     cleanup_previous_install_invalid:

@@ -153,14 +153,26 @@ Function un.RollbackTransaction
 FunctionEnd
 
 Function un.DeleteStagedFiles
+    StrCpy $2 0
+    un_delete_staged_files_retry:
+    ClearErrors
     RMDir /r "$UninstallRollbackDir"
-    IfFileExists "$UninstallRollbackDir\*" un_delete_staged_files_failed
+    IfFileExists "$UninstallRollbackDir\*" 0 un_delete_staged_files_done
+    IntOp $2 $2 + 1
+    IntCmp $2 10 un_delete_staged_files_failed \
+        un_delete_staged_files_wait un_delete_staged_files_failed
+
+    un_delete_staged_files_wait:
+    Sleep 100
+    Goto un_delete_staged_files_retry
+
+    un_delete_staged_files_done:
     Push 1
     Return
 
     un_delete_staged_files_failed:
     StrCpy $FailureMessage \
-        "部分 CxxIME 文件无法删除。请关闭相关应用程序后重新运行卸载程序。"
+        "部分 CxxIME 文件无法立即删除，将在重新启动 Windows 后完成清理。"
     Push 0
 FunctionEnd
 
