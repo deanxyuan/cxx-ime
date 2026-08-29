@@ -1,47 +1,144 @@
-# 中英文切换机制 — AsciiComposer
+# 组合输入、内联 ASCII 与符号输入
 
-描述 CxxIME 的 AsciiComposer 模块：职责、配置、切换行为、状态同步链路。
+本文描述 CxxIME 当前的组合输入行为，是内联 ASCII、修饰键切换和符号输入的行为规范。
 
----
+## 1. 目标
 
-## 1. 职责与定位
+CxxIME 在中文模式下允许用户连续输入中文编码、英文单词、程序标识和简单公式，不要求为了短暂的中英混合内容切换到持久英文模式。例如：
 
-AsciiComposer 是 Engine 内部的一个**修饰键追踪与模式切换组件**，负责：
+- `C++`
+- `a+b`
+- `name@example`
+- 拼音或五笔编码后继续输入技术符号；
+- 编辑技术符号后恢复原来的拼音、五笔或符号候选；
+- 用 Enter 原样提交当前 preedit，并继续保持原输入模式。
 
-- 追踪 Shift / Ctrl / Alt / Win 修饰键的按下与释放状态
-- 在修饰键释放时根据配置的切换风格执行中英文模式切换
-- 处理 CapsLock 的 ASCII 覆盖（overlay）机制
-- 管理 `ascii_mode_` 和 `temporary_ascii_` 状态供 Engine 决策
+这套行为遵循以下原则：
 
-**关键设计约束：**
+1. 活动 preedit 始终由 CxxIME 完整管理，不能保留一部分 preedit、再把同一按键交给宿主应用。
+2. 中文候选、内联 ASCII 和符号输入是明确的组合状态，不通过字符串内容猜测状态。
+3. 全角模式优先于半角技术符号规则。
+4. 主键盘候选快捷键和小键盘字面输入保持区分。
+5. 三种组合状态共用 64 字节的 ASCII preedit 上限。
 
-- AsciiComposer 不消费按键事件 — `process_key()` 始终返回 `false`
-- 模式切换产生的结果通过 `Context` 传达（设置 `committed_text` 或清空 composition）
-- 真正的 ASCII 模式字符处理（字母直接上屏、空格、标点）在 `Engine::process_key()` 的 Phase 2.4–2.5 完成
+## 2. 组合状态
 
-### 在 Engine Pipeline 中的位置
+`Context::CompositionKind` 定义三种活动组合：
 
-```
-Engine::process_key()
-  ├── Phase 0: 初始化 trace
-  ├── Phase 1: 重置 scratch 缓冲区
-  ├── Phase 2: ascii_composer_.process_key()  ← 修饰键追踪 + 模式切换
-  │   └── 可能设置 context_.committed_text
-  ├── Phase 2.3: 键盘快捷键（Shift+Space 全角/半角切换, Ctrl+. 中英文标点切换）
-  ├── Phase 2.4: 未配置 CapsLock 时保持原生 OS 行为（字母翻转大小写直接上屏）
-  ├── Phase 2.5: 英文全宽数字拦截
-  ├── ASCII 模式处理：字母/空格/回车/标点直接上屏或穿透
-  ├── Phase 4: processor_->process_key()（PinyinProcessor）
-  └── Phase 5: translator_->translate()（候选查询）
-```
+| 状态 | 含义 | 是否查询词典 |
+|------|------|--------------|
+| `kIme` | 拼音、五笔或混输编码 | 是 |
+| `kInlineAscii` | 中文组合中的字面 ASCII 内容 | 否 |
+| `kSymbol` | 以 `\` 开始的符号分类或助记码 | 查询符号表 |
 
----
+preedit 为空时视为空闲状态，并将默认状态恢复为 `kIme`。`Context::clear_preedit()`、提交和取消都会清除组合来源。
 
-## 2. 配置项
+所有状态的 preedit 都只能包含 ASCII，最大长度由 `shared/include/cxxime/input_limits.h` 中的 `kMaxInputCodeLength = 64` 统一约束。达到上限后不再追加字符，也不会建立第二套截断规则。
 
-配置位于 `default.json` 的 `ascii_composer.switch_key` 节，在 `Config` 结构体中对应 `std::unordered_map<std::string, std::string> ascii_switch_key`（`config.h:55`）。
+## 3. 内联 ASCII
 
-### 默认配置
+### 3.1 进入方式
+
+以下情况会进入 `kInlineAscii`：
+
+- 中文模式空闲时输入 Shift+字母，直接开始保留大小写的英文组合；
+- 活动 IME 组合后输入明确的技术符号，例如 `+`、`~`、`^` 等；
+- 活动 IME 组合没有候选时输入可打印数字或符号；
+- SymbolProcessor 无法继续处理某个可打印字符，且该字符需要保留在当前 preedit；
+- 配置为 `inline_ascii` 的修饰键作用于活动 IME 或 Symbol 组合。
+
+从 `kIme` 或 `kSymbol` 转入时会保存原组合类型、原编码和光标位置。转换不会先提交部分内容，候选会暂时隐藏，完整 preedit 继续由 CxxIME 编辑。
+
+### 3.2 编辑与恢复
+
+内联 ASCII 支持：
+
+- `Left`、`Right`、`Home`、`End` 移动光标；
+- `Backspace`、`Delete` 删除字符；
+- 在光标位置插入可归一化的 ASCII 字符；
+- `Escape` 或 `Space` 取消组合；
+- `Enter` 原样提交完整 preedit。
+
+删除技术字符后满足恢复条件时，会退出 `kInlineAscii` 并立即重新查询候选：
+
+- IME 来源：恢复到原编码，或编辑结果重新成为非空的小写 a-z 编码；
+- Symbol 来源：必须精确恢复原符号编码，且光标不能移动到前导 `\` 之前。
+
+因此 `ni*/` 逐步删除回 `ni` 后会重新出现拼音候选；继续删除成 `n` 也会重新查询。光标移动本身不会触发恢复，必须发生实际编辑。
+
+### 3.3 提交和取消
+
+| 按键或事件 | `kInlineAscii` 行为 |
+|------------|---------------------|
+| `Enter` | 原样提交 preedit，不改变持久中英文模式 |
+| `Space` | 取消组合，不提交空格或 preedit |
+| `Escape` | 取消组合 |
+| 外部提交 | 原样提交并保留大小写 |
+| 失去焦点或清除组合 | 清除 preedit，并结束临时英文状态 |
+
+持久 ASCII 模式与内联 ASCII 是两件事。内联 ASCII 只管理当前组合；由 `inline_ascii` 修饰键临时开启的 ASCII 模式会在提交、取消、清除或焦点离开后恢复中文。普通技术符号转换不会修改持久模式。
+
+## 4. 候选状态下的数字和符号
+
+半角 IME 组合中，数字和符号按以下优先级处理：
+
+1. 未修饰的主键盘 1-9 保留选词语义。
+2. 有候选时，未修饰的主键盘 `-`、`+` 保留向前、向后翻页语义。
+3. 小键盘数字及 `+`、`-`、`*`、`/`、`.` 保留字面输入，不复用主键盘选词或翻页语义。
+4. 明确的技术符号进入内联 ASCII，不提交现有候选。
+5. 没有候选时，其余可打印数字和符号也进入内联 ASCII。
+6. 有候选且未进入内联 ASCII 时，提交当前高亮候选并追加标点；高亮无效时由现有候选选择逻辑回退。
+
+全角模式优先：活动 IME 或 Symbol 组合收到可打印字符时，提交高亮候选或原编码，再追加对应全角字符，不进入内联 ASCII。
+
+## 5. `/` 与 `\`
+
+`/` 和 `\` 同时承担中文顿号、字面字符和符号入口职责，必须根据状态确定行为。
+
+### 5.1 半角中文标点
+
+| 当前状态 | `/` | `\` |
+|----------|-----|-----|
+| 空闲 | 提交 `、` | 进入 `kSymbol` |
+| `kIme` 有候选 | 提交高亮候选并追加 `、` | 提交高亮候选并追加 `、` |
+| `kIme` 无候选 | 作为 `/` 进入内联 ASCII | 作为 `\` 进入内联 ASCII |
+| `kInlineAscii` | 插入字面 `/` | 插入字面 `\` |
+| `kSymbol` 无法继续查询且无候选 | 进入内联 ASCII | 进入内联 ASCII |
+
+`\` 只在空闲、中文模式、中文标点开启且符号表可用时启动符号输入。关闭中文模式、关闭中文标点或符号表不可用时，空闲 `\` 不启动组合。
+
+### 5.2 全角和英文标点
+
+- 全角活动组合中，`/`、`\` 提交候选或原编码，并分别追加对应全角字符（`／`、`＼`）。
+- 半角英文状态或英文标点状态空闲时，两键交给宿主应用。
+- 英文标点状态已有 IME 组合时，Engine 仍先结束该组合并追加字面 `/`、`\`，不能留下悬空 preedit。
+
+## 6. 符号输入
+
+空闲时输入 `\` 进入 `kSymbol` 并显示符号分类。可以：
+
+- 用数字、空格或鼠标进入分类；
+- 输入 `\bd`、`\sx`、`\sz` 等助记码直接查询；
+- 使用候选导航、翻页、数字选择或鼠标提交；
+- 用 Backspace 编辑编码，用 Escape 取消；
+- 用 Enter 原样提交当前符号编码。
+
+符号分类名称只用于导航，不作为正文候选提交。Symbol 状态不应应用五笔四码自动提交或第五码规则。
+
+如果符号编码后追加技术字符，组合可以转为 `kInlineAscii`。删除追加字符并精确恢复原符号编码后，符号候选和原光标位置随即恢复。
+
+## 7. 五笔第五码
+
+五笔的两项第五码规则只作用于 `kIme`：
+
+- 四码有多个五笔候选且开启“第五码首选上屏”时，第五码提交原首选，并以该字母开始下一段编码；
+- 四码无候选且开启“空码第五键重置”时，输入第五个未修饰字母会清除前四码，让第五码成为新编码的第一码。
+
+四码无候选后先输入数字或符号，会按内联 ASCII 规则保留完整 preedit；删除这些字符恢复四码后，再输入第五个字母，仍可触发空码第五键重置。`kInlineAscii` 或 `kSymbol` 内部的第五个字母不会误触发五笔规则。
+
+## 8. 修饰键配置
+
+配置位于 `ascii_composer.switch_key`。默认值为：
 
 ```json
 {
@@ -57,205 +154,48 @@ Engine::process_key()
 }
 ```
 
-### 可配置的按键
+设置窗口提供以下普通修饰键动作：
 
-| 配置键名 | 对应 Windows VK |
-|----------|-----------------|
-| `Shift_L` | `VK_LSHIFT` |
-| `Shift_R` | `VK_RSHIFT` |
-| `Shift` | `VK_SHIFT`（左右 Shift 通用回退） |
-| `Control_L` | `VK_LCONTROL` |
-| `Control_R` | `VK_RCONTROL` |
-| `Control` | `VK_CONTROL`（通用回退） |
-| `Caps_Lock` | `VK_CAPITAL` |
-| `Alt_L` | `VK_LMENU` |
-| `Alt_R` | `VK_RMENU` |
-| `Alt` | `VK_MENU` |
-| `Super_L` | `VK_LWIN` |
-| `Super_R` | `VK_RWIN` |
+| 配置值 | 行为 |
+|--------|------|
+| `inline_ascii` | 活动组合转为临时内联 ASCII；空闲时切换中英文 |
+| `code` | 提交原编码并切换中英文 |
+| `candidate` | 提交高亮候选，无有效高亮时回退首选，然后切换中英文 |
+| `clear` | 清除组合并切换中英文 |
+| `set_ascii_mode` | 单向切换到英文 |
+| `unset_ascii_mode` | 单向切换到中文 |
+| `noop` | 不处理 |
 
-### 切换风格枚举及语义
+CapsLock 支持 `code`、`candidate`、`clear`、`append`、`noop`。`append` 保留 CapsLock 大小写输入，不单独切换组合；不适用于 CapsLock 的动作会按实现降级为 `clear`。
 
-定义在 `ascii_composer.h:15-24`：
+修饰键必须单独按下并释放才执行绑定。期间出现普通按键，或同时按下多个受跟踪的修饰键，会取消本次切换。当前实现没有基于按住时长的超时规则。
 
-| 枚举值 | 配置字符串 | 行为 |
-|--------|-----------|------|
-| `NOOP` | `"noop"` | 禁用该键的切换功能 |
-| `INLINE_ASCII` | `"inline_ascii"` | 切换模式，若正在组合则设 `temporary_ascii_`，组合结束时自动恢复中文 |
-| `CODE` | `"code"` | 提交原始编码（`pinyin_buffer`）后切换模式 |
-| `CLEAR` | `"clear"` | 清除当前组合后切换模式 |
-| `SET_ASCII_MODE` | `"set_ascii_mode"` | 强制切换到英文模式（单向） |
-| `UNSET_ASCII_MODE` | `"unset_ascii_mode"` | 强制切换到中文模式（单向） |
-| `CANDIDATE` | `"candidate"` | 提交第一个候选词后切换模式 |
-| `APPEND` | `"append"` | 仅用于 CapsLock：不切换模式，字母处理延迟到 Engine Phase 2.4 |
+## 9. 快捷键与模式边界
 
-**CapsLock 特殊处理**（`ascii_composer.cc:65-71`）：若配置为 `inline_ascii` / `set_ascii_mode` / `unset_ascii_mode`，自动降级为 `clear`，因为这些风格与 CapsLock 的翻转特性不兼容。
+- Shift+Space 切换全角、半角。
+- Ctrl+. 切换中文、英文标点。
+- 其他 Ctrl、Alt 组合默认交给应用，不能修改活动 preedit。
+- 持久 ASCII 模式空闲时，字母和空格直接输出；Enter 交给应用。
 
-### TSF 通用键码回退
+即使持久 ASCII 模式已经开启，已有活动 preedit 仍优先由 Engine 完整处理。
 
-TSF 框架有时发送通用 `VK_SHIFT` 而非 `VK_LSHIFT`/`VK_RSHIFT`（类似地 `VK_CONTROL`/`VK_MENU`）。`get_binding()` 方法（`ascii_composer.cc:156-171`）在找不到精确绑定时回退到左键绑定。
+## 10. 实现位置
 
----
+| 模块 | 职责 |
+|------|------|
+| `engine/src/ascii_composer.cc` | 修饰键绑定、持久/临时 ASCII 状态、内联编辑 |
+| `engine/src/context.cc` | 组合类型、光标和 64 字节约束 |
+| `engine/src/engine.cc` | IME、内联 ASCII、标点、全角和五笔规则的路由 |
+| `engine/src/symbol_processor.cc` | `\` 入口、符号查询与导航和提交 |
+| `engine/src/symbol_table.cc` | 符号分类和助记码 |
+| `data/punctuation.json` | `/`、`\` 等中文标点映射 |
+| `settings/editor_shortcuts_panel.cc` | 修饰键动作配置界面 |
 
-## 3. 关键行为
+主要回归测试位于：
 
-### 3.1 修饰键追踪与切换
-
-`process_key()` 核心逻辑（`ascii_composer.cc:77-154`）：
-
-```
-process_key(key_code, is_key_up, ctx, caps_lock):
-    1. 多修饰键同时按下 → 重置所有追踪位，不切换
-    2. CapsLock → apply_caps_lock_overlay()
-    3. Shift/Ctrl/Alt/Win 按下 → 设置对应追踪位
-    4. Shift/Ctrl/Alt/Win 释放 → 调用 toggle_mode()
-    5. 非修饰键 → 取消待切换状态（清除所有追踪位）
-    6. 始终返回 false
-```
-
-切换无超时限制：`toggle_mode()` 在修饰键释放时无条件调用（按下期间未夹杂其他按键即触发）。
-
-### 3.2 切换执行
-
-`toggle_mode()`（`ascii_composer.cc:173-235`）根据风格执行操作：
-
-- **CODE**: 正在组合时，`committed_text = pinyin_buffer`，然后切换模式
-- **CANDIDATE**: 正在组合时，`committed_text = candidates[0].text`，清空 buffer，然后切换
-- **CLEAR**: 正在组合时 `ctx.reset()`，然后切换模式
-- **INLINE_ASCII**: 切换模式，若正在组合则设 `temporary_ascii_ = true`
-- **SET_ASCII_MODE / UNSET_ASCII_MODE**: 单向切换，不依赖当前模式
-
-`set_ascii_mode_from_switch()`（`ascii_composer.cc:237-241`）设置新模式并清理临时状态：
-```cpp
-void AsciiComposer::set_ascii_mode_from_switch(bool mode) {
-    ascii_mode_ = mode;
-    temporary_ascii_ = false;
-    caps_lock_overlay_active_ = false;
-}
-```
-
-### 3.3 临时英文态（INLINE_ASCII）
-
-INLINE_ASCII 风格的切换会设置 `temporary_ascii_`，Engine 在以下条件自动恢复中文模式：
-
-- 字母键上屏后：`ascii_composer_.set_ascii_mode(false)`（`engine.cc:217`）
-- 组合结束时（`COMMITTED + is_temporary_ascii()`）：同上（`engine.cc:309-311`）
-
-### 3.4 CapsLock Overlay
-
-`apply_caps_lock_overlay()`（`ascii_composer.cc:243-299`）：
-
-```
-CapsLock 灯亮 → 进入 overlay：
-  1. 记录当前 ascii_mode 到 ascii_mode_before_caps_lock_
-  2. 设置 caps_lock_overlay_active_ = true
-  3. 强制 ascii_mode_ = true
-  4. 根据 CapsLock 配置风格执行动作（CODE/CLEAR/CANDIDATE/APPEND）
-
-CapsLock 灯灭 → 退出 overlay：
-  1. 恢复 ascii_mode_ = ascii_mode_before_caps_lock_
-  2. 清除 caps_lock_overlay_active_ 和 temporary_ascii_
-```
-
-CapsLock overlay 激活时，修饰键切换被抑制（`ascii_composer.cc:118-124`），防止 CapsLock 英文态下误切模式。
-
-### 3.5 成员变量
-
-定义在 `ascii_composer.h:50-58`：
-
-| 成员 | 类型 | 初始值 | 用途 |
-|------|------|--------|------|
-| `bindings_` | `unordered_map<uint32_t, AsciiModeSwitchStyle>` | 空 | 按键→切换风格映射 |
-| `ascii_mode_` | `bool` | `false` | 当前是否英文模式 |
-| `temporary_ascii_` | `bool` | `false` | 临时英文态（INLINE_ASCII） |
-| `caps_lock_overlay_active_` | `bool` | `false` | CapsLock overlay 激活中 |
-| `ascii_mode_before_caps_lock_` | `bool` | `false` | CapsLock 前的模式（用于恢复） |
-| `shift_pressed_` | `bool` | `false` | 左/右 Shift 按下 |
-| `ctrl_pressed_` | `bool` | `false` | 左/右 Ctrl 按下 |
-| `alt_pressed_` | `bool` | `false` | 左/右 Alt 按下 |
-| `win_pressed_` | `bool` | `false` | Win 键按下 |
-
----
-
-## 4. 与 TSF / Server 的状态同步链路
-
-### 4.1 数据流向
-
-```
-TSF 按键 → IPC → ServerApp::handle_request()
-  → SessionManager::process_key()
-    → align_session_to_global()      // 全局可见状态 → Engine
-    → engine.process_key()
-      → ascii_composer_.process_key()
-        → 可能修改 context + ascii_mode_
-    → 读取 engine.ascii_composer().is_ascii_mode()
-    → 更新 GlobalVisibleState.base_chinese_mode
-  → 构造 ProcessKeyResult
-    → ime_status 含 chinese_mode/caps_lock/full_shape/...
-  → IPCResponse
-    → ascii_mode = !ime_status.chinese_mode
-    → ime_status 完整字段
-  → TSF 更新语言栏图标 + 状态窗口
-```
-
-### 4.2 GlobalVisibleState 与 align_session_to_global
-
-`SessionManager::GlobalVisibleState`（`session_manager.h:126-129`）包含：
-
-```cpp
-struct GlobalVisibleState {
-    cxxime::ImeStatus status;          // chinese_mode, caps_lock, full_shape, chinese_punct, input_mode, revision
-    bool base_chinese_mode = true;     // CapsLock overlay 下的"真实"模式
-};
-```
-
-`align_session_to_global()`（`session_manager.cc:315-330`）在每次处理按键前同步 session：
-
-1. 根据 `base_chinese_mode` 设置 engine 的 ascii_mode（`set_ascii_mode(!base_chinese_mode)`）
-2. 根据 `status.caps_lock` 调用 `sync_caps_lock()` 应用或解除 overlay
-3. 同步 `input_mode`（输入模式切换）
-4. 处理模式切换后的状态修复（当 engine 不支持某模式时回退）
-
-### 4.3 commit_global_state 的 CapsLock 合成
-
-`commit_global_state()`（`session_manager.cc:302-313`）在发布状态时考虑 CapsLock：
-
-```cpp
-next.status.chinese_mode = next.status.caps_lock ? false : next.base_chinese_mode;
-```
-
-即：CapsLock 灯亮时 `chinese_mode` 强制为 `false`，灯灭时等于 `base_chinese_mode`。
-
-### 4.4 ServerApp 的 ascii_mode 输出
-
-`server_app.cc:155`：
-```cpp
-response.ascii_mode = !r.ime_status.chinese_mode;
-```
-
-`ascii_mode` 从 `ImeStatus.chinese_mode` 取反得到。IPCResponse 同时包含 `ime_status` 完整字段（`ipc_protocol.h:96`）。
-
-### 4.5 Ctrl+Space 保留键
-
-Ctrl+Space 仍通过 TSF Preserved Key 机制注册（`text_service.cpp:943`），触发 `SessionManager::toggle_chinese()` 而非走 AsciiComposer 流程。
-
-### 4.6 TSF 侧状态同步
-
-TSF 的 `_chinese_mode` 在 `_sync_ime_status()` 中从 `ImeStatus.chinese_mode` 更新，不再独立管理模式切换逻辑。
-
----
-
-## 5. 测试覆盖
-
-AsciiComposer 无独立测试文件，但 `engine_test.cc` 内置 **AsciiComposer 套件**，覆盖 Shift / Alt / Super / CapsLock 的切换与 overlay 行为（如 `shift_l_code_toggles_and_commits`、`capslock_clear_resets_pinyin`、`shift_held_capslock_no_double_toggle` 等）。
-
-CapsLock overlay 的跨 session 行为通过集成测试 `session_manager_status_test.cc` 覆盖，包括：
-
-- `sync_caps_lock_sets_current_state` — CapsLock 状态同步
-- `sync_caps_lock_enables_ascii_overlay` — CapsLock 激活后字母直接上屏
-- `first_key_with_caps_lock_on_enables_ascii_overlay` — 首次按键时 CapsLock 已开
-- `caps_lock_key_off_restores_chinese_overlay` — CapsLock 关灯恢复中文
-- `caps_lock_key_up_does_not_override_key_down_state` — key-up 不覆盖 key-down 状态
-- `caps_lock_overlay_restores_each_session_base_mode` — 跨 session 的 CapsLock 同步
-
-普通 Shift/Ctrl 切换行为通过 `session_manager_integration_test.cc` 覆盖（组合中的键处理结果验证）。
+- `test/engine_test.cc`：修饰键动作和 CapsLock；
+- `test/temporary_ascii_test.cc`：内联 ASCII 进入、提交、取消和全角边界；
+- `test/preedit_edit_test.cc`：光标编辑与来源恢复；
+- `test/symbol_input_test.cc`：符号入口以及 `/`、`\` 行为矩阵；
+- `test/wubi_engine_test.cc`：五笔第五码与内联 ASCII 交互；
+- `test/session_manager_integration_test.cc`：Server 会话状态和临时模式恢复。
