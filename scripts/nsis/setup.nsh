@@ -409,7 +409,16 @@ Function ValidateInstallDirectory
     StrCpy $InstallTargetPrepared 1
     Return
     install_target_conflict:
-    StrCmp $InstallTargetDir $PreviousVersionDir install_target_pending_cleanup
+    StrCmp $InstallTargetDir $PreviousVersionDir 0 install_target_conflict_generic
+    ; A committed active install can safely finalize an obsolete directory's uninstall state.
+    IfFileExists "$RegisteredInstallDir\${INSTALL_MARKER}" 0 install_target_pending_cleanup
+    IfFileExists "$InstallTargetDir\${UNINSTALL_TRANSACTION_MARKER}" 0 \
+        install_target_pending_cleanup
+    StrCpy $INSTDIR $InstallTargetDir
+    StrCpy $InstallTargetPrepared 1
+    Push 1
+    Return
+    install_target_conflict_generic:
     StrCpy $FailureMessage "目标版本目录已存在。请先完成或清理上一次未完成的安装。"
     Goto install_target_conflict_show
     install_target_pending_cleanup:
