@@ -534,7 +534,9 @@ Section "Uninstall"
     Call un.DeleteStagedFiles
     Pop $0
     StrCmp $0 "1" un_remove_registry
-        Call un.FailIncomplete
+        DetailPrint "$FailureMessage"
+        StrCpy $UninstallDeferred 1
+        Goto un_deferred_schedule
 
     un_deferred_prepare:
     Call un.PrepareTransaction
