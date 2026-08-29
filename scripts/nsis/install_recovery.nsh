@@ -336,6 +336,9 @@ Function RecoverInterruptedInstall
 
     recover_check_registered_install:
     ${If} $MultiVersionInstall == 1
+        ; An interrupted uninstall still belongs to the registered installation, not .next.
+        IfFileExists "$PreviousInstallDir\${UNINSTALL_TRANSACTION_MARKER}" \
+            recover_uninstall_transaction_pending
         IfFileExists "$PreviousInstallDir\${INSTALL_MARKER}" \
             recover_registered_install_complete recover_registered_transaction
         recover_registered_install_complete:
@@ -357,7 +360,9 @@ Function RecoverInterruptedInstall
     ${EndIf}
 
     recover_check_uninstall_transaction:
-    IfFileExists "$INSTDIR\${UNINSTALL_TRANSACTION_MARKER}" 0 recover_check_committed_install
+    IfFileExists "$INSTDIR\${UNINSTALL_TRANSACTION_MARKER}" \
+        recover_uninstall_transaction_pending recover_check_committed_install
+    recover_uninstall_transaction_pending:
         StrCpy $FailureMessage \
             "上一次 CxxIME 卸载尚未完成。请先重新运行已安装的卸载程序。"
         Push 0

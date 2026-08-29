@@ -153,6 +153,16 @@ Function un.CleanupKnownVersion
     Delete /REBOOTOK "$2\${INSTALL_MARKER}"
     Delete /REBOOTOK "$2\${TRANSACTION_MARKER}"
     Delete /REBOOTOK "$2\${TRANSACTION_TEMP}"
+    ClearErrors
+    RMDir /r /REBOOTOK "$2\${UNINSTALL_ROLLBACK_DIR}"
+    IfErrors un_cleanup_known_version_preserve_uninstall_markers
+    Delete /REBOOTOK "$2\${UNINSTALL_TRANSACTION_MARKER}"
+    Delete /REBOOTOK "$2\${UNINSTALL_TRANSACTION_TEMP}"
+    Delete /REBOOTOK "$2\${UNINSTALL_DEFERRED_MARKER}"
+    Goto un_cleanup_known_version_data
+    un_cleanup_known_version_preserve_uninstall_markers:
+    DetailPrint "无法安排清理旧版本的卸载回滚目录，已保留事务标记。"
+    un_cleanup_known_version_data:
     Delete /REBOOTOK "$2\data\default.json"
     Delete /REBOOTOK "$2\data\settings_presets.json"
     Delete /REBOOTOK "$2\data\themes.json"
