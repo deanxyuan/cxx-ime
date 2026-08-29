@@ -5,6 +5,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -18,6 +19,18 @@ namespace cxxime {
 
 struct KeyEvent;
 
+enum class CompositionKind {
+    kIme,
+    kInlineAscii,
+    kSymbol,
+};
+
+struct CompositionOrigin {
+    CompositionKind kind = CompositionKind::kIme;
+    std::string code;
+    size_t cursor = 0;
+};
+
 class Context {
 public:
     std::string pinyin_buffer;
@@ -26,9 +39,6 @@ public:
     int page_index = 0;
     int page_offset = 0;
     int visible_candidate_count = 0;
-    // Shift+letter temporary English composition inside Chinese mode.
-    bool temporary_ascii_composition = false;
-
     // CapsLock mode (set by Engine before calling processor)
     AsciiModeSwitchStyle caps_lock_style{};
 
@@ -36,6 +46,9 @@ public:
     size_t preedit_cursor() const;
     uint64_t preedit_revision() const { return preedit_revision_; }
     bool set_preedit(std::string text);
+    bool start_composition(CompositionKind kind, std::string text, size_t cursor);
+    bool enter_inline_ascii(bool preserve_origin);
+    bool restore_composition_origin();
     void clear_preedit();
     bool insert_preedit(char ch);
     bool erase_preedit_before_cursor();
@@ -58,6 +71,11 @@ public:
     void move_to_next_candidate();
     void move_to_previous_candidate();
     int selectable_candidate_count() const;
+
+    CompositionKind composition_kind() const { return composition_kind_; }
+    const std::optional<CompositionOrigin>& composition_origin() const {
+        return composition_origin_;
+    }
 
     void set_commit_source(CommitSource s) { commit_source_ = s; }
     CommitSource commit_source() const { return commit_source_; }
@@ -84,6 +102,8 @@ private:
     Candidate committed_candidate_;
     std::string committed_candidate_code_;
     bool has_committed_candidate_ = false;
+    CompositionKind composition_kind_ = CompositionKind::kIme;
+    std::optional<CompositionOrigin> composition_origin_;
 };
 
 } // namespace cxxime

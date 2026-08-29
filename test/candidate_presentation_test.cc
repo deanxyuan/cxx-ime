@@ -281,6 +281,20 @@ TEST(CandidatePresentation, popup_preedit_is_presentable_without_candidates) {
     ASSERT_TRUE(presentation.external_window_expected());
 }
 
+TEST(CandidatePresentation, candidate_to_popup_preedit_transition_keeps_presentation) {
+    cxxime_tsf::CandidatePresentation presentation;
+    presentation.update_content(page_with_candidate("stale"), "old", 3, 1, 1);
+    presentation.set_ownership(cxxime_tsf::CandidateOwnership::kExternal);
+
+    presentation.update_content(cxxime::CandidatePage(), "raw", 3, 0, 0);
+
+    ASSERT_EQ(presentation.content_state(), cxxime_tsf::CandidateContentState::kPreeditOnly);
+    ASSERT_TRUE(presentation.page().candidates.empty());
+    ASSERT_EQ(presentation.popup_preedit(), "raw");
+    ASSERT_EQ(presentation.popup_preedit_cursor(), static_cast<std::size_t>(3));
+    ASSERT_TRUE(presentation.external_window_expected());
+}
+
 TEST(CandidatePresentation, finish_clears_all_presentation_state) {
     cxxime_tsf::CandidatePresentation presentation;
     presentation.update_content(page_with_candidate("candidate"), "preedit", 2, 2, 4);

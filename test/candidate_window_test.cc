@@ -116,6 +116,34 @@ TEST(CandidateWindow, recreate_resets_native_window_size_cache) {
     window.destroy();
 }
 
+TEST(CandidateWindow, candidate_to_preedit_only_clears_candidate_layout) {
+    cxxime::Config config;
+    config.render_backend = "d2d";
+
+    cxxime::CandidatePage page;
+    cxxime::Candidate candidate;
+    candidate.text = "candidate";
+    page.candidates.push_back(candidate);
+
+    cxxime::CandidateWindow window;
+    ASSERT_TRUE(window.create(nullptr, config));
+    window.set_preedit("hs");
+    window.update(page);
+    window.show();
+    ASSERT_TRUE(window.visible_candidate_count() > 0);
+
+    window.set_preedit("hsq");
+    window.update({});
+    window.show();
+
+    ASSERT_TRUE(window.is_visible());
+    ASSERT_EQ(window.visible_candidate_count(), 0);
+    const RECT stale_candidate = window.candidate_rect_for_test(0);
+    ASSERT_EQ(stale_candidate.right - stale_candidate.left, 0);
+    ASSERT_EQ(stale_candidate.bottom - stale_candidate.top, 0);
+    window.destroy();
+}
+
 TEST(CandidateWindow, dpi_relayout_notifies_controller) {
     cxxime::Config config;
     config.render_backend = "gdi";

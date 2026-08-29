@@ -3,15 +3,19 @@
 // Engine commit source tests: verify CommitSource is set correctly
 // for different input paths (ASCII, intercept_key, pinyin, Enter).
 
-#include "util/testutil.h"
-#include <cxxime/engine.h>
+#include <string>
+
+#include <windows.h>
+
 #include <cxxime/context.h>
-#include <cxxime/output_options.h>
+#include <cxxime/dict.h>
+#include <cxxime/engine.h>
 #include <cxxime/key_event.h>
+#include <cxxime/output_options.h>
 #include <cxxime/processor.h>
 #include <cxxime/punct_types.h>
-#include <cxxime/dict.h>
-#include <windows.h>
+
+#include "util/testutil.h"
 
 // ============================================================
 // Punctuation test helpers
@@ -119,24 +123,22 @@ TEST(EngineSource, default_commit_source_is_kRawCode) {
 }
 
 // ============================================================
-// PinyinProcessor commit source tests (no dictionary needed)
+// Processor and Engine commit source tests (no dictionary needed)
 // ============================================================
 
-TEST(EngineSource, pinyin_processor_enter_commits_raw) {
-    // Enter with pinyin buffer but no candidates → committed_text = pinyin_buffer
-    cxxime::Context ctx;
-    ctx.pinyin_buffer = "zzz";  // invalid pinyin, no candidates
+TEST(EngineSource, engine_enter_commits_raw_with_preserved_case) {
+    cxxime::Engine engine;
+    ASSERT_TRUE(engine.context().start_composition(cxxime::CompositionKind::kIme, "ZzZ", 3));
 
     cxxime::KeyEvent event;
     event.keycode = 0x0D;  // VK_RETURN
     event.is_key_up = false;
 
-    cxxime::PinyinProcessor processor;
-    auto result = processor.process_key(event, ctx);
+    auto result = engine.process_key(event);
     ASSERT_EQ(result, cxxime::ProcessResult::COMMITTED);
-    ASSERT_EQ(ctx.committed_text, "zzz");
-    // Note: commit_source is set by Engine, not PinyinProcessor.
-    // PinyinProcessor only sets committed_text.
+    auto committed = engine.take_commit_text_with_source();
+    ASSERT_EQ(committed.first, "ZzZ");
+    ASSERT_EQ(committed.second, cxxime::CommitSource::kRawCodePreserveCase);
 }
 
 TEST(EngineSource, pinyin_processor_space_selects_candidate) {
@@ -224,7 +226,7 @@ TEST(EngineSource, punctuation_chinese_period) {
     ASSERT_EQ(result, cxxime::ProcessResult::COMMITTED);
     auto [text, source] = engine.take_commit_text_with_source();
     ASSERT_EQ(text, "\xe3\x80\x82");  // 。
-    ASSERT_EQ(source, cxxime::CommitSource::kCandidate);
+    ASSERT_EQ(source, cxxime::CommitSource::kRawCodePretransformed);
 
     engine.finalize();
     DeleteFileA(dp.c_str());
@@ -255,6 +257,34 @@ TEST(EngineSource, punctuation_with_composing) {
     ASSERT_TRUE(!text.empty());
     ASSERT_EQ(source, cxxime::CommitSource::kCandidate);
     ASSERT_EQ(engine.context().pinyin_buffer, "");
+
+    engine.finalize();
+    DeleteFileA(dp.c_str());
+}
+
+TEST(EngineSource, punctuation_falls_back_to_first_candidate_when_highlight_is_invalid) {
+    auto pm = make_test_punct_mapping();
+    std::string dp = punct_tmp("es_punct_invalid_highlight.bin");
+    cxxime::Dict::create_test_dict(dp, {{"ni", "first", 100}});
+    cxxime::Engine engine;
+    ASSERT_TRUE(engine.initialize(dp));
+    engine.set_trace_enabled(false);
+
+    cxxime::OutputOptions opts;
+    opts.chinese_mode = true;
+    opts.chinese_punct = true;
+    opts.punct_mapping = &pm;
+
+    engine.process_key(make_punct_key('N'), opts);
+    engine.process_key(make_punct_key('I'), opts);
+    ASSERT_TRUE(!engine.context().candidates.candidates.empty());
+    engine.context().candidates.highlighted = -1;
+
+    ASSERT_EQ(engine.process_key(make_punct_key(VK_OEM_PERIOD), opts),
+              cxxime::ProcessResult::COMMITTED);
+    const auto committed = engine.take_commit_text_with_source();
+    ASSERT_EQ(committed.first, "first\xe3\x80\x82");
+    ASSERT_EQ(committed.second, cxxime::CommitSource::kCandidate);
 
     engine.finalize();
     DeleteFileA(dp.c_str());

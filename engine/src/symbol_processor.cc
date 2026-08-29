@@ -7,7 +7,7 @@
 namespace cxxime {
 
 bool SymbolProcessor::is_active(const Context& context) {
-    return !context.pinyin_buffer.empty() && context.pinyin_buffer.front() == '/';
+    return context.composition_kind() == CompositionKind::kSymbol;
 }
 
 bool SymbolProcessor::is_trigger(const KeyEvent& event) {
@@ -79,7 +79,7 @@ ProcessResult SymbolProcessor::process_key(const KeyEvent& event, Context& conte
         if (!allow_trigger || !is_trigger(event) || context.is_composing()) {
             return ProcessResult::REJECTED;
         }
-        context.set_preedit("/");
+        context.start_composition(CompositionKind::kSymbol, "/", 1);
         context.candidates = {};
         context.reset_pagination();
         return ProcessResult::ACCEPTED;
@@ -114,16 +114,8 @@ ProcessResult SymbolProcessor::process_key(const KeyEvent& event, Context& conte
         return ProcessResult::ACCEPTED;
     }
 
-    if (event.keycode == VK_RETURN) {
-        context.committed_text = context.pinyin_buffer;
-        context.set_commit_source(CommitSource::kRawCodePreserveCase);
-        context.clear_preedit();
-        context.candidates = {};
-        context.reset_pagination();
-        return ProcessResult::COMMITTED;
-    }
-
-    if (event.keycode >= '1' && event.keycode <= '9') {
+    if (event.keycode >= '1' && event.keycode <= '9' && !event.is_shift() &&
+        !event.is_ctrl() && !event.is_alt()) {
         if (!context.candidates.candidates.empty()) {
             const int index = static_cast<int>(event.keycode - '1');
             return select_candidate(context, index);
@@ -132,8 +124,10 @@ ProcessResult SymbolProcessor::process_key(const KeyEvent& event, Context& conte
         return ProcessResult::ACCEPTED;
     }
 
-    const bool shortcut_page_up = event.keycode == VK_OEM_MINUS && !event.is_shift();
-    const bool shortcut_page_down = event.keycode == VK_OEM_PLUS && !event.is_shift();
+    const bool shortcut_page_up = event.keycode == VK_OEM_MINUS && !event.is_shift() &&
+                                  !event.is_ctrl() && !event.is_alt();
+    const bool shortcut_page_down = event.keycode == VK_OEM_PLUS && !event.is_shift() &&
+                                    !event.is_ctrl() && !event.is_alt();
     if (event.keycode == VK_PRIOR || event.keycode == VK_NEXT || shortcut_page_up ||
         shortcut_page_down) {
         if (!context.candidates.candidates.empty()) {
@@ -142,8 +136,9 @@ ProcessResult SymbolProcessor::process_key(const KeyEvent& event, Context& conte
             } else {
                 context.move_to_previous_page();
             }
+            return ProcessResult::ACCEPTED;
         }
-        return ProcessResult::ACCEPTED;
+        return ProcessResult::REJECTED;
     }
 
     if (event.keycode >= 'A' && event.keycode <= 'Z') {

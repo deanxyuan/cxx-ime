@@ -399,7 +399,10 @@ void SessionManager::align_session_to_global(SessionEntry& entry) {
     if (entry.ime_status.input_mode != state.input_mode) {
         entry.engine->switch_mode(state.input_mode);
     }
-    entry.engine->ascii_composer().set_ascii_mode(!entry.base_chinese_mode);
+    auto& ascii_composer = entry.engine->ascii_composer();
+    if (!ascii_composer.is_temporary_ascii() || !entry.base_chinese_mode) {
+        ascii_composer.set_ascii_mode(!entry.base_chinese_mode);
+    }
     entry.engine->ascii_composer().sync_caps_lock(state.caps_lock,
                                                   entry.engine->context());
     entry.ime_status.set_chinese_mode(state.caps_lock ? false : entry.base_chinese_mode);
@@ -1096,6 +1099,7 @@ ProcessKeyResult SessionManager::process_key(uint32_t id, const cxxime::KeyEvent
     auto result = engine.process_key(event, opts, static_cast<int>(visible_candidate_count));
 
     // 5. Publish shared mode changes and retain this session's base language mode.
+    const bool temporary_ascii = engine.ascii_composer().is_temporary_ascii();
     bool new_ascii = engine.ascii_composer().is_ascii_mode();
     GlobalVisibleState state = snapshot_global_state();
     bool shared_state_changed = false;
@@ -1103,7 +1107,7 @@ ProcessKeyResult SessionManager::process_key(uint32_t id, const cxxime::KeyEvent
         state.caps_lock = event.is_caps_lock();
         shared_state_changed = true;
     }
-    if (!state.caps_lock) {
+    if (!state.caps_lock && !temporary_ascii) {
         s.base_chinese_mode = !new_ascii;
     }
 
@@ -1146,10 +1150,7 @@ ProcessKeyResult SessionManager::process_key(uint32_t id, const cxxime::KeyEvent
         ret.composing = engine.context().is_composing();
     } else if (result == cxxime::ProcessResult::TOGGLE_PUNCT
             || result == cxxime::ProcessResult::TOGGLE_SHAPE) {
-        // Toggle results should not carry stale preedit. Clear the composition
-        // so the TSF client ends the inline display cleanly.
-        engine.clear_composition();
-        ret.composing = false;
+        ret.composing = engine.context().is_composing();
     } else if (result == cxxime::ProcessResult::SWITCH_INPUT_MODE) {
         ret.composing = false;
     } else {

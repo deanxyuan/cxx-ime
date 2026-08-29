@@ -11,6 +11,15 @@
 
 namespace cxxime {
 
+namespace {
+
+bool is_resumable_ime_code(const std::string& text) {
+    return !text.empty() &&
+           std::all_of(text.begin(), text.end(), [](char ch) { return ch >= 'a' && ch <= 'z'; });
+}
+
+} // namespace
+
 bool Context::is_composing() const {
     return !pinyin_buffer.empty();
 }
@@ -32,6 +41,62 @@ bool Context::set_preedit(std::string text) {
         ++preedit_revision_;
     }
     preedit_cursor_from_end_ = 0;
+    if (pinyin_buffer.empty()) {
+        composition_kind_ = CompositionKind::kIme;
+        composition_origin_.reset();
+    }
+    return true;
+}
+
+bool Context::start_composition(CompositionKind kind, std::string text, size_t cursor) {
+    if (text.empty() || cursor > text.size() ||
+        (kind == CompositionKind::kSymbol && (text.front() != '/' || cursor == 0)) ||
+        !set_preedit(std::move(text))) {
+        return false;
+    }
+    composition_kind_ = kind;
+    composition_origin_.reset();
+    preedit_cursor_from_end_ = pinyin_buffer.size() - cursor;
+    commit_source_ = kind == CompositionKind::kInlineAscii ? CommitSource::kRawCodePreserveCase
+                                                           : CommitSource::kRawCode;
+    return true;
+}
+
+bool Context::enter_inline_ascii(bool preserve_origin) {
+    if (!is_composing() || composition_kind_ == CompositionKind::kInlineAscii) {
+        return false;
+    }
+    if (preserve_origin) {
+        composition_origin_ = CompositionOrigin{composition_kind_, pinyin_buffer, preedit_cursor()};
+    } else {
+        composition_origin_.reset();
+    }
+    composition_kind_ = CompositionKind::kInlineAscii;
+    commit_source_ = CommitSource::kRawCodePreserveCase;
+    return true;
+}
+
+bool Context::restore_composition_origin() {
+    if (composition_kind_ != CompositionKind::kInlineAscii || !composition_origin_) {
+        return false;
+    }
+    const CompositionOrigin origin = *composition_origin_;
+    const bool original_code_restored = pinyin_buffer == origin.code;
+    if (!original_code_restored &&
+        (origin.kind != CompositionKind::kIme || !is_resumable_ime_code(pinyin_buffer))) {
+        return false;
+    }
+    const size_t edited_cursor = preedit_cursor();
+    composition_kind_ = origin.kind;
+    composition_origin_.reset();
+    size_t cursor = original_code_restored
+                        ? (std::min)(origin.cursor, pinyin_buffer.size())
+                        : edited_cursor;
+    if (composition_kind_ == CompositionKind::kSymbol) {
+        cursor = (std::max)(static_cast<size_t>(1), cursor);
+    }
+    preedit_cursor_from_end_ = pinyin_buffer.size() - cursor;
+    commit_source_ = CommitSource::kRawCode;
     return true;
 }
 
@@ -41,6 +106,8 @@ void Context::clear_preedit() {
         ++preedit_revision_;
     }
     preedit_cursor_from_end_ = 0;
+    composition_kind_ = CompositionKind::kIme;
+    composition_origin_.reset();
 }
 
 bool Context::insert_preedit(char ch) {
@@ -136,6 +203,7 @@ bool Context::edit_preedit(const KeyEvent& event) {
 
     if (pinyin_buffer.empty()) {
         candidates = {};
+        clear_preedit();
     }
     return true;
 }
@@ -145,7 +213,6 @@ void Context::reset() {
     committed_text.clear();
     candidates = {};
     reset_pagination();
-    temporary_ascii_composition = false;
     commit_source_ = CommitSource::kRawCode;
     clear_commit_evidence();
 }
@@ -191,7 +258,6 @@ std::string Context::commit() {
     committed_text.clear();
     candidates = {};
     reset_pagination();
-    temporary_ascii_composition = false;
     commit_source_ = CommitSource::kRawCode;
     clear_commit_evidence();
     return text;
@@ -209,7 +275,7 @@ std::pair<std::string, CommitSource> Context::commit_with_source() {
         source = CommitSource::kCandidate;
     } else if (!pinyin_buffer.empty()) {
         text = pinyin_buffer;
-        source = temporary_ascii_composition
+        source = composition_kind_ == CompositionKind::kInlineAscii
             ? CommitSource::kRawCodePreserveCase
             : CommitSource::kRawCode;
     }
@@ -217,7 +283,6 @@ std::pair<std::string, CommitSource> Context::commit_with_source() {
     committed_text.clear();
     candidates = {};
     reset_pagination();
-    temporary_ascii_composition = false;
     commit_source_ = CommitSource::kRawCode;
     clear_commit_evidence();
     return {std::move(text), source};
