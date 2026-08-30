@@ -380,6 +380,72 @@ TEST(EngineSource, full_shape_period) {
     DeleteFileA(dp.c_str());
 }
 
+TEST(EngineSource, numpad_text_stays_ascii_in_full_shape_chinese_mode) {
+    auto pm = make_test_punct_mapping();
+    std::string dp = punct_tmp("es_numpad_ascii.bin");
+    cxxime::Dict::create_test_dict(dp, {{"ni", "你", 100}});
+    cxxime::Engine engine;
+    ASSERT_TRUE(engine.initialize(dp));
+    engine.set_trace_enabled(false);
+
+    cxxime::OutputOptions opts;
+    opts.chinese_mode = true;
+    opts.chinese_punct = true;
+    opts.full_shape = true;
+    opts.punct_mapping = &pm;
+
+    const struct {
+        uint32_t key;
+        const char* expected;
+    } cases[] = {
+        {VK_NUMPAD2, "2"},
+        {VK_DIVIDE, "/"},
+        {VK_MULTIPLY, "*"},
+        {VK_SUBTRACT, "-"},
+        {VK_ADD, "+"},
+        {VK_DECIMAL, "."},
+    };
+    for (const auto& item : cases) {
+        ASSERT_EQ(engine.process_key(make_punct_key(item.key), opts),
+                  cxxime::ProcessResult::COMMITTED);
+        const auto committed = engine.take_commit_text_with_source();
+        ASSERT_EQ(committed.first, item.expected);
+        ASSERT_EQ(committed.second, cxxime::CommitSource::kRawCodePretransformed);
+    }
+
+    engine.finalize();
+    DeleteFileA(dp.c_str());
+}
+
+TEST(EngineSource, numpad_text_enters_inline_ascii_before_full_shape_conversion) {
+    auto pm = make_test_punct_mapping();
+    std::string dp = punct_tmp("es_numpad_inline_ascii.bin");
+    cxxime::Dict::create_test_dict(dp, {{"ni", "你", 100}});
+    cxxime::Engine engine;
+    ASSERT_TRUE(engine.initialize(dp));
+    engine.set_trace_enabled(false);
+
+    cxxime::OutputOptions opts;
+    opts.chinese_mode = true;
+    opts.chinese_punct = true;
+    opts.full_shape = true;
+    opts.punct_mapping = &pm;
+
+    engine.process_key(make_punct_key('N'), opts);
+    engine.process_key(make_punct_key('I'), opts);
+    ASSERT_TRUE(!engine.context().candidates.candidates.empty());
+
+    ASSERT_EQ(engine.process_key(make_punct_key(VK_DIVIDE), opts),
+              cxxime::ProcessResult::ACCEPTED);
+    ASSERT_EQ(engine.context().pinyin_buffer, "ni/");
+    ASSERT_EQ(engine.context().composition_kind(), cxxime::CompositionKind::kInlineAscii);
+    ASSERT_TRUE(engine.context().candidates.candidates.empty());
+    ASSERT_TRUE(engine.context().committed_text.empty());
+
+    engine.finalize();
+    DeleteFileA(dp.c_str());
+}
+
 TEST(EngineSource, full_shape_letter_in_english_mode) {
     std::string dp = punct_tmp("es_punct6.bin");
     cxxime::Dict::create_test_dict(dp, {{"de", "的", 1}});
