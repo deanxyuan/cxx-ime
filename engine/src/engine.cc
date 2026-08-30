@@ -258,6 +258,18 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
         return ProcessResult::REJECTED;
     }
 
+    // The numeric keypad is a literal number/formula input area. Its digits and operators stay
+    // ASCII regardless of Chinese punctuation or full-shape mode.
+    if (!event.is_key_up && !context_.is_composing() && is_numpad_text_key(event.keycode)) {
+        const std::optional<char> numpad_character = normalize_ascii_key(event);
+        if (numpad_character) {
+            context_.committed_text.assign(1, *numpad_character);
+            context_.set_commit_source(CommitSource::kRawCodePretransformed);
+            record_total_us(trace_, total_start, trace_enabled_);
+            return ProcessResult::COMMITTED;
+        }
+    }
+
     // Check if AsciiComposer committed text (e.g. Shift toggle with code style)
     if (!context_.committed_text.empty()) {
         record_total_us(trace_, total_start, trace_enabled_);
@@ -409,7 +421,7 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
         const bool start_inline = is_inline_ascii_character(*normalized) ||
                                   plain_main_zero || is_numpad_text_key(event.keycode) ||
                                   !has_candidates;
-        if (opts.full_shape) {
+        if (opts.full_shape && !is_numpad_text_key(event.keycode)) {
             if (handle_full_shape(event, context_, opts)) {
                 routed_result = ProcessResult::COMMITTED;
             }
@@ -484,7 +496,7 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
         const bool has_candidates = !context_.candidates.candidates.empty();
         const bool start_inline = is_inline_ascii_character(*normalized) ||
                                   plain_main_zero || is_numpad_text_key(event.keycode);
-        if (opts.full_shape) {
+        if (opts.full_shape && !is_numpad_text_key(event.keycode)) {
             if (handle_full_shape(event, context_, opts)) {
                 result = ProcessResult::COMMITTED;
             }
