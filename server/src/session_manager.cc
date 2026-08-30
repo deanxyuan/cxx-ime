@@ -229,10 +229,9 @@ std::shared_ptr<const cxxime::PunctMapping> load_punctuation_mapping(const std::
         auto mapping = std::make_shared<cxxime::PunctMapping>();
 
         parse_punct_section(j, "half_shape", mapping->half_shape);
-        parse_punct_section(j, "full_shape", mapping->full_shape);
 
-        CXXIME_LOG(L"SharedResources: punctuation loaded (%zu half, %zu full)",
-                   mapping->half_shape.size(), mapping->full_shape.size());
+        CXXIME_LOG(L"SharedResources: punctuation loaded (%zu entries)",
+                   mapping->half_shape.size());
         return mapping;
     } catch (const nlohmann::json::exception& e) {
         CXXIME_LOG(L"SharedResources: punctuation parse error: %S", e.what());
