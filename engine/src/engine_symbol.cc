@@ -10,7 +10,8 @@ bool Engine::symbol_input_enabled(const OutputOptions& opts) const {
     return symbol_table_ &&
            !symbol_table_->empty() &&
            opts.chinese_mode &&
-           opts.chinese_punct;
+           opts.chinese_punct &&
+           !opts.full_shape;
 }
 
 CandidatePage Engine::translate_symbol_page() const {

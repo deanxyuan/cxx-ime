@@ -21,7 +21,6 @@ struct PunctEntry {
 
 struct PunctMapping {
     std::unordered_map<std::string, PunctEntry> half_shape;
-    std::unordered_map<std::string, PunctEntry> full_shape;
 };
 
 }  // namespace cxxime

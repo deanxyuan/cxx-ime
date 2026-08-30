@@ -272,9 +272,8 @@ static cxxime::PunctMapping make_punct_mapping() {
     pm.half_shape["\""] = double_quote;
     // alternatives: U+2014, U+2013, U+00B7
     pm.half_shape["-"] = {cxxime::PunctType::ALTERNATIVES, {}, {}, {"\xe2\x80\x94", "\xe2\x80\x93", "\xc2\xb7"}};
-    // full_shape: used when chinese_punct=false && full_shape=true
     // "【" = U+3010
-    pm.full_shape["["] = {cxxime::PunctType::COMMIT, "\xe3\x80\x90", {}, {}};
+    pm.half_shape["["] = {cxxime::PunctType::COMMIT, "\xe3\x80\x90", {}, {}};
     return pm;
 }
 
@@ -514,7 +513,7 @@ TEST(OutputComposer, full_shape_period) {
     opts.full_shape = true;
     opts.punct_mapping = &pm;
 
-    // '.' not in full_shape table → handle_punctuation skips → handle_full_shape converts
+    // Literal full-shape conversion handles the idle period.
     auto r = engine.process_key(make_key(0xBE), opts);  // VK_OEM_PERIOD '.'
     ASSERT_EQ(r, cxxime::ProcessResult::COMMITTED);
     ASSERT_EQ(engine.context().committed_text, "．");  // ．
@@ -555,7 +554,7 @@ TEST(OutputComposer, full_shape_digit) {
     DeleteFileA(dp.c_str());
 }
 
-TEST(OutputComposer, full_shape_custom_mapping) {
+TEST(OutputComposer, full_shape_idle_symbol_ignores_semantic_mapping) {
     auto pm = make_punct_mapping();
     std::string dp = punct_tmp("punct12.bin");
     cxxime::Dict::create_test_dict(dp, {{"de", "的", 1}});
@@ -565,14 +564,14 @@ TEST(OutputComposer, full_shape_custom_mapping) {
 
     cxxime::OutputOptions opts;
     opts.chinese_mode = true;
-    opts.chinese_punct = false;
+    opts.chinese_punct = true;
     opts.full_shape = true;
     opts.punct_mapping = &pm;
 
-    // '[' is in full_shape table → handle_punctuation handles it
+    // Full-shape literal input takes priority over the semantic punctuation table.
     auto r = engine.process_key(make_key(0xDB), opts);  // VK_OEM_4 '['
     ASSERT_EQ(r, cxxime::ProcessResult::COMMITTED);
-    ASSERT_EQ(engine.context().committed_text, "【");  // 【
+    ASSERT_EQ(engine.context().committed_text, "［");  // ［
 
     engine.finalize();
     DeleteFileA(dp.c_str());
