@@ -1,6 +1,8 @@
 # Build output
 build/
 build_debug/
+build-package/
+build-package-x86/
 dist/
 
 # Raw dictionary databases (too large for git; committed as .zip)
@@ -12,6 +14,7 @@ data/*.dict.bin
 data/*.spellings.bin
 data/*.dict.idx
 data/*.topn.bin
+data/*.reverse.idx
 data/dictionary_manifest.json
 
 # Benchmark output

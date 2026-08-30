@@ -37,9 +37,12 @@ static cxxime::PunctMapping make_test_punct_mapping() {
     pm.half_shape[","] = {cxxime::PunctType::COMMIT, "\xef\xbc\x8c", {}, {}};  // ，
     pm.half_shape["'"] = {cxxime::PunctType::PAIR, {}, {"\xe2\x80\x98", "\xe2\x80\x99"}, {}};  // ' '
     pm.half_shape["\""] = {cxxime::PunctType::PAIR, {}, {"\xe2\x80\x9c", "\xe2\x80\x9d"}, {}};  // " "
-    pm.half_shape["-"] = {cxxime::PunctType::ALTERNATIVES, {}, {}, {"\xe2\x80\x94", "\xe2\x80\x93", "\xc2\xb7"}};  // — – ·
-    // full_shape: used when chinese_punct=false && full_shape=true
-    pm.full_shape["["] = {cxxime::PunctType::COMMIT, "\xe3\x80\x90", {}, {}};  // 【
+    pm.half_shape["-"] = {
+        cxxime::PunctType::ALTERNATIVES,
+        {},
+        {},
+        {"\xe2\x80\x94", "\xe2\x80\x93", "\xc2\xb7"}};  // — – ·
+    pm.half_shape["["] = {cxxime::PunctType::COMMIT, "\xe3\x80\x90", {}, {}};  // 【
     return pm;
 }
 
@@ -472,7 +475,7 @@ TEST(EngineSource, full_shape_letter_in_english_mode) {
     DeleteFileA(dp.c_str());
 }
 
-TEST(EngineSource, full_shape_custom_mapping) {
+TEST(EngineSource, full_shape_idle_symbol_ignores_semantic_mapping) {
     auto pm = make_test_punct_mapping();
     std::string dp = punct_tmp("es_punct7.bin");
     cxxime::Dict::create_test_dict(dp, {{"de", "的", 1}});
@@ -482,14 +485,14 @@ TEST(EngineSource, full_shape_custom_mapping) {
 
     cxxime::OutputOptions opts;
     opts.chinese_mode = false;
-    opts.chinese_punct = false;
+    opts.chinese_punct = true;
     opts.full_shape = true;
     opts.punct_mapping = &pm;
 
     auto result = engine.process_key(make_punct_key(0xDB), opts);  // VK_OEM_4 ([)
     ASSERT_EQ(result, cxxime::ProcessResult::COMMITTED);
     auto [text, source] = engine.take_commit_text_with_source();
-    ASSERT_EQ(text, "\xe3\x80\x90");  // 【
+    ASSERT_EQ(text, "\xef\xbc\xbb");  // ［
 
     engine.finalize();
     DeleteFileA(dp.c_str());
