@@ -77,6 +77,10 @@ static bool is_ascii_digit_or_symbol(char ch) {
     return ch >= 0x21 && ch <= 0x7e && !std::isalpha(static_cast<unsigned char>(ch));
 }
 
+static bool is_ascii_symbol(char ch) {
+    return ch >= 0x21 && ch <= 0x7e && !std::isalnum(static_cast<unsigned char>(ch));
+}
+
 // Static member for global query ID generation
 std::atomic<uint64_t> Engine::next_query_id_{0};
 
@@ -258,16 +262,25 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
         return ProcessResult::REJECTED;
     }
 
+    const std::optional<char> normalized = normalize_ascii_key(event);
+
     // The numeric keypad is a literal number/formula input area. Its digits and operators stay
     // ASCII regardless of Chinese punctuation or full-shape mode.
-    if (!event.is_key_up && !context_.is_composing() && is_numpad_text_key(event.keycode)) {
-        const std::optional<char> numpad_character = normalize_ascii_key(event);
-        if (numpad_character) {
-            context_.committed_text.assign(1, *numpad_character);
-            context_.set_commit_source(CommitSource::kRawCodePretransformed);
-            record_total_us(trace_, total_start, trace_enabled_);
-            return ProcessResult::COMMITTED;
-        }
+    if (!event.is_key_up && !context_.is_composing() && normalized &&
+        is_numpad_text_key(event.keycode)) {
+        context_.committed_text.assign(1, *normalized);
+        context_.set_commit_source(CommitSource::kRawCodePretransformed);
+        record_total_us(trace_, total_start, trace_enabled_);
+        return ProcessResult::COMMITTED;
+    }
+
+    // Full-shape mode is an explicit literal-symbol input mode. Handle idle main-keyboard
+    // symbols before Chinese punctuation and the backslash Symbol trigger.
+    if (!event.is_key_up && !context_.is_composing() && opts.full_shape && normalized &&
+        is_ascii_symbol(*normalized) && !is_numpad_text_key(event.keycode) &&
+        handle_full_shape(event, context_, opts)) {
+        record_total_us(trace_, total_start, trace_enabled_);
+        return ProcessResult::COMMITTED;
     }
 
     // Check if AsciiComposer committed text (e.g. Shift toggle with code style)
@@ -410,7 +423,6 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
     const bool symbol_trigger_enabled = symbol_input_enabled(opts);
     const bool symbol_trigger = symbol_trigger_enabled && !context_.is_composing() &&
                                 SymbolProcessor::is_trigger(event);
-    const std::optional<char> normalized = normalize_ascii_key(event);
     const bool plain_main_zero = event.keycode == '0' && !event.is_shift();
     std::optional<ProcessResult> routed_result;
 
@@ -694,10 +706,8 @@ bool Engine::handle_punctuation(const KeyEvent& event, Context& context,
     if (event.is_ctrl() || event.is_alt())
         return false;
 
-    // Guard: chinese_punct or (full_shape with custom mapping)
-    bool should_process = opts.chinese_punct ||
-        (opts.full_shape && opts.punct_mapping && !opts.punct_mapping->full_shape.empty());
-    if (!should_process)
+    // Semantic punctuation mappings apply only in half-shape Chinese punctuation mode.
+    if (!opts.chinese_punct || opts.full_shape)
         return false;
 
     // Step 1: convert virtual key to character.
@@ -713,15 +723,9 @@ bool Engine::handle_punctuation(const KeyEvent& event, Context& context,
     // Step 3: select mapping table
     std::string key(1, ch);
     const PunctEntry* entry = nullptr;
-    if (opts.chinese_punct) {
-        auto it = opts.punct_mapping->half_shape.find(key);
-        if (it != opts.punct_mapping->half_shape.end())
-            entry = &it->second;
-    } else if (opts.full_shape) {
-        auto it = opts.punct_mapping->full_shape.find(key);
-        if (it != opts.punct_mapping->full_shape.end())
-            entry = &it->second;
-    }
+    auto it = opts.punct_mapping->half_shape.find(key);
+    if (it != opts.punct_mapping->half_shape.end())
+        entry = &it->second;
 
     // Step 4: not found
     if (!entry)
