@@ -300,6 +300,23 @@ TEST(SymbolInput, slash_and_backslash_preserve_full_shape_composition_behavior) 
     }
 }
 
+TEST(SymbolInput, numpad_operator_stays_ascii_in_full_shape_composition) {
+    SymbolEngineFixture fixture;
+    ASSERT_TRUE(fixture.initialize());
+
+    cxxime::OutputOptions options;
+    options.full_shape = true;
+    type_symbol_code(fixture.engine(), "bd", options);
+    ASSERT_TRUE(!fixture.engine().context().candidates.candidates.empty());
+
+    ASSERT_EQ(fixture.engine().process_key(make_key(VK_ADD), options),
+              cxxime::ProcessResult::ACCEPTED);
+    ASSERT_EQ(fixture.engine().context().pinyin_buffer, "\\bd+");
+    ASSERT_EQ(fixture.engine().context().composition_kind(), cxxime::CompositionKind::kInlineAscii);
+    ASSERT_TRUE(fixture.engine().context().candidates.candidates.empty());
+    ASSERT_TRUE(fixture.engine().context().committed_text.empty());
+}
+
 TEST(SymbolInput, slash_and_backslash_finish_composition_with_english_punctuation) {
     const struct {
         uint32_t key;
