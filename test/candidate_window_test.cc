@@ -252,6 +252,47 @@ TEST(CandidateWindow, ensure_created_recovers_destroyed_window_and_owner) {
     DestroyWindow(owner);
 }
 
+TEST(CandidateWindow, ensure_created_falls_back_when_preferred_owner_is_unavailable) {
+    HWND stale_owner = CreateWindowExW(0, L"STATIC", L"", WS_OVERLAPPED, 0, 0, 0, 0, nullptr,
+                                       nullptr, GetModuleHandleW(nullptr), nullptr);
+    ASSERT_TRUE(stale_owner != nullptr);
+    ASSERT_TRUE(DestroyWindow(stale_owner) != FALSE);
+    ASSERT_TRUE(IsWindow(stale_owner) == FALSE);
+
+    cxxime::Config config;
+    config.render_backend = "gdi";
+
+    cxxime::CandidateWindow window;
+    ASSERT_TRUE(window.create(nullptr, config));
+    bool ownerless = false;
+    ASSERT_TRUE(window.ensure_created_with_ownerless_fallback(stale_owner, &ownerless));
+    ASSERT_TRUE(ownerless);
+    ASSERT_TRUE(window.owner_matches(nullptr));
+
+    window.destroy();
+}
+
+TEST(CandidateWindow, ensure_created_does_not_fall_back_from_unavailable_owner) {
+    HWND current_owner = CreateWindowExW(0, L"STATIC", L"", WS_OVERLAPPED, 0, 0, 0, 0, nullptr,
+                                         nullptr, GetModuleHandleW(nullptr), nullptr);
+    ASSERT_TRUE(current_owner != nullptr);
+    HWND stale_owner = CreateWindowExW(0, L"STATIC", L"", WS_OVERLAPPED, 0, 0, 0, 0, nullptr,
+                                       nullptr, GetModuleHandleW(nullptr), nullptr);
+    ASSERT_TRUE(stale_owner != nullptr);
+    ASSERT_TRUE(DestroyWindow(stale_owner) != FALSE);
+
+    cxxime::Config config;
+    config.render_backend = "gdi";
+
+    cxxime::CandidateWindow window;
+    ASSERT_TRUE(window.create(current_owner, config));
+    ASSERT_TRUE(!window.ensure_created(stale_owner));
+    ASSERT_TRUE(window.owner_matches(current_owner));
+
+    window.destroy();
+    DestroyWindow(current_owner);
+}
+
 TEST(CandidateWindow, width_is_clamped_to_monitor_work_area) {
     cxxime::Config config;
     config.render_backend = "gdi";

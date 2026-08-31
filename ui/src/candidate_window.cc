@@ -67,6 +67,9 @@ bool CandidateWindow::create(HWND owner, const Config& config) {
 }
 
 bool CandidateWindow::ensure_created(HWND owner) {
+    if (owner && !IsWindow(owner)) {
+        return false;
+    }
     if (!is_created()) {
         if (!config_) {
             return false;
@@ -88,6 +91,34 @@ bool CandidateWindow::ensure_created(HWND owner) {
         show();
     }
     return is_created() && owner_matches(owner);
+}
+
+bool CandidateWindow::ensure_created_with_ownerless_fallback(HWND preferred_owner,
+                                                             bool* ownerless) {
+    if (ownerless) {
+        *ownerless = false;
+    }
+    if (ensure_created(preferred_owner)) {
+        return true;
+    }
+
+    // A normal-integrity server cannot always bind its popup to an elevated host.
+    // Keep the candidate available as an ownerless topmost window in that case.
+    if (!preferred_owner || !config_) {
+        return false;
+    }
+    const Config* config = config_;
+    set_owner(nullptr);
+    if (!is_created() && !create(nullptr, *config)) {
+        return false;
+    }
+    if (!owner_matches(nullptr)) {
+        return false;
+    }
+    if (ownerless) {
+        *ownerless = true;
+    }
+    return true;
 }
 
 void CandidateWindow::init_gdi_renderer() {

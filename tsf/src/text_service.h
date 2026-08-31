@@ -314,12 +314,12 @@ private:
     bool _start_ui_presentation_channel();
     void _stop_ui_presentation_channel();
     void _publish_ui_presentation();
-    bool _present_immersive_candidate_window(const cxxime::CandidatePage& page,
-                                             int page_current,
-                                             int page_total,
-                                             const std::string& preedit,
-                                             std::size_t preedit_cursor);
-    void _hide_immersive_candidate_window();
+    bool _present_local_candidate_window(const cxxime::CandidatePage& page,
+                                         int page_current,
+                                         int page_total,
+                                         const std::string& preedit,
+                                         std::size_t preedit_cursor);
+    void _hide_local_candidate_window();
     void _publish_ui_session_ended();
     void _queue_ui_command(const cxxime::UiCommand& command);
     void _drain_ui_commands();
@@ -376,7 +376,7 @@ private:
     CandidateUIElement* _candidateUiElement = nullptr;
     ReadingUIElement* _readingUiElement = nullptr;
     cxxime::Config _config;
-    std::unique_ptr<cxxime::CandidateWindow> _immersiveCandidateWindow;
+    std::unique_ptr<cxxime::CandidateWindow> _localCandidateWindow;
     cxxime::ConfigGeneration _configGeneration;
     HWND _configWindow = nullptr;
     std::uint32_t _configSubscriptionId = 0;
