@@ -83,8 +83,8 @@ void TextService::_apply_config_snapshot() {
     }
 
     _inputIndicator.set_status_visible(_config.status_window.enable);
-    if (_immersiveCandidateWindow) {
-        _immersiveCandidateWindow->set_config(_config);
+    if (_localCandidateWindow) {
+        _localCandidateWindow->set_config(_config);
     }
 
     _publish_ui_presentation();

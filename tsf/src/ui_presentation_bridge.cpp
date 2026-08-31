@@ -54,13 +54,30 @@ void copy_packet_text(char* destination, std::size_t capacity, std::uint32_t* le
     *length = static_cast<std::uint32_t>(copied);
 }
 
+bool current_process_is_elevated() {
+    static const bool elevated = []() {
+        HANDLE token = nullptr;
+        if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) {
+            return false;
+        }
+
+        TOKEN_ELEVATION elevation = {};
+        DWORD returned_size = 0;
+        const bool result = GetTokenInformation(token, TokenElevation, &elevation,
+                                                sizeof(elevation), &returned_size) != FALSE &&
+            elevation.TokenIsElevated != 0;
+        CloseHandle(token);
+        return result;
+    }();
+    return elevated;
+}
+
 } // namespace
 
-bool TextService::_present_immersive_candidate_window(const cxxime::CandidatePage& page,
-                                                      int page_current,
-                                                      int page_total,
-                                                      const std::string& preedit,
-                                                      std::size_t preedit_cursor) {
+bool TextService::_present_local_candidate_window(const cxxime::CandidatePage& page,
+                                                  int page_current, int page_total,
+                                                  const std::string& preedit,
+                                                  std::size_t preedit_cursor) {
     HWND owner = reinterpret_cast<HWND>(_effectiveEditTarget.view_window);
     if (!owner || !IsWindow(owner)) {
         owner = GetFocus();
@@ -69,53 +86,54 @@ bool TextService::_present_immersive_candidate_window(const cxxime::CandidatePag
         return false;
     }
 
-    if (!_immersiveCandidateWindow) {
-        _immersiveCandidateWindow = std::make_unique<cxxime::CandidateWindow>();
-        if (!_immersiveCandidateWindow->create(owner, _config)) {
-            _immersiveCandidateWindow.reset();
+    if (!_localCandidateWindow) {
+        _localCandidateWindow = std::make_unique<cxxime::CandidateWindow>();
+        if (!_localCandidateWindow->create(owner, _config) ||
+            !_localCandidateWindow->owner_matches(owner)) {
+            _localCandidateWindow.reset();
             return false;
         }
-        _immersiveCandidateWindow->set_candidate_selection_callback(
+        _localCandidateWindow->set_candidate_selection_callback(
             [this](std::size_t index) {
                 select_candidate_from_ui(static_cast<UINT>(index));
             });
-        _immersiveCandidateWindow->set_page_callback(
+        _localCandidateWindow->set_page_callback(
             [this](cxxime::CandidatePageDirection direction) {
                 navigate_candidate_page_from_ui(
                     direction == cxxime::CandidatePageDirection::Previous);
             });
-        _immersiveCandidateWindow->set_layout_changed_callback([this]() {
-            if (!_immersiveCandidateWindow || !_immersiveCandidateWindow->is_visible() ||
+        _localCandidateWindow->set_layout_changed_callback([this]() {
+            if (!_localCandidateWindow || !_localCandidateWindow->is_visible() ||
                 _candidatePresentation.presenter() !=
                     cxxime_tsf::CandidatePresenter::kLocal) {
                 return;
             }
             _candidatePresentation.set_local_visible_candidate_count(
                 static_cast<std::size_t>(
-                    _immersiveCandidateWindow->visible_candidate_count()));
+                    _localCandidateWindow->visible_candidate_count()));
         });
-    } else if (!_immersiveCandidateWindow->ensure_created(owner)) {
+    } else if (!_localCandidateWindow->ensure_created(owner)) {
         return false;
     }
 
-    _immersiveCandidateWindow->set_page_info(page_current, page_total);
-    _immersiveCandidateWindow->set_preedit(preedit, preedit_cursor);
-    _immersiveCandidateWindow->update(page);
-    _immersiveCandidateWindow->move_to_caret(_caretRect);
-    _immersiveCandidateWindow->show();
-    if (!_immersiveCandidateWindow->is_visible()) {
+    _localCandidateWindow->set_page_info(page_current, page_total);
+    _localCandidateWindow->set_preedit(preedit, preedit_cursor);
+    _localCandidateWindow->update(page);
+    _localCandidateWindow->move_to_caret(_caretRect);
+    _localCandidateWindow->show();
+    if (!_localCandidateWindow->is_visible()) {
         return false;
     }
     _candidatePresentation.set_presenter(cxxime_tsf::CandidatePresenter::kLocal);
     _candidatePresentation.set_local_visible_candidate_count(
-        static_cast<std::size_t>(_immersiveCandidateWindow->visible_candidate_count()));
+        static_cast<std::size_t>(_localCandidateWindow->visible_candidate_count()));
     return true;
 }
 
-void TextService::_hide_immersive_candidate_window() {
+void TextService::_hide_local_candidate_window() {
     _candidatePresentation.set_local_visible_candidate_count(0);
-    if (_immersiveCandidateWindow) {
-        _immersiveCandidateWindow->hide();
+    if (_localCandidateWindow) {
+        _localCandidateWindow->hide();
     }
 }
 
@@ -131,7 +149,7 @@ bool TextService::_start_ui_presentation_channel() {
 }
 
 void TextService::_stop_ui_presentation_channel() {
-    _hide_immersive_candidate_window();
+    _hide_local_candidate_window();
     _stop_input_indicator_refresh_retry();
     _uiChannel.stop();
     std::lock_guard<std::mutex> lock(_uiCommandMutex);
@@ -225,23 +243,26 @@ void TextService::_publish_ui_presentation() {
     if (candidate_visible) {
         snapshot.flags |= cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kCandidateVisible);
     }
+    const bool local_candidate_preferred =
+        is_immersive_mode() || current_process_is_elevated();
     const bool local_candidate_visible =
-        candidate_visible && is_immersive_mode() &&
-        _present_immersive_candidate_window(
+        candidate_visible && local_candidate_preferred &&
+        _present_local_candidate_window(
             page, static_cast<int>(snapshot.candidate_page.page_current),
             static_cast<int>(snapshot.candidate_page.page_total),
             _candidatePresentation.popup_preedit(),
             _candidatePresentation.popup_preedit_cursor());
     if (local_candidate_visible) {
-        snapshot.flags |= cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kTsfLocalCandidate);
+        snapshot.flags |=
+            cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kTsfLocalCandidate);
     } else if (snapshot.ownership == cxxime::UiOwnership::kHost) {
-        _hide_immersive_candidate_window();
+        _hide_local_candidate_window();
         _candidatePresentation.set_presenter(cxxime_tsf::CandidatePresenter::kHost);
     } else if (candidate_visible) {
-        _hide_immersive_candidate_window();
+        _hide_local_candidate_window();
         _candidatePresentation.set_presenter(cxxime_tsf::CandidatePresenter::kServer);
     } else {
-        _hide_immersive_candidate_window();
+        _hide_local_candidate_window();
         _candidatePresentation.set_presenter(cxxime_tsf::CandidatePresenter::kNone);
     }
     snapshot.presentation_generation = _candidatePresentation.presentation_generation();
@@ -254,7 +275,7 @@ void TextService::_publish_ui_presentation() {
 }
 
 void TextService::_publish_ui_session_ended() {
-    _hide_immersive_candidate_window();
+    _hide_local_candidate_window();
     if (!_uiChannel.is_running() || _sessionId == 0 || _uiSessionGeneration == 0) {
         return;
     }
