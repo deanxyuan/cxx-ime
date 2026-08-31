@@ -49,7 +49,7 @@ TextService::~TextService() {
     // TSF normally calls Deactivate before releasing the service. Keep destruction safe for
     // hosts that tear down an instance directly after a partial activation.
     Deactivate();
-    _immersiveCandidateWindow.reset();
+    _localCandidateWindow.reset();
     DllRelease();
 }
 

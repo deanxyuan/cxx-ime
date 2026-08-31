@@ -31,6 +31,7 @@ public:
 
     bool create(HWND owner, const Config& config);
     bool ensure_created(HWND owner);
+    bool ensure_created_with_ownerless_fallback(HWND preferred_owner, bool* ownerless = nullptr);
     void destroy();
     bool is_created() const;
     void show();

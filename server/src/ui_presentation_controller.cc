@@ -104,6 +104,7 @@ public:
     struct AppliedPresentation {
         bool candidate_requested = false;
         bool candidate_visible = false;
+        bool candidate_ownerless = false;
         bool status_requested = false;
         bool status_suppressed_fullscreen = false;
         bool status_visible = false;
@@ -439,13 +440,11 @@ private:
 
         // Bind the popup to the active TSF view before showing it so ordinary
         // desktop hosts keep the candidate window in their owner hierarchy.
-        const bool immersive_mode =
-            has_flag(current, cxxime::UiSnapshotFlag::kImmersiveMode);
-        const HWND candidate_owner = immersive_mode
-                                        ? nullptr
-                                        : reinterpret_cast<HWND>(current.target_window);
+        const HWND candidate_owner = reinterpret_cast<HWND>(current.target_window);
         applying_candidate_presentation_ = true;
-        if (!candidate_window_.ensure_created(candidate_owner)) {
+        bool owner_binding_fallback = false;
+        if (!candidate_window_.ensure_created_with_ownerless_fallback(
+                candidate_owner, &owner_binding_fallback)) {
             applying_candidate_presentation_ = false;
             applied.candidate_visible = false;
             candidate_window_.hide();
@@ -458,6 +457,7 @@ private:
             trace_presentation(*presentation, applied);
             return;
         }
+        applied.candidate_ownerless = candidate_owner == nullptr || owner_binding_fallback;
         candidate_window_.set_page_info(static_cast<int>(current.candidate_page.page_current),
                                         static_cast<int>(current.candidate_page.page_total));
         if (has_flag(current, cxxime::UiSnapshotFlag::kHasPreedit)) {
@@ -518,7 +518,8 @@ private:
             has_flag(snapshot, cxxime::UiSnapshotFlag::kImmersiveMode);
         trace.tsf_local_candidate =
             has_flag(snapshot, cxxime::UiSnapshotFlag::kTsfLocalCandidate);
-        trace.candidate_ownerless = trace.immersive_mode && applied.candidate_visible;
+        trace.candidate_ownerless =
+            applied.candidate_ownerless && applied.candidate_visible;
         trace.candidate_requested = applied.candidate_requested;
         trace.candidate_visible = applied.candidate_visible;
         trace.status_requested = applied.status_requested;
