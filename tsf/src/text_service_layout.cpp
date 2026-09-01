@@ -33,7 +33,7 @@ void normalize_caret_rect_size(RECT* rc) {
         std::swap(rc->top, rc->bottom);
     if (rc->right == rc->left)
         rc->right = rc->left + 1;
-    if (rc->bottom == rc->top)
+    if (rc->bottom - rc->top <= 2)
         rc->bottom = rc->top + 20;
 }
 
@@ -107,6 +107,7 @@ void TextService::update_candidate_position(const RECT& rc,
         }
     }
 
+    normalize_caret_rect_size(&final_rect);
     _caretRect = final_rect;
     const bool ui_element_only = (_activateFlags & TF_TMF_UIELEMENTENABLEDONLY) != 0;
     const bool original_ui_allowed =
