@@ -39,7 +39,7 @@ void normalize_rect_size(RECT* rc) {
         std::swap(rc->top, rc->bottom);
     if (rc->right == rc->left)
         rc->right = rc->left + 1;
-    if (rc->bottom == rc->top)
+    if (rc->bottom - rc->top <= 2)
         rc->bottom = rc->top + 20;
 }
 
