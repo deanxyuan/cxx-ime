@@ -729,11 +729,11 @@ void EditorApp::update_lexicon_entry_actions() {
     const bool learning_page =
         current_lexicon_resource() == LexiconResource::kCandidatePreference;
     const bool mutation_available =
-        lexiconServerAvailable_ && !lexiconImportRunning_ && !lexiconQueryRunning_;
+        lexiconServerAvailable_ && !lexiconImportRunning_ && !lexiconBatchAddRunning_ &&
+        !lexiconQueryRunning_;
     const bool has_text = hLexiconText_ && GetWindowTextLengthW(hLexiconText_) > 0;
     const bool has_code = hLexiconCode_ && GetWindowTextLengthW(hLexiconCode_) > 0;
-    EnableWindow(hLexiconAdd_, lexicon_page && mutation_available && has_text && has_code &&
-                                   !selectedLexiconHasUser_);
+    EnableWindow(hLexiconAdd_, lexicon_page && mutation_available && has_text);
     EnableWindow(hLexiconSave_, lexicon_page && mutation_available && has_text && has_code &&
                                    selectedLexiconCount_ == 1 && selectedLexiconHasUser_);
     EnableWindow(hLexiconDelete_, lexicon_page && mutation_available &&
