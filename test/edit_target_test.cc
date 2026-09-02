@@ -81,6 +81,38 @@ TEST(EditTarget, outside_view_is_diagnostic_only) {
         cxxime_tsf::EditTargetState::NoEditTarget);
 }
 
+TEST(EditTarget, detects_only_known_narrow_view_placeholders) {
+    const RECT fullscreen_view = {1, 1, 1506, 954};
+    const RECT douyu_right_boundary = {1506, 914, 1507, 934};
+
+    ASSERT_TRUE(cxxime_tsf::text_rect_is_placeholder(fullscreen_view, {1, 1, 2, 21}));
+    ASSERT_TRUE(!cxxime_tsf::text_rect_is_placeholder(fullscreen_view, douyu_right_boundary));
+    ASSERT_TRUE(cxxime_tsf::text_rect_requires_composition_refresh(
+        fullscreen_view, douyu_right_boundary));
+    ASSERT_TRUE(!cxxime_tsf::text_rect_is_placeholder(fullscreen_view, {1, 1, 1, 1}));
+    ASSERT_TRUE(cxxime_tsf::text_rect_requires_composition_refresh(
+        fullscreen_view, {1, 1, 1, 1}));
+    ASSERT_TRUE(!cxxime_tsf::text_rect_is_placeholder(
+        fullscreen_view, {1505, 914, 1506, 934}));
+    ASSERT_TRUE(!cxxime_tsf::text_rect_is_placeholder(
+        fullscreen_view, {1490, 914, 1507, 934}));
+    ASSERT_TRUE(!cxxime_tsf::text_rect_requires_composition_refresh(
+        fullscreen_view, {1505, 914, 1506, 934}));
+
+    auto evidence = captured_selection();
+    evidence.context_is_focused_child = true;
+    evidence.text_rect_outside_view = true;
+    evidence.has_meaningful_text_rect =
+        cxxime_tsf::text_rect_is_meaningful(S_OK, douyu_right_boundary, false);
+    ASSERT_EQ(cxxime_tsf::classify_edit_target(evidence),
+        cxxime_tsf::EditTargetState::Editable);
+
+    const RECT dota_view = {0, 0, 1920, 1080};
+    ASSERT_TRUE(!cxxime_tsf::text_rect_is_placeholder(dota_view, {-1000, -1000, -983, -980}));
+    ASSERT_TRUE(!cxxime_tsf::text_rect_requires_composition_refresh(
+        dota_view, {-1000, -1000, -983, -980}));
+}
+
 TEST(EditTarget, no_target_on_shell_surface_without_editing_evidence) {
     auto evidence = captured_selection();
     evidence.context_is_focused_child = true;

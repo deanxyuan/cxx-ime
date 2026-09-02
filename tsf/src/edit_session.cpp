@@ -4,6 +4,7 @@
 
 #include <climits>
 
+#include "edit_target.h"
 #include "globals.h"
 #include "text_service.h"
 
@@ -46,19 +47,6 @@ void normalize_rect_size(RECT* rc) {
 bool rect_primary_point_in_rect(const RECT& outer, const RECT& inner) {
     return inner.left >= outer.left && inner.left <= outer.right &&
            inner.top >= outer.top && inner.top <= outer.bottom;
-}
-
-bool is_placeholder_text_ext_rect(const RECT& extent, const RECT& text_rect) {
-    constexpr LONG kOriginTolerance = 2;
-    const bool at_extent_origin =
-        text_rect.left >= extent.left - kOriginTolerance &&
-        text_rect.left <= extent.left + kOriginTolerance &&
-        text_rect.top >= extent.top - kOriginTolerance &&
-        text_rect.top <= extent.top + kOriginTolerance;
-    const bool narrow_placeholder = text_rect.right - text_rect.left <= 2;
-    const bool large_extent =
-        extent.right - extent.left > 100 && extent.bottom - extent.top > 100;
-    return at_extent_origin && narrow_placeholder && large_extent;
 }
 
 bool same_root_window(HWND a, HWND b) {
@@ -152,9 +140,10 @@ bool is_placeholder_caret_rect(ITfContext* context, const RECT& caret_rect) {
     RECT foreground_rect = {};
     const bool has_foreground_rect =
         foreground && GetWindowRect(foreground, &foreground_rect);
-    return (has_view_rect && is_placeholder_text_ext_rect(view_rect, caret_rect)) ||
-           (has_foreground_rect &&
-            is_placeholder_text_ext_rect(foreground_rect, caret_rect));
+    return (has_view_rect &&
+            cxxime_tsf::text_rect_requires_composition_refresh(view_rect, caret_rect)) ||
+           (has_foreground_rect && cxxime_tsf::text_rect_requires_composition_refresh(
+                                    foreground_rect, caret_rect));
 }
 
 bool get_range_caret_rect(ITfContext* context,

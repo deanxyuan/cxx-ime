@@ -22,6 +22,54 @@ bool text_rect_is_outside_view(HRESULT screen_rect_hr, const RECT& screen_rect,
             text_rect.bottom <= screen_rect.top || text_rect.top >= screen_rect.bottom);
 }
 
+bool text_rect_is_placeholder(const RECT& view_rect, const RECT& text_rect) {
+    const bool valid_view =
+        view_rect.right > view_rect.left && view_rect.bottom > view_rect.top;
+    const bool valid_text =
+        text_rect.right > text_rect.left && text_rect.bottom > text_rect.top;
+    if (!valid_view || !valid_text || text_rect.right - text_rect.left > 2 ||
+        view_rect.right - view_rect.left <= 100 ||
+        view_rect.bottom - view_rect.top <= 100) {
+        return false;
+    }
+
+    constexpr LONG kBoundaryTolerance = 2;
+    const bool at_view_origin =
+        text_rect.left >= view_rect.left - kBoundaryTolerance &&
+        text_rect.left <= view_rect.left + kBoundaryTolerance &&
+        text_rect.top >= view_rect.top - kBoundaryTolerance &&
+        text_rect.top <= view_rect.top + kBoundaryTolerance;
+    return at_view_origin;
+}
+
+bool text_rect_requires_composition_refresh(const RECT& view_rect,
+    const RECT& text_rect) {
+    const bool valid_view =
+        view_rect.right > view_rect.left && view_rect.bottom > view_rect.top;
+    const bool valid_text =
+        text_rect.right >= text_rect.left && text_rect.bottom >= text_rect.top;
+    if (!valid_view || !valid_text || text_rect.right - text_rect.left > 2 ||
+        view_rect.right - view_rect.left <= 100 ||
+        view_rect.bottom - view_rect.top <= 100) {
+        return false;
+    }
+
+    constexpr LONG kBoundaryTolerance = 2;
+    const bool at_view_origin =
+        text_rect.left >= view_rect.left - kBoundaryTolerance &&
+        text_rect.left <= view_rect.left + kBoundaryTolerance &&
+        text_rect.top >= view_rect.top - kBoundaryTolerance &&
+        text_rect.top <= view_rect.top + kBoundaryTolerance;
+    // Qt can expose an uninitialized selection just beyond a full-screen view's right edge.
+    const bool outside_right_boundary =
+        text_rect.left >= view_rect.right &&
+        text_rect.left <= view_rect.right + kBoundaryTolerance &&
+        text_rect.right > view_rect.right &&
+        text_rect.top >= view_rect.top &&
+        text_rect.top < view_rect.bottom;
+    return at_view_origin || outside_right_boundary;
+}
+
 bool text_rect_is_meaningful(HRESULT text_rect_hr, const RECT& text_rect,
     bool placeholder_text_rect) {
     return SUCCEEDED(text_rect_hr) && text_rect.right > text_rect.left &&
@@ -210,10 +258,7 @@ private:
             evidence_->text_rect.top >= evidence_->screen_rect.top - kOriginTolerance &&
             evidence_->text_rect.top <= evidence_->screen_rect.top + kOriginTolerance;
         evidence_->placeholder_text_rect =
-            evidence_->text_rect_at_view_origin &&
-            evidence_->text_rect.right - evidence_->text_rect.left <= 2 &&
-            evidence_->screen_rect.right - evidence_->screen_rect.left > 100 &&
-            evidence_->screen_rect.bottom - evidence_->screen_rect.top > 100;
+            text_rect_is_placeholder(evidence_->screen_rect, evidence_->text_rect);
         evidence_->text_rect_outside_view = text_rect_is_outside_view(
             evidence_->screen_rect_hr, evidence_->screen_rect, evidence_->text_rect_hr,
             evidence_->text_rect, evidence_->text_clipped);
