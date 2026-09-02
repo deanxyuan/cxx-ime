@@ -146,6 +146,26 @@ TEST(CandidatePresentation, repeated_wait_preserves_original_deadline) {
         stale, true, true, started + std::chrono::milliseconds(151), 30, 150));
 }
 
+TEST(CandidatePresentation, pending_caret_fallback_becomes_due_at_deadline) {
+    cxxime_tsf::CandidatePresentation presentation;
+    presentation.update_content(page_with_candidate("candidate"), "", 0, 1, 1);
+    presentation.set_ownership(cxxime_tsf::CandidateOwnership::kExternal);
+    const auto started =
+        cxxime_tsf::CandidatePresentation::TimePoint(std::chrono::milliseconds(100));
+    presentation.begin_waiting_for_caret(false, nullptr, started);
+
+    ASSERT_TRUE(!presentation.pending_caret_fallback_due(
+        started + std::chrono::milliseconds(29), 30));
+    ASSERT_TRUE(presentation.pending_caret_fallback_due(
+        started + std::chrono::milliseconds(30), 30));
+
+    const RECT fallback = {1, 1, 2, 21};
+    ASSERT_TRUE(!presentation.should_keep_waiting_for_caret(
+        fallback, false, false, started + std::chrono::milliseconds(30), 30, 150));
+    ASSERT_TRUE(presentation.accept_caret(presentation.generation()));
+    ASSERT_TRUE(!presentation.waiting_for_caret());
+}
+
 TEST(CandidatePresentation, host_takeover_suppresses_external_wait_without_losing_guard) {
     cxxime_tsf::CandidatePresentation presentation;
     presentation.update_content(page_with_candidate("candidate"), "", 0, 1, 1);

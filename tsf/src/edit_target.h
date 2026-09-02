@@ -56,6 +56,8 @@ struct EditTargetEvidence {
 
 bool text_rect_is_outside_view(HRESULT screen_rect_hr, const RECT& screen_rect,
     HRESULT text_rect_hr, const RECT& text_rect, bool text_clipped);
+bool text_rect_is_placeholder(const RECT& view_rect, const RECT& text_rect);
+bool text_rect_requires_composition_refresh(const RECT& view_rect, const RECT& text_rect);
 bool text_rect_is_meaningful(HRESULT text_rect_hr, const RECT& text_rect,
     bool placeholder_text_rect);
 EditTargetState classify_edit_target(const EditTargetEvidence& evidence);
