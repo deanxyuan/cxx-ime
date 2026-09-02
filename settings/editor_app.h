@@ -66,6 +66,8 @@ private:
     void query_lexicon_entries(bool preserve_editor);
     void clear_lexicon_entry_form();
     void add_lexicon_entry();
+    void add_lexicon_entry_to_both();
+    void handle_lexicon_batch_add_complete(LPARAM completion);
     void save_lexicon_entry();
     void delete_lexicon_entries();
     void disable_or_restore_system_entry();
@@ -215,7 +217,9 @@ private:
     bool lexiconCodeRunning_ = false;
     bool lexiconCodePending_ = false;
     bool lexiconImportRunning_ = false;
+    bool lexiconBatchAddRunning_ = false;
     std::shared_ptr<const bool> lexiconImportToken_ = std::make_shared<const bool>(true);
+    std::shared_ptr<const bool> lexiconBatchAddToken_ = std::make_shared<const bool>(true);
     bool selectedLexiconHasSystem_ = false;
     bool selectedLexiconHasUser_ = false;
     bool selectedLexiconSystemDisabled_ = false;

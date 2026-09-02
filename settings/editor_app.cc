@@ -416,6 +416,9 @@ LRESULT CALLBACK EditorApp::wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case kLexiconImportCompleteMessage:
         a->handle_lexicon_import_complete(lp);
         return 0;
+    case kLexiconBatchAddCompleteMessage:
+        a->handle_lexicon_batch_add_complete(lp);
+        return 0;
     case WM_TIMER:
         if (wp == kLexiconCodeTimerId) {
             KillTimer(hwnd, kLexiconCodeTimerId);
@@ -521,6 +524,8 @@ LRESULT CALLBACK EditorApp::wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_DESTROY:
         a->lexiconImportToken_.reset();
         a->lexiconImportRunning_ = false;
+        a->lexiconBatchAddToken_.reset();
+        a->lexiconBatchAddRunning_ = false;
         a->readback(hwnd);
         a->destroy_candidate_preview_window();
         a->release_fonts();

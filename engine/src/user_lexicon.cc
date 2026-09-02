@@ -336,6 +336,17 @@ bool UserLexicon::add_entry_and_save(const std::string& text, const std::string&
                                      const std::string& syllables) {
     std::lock_guard<std::mutex> transaction_lock(transaction_mutex_);
     Snapshot next = snapshot();
+    if (!is_valid_user_dict_entry(text, code, syllables)) {
+        return false;
+    }
+    const std::string key = entry_key(text, code);
+    const bool exists =
+        std::any_of(next.entries.begin(), next.entries.end(), [&](const Entry& entry) {
+            return !entry.deleted && entry_key(entry.text, entry.code) == key;
+        });
+    if (exists) {
+        return true;
+    }
     return add_to_snapshot(&next, text, code, syllables) && persist_snapshot(std::move(next));
 }
 

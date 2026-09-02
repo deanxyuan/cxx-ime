@@ -75,9 +75,10 @@ void EditorApp::create_dictionary_panel(HWND panel, int panel_width) {
     SendMessageW(hLexiconQuery_, EM_SETCUEBANNER, TRUE, reinterpret_cast<LPARAM>(L"词语或编码"));
     SetWindowSubclass(hLexiconQuery_, QueryEditProc, 4000, reinterpret_cast<DWORD_PTR>(hwnd_));
 
-    auto make_button = [&](int id, const wchar_t* text, int x, int y, int width) {
+    auto make_button = [&](int id, const wchar_t* text, int x, int y, int width,
+                           DWORD button_style = BS_PUSHBUTTON) {
         HWND button = CreateWindowExW(
-            0, L"BUTTON", text, WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON, x, y, width,
+            0, L"BUTTON", text, WS_CHILD | WS_VISIBLE | WS_TABSTOP | button_style, x, y, width,
             kCtrlH, panel, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
             GetModuleHandle(nullptr), nullptr);
         SendMessageW(button, WM_SETFONT, reinterpret_cast<WPARAM>(get_font()), TRUE);
@@ -128,7 +129,8 @@ void EditorApp::create_dictionary_panel(HWND panel, int panel_width) {
         reinterpret_cast<HMENU>(static_cast<INT_PTR>(4005)), GetModuleHandle(nullptr), nullptr);
     SendMessageW(hLexiconCode_, WM_SETFONT, reinterpret_cast<WPARAM>(get_font()), TRUE);
 
-    hLexiconAdd_ = make_button(4006, L"新增", kPanelPadLeft, action_y, S(64));
+    hLexiconAdd_ =
+        make_button(4006, L"新增", kPanelPadLeft, action_y, S(64), BS_SPLITBUTTON);
     hLexiconSave_ = make_button(4007, L"保存修改", kPanelPadLeft + S(72), action_y, S(86));
     hLexiconDelete_ = make_button(4008, L"删除用户词", kPanelPadLeft + S(166), action_y, S(86));
     hLexiconSystemAction_ =
@@ -285,7 +287,27 @@ bool EditorApp::handle_dictionary_command(int control_id, int notification) {
 
 bool EditorApp::handle_dictionary_notify(LPARAM notification) {
     auto* header = reinterpret_cast<LPNMHDR>(notification);
-    if (!header || header->idFrom != 4003) {
+    if (!header) {
+        return false;
+    }
+    if (header->idFrom == 4006 && header->code == BCN_DROPDOWN) {
+        HMENU menu = CreatePopupMenu();
+        if (!menu) {
+            return true;
+        }
+        AppendMenuW(menu, MF_STRING, 1, L"同时添加到拼音和五笔");
+        RECT button_rect = {};
+        GetWindowRect(hLexiconAdd_, &button_rect);
+        const UINT command = TrackPopupMenu(
+            menu, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN | TPM_RIGHTBUTTON,
+            button_rect.left, button_rect.bottom, 0, hwnd_, nullptr);
+        DestroyMenu(menu);
+        if (command == 1) {
+            add_lexicon_entry_to_both();
+        }
+        return true;
+    }
+    if (header->idFrom != 4003) {
         return false;
     }
     if (header->code == LVN_ITEMCHANGED) {
