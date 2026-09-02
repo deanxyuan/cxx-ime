@@ -118,4 +118,11 @@ TEST(PreeditMode, desktop_placeholder_is_limited_to_nonempty_to_empty_transition
     ASSERT_TRUE(!cxxime_tsf::empty_composition_requires_placeholder(false, true, L"", L""));
 }
 
+TEST(PreeditMode, empty_placeholder_waits_only_when_no_trusted_caret_is_available) {
+    ASSERT_TRUE(cxxime_tsf::should_wait_for_composition_layout(true, false, false));
+    ASSERT_TRUE(!cxxime_tsf::should_wait_for_composition_layout(false, false, false));
+    ASSERT_TRUE(!cxxime_tsf::should_wait_for_composition_layout(true, true, false));
+    ASSERT_TRUE(!cxxime_tsf::should_wait_for_composition_layout(true, false, true));
+}
+
 RUN_ALL_TESTS()
