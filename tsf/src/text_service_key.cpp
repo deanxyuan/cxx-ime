@@ -491,13 +491,19 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
                                       !caretResolved);
                     pCaretSession->Release();
                 }
+                const bool wait_for_composition_layout =
+                    cxxime_tsf::should_wait_for_composition_layout(
+                    empty_composition_placeholder_active(), caretResolved,
+                    hasTrustedNativeCaret);
+                // The blank composition asks framework hosts to publish real layout. Do not show
+                // a generic Win32 fallback before that layout callback arrives.
                 // A native HWND caret can lag one paint after a synchronous commit. Retain a
                 // successful TSF selection result until the continuation composition catches up.
                 if (!caretResolved) {
                     if (hasTrustedNativeCaret) {
                         caretRect = trustedNativeRect;
                         caretResolved = true;
-                    } else {
+                    } else if (!wait_for_composition_layout) {
                         caretRect = _resolve_caret_rect(pic);
                         trace_caret_event("show_query", "fallback",
                                           cxxime_tsf::is_valid_caret_rect(caretRect), &caretRect,

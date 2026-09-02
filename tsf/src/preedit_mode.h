@@ -66,6 +66,13 @@ inline bool empty_composition_requires_placeholder(bool immersive_mode, bool com
     return immersive_mode || (composition_active && !current_text.empty());
 }
 
+inline bool should_wait_for_composition_layout(bool empty_placeholder_active,
+                                               bool tsf_caret_resolved,
+                                               bool trusted_native_caret_resolved) {
+    return empty_placeholder_active && !tsf_caret_resolved &&
+        !trusted_native_caret_resolved;
+}
+
 } // namespace cxxime_tsf
 
 #endif // CXXIME_TSF_PREEDIT_MODE_H_

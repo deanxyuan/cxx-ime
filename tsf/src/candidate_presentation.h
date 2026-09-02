@@ -51,6 +51,7 @@ public:
     void set_local_visible_candidate_count(std::size_t count);
     std::uint32_t local_visible_candidate_count() const;
     void begin_waiting_for_caret(bool reposition, const RECT* stale_rect, TimePoint now);
+    bool pending_caret_fallback_due(TimePoint now, int delay_ms) const;
     void begin_composition_restart(TimePoint now);
     bool fail_composition_restart(std::uint64_t generation);
     bool should_keep_waiting_for_caret(const RECT& caret_rect, bool from_layout_change,

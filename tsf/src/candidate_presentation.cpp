@@ -99,6 +99,13 @@ void CandidatePresentation::begin_waiting_for_caret(bool reposition, const RECT*
     }
 }
 
+bool CandidatePresentation::pending_caret_fallback_due(TimePoint now, int delay_ms) const {
+    return waiting_for_caret() &&
+        caret_resolution_allowed_ && !reposition_wait_ && !has_stale_rect_ &&
+        waiting_since_.time_since_epoch().count() != 0 &&
+            now - waiting_since_ >= std::chrono::milliseconds(delay_ms);
+}
+
 void CandidatePresentation::begin_composition_restart(TimePoint now) {
     position_state_ = CandidatePositionState::kWaitingCaret;
     reposition_wait_ = true;

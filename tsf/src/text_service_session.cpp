@@ -388,8 +388,23 @@ void TextService::_poll_runtime_state() {
         _candidatePresentation.waiting_for_caret()) {
         ITfContext* context = _current_edit_context_for_composition();
         if (context) {
-            _request_candidate_position_update(context, "show:pending_timeout");
+            if (_candidatePresentation.pending_caret_fallback_due(
+                    cxxime_tsf::CandidatePresentation::Clock::now(),
+                    static_cast<int>(kStatePollFastIntervalMs))) {
+                RECT fallback_rect = _resolve_caret_rect(context);
+                const bool resolved = cxxime_tsf::is_valid_caret_rect(fallback_rect);
+                trace_caret_event("pending_timeout", "fallback", resolved, &fallback_rect,
+                                  resolved ? S_FALSE : E_FAIL, true);
+                if (resolved) {
+                    update_candidate_position(fallback_rect, context, false,
+                                              _candidatePresentation.generation());
+                }
+            }
+            if (_candidatePresentation.waiting_for_caret()) {
+                _request_candidate_position_update(context, "show:pending_timeout");
+            }
             context->Release();
         }
     }
+    _update_state_poll_timer();
 }
