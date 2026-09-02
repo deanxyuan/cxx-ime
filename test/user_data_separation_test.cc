@@ -172,6 +172,23 @@ TEST(UserDataSeparation, exact_text_query_does_not_return_prefix_or_code_matches
     DeleteFileA(user_path.c_str());
 }
 
+TEST(UserDataSeparation, persisted_add_is_idempotent) {
+    const std::string user_path = make_temp_path("udi");
+    cxxime::Dict dictionary;
+    ASSERT_TRUE(dictionary.load_user_dict(user_path));
+
+    ASSERT_TRUE(dictionary.add_user_entry_and_save("target", "targetcode"));
+    ASSERT_TRUE(dictionary.add_user_entry_and_save("target", "targetcode"));
+
+    std::size_t total = 0;
+    const auto entries = dictionary.query_user_entries("target", 0, 16, &total, true);
+    ASSERT_EQ(1u, total);
+    ASSERT_EQ(1u, entries.size());
+
+    dictionary.close();
+    DeleteFileA(user_path.c_str());
+}
+
 TEST(UserDataSeparation, manual_candidate_order_enforces_profile_code_length) {
     const std::string order_path = make_temp_path("udw");
     cxxime::Dict dictionary;
