@@ -1,90 +1,154 @@
 project(cxxime-test CXX)
 
-set(TEST_COMMON_SOURCES util/testutil.cc)
-set(TEST_COMMON_DEPS cxxime-shared cxxime-engine cxxime-ui cxxime-ipc)
 set(TEST_INCLUDE_DIRS ${CMAKE_SOURCE_DIR}/tsf/src)
 
-add_library(cxxime-test-topn-data STATIC util/topn_test_data.cc)
+add_library(cxxime-test-util STATIC support/testutil.cc)
+target_include_directories(cxxime-test-util PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+
+add_library(cxxime-test-topn-data STATIC support/topn_test_data.cc)
+target_include_directories(cxxime-test-topn-data PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(cxxime-test-topn-data PUBLIC
     cxxime-engine
     cxxime-topn-index-builder
 )
 
-add_library(cxxime-test-wubi-index-data STATIC util/wubi_index_test_data.cc)
+add_library(cxxime-test-wubi-index-data STATIC support/wubi_index_test_data.cc)
+target_include_directories(cxxime-test-wubi-index-data PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(cxxime-test-wubi-index-data PRIVATE
     ${CMAKE_SOURCE_DIR}/engine/src
 )
 
 function(add_cxxime_test name)
-    add_executable(${name} ${name}.cc ${TEST_COMMON_SOURCES})
+    cmake_parse_arguments(TEST "" "" "SOURCES;DEPS" ${ARGN})
+    if(NOT TEST_SOURCES)
+        message(FATAL_ERROR "add_cxxime_test(${name}) requires SOURCES")
+    endif()
+    if(TEST_UNPARSED_ARGUMENTS OR TEST_KEYWORDS_MISSING_VALUES)
+        message(FATAL_ERROR "Invalid arguments for add_cxxime_test(${name})")
+    endif()
+
+    add_executable(${name} ${TEST_SOURCES})
     target_include_directories(${name} PRIVATE ${TEST_INCLUDE_DIRS})
     # Tests always use the project's data/ directory regardless of CXXIME_PRODUCTION_BUILD
     target_compile_definitions(${name} PRIVATE
         CXXIME_PROJECT_DIR="${CMAKE_SOURCE_DIR}/"
         CXXIME_DATA_DIR="${CMAKE_SOURCE_DIR}/data/"
     )
-    target_link_libraries(${name} PRIVATE ${TEST_COMMON_DEPS})
+    target_link_libraries(${name} PRIVATE cxxime-test-util ${TEST_DEPS})
     add_test(NAME ${name} COMMAND ${name})
 endfunction()
 
-add_cxxime_test(engine_test)
-add_cxxime_test(segmentor_test)
-add_cxxime_test(syllabifier_completion_test)
-add_cxxime_test(pinyin_composer_test)
-add_cxxime_test(dict_test)
-add_cxxime_test(user_data_separation_test)
-add_cxxime_test(disabled_system_lexicon_test)
-target_link_libraries(disabled_system_lexicon_test PRIVATE cxxime-test-topn-data)
-add_cxxime_test(dictionary_format_test)
-target_link_libraries(dictionary_format_test PRIVATE cxxime-test-topn-data)
-add_cxxime_test(dictionary_manifest_test)
-add_cxxime_test(config_test)
-add_cxxime_test(keyboard_shortcut_test)
-add_cxxime_test(layout_test)
-add_cxxime_test(preedit_mode_test)
-add_cxxime_test(preedit_edit_test)
-add_cxxime_test(edit_target_test)
+add_cxxime_test(engine_test
+    SOURCES
+        engine/engine_test.cc
+        engine/engine_pinyin_test.cc
+        engine/engine_ascii_mode_test.cc
+        engine/engine_ascii_composition_test.cc
+        engine/engine_deadline_test.cc
+    DEPS cxxime-engine
+)
+add_cxxime_test(segmentor_test SOURCES engine/segmentor_test.cc DEPS cxxime-engine)
+add_cxxime_test(syllabifier_completion_test
+    SOURCES engine/syllabifier_completion_test.cc
+    DEPS cxxime-engine
+)
+add_cxxime_test(pinyin_composer_test SOURCES engine/pinyin_composer_test.cc DEPS cxxime-engine)
+add_cxxime_test(dict_test SOURCES engine/dict_test.cc DEPS cxxime-engine)
+add_cxxime_test(user_data_separation_test
+    SOURCES engine/user_data_separation_test.cc
+    DEPS cxxime-engine
+)
+add_cxxime_test(disabled_system_lexicon_test
+    SOURCES engine/disabled_system_lexicon_test.cc
+    DEPS cxxime-engine cxxime-test-topn-data
+)
+add_cxxime_test(dictionary_format_test
+    SOURCES engine/dictionary_format_test.cc
+    DEPS cxxime-engine cxxime-test-topn-data
+)
+add_cxxime_test(dictionary_manifest_test
+    SOURCES shared/dictionary_manifest_test.cc
+    DEPS cxxime-shared
+)
+add_cxxime_test(config_test
+    SOURCES engine/config_test.cc
+    DEPS cxxime-engine cxxime-ipc cxxime-ui
+)
+add_cxxime_test(keyboard_shortcut_test
+    SOURCES shared/keyboard_shortcut_test.cc
+    DEPS cxxime-shared
+)
+add_cxxime_test(layout_test SOURCES ui/layout_test.cc DEPS cxxime-ui)
+add_cxxime_test(preedit_mode_test SOURCES tsf/preedit_mode_test.cc)
+add_cxxime_test(preedit_edit_test SOURCES engine/preedit_edit_test.cc DEPS cxxime-engine)
+add_cxxime_test(edit_target_test SOURCES tsf/edit_target_test.cc DEPS cxxime-shared)
 target_sources(edit_target_test PRIVATE
     ${CMAKE_SOURCE_DIR}/tsf/src/edit_target.cc
     ${CMAKE_SOURCE_DIR}/tsf/src/globals.cpp
 )
 target_link_libraries(edit_target_test PRIVATE ole32 oleaut32 user32)
-add_cxxime_test(effective_edit_target_test)
+add_cxxime_test(effective_edit_target_test SOURCES tsf/effective_edit_target_test.cc)
 target_sources(effective_edit_target_test PRIVATE
     ${CMAKE_SOURCE_DIR}/tsf/src/effective_edit_target.cpp
 )
-add_cxxime_test(candidate_presentation_test)
+add_cxxime_test(candidate_presentation_test
+    SOURCES tsf/candidate_presentation_test.cc
+    DEPS cxxime-shared
+)
 target_sources(candidate_presentation_test PRIVATE
     ${CMAKE_SOURCE_DIR}/tsf/src/candidate_presentation.cpp
 )
-add_cxxime_test(ipc_test)
-add_cxxime_test(wubi_test)
-add_cxxime_test(wubi_prefix_query_test)
-target_link_libraries(wubi_prefix_query_test PRIVATE cxxime-test-wubi-index-data)
-add_cxxime_test(candidate_window_test)
-add_cxxime_test(candidate_quality_test)
-add_cxxime_test(status_window_test)
-add_cxxime_test(window_position_test)
-add_cxxime_test(benchmark_test)
-add_cxxime_test(short_cache_test)
-target_link_libraries(short_cache_test PRIVATE cxxime-test-topn-data)
-add_cxxime_test(trace_test)
-add_cxxime_test(diagnostic_log_maintenance_test)
+add_cxxime_test(ipc_test SOURCES ipc/ipc_test.cc DEPS cxxime-ipc)
+add_cxxime_test(wubi_test SOURCES engine/wubi_test.cc DEPS cxxime-engine)
+add_cxxime_test(wubi_prefix_query_test
+    SOURCES engine/wubi_prefix_query_test.cc
+    DEPS cxxime-engine cxxime-test-wubi-index-data
+)
+add_cxxime_test(candidate_window_test
+    SOURCES ui/candidate_window_test.cc
+    DEPS cxxime-engine cxxime-ui
+)
+add_cxxime_test(candidate_quality_test
+    SOURCES engine/candidate_quality_test.cc
+    DEPS cxxime-engine
+)
+add_cxxime_test(status_window_test SOURCES ui/status_window_test.cc DEPS cxxime-ui)
+add_cxxime_test(window_position_test SOURCES ui/window_position_test.cc DEPS cxxime-ui)
+add_cxxime_test(benchmark_test SOURCES engine/benchmark_test.cc DEPS cxxime-engine)
+add_cxxime_test(short_cache_test
+    SOURCES engine/short_cache_test.cc
+    DEPS cxxime-engine cxxime-test-topn-data
+)
+target_include_directories(short_cache_test PRIVATE ${CMAKE_SOURCE_DIR}/engine/src)
+add_cxxime_test(trace_test SOURCES shared/trace_test.cc DEPS cxxime-engine)
+add_cxxime_test(diagnostic_log_maintenance_test
+    SOURCES shared/diagnostic_log_maintenance_test.cc
+    DEPS cxxime-shared
+)
 if(CXXIME_ENABLE_HOST_DIAGNOSTICS)
-    add_cxxime_test(host_trace_test)
+    add_cxxime_test(host_trace_test SOURCES shared/host_trace_test.cc DEPS cxxime-shared)
 endif()
-add_cxxime_test(mpscq_test)
-add_cxxime_test(control_channel_test)
-add_cxxime_test(control_lifecycle_test)
-add_cxxime_test(ui_channel_test)
-add_cxxime_test(ui_presentation_router_test)
+add_cxxime_test(mpscq_test SOURCES shared/mpscq_test.cc DEPS cxxime-shared)
+add_cxxime_test(control_channel_test SOURCES ipc/control_channel_test.cc DEPS cxxime-ipc)
+add_cxxime_test(control_lifecycle_test
+    SOURCES ipc/control_lifecycle_test.cc
+    DEPS cxxime-ipc
+)
+add_cxxime_test(ui_channel_test SOURCES ipc/ui_channel_test.cc DEPS cxxime-ipc)
+add_cxxime_test(ui_presentation_router_test
+    SOURCES server/ui_presentation_router_test.cc
+    DEPS cxxime-ipc
+)
 target_sources(ui_presentation_router_test PRIVATE
     ${CMAKE_SOURCE_DIR}/server/src/ui_presentation_router.cc
 )
 target_include_directories(ui_presentation_router_test PRIVATE
     ${CMAKE_SOURCE_DIR}/server/src
 )
-add_cxxime_test(system_lifecycle_monitor_test)
+add_cxxime_test(system_lifecycle_monitor_test
+    SOURCES server/system_lifecycle_monitor_test.cc
+    DEPS cxxime-shared
+)
 target_sources(system_lifecycle_monitor_test PRIVATE
     ${CMAKE_SOURCE_DIR}/server/src/system_lifecycle_monitor.cc
 )
@@ -95,29 +159,32 @@ target_link_libraries(system_lifecycle_monitor_test PRIVATE
     wtsapi32
 )
 
-add_executable(config_write_coordinator_test
-    config_write_coordinator_test.cc
-    ${TEST_COMMON_SOURCES}
-    ${CMAKE_SOURCE_DIR}/server/src/config_store.cc
-    ${CMAKE_SOURCE_DIR}/server/src/config_write_coordinator.cc
+add_cxxime_test(config_write_coordinator_test
+    SOURCES
+        server/config_write_coordinator_test.cc
+        ${CMAKE_SOURCE_DIR}/server/src/config_store.cc
+        ${CMAKE_SOURCE_DIR}/server/src/config_write_coordinator.cc
+    DEPS cxxime-engine cxxime-ipc
 )
 target_include_directories(config_write_coordinator_test PRIVATE
-    ${TEST_INCLUDE_DIRS}
     ${CMAKE_SOURCE_DIR}/server/src
 )
-target_compile_definitions(config_write_coordinator_test PRIVATE
-    CXXIME_PROJECT_DIR="${CMAKE_SOURCE_DIR}/"
-    CXXIME_DATA_DIR="${CMAKE_SOURCE_DIR}/data/"
-)
-target_link_libraries(config_write_coordinator_test PRIVATE ${TEST_COMMON_DEPS})
-add_test(NAME config_write_coordinator_test COMMAND config_write_coordinator_test)
 
-add_cxxime_test(dictionary_monitor_test)
-add_cxxime_test(output_composer_test)
-add_cxxime_test(engine_source_test)
-add_cxxime_test(symbol_input_test)
-add_cxxime_test(symbol_table_test)
-add_cxxime_test(system_lexicon_inspector_test)
+add_cxxime_test(dictionary_monitor_test
+    SOURCES shared/dictionary_monitor_test.cc
+    DEPS cxxime-shared
+)
+add_cxxime_test(output_composer_test
+    SOURCES engine/output_composer_test.cc
+    DEPS cxxime-engine
+)
+add_cxxime_test(engine_source_test SOURCES engine/engine_source_test.cc DEPS cxxime-engine)
+add_cxxime_test(symbol_input_test SOURCES engine/symbol_input_test.cc DEPS cxxime-engine)
+add_cxxime_test(symbol_table_test SOURCES engine/symbol_table_test.cc DEPS cxxime-engine)
+add_cxxime_test(system_lexicon_inspector_test
+    SOURCES settings/system_lexicon_inspector_test.cc
+    DEPS cxxime-engine cxxime-shared
+)
 target_sources(system_lexicon_inspector_test PRIVATE
     ${CMAKE_SOURCE_DIR}/settings/pinyin_code_paths.cc
     ${CMAKE_SOURCE_DIR}/settings/system_lexicon_inspector.cc
@@ -125,111 +192,121 @@ target_sources(system_lexicon_inspector_test PRIVATE
 target_include_directories(system_lexicon_inspector_test PRIVATE
     ${CMAKE_SOURCE_DIR}/settings
 )
-add_cxxime_test(lexicon_panel_model_test)
+add_cxxime_test(lexicon_panel_model_test
+    SOURCES settings/lexicon_panel_model_test.cc
+    DEPS cxxime-engine cxxime-shared
+)
 target_sources(lexicon_panel_model_test PRIVATE
     ${CMAKE_SOURCE_DIR}/settings/lexicon_panel_model.cc
 )
 target_include_directories(lexicon_panel_model_test PRIVATE
     ${CMAKE_SOURCE_DIR}/settings
 )
-add_cxxime_test(wubi_engine_test)
-target_link_libraries(wubi_engine_test PRIVATE cxxime-test-wubi-index-data)
-add_cxxime_test(processor_pagination_test)
-add_cxxime_test(temporary_ascii_test)
-add_cxxime_test(tsf_factory_test)
-target_link_libraries(tsf_factory_test PRIVATE ole32 uuid)
+add_cxxime_test(wubi_engine_test
+    SOURCES
+        engine/wubi_engine_test.cc
+        engine/wubi_engine_input_test.cc
+        engine/wubi_engine_mixed_test.cc
+    DEPS cxxime-engine cxxime-test-wubi-index-data
+)
+add_cxxime_test(processor_pagination_test
+    SOURCES engine/processor_pagination_test.cc
+    DEPS cxxime-engine
+)
+add_cxxime_test(temporary_ascii_test
+    SOURCES engine/temporary_ascii_test.cc
+    DEPS cxxime-engine
+)
+add_cxxime_test(tsf_factory_test
+    SOURCES tsf/tsf_factory_test.cc
+    DEPS cxxime-shared ole32 uuid
+)
 
-add_cxxime_test(settings_launcher_util_test)
+add_cxxime_test(settings_launcher_util_test SOURCES tsf/settings_launcher_util_test.cc)
 target_sources(settings_launcher_util_test PRIVATE
     ${CMAKE_SOURCE_DIR}/tsf/src/settings_launcher_util.cpp
 )
 
-add_cxxime_test(installer_lock_test)
-target_link_libraries(installer_lock_test PRIVATE cxxime-installer-lock)
+add_cxxime_test(installer_lock_test
+    SOURCES installer/installer_lock_test.cc
+    DEPS cxxime-installer-lock
+)
 
-add_executable(candidate_preference_save_worker_test
-    candidate_preference_save_worker_test.cc
-    ${TEST_COMMON_SOURCES}
-    ${CMAKE_SOURCE_DIR}/server/src/candidate_preference_save_worker.cc
+add_cxxime_test(candidate_preference_save_worker_test
+    SOURCES
+        server/candidate_preference_save_worker_test.cc
+        ${CMAKE_SOURCE_DIR}/server/src/candidate_preference_save_worker.cc
+    DEPS cxxime-engine
 )
 target_include_directories(candidate_preference_save_worker_test PRIVATE
-    ${TEST_INCLUDE_DIRS}
     ${CMAKE_SOURCE_DIR}/server/src
 )
-target_compile_definitions(candidate_preference_save_worker_test PRIVATE
-    CXXIME_PROJECT_DIR="${CMAKE_SOURCE_DIR}/"
-    CXXIME_DATA_DIR="${CMAKE_SOURCE_DIR}/data/"
-)
-target_link_libraries(candidate_preference_save_worker_test PRIVATE ${TEST_COMMON_DEPS})
-add_test(NAME candidate_preference_save_worker_test COMMAND candidate_preference_save_worker_test)
 
-add_executable(session_manager_status_test
-    session_manager_status_test.cc
-    ${TEST_COMMON_SOURCES}
-    ${CMAKE_SOURCE_DIR}/server/src/session_manager.cc
+add_cxxime_test(session_manager_status_test
+    SOURCES
+        server/session_manager_status_test.cc
+        ${CMAKE_SOURCE_DIR}/server/src/session_manager.cc
+    DEPS
+        cxxime-engine
+        cxxime-ipc
+        cxxime-test-topn-data
+        cxxime-test-wubi-index-data
 )
 target_include_directories(session_manager_status_test PRIVATE
-    ${TEST_INCLUDE_DIRS}
     ${CMAKE_SOURCE_DIR}/server/src
 )
-target_compile_definitions(session_manager_status_test PRIVATE
-    CXXIME_PROJECT_DIR="${CMAKE_SOURCE_DIR}/"
-    CXXIME_DATA_DIR="${CMAKE_SOURCE_DIR}/data/"
-)
-target_link_libraries(session_manager_status_test PRIVATE ${TEST_COMMON_DEPS})
-target_link_libraries(session_manager_status_test PRIVATE cxxime-test-topn-data)
-target_link_libraries(session_manager_status_test PRIVATE cxxime-test-wubi-index-data)
-add_test(NAME session_manager_status_test COMMAND session_manager_status_test)
 
-add_executable(session_manager_integration_test
-    session_manager_integration_test.cc
-    ${TEST_COMMON_SOURCES}
-    ${CMAKE_SOURCE_DIR}/server/src/session_manager.cc
-    ${CMAKE_SOURCE_DIR}/server/src/lexicon_control_handler.cc
+add_cxxime_test(session_manager_integration_test
+    SOURCES
+        server/session_manager_integration_test.cc
+        server/session_manager_candidate_test.cc
+        server/session_manager_lexicon_test.cc
+        server/session_manager_lifecycle_test.cc
+        server/session_manager_integration_test_support.cc
+        ${CMAKE_SOURCE_DIR}/server/src/session_manager.cc
+        ${CMAKE_SOURCE_DIR}/server/src/lexicon_control_handler.cc
+    DEPS
+        cxxime-engine
+        cxxime-ipc
+        cxxime-test-topn-data
+        cxxime-test-wubi-index-data
 )
 target_include_directories(session_manager_integration_test PRIVATE
-    ${TEST_INCLUDE_DIRS}
     ${CMAKE_SOURCE_DIR}/server/src
 )
-target_compile_definitions(session_manager_integration_test PRIVATE
-    CXXIME_PROJECT_DIR="${CMAKE_SOURCE_DIR}/"
-    CXXIME_DATA_DIR="${CMAKE_SOURCE_DIR}/data/"
-)
-target_link_libraries(session_manager_integration_test PRIVATE ${TEST_COMMON_DEPS})
-target_link_libraries(session_manager_integration_test PRIVATE cxxime-test-topn-data)
-target_link_libraries(session_manager_integration_test PRIVATE cxxime-test-wubi-index-data)
-add_test(NAME session_manager_integration_test COMMAND session_manager_integration_test)
 
 find_package(Python3 QUIET)
 if(Python3_FOUND)
     add_test(
         NAME dictionary_format_verifier_test
         COMMAND ${Python3_EXECUTABLE}
-                ${CMAKE_CURRENT_SOURCE_DIR}/dictionary_format_verifier_test.py
+                ${CMAKE_CURRENT_SOURCE_DIR}/data/dictionary_format_verifier_test.py
     )
     add_test(
         NAME reverse_index_pipeline_test
         COMMAND ${Python3_EXECUTABLE}
-                ${CMAKE_CURRENT_SOURCE_DIR}/reverse_index_pipeline_test.py
+                ${CMAKE_CURRENT_SOURCE_DIR}/data/reverse_index_pipeline_test.py
     )
     add_test(
         NAME wubi_symbol_pipeline_test
-        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/wubi_symbol_pipeline_test.py
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/data/wubi_symbol_pipeline_test.py
     )
     add_test(
         NAME wubi_prefix_index_test
-        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/wubi_prefix_index_test.py
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/data/wubi_prefix_index_test.py
     )
     add_test(
         NAME pinyin_topn_pipeline_test
-        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/pinyin_topn_pipeline_test.py
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/data/pinyin_topn_pipeline_test.py
                 --topn-builder $<TARGET_FILE:topn_builder>
     )
     find_program(POWERSHELL_EXECUTABLE powershell)
     if(POWERSHELL_EXECUTABLE)
         add_test(
             NAME host_trace_tools_test
-            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/host_trace_tools_test.py
+            COMMAND ${Python3_EXECUTABLE}
+                    ${CMAKE_CURRENT_SOURCE_DIR}/tools/host_trace_tools_test.py
                     --powershell ${POWERSHELL_EXECUTABLE}
         )
     endif()
