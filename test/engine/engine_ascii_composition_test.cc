@@ -179,14 +179,14 @@ TEST(AsciiComposer, capslock_append_noop_during_composing) {
     ac.load_config(config);
     cxxime::Context ctx;
 
-    ctx.pinyin_buffer = "nihao";
+    ASSERT_TRUE(ctx.set_preedit("nihao"));
     ASSERT_TRUE(ctx.is_composing());
 
     // Press CapsLock in append mode — should NOT clear or toggle
     ac.process_key(0x14, false, ctx, true);  // VK_CAPITAL down, CapsLock ON
 
     ASSERT_TRUE(!ac.is_ascii_mode());  // still Chinese mode
-    ASSERT_EQ(ctx.pinyin_buffer, "nihao");  // buffer unchanged
+    ASSERT_EQ(ctx.active_input(), "nihao");  // buffer unchanged
 }
 
 TEST(AsciiComposer, capslock_candidate_commits_first_candidate) {
@@ -198,7 +198,7 @@ TEST(AsciiComposer, capslock_candidate_commits_first_candidate) {
     cxxime::Context ctx;
 
     // Set up composing state with candidates
-    ctx.pinyin_buffer = "nihao";
+    ASSERT_TRUE(ctx.set_preedit("nihao"));
     cxxime::CandidatePage page;
     cxxime::Candidate c1; c1.text = "你好";
     cxxime::Candidate c2; c2.text = "拟好";
@@ -213,7 +213,7 @@ TEST(AsciiComposer, capslock_candidate_commits_first_candidate) {
     ASSERT_TRUE(ac.is_ascii_mode());
     ASSERT_EQ(ctx.committed_text, "你好");
     ASSERT_TRUE(ctx.committed_candidate() == nullptr);
-    ASSERT_TRUE(ctx.pinyin_buffer.empty());
+    ASSERT_TRUE(ctx.active_input().empty());
 }
 
 TEST(AsciiComposer, capslock_candidate_no_candidates_toggles) {
@@ -224,14 +224,14 @@ TEST(AsciiComposer, capslock_candidate_no_candidates_toggles) {
     ac.load_config(config);
     cxxime::Context ctx;
 
-    ctx.pinyin_buffer = "zzz";  // no valid candidates
+    ASSERT_TRUE(ctx.set_preedit("zzz"));  // no valid candidates
     ASSERT_TRUE(ctx.is_composing());
 
     // Press CapsLock - no candidates, commit raw text and toggle
     ac.process_key(0x14, false, ctx, true);  // VK_CAPITAL down, CapsLock ON
 
     ASSERT_TRUE(ac.is_ascii_mode());
-    ASSERT_TRUE(ctx.pinyin_buffer.empty());
+    ASSERT_TRUE(ctx.active_input().empty());
     ASSERT_EQ(ctx.committed_text, "zzz");
     ASSERT_EQ(ctx.commit_source(), cxxime::CommitSource::kRawCodePreserveCase);
 }
@@ -244,14 +244,14 @@ TEST(AsciiComposer, capslock_code_commits_buffer) {
     ac.load_config(config);
     cxxime::Context ctx;
 
-    ctx.pinyin_buffer = "nihao";
+    ASSERT_TRUE(ctx.set_preedit("nihao"));
 
     // Press CapsLock — should commit raw buffer and toggle
     ac.process_key(0x14, false, ctx, true);  // VK_CAPITAL down, CapsLock ON
 
     ASSERT_TRUE(ac.is_ascii_mode());
     ASSERT_EQ(ctx.committed_text, "nihao");
-    ASSERT_TRUE(ctx.pinyin_buffer.empty());
+    ASSERT_TRUE(ctx.active_input().empty());
 }
 
 TEST(Engine, capslock_append_letter_accepted) {
@@ -281,7 +281,7 @@ TEST(Engine, capslock_append_letter_accepted) {
     first.keycode = 'N';
     first.is_key_up = false;
     ASSERT_EQ(engine.process_key(first), cxxime::ProcessResult::ACCEPTED);
-    ASSERT_EQ(engine.context().pinyin_buffer, "n");
+    ASSERT_EQ(engine.context().active_input(), "n");
 
     // Press CapsLock while composing. Append mode should not clear or switch.
     cxxime::KeyEvent caps_event;
@@ -290,7 +290,7 @@ TEST(Engine, capslock_append_letter_accepted) {
     caps_event.set_caps_lock();  // OS has toggled CapsLock ON
     engine.process_key(caps_event);
     ASSERT_TRUE(!engine.ascii_composer().is_ascii_mode());
-    ASSERT_EQ(engine.context().pinyin_buffer, "n");
+    ASSERT_EQ(engine.context().active_input(), "n");
 
     // Now press 'A' with CapsLock ON
     cxxime::KeyEvent event;
@@ -301,7 +301,7 @@ TEST(Engine, capslock_append_letter_accepted) {
     auto result = engine.process_key(event);
     // In append mode, letter should be accepted (buffered), not committed
     ASSERT_EQ(result, cxxime::ProcessResult::ACCEPTED);
-    ASSERT_EQ(engine.context().pinyin_buffer, "nA");
+    ASSERT_EQ(engine.context().active_input(), "nA");
 
     engine.finalize();
     DeleteFileA(dict_path.c_str());
@@ -332,8 +332,8 @@ TEST(Engine, capslock_append_clears_candidates_and_commits_raw_code) {
         event.is_key_up = false;
         ASSERT_EQ(engine.process_key(event), cxxime::ProcessResult::ACCEPTED);
     }
-    ASSERT_EQ(engine.context().pinyin_buffer, "ni");
-    ASSERT_TRUE(!engine.context().candidates.candidates.empty());
+    ASSERT_EQ(engine.context().active_input(), "ni");
+    ASSERT_TRUE(!engine.context().candidate_page().candidates.empty());
 
     cxxime::KeyEvent caps_event;
     caps_event.keycode = 0x14;  // VK_CAPITAL
@@ -349,8 +349,8 @@ TEST(Engine, capslock_append_clears_candidates_and_commits_raw_code) {
         ASSERT_EQ(engine.process_key(event), cxxime::ProcessResult::ACCEPTED);
     }
 
-    ASSERT_EQ(engine.context().pinyin_buffer, "niDD");
-    ASSERT_TRUE(engine.context().candidates.candidates.empty());
+    ASSERT_EQ(engine.context().active_input(), "niDD");
+    ASSERT_TRUE(engine.context().candidate_page().candidates.empty());
 
     cxxime::KeyEvent space;
     space.keycode = VK_SPACE;

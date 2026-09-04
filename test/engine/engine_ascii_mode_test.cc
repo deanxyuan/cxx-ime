@@ -11,7 +11,7 @@ TEST(AsciiComposer, shift_l_code_toggles_and_commits) {
     cxxime::Context ctx;
 
     // Simulate composing state with pinyin
-    ctx.pinyin_buffer = "ni";
+    ASSERT_TRUE(ctx.set_preedit("ni"));
     ASSERT_TRUE(!ac.is_ascii_mode());
 
     // Press Shift_L (key-down)
@@ -33,7 +33,7 @@ TEST(AsciiComposer, shift_r_set_ascii_mode_toggles_no_commit) {
     ac.load_config(config);
     cxxime::Context ctx;
 
-    ctx.pinyin_buffer = "ni";
+    ASSERT_TRUE(ctx.set_preedit("ni"));
     ASSERT_TRUE(!ac.is_ascii_mode());
 
     // Press and release Shift_R
@@ -52,17 +52,17 @@ TEST(AsciiComposer, inline_ascii_binding_preserves_ime_origin) {
     cxxime::AsciiComposer composer;
     composer.load_config(config);
     cxxime::Context context;
-    ASSERT_TRUE(context.start_composition(cxxime::CompositionKind::kIme, "ni", 1));
+    ASSERT_TRUE(context.start_composition(cxxime::CompositionScheme::kPinyin, "ni", 1));
 
     composer.process_key(VK_LSHIFT, false, context);
     composer.process_key(VK_LSHIFT, true, context);
 
     ASSERT_TRUE(composer.is_ascii_mode());
     ASSERT_TRUE(composer.is_temporary_ascii());
-    ASSERT_EQ(context.composition_kind(), cxxime::CompositionKind::kInlineAscii);
+    ASSERT_EQ(context.composition_scheme(), cxxime::CompositionScheme::kInlineAscii);
     ASSERT_TRUE(context.composition_origin().has_value());
-    ASSERT_EQ(context.composition_origin()->kind, cxxime::CompositionKind::kIme);
-    ASSERT_EQ(context.composition_origin()->code, "ni");
+    ASSERT_EQ(context.composition_origin()->scheme, cxxime::CompositionScheme::kPinyin);
+    ASSERT_EQ(context.composition_origin()->input, "ni");
     ASSERT_EQ(context.composition_origin()->cursor, static_cast<size_t>(1));
 }
 
@@ -73,7 +73,8 @@ TEST(AsciiComposer, inline_ascii_binding_keeps_active_inline_mode_stable) {
     cxxime::AsciiComposer composer;
     composer.load_config(config);
     cxxime::Context context;
-    ASSERT_TRUE(context.start_composition(cxxime::CompositionKind::kInlineAscii, "c++", 3));
+    ASSERT_TRUE(
+        context.start_composition(cxxime::CompositionScheme::kInlineAscii, "c++", 3));
     composer.set_ascii_mode(true);
 
     composer.process_key(VK_LSHIFT, false, context);
@@ -81,8 +82,8 @@ TEST(AsciiComposer, inline_ascii_binding_keeps_active_inline_mode_stable) {
 
     ASSERT_TRUE(composer.is_ascii_mode());
     ASSERT_TRUE(!composer.is_temporary_ascii());
-    ASSERT_EQ(context.composition_kind(), cxxime::CompositionKind::kInlineAscii);
-    ASSERT_EQ(context.pinyin_buffer, "c++");
+    ASSERT_EQ(context.composition_scheme(), cxxime::CompositionScheme::kInlineAscii);
+    ASSERT_EQ(context.active_input(), "c++");
 }
 
 TEST(AsciiComposer, inline_ascii_origin_survives_cursor_navigation) {
@@ -92,7 +93,7 @@ TEST(AsciiComposer, inline_ascii_origin_survives_cursor_navigation) {
     cxxime::AsciiComposer composer;
     composer.load_config(config);
     cxxime::Context context;
-    ASSERT_TRUE(context.start_composition(cxxime::CompositionKind::kIme, "ni", 2));
+    ASSERT_TRUE(context.start_composition(cxxime::CompositionScheme::kPinyin, "ni", 2));
 
     composer.process_key(VK_LSHIFT, false, context);
     composer.process_key(VK_LSHIFT, true, context);
@@ -101,7 +102,7 @@ TEST(AsciiComposer, inline_ascii_origin_survives_cursor_navigation) {
     ASSERT_EQ(composer.process_inline_ascii_composition(left, context, true),
               cxxime::InlineAsciiResult::kAccepted);
 
-    ASSERT_EQ(context.composition_kind(), cxxime::CompositionKind::kInlineAscii);
+    ASSERT_EQ(context.composition_scheme(), cxxime::CompositionScheme::kInlineAscii);
     ASSERT_TRUE(context.composition_origin().has_value());
     ASSERT_EQ(context.preedit_cursor(), static_cast<size_t>(1));
 }
@@ -113,16 +114,16 @@ TEST(AsciiComposer, set_ascii_mode_binding_does_not_create_origin) {
     cxxime::AsciiComposer composer;
     composer.load_config(config);
     cxxime::Context context;
-    ASSERT_TRUE(context.start_composition(cxxime::CompositionKind::kSymbol, "\\bd", 2));
+    ASSERT_TRUE(context.start_composition(cxxime::CompositionScheme::kSymbol, "\\bd", 2));
 
     composer.process_key(VK_RSHIFT, false, context);
     composer.process_key(VK_RSHIFT, true, context);
 
     ASSERT_TRUE(composer.is_ascii_mode());
     ASSERT_TRUE(!composer.is_temporary_ascii());
-    ASSERT_EQ(context.composition_kind(), cxxime::CompositionKind::kInlineAscii);
+    ASSERT_EQ(context.composition_scheme(), cxxime::CompositionScheme::kInlineAscii);
     ASSERT_TRUE(!context.composition_origin().has_value());
-    ASSERT_EQ(context.pinyin_buffer, "\\bd");
+    ASSERT_EQ(context.active_input(), "\\bd");
     ASSERT_EQ(context.preedit_cursor(), static_cast<size_t>(2));
 }
 
@@ -243,14 +244,14 @@ TEST(AsciiComposer, capslock_clear_resets_pinyin) {
     cxxime::Context ctx;
 
     // Simulate composing state
-    ctx.pinyin_buffer = "nihao";
+    ASSERT_TRUE(ctx.set_preedit("nihao"));
     ASSERT_TRUE(ctx.is_composing());
 
     // Press CapsLock — should clear pinyin and toggle ascii_mode
     ac.process_key(0x14, false, ctx, true);  // VK_CAPITAL down, CapsLock ON
 
     ASSERT_TRUE(ac.is_ascii_mode());
-    ASSERT_TRUE(ctx.pinyin_buffer.empty());
+    ASSERT_TRUE(ctx.active_input().empty());
     ASSERT_TRUE(!ctx.is_composing());
 }
 
@@ -288,7 +289,7 @@ TEST(Engine, capslock_clear_off_restores_chinese_without_ascii_letter_intercept)
 
     auto result = engine.process_key(letter);
     ASSERT_EQ(result, cxxime::ProcessResult::ACCEPTED);
-    ASSERT_EQ(engine.context().pinyin_buffer, "a");
+    ASSERT_EQ(engine.context().active_input(), "a");
 
     engine.finalize();
     DeleteFileA(dict_path.c_str());

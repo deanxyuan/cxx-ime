@@ -14,10 +14,12 @@ class WubiTranslator : public ITranslator {
 public:
     void set_dict(Dict* dict);
 
-    CandidatePage translate(const std::string& code, int page_index = 0, int page_size = 9,
-                            QueryTrace* trace = nullptr, const QueryBudget* budget = nullptr,
-                            QueryScratch* scratch = nullptr,
-                            int candidate_offset = -1) override;
+    TranslationResult translate(const TranslationRequest& request) override;
+    CandidatePage translate_page(const std::string& code, int page_index = 0,
+                                 int page_size = 9, QueryTrace* trace = nullptr,
+                                 const QueryBudget* budget = nullptr,
+                                 QueryScratch* scratch = nullptr,
+                                 int candidate_offset = -1);
 
     void clear_query_cache() override;
     void set_candidate_learning_enabled(bool enabled) override;

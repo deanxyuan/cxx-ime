@@ -3,8 +3,8 @@
 #ifndef CXXIME_PROCESSOR_H_
 #define CXXIME_PROCESSOR_H_
 
-#include <cxxime/key_event.h>
 #include <cxxime/context.h>
+#include <cxxime/key_event.h>
 
 namespace cxxime {
 
@@ -12,6 +12,7 @@ enum class ProcessResult {
     ACCEPTED,
     REJECTED,
     COMMITTED,
+    CANDIDATE_SELECTED,
     TOGGLE_SHAPE,   // full/half shape toggle (Shift+Space)
     TOGGLE_PUNCT,   // Chinese/English punctuation toggle (Ctrl+.)
     // The first KeyDown switches; repeats and the matching KeyUp are only consumed.

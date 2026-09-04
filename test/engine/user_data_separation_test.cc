@@ -49,7 +49,7 @@ cxxime::Candidate make_candidate(const std::string& text, const std::string& cod
 }
 
 int candidate_index(const cxxime::Engine& engine, cxxime::CandidateSource source) {
-    const auto& candidates = engine.context().candidates.candidates;
+    const auto candidates = engine.context().candidate_page().candidates;
     for (std::size_t i = 0; i < candidates.size(); ++i) {
         if (candidates[i].source == source) {
             return static_cast<int>(i);
@@ -524,8 +524,8 @@ TEST(UserDataSeparation, deep_candidate_preference_is_applied_before_pagination)
     cxxime::WubiTranslator translator;
     translator.set_dict(&dictionary);
     translator.set_candidate_learning_enabled(true);
-    const auto first_page = translator.translate("abcd", 0, 5);
-    const auto second_page = translator.translate("abcd", 1, 5);
+    const auto first_page = translator.translate_page("abcd", 0, 5);
+    const auto second_page = translator.translate_page("abcd", 1, 5);
     ASSERT_EQ(first_page.candidates[0].text, preferred.text);
     ASSERT_TRUE(std::none_of(
         second_page.candidates.begin(), second_page.candidates.end(),
@@ -555,7 +555,7 @@ TEST(UserDataSeparation, deep_manual_prefix_preference_uses_candidate_full_code)
     cxxime::WubiTranslator translator;
     translator.set_dict(&dictionary);
     translator.set_candidate_learning_enabled(true);
-    const auto first_page = translator.translate("aa", 0, 5);
+    const auto first_page = translator.translate_page("aa", 0, 5);
     ASSERT_EQ(first_page.candidates[0].text, preferred.text);
 
     dictionary.close();
@@ -587,8 +587,8 @@ TEST(UserDataSeparation, deep_pinyin_preference_is_applied_before_pagination) {
     translator.set_dict(&dictionary);
     translator.set_syllabifier(&syllabifier);
     translator.set_candidate_learning_enabled(true);
-    const auto first_page = translator.translate("ni", 0, 5);
-    const auto second_page = translator.translate("ni", 1, 5);
+    const auto first_page = translator.translate_page("ni", 0, 5);
+    const auto second_page = translator.translate_page("ni", 1, 5);
     ASSERT_EQ(first_page.candidates[0].text, preferred.text);
     ASSERT_TRUE(std::none_of(
         second_page.candidates.begin(), second_page.candidates.end(),

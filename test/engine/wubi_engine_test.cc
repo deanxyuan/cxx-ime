@@ -8,17 +8,17 @@ TEST(WubiEngine, processor_letter_input) {
     // 输入字母 a
     auto r = proc.process_key(make_key('A'), ctx);
     ASSERT_EQ(r, cxxime::ProcessResult::ACCEPTED);
-    ASSERT_EQ(ctx.pinyin_buffer, "a");
+    ASSERT_EQ(ctx.active_input(), "a");
 
     // 输入字母 b
     r = proc.process_key(make_key('B'), ctx);
     ASSERT_EQ(r, cxxime::ProcessResult::ACCEPTED);
-    ASSERT_EQ(ctx.pinyin_buffer, "ab");
+    ASSERT_EQ(ctx.active_input(), "ab");
 
     // Escape 清空
     r = proc.process_key(make_key(VK_ESCAPE), ctx);
     ASSERT_EQ(r, cxxime::ProcessResult::ACCEPTED);
-    ASSERT_TRUE(ctx.pinyin_buffer.empty());
+    ASSERT_TRUE(ctx.active_input().empty());
 }
 
 TEST(WubiEngine, processor_backspace) {
@@ -27,15 +27,15 @@ TEST(WubiEngine, processor_backspace) {
 
     proc.process_key(make_key('A'), ctx);
     proc.process_key(make_key('B'), ctx);
-    ASSERT_EQ(ctx.pinyin_buffer, "ab");
+    ASSERT_EQ(ctx.active_input(), "ab");
 
     auto r = proc.process_key(make_key(VK_BACK), ctx);
     ASSERT_EQ(r, cxxime::ProcessResult::ACCEPTED);
-    ASSERT_EQ(ctx.pinyin_buffer, "a");
+    ASSERT_EQ(ctx.active_input(), "a");
 
     r = proc.process_key(make_key(VK_BACK), ctx);
     ASSERT_EQ(r, cxxime::ProcessResult::ACCEPTED);
-    ASSERT_TRUE(ctx.pinyin_buffer.empty());
+    ASSERT_TRUE(ctx.active_input().empty());
 
     // 空输入时按 Backspace，应 REJECTED
     r = proc.process_key(make_key(VK_BACK), ctx);
@@ -47,18 +47,18 @@ TEST(WubiEngine, processor_number_select) {
     cxxime::Context ctx;
 
     // 设置候选
-    ctx.pinyin_buffer = "a";
+    ASSERT_TRUE(ctx.set_preedit("a"));
     cxxime::CandidatePage page;
     cxxime::Candidate c1; c1.text = "工"; c1.frequency = 300;
     cxxime::Candidate c2; c2.text = "式"; c2.frequency = 200;
     page.candidates = {c1, c2};
     page.highlighted = 0;
-    ctx.candidates = page;
+    ctx.update_candidates(std::move(page));
 
     // 按数字键 2 选中 "式"
     auto r = proc.process_key(make_key('2'), ctx);
-    ASSERT_EQ(r, cxxime::ProcessResult::COMMITTED);
-    ASSERT_EQ(ctx.committed_text, "式");
+    ASSERT_EQ(r, cxxime::ProcessResult::CANDIDATE_SELECTED);
+    ASSERT_EQ(ctx.take_requested_candidate_selection().value_or(-1), 1);
 }
 
 TEST(WubiEngine, processor_space_select_first) {
@@ -66,31 +66,31 @@ TEST(WubiEngine, processor_space_select_first) {
     cxxime::Context ctx;
 
     // 设置候选
-    ctx.pinyin_buffer = "a";
+    ASSERT_TRUE(ctx.set_preedit("a"));
     cxxime::CandidatePage page;
     cxxime::Candidate c1; c1.text = "工"; c1.frequency = 300;
     cxxime::Candidate c2; c2.text = "式"; c2.frequency = 200;
     page.candidates = {c1, c2};
     page.highlighted = 0;
-    ctx.candidates = page;
+    ctx.update_candidates(std::move(page));
 
     // Space 选中第一候选
     auto r = proc.process_key(make_key(VK_SPACE), ctx);
-    ASSERT_EQ(r, cxxime::ProcessResult::COMMITTED);
-    ASSERT_EQ(ctx.committed_text, "工");
+    ASSERT_EQ(r, cxxime::ProcessResult::CANDIDATE_SELECTED);
+    ASSERT_EQ(ctx.take_requested_candidate_selection().value_or(-1), 0);
 }
 
 TEST(WubiEngine, processor_space_without_candidates_clears) {
     cxxime::WubiProcessor proc;
     cxxime::Context ctx;
 
-    ctx.pinyin_buffer = "niwe";
+    ASSERT_TRUE(ctx.set_preedit("niwe"));
 
     auto r = proc.process_key(make_key(VK_SPACE), ctx);
     ASSERT_EQ(r, cxxime::ProcessResult::ACCEPTED);
-    ASSERT_TRUE(ctx.pinyin_buffer.empty());
+    ASSERT_TRUE(ctx.active_input().empty());
     ASSERT_TRUE(ctx.committed_text.empty());
-    ASSERT_TRUE(ctx.candidates.candidates.empty());
+    ASSERT_TRUE(ctx.candidate_page().candidates.empty());
 }
 
 // --- WubiTranslator tests ---
@@ -110,11 +110,11 @@ TEST(WubiEngine, translator_basic_lookup) {
     trans.set_dict(&dict);
 
     // 查询 "a"，应返回 "工" 和/或 "式"
-    auto page = trans.translate("a", 0, 9);
+    auto page = trans.translate_page("a", 0, 9);
     ASSERT_GE(page.candidates.size(), 1u);
 
     // 查询 "aa"，应返回 "式"
-    page = trans.translate("aa", 0, 9);
+    page = trans.translate_page("aa", 0, 9);
     ASSERT_GE(page.candidates.size(), 1u);
     ASSERT_EQ(page.candidates[0].text, "式");
 
@@ -135,8 +135,8 @@ TEST(WubiEngine, translator_uses_explicit_candidate_offset) {
 
     cxxime::WubiTranslator translator;
     translator.set_dict(&dict);
-    auto first = translator.translate("a", 0, 2);
-    auto second = translator.translate("a", 1, 2, nullptr, nullptr, nullptr, 2);
+    auto first = translator.translate_page("a", 0, 2);
+    auto second = translator.translate_page("a", 1, 2, nullptr, nullptr, nullptr, 2);
 
     ASSERT_EQ(first.page_offset, 0);
     ASSERT_EQ(second.page_index, 1);
@@ -170,12 +170,12 @@ TEST(WubiEngine, translator_keeps_candidate_order_stable_when_page_query_expands
 
     cxxime::WubiTranslator translator;
     translator.set_dict(&dict);
-    auto first = translator.translate("a", 0, 2);
-    auto second = translator.translate("a", 1, 2, nullptr, nullptr, nullptr, 2);
+    auto first = translator.translate_page("a", 0, 2);
+    auto second = translator.translate_page("a", 1, 2, nullptr, nullptr, nullptr, 2);
 
     cxxime::WubiTranslator wide_translator;
     wide_translator.set_dict(&dict);
-    auto wide = wide_translator.translate("a", 0, 5);
+    auto wide = wide_translator.translate_page("a", 0, 5);
 
     ASSERT_EQ(first.candidates.size(), 2u);
     ASSERT_EQ(second.candidates.size(), 2u);
@@ -208,19 +208,19 @@ TEST(WubiEngine, clear_query_cache_discards_candidate_snapshot) {
     cxxime::QueryBudget budget;
 
     cxxime::QueryTrace initial_trace = {};
-    const auto initial = translator.translate("a", 0, 9, &initial_trace, &budget);
+    const auto initial = translator.translate_page("a", 0, 9, &initial_trace, &budget);
     ASSERT_EQ(initial.candidates.size(), 2u);
     ASSERT_TRUE(initial_trace.exact_scan_count + initial_trace.prefix_scan_count > 0);
 
     cxxime::QueryTrace cached_trace = {};
-    const auto cached = translator.translate("a", 0, 9, &cached_trace, &budget);
+    const auto cached = translator.translate_page("a", 0, 9, &cached_trace, &budget);
     ASSERT_EQ(cached.candidates.size(), initial.candidates.size());
     ASSERT_EQ(cached_trace.exact_scan_count + cached_trace.prefix_scan_count, 0u);
 
     translator.clear_query_cache();
 
     cxxime::QueryTrace cleared_trace = {};
-    const auto cleared = translator.translate("a", 0, 9, &cleared_trace, &budget);
+    const auto cleared = translator.translate_page("a", 0, 9, &cleared_trace, &budget);
     ASSERT_EQ(cleared.candidates.size(), initial.candidates.size());
     ASSERT_TRUE(cleared_trace.exact_scan_count + cleared_trace.prefix_scan_count > 0);
 
@@ -261,13 +261,13 @@ TEST(WubiEngine, mixed_order_is_independent_of_page_query_limit) {
     narrow_translator.set_pinyin_dict(&pinyin_dict);
     narrow_translator.set_wubi_dict(&wubi_dict);
     narrow_translator.set_candidate_preference(cxxime::MixedCandidatePreference::kWubi);
-    const auto narrow = narrow_translator.translate("a", 0, 3);
+    const auto narrow = narrow_translator.translate_page("a", 0, 3);
 
     cxxime::MixedTranslator wide_translator;
     wide_translator.set_pinyin_dict(&pinyin_dict);
     wide_translator.set_wubi_dict(&wubi_dict);
     wide_translator.set_candidate_preference(cxxime::MixedCandidatePreference::kWubi);
-    const auto wide = wide_translator.translate("a", 0, 10);
+    const auto wide = wide_translator.translate_page("a", 0, 10);
 
     ASSERT_EQ(narrow.candidates.size(), 3u);
     ASSERT_GE(wide.candidates.size(), narrow.candidates.size());
@@ -323,7 +323,7 @@ TEST(WubiEngine, mixed_order_places_manually_pinned_candidate_first) {
     translator.set_pinyin_dict(&pinyin_dict);
     translator.set_wubi_dict(&wubi_dict);
     translator.set_candidate_preference(cxxime::MixedCandidatePreference::kWubi);
-    const auto page = translator.translate("a", 0, 4);
+    const auto page = translator.translate_page("a", 0, 4);
 
     ASSERT_EQ(page.candidates.size(), 4u);
     ASSERT_EQ(page.candidates[0].text, "pinyin-two");
@@ -377,7 +377,7 @@ TEST(WubiEngine, mixed_order_preserves_pinned_identity_across_text_deduplication
     translator.set_pinyin_dict(&pinyin_dict);
     translator.set_wubi_dict(&wubi_dict);
     translator.set_candidate_preference(cxxime::MixedCandidatePreference::kWubi);
-    const auto page = translator.translate("a", 0, 4);
+    const auto page = translator.translate_page("a", 0, 4);
 
     ASSERT_GE(page.candidates.size(), static_cast<std::size_t>(2));
     ASSERT_EQ(page.candidates[0].text, "shared-text");
@@ -388,7 +388,7 @@ TEST(WubiEngine, mixed_order_preserves_pinned_identity_across_text_deduplication
     ASSERT_TRUE(
         wubi_dict.replace_manual_candidate_order_and_save("a", {{"shared-text", "a", "a"}}));
     translator.set_candidate_preference(cxxime::MixedCandidatePreference::kAuto);
-    const auto both_pinned = translator.translate("a", 0, 4);
+    const auto both_pinned = translator.translate_page("a", 0, 4);
     ASSERT_TRUE(!both_pinned.candidates.empty());
     ASSERT_EQ(both_pinned.candidates[0].text, "shared-text");
     ASSERT_EQ(both_pinned.candidates[0].source, cxxime::CandidateSource::kWubi);
@@ -436,7 +436,7 @@ TEST(WubiEngine, mixed_order_ignores_stale_manual_entry_from_other_profile) {
     cxxime::MixedTranslator translator;
     translator.set_pinyin_dict(&pinyin_dict);
     translator.set_wubi_dict(&wubi_dict);
-    const auto page = translator.translate("a", 0, 2);
+    const auto page = translator.translate_page("a", 0, 2);
 
     ASSERT_EQ(page.candidates.size(), 2u);
     ASSERT_EQ(page.candidates[0].text, "pinyin-first");
@@ -467,7 +467,7 @@ TEST(WubiEngine, translator_empty_code) {
     trans.set_dict(&dict);
 
     // 空输入应返回空结果
-    auto page = trans.translate("", 0, 9);
+    auto page = trans.translate_page("", 0, 9);
     ASSERT_EQ(page.candidates.size(), 0u);
 
     dict.close();

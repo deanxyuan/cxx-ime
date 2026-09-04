@@ -129,7 +129,7 @@ TEST(SyllabifierCompletion, translator_retries_when_exact_path_has_no_word) {
     translator.set_dict(&dictionary);
     translator.set_syllabifier(&syllabifier);
 
-    const auto page = translator.translate("nihaoshiji", 0, 10);
+    const auto page = translator.translate_page("nihaoshiji", 0, 10);
     ASSERT_TRUE(!page.candidates.empty());
     ASSERT_EQ(page.candidates[0].text, "hello-world");
 
@@ -154,7 +154,7 @@ TEST(SyllabifierCompletion, translator_keeps_valid_exact_path_authoritative) {
     translator.set_dict(&dictionary);
     translator.set_syllabifier(&syllabifier);
 
-    const auto page = translator.translate("nihaoshiji", 0, 10);
+    const auto page = translator.translate_page("nihaoshiji", 0, 10);
     ASSERT_TRUE(!page.candidates.empty());
     ASSERT_EQ(page.candidates[0].text, "exact-ji");
     ASSERT_EQ(page.candidates.size(), 1u);

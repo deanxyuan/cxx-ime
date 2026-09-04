@@ -136,7 +136,7 @@ static void run_pinyin(const std::string& dict_path, const std::string& spelling
             continue;
         }
 
-        auto page = translator.translate(input, 0, 20);
+        auto page = translator.translate_page(input, 0, 20);
         int idx = 0;
         for (auto& c : page.candidates) {
             std::printf("[%d] %s  (%d)\n", idx++, c.text.c_str(), c.frequency);

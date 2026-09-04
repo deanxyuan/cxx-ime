@@ -293,7 +293,7 @@ Measurement measure_engine_input(Engine* engine, std::string_view input, std::si
         return std::make_pair(
             static_cast<std::uint64_t>(
                 std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count()),
-            hash_candidates(engine->context().candidates));
+            hash_candidates(engine->context().candidate_page()));
     };
 
     for (std::size_t index = 0; index < warmup; ++index) {
@@ -303,7 +303,7 @@ Measurement measure_engine_input(Engine* engine, std::string_view input, std::si
     samples.reserve(repeat);
     for (std::size_t index = 0; index < repeat; ++index) {
         const auto sample = run_once();
-        const std::size_t result_count = engine->context().candidates.candidates.size();
+        const std::size_t result_count = engine->context().candidate_page().candidates.size();
         if (index == 0) {
             measurement.result_count = result_count;
             measurement.result_checksum = sample.second;

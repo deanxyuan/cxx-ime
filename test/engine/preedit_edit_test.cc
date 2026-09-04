@@ -52,29 +52,29 @@ void verify_insert_delete_and_boundaries() {
     ASSERT_EQ(processor.process_key(make_key(VK_LEFT), context), cxxime::ProcessResult::ACCEPTED);
     ASSERT_EQ(context.preedit_cursor(), static_cast<size_t>(2));
     ASSERT_EQ(processor.process_key(make_key('A'), context), cxxime::ProcessResult::ACCEPTED);
-    ASSERT_EQ(context.pinyin_buffer, "niah");
+    ASSERT_EQ(context.active_input(), "niah");
     ASSERT_EQ(context.preedit_cursor(), static_cast<size_t>(3));
 
     ASSERT_EQ(processor.process_key(make_key(VK_BACK), context), cxxime::ProcessResult::ACCEPTED);
-    ASSERT_EQ(context.pinyin_buffer, "nih");
+    ASSERT_EQ(context.active_input(), "nih");
     ASSERT_EQ(context.preedit_cursor(), static_cast<size_t>(2));
     ASSERT_EQ(processor.process_key(make_key(VK_DELETE), context), cxxime::ProcessResult::ACCEPTED);
-    ASSERT_EQ(context.pinyin_buffer, "ni");
+    ASSERT_EQ(context.active_input(), "ni");
     ASSERT_EQ(context.preedit_cursor(), static_cast<size_t>(2));
 
     ASSERT_EQ(processor.process_key(make_key(VK_HOME), context), cxxime::ProcessResult::ACCEPTED);
     ASSERT_EQ(context.preedit_cursor(), static_cast<size_t>(0));
     ASSERT_EQ(processor.process_key(make_key(VK_LEFT), context), cxxime::ProcessResult::ACCEPTED);
     ASSERT_EQ(processor.process_key(make_key(VK_BACK), context), cxxime::ProcessResult::ACCEPTED);
-    ASSERT_EQ(context.pinyin_buffer, "ni");
+    ASSERT_EQ(context.active_input(), "ni");
     ASSERT_EQ(context.preedit_cursor(), static_cast<size_t>(0));
 
     ASSERT_EQ(processor.process_key(make_key(VK_END), context), cxxime::ProcessResult::ACCEPTED);
-    ASSERT_EQ(context.preedit_cursor(), context.pinyin_buffer.size());
+    ASSERT_EQ(context.preedit_cursor(), context.active_input().size());
     ASSERT_EQ(processor.process_key(make_key(VK_RIGHT), context), cxxime::ProcessResult::ACCEPTED);
     ASSERT_EQ(processor.process_key(make_key(VK_DELETE), context), cxxime::ProcessResult::ACCEPTED);
-    ASSERT_EQ(context.pinyin_buffer, "ni");
-    ASSERT_EQ(context.preedit_cursor(), context.pinyin_buffer.size());
+    ASSERT_EQ(context.active_input(), "ni");
+    ASSERT_EQ(context.preedit_cursor(), context.active_input().size());
 }
 
 } // namespace
@@ -101,15 +101,20 @@ TEST(PreeditEdit, mixed_mode_uses_the_edited_buffer) {
     engine.set_wubi_dict(&wubi_dict);
     engine.switch_mode(cxxime::InputMode::MIXED);
     cxxime::Config config;
+    config.page_size = 1;
     config.wubi_auto_commit = false;
     engine.reload_config(config);
 
     ASSERT_EQ(engine.process_key(make_key('A')), cxxime::ProcessResult::ACCEPTED);
-    const size_t candidate_count_before = engine.context().candidates.candidates.size();
+    const size_t candidate_count_before = engine.context().candidate_page().candidates.size();
     ASSERT_TRUE(candidate_count_before > 0);
+    ASSERT_EQ(engine.process_key(make_key(VK_NEXT)), cxxime::ProcessResult::ACCEPTED);
+    const int page_offset_before = engine.context().page_offset();
+    ASSERT_GT(page_offset_before, 0);
     ASSERT_EQ(engine.process_key(make_key(VK_LEFT)), cxxime::ProcessResult::ACCEPTED);
     ASSERT_EQ(engine.context().preedit_cursor(), static_cast<size_t>(0));
-    ASSERT_EQ(engine.context().candidates.candidates.size(), candidate_count_before);
+    ASSERT_EQ(engine.context().page_offset(), page_offset_before);
+    ASSERT_EQ(engine.context().candidate_page().candidates.size(), candidate_count_before);
     ASSERT_EQ(engine.last_trace().exact_scan_count, 0u);
     ASSERT_EQ(engine.last_trace().prefix_scan_count, 0u);
     ASSERT_EQ(engine.last_trace().user_scan_count, 0u);
@@ -120,7 +125,7 @@ TEST(PreeditEdit, mixed_mode_uses_the_edited_buffer) {
     ASSERT_EQ(engine.process_key(make_key('C')), cxxime::ProcessResult::ACCEPTED);
     ASSERT_EQ(engine.process_key(make_key(VK_LEFT)), cxxime::ProcessResult::ACCEPTED);
     ASSERT_EQ(engine.process_key(make_key('X')), cxxime::ProcessResult::ACCEPTED);
-    ASSERT_EQ(engine.context().pinyin_buffer, "abxc");
+    ASSERT_EQ(engine.context().active_input(), "abxc");
     ASSERT_EQ(engine.context().preedit_cursor(), static_cast<size_t>(3));
 
     engine.finalize();
@@ -143,14 +148,14 @@ TEST(PreeditEdit, temporary_ascii_uses_the_same_cursor_operations) {
               cxxime::InlineAsciiResult::kNotHandled);
     ASSERT_NE(composer.process_inline_ascii_composition(make_key('A'), context, true),
               cxxime::InlineAsciiResult::kNotHandled);
-    ASSERT_EQ(context.pinyin_buffer, "Doat");
+    ASSERT_EQ(context.active_input(), "Doat");
     ASSERT_EQ(context.preedit_cursor(), static_cast<size_t>(3));
 
     ASSERT_NE(composer.process_inline_ascii_composition(make_key(VK_BACK), context, true),
               cxxime::InlineAsciiResult::kNotHandled);
     ASSERT_NE(composer.process_inline_ascii_composition(make_key(VK_DELETE), context, true),
               cxxime::InlineAsciiResult::kNotHandled);
-    ASSERT_EQ(context.pinyin_buffer, "Do");
+    ASSERT_EQ(context.active_input(), "Do");
     ASSERT_EQ(context.preedit_cursor(), static_cast<size_t>(2));
 }
 
@@ -158,39 +163,41 @@ TEST(PreeditEdit, inline_ascii_restores_origin_kind_and_cursor) {
     cxxime::AsciiComposer composer;
     for (size_t cursor : {static_cast<size_t>(0), static_cast<size_t>(1), static_cast<size_t>(3)}) {
         cxxime::Context context;
-        ASSERT_TRUE(context.start_composition(cxxime::CompositionKind::kIme, "abc", cursor));
+        ASSERT_TRUE(
+            context.start_composition(cxxime::CompositionScheme::kPinyin, "abc", cursor));
         ASSERT_TRUE(context.enter_inline_ascii(true));
         ASSERT_TRUE(context.insert_preedit('+'));
         ASSERT_EQ(composer.process_inline_ascii_composition(make_key(VK_BACK), context, true),
                   cxxime::InlineAsciiResult::kResumeOrigin);
-        ASSERT_EQ(context.composition_kind(), cxxime::CompositionKind::kIme);
-        ASSERT_EQ(context.pinyin_buffer, "abc");
+        ASSERT_EQ(context.composition_scheme(), cxxime::CompositionScheme::kPinyin);
+        ASSERT_EQ(context.active_input(), "abc");
         ASSERT_EQ(context.preedit_cursor(), cursor);
     }
 
     for (size_t cursor : {static_cast<size_t>(1), static_cast<size_t>(2), static_cast<size_t>(3)}) {
         cxxime::Context context;
-        ASSERT_TRUE(context.start_composition(cxxime::CompositionKind::kSymbol, "\\bd", cursor));
+        ASSERT_TRUE(
+            context.start_composition(cxxime::CompositionScheme::kSymbol, "\\bd", cursor));
         ASSERT_TRUE(context.enter_inline_ascii(true));
         ASSERT_TRUE(context.insert_preedit('+'));
         ASSERT_EQ(composer.process_inline_ascii_composition(make_key(VK_BACK), context, true),
                   cxxime::InlineAsciiResult::kResumeOrigin);
-        ASSERT_EQ(context.composition_kind(), cxxime::CompositionKind::kSymbol);
-        ASSERT_EQ(context.pinyin_buffer, "\\bd");
+        ASSERT_EQ(context.composition_scheme(), cxxime::CompositionScheme::kSymbol);
+        ASSERT_EQ(context.active_input(), "\\bd");
         ASSERT_EQ(context.preedit_cursor(), cursor);
-        ASSERT_EQ(context.pinyin_buffer.front(), '\\');
+        ASSERT_EQ(context.active_input().front(), '\\');
     }
 }
 
 TEST(PreeditEdit, inline_ascii_navigation_does_not_restore_origin) {
     cxxime::AsciiComposer composer;
     cxxime::Context context;
-    ASSERT_TRUE(context.start_composition(cxxime::CompositionKind::kIme, "abc", 2));
+    ASSERT_TRUE(context.start_composition(cxxime::CompositionScheme::kPinyin, "abc", 2));
     ASSERT_TRUE(context.enter_inline_ascii(true));
 
     ASSERT_EQ(composer.process_inline_ascii_composition(make_key(VK_LEFT), context, true),
               cxxime::InlineAsciiResult::kAccepted);
-    ASSERT_EQ(context.composition_kind(), cxxime::CompositionKind::kInlineAscii);
+    ASSERT_EQ(context.composition_scheme(), cxxime::CompositionScheme::kInlineAscii);
     ASSERT_TRUE(context.composition_origin().has_value());
     ASSERT_EQ(context.preedit_cursor(), static_cast<size_t>(1));
 }
@@ -205,32 +212,32 @@ TEST(PreeditEdit, edited_inline_ascii_resumes_ime_candidates) {
     ASSERT_TRUE(engine.initialize(pinyin_path));
     ASSERT_EQ(engine.process_key(make_key('N')), cxxime::ProcessResult::ACCEPTED);
     ASSERT_EQ(engine.process_key(make_key('I')), cxxime::ProcessResult::ACCEPTED);
-    ASSERT_TRUE(!engine.context().candidates.candidates.empty());
+    ASSERT_TRUE(!engine.context().candidate_page().candidates.empty());
 
     ASSERT_EQ(engine.process_key(make_key('8', true)), cxxime::ProcessResult::ACCEPTED);
     ASSERT_EQ(engine.process_key(make_key(VK_OEM_2)), cxxime::ProcessResult::ACCEPTED);
-    ASSERT_EQ(engine.context().pinyin_buffer, "ni*/");
-    ASSERT_TRUE(engine.context().candidates.candidates.empty());
+    ASSERT_EQ(engine.context().active_input(), "ni*/");
+    ASSERT_TRUE(engine.context().candidate_page().candidates.empty());
 
     ASSERT_EQ(engine.process_key(make_key(VK_HOME)), cxxime::ProcessResult::ACCEPTED);
     ASSERT_EQ(engine.process_key(make_key(VK_RIGHT)), cxxime::ProcessResult::ACCEPTED);
     ASSERT_EQ(engine.process_key(make_key(VK_RIGHT)), cxxime::ProcessResult::ACCEPTED);
     ASSERT_EQ(engine.process_key(make_key(VK_DELETE)), cxxime::ProcessResult::ACCEPTED);
-    ASSERT_EQ(engine.context().pinyin_buffer, "ni/");
+    ASSERT_EQ(engine.context().active_input(), "ni/");
     ASSERT_EQ(engine.process_key(make_key(VK_BACK)), cxxime::ProcessResult::ACCEPTED);
-    ASSERT_EQ(engine.context().pinyin_buffer, "n/");
+    ASSERT_EQ(engine.context().active_input(), "n/");
     ASSERT_EQ(engine.process_key(make_key(VK_DELETE)), cxxime::ProcessResult::ACCEPTED);
 
-    ASSERT_EQ(engine.context().composition_kind(), cxxime::CompositionKind::kIme);
-    ASSERT_EQ(engine.context().pinyin_buffer, "n");
+    ASSERT_EQ(engine.context().composition_scheme(), cxxime::CompositionScheme::kPinyin);
+    ASSERT_EQ(engine.context().active_input(), "n");
     ASSERT_EQ(engine.context().preedit_cursor(), static_cast<size_t>(1));
-    ASSERT_TRUE(!engine.context().candidates.candidates.empty());
-    ASSERT_EQ(engine.context().candidates.candidates.front().text, "n candidate");
+    ASSERT_TRUE(!engine.context().candidate_page().candidates.empty());
+    ASSERT_EQ(engine.context().candidate_page().candidates.front().text, "n candidate");
 
     ASSERT_EQ(engine.process_key(make_key('I')), cxxime::ProcessResult::ACCEPTED);
-    ASSERT_EQ(engine.context().pinyin_buffer, "ni");
-    ASSERT_TRUE(!engine.context().candidates.candidates.empty());
-    ASSERT_EQ(engine.context().candidates.candidates.front().text, "ni candidate");
+    ASSERT_EQ(engine.context().active_input(), "ni");
+    ASSERT_TRUE(!engine.context().candidate_page().candidates.empty());
+    ASSERT_EQ(engine.context().candidate_page().candidates.front().text, "ni candidate");
 
     engine.finalize();
     DeleteFileA(pinyin_path.c_str());

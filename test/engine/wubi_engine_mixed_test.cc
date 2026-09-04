@@ -21,7 +21,7 @@ TEST(WubiEngine, engine_mixed_switch) {
     // 输入字母 a，应有候选
     auto r = engine.process_key(make_key('A'));
     ASSERT_EQ(r, cxxime::ProcessResult::ACCEPTED);
-    ASSERT_GE(engine.context().candidates.candidates.size(), 1u);
+    ASSERT_GE(engine.context().candidate_page().candidates.size(), 1u);
 
     engine.finalize();
     wubi_dict.close();
@@ -49,7 +49,7 @@ TEST(WubiEngine, engine_mixed_returns_candidates) {
 
     // 输入 a，混输模式应返回候选（至少五笔的 "工"）
     engine.process_key(make_key('A'));
-    auto& candidates = engine.context().candidates.candidates;
+    const auto candidates = engine.context().candidate_page().candidates;
     ASSERT_GE(candidates.size(), 1u);
 
     // 验证五笔候选在结果中
@@ -97,7 +97,7 @@ TEST(WubiEngine, mixed_wubi_preference_interleaves_candidate_sources) {
     engine.switch_mode(cxxime::InputMode::MIXED);
 
     ASSERT_EQ(engine.process_key(make_key('A')), cxxime::ProcessResult::ACCEPTED);
-    const auto& candidates = engine.context().candidates.candidates;
+    const auto candidates = engine.context().candidate_page().candidates;
     ASSERT_GE(candidates.size(), 4u);
     ASSERT_EQ(candidates[0].source, cxxime::CandidateSource::kWubi);
     ASSERT_EQ(candidates[1].source, cxxime::CandidateSource::kPinyin);
@@ -184,8 +184,9 @@ TEST(WubiEngine, engine_mixed_does_not_auto_commit_unique_pinyin_candidate) {
     engine.process_key(make_key('H'));
     auto result = engine.process_key(make_key('A'));
     ASSERT_EQ(result, cxxime::ProcessResult::ACCEPTED);
-    ASSERT_EQ(engine.context().candidates.candidates.size(), 1u);
-    ASSERT_EQ(engine.context().candidates.candidates[0].source, cxxime::CandidateSource::kPinyin);
+    ASSERT_EQ(engine.context().candidate_page().candidates.size(), 1u);
+    ASSERT_EQ(engine.context().candidate_page().candidates[0].source,
+              cxxime::CandidateSource::kPinyin);
 
     engine.finalize();
     pinyin_dict.close();
@@ -216,10 +217,10 @@ TEST(WubiEngine, engine_mixed_select_candidate) {
     // 输入字母 a，获取候选列表
     engine.process_key(make_key('A'));
     auto& ctx = engine.context();
-    ASSERT_GE(ctx.candidates.candidates.size(), 2u);
+    ASSERT_GE(ctx.candidate_page().candidates.size(), 2u);
 
     // 选中第二个候选
-    std::string expected = ctx.candidates.candidates[1].text;
+    std::string expected = ctx.candidate_page().candidates[1].text;
     bool ok = engine.select_candidate(1);
     ASSERT_TRUE(ok);
     ASSERT_EQ(engine.context().committed_text, expected);
@@ -249,7 +250,7 @@ TEST(WubiEngine, engine_mixed_candidate_source_tagging) {
     // 输入字母 a，获取候选
     auto r = engine.process_key(make_key('A'));
     ASSERT_EQ(r, cxxime::ProcessResult::ACCEPTED);
-    auto& candidates = engine.context().candidates.candidates;
+    const auto candidates = engine.context().candidate_page().candidates;
     ASSERT_GE(candidates.size(), 1u);
 
     // 验证候选来源标签
@@ -295,7 +296,7 @@ TEST(WubiEngine, engine_wubi_candidate_source) {
     // 输入字母 a，获取候选
     auto r = engine.process_key(make_key('A'));
     ASSERT_EQ(r, cxxime::ProcessResult::ACCEPTED);
-    auto& candidates = engine.context().candidates.candidates;
+    const auto candidates = engine.context().candidate_page().candidates;
     ASSERT_GE(candidates.size(), 1u);
 
     // 纯五笔模式：所有候选来源应为 kWubi
@@ -339,8 +340,8 @@ TEST(WubiEngine, engine_wubi_auto_commit_disabled) {
 
     // 候选应仍然可见
     auto& ctx = engine.context();
-    ASSERT_EQ(ctx.candidates.candidates.size(), 1u);
-    ASSERT_EQ(ctx.candidates.candidates[0].text, "中");
+    ASSERT_EQ(ctx.candidate_page().candidates.size(), 1u);
+    ASSERT_EQ(ctx.candidate_page().candidates[0].text, "中");
 
     // 手动选中第一候选，应上屏
     bool ok = engine.select_candidate(0);
@@ -375,7 +376,7 @@ TEST(WubiEngine, engine_wubi_code_hint_is_optional_and_does_not_change_commit_te
 
     engine.process_key(make_key('W'));
     engine.process_key(make_key('Q'));
-    for (const auto& candidate : engine.context().candidates.candidates) {
+    for (const auto& candidate : engine.context().candidate_page().candidates) {
         ASSERT_TRUE(candidate.comment.empty());
     }
     const cxxime::QueryTrace trace_without_hint = engine.last_trace();
@@ -394,8 +395,9 @@ TEST(WubiEngine, engine_wubi_code_hint_is_optional_and_does_not_change_commit_te
     ASSERT_EQ(trace_with_hint.mixed_scan_count, trace_without_hint.mixed_scan_count);
 
     int low_index = -1;
-    for (int i = 0; i < static_cast<int>(engine.context().candidates.candidates.size()); ++i) {
-        const auto& candidate = engine.context().candidates.candidates[i];
+    const auto candidates = engine.context().candidate_page().candidates;
+    for (int i = 0; i < static_cast<int>(candidates.size()); ++i) {
+        const auto& candidate = candidates[i];
         if (candidate.text == "你") {
             ASSERT_TRUE(candidate.comment.empty());
         } else if (candidate.text == "低") {
@@ -406,10 +408,10 @@ TEST(WubiEngine, engine_wubi_code_hint_is_optional_and_does_not_change_commit_te
     ASSERT_GE(low_index, 0);
 
     ASSERT_EQ(engine.process_key(make_key(VK_OEM_PLUS, true)), cxxime::ProcessResult::ACCEPTED);
-    ASSERT_EQ(engine.context().composition_kind(), cxxime::CompositionKind::kInlineAscii);
+    ASSERT_EQ(engine.context().composition_scheme(), cxxime::CompositionScheme::kInlineAscii);
     ASSERT_EQ(engine.process_key(make_key(VK_BACK)), cxxime::ProcessResult::ACCEPTED);
-    ASSERT_EQ(engine.context().composition_kind(), cxxime::CompositionKind::kIme);
-    ASSERT_EQ(engine.context().candidates.candidates[low_index].comment, "a");
+    ASSERT_EQ(engine.context().composition_scheme(), cxxime::CompositionScheme::kWubi);
+    ASSERT_EQ(engine.context().candidate_page().candidates[low_index].comment, "a");
 
     ASSERT_TRUE(engine.select_candidate(low_index));
     ASSERT_EQ(engine.context().committed_text, "低");
@@ -419,7 +421,7 @@ TEST(WubiEngine, engine_wubi_code_hint_is_optional_and_does_not_change_commit_te
     engine.process_key(make_key('W'));
     engine.process_key(make_key('Q'));
     bool found_mixed_wubi_hint = false;
-    for (const auto& candidate : engine.context().candidates.candidates) {
+    for (const auto& candidate : engine.context().candidate_page().candidates) {
         if (candidate.source == cxxime::CandidateSource::kWubi && candidate.text == "低") {
             ASSERT_EQ(candidate.comment, "a");
             found_mixed_wubi_hint = true;
@@ -434,7 +436,7 @@ TEST(WubiEngine, engine_wubi_code_hint_is_optional_and_does_not_change_commit_te
     engine.reload_config(cfg);
     engine.process_key(make_key('W'));
     engine.process_key(make_key('Q'));
-    for (const auto& candidate : engine.context().candidates.candidates) {
+    for (const auto& candidate : engine.context().candidate_page().candidates) {
         ASSERT_TRUE(candidate.comment.empty());
     }
 
@@ -466,12 +468,12 @@ TEST(WubiEngine, engine_mixed_select_candidate_updates_correct_dict) {
     // 输入字母 a，获取候选列表
     engine.process_key(make_key('A'));
     auto& ctx = engine.context();
-    ASSERT_GE(ctx.candidates.candidates.size(), 1u);
+    ASSERT_GE(ctx.candidate_page().candidates.size(), 1u);
 
     // 找到五笔候选的索引
     int wubi_idx = -1;
-    for (int i = 0; i < (int)ctx.candidates.candidates.size(); i++) {
-        if (ctx.candidates.candidates[i].source == cxxime::CandidateSource::kWubi) {
+    for (int i = 0; i < (int)ctx.candidate_page().candidates.size(); i++) {
+        if (ctx.candidate_page().candidates[i].source == cxxime::CandidateSource::kWubi) {
             wubi_idx = i;
             break;
         }
@@ -479,7 +481,7 @@ TEST(WubiEngine, engine_mixed_select_candidate_updates_correct_dict) {
     ASSERT_GE(wubi_idx, 0);
 
     // 选中五笔候选，验证上屏文本正确
-    std::string expected = ctx.candidates.candidates[wubi_idx].text;
+    std::string expected = ctx.candidate_page().candidates[wubi_idx].text;
     bool ok = engine.select_candidate(wubi_idx);
     ASSERT_TRUE(ok);
     ASSERT_EQ(engine.context().committed_text, expected);
@@ -504,7 +506,7 @@ TEST(WubiEngine, engine_mixed_no_wubi_dict_fallback) {
     // 应自动回退到拼音模式
     auto r = engine.process_key(make_key('A'));
     ASSERT_EQ(r, cxxime::ProcessResult::ACCEPTED);
-    ASSERT_GE(engine.context().candidates.candidates.size(), 1u);
+    ASSERT_GE(engine.context().candidate_page().candidates.size(), 1u);
 
     engine.finalize();
     DeleteFileA(pinyin_path.c_str());

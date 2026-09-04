@@ -20,16 +20,19 @@ public:
     void set_short_cache(const ShortCodeCache* cache);
     void set_candidate_preference(MixedCandidatePreference preference);
 
-    CandidatePage translate(const std::string& input, int page_index = 0, int page_size = 9,
-                            QueryTrace* trace = nullptr, const QueryBudget* budget = nullptr,
-                            QueryScratch* scratch = nullptr,
-                            int candidate_offset = -1) override;
+    TranslationResult translate(const TranslationRequest& request) override;
+    CandidatePage translate_page(const std::string& input, int page_index = 0,
+                                 int page_size = 9, QueryTrace* trace = nullptr,
+                                 const QueryBudget* budget = nullptr,
+                                 QueryScratch* scratch = nullptr,
+                                 int candidate_offset = -1);
     void clear_query_cache() override;
     void set_sentence_composition_enabled(bool enabled) override;
     void set_candidate_learning_enabled(bool enabled) override;
 
 private:
     bool manually_ordered(const std::string& input, const Candidate& candidate) const;
+    bool manually_ordered(const std::string& input, const CandidateEntry& entry) const;
 
     PinyinTranslator pinyin_translator_;
     WubiTranslator wubi_translator_;

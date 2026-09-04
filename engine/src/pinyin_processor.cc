@@ -26,27 +26,23 @@ ProcessResult PinyinProcessor::process_key(const KeyEvent& event, Context& conte
     if (vk == VK_SPACE) {
         if (context.is_composing() &&
             context.commit_source() == CommitSource::kRawCodePreserveCase) {
-            context.committed_text = context.pinyin_buffer;
-            context.candidates = {};
-            context.reset_pagination();
-            context.clear_preedit();
-            return ProcessResult::COMMITTED;
+            return context.finalize_raw(CommitSource::kRawCodePreserveCase)
+                       ? ProcessResult::COMMITTED
+                       : ProcessResult::ACCEPTED;
         }
-        if (context.is_composing() && !context.candidates.candidates.empty()) {
-            if (context.candidates.highlighted >= 0 && context.candidates.highlighted < (int)context.candidates.candidates.size()) {
-                context.commit_candidate(context.candidates.highlighted);
-                return ProcessResult::COMMITTED;
+        if (context.is_composing() && context.candidate_count() > 0) {
+            const int index = context.highlighted();
+            if (index >= 0 && index < context.candidate_count()) {
+                context.request_candidate_selection(index);
+                return ProcessResult::CANDIDATE_SELECTED;
             }
         }
         if (context.is_composing()) {
             // Append mode: commit buffer text instead of discarding
             if (event.is_caps_lock() && context.caps_lock_style == AsciiModeSwitchStyle::APPEND) {
-                context.committed_text = context.pinyin_buffer;
-                context.set_commit_source(CommitSource::kRawCodePreserveCase);
-                context.candidates = {};
-                context.reset_pagination();
-                context.clear_preedit();
-                return ProcessResult::COMMITTED;
+                return context.finalize_raw(CommitSource::kRawCodePreserveCase)
+                           ? ProcessResult::COMMITTED
+                           : ProcessResult::ACCEPTED;
             }
             context.reset();
             return ProcessResult::ACCEPTED;
@@ -56,7 +52,7 @@ ProcessResult PinyinProcessor::process_key(const KeyEvent& event, Context& conte
 
     // Up/Down arrows: navigate candidates
     if (vk == VK_UP || vk == VK_DOWN) {
-        if (context.is_composing() && !context.candidates.candidates.empty()) {
+        if (context.is_composing() && context.candidate_count() > 0) {
             if (vk == VK_DOWN) {
                 context.move_to_next_candidate();
             } else {
@@ -69,11 +65,11 @@ ProcessResult PinyinProcessor::process_key(const KeyEvent& event, Context& conte
 
     // Number keys 1-9: select candidate by index
     if (is_digit_key(vk) && vk >= '1' && vk <= '9') {
-        if (context.is_composing() && !context.candidates.candidates.empty()) {
+        if (context.is_composing() && context.candidate_count() > 0) {
             int index = vk - '1';
             if (index < context.selectable_candidate_count()) {
-                context.commit_candidate(index);
-                return ProcessResult::COMMITTED;
+                context.request_candidate_selection(index);
+                return ProcessResult::CANDIDATE_SELECTED;
             }
             return ProcessResult::ACCEPTED;
         }
@@ -87,7 +83,7 @@ ProcessResult PinyinProcessor::process_key(const KeyEvent& event, Context& conte
     bool shortcut_page_down = vk == VK_OEM_PLUS && !event.is_shift() &&
                                     !event.is_ctrl() && !event.is_alt();
     if (vk == VK_PRIOR || vk == VK_NEXT || shortcut_page_up || shortcut_page_down) {
-        if (context.is_composing() && !context.candidates.candidates.empty()) {
+        if (context.is_composing() && context.candidate_count() > 0) {
             if (vk == VK_NEXT || shortcut_page_down) {  // Page Down
                 context.move_to_next_page();
             } else {  // Page Up
@@ -107,7 +103,7 @@ ProcessResult PinyinProcessor::process_key(const KeyEvent& event, Context& conte
             if (event.is_shift())
                 ch = static_cast<char>(vk - 'A' + 'a');  // Shift+CapsLock → lowercase
             context.set_commit_source(CommitSource::kRawCodePreserveCase);
-            context.candidates = {};
+            context.clear_translation();
             context.reset_pagination();
         } else {
             ch = static_cast<char>(vk - 'A' + 'a');  // force lowercase

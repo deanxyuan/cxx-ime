@@ -3,6 +3,7 @@
 #include <cxxime/ascii_composer.h>
 
 #include <optional>
+#include <utility>
 
 #include <windows.h>
 
@@ -167,7 +168,7 @@ InlineAsciiResult AsciiComposer::process_inline_ascii_composition(const KeyEvent
         return InlineAsciiResult::kNotHandled;
     }
 
-    if (ctx.composition_kind() == CompositionKind::kInlineAscii) {
+    if (ctx.composition_scheme() == CompositionScheme::kInlineAscii) {
         if (event.keycode == VK_ESCAPE) {
             ctx.reset();
             finish_temporary_ascii();
@@ -195,7 +196,7 @@ InlineAsciiResult AsciiComposer::process_inline_ascii_composition(const KeyEvent
         const std::optional<char> normalized = normalize_ascii_key(event);
         if (normalized) {
             ctx.insert_preedit(*normalized);
-            ctx.candidates = {};
+            ctx.clear_translation();
             ctx.reset_pagination();
             ctx.set_commit_source(CommitSource::kRawCodePreserveCase);
             return InlineAsciiResult::kAccepted;
@@ -210,10 +211,10 @@ InlineAsciiResult AsciiComposer::process_inline_ascii_composition(const KeyEvent
 
     const std::optional<char> normalized = normalize_ascii_key(event);
     if (!normalized ||
-        !ctx.start_composition(CompositionKind::kInlineAscii, std::string(1, *normalized), 1)) {
+        !ctx.start_composition(CompositionScheme::kInlineAscii, std::string(1, *normalized), 1)) {
         return InlineAsciiResult::kNotHandled;
     }
-    ctx.candidates = {};
+    ctx.clear_translation();
     ctx.reset_pagination();
     return InlineAsciiResult::kAccepted;
 }
@@ -239,17 +240,17 @@ void AsciiComposer::toggle_mode(uint32_t key_code, Context& ctx) {
     auto style = get_binding(key_code);
     bool composing = ctx.is_composing();
 
-    CXXIME_LOG(L"AsciiComposer::toggle_mode: vk=%u, style=%d, composing=%d, pinyin_buffer='%S'",
-               key_code, (int)style, composing, ctx.pinyin_buffer.c_str());
+    CXXIME_LOG(L"AsciiComposer::toggle_mode: vk=%u, style=%d, composing=%d, input='%S'",
+               key_code, (int)style, composing, ctx.active_input().c_str());
 
     switch (style) {
     case AsciiModeSwitchStyle::NOOP:
         return;
 
     case AsciiModeSwitchStyle::SET_ASCII_MODE:
-        if (composing && ctx.composition_kind() != CompositionKind::kInlineAscii) {
+        if (composing && ctx.composition_scheme() != CompositionScheme::kInlineAscii) {
             ctx.enter_inline_ascii(false);
-            ctx.candidates = {};
+            ctx.clear_translation();
             ctx.reset_pagination();
         }
         set_ascii_mode_from_switch(true);
@@ -261,9 +262,9 @@ void AsciiComposer::toggle_mode(uint32_t key_code, Context& ctx) {
 
     case AsciiModeSwitchStyle::INLINE_ASCII:
         if (composing) {
-            if (ctx.composition_kind() != CompositionKind::kInlineAscii) {
+            if (ctx.composition_scheme() != CompositionScheme::kInlineAscii) {
                 ctx.enter_inline_ascii(true);
-                ctx.candidates = {};
+                ctx.clear_translation();
                 ctx.reset_pagination();
                 if (!ascii_mode_) {
                     set_ascii_mode_from_switch(true);
@@ -311,28 +312,15 @@ void AsciiComposer::finish_temporary_ascii() {
 }
 
 void AsciiComposer::commit_raw_composition(Context& ctx) {
-    ctx.committed_text = ctx.pinyin_buffer;
-    ctx.set_commit_source(CommitSource::kRawCodePreserveCase);
-    ctx.clear_preedit();
-    ctx.candidates = {};
-    ctx.reset_pagination();
+    ctx.finalize_raw(CommitSource::kRawCodePreserveCase);
 }
 
 void AsciiComposer::commit_candidate_or_raw(Context& ctx) {
-    if (ctx.composition_kind() != CompositionKind::kInlineAscii &&
-        !ctx.candidates.candidates.empty()) {
-        int index = ctx.candidates.highlighted;
-        if (index < 0 || index >= ctx.selectable_candidate_count()) {
-            index = 0;
-        }
-        ctx.committed_text = ctx.candidates.candidates[static_cast<size_t>(index)].text;
-        ctx.set_commit_source(CommitSource::kCandidate);
-        ctx.clear_preedit();
-        ctx.candidates = {};
-        ctx.reset_pagination();
-        return;
-    }
-    commit_raw_composition(ctx);
+    auto committed = ctx.commit_with_source();
+    ctx.committed_text = std::move(committed.first);
+    ctx.set_commit_source(committed.second == CommitSource::kRawCode
+                              ? CommitSource::kRawCodePreserveCase
+                              : committed.second);
 }
 
 void AsciiComposer::set_ascii_mode_from_switch(bool mode) {

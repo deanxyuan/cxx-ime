@@ -45,6 +45,11 @@ add_cxxime_test(engine_test
         engine/engine_ascii_mode_test.cc
         engine/engine_ascii_composition_test.cc
         engine/engine_deadline_test.cc
+        engine/composition_state_test.cc
+    DEPS cxxime-engine
+)
+add_cxxime_test(segmented_selection_test
+    SOURCES engine/segmented_selection_test.cc
     DEPS cxxime-engine
 )
 add_cxxime_test(segmentor_test SOURCES engine/segmentor_test.cc DEPS cxxime-engine)

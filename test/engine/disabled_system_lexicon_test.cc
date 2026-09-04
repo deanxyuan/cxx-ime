@@ -215,7 +215,7 @@ TEST(DisabledSystemLexicon, pinyin_cache_and_learned_fallback_cannot_restore_dis
     translator.set_dict(&dictionary);
     translator.set_short_cache(&cache);
     translator.set_candidate_learning_enabled(true);
-    const auto page = translator.translate("ni", 0, 10);
+    const auto page = translator.translate_page("ni", 0, 10);
     ASSERT_TRUE(!contains_text(page, "缓存停用"));
     ASSERT_TRUE(!contains_text(page, "学习停用"));
     ASSERT_TRUE(contains_text(page, "缓存可见"));
@@ -253,7 +253,7 @@ TEST(DisabledSystemLexicon, input_method_scopes_are_independent_in_mixed_mode) {
     translator.set_wubi_dict(&wubi_dictionary);
     translator.set_short_cache(&cache);
 
-    const auto pinyin_disabled = translator.translate("aa", 0, 10);
+    const auto pinyin_disabled = translator.translate_page("aa", 0, 10);
     const auto wubi_candidate =
         std::find_if(pinyin_disabled.candidates.begin(), pinyin_disabled.candidates.end(),
                      [](const auto& candidate) { return candidate.text == "同文词"; });
@@ -261,11 +261,11 @@ TEST(DisabledSystemLexicon, input_method_scopes_are_independent_in_mixed_mode) {
     ASSERT_EQ(wubi_candidate->source, cxxime::CandidateSource::kWubi);
 
     ASSERT_TRUE(wubi_dictionary.disable_system_entry("同文词"));
-    const auto both_disabled = translator.translate("aa", 0, 10);
+    const auto both_disabled = translator.translate_page("aa", 0, 10);
     ASSERT_TRUE(!contains_text(both_disabled, "同文词"));
 
     ASSERT_TRUE(pinyin_dictionary.restore_system_entry("同文词"));
-    const auto wubi_disabled = translator.translate("aa", 0, 10);
+    const auto wubi_disabled = translator.translate_page("aa", 0, 10);
     const auto pinyin_candidate =
         std::find_if(wubi_disabled.candidates.begin(), wubi_disabled.candidates.end(),
                      [](const auto& candidate) { return candidate.text == "同文词"; });
@@ -303,17 +303,17 @@ TEST(DisabledSystemLexicon, composed_candidate_is_filtered_and_restore_invalidat
     translator.set_dict(&dictionary);
     translator.set_syllabifier(&syllabifier);
 
-    const auto baseline = translator.translate("wushuchu", 0, 10);
+    const auto baseline = translator.translate_page("wushuchu", 0, 10);
     ASSERT_TRUE(contains_text(baseline, "无输出"));
     ASSERT_TRUE(dictionary.disable_system_entry("输出"));
-    const auto component_disabled = translator.translate("wushuchu", 0, 10);
+    const auto component_disabled = translator.translate_page("wushuchu", 0, 10);
     ASSERT_TRUE(contains_text(component_disabled, "无输出"));
     ASSERT_TRUE(dictionary.restore_system_entry("输出"));
     ASSERT_TRUE(dictionary.disable_system_entry("无输出"));
-    const auto disabled = translator.translate("wushuchu", 0, 10);
+    const auto disabled = translator.translate_page("wushuchu", 0, 10);
     ASSERT_TRUE(!contains_text(disabled, "无输出"));
     ASSERT_TRUE(dictionary.restore_system_entry("无输出"));
-    const auto restored = translator.translate("wushuchu", 0, 10);
+    const auto restored = translator.translate_page("wushuchu", 0, 10);
     ASSERT_TRUE(contains_text(restored, "无输出"));
 
     spellings.unload();

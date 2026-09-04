@@ -26,7 +26,7 @@ TEST(Engine, translate_shurufa) {
     translator.set_dict(&dict);
     translator.set_syllabifier(&syllabifier);
 
-    auto page = translator.translate("shurufa", 0, 10);
+    auto page = translator.translate_page("shurufa", 0, 10);
     ASSERT_GE(page.candidates.size(), 1u);
     bool found = false;
     for (auto& c : page.candidates)
@@ -66,7 +66,7 @@ TEST(Engine, composed_pinyin_candidate_is_not_learned) {
     ASSERT_TRUE(engine.initialize(dict, spellings, &syllabifier, config));
 
     type_code(engine, "wushuchu");
-    const auto& candidates = engine.context().candidates.candidates;
+    const auto candidates = engine.context().candidate_page().candidates;
     const auto candidate = std::find_if(candidates.begin(), candidates.end(),
         [](const auto& item) { return item.text == "无输出"; });
     ASSERT_TRUE(candidate != candidates.end());
@@ -106,7 +106,7 @@ TEST(Engine, translate_nihao) {
     translator.set_dict(&dict);
     translator.set_syllabifier(&syllabifier);
 
-    auto page = translator.translate("nihao", 0, 10);
+    auto page = translator.translate_page("nihao", 0, 10);
     ASSERT_GE(page.candidates.size(), 1u);
     ASSERT_EQ(page.candidates[0].text, "你好");
 
@@ -141,7 +141,7 @@ TEST(Engine, translate_abbrev_bj) {
     translator.set_dict(&dict);
     translator.set_syllabifier(&syllabifier);
 
-    auto page = translator.translate("bj", 0, 10);
+    auto page = translator.translate_page("bj", 0, 10);
     ASSERT_GE(page.candidates.size(), 1u);
     bool found = false;
     for (auto& c : page.candidates)
@@ -176,7 +176,7 @@ TEST(Engine, translate_abbrev_srf) {
     translator.set_dict(&dict);
     translator.set_syllabifier(&syllabifier);
 
-    auto page = translator.translate("srf", 0, 10);
+    auto page = translator.translate_page("srf", 0, 10);
     ASSERT_GE(page.candidates.size(), 1u);
     bool found = false;
     for (auto& c : page.candidates)
@@ -212,7 +212,7 @@ TEST(Engine, translate_mixed_zhg) {
     translator.set_dict(&dict);
     translator.set_syllabifier(&syllabifier);
 
-    auto page = translator.translate("zhg", 0, 10);
+    auto page = translator.translate_page("zhg", 0, 10);
     ASSERT_GE(page.candidates.size(), 1u);
     bool found = false;
     for (auto& c : page.candidates)
@@ -246,7 +246,7 @@ TEST(Engine, translate_mixed_zguo) {
     translator.set_dict(&dict);
     translator.set_syllabifier(&syllabifier);
 
-    auto page = translator.translate("zguo", 0, 10);
+    auto page = translator.translate_page("zguo", 0, 10);
     ASSERT_GE(page.candidates.size(), 1u);
     bool found = false;
     for (auto& c : page.candidates)
@@ -282,7 +282,7 @@ TEST(Engine, translate_fuzzy_zongguo) {
     translator.set_dict(&dict);
     translator.set_syllabifier(&syllabifier);
 
-    auto page = translator.translate("zongguo", 0, 10);
+    auto page = translator.translate_page("zongguo", 0, 10);
     ASSERT_GE(page.candidates.size(), 1u);
     bool found = false;
     for (auto& c : page.candidates)
@@ -316,7 +316,7 @@ TEST(Engine, translate_fuzzy_cifan) {
     translator.set_dict(&dict);
     translator.set_syllabifier(&syllabifier);
 
-    auto page = translator.translate("cifan", 0, 10);
+    auto page = translator.translate_page("cifan", 0, 10);
     ASSERT_GE(page.candidates.size(), 1u);
     bool found = false;
     for (auto& c : page.candidates)
@@ -332,12 +332,12 @@ TEST(Engine, translate_fuzzy_cifan) {
 
 TEST(Engine, translate_empty_input) {
     cxxime::PinyinTranslator translator;
-    auto page = translator.translate("", 0, 10);
+    auto page = translator.translate_page("", 0, 10);
     ASSERT_EQ(page.candidates.size(), 0u);
 }
 
 TEST(Engine, translate_no_match) {
     cxxime::PinyinTranslator translator;
-    auto page = translator.translate("xyz", 0, 10);
+    auto page = translator.translate_page("xyz", 0, 10);
     ASSERT_EQ(page.candidates.size(), 0u);
 }

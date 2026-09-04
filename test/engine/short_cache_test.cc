@@ -401,7 +401,7 @@ TEST(IndexedFastPath, cache_hit_skips_syllabifier) {
     }
 
     auto& ctx = engine.context();
-    ASSERT_TRUE(!ctx.candidates.candidates.empty());
+    ASSERT_TRUE(!ctx.candidate_page().candidates.empty());
     auto& trace = engine.last_trace();
     ASSERT_TRUE(trace.cache_hit);
     ASSERT_EQ(trace.exact_scan_count, 0);
@@ -441,8 +441,8 @@ TEST(IndexedFastPath, underfilled_complete_key_checks_composition_once) {
     auto& trace = engine.last_trace();
     ASSERT_TRUE(trace.cache_hit);
     ASSERT_TRUE(trace.syllable_path_count > 0);
-    ASSERT_TRUE(!engine.context().candidates.candidates.empty());
-    ASSERT_EQ(engine.context().candidates.candidates[0].text, "你好世界");
+    ASSERT_TRUE(!engine.context().candidate_page().candidates.empty());
+    ASSERT_EQ(engine.context().candidate_page().candidates[0].text, "你好世界");
 
     engine.clear_composition();
     for (char c : std::string("nihaoshijie")) {
@@ -492,7 +492,7 @@ TEST(IndexedFastPath, incomplete_long_posting_falls_back) {
     ASSERT_TRUE(trace.cache_hit);
     ASSERT_GT(trace.syllable_path_count, 0);
     bool found_longer = false;
-    for (const auto& candidate : engine.context().candidates.candidates) {
+    for (const auto& candidate : engine.context().candidate_page().candidates) {
         if (candidate.text == "你好世界朋友") {
             found_longer = true;
         }
@@ -529,8 +529,8 @@ TEST(IndexedFastPath, unmaterialized_long_prefix_falls_back) {
 
     auto& trace = engine.last_trace();
     ASSERT_TRUE(!trace.cache_hit);
-    ASSERT_TRUE(!engine.context().candidates.candidates.empty());
-    ASSERT_EQ(engine.context().candidates.candidates[0].text, "你好世界你好");
+    ASSERT_TRUE(!engine.context().candidate_page().candidates.empty());
+    ASSERT_EQ(engine.context().candidate_page().candidates[0].text, "你好世界你好");
 
     dict.close();
     DeleteFileA(dict_path.c_str());

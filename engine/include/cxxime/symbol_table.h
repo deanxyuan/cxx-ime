@@ -8,6 +8,7 @@
 #include <vector>
 
 #include <cxxime/candidate.h>
+#include <cxxime/translation_result.h>
 
 namespace cxxime {
 
@@ -18,8 +19,9 @@ public:
     bool load(const std::string& path);
     bool empty() const { return categories_.empty(); }
 
-    CandidatePage translate(const std::string& code, int page_index, int page_size,
-                            int candidate_offset = -1) const;
+    TranslationResult translate(const TranslationRequest& request) const;
+    CandidatePage translate_page(const std::string& code, int page_index, int page_size,
+                                 int candidate_offset = -1) const;
 
 private:
     struct Category {

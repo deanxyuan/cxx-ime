@@ -219,7 +219,7 @@ TEST(Translator, translate_topk_merge_across_paths) {
     translator.set_syllabifier(&syllabifier);
 
     // With page_size=5, TopK should limit to 5 candidates
-    auto page = translator.translate("bs", 0, 5);
+    auto page = translator.translate_page("bs", 0, 5);
     ASSERT_LE(page.candidates.size(), 5u);
 
     // The top results should include the high-frequency ones
