@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <limits>
 
+#include <cxxime/query_trace.h>
+
 namespace cxxime {
 
 void WubiTranslator::set_dict(Dict* dict) {
@@ -66,10 +68,10 @@ std::vector<Candidate> WubiTranslator::lookup_candidates(const std::string& code
     return results;
 }
 
-CandidatePage WubiTranslator::translate(const std::string& code, int page_index,
-                                         int page_size, QueryTrace* trace,
-                                         const QueryBudget* budget,
-                                         QueryScratch* scratch, int candidate_offset) {
+CandidatePage WubiTranslator::translate_page(const std::string& code, int page_index,
+                                             int page_size, QueryTrace* trace,
+                                             const QueryBudget* budget,
+                                             QueryScratch* scratch, int candidate_offset) {
     if (!dict_ || code.empty()) {
         return {};
     }
@@ -138,6 +140,34 @@ CandidatePage WubiTranslator::translate(const std::string& code, int page_index,
     page.highlighted = 0;
 
     return page;
+}
+
+TranslationResult WubiTranslator::translate(const TranslationRequest& request) {
+    TranslationResult result;
+    if (!dict_ || !dict_->is_open()) {
+        result.status = TranslationStatus::kFailed;
+        return result;
+    }
+    QueryTrace local_trace;
+    QueryTrace* trace = request.trace;
+    if (!trace && request.policy.allow_partial_selection) {
+        trace = &local_trace;
+    }
+    if (trace) {
+        trace->deadline_exceeded = false;
+        trace->scan_budget_truncated = false;
+    }
+    CandidatePage page = translate_page(request.input, request.page_index, request.page_size,
+                                        trace, request.budget, request.scratch,
+                                        request.page_offset);
+    result = make_translation_result(std::move(page), request.input.size());
+    const bool query_incomplete =
+        trace && (trace->deadline_exceeded || trace->scan_budget_truncated);
+    if (query_incomplete) {
+        result.status = result.entries.empty() ? TranslationStatus::kFailed
+                                               : TranslationStatus::kStableDegraded;
+    }
+    return result;
 }
 
 } // namespace cxxime

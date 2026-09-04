@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <chrono>
 #include <climits>
+#include <iterator>
 
 #include <cxxime/query_budget.h>
 #include <cxxime/pinyin_composer.h>
@@ -15,6 +16,7 @@
 #include <cxxime/topk_collector.h>
 
 #include "pinyin_path_filter.h"
+#include "pinyin_partial_candidates.h"
 
 namespace cxxime {
 
@@ -280,9 +282,10 @@ void PinyinTranslator::store_query_cache(const std::string& input, int page_inde
     query_cache_.push_back(std::move(entry));
 }
 
-CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_index, int page_size,
-                                           QueryTrace* trace, const QueryBudget* budget,
-                                           QueryScratch* scratch, int candidate_offset) {
+CandidatePage PinyinTranslator::translate_page(const std::string& pinyin, int page_index,
+                                               int page_size, QueryTrace* trace,
+                                               const QueryBudget* budget, QueryScratch* scratch,
+                                               int candidate_offset) {
     CandidatePage page;
     page.page_index = page_index;
     page.page_size = page_size;
@@ -641,6 +644,89 @@ CandidatePage PinyinTranslator::translate(const std::string& pinyin, int page_in
         store_query_cache(pinyin, page_index, offset, page_size, cache_versions, page);
 
     return page;
+}
+
+TranslationResult PinyinTranslator::translate(const TranslationRequest& request) {
+    TranslationResult result;
+    if (!dict_ || !dict_->is_open() || request.input.empty() || request.page_size <= 0) {
+        result.status = dict_ && dict_->is_open() ? TranslationStatus::kSuccess
+                                                  : TranslationStatus::kFailed;
+        return result;
+    }
+
+    if (!request.policy.allow_partial_selection) {
+        CandidatePage page =
+            translate_page(request.input, request.page_index, request.page_size, request.trace,
+                           request.budget, request.scratch, request.page_offset);
+        result = make_translation_result(std::move(page), request.input.size());
+        const bool incomplete = (request.trace &&
+                                (request.trace->deadline_exceeded ||
+                                 request.trace->scan_budget_truncated ||
+                                 request.trace->composition_truncated));
+        if (incomplete) {
+            result.status = result.entries.empty() ? TranslationStatus::kFailed
+                                                   : TranslationStatus::kStableDegraded;
+        }
+        return result;
+    }
+
+    QueryTrace local_trace;
+    TranslationRequest effective_request = request;
+    if (!effective_request.trace) {
+        effective_request.trace = &local_trace;
+    }
+    effective_request.trace->deadline_exceeded = false;
+    effective_request.trace->scan_budget_truncated = false;
+    effective_request.trace->composition_truncated = false;
+
+    const int fetch_count = request.page_offset + request.page_size + 1;
+    CandidatePage full = translate_page(request.input, 0, fetch_count, effective_request.trace,
+                                        request.budget, request.scratch, 0);
+    std::vector<CandidateEntry> merged;
+    merged.reserve(full.candidates.size() + request.page_size);
+    for (auto& candidate : full.candidates) {
+        merged.push_back(make_text_candidate_entry(std::move(candidate), request.input.size()));
+    }
+    const bool full_query_incomplete = effective_request.trace->deadline_exceeded ||
+                                       effective_request.trace->scan_budget_truncated ||
+                                       effective_request.trace->composition_truncated;
+    if (full_query_incomplete) {
+        result.status = merged.empty() ? TranslationStatus::kFailed
+                                       : TranslationStatus::kStableDegraded;
+    }
+    const std::size_t full_count = merged.size();
+    if (syllabifier_) {
+        append_pinyin_partial_candidates(*dict_, *syllabifier_, effective_request,
+                                         candidate_learning_enabled_, merged, result.status);
+    }
+    const std::size_t partial_count = merged.size() - full_count;
+
+    // Preserve the leading full-span choices and reserve the last first-page slot
+    // for the longest partial action. Remaining partials keep stable later positions.
+    if (request.page_size > 1 && full_count >= static_cast<std::size_t>(request.page_size) &&
+        partial_count > 0) {
+        std::vector<CandidateEntry> partials(
+            std::make_move_iterator(merged.begin() + full_count),
+            std::make_move_iterator(merged.end()));
+        merged.erase(merged.begin() + full_count, merged.end());
+        merged.insert(merged.begin() + request.page_size - 1,
+                      std::make_move_iterator(partials.begin()),
+                      std::make_move_iterator(partials.end()));
+    }
+
+    result.page_index = request.page_index;
+    result.page_offset = request.page_offset;
+    result.page_size = request.page_size;
+    result.total_count = full.total_count + static_cast<int>(partial_count);
+    const int available = static_cast<int>(merged.size());
+    const int begin = (std::min)(request.page_offset, available);
+    const int end = (std::min)(begin + request.page_size, available);
+    result.entries.assign(std::make_move_iterator(merged.begin() + begin),
+                          std::make_move_iterator(merged.begin() + end));
+    if (!result.entries.empty()) {
+        result.highlighted = 0;
+    }
+    return result;
 }
 
 } // namespace cxxime

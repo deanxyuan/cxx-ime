@@ -1,6 +1,8 @@
 project(cxxime-engine CXX)
 
 add_library(cxxime-engine STATIC
+    src/composition_state.cc
+    src/composition_presentation.cc
     src/context.cc
     src/pinyin_segment_paths.cc
     src/pinyin_segmentor.cc
@@ -20,14 +22,15 @@ add_library(cxxime-engine STATIC
     src/syllabifier.cc
     src/pinyin_composer.cc
     src/pinyin_path_filter.cc
+    src/pinyin_partial_candidates.cc
     src/pinyin_translator.cc
     src/pinyin_processor.cc
     src/wubi_translator.cc
     src/mixed_translator.cc
     src/wubi_processor.cc
+    src/wubi_input_policy.cc
     src/config.cc
     src/engine.cc
-    src/engine_symbol.cc
     src/ascii_composer.cc
     src/short_code_cache.cc
     src/output_composer.cc

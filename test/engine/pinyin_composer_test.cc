@@ -176,12 +176,12 @@ TEST(PinyinComposer, appends_missing_sentence_after_legacy_candidates) {
     translator.set_syllabifier(&syllabifier);
 
     translator.set_sentence_composition_enabled(false);
-    const auto baseline = translator.translate("wushuchu", 0, 10);
+    const auto baseline = translator.translate_page("wushuchu", 0, 10);
     ASSERT_TRUE(find_candidate(baseline, "原有长词") != nullptr);
     ASSERT_TRUE(find_candidate(baseline, "无输出") == nullptr);
 
     translator.set_sentence_composition_enabled(true);
-    const auto composed = translator.translate("wushuchu", 0, 10);
+    const auto composed = translator.translate_page("wushuchu", 0, 10);
     ASSERT_GE(composed.candidates.size(), baseline.candidates.size());
     for (size_t i = 0; i < baseline.candidates.size(); ++i) {
         ASSERT_EQ(composed.candidates[i].text, baseline.candidates[i].text);
@@ -216,7 +216,7 @@ TEST(PinyinComposer, composes_complete_and_repeated_short_code_paths) {
     translator.set_dict(&fixture.dictionary);
     translator.set_syllabifier(&syllabifier);
 
-    const auto five_a = translator.translate("aaaaa", 0, 10);
+    const auto five_a = translator.translate_page("aaaaa", 0, 10);
     const size_t legacy_index = candidate_index(five_a, "啊啊啊啊啊啊");
     const size_t composed_index = candidate_index(five_a, "啊啊啊啊啊");
     ASSERT_NE(legacy_index, SIZE_MAX);
@@ -224,22 +224,22 @@ TEST(PinyinComposer, composes_complete_and_repeated_short_code_paths) {
     ASSERT_TRUE(legacy_index < composed_index);
     ASSERT_TRUE(five_a.candidates[composed_index].origin == cxxime::CandidateOrigin::kComposed);
 
-    const auto seven_a = translator.translate("aaaaaaa", 0, 10);
+    const auto seven_a = translator.translate_page("aaaaaaa", 0, 10);
     const auto* seven_a_candidate = find_candidate(seven_a, "啊啊啊啊啊啊啊");
     ASSERT_TRUE(seven_a_candidate != nullptr);
     ASSERT_TRUE(seven_a_candidate->origin == cxxime::CandidateOrigin::kComposed);
 
-    const auto nine_h = translator.translate("hhhhhhhhh", 0, 10);
+    const auto nine_h = translator.translate_page("hhhhhhhhh", 0, 10);
     const auto* nine_h_candidate = find_candidate(nine_h, "哈哈哈哈哈哈哈哈哈");
     ASSERT_TRUE(nine_h_candidate != nullptr);
     ASSERT_TRUE(nine_h_candidate->origin == cxxime::CandidateOrigin::kComposed);
 
-    const auto ten_h = translator.translate("hhhhhhhhhh", 0, 10);
+    const auto ten_h = translator.translate_page("hhhhhhhhhh", 0, 10);
     ASSERT_EQ(ten_h.candidates.size(), 1u);
     ASSERT_EQ(ten_h.candidates[0].text, "哈哈哈哈哈哈哈哈哈哈");
 
     cxxime::QueryTrace trace;
-    const auto prefixed_repeat = translator.translate("nihh", 0, 10, &trace);
+    const auto prefixed_repeat = translator.translate_page("nihh", 0, 10, &trace);
     const auto* prefixed_candidate = find_candidate(prefixed_repeat, "你哈哈");
     ASSERT_TRUE(prefixed_candidate != nullptr);
     ASSERT_TRUE(prefixed_candidate->origin == cxxime::CandidateOrigin::kComposed);
@@ -250,7 +250,7 @@ TEST(PinyinComposer, composes_complete_and_repeated_short_code_paths) {
     for (int i = 0; i < 23; ++i) {
         long_repeat_text += "哈";
     }
-    const auto long_repeat = translator.translate(long_repeat_input, 0, 10);
+    const auto long_repeat = translator.translate_page(long_repeat_input, 0, 10);
     const auto* long_repeat_candidate = find_candidate(long_repeat, long_repeat_text);
     ASSERT_TRUE(long_repeat_candidate != nullptr);
     ASSERT_TRUE(std::none_of(long_repeat.candidates.begin(), long_repeat.candidates.end(),
@@ -282,7 +282,7 @@ TEST(PinyinComposer, normal_paths_do_not_expand_low_frequency_homophones) {
     translator.set_dict(&fixture.dictionary);
     translator.set_syllabifier(&syllabifier);
 
-    const auto page = translator.translate("wahahaha", 0, 10);
+    const auto page = translator.translate_page("wahahaha", 0, 10);
     ASSERT_TRUE(find_candidate(page, "哇哈哈哈") != nullptr);
     ASSERT_TRUE(find_candidate(page, "娃哈哈哈") != nullptr);
     ASSERT_TRUE(
@@ -318,9 +318,9 @@ TEST(PinyinComposer, rejects_single_tail_and_mixed_abbreviation_paths) {
     translator.set_dict(&fixture.dictionary);
     translator.set_syllabifier(&syllabifier);
 
-    ASSERT_TRUE(translator.translate("nih", 0, 10).candidates.empty());
-    ASSERT_TRUE(translator.translate("wahahah", 0, 10).candidates.empty());
-    ASSERT_TRUE(translator.translate("srf", 0, 10).candidates.empty());
+    ASSERT_TRUE(translator.translate_page("nih", 0, 10).candidates.empty());
+    ASSERT_TRUE(translator.translate_page("wahahah", 0, 10).candidates.empty());
+    ASSERT_TRUE(translator.translate_page("srf", 0, 10).candidates.empty());
 }
 
 TEST(PinyinComposer, composed_candidates_do_not_enter_learning_preferences) {
@@ -337,7 +337,7 @@ TEST(PinyinComposer, composed_candidates_do_not_enter_learning_preferences) {
     cxxime::PinyinTranslator translator;
     translator.set_dict(&fixture.dictionary);
     translator.set_syllabifier(&syllabifier);
-    const auto page = translator.translate("aaaaaaa", 0, 10);
+    const auto page = translator.translate_page("aaaaaaa", 0, 10);
     const auto* composed = find_candidate(page, "啊啊啊啊啊啊啊");
     ASSERT_TRUE(composed != nullptr);
 

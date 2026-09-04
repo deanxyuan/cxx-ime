@@ -26,25 +26,25 @@ TEST(SymbolTable, loads_categories_and_paginates) {
     cxxime::SymbolTable table;
     ASSERT_TRUE(table.load(project_data_path("symbols.json")));
 
-    cxxime::CandidatePage first = table.translate("bd", 0, 7);
+    cxxime::CandidatePage first = table.translate_page("bd", 0, 7);
     ASSERT_EQ(first.total_count, 46);
     ASSERT_EQ(first.candidates.size(), 7u);
     ASSERT_EQ(first.candidates[0].text, "。");
     ASSERT_EQ(first.candidates[0].code, "\\bd");
     ASSERT_EQ(first.candidates[0].source, cxxime::CandidateSource::kSymbol);
 
-    cxxime::CandidatePage second = table.translate("bd", 1, 7);
+    cxxime::CandidatePage second = table.translate_page("bd", 1, 7);
     ASSERT_EQ(second.page_offset, 7);
     ASSERT_EQ(second.candidates.size(), 7u);
     ASSERT_NE(second.candidates[0].text, first.candidates[0].text);
-    ASSERT_TRUE(table.translate("unknown", 0, 7).candidates.empty());
+    ASSERT_TRUE(table.translate_page("unknown", 0, 7).candidates.empty());
 }
 
 TEST(SymbolTable, lists_category_navigation_in_source_order) {
     cxxime::SymbolTable table;
     ASSERT_TRUE(table.load(project_data_path("symbols.json")));
 
-    cxxime::CandidatePage first = table.translate("", 0, 7);
+    cxxime::CandidatePage first = table.translate_page("", 0, 7);
     ASSERT_EQ(first.total_count, 14);
     ASSERT_EQ(first.candidates.size(), 7u);
     ASSERT_EQ(first.candidates[0].text, "标点");
@@ -53,13 +53,13 @@ TEST(SymbolTable, lists_category_navigation_in_source_order) {
     ASSERT_EQ(first.candidates[1].text, "数字序号");
     ASSERT_EQ(first.candidates[1].comment, "\\sz");
 
-    cxxime::CandidatePage second = table.translate("", 1, 7);
+    cxxime::CandidatePage second = table.translate_page("", 1, 7);
     ASSERT_EQ(second.page_offset, 7);
     ASSERT_EQ(second.candidates.size(), 7u);
     ASSERT_EQ(second.candidates[0].text, "电脑符号");
     ASSERT_EQ(second.candidates[0].comment, "\\dn");
 
-    cxxime::CandidatePage capped = table.translate("", 0, 10);
+    cxxime::CandidatePage capped = table.translate_page("", 0, 10);
     ASSERT_EQ(capped.page_size, 9);
     ASSERT_EQ(capped.candidates.size(), 9u);
 }
@@ -72,7 +72,7 @@ TEST(SymbolTable, every_published_category_has_candidates) {
         "bd", "sz", "sx", "jt", "xl", "ew", "rw", "dn", "dw", "hb", "ts", "zy", "py", "pp",
     };
     for (const char* code : codes) {
-        ASSERT_TRUE(!table.translate(code, 0, 7).candidates.empty()) << code;
+        ASSERT_TRUE(!table.translate_page(code, 0, 7).candidates.empty()) << code;
     }
 }
 

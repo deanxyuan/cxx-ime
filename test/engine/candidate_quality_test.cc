@@ -279,11 +279,11 @@ public:
         auto start = std::chrono::steady_clock::now();
         cxxime::CandidatePage page;
         if (q.mode == "pinyin") {
-            page = pinyin_.translate(q.input, 0, q.page_size, &trace, &budget, &scratch);
+            page = pinyin_.translate_page(q.input, 0, q.page_size, &trace, &budget, &scratch);
         } else if (q.mode == "wubi") {
-            page = wubi_.translate(q.input, 0, q.page_size, &trace, &budget, &scratch);
+            page = wubi_.translate_page(q.input, 0, q.page_size, &trace, &budget, &scratch);
         } else if (q.mode == "mixed") {
-            page = mixed_.translate(q.input, 0, q.page_size, &trace, &budget, &scratch);
+            page = mixed_.translate_page(q.input, 0, q.page_size, &trace, &budget, &scratch);
         } else {
             ASSERT_TRUE(false) << "unknown quality mode: " << q.mode;
         }
@@ -458,7 +458,7 @@ TEST(CandidateQuality, pinyin_tc_candidate_and_space_commit_match) {
     ASSERT_EQ(page.candidates.front().text, u8"提出") << "tc candidates: " << summary;
 
     cxxime::Context context;
-    context.pinyin_buffer = "tc";
+    ASSERT_TRUE(context.set_preedit("tc"));
     context.update_candidates(std::move(page));
 
     cxxime::PinyinProcessor processor;
@@ -466,7 +466,10 @@ TEST(CandidateQuality, pinyin_tc_candidate_and_space_commit_match) {
     space.keycode = VK_SPACE;
     auto result = processor.process_key(space, context);
 
-    ASSERT_EQ(result, cxxime::ProcessResult::COMMITTED);
+    ASSERT_EQ(result, cxxime::ProcessResult::CANDIDATE_SELECTED);
+    const int selected = context.take_requested_candidate_selection().value_or(-1);
+    ASSERT_EQ(selected, 0);
+    ASSERT_TRUE(context.commit_candidate(selected));
     ASSERT_EQ(context.committed_text, u8"提出");
 }
 

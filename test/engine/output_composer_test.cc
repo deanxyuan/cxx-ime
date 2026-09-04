@@ -599,7 +599,7 @@ TEST(OutputComposer, full_shape_ctrl_not_intercepted) {
     // Ctrl+letter belongs to the host even when full-shape output is enabled.
     auto r = engine.process_key(e, opts);
     ASSERT_EQ(r, cxxime::ProcessResult::REJECTED);
-    ASSERT_TRUE(engine.context().pinyin_buffer.empty());
+    ASSERT_TRUE(engine.context().active_input().empty());
     ASSERT_TRUE(engine.context().committed_text.empty());
 
     engine.finalize();

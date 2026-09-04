@@ -3,12 +3,11 @@
 #include <cxxime/context.h>
 
 #include <algorithm>
+#include <tuple>
 
 #include <windows.h>
 
-#include <cxxime/input_limits.h>
 #include <cxxime/key_event.h>
-#include <cxxime/symbol_table.h>
 
 namespace cxxime {
 
@@ -21,158 +20,130 @@ bool is_resumable_ime_code(const std::string& text) {
 
 } // namespace
 
-bool Context::is_composing() const {
-    return !pinyin_buffer.empty();
+const CandidateEntry* Context::candidate_entry(int index) const {
+    if (index < 0 || index >= candidate_count()) {
+        return nullptr;
+    }
+    return &translation_.entries[static_cast<std::size_t>(index)];
 }
 
-size_t Context::preedit_cursor() const {
-    const size_t distance = (std::min)(preedit_cursor_from_end_, pinyin_buffer.size());
-    return pinyin_buffer.size() - distance;
+const Candidate* Context::candidate(int index) const {
+    const CandidateEntry* entry = candidate_entry(index);
+    return entry ? &entry->candidate : nullptr;
 }
 
-bool Context::set_preedit(std::string text) {
-    if (text.size() > kMaxInputCodeLength ||
-        std::any_of(text.begin(), text.end(), [](char ch) {
-            return ch == '\0' || static_cast<unsigned char>(ch) > 0x7f;
-        })) {
+bool Context::set_ime_scheme(CompositionScheme scheme) {
+    if (scheme == CompositionScheme::kSymbol || scheme == CompositionScheme::kInlineAscii) {
         return false;
     }
-    if (pinyin_buffer != text) {
-        pinyin_buffer = std::move(text);
-        ++preedit_revision_;
+    if (!composition_.set_scheme(scheme)) {
+        return false;
     }
-    preedit_cursor_from_end_ = 0;
-    if (pinyin_buffer.empty()) {
-        composition_kind_ = CompositionKind::kIme;
-        composition_origin_.reset();
-    }
+    ime_scheme_ = scheme;
     return true;
 }
 
-bool Context::start_composition(CompositionKind kind, std::string text, size_t cursor) {
+bool Context::set_preedit(std::string text) {
+    const std::size_t cursor = text.size();
+    return composition_.set_active_input(std::move(text), cursor);
+}
+
+bool Context::start_composition(CompositionScheme scheme, std::string text,
+                                std::size_t cursor) {
     if (text.empty() || cursor > text.size() ||
-        (kind == CompositionKind::kSymbol &&
-        (text.front() != kSymbolPrefix || cursor == 0)) ||
-        !set_preedit(std::move(text))) {
+        (scheme == CompositionScheme::kSymbol && (text.front() != '\\' || cursor == 0))) {
         return false;
     }
-    composition_kind_ = kind;
+    CompositionState next = composition_;
+    next.cancel();
+    if (!next.set_scheme(scheme) || !next.set_active_input(std::move(text), cursor)) {
+        return false;
+    }
+    composition_ = std::move(next);
+    if (scheme != CompositionScheme::kSymbol && scheme != CompositionScheme::kInlineAscii) {
+        ime_scheme_ = scheme;
+    }
     composition_origin_.reset();
-    preedit_cursor_from_end_ = pinyin_buffer.size() - cursor;
-    commit_source_ = kind == CompositionKind::kInlineAscii ? CommitSource::kRawCodePreserveCase
-                                                           : CommitSource::kRawCode;
+    commit_source_ = scheme == CompositionScheme::kInlineAscii
+                         ? CommitSource::kRawCodePreserveCase
+                         : CommitSource::kRawCode;
     return true;
 }
 
 bool Context::enter_inline_ascii(bool preserve_origin) {
-    if (!is_composing() || composition_kind_ == CompositionKind::kInlineAscii) {
+    if (!is_composing() || composition_scheme() == CompositionScheme::kInlineAscii) {
         return false;
     }
     if (preserve_origin) {
-        composition_origin_ = CompositionOrigin{composition_kind_, pinyin_buffer, preedit_cursor()};
+        composition_origin_ =
+            CompositionOrigin{composition_scheme(), active_input(), preedit_cursor()};
     } else {
         composition_origin_.reset();
     }
-    composition_kind_ = CompositionKind::kInlineAscii;
+    if (!composition_.set_scheme(CompositionScheme::kInlineAscii)) {
+        return false;
+    }
     commit_source_ = CommitSource::kRawCodePreserveCase;
     return true;
 }
 
 bool Context::restore_composition_origin() {
-    if (composition_kind_ != CompositionKind::kInlineAscii || !composition_origin_) {
+    if (composition_scheme() != CompositionScheme::kInlineAscii || !composition_origin_) {
         return false;
     }
     const CompositionOrigin origin = *composition_origin_;
-    const bool original_code_restored = pinyin_buffer == origin.code;
-    if (!original_code_restored &&
-        (origin.kind != CompositionKind::kIme || !is_resumable_ime_code(pinyin_buffer))) {
+    const bool original_input_restored = active_input() == origin.input;
+    if (!original_input_restored &&
+        (origin.scheme == CompositionScheme::kSymbol || !is_resumable_ime_code(active_input()))) {
         return false;
     }
-    const size_t edited_cursor = preedit_cursor();
-    composition_kind_ = origin.kind;
-    composition_origin_.reset();
-    size_t cursor = original_code_restored
-                        ? (std::min)(origin.cursor, pinyin_buffer.size())
-                        : edited_cursor;
-    if (composition_kind_ == CompositionKind::kSymbol) {
-        cursor = (std::max)(static_cast<size_t>(1), cursor);
+    const std::size_t edited_cursor = preedit_cursor();
+    if (!composition_.set_scheme(origin.scheme)) {
+        return false;
     }
-    preedit_cursor_from_end_ = pinyin_buffer.size() - cursor;
+    composition_origin_.reset();
+    const std::size_t cursor = original_input_restored
+                                   ? (std::min)(origin.cursor, active_input().size())
+                                   : edited_cursor;
+    if (!composition_.set_active_input(active_input(), cursor)) {
+        return false;
+    }
     commit_source_ = CommitSource::kRawCode;
     return true;
 }
 
 void Context::clear_preedit() {
-    if (!pinyin_buffer.empty()) {
-        pinyin_buffer.clear();
-        ++preedit_revision_;
-    }
-    preedit_cursor_from_end_ = 0;
-    composition_kind_ = CompositionKind::kIme;
+    composition_.cancel();
+    composition_.set_scheme(ime_scheme_);
     composition_origin_.reset();
 }
 
 bool Context::insert_preedit(char ch) {
-    if (pinyin_buffer.size() >= kMaxInputCodeLength || ch == '\0' ||
-        static_cast<unsigned char>(ch) > 0x7f) {
-        return false;
-    }
-    pinyin_buffer.insert(preedit_cursor(), 1, ch);
-    ++preedit_revision_;
-    return true;
+    return composition_.insert(ch);
 }
 
 bool Context::erase_preedit_before_cursor() {
-    const size_t cursor = preedit_cursor();
-    if (cursor == 0) {
-        return false;
-    }
-    pinyin_buffer.erase(cursor - 1, 1);
-    ++preedit_revision_;
-    return true;
+    return composition_.erase_before_cursor();
 }
 
 bool Context::erase_preedit_at_cursor() {
-    const size_t cursor = preedit_cursor();
-    if (cursor >= pinyin_buffer.size()) {
-        return false;
-    }
-    pinyin_buffer.erase(cursor, 1);
-    --preedit_cursor_from_end_;
-    ++preedit_revision_;
-    return true;
+    return composition_.erase_at_cursor();
 }
 
 bool Context::move_preedit_cursor_left() {
-    if (preedit_cursor() == 0) {
-        return false;
-    }
-    ++preedit_cursor_from_end_;
-    return true;
+    return composition_.move_cursor_left();
 }
 
 bool Context::move_preedit_cursor_right() {
-    if (preedit_cursor_from_end_ == 0) {
-        return false;
-    }
-    --preedit_cursor_from_end_;
-    return true;
+    return composition_.move_cursor_right();
 }
 
 bool Context::move_preedit_cursor_home() {
-    if (preedit_cursor() == 0) {
-        return false;
-    }
-    preedit_cursor_from_end_ = pinyin_buffer.size();
-    return true;
+    return composition_.move_cursor_home();
 }
 
 bool Context::move_preedit_cursor_end() {
-    if (preedit_cursor_from_end_ == 0) {
-        return false;
-    }
-    preedit_cursor_from_end_ = 0;
-    return true;
+    return composition_.move_cursor_end();
 }
 
 bool Context::edit_preedit(const KeyEvent& event) {
@@ -180,6 +151,7 @@ bool Context::edit_preedit(const KeyEvent& event) {
         return false;
     }
 
+    bool handled = true;
     switch (event.keycode) {
     case VK_BACK:
         erase_preedit_before_cursor();
@@ -200,12 +172,14 @@ bool Context::edit_preedit(const KeyEvent& event) {
         move_preedit_cursor_end();
         break;
     default:
+        handled = false;
+        break;
+    }
+    if (!handled) {
         return false;
     }
-
-    if (pinyin_buffer.empty()) {
-        candidates = {};
-        clear_preedit();
+    if (!is_composing()) {
+        clear_translation();
     }
     return true;
 }
@@ -213,23 +187,68 @@ bool Context::edit_preedit(const KeyEvent& event) {
 void Context::reset() {
     clear_preedit();
     committed_text.clear();
-    candidates = {};
+    clear_translation();
     reset_pagination();
     commit_source_ = CommitSource::kRawCode;
     clear_commit_evidence();
+    requested_candidate_index_.reset();
 }
 
 bool Context::commit_candidate(int index) {
-    if (index < 0 || index >= static_cast<int>(candidates.candidates.size())) {
+    const CandidateEntry* entry = candidate_entry(index);
+    return entry && commit_entry(*entry);
+}
+
+bool Context::commit_entry(const CandidateEntry& entry) {
+    const auto* action = std::get_if<TextSelectionAction>(&entry.selection);
+    if (!action || action->consumed_input_bytes != active_input().size()) {
         return false;
     }
-    candidates.highlighted = index;
-    committed_candidate_ = candidates.candidates[static_cast<std::size_t>(index)];
-    committed_candidate_code_ = pinyin_buffer;
+    const std::string typed_code = active_input();
+    const Candidate committed_candidate = entry.candidate;
+    if (!commit_selection(*action)) {
+        return false;
+    }
+    committed_candidate_ = committed_candidate;
+    committed_candidate_code_ = typed_code;
     has_committed_candidate_ = true;
-    committed_text = committed_candidate_.text;
-    commit_source_ = CommitSource::kCandidate;
     return true;
+}
+
+bool Context::commit_selection(const TextSelectionAction& action) {
+    if (!composition_.finalize_candidate(action, committed_text)) {
+        return false;
+    }
+    composition_.set_scheme(ime_scheme_);
+    commit_source_ = CommitSource::kCandidate;
+    clear_translation();
+    composition_origin_.reset();
+    return true;
+}
+
+bool Context::finalize_raw(CommitSource source) {
+    if (!composition_.finalize_raw(committed_text)) {
+        return false;
+    }
+    composition_.set_scheme(ime_scheme_);
+    commit_source_ = source;
+    clear_translation();
+    composition_origin_.reset();
+    return true;
+}
+
+bool Context::request_candidate_selection(int index) {
+    if (!candidate_entry(index) || index >= selectable_candidate_count()) {
+        return false;
+    }
+    requested_candidate_index_ = index;
+    return true;
+}
+
+std::optional<int> Context::take_requested_candidate_selection() {
+    const std::optional<int> requested = requested_candidate_index_;
+    requested_candidate_index_.reset();
+    return requested;
 }
 
 const Candidate* Context::committed_candidate() const {
@@ -248,76 +267,104 @@ void Context::clear_commit_evidence() {
 
 std::string Context::commit() {
     std::string text;
-    if (!committed_text.empty()) {
-        text = committed_text;
-    } else if (!candidates.candidates.empty() && candidates.highlighted >= 0 &&
-               candidates.highlighted < (int)candidates.candidates.size()) {
-        text = candidates.candidates[candidates.highlighted].text;
-    } else if (!pinyin_buffer.empty()) {
-        text = pinyin_buffer;
-    }
-    clear_preedit();
-    committed_text.clear();
-    candidates = {};
-    reset_pagination();
-    commit_source_ = CommitSource::kRawCode;
-    clear_commit_evidence();
+    CommitSource source;
+    std::tie(text, source) = commit_with_source();
     return text;
 }
 
 std::pair<std::string, CommitSource> Context::commit_with_source() {
     std::string text;
     CommitSource source = commit_source_;
+    bool finalized = false;
     if (!committed_text.empty()) {
-        text = committed_text;
-        // source 已经由 Engine 设置（kRawCode 或 kCandidate）
-    } else if (!candidates.candidates.empty() && candidates.highlighted >= 0 &&
-               candidates.highlighted < (int)candidates.candidates.size()) {
-        text = candidates.candidates[candidates.highlighted].text;
-        source = CommitSource::kCandidate;
-    } else if (!pinyin_buffer.empty()) {
-        text = pinyin_buffer;
-        source = composition_kind_ == CompositionKind::kInlineAscii
-            ? CommitSource::kRawCodePreserveCase
-            : CommitSource::kRawCode;
+        text = std::move(committed_text);
+        finalized = true;
+    } else {
+        bool finalized_candidate = false;
+        const CandidateEntry* entry = candidate_entry(highlighted());
+        const CompositionScheme scheme = composition_scheme();
+        const auto* action =
+            entry ? std::get_if<TextSelectionAction>(&entry->selection) : nullptr;
+        if (action) {
+            if (action->consumed_input_bytes == active_input().size() &&
+                composition_.finalize_candidate(*action, text)) {
+                source = CommitSource::kCandidate;
+                finalized_candidate = true;
+                finalized = true;
+            } else if (action->consumed_input_bytes < active_input().size()) {
+                CompositionState next = composition_;
+                if (next.confirm_prefix(*action) && next.finalize_raw(text)) {
+                    composition_ = std::move(next);
+                    source = CommitSource::kCandidate;
+                    finalized_candidate = true;
+                    finalized = true;
+                }
+            }
+        }
+        if (!finalized_candidate && composition_.finalize_raw(text)) {
+            source = scheme == CompositionScheme::kInlineAscii
+                         ? CommitSource::kRawCodePreserveCase
+                         : CommitSource::kRawCode;
+            finalized = true;
+        }
     }
-    clear_preedit();
+    if (!finalized) {
+        return {{}, source};
+    }
+    if (!composition_.is_composing()) {
+        composition_.set_scheme(ime_scheme_);
+    }
     committed_text.clear();
-    candidates = {};
+    clear_translation();
     reset_pagination();
     commit_source_ = CommitSource::kRawCode;
     clear_commit_evidence();
+    composition_origin_.reset();
     return {std::move(text), source};
 }
 
 void Context::update_candidates(CandidatePage&& page) {
+    update_translation(make_translation_result(std::move(page), active_input().size()));
+}
+
+void Context::update_translation(TranslationResult&& result) {
     const int highlight_count = highlight_count_after_page_change_;
     highlight_count_after_page_change_ = 0;
-    candidates = std::move(page);
-    page_index = candidates.page_index;
-    page_offset = candidates.page_offset;
+    translation_ = std::move(result);
     const int selectable_count = selectable_candidate_count();
-    const int candidate_count = static_cast<int>(candidates.candidates.size());
-    if (candidate_count <= 0) {
-        candidates.highlighted = -1;
+    const int count = candidate_count();
+    if (count <= 0) {
+        translation_.highlighted = -1;
     } else if (highlight_count > 0) {
-        candidates.highlighted = (std::min)(highlight_count, candidate_count) - 1;
-    } else if (selectable_count <= 0 || candidates.highlighted < 0 ||
-               candidates.highlighted >= selectable_count) {
-        candidates.highlighted = 0;
+        translation_.highlighted = (std::min)(highlight_count, count) - 1;
+    } else if (selectable_count <= 0 || translation_.highlighted < 0 ||
+               translation_.highlighted >= selectable_count) {
+        translation_.highlighted = 0;
     }
 }
 
+void Context::clear_translation() {
+    translation_ = {};
+}
+
+void Context::replace_composition(CompositionState&& state, TranslationResult&& result) {
+    composition_ = std::move(state);
+    previous_pages_.clear();
+    highlight_count_after_page_change_ = 0;
+    visible_candidate_count = 0;
+    update_translation(std::move(result));
+}
+
 void Context::reset_pagination() {
-    page_index = 0;
-    page_offset = 0;
+    translation_.page_index = 0;
+    translation_.page_offset = 0;
     visible_candidate_count = 0;
     previous_pages_.clear();
     highlight_count_after_page_change_ = 0;
 }
 
 int Context::selectable_candidate_count() const {
-    int count = static_cast<int>(candidates.candidates.size());
+    int count = candidate_count();
     if (visible_candidate_count > 0) {
         count = (std::min)(count, visible_candidate_count);
     }
@@ -325,24 +372,24 @@ int Context::selectable_candidate_count() const {
 }
 
 void Context::move_to_next_page() {
-    int step = selectable_candidate_count();
-    if (step <= 0 || page_offset + step >= candidates.total_count) {
+    const int step = selectable_candidate_count();
+    if (step <= 0 || page_offset() + step >= translation_.total_count) {
         return;
     }
-    previous_pages_.push_back({page_offset, step});
-    page_offset += step;
-    ++page_index;
+    previous_pages_.push_back({page_offset(), step});
+    translation_.page_offset += step;
+    ++translation_.page_index;
 }
 
 void Context::move_to_previous_page(bool highlight_last) {
     if (previous_pages_.empty()) {
         return;
     }
-    page_offset = previous_pages_.back().offset;
+    translation_.page_offset = previous_pages_.back().offset;
     highlight_count_after_page_change_ =
         highlight_last ? previous_pages_.back().visible_candidate_count : 0;
     previous_pages_.pop_back();
-    --page_index;
+    --translation_.page_index;
 }
 
 void Context::move_to_next_candidate() {
@@ -350,30 +397,25 @@ void Context::move_to_next_candidate() {
     if (count <= 0) {
         return;
     }
-
-    if (candidates.highlighted < count - 1) {
-        ++candidates.highlighted;
+    if (translation_.highlighted < count - 1) {
+        ++translation_.highlighted;
         return;
     }
-
-    const int previous_offset = page_offset;
+    const int previous_offset = page_offset();
     move_to_next_page();
-    if (page_offset != previous_offset) {
-        candidates.highlighted = 0;
+    if (page_offset() != previous_offset) {
+        translation_.highlighted = 0;
     }
 }
 
 void Context::move_to_previous_candidate() {
-    const int count = selectable_candidate_count();
-    if (count <= 0) {
+    if (selectable_candidate_count() <= 0) {
         return;
     }
-
-    if (candidates.highlighted > 0) {
-        --candidates.highlighted;
+    if (translation_.highlighted > 0) {
+        --translation_.highlighted;
         return;
     }
-
     move_to_previous_page(true);
 }
 

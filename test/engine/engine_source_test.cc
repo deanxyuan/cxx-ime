@@ -79,10 +79,12 @@ TEST(EngineSource, take_candidate_source) {
 
 TEST(EngineSource, commit_with_source_from_highlighted_candidate) {
     cxxime::Context ctx;
-    ctx.pinyin_buffer = "ni";
-    ctx.candidates.candidates.push_back({"你", "", 100});
-    ctx.candidates.candidates.push_back({"呢", "", 80});
-    ctx.candidates.highlighted = 0;
+    ASSERT_TRUE(ctx.set_preedit("ni"));
+    cxxime::CandidatePage page;
+    page.candidates.push_back({"你", "", 100});
+    page.candidates.push_back({"呢", "", 80});
+    page.highlighted = 0;
+    ctx.update_candidates(std::move(page));
     // committed_text is empty, so commit_with_source falls back to highlighted candidate
 
     auto [text, source] = ctx.commit_with_source();
@@ -90,10 +92,10 @@ TEST(EngineSource, commit_with_source_from_highlighted_candidate) {
     ASSERT_EQ(source, cxxime::CommitSource::kCandidate);
 }
 
-TEST(EngineSource, commit_with_source_from_pinyin_buffer) {
+TEST(EngineSource, commit_with_source_from_active_input) {
     cxxime::Context ctx;
-    ctx.pinyin_buffer = "nihao";
-    // No committed_text, no candidates → falls back to pinyin_buffer
+    ASSERT_TRUE(ctx.set_preedit("nihao"));
+    // No committed text or candidates falls back to the active input.
 
     auto [text, source] = ctx.commit_with_source();
     ASSERT_EQ(text, "nihao");
@@ -131,7 +133,8 @@ TEST(EngineSource, default_commit_source_is_kRawCode) {
 
 TEST(EngineSource, engine_enter_commits_raw_with_preserved_case) {
     cxxime::Engine engine;
-    ASSERT_TRUE(engine.context().start_composition(cxxime::CompositionKind::kIme, "ZzZ", 3));
+    ASSERT_TRUE(
+        engine.context().start_composition(cxxime::CompositionScheme::kPinyin, "ZzZ", 3));
 
     cxxime::KeyEvent event;
     event.keycode = 0x0D;  // VK_RETURN
@@ -146,9 +149,11 @@ TEST(EngineSource, engine_enter_commits_raw_with_preserved_case) {
 
 TEST(EngineSource, pinyin_processor_space_selects_candidate) {
     cxxime::Context ctx;
-    ctx.pinyin_buffer = "de";
-    ctx.candidates.candidates.push_back({"的", "", 100});
-    ctx.candidates.highlighted = 0;
+    ASSERT_TRUE(ctx.set_preedit("de"));
+    cxxime::CandidatePage page;
+    page.candidates.push_back({"的", "", 100});
+    page.highlighted = 0;
+    ctx.update_candidates(std::move(page));
 
     cxxime::KeyEvent event;
     event.keycode = 0x20;  // VK_SPACE
@@ -156,16 +161,18 @@ TEST(EngineSource, pinyin_processor_space_selects_candidate) {
 
     cxxime::PinyinProcessor processor;
     auto result = processor.process_key(event, ctx);
-    ASSERT_EQ(result, cxxime::ProcessResult::COMMITTED);
-    ASSERT_EQ(ctx.committed_text, "的");
+    ASSERT_EQ(result, cxxime::ProcessResult::CANDIDATE_SELECTED);
+    ASSERT_EQ(ctx.take_requested_candidate_selection().value_or(-1), 0);
 }
 
 TEST(EngineSource, pinyin_processor_digit_selects_candidate) {
     cxxime::Context ctx;
-    ctx.pinyin_buffer = "de";
-    ctx.candidates.candidates.push_back({"的", "", 100});
-    ctx.candidates.candidates.push_back({"地", "", 80});
-    ctx.candidates.highlighted = 0;
+    ASSERT_TRUE(ctx.set_preedit("de"));
+    cxxime::CandidatePage page;
+    page.candidates.push_back({"的", "", 100});
+    page.candidates.push_back({"地", "", 80});
+    page.highlighted = 0;
+    ctx.update_candidates(std::move(page));
 
     cxxime::KeyEvent event;
     event.keycode = '2';
@@ -173,8 +180,8 @@ TEST(EngineSource, pinyin_processor_digit_selects_candidate) {
 
     cxxime::PinyinProcessor processor;
     auto result = processor.process_key(event, ctx);
-    ASSERT_EQ(result, cxxime::ProcessResult::COMMITTED);
-    ASSERT_EQ(ctx.committed_text, "地");
+    ASSERT_EQ(result, cxxime::ProcessResult::CANDIDATE_SELECTED);
+    ASSERT_EQ(ctx.take_requested_candidate_selection().value_or(-1), 1);
 }
 
 // ============================================================
@@ -259,7 +266,7 @@ TEST(EngineSource, punctuation_with_composing) {
     // Should be candidate text + punctuation
     ASSERT_TRUE(!text.empty());
     ASSERT_EQ(source, cxxime::CommitSource::kCandidate);
-    ASSERT_EQ(engine.context().pinyin_buffer, "");
+    ASSERT_EQ(engine.context().active_input(), "");
 
     engine.finalize();
     DeleteFileA(dp.c_str());
@@ -280,8 +287,8 @@ TEST(EngineSource, punctuation_falls_back_to_first_candidate_when_highlight_is_i
 
     engine.process_key(make_punct_key('N'), opts);
     engine.process_key(make_punct_key('I'), opts);
-    ASSERT_TRUE(!engine.context().candidates.candidates.empty());
-    engine.context().candidates.highlighted = -1;
+    ASSERT_TRUE(!engine.context().candidate_page().candidates.empty());
+    engine.context().translation().highlighted = -1;
 
     ASSERT_EQ(engine.process_key(make_punct_key(VK_OEM_PERIOD), opts),
               cxxime::ProcessResult::COMMITTED);
@@ -436,13 +443,13 @@ TEST(EngineSource, numpad_text_enters_inline_ascii_before_full_shape_conversion)
 
     engine.process_key(make_punct_key('N'), opts);
     engine.process_key(make_punct_key('I'), opts);
-    ASSERT_TRUE(!engine.context().candidates.candidates.empty());
+    ASSERT_TRUE(!engine.context().candidate_page().candidates.empty());
 
     ASSERT_EQ(engine.process_key(make_punct_key(VK_DIVIDE), opts),
               cxxime::ProcessResult::ACCEPTED);
-    ASSERT_EQ(engine.context().pinyin_buffer, "ni/");
-    ASSERT_EQ(engine.context().composition_kind(), cxxime::CompositionKind::kInlineAscii);
-    ASSERT_TRUE(engine.context().candidates.candidates.empty());
+    ASSERT_EQ(engine.context().active_input(), "ni/");
+    ASSERT_EQ(engine.context().composition_scheme(), cxxime::CompositionScheme::kInlineAscii);
+    ASSERT_TRUE(engine.context().candidate_page().candidates.empty());
     ASSERT_TRUE(engine.context().committed_text.empty());
 
     engine.finalize();

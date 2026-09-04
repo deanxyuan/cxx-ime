@@ -698,14 +698,14 @@ cxxime::CandidateOrderQueryResult SharedResources::query_candidate_order(
         cxxime::WubiTranslator translator;
         translator.set_dict(dictionary.get());
         translator.set_candidate_learning_enabled(learning_enabled);
-        page = translator.translate(code, 0, static_cast<int>(limit));
+        page = translator.translate_page(code, 0, static_cast<int>(limit));
     } else {
         cxxime::PinyinTranslator translator;
         translator.set_dict(dictionary.get());
         translator.set_syllabifier(resources.syllabifier.get());
         translator.set_short_cache(&dictionary->short_cache());
         translator.set_candidate_learning_enabled(learning_enabled);
-        page = translator.translate(code, 0, static_cast<int>(limit));
+        page = translator.translate_page(code, 0, static_cast<int>(limit));
     }
 
     result.version = dictionary->manual_candidate_order_version();
@@ -1110,10 +1110,9 @@ ProcessKeyResult SessionManager::process_key(uint32_t id, const cxxime::KeyEvent
         s.base_chinese_mode = !new_ascii;
     }
 
-    // 6. populate return value
-    //    Key: process COMMITTED first (take + clear context), THEN read composing.
-    //    COMMITTED sets committed_text but does NOT clear pinyin_buffer,
-    //    so is_composing() would return true if read before take.
+    // 6. Populate the return value. A Wubi fifth-key commit can start the next
+    //    composition in the same engine step, so consume the commit before
+    //    publishing the remaining composition state.
     ProcessKeyResult ret;
     ret.status = cxxime::IPCStatus::OK;
     ret.result = result;
@@ -1156,9 +1155,11 @@ ProcessKeyResult SessionManager::process_key(uint32_t id, const cxxime::KeyEvent
         ret.composing = engine.context().is_composing();
     }
     if (ret.composing) {
-        ret.preedit = engine.context().pinyin_buffer;
-        ret.preedit_cursor = engine.context().preedit_cursor();
-        ret.candidates = engine.context().candidates;
+        const cxxime::CompositionPresentation presentation =
+            cxxime::derive_composition_presentation(engine.context().composition());
+        ret.preedit = presentation.logical_preedit;
+        ret.preedit_cursor = presentation.cursor_bytes;
+        ret.candidates = engine.context().candidate_page();
     }
 
     // trace log

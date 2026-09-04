@@ -88,8 +88,8 @@ bool SymbolTable::load(const std::string& path) {
     }
 }
 
-CandidatePage SymbolTable::translate(const std::string& code, int page_index, int page_size,
-                                     int candidate_offset) const {
+CandidatePage SymbolTable::translate_page(const std::string& code, int page_index, int page_size,
+                                          int candidate_offset) const {
     CandidatePage page;
     if (page_size <= 0) {
         return page;
@@ -155,6 +155,36 @@ CandidatePage SymbolTable::translate(const std::string& code, int page_index, in
         page.highlighted = 0;
     }
     return page;
+}
+
+TranslationResult SymbolTable::translate(const TranslationRequest& request) const {
+    CandidatePage page =
+        translate_page(request.input, request.page_index, request.page_size, request.page_offset);
+    TranslationResult result;
+    result.page_index = page.page_index;
+    result.page_offset = page.page_offset;
+    result.page_size = page.page_size;
+    result.total_count = page.total_count;
+    result.highlighted = page.highlighted;
+    result.entries.reserve(page.candidates.size());
+    for (auto& candidate : page.candidates) {
+        CandidateEntry entry;
+        entry.hint = candidate.comment;
+        if (request.input.empty()) {
+            ReplaceActiveInputAction action;
+            action.scheme = CompositionScheme::kSymbol;
+            action.input = candidate.code;
+            action.cursor = action.input.size();
+            entry.selection = std::move(action);
+        } else {
+            entry = make_text_candidate_entry(std::move(candidate), request.input.size() + 1);
+            result.entries.push_back(std::move(entry));
+            continue;
+        }
+        entry.candidate = std::move(candidate);
+        result.entries.push_back(std::move(entry));
+    }
+    return result;
 }
 
 } // namespace cxxime

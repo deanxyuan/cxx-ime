@@ -110,11 +110,11 @@ TEST(SymbolInput, works_in_all_input_modes) {
         fixture.engine().clear();
         fixture.engine().switch_mode(mode);
         type_symbol_code(fixture.engine(), "bd");
-        ASSERT_EQ(fixture.engine().context().pinyin_buffer, "\\bd");
-        ASSERT_EQ(fixture.engine().context().composition_kind(),
-                  cxxime::CompositionKind::kSymbol);
-        ASSERT_TRUE(!fixture.engine().context().candidates.candidates.empty());
-        ASSERT_EQ(fixture.engine().context().candidates.candidates[0].source,
+        ASSERT_EQ(fixture.engine().context().active_input(), "\\bd");
+        ASSERT_EQ(fixture.engine().context().composition_scheme(),
+                  cxxime::CompositionScheme::kSymbol);
+        ASSERT_TRUE(!fixture.engine().context().candidate_page().candidates.empty());
+        ASSERT_EQ(fixture.engine().context().candidate_page().candidates[0].source,
                   cxxime::CandidateSource::kSymbol);
     }
 }
@@ -135,20 +135,31 @@ TEST(SymbolInput, bare_trigger_navigates_categories_without_committing) {
     ASSERT_TRUE(fixture.initialize());
     type_symbol_code(fixture.engine(), "");
 
-    const auto& categories = fixture.engine().context().candidates;
+    const auto categories = fixture.engine().context().candidate_page();
     ASSERT_EQ(categories.total_count, 14);
     ASSERT_EQ(categories.candidates[0].text, "标点");
     ASSERT_EQ(categories.candidates[0].comment, "\\bd");
 
     ASSERT_EQ(fixture.engine().process_key(make_key('1')), cxxime::ProcessResult::ACCEPTED);
-    ASSERT_EQ(fixture.engine().context().pinyin_buffer, "\\bd");
+    ASSERT_EQ(fixture.engine().context().active_input(), "\\bd");
     ASSERT_TRUE(fixture.engine().context().committed_text.empty());
-    ASSERT_EQ(fixture.engine().context().candidates.candidates[0].text, "。");
+    ASSERT_EQ(fixture.engine().context().candidate_page().candidates[0].text, "。");
 
     fixture.engine().clear();
     type_symbol_code(fixture.engine(), "");
     ASSERT_EQ(fixture.engine().process_key(make_key(VK_SPACE)), cxxime::ProcessResult::ACCEPTED);
-    ASSERT_EQ(fixture.engine().context().pinyin_buffer, "\\bd");
+    ASSERT_EQ(fixture.engine().context().active_input(), "\\bd");
+}
+
+TEST(SymbolInput, mouse_selection_navigates_categories_without_committing) {
+    SymbolEngineFixture fixture;
+    ASSERT_TRUE(fixture.initialize());
+    type_symbol_code(fixture.engine(), "");
+
+    ASSERT_TRUE(fixture.engine().select_candidate(0));
+    ASSERT_EQ(fixture.engine().context().active_input(), "\\bd");
+    ASSERT_TRUE(fixture.engine().context().committed_text.empty());
+    ASSERT_EQ(fixture.engine().context().candidate_page().candidates[0].text, "。");
 }
 
 TEST(SymbolInput, shift_commits_raw_trigger_and_switches_to_english) {
@@ -206,9 +217,10 @@ TEST(SymbolInput, backslash_starts_symbol_input_before_idle_punctuation) {
 
     ASSERT_EQ(fixture.engine().process_key(make_key(VK_OEM_5), options),
               cxxime::ProcessResult::ACCEPTED);
-    ASSERT_EQ(fixture.engine().context().pinyin_buffer, "\\");
-    ASSERT_EQ(fixture.engine().context().composition_kind(), cxxime::CompositionKind::kSymbol);
-    ASSERT_TRUE(!fixture.engine().context().candidates.candidates.empty());
+    ASSERT_EQ(fixture.engine().context().active_input(), "\\");
+    ASSERT_EQ(fixture.engine().context().composition_scheme(),
+              cxxime::CompositionScheme::kSymbol);
+    ASSERT_TRUE(!fixture.engine().context().candidate_page().candidates.empty());
 }
 
 TEST(SymbolInput, main_symbols_use_full_shape_while_idle) {
@@ -253,12 +265,12 @@ TEST(SymbolInput, candidate_pagination_keys_remain_commands_in_full_shape) {
 
     ASSERT_EQ(fixture.engine().process_key(make_key('A'), options),
               cxxime::ProcessResult::ACCEPTED);
-    ASSERT_TRUE(!fixture.engine().context().candidates.candidates.empty());
+    ASSERT_TRUE(!fixture.engine().context().candidate_page().candidates.empty());
     ASSERT_EQ(fixture.engine().process_key(make_key(VK_OEM_PLUS), options),
               cxxime::ProcessResult::ACCEPTED);
     ASSERT_EQ(fixture.engine().process_key(make_key(VK_OEM_MINUS), options),
               cxxime::ProcessResult::ACCEPTED);
-    ASSERT_EQ(fixture.engine().context().pinyin_buffer, "a");
+    ASSERT_EQ(fixture.engine().context().active_input(), "a");
     ASSERT_TRUE(fixture.engine().context().committed_text.empty());
 }
 
@@ -274,10 +286,10 @@ TEST(SymbolInput, slash_and_backslash_commit_ime_candidate_with_enumeration_comm
 
         ASSERT_EQ(fixture.engine().process_key(make_key('A'), options),
                   cxxime::ProcessResult::ACCEPTED);
-        ASSERT_GE(fixture.engine().context().candidates.candidates.size(), 2u);
-        fixture.engine().context().candidates.highlighted = 1;
+        ASSERT_GE(fixture.engine().context().candidate_page().candidates.size(), 2u);
+        fixture.engine().context().translation().highlighted = 1;
         const std::string expected =
-            fixture.engine().context().candidates.candidates[1].text + "\xe3\x80\x81";
+            fixture.engine().context().candidate_page().candidates[1].text + "\xe3\x80\x81";
         ASSERT_EQ(fixture.engine().process_key(make_key(key), options),
                   cxxime::ProcessResult::COMMITTED);
         const auto committed = fixture.engine().take_commit_text_with_source();
@@ -303,12 +315,12 @@ TEST(SymbolInput, slash_and_backslash_extend_ime_preedit_without_candidates) {
 
         ASSERT_EQ(fixture.engine().process_key(make_key('Z'), options),
                   cxxime::ProcessResult::ACCEPTED);
-        ASSERT_TRUE(fixture.engine().context().candidates.candidates.empty());
+        ASSERT_TRUE(fixture.engine().context().candidate_page().candidates.empty());
         ASSERT_EQ(fixture.engine().process_key(make_key(test_case.key), options),
                   cxxime::ProcessResult::ACCEPTED);
-        ASSERT_EQ(fixture.engine().context().pinyin_buffer, test_case.expected);
-        ASSERT_EQ(fixture.engine().context().composition_kind(),
-                  cxxime::CompositionKind::kInlineAscii);
+        ASSERT_EQ(fixture.engine().context().active_input(), test_case.expected);
+        ASSERT_EQ(fixture.engine().context().composition_scheme(),
+                  cxxime::CompositionScheme::kInlineAscii);
         ASSERT_TRUE(fixture.engine().context().committed_text.empty());
     }
 }
@@ -329,10 +341,10 @@ TEST(SymbolInput, slash_and_backslash_preserve_full_shape_composition_behavior) 
 
         ASSERT_EQ(candidate_fixture.engine().process_key(make_key('A'), options),
                   cxxime::ProcessResult::ACCEPTED);
-        ASSERT_GE(candidate_fixture.engine().context().candidates.candidates.size(), 2u);
-        candidate_fixture.engine().context().candidates.highlighted = 1;
+        ASSERT_GE(candidate_fixture.engine().context().candidate_page().candidates.size(), 2u);
+        candidate_fixture.engine().context().translation().highlighted = 1;
         const std::string expected_candidate =
-            candidate_fixture.engine().context().candidates.candidates[1].text +
+            candidate_fixture.engine().context().candidate_page().candidates[1].text +
             test_case.full_width;
         ASSERT_EQ(candidate_fixture.engine().process_key(make_key(test_case.key), options),
                   cxxime::ProcessResult::COMMITTED);
@@ -343,7 +355,7 @@ TEST(SymbolInput, slash_and_backslash_preserve_full_shape_composition_behavior) 
         ASSERT_TRUE(raw_fixture.initialize());
         ASSERT_EQ(raw_fixture.engine().process_key(make_key('Z'), options),
                   cxxime::ProcessResult::ACCEPTED);
-        ASSERT_TRUE(raw_fixture.engine().context().candidates.candidates.empty());
+        ASSERT_TRUE(raw_fixture.engine().context().candidate_page().candidates.empty());
         ASSERT_EQ(raw_fixture.engine().process_key(make_key(test_case.key), options),
                   cxxime::ProcessResult::COMMITTED);
         ASSERT_EQ(raw_fixture.engine().take_commit_text_with_source().first,
@@ -356,16 +368,17 @@ TEST(SymbolInput, numpad_operator_stays_ascii_in_full_shape_composition) {
     ASSERT_TRUE(fixture.initialize());
 
     type_symbol_code(fixture.engine(), "bd");
-    ASSERT_TRUE(!fixture.engine().context().candidates.candidates.empty());
+    ASSERT_TRUE(!fixture.engine().context().candidate_page().candidates.empty());
 
     cxxime::OutputOptions options;
     options.full_shape = true;
 
     ASSERT_EQ(fixture.engine().process_key(make_key(VK_ADD), options),
               cxxime::ProcessResult::ACCEPTED);
-    ASSERT_EQ(fixture.engine().context().pinyin_buffer, "\\bd+");
-    ASSERT_EQ(fixture.engine().context().composition_kind(), cxxime::CompositionKind::kInlineAscii);
-    ASSERT_TRUE(fixture.engine().context().candidates.candidates.empty());
+    ASSERT_EQ(fixture.engine().context().active_input(), "\\bd+");
+    ASSERT_EQ(fixture.engine().context().composition_scheme(),
+              cxxime::CompositionScheme::kInlineAscii);
+    ASSERT_TRUE(fixture.engine().context().candidate_page().candidates.empty());
     ASSERT_TRUE(fixture.engine().context().committed_text.empty());
 }
 
@@ -385,10 +398,10 @@ TEST(SymbolInput, slash_and_backslash_finish_composition_with_english_punctuatio
 
         ASSERT_EQ(fixture.engine().process_key(make_key('A'), options),
                   cxxime::ProcessResult::ACCEPTED);
-        ASSERT_GE(fixture.engine().context().candidates.candidates.size(), 2u);
-        fixture.engine().context().candidates.highlighted = 1;
+        ASSERT_GE(fixture.engine().context().candidate_page().candidates.size(), 2u);
+        fixture.engine().context().translation().highlighted = 1;
         const std::string expected =
-            fixture.engine().context().candidates.candidates[1].text + test_case.text;
+            fixture.engine().context().candidate_page().candidates[1].text + test_case.text;
         ASSERT_EQ(fixture.engine().process_key(make_key(test_case.key), options),
                   cxxime::ProcessResult::COMMITTED);
         ASSERT_EQ(fixture.engine().take_commit_text_with_source().first, expected);
@@ -400,28 +413,30 @@ TEST(SymbolInput, rejected_printable_restores_symbol_origin_after_delete) {
     SymbolEngineFixture fixture;
     ASSERT_TRUE(fixture.initialize());
     type_symbol_code(fixture.engine(), "bd");
-    ASSERT_TRUE(!fixture.engine().context().candidates.candidates.empty());
+    ASSERT_TRUE(!fixture.engine().context().candidate_page().candidates.empty());
 
     ASSERT_EQ(fixture.engine().process_key(make_shift_key(VK_OEM_PLUS)),
               cxxime::ProcessResult::ACCEPTED);
-    ASSERT_EQ(fixture.engine().context().pinyin_buffer, "\\bd+");
-    ASSERT_EQ(fixture.engine().context().composition_kind(), cxxime::CompositionKind::kInlineAscii);
-    ASSERT_TRUE(fixture.engine().context().candidates.candidates.empty());
+    ASSERT_EQ(fixture.engine().context().active_input(), "\\bd+");
+    ASSERT_EQ(fixture.engine().context().composition_scheme(),
+              cxxime::CompositionScheme::kInlineAscii);
+    ASSERT_TRUE(fixture.engine().context().candidate_page().candidates.empty());
 
     ASSERT_EQ(fixture.engine().process_key(make_key(VK_BACK)), cxxime::ProcessResult::ACCEPTED);
-    ASSERT_EQ(fixture.engine().context().pinyin_buffer, "\\bd");
-    ASSERT_EQ(fixture.engine().context().composition_kind(), cxxime::CompositionKind::kSymbol);
-    ASSERT_TRUE(!fixture.engine().context().candidates.candidates.empty());
+    ASSERT_EQ(fixture.engine().context().active_input(), "\\bd");
+    ASSERT_EQ(fixture.engine().context().composition_scheme(),
+              cxxime::CompositionScheme::kSymbol);
+    ASSERT_TRUE(!fixture.engine().context().candidate_page().candidates.empty());
 }
 
 TEST(SymbolInput, shifted_digit_does_not_select_candidate) {
     SymbolEngineFixture fixture;
     ASSERT_TRUE(fixture.initialize());
     type_symbol_code(fixture.engine(), "bd");
-    const int highlighted = fixture.engine().context().candidates.highlighted;
+    const int highlighted = fixture.engine().context().translation().highlighted;
     ASSERT_GE(highlighted, 0);
     const std::string expected =
-        fixture.engine().context().candidates.candidates[highlighted].text + "!";
+        fixture.engine().context().candidate_page().candidates[highlighted].text + "!";
 
     ASSERT_EQ(fixture.engine().process_key(make_shift_key('1')), cxxime::ProcessResult::COMMITTED);
     const auto committed = fixture.engine().take_commit_text_with_source();
@@ -433,10 +448,10 @@ TEST(SymbolInput, shifted_zero_commits_candidate_with_right_parenthesis) {
     SymbolEngineFixture fixture;
     ASSERT_TRUE(fixture.initialize());
     type_symbol_code(fixture.engine(), "bd");
-    const int highlighted = fixture.engine().context().candidates.highlighted;
+    const int highlighted = fixture.engine().context().translation().highlighted;
     ASSERT_GE(highlighted, 0);
     const std::string expected =
-        fixture.engine().context().candidates.candidates[highlighted].text + "\xef\xbc\x89";
+        fixture.engine().context().candidate_page().candidates[highlighted].text + "\xef\xbc\x89";
     cxxime::PunctMapping punctuation;
     punctuation.half_shape[")"] = {cxxime::PunctType::COMMIT, "\xef\xbc\x89", {}, {}};
     cxxime::OutputOptions options;
@@ -453,21 +468,28 @@ TEST(SymbolInput, supports_navigation_pagination_editing_and_cancel) {
     ASSERT_TRUE(fixture.initialize());
     type_symbol_code(fixture.engine(), "sz");
 
-    const std::string first = fixture.engine().context().candidates.candidates[0].text;
-    const int page_size = static_cast<int>(fixture.engine().context().candidates.candidates.size());
+    const std::string first = fixture.engine().context().candidate_page().candidates[0].text;
+    const int page_size =
+        static_cast<int>(fixture.engine().context().candidate_page().candidates.size());
     ASSERT_EQ(fixture.engine().process_key(make_key(VK_DOWN)), cxxime::ProcessResult::ACCEPTED);
-    ASSERT_EQ(fixture.engine().context().candidates.highlighted, 1);
+    ASSERT_EQ(fixture.engine().context().translation().highlighted, 1);
     ASSERT_EQ(fixture.engine().process_key(make_key(VK_UP)), cxxime::ProcessResult::ACCEPTED);
-    ASSERT_EQ(fixture.engine().context().candidates.highlighted, 0);
+    ASSERT_EQ(fixture.engine().context().translation().highlighted, 0);
     ASSERT_EQ(fixture.engine().process_key(make_key(VK_NEXT)), cxxime::ProcessResult::ACCEPTED);
-    ASSERT_EQ(fixture.engine().context().candidates.page_offset, page_size);
-    ASSERT_NE(fixture.engine().context().candidates.candidates[0].text, first);
+    ASSERT_EQ(fixture.engine().context().page_offset(), page_size);
+    ASSERT_NE(fixture.engine().context().candidate_page().candidates[0].text, first);
 
     ASSERT_EQ(fixture.engine().process_key(make_key(VK_BACK)), cxxime::ProcessResult::ACCEPTED);
-    ASSERT_EQ(fixture.engine().context().pinyin_buffer, "\\s");
-    ASSERT_TRUE(fixture.engine().context().candidates.candidates.empty());
+    ASSERT_EQ(fixture.engine().context().active_input(), "\\s");
+    ASSERT_TRUE(fixture.engine().context().candidate_page().candidates.empty());
     ASSERT_EQ(fixture.engine().process_key(make_key(VK_ESCAPE)), cxxime::ProcessResult::ACCEPTED);
     ASSERT_TRUE(!fixture.engine().context().is_composing());
+    ASSERT_EQ(fixture.engine().context().composition_scheme(),
+              cxxime::CompositionScheme::kPinyin);
+    ASSERT_EQ(fixture.engine().process_key(make_key('A')), cxxime::ProcessResult::ACCEPTED);
+    ASSERT_EQ(fixture.engine().context().composition_scheme(),
+              cxxime::CompositionScheme::kPinyin);
+    ASSERT_EQ(fixture.engine().context().active_input(), "a");
 }
 
 TEST(SymbolInput, ignores_wubi_auto_commit_rules) {
@@ -478,7 +500,7 @@ TEST(SymbolInput, ignores_wubi_auto_commit_rules) {
 
     ASSERT_EQ(fixture.engine().process_key(make_key('X')), cxxime::ProcessResult::ACCEPTED);
     ASSERT_EQ(fixture.engine().process_key(make_key('A')), cxxime::ProcessResult::ACCEPTED);
-    ASSERT_EQ(fixture.engine().context().pinyin_buffer, "\\bdxa");
+    ASSERT_EQ(fixture.engine().context().active_input(), "\\bdxa");
     ASSERT_TRUE(fixture.engine().context().committed_text.empty());
 }
 

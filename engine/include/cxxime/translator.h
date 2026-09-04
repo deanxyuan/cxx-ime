@@ -9,6 +9,7 @@
 #include <cxxime/candidate.h>
 #include <cxxime/dict.h>
 #include <cxxime/segmentor.h>
+#include <cxxime/translation_result.h>
 
 namespace cxxime {
 
@@ -22,10 +23,7 @@ struct QueryScratch;
 class ITranslator {
 public:
     virtual ~ITranslator() = default;
-    virtual CandidatePage translate(const std::string& input, int page_index = 0, int page_size = 9,
-                                    QueryTrace* trace = nullptr, const QueryBudget* budget = nullptr,
-                                    QueryScratch* scratch = nullptr,
-                                    int candidate_offset = -1) = 0;
+    virtual TranslationResult translate(const TranslationRequest& request) = 0;
     virtual void clear_query_cache() {}
     virtual void set_sentence_composition_enabled(bool enabled) {}
     virtual void set_candidate_learning_enabled(bool enabled) {}
@@ -42,10 +40,12 @@ public:
     void set_sentence_composition_enabled(bool enabled) override;
     void set_candidate_learning_enabled(bool enabled) override;
 
-    CandidatePage translate(const std::string& pinyin, int page_index = 0, int page_size = 9,
-                            QueryTrace* trace = nullptr, const QueryBudget* budget = nullptr,
-                            QueryScratch* scratch = nullptr,
-                            int candidate_offset = -1) override;
+    TranslationResult translate(const TranslationRequest& request) override;
+    CandidatePage translate_page(const std::string& pinyin, int page_index = 0,
+                                 int page_size = 9, QueryTrace* trace = nullptr,
+                                 const QueryBudget* budget = nullptr,
+                                 QueryScratch* scratch = nullptr,
+                                 int candidate_offset = -1);
 
 private:
     static bool is_indexable_key(const std::string& pinyin);
@@ -81,7 +81,6 @@ private:
     void store_query_cache(const std::string& input, int page_index, int candidate_offset,
                            int page_size, const QueryCacheVersions& versions,
                            const CandidatePage& page);
-
     Dict* dict_ = nullptr;
     Syllabifier* syllabifier_ = nullptr;
     const ShortCodeCache* short_cache_ = nullptr;

@@ -9,6 +9,7 @@
 #include <utility>
 
 #include <cxxime/ascii_composer.h>
+#include <cxxime/composition_presentation.h>
 #include <cxxime/config.h>
 #include <cxxime/context.h>
 #include <cxxime/dict.h>
@@ -54,6 +55,9 @@ public:
     const Context& context() const;
     Context& context();
     bool select_candidate(int index);
+    void set_partial_selection_enabled(bool enabled) {
+        translation_policy_.allow_partial_selection = enabled;
+    }
     std::string get_commit_text();
     std::pair<std::string, CommitSource> take_commit_text_with_source();
     std::pair<std::string, CommitSource> commit_composition_with_source();
@@ -106,8 +110,16 @@ private:
     void reset_composition_state();
     void rebuild_pipeline(InputMode mode, bool force = false);
     bool symbol_input_enabled(const OutputOptions& opts) const;
-    CandidatePage translate_current_composition(const QueryDeadline& deadline);
-    CandidatePage translate_symbol_page() const;
+    TranslationResult translate_current_composition(const QueryDeadline& deadline);
+    TranslationResult translate_composition(const CompositionState& state,
+                                            int page_index,
+                                            int page_offset,
+                                            const QueryDeadline& deadline);
+    bool dispatch_candidate_selection(int index, const QueryDeadline& deadline);
+    bool finalize_selection(const CandidateEntry& entry);
+    bool replace_active_input(const ReplaceActiveInputAction& action,
+                              const QueryDeadline& deadline);
+    static CompositionScheme scheme_for_mode(InputMode mode);
 
     std::unique_ptr<IProcessor> processor_;
     std::unique_ptr<ITranslator> translator_;
@@ -132,7 +144,7 @@ private:
 
     // Input mode
     InputMode mode_ = InputMode::PINYIN;
-    bool commit_continues_composition_ = false;
+    TranslationPolicy translation_policy_;
     KeyboardShortcut input_mode_switch_shortcut_;
     uint32_t handled_shortcut_key_ = 0;
 

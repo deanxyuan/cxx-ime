@@ -9,7 +9,7 @@
 namespace cxxime {
 
 bool SymbolProcessor::is_active(const Context& context) {
-    return context.composition_kind() == CompositionKind::kSymbol;
+    return context.composition_scheme() == CompositionScheme::kSymbol;
 }
 
 bool SymbolProcessor::is_trigger(const KeyEvent& event) {
@@ -24,7 +24,7 @@ bool SymbolProcessor::edit_preedit(const KeyEvent& event, Context& context) {
     switch (event.keycode) {
     case VK_BACK:
         context.erase_preedit_before_cursor();
-        if (context.pinyin_buffer.empty()) {
+        if (context.active_input().empty()) {
             context.reset();
         }
         return true;
@@ -57,19 +57,8 @@ ProcessResult SymbolProcessor::select_candidate(Context& context, int index) {
         return ProcessResult::ACCEPTED;
     }
 
-    const Candidate& candidate = context.candidates.candidates[index];
-    if (context.pinyin_buffer == std::string(1, kSymbolPrefix) &&
-        candidate.source == CandidateSource::kSymbol &&
-        candidate.code.size() > 1 && candidate.code.front() == kSymbolPrefix) {
-        context.set_preedit(candidate.code);
-        context.candidates = {};
-        context.reset_pagination();
-        return ProcessResult::ACCEPTED;
-    }
-
-    context.candidates.highlighted = index;
-    context.committed_text = candidate.text;
-    return ProcessResult::COMMITTED;
+    context.request_candidate_selection(index);
+    return ProcessResult::CANDIDATE_SELECTED;
 }
 
 ProcessResult SymbolProcessor::process_key(const KeyEvent& event, Context& context,
@@ -83,8 +72,8 @@ ProcessResult SymbolProcessor::process_key(const KeyEvent& event, Context& conte
             return ProcessResult::REJECTED;
         }
         context.start_composition(
-            CompositionKind::kSymbol, std::string(1, kSymbolPrefix), 1);
-        context.candidates = {};
+            CompositionScheme::kSymbol, std::string(1, kSymbolPrefix), 1);
+        context.clear_translation();
         context.reset_pagination();
         return ProcessResult::ACCEPTED;
     }
@@ -98,9 +87,8 @@ ProcessResult SymbolProcessor::process_key(const KeyEvent& event, Context& conte
     }
 
     if (event.keycode == VK_SPACE) {
-        if (!context.candidates.candidates.empty()) {
-            const int index =
-                context.candidates.highlighted >= 0 ? context.candidates.highlighted : 0;
+        if (context.candidate_count() > 0) {
+            const int index = context.highlighted() >= 0 ? context.highlighted() : 0;
             return select_candidate(context, index);
         }
         context.reset();
@@ -108,7 +96,7 @@ ProcessResult SymbolProcessor::process_key(const KeyEvent& event, Context& conte
     }
 
     if (event.keycode == VK_UP || event.keycode == VK_DOWN) {
-        if (!context.candidates.candidates.empty()) {
+        if (context.candidate_count() > 0) {
             if (event.keycode == VK_DOWN) {
                 context.move_to_next_candidate();
             } else {
@@ -120,7 +108,7 @@ ProcessResult SymbolProcessor::process_key(const KeyEvent& event, Context& conte
 
     if (event.keycode >= '1' && event.keycode <= '9' && !event.is_shift() &&
         !event.is_ctrl() && !event.is_alt()) {
-        if (!context.candidates.candidates.empty()) {
+        if (context.candidate_count() > 0) {
             const int index = static_cast<int>(event.keycode - '1');
             return select_candidate(context, index);
         }
@@ -134,7 +122,7 @@ ProcessResult SymbolProcessor::process_key(const KeyEvent& event, Context& conte
                                     !event.is_ctrl() && !event.is_alt();
     if (event.keycode == VK_PRIOR || event.keycode == VK_NEXT || shortcut_page_up ||
         shortcut_page_down) {
-        if (!context.candidates.candidates.empty()) {
+        if (context.candidate_count() > 0) {
             if (event.keycode == VK_NEXT || shortcut_page_down) {
                 context.move_to_next_page();
             } else {

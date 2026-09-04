@@ -33,7 +33,6 @@ TEST(WubiEngine, engine_switch_mode) {
     DeleteFileA(wubi_path.c_str());
 }
 
-
 TEST(WubiEngine, engine_wubi_input_flow) {
     std::string pinyin_path = make_temp_path("test_wubi_flow_pinyin.bin");
     std::string wubi_path = make_temp_path("test_wubi_flow_wubi.bin");
@@ -61,7 +60,7 @@ TEST(WubiEngine, engine_wubi_input_flow) {
 
     // 应有候选（"工" 或 "式"）
     auto& ctx = engine.context();
-    ASSERT_GE(ctx.candidates.candidates.size(), 1u);
+    ASSERT_GE(ctx.candidate_page().candidates.size(), 1u);
 
     engine.finalize();
     wubi_dict.close();
@@ -89,14 +88,14 @@ TEST(WubiEngine, engine_paginates_from_visible_candidate_count_without_skipping)
     engine.switch_mode(cxxime::InputMode::WUBI);
 
     ASSERT_EQ(engine.process_key(make_key('A')), cxxime::ProcessResult::ACCEPTED);
-    ASSERT_EQ(engine.context().candidates.candidates.size(), 7u);
-    std::string expected_second_page_first = engine.context().candidates.candidates[2].text;
+    ASSERT_EQ(engine.context().candidate_page().candidates.size(), 7u);
+    std::string expected_second_page_first = engine.context().candidate_page().candidates[2].text;
 
     cxxime::OutputOptions options;
     ASSERT_EQ(engine.process_key(make_key(VK_NEXT), options, 2), cxxime::ProcessResult::ACCEPTED);
-    ASSERT_EQ(engine.context().page_index, 1);
-    ASSERT_EQ(engine.context().page_offset, 2);
-    ASSERT_EQ(engine.context().candidates.candidates[0].text, expected_second_page_first);
+    ASSERT_EQ(engine.context().page_index(), 1);
+    ASSERT_EQ(engine.context().page_offset(), 2);
+    ASSERT_EQ(engine.context().candidate_page().candidates[0].text, expected_second_page_first);
 
     engine.finalize();
     wubi_dict.close();
@@ -163,18 +162,18 @@ TEST(WubiEngine, engine_wubi_fifth_key_commits_first_and_starts_next_code) {
     ASSERT_EQ(engine.process_key(make_key('B')), cxxime::ProcessResult::ACCEPTED);
     ASSERT_EQ(engine.process_key(make_key('C')), cxxime::ProcessResult::ACCEPTED);
     ASSERT_EQ(engine.process_key(make_key('D')), cxxime::ProcessResult::ACCEPTED);
-    ASSERT_GE(engine.context().candidates.candidates.size(), 2u);
+    ASSERT_GE(engine.context().candidate_page().candidates.size(), 2u);
 
     ASSERT_EQ(engine.process_key(make_key('E')), cxxime::ProcessResult::COMMITTED);
     ASSERT_EQ(engine.context().committed_text, "首选");
-    ASSERT_EQ(engine.context().pinyin_buffer, "e");
+    ASSERT_EQ(engine.context().active_input(), "e");
     ASSERT_TRUE(engine.context().is_composing());
-    ASSERT_EQ(engine.context().candidates.candidates[0].text, "下一项");
+    ASSERT_EQ(engine.context().candidate_page().candidates[0].text, "下一项");
 
     const auto committed = engine.take_commit_text_with_source();
     ASSERT_EQ(committed.first, "首选");
     ASSERT_EQ(committed.second, cxxime::CommitSource::kCandidate);
-    ASSERT_EQ(engine.context().pinyin_buffer, "e");
+    ASSERT_EQ(engine.context().active_input(), "e");
     ASSERT_TRUE(engine.context().is_composing());
 
     engine.finalize();
@@ -212,7 +211,7 @@ TEST(WubiEngine, engine_wubi_fifth_key_commit_can_be_disabled) {
     ASSERT_EQ(engine.process_key(make_key('D')), cxxime::ProcessResult::ACCEPTED);
     ASSERT_EQ(engine.process_key(make_key('E')), cxxime::ProcessResult::ACCEPTED);
     ASSERT_TRUE(engine.context().committed_text.empty());
-    ASSERT_EQ(engine.context().pinyin_buffer, "abcde");
+    ASSERT_EQ(engine.context().active_input(), "abcde");
 
     engine.finalize();
     wubi_dict.close();
@@ -239,13 +238,13 @@ TEST(WubiEngine, engine_wubi_fifth_key_restarts_after_four_code_miss) {
     ASSERT_EQ(engine.process_key(make_key('Z')), cxxime::ProcessResult::ACCEPTED);
     ASSERT_EQ(engine.process_key(make_key('Z')), cxxime::ProcessResult::ACCEPTED);
     ASSERT_EQ(engine.process_key(make_key('Z')), cxxime::ProcessResult::ACCEPTED);
-    ASSERT_EQ(engine.context().pinyin_buffer, "zzzz");
-    ASSERT_TRUE(engine.context().candidates.candidates.empty());
+    ASSERT_EQ(engine.context().active_input(), "zzzz");
+    ASSERT_TRUE(engine.context().candidate_page().candidates.empty());
 
     ASSERT_EQ(engine.process_key(make_key('E')), cxxime::ProcessResult::ACCEPTED);
-    ASSERT_EQ(engine.context().pinyin_buffer, "e");
-    ASSERT_EQ(engine.context().candidates.candidates.size(), 1u);
-    ASSERT_EQ(engine.context().candidates.candidates[0].text, "新编码");
+    ASSERT_EQ(engine.context().active_input(), "e");
+    ASSERT_EQ(engine.context().candidate_page().candidates.size(), 1u);
+    ASSERT_EQ(engine.context().candidate_page().candidates[0].text, "新编码");
 
     engine.finalize();
     wubi_dict.close();
@@ -271,16 +270,16 @@ TEST(WubiEngine, fifth_key_restart_survives_inline_ascii_round_trip) {
         ASSERT_EQ(engine.process_key(make_key('Z')), cxxime::ProcessResult::ACCEPTED);
     }
     ASSERT_EQ(engine.process_key(make_key(VK_OEM_PLUS, true)), cxxime::ProcessResult::ACCEPTED);
-    ASSERT_EQ(engine.context().pinyin_buffer, "zzzz+");
-    ASSERT_EQ(engine.context().composition_kind(), cxxime::CompositionKind::kInlineAscii);
+    ASSERT_EQ(engine.context().active_input(), "zzzz+");
+    ASSERT_EQ(engine.context().composition_scheme(), cxxime::CompositionScheme::kInlineAscii);
 
     ASSERT_EQ(engine.process_key(make_key(VK_BACK)), cxxime::ProcessResult::ACCEPTED);
-    ASSERT_EQ(engine.context().pinyin_buffer, "zzzz");
-    ASSERT_EQ(engine.context().composition_kind(), cxxime::CompositionKind::kIme);
+    ASSERT_EQ(engine.context().active_input(), "zzzz");
+    ASSERT_EQ(engine.context().composition_scheme(), cxxime::CompositionScheme::kWubi);
     ASSERT_EQ(engine.process_key(make_key('E')), cxxime::ProcessResult::ACCEPTED);
-    ASSERT_EQ(engine.context().pinyin_buffer, "e");
-    ASSERT_EQ(engine.context().candidates.candidates.size(), 1u);
-    ASSERT_EQ(engine.context().candidates.candidates[0].text, "新编码");
+    ASSERT_EQ(engine.context().active_input(), "e");
+    ASSERT_EQ(engine.context().candidate_page().candidates.size(), 1u);
+    ASSERT_EQ(engine.context().candidate_page().candidates[0].text, "新编码");
 
     engine.finalize();
     wubi_dict.close();
@@ -305,12 +304,13 @@ TEST(WubiEngine, technical_symbols_use_inline_ascii_in_wubi_and_mixed_modes) {
         engine.clear();
         engine.switch_mode(mode);
         ASSERT_EQ(engine.process_key(make_key('C')), cxxime::ProcessResult::ACCEPTED);
-        ASSERT_TRUE(!engine.context().candidates.candidates.empty());
+        ASSERT_TRUE(!engine.context().candidate_page().candidates.empty());
         ASSERT_EQ(engine.process_key(make_key(VK_OEM_PLUS, true)), cxxime::ProcessResult::ACCEPTED);
         ASSERT_EQ(engine.process_key(make_key(VK_ADD)), cxxime::ProcessResult::ACCEPTED);
-        ASSERT_EQ(engine.context().pinyin_buffer, "c++");
-        ASSERT_EQ(engine.context().composition_kind(), cxxime::CompositionKind::kInlineAscii);
-        ASSERT_TRUE(engine.context().candidates.candidates.empty());
+        ASSERT_EQ(engine.context().active_input(), "c++");
+        ASSERT_EQ(engine.context().composition_scheme(),
+                  cxxime::CompositionScheme::kInlineAscii);
+        ASSERT_TRUE(engine.context().candidate_page().candidates.empty());
     }
 
     engine.finalize();
@@ -336,10 +336,10 @@ TEST(WubiEngine, inline_ascii_space_cancels_and_enter_commits) {
     for (uint32_t key : {'H', 'S', 'Q'}) {
         ASSERT_EQ(engine.process_key(make_key(key)), cxxime::ProcessResult::ACCEPTED);
     }
-    ASSERT_TRUE(engine.context().candidates.candidates.empty());
+    ASSERT_TRUE(engine.context().candidate_page().candidates.empty());
     ASSERT_EQ(engine.process_key(make_key(VK_DIVIDE)), cxxime::ProcessResult::ACCEPTED);
     ASSERT_EQ(engine.process_key(make_key(VK_MULTIPLY)), cxxime::ProcessResult::ACCEPTED);
-    ASSERT_EQ(engine.context().pinyin_buffer, "hsq/*");
+    ASSERT_EQ(engine.context().active_input(), "hsq/*");
 
     ASSERT_EQ(engine.process_key(make_key(VK_SPACE)), cxxime::ProcessResult::ACCEPTED);
     ASSERT_TRUE(!engine.context().is_composing());
@@ -378,7 +378,7 @@ TEST(WubiEngine, fifth_key_restart_requires_cursor_at_end) {
     }
     ASSERT_EQ(engine.process_key(make_key(VK_LEFT)), cxxime::ProcessResult::ACCEPTED);
     ASSERT_EQ(engine.process_key(make_key('E')), cxxime::ProcessResult::ACCEPTED);
-    ASSERT_EQ(engine.context().pinyin_buffer, "zzzez");
+    ASSERT_EQ(engine.context().active_input(), "zzzez");
 
     engine.finalize();
     wubi_dict.close();
@@ -407,8 +407,8 @@ TEST(WubiEngine, engine_wubi_fifth_key_empty_restart_can_be_disabled) {
         ASSERT_EQ(engine.process_key(make_key('Z')), cxxime::ProcessResult::ACCEPTED);
     }
     ASSERT_EQ(engine.process_key(make_key('E')), cxxime::ProcessResult::ACCEPTED);
-    ASSERT_EQ(engine.context().pinyin_buffer, "zzzze");
-    ASSERT_TRUE(engine.context().candidates.candidates.empty());
+    ASSERT_EQ(engine.context().active_input(), "zzzze");
+    ASSERT_TRUE(engine.context().candidate_page().candidates.empty());
 
     engine.finalize();
     wubi_dict.close();
@@ -434,7 +434,7 @@ TEST(WubiEngine, engine_mixed_fifth_key_does_not_restart_after_empty_four_code) 
         ASSERT_EQ(engine.process_key(make_key('Z')), cxxime::ProcessResult::ACCEPTED);
     }
     ASSERT_EQ(engine.process_key(make_key('E')), cxxime::ProcessResult::ACCEPTED);
-    ASSERT_EQ(engine.context().pinyin_buffer, "zzzze");
+    ASSERT_EQ(engine.context().active_input(), "zzzze");
 
     engine.finalize();
     wubi_dict.close();
@@ -463,13 +463,13 @@ TEST(WubiEngine, engine_wubi_space_without_candidates_clears) {
     auto r = engine.process_key(make_key('E'));
     ASSERT_EQ(r, cxxime::ProcessResult::ACCEPTED);
     ASSERT_TRUE(engine.context().is_composing());
-    ASSERT_TRUE(engine.context().candidates.candidates.empty());
+    ASSERT_TRUE(engine.context().candidate_page().candidates.empty());
 
     r = engine.process_key(make_key(VK_SPACE));
     ASSERT_EQ(r, cxxime::ProcessResult::ACCEPTED);
     ASSERT_TRUE(!engine.context().is_composing());
     ASSERT_TRUE(engine.context().committed_text.empty());
-    ASSERT_TRUE(engine.context().candidates.candidates.empty());
+    ASSERT_TRUE(engine.context().candidate_page().candidates.empty());
 
     engine.finalize();
     wubi_dict.close();
@@ -494,7 +494,7 @@ TEST(WubiEngine, engine_no_wubi_dict_fallback) {
 
     // 应有拼音候选
     auto& ctx = engine.context();
-    ASSERT_GE(ctx.candidates.candidates.size(), 1u);
+    ASSERT_GE(ctx.candidate_page().candidates.size(), 1u);
 
     engine.finalize();
     DeleteFileA(pinyin_path.c_str());

@@ -17,7 +17,7 @@ TEST(Engine, process_letter_key) {
     cxxime::PinyinProcessor processor;
     auto result = processor.process_key(event, ctx);
     ASSERT_EQ(result, cxxime::ProcessResult::ACCEPTED);
-    ASSERT_EQ(ctx.pinyin_buffer, "n");
+    ASSERT_EQ(ctx.active_input(), "n");
 }
 
 TEST(Engine, input_code_stops_at_shared_limit) {
@@ -29,19 +29,19 @@ TEST(Engine, input_code_stops_at_shared_limit) {
     for (size_t i = 0; i < cxxime::kMaxInputCodeLength; ++i) {
         ASSERT_EQ(processor.process_key(letter, context), cxxime::ProcessResult::ACCEPTED);
     }
-    ASSERT_EQ(context.pinyin_buffer.size(), cxxime::kMaxInputCodeLength);
+    ASSERT_EQ(context.active_input().size(), cxxime::kMaxInputCodeLength);
     const uint64_t revision = context.preedit_revision();
 
     ASSERT_EQ(processor.process_key(letter, context), cxxime::ProcessResult::ACCEPTED);
-    ASSERT_EQ(context.pinyin_buffer.size(), cxxime::kMaxInputCodeLength);
+    ASSERT_EQ(context.active_input().size(), cxxime::kMaxInputCodeLength);
     ASSERT_EQ(context.preedit_revision(), revision);
 
     cxxime::KeyEvent backspace;
     backspace.keycode = VK_BACK;
     ASSERT_EQ(processor.process_key(backspace, context), cxxime::ProcessResult::ACCEPTED);
-    ASSERT_EQ(context.pinyin_buffer.size(), cxxime::kMaxInputCodeLength - 1);
+    ASSERT_EQ(context.active_input().size(), cxxime::kMaxInputCodeLength - 1);
     ASSERT_EQ(processor.process_key(letter, context), cxxime::ProcessResult::ACCEPTED);
-    ASSERT_EQ(context.pinyin_buffer.size(), cxxime::kMaxInputCodeLength);
+    ASSERT_EQ(context.active_input().size(), cxxime::kMaxInputCodeLength);
 }
 
 TEST(Engine, normalizes_printable_ascii_keys) {
@@ -143,7 +143,7 @@ TEST(Engine, translator_excludes_candidate_text_over_shared_capacity) {
     ASSERT_TRUE(dict.open_dict(dict_path));
     cxxime::WubiTranslator translator;
     translator.set_dict(&dict);
-    auto page = translator.translate("abc", 0, 10);
+    auto page = translator.translate_page("abc", 0, 10);
     ASSERT_EQ(page.candidates.size(), static_cast<size_t>(1));
     ASSERT_TRUE(page.candidates[0].text == accepted);
     ASSERT_TRUE(page.candidates[0].text.size() > 63);
@@ -154,7 +154,7 @@ TEST(Engine, translator_excludes_candidate_text_over_shared_capacity) {
 
 TEST(Engine, process_escape) {
     cxxime::Context ctx;
-    ctx.pinyin_buffer = "nihao";
+    ASSERT_TRUE(ctx.set_preedit("nihao"));
 
     cxxime::KeyEvent event;
     event.keycode = VK_ESCAPE;
@@ -163,12 +163,12 @@ TEST(Engine, process_escape) {
     cxxime::PinyinProcessor processor;
     auto result = processor.process_key(event, ctx);
     ASSERT_EQ(result, cxxime::ProcessResult::ACCEPTED);
-    ASSERT_TRUE(ctx.pinyin_buffer.empty());
+    ASSERT_TRUE(ctx.active_input().empty());
 }
 
 TEST(Engine, process_backspace) {
     cxxime::Context ctx;
-    ctx.pinyin_buffer = "ni";
+    ASSERT_TRUE(ctx.set_preedit("ni"));
 
     cxxime::KeyEvent event;
     event.keycode = VK_BACK;
@@ -177,7 +177,7 @@ TEST(Engine, process_backspace) {
     cxxime::PinyinProcessor processor;
     auto result = processor.process_key(event, ctx);
     ASSERT_EQ(result, cxxime::ProcessResult::ACCEPTED);
-    ASSERT_EQ(ctx.pinyin_buffer, "n");
+    ASSERT_EQ(ctx.active_input(), "n");
 }
 
 TEST(Engine, translate_dd_has_candidates) {
@@ -210,7 +210,7 @@ TEST(Engine, translate_dd_has_candidates) {
     translator.set_dict(&dict);
     translator.set_syllabifier(&syllabifier);
 
-    auto page = translator.translate("dd", 0, 10);
+    auto page = translator.translate_page("dd", 0, 10);
     ASSERT_GE(page.candidates.size(), 1u);
 
     bool found_didi = false;
@@ -250,7 +250,7 @@ TEST(Engine, selected_pinyin_candidate_records_typed_code_as_preference) {
         ASSERT_EQ(engine.process_key(event), cxxime::ProcessResult::ACCEPTED);
     }
 
-    const auto& candidates = engine.context().candidates.candidates;
+    const auto candidates = engine.context().candidate_page().candidates;
     ASSERT_GE(candidates.size(), 1u);
     ASSERT_EQ(candidates[0].text, "测试系统词");
     ASSERT_TRUE(engine.select_candidate(0));
@@ -284,18 +284,18 @@ TEST(Engine, candidate_order_stays_stable_when_candidate_learning_is_disabled) {
     ASSERT_TRUE(engine.initialize(dict, spellings, nullptr, config));
 
     type_code(engine, "nihao");
-    ASSERT_GE(engine.context().candidates.candidates.size(), 2u);
-    ASSERT_EQ(engine.context().candidates.candidates[0].text, "默认候选");
-    ASSERT_EQ(engine.context().candidates.candidates[1].text, "第二候选");
+    ASSERT_GE(engine.context().candidate_page().candidates.size(), 2u);
+    ASSERT_EQ(engine.context().candidate_page().candidates[0].text, "默认候选");
+    ASSERT_EQ(engine.context().candidate_page().candidates[1].text, "第二候选");
     ASSERT_TRUE(engine.select_candidate(1));
     ASSERT_EQ(engine.get_commit_text(), "第二候选");
     ASSERT_TRUE(!dict.has_user_entry("第二候选"));
     ASSERT_EQ(dict.candidate_preference_count(), static_cast<size_t>(0));
 
     type_code(engine, "nihao");
-    ASSERT_GE(engine.context().candidates.candidates.size(), 2u);
-    ASSERT_EQ(engine.context().candidates.candidates[0].text, "默认候选");
-    ASSERT_EQ(engine.context().candidates.candidates[1].text, "第二候选");
+    ASSERT_GE(engine.context().candidate_page().candidates.size(), 2u);
+    ASSERT_EQ(engine.context().candidate_page().candidates[0].text, "默认候选");
+    ASSERT_EQ(engine.context().candidate_page().candidates[1].text, "第二候选");
     cxxime::KeyEvent space;
     space.keycode = VK_SPACE;
     space.is_key_up = false;
@@ -329,17 +329,17 @@ TEST(Engine, candidate_learning_promotes_selected_candidate_when_enabled) {
     ASSERT_TRUE(engine.initialize(dict, spellings, nullptr, config));
 
     type_code(engine, "nihao");
-    ASSERT_GE(engine.context().candidates.candidates.size(), 2u);
-    ASSERT_EQ(engine.context().candidates.candidates[0].text, "默认候选");
-    ASSERT_EQ(engine.context().candidates.candidates[1].text, "第二候选");
+    ASSERT_GE(engine.context().candidate_page().candidates.size(), 2u);
+    ASSERT_EQ(engine.context().candidate_page().candidates[0].text, "默认候选");
+    ASSERT_EQ(engine.context().candidate_page().candidates[1].text, "第二候选");
     ASSERT_TRUE(engine.select_candidate(1));
     ASSERT_EQ(engine.get_commit_text(), "第二候选");
     ASSERT_EQ(dict.user_entry_count(), static_cast<size_t>(0));
     ASSERT_EQ(dict.candidate_preference_count(), static_cast<size_t>(1));
 
     type_code(engine, "nihao");
-    ASSERT_GE(engine.context().candidates.candidates.size(), 1u);
-    ASSERT_EQ(engine.context().candidates.candidates[0].text, "第二候选");
+    ASSERT_GE(engine.context().candidate_page().candidates.size(), 1u);
+    ASSERT_EQ(engine.context().candidate_page().candidates[0].text, "第二候选");
 
     engine.finalize();
     dict.close();
@@ -365,7 +365,7 @@ TEST(Engine, candidate_learning_uses_candidate_text_for_punctuation_commit) {
     ASSERT_TRUE(engine.initialize(dict, spellings, nullptr, config));
 
     type_code(engine, "nihao");
-    ASSERT_GE(engine.context().candidates.candidates.size(), 1u);
+    ASSERT_GE(engine.context().candidate_page().candidates.size(), 1u);
 
     cxxime::PunctMapping punct_mapping;
     punct_mapping.half_shape["."] = {
@@ -400,7 +400,7 @@ TEST(Engine, translate_valid_pinyin) {
     cxxime::PinyinTranslator translator;
     translator.set_dict(&dict);
 
-    auto page = translator.translate("de", 0, 10);
+    auto page = translator.translate_page("de", 0, 10);
     ASSERT_GE(page.candidates.size(), 1u);
 
     bool found_de = false;
@@ -415,9 +415,11 @@ TEST(Engine, translate_valid_pinyin) {
 
 TEST(Engine, space_with_candidates_commits) {
     cxxime::Context ctx;
-    ctx.pinyin_buffer = "de";
-    ctx.candidates.candidates.push_back({"的", "", 100});
-    ctx.candidates.highlighted = 0;
+    ASSERT_TRUE(ctx.set_preedit("de"));
+    cxxime::CandidatePage page;
+    page.candidates.push_back({"的", "", 100});
+    page.highlighted = 0;
+    ctx.update_candidates(std::move(page));
 
     cxxime::KeyEvent event;
     event.keycode = VK_SPACE;
@@ -425,13 +427,13 @@ TEST(Engine, space_with_candidates_commits) {
 
     cxxime::PinyinProcessor processor;
     auto result = processor.process_key(event, ctx);
-    ASSERT_EQ(result, cxxime::ProcessResult::COMMITTED);
-    ASSERT_EQ(ctx.committed_text, "的");
+    ASSERT_EQ(result, cxxime::ProcessResult::CANDIDATE_SELECTED);
+    ASSERT_EQ(ctx.take_requested_candidate_selection().value_or(-1), 0);
 }
 
 TEST(Engine, space_no_candidates_dismisses) {
     cxxime::Context ctx;
-    ctx.pinyin_buffer = "zzz";
+    ASSERT_TRUE(ctx.set_preedit("zzz"));
 
     cxxime::KeyEvent event;
     event.keycode = VK_SPACE;
@@ -440,15 +442,17 @@ TEST(Engine, space_no_candidates_dismisses) {
     cxxime::PinyinProcessor processor;
     auto result = processor.process_key(event, ctx);
     ASSERT_EQ(result, cxxime::ProcessResult::ACCEPTED);
-    ASSERT_TRUE(ctx.pinyin_buffer.empty());
+    ASSERT_TRUE(ctx.active_input().empty());
 }
 
 TEST(Engine, number_selects_candidate) {
     cxxime::Context ctx;
-    ctx.pinyin_buffer = "de";
-    ctx.candidates.candidates.push_back({"的", "", 100});
-    ctx.candidates.candidates.push_back({"地", "", 80});
-    ctx.candidates.highlighted = 0;
+    ASSERT_TRUE(ctx.set_preedit("de"));
+    cxxime::CandidatePage page;
+    page.candidates.push_back({"的", "", 100});
+    page.candidates.push_back({"地", "", 80});
+    page.highlighted = 0;
+    ctx.update_candidates(std::move(page));
 
     cxxime::KeyEvent event;
     event.keycode = '2';
@@ -456,8 +460,8 @@ TEST(Engine, number_selects_candidate) {
 
     cxxime::PinyinProcessor processor;
     auto result = processor.process_key(event, ctx);
-    ASSERT_EQ(result, cxxime::ProcessResult::COMMITTED);
-    ASSERT_EQ(ctx.committed_text, "地");
+    ASSERT_EQ(result, cxxime::ProcessResult::CANDIDATE_SELECTED);
+    ASSERT_EQ(ctx.take_requested_candidate_selection().value_or(-1), 1);
 }
 
 // Verify that raw VK constants used in engine (to avoid <windows.h> dependency)

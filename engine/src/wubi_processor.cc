@@ -24,13 +24,12 @@ ProcessResult WubiProcessor::process_key(const KeyEvent& event, Context& context
 
     // Space: select first candidate and commit
     if (vk == VK_SPACE) {
-        if (context.is_composing() && !context.candidates.candidates.empty()) {
+        if (context.is_composing() && context.candidate_count() > 0) {
             // 五笔模式：Space 选中第一候选（不高亮状态下）
-            int index = context.candidates.highlighted >= 0
-                ? context.candidates.highlighted : 0;
-            if (index < (int)context.candidates.candidates.size()) {
-                context.commit_candidate(index);
-                return ProcessResult::COMMITTED;
+            int index = context.highlighted() >= 0 ? context.highlighted() : 0;
+            if (index < context.candidate_count()) {
+                context.request_candidate_selection(index);
+                return ProcessResult::CANDIDATE_SELECTED;
             }
         }
         if (context.is_composing()) {
@@ -43,7 +42,7 @@ ProcessResult WubiProcessor::process_key(const KeyEvent& event, Context& context
 
     // Up/Down arrows: navigate candidates
     if (vk == VK_UP || vk == VK_DOWN) {
-        if (context.is_composing() && !context.candidates.candidates.empty()) {
+        if (context.is_composing() && context.candidate_count() > 0) {
             if (vk == VK_DOWN) {
                 context.move_to_next_candidate();
             } else {
@@ -56,11 +55,11 @@ ProcessResult WubiProcessor::process_key(const KeyEvent& event, Context& context
 
     // Number keys 1-9: select candidate by index
     if (vk >= '1' && vk <= '9') {
-        if (context.is_composing() && !context.candidates.candidates.empty()) {
+        if (context.is_composing() && context.candidate_count() > 0) {
             int index = vk - '1';
             if (index < context.selectable_candidate_count()) {
-                context.commit_candidate(index);
-                return ProcessResult::COMMITTED;
+                context.request_candidate_selection(index);
+                return ProcessResult::CANDIDATE_SELECTED;
             }
             return ProcessResult::ACCEPTED;
         }
@@ -73,7 +72,7 @@ ProcessResult WubiProcessor::process_key(const KeyEvent& event, Context& context
     bool shortcut_page_down = vk == VK_OEM_PLUS && !event.is_shift() &&
                                     !event.is_ctrl() && !event.is_alt();
     if (vk == VK_PRIOR || vk == VK_NEXT || shortcut_page_up || shortcut_page_down) {
-        if (context.is_composing() && !context.candidates.candidates.empty()) {
+        if (context.is_composing() && context.candidate_count() > 0) {
             if (vk == VK_NEXT || shortcut_page_down) {  // Page Down
                 context.move_to_next_page();
             } else {  // Page Up
