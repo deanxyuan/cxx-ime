@@ -10,14 +10,14 @@ TEST(SessionIntegration, shape_and_punctuation_toggles_preserve_composition) {
     const ProcessKeyResult initial = manager.process_key(id, make_key('I'));
     ASSERT_TRUE(initial.composing);
     ASSERT_EQ(initial.preedit, "ni");
-    ASSERT_TRUE(!initial.candidates.candidates.empty());
+    ASSERT_TRUE(!initial.presentation.items.empty());
 
     const ProcessKeyResult shape = manager.process_key(id, make_key(VK_SPACE, true));
     ASSERT_EQ(shape.result, cxxime::ProcessResult::TOGGLE_SHAPE);
     ASSERT_TRUE(shape.composing);
     ASSERT_EQ(shape.preedit, initial.preedit);
     ASSERT_EQ(shape.preedit_cursor, initial.preedit_cursor);
-    ASSERT_EQ(shape.candidates.candidates.size(), initial.candidates.candidates.size());
+    ASSERT_EQ(shape.presentation.items.size(), initial.presentation.items.size());
     ASSERT_TRUE(shape.ime_status.full_shape());
 
     cxxime::KeyEvent punctuation = make_key(VK_OEM_PERIOD);
@@ -27,7 +27,7 @@ TEST(SessionIntegration, shape_and_punctuation_toggles_preserve_composition) {
     ASSERT_TRUE(punct.composing);
     ASSERT_EQ(punct.preedit, initial.preedit);
     ASSERT_EQ(punct.preedit_cursor, initial.preedit_cursor);
-    ASSERT_EQ(punct.candidates.candidates.size(), initial.candidates.candidates.size());
+    ASSERT_EQ(punct.presentation.items.size(), initial.presentation.items.size());
     ASSERT_TRUE(!punct.ime_status.chinese_punct());
 }
 
@@ -39,14 +39,14 @@ TEST(SessionIntegration, inline_ascii_is_returned_as_uncommitted_preedit) {
     ASSERT_EQ(manager.process_key(id, make_key('N')).result, cxxime::ProcessResult::ACCEPTED);
     const ProcessKeyResult initial = manager.process_key(id, make_key('I'));
     ASSERT_TRUE(initial.composing);
-    ASSERT_TRUE(!initial.candidates.candidates.empty());
+    ASSERT_TRUE(!initial.presentation.items.empty());
 
     const ProcessKeyResult plus = manager.process_key(id, make_key(VK_OEM_PLUS, true));
     ASSERT_EQ(plus.result, cxxime::ProcessResult::ACCEPTED);
     ASSERT_TRUE(plus.composing);
     ASSERT_EQ(plus.preedit, "ni+");
     ASSERT_EQ(plus.preedit_cursor, static_cast<size_t>(3));
-    ASSERT_TRUE(plus.candidates.candidates.empty());
+    ASSERT_TRUE(plus.presentation.items.empty());
     ASSERT_TRUE(plus.commit_text.empty());
 }
 
@@ -70,7 +70,7 @@ TEST(SessionIntegration, inline_ascii_binding_restores_chinese_mode_after_commit
     ASSERT_EQ(converted.result, cxxime::ProcessResult::ACCEPTED);
     ASSERT_TRUE(converted.composing);
     ASSERT_EQ(converted.preedit, "ni");
-    ASSERT_TRUE(converted.candidates.candidates.empty());
+    ASSERT_TRUE(converted.presentation.items.empty());
     ASSERT_TRUE(converted.ime_status.chinese_mode());
 
     const ProcessKeyResult committed = manager.process_key(id, make_key(VK_RETURN));
@@ -80,7 +80,7 @@ TEST(SessionIntegration, inline_ascii_binding_restores_chinese_mode_after_commit
 
     const ProcessKeyResult resumed = manager.process_key(id, make_key('N'));
     ASSERT_TRUE(resumed.composing);
-    ASSERT_TRUE(!resumed.candidates.candidates.empty());
+    ASSERT_TRUE(!resumed.presentation.items.empty());
     ASSERT_TRUE(resumed.ime_status.chinese_mode());
 }
 
@@ -99,10 +99,10 @@ TEST(SessionIntegration, inline_ascii_binding_restores_chinese_mode_after_clear)
     shift_up.is_key_up = true;
     ASSERT_EQ(manager.process_key(id, shift_up).result, cxxime::ProcessResult::ACCEPTED);
 
-    ASSERT_EQ(manager.clear_composition(id), cxxime::IPCStatus::OK);
+    ASSERT_EQ(manager.clear_composition(id).status, cxxime::IPCStatus::OK);
     const ProcessKeyResult resumed = manager.process_key(id, make_key('N'));
     ASSERT_TRUE(resumed.composing);
-    ASSERT_TRUE(!resumed.candidates.candidates.empty());
+    ASSERT_TRUE(!resumed.presentation.items.empty());
     ASSERT_TRUE(resumed.ime_status.chinese_mode());
 }
 
@@ -121,10 +121,10 @@ TEST(SessionIntegration, inline_ascii_binding_restores_chinese_mode_after_focus_
     shift_up.is_key_up = true;
     ASSERT_EQ(manager.process_key(id, shift_up).result, cxxime::ProcessResult::ACCEPTED);
 
-    ASSERT_EQ(manager.focus_out(id), cxxime::IPCStatus::OK);
+    ASSERT_EQ(manager.focus_out(id).status, cxxime::IPCStatus::OK);
     const ProcessKeyResult resumed = manager.process_key(id, make_key('N'));
     ASSERT_TRUE(resumed.composing);
-    ASSERT_TRUE(!resumed.candidates.candidates.empty());
+    ASSERT_TRUE(!resumed.presentation.items.empty());
     ASSERT_TRUE(resumed.ime_status.chinese_mode());
 }
 
@@ -177,9 +177,9 @@ TEST(SessionIntegration, inline_ascii_binding_restores_chinese_mode_after_deleti
         ASSERT_TRUE(resumed.ime_status.chinese_mode());
         const ProcessKeyResult candidates = manager.process_key(id, make_key('I'));
         ASSERT_TRUE(candidates.composing);
-        ASSERT_TRUE(!candidates.candidates.candidates.empty())
+        ASSERT_TRUE(!candidates.presentation.items.empty())
             << "delete=" << use_delete << " preedit=" << candidates.preedit
-            << " total=" << candidates.candidates.total_count;
+            << " total=" << candidates.presentation.total_count;
         ASSERT_TRUE(candidates.ime_status.chinese_mode());
     }
 }
@@ -262,7 +262,7 @@ TEST(SessionIntegration, wubi_fifth_key_returns_commit_and_next_composition) {
     ASSERT_TRUE(result.composing);
     ASSERT_EQ(result.preedit, "e");
     ASSERT_EQ(result.preedit_cursor, static_cast<size_t>(1));
-    ASSERT_TRUE(candidate_contains(result.candidates, "下一项"));
+    ASSERT_TRUE(candidate_contains(result.presentation, "下一项"));
 
     mgr.destroy_session(id);
     delete_test_dictionary_bundle(dict_path);

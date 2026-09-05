@@ -137,8 +137,12 @@ TEST(Protocol, server_accepts_future_append_only_request) {
 }
 
 TEST(Protocol, server_accepts_baseline_request_prefix) {
+    uint64_t client_capabilities = 1;
+    uint64_t candidate_revision = 1;
     TestServer server;
-    ASSERT_TRUE(server.start([](const cxxime::IPCRequest& request) {
+    ASSERT_TRUE(server.start([&](const cxxime::IPCRequest& request) {
+        client_capabilities = request.client_capabilities;
+        candidate_revision = request.candidate_revision;
         return make_response(request.command == cxxime::IPCCommand::PING
                                  ? cxxime::IPCStatus::OK
                                  : cxxime::IPCStatus::ERR_UNKNOWN_COMMAND);
@@ -156,6 +160,63 @@ TEST(Protocol, server_accepts_baseline_request_prefix) {
 
     std::vector<uint8_t> response_wire;
     ASSERT_TRUE(raw_round_trip(wire, &response_wire));
+    ASSERT_EQ(client_capabilities, 0u);
+    ASSERT_EQ(candidate_revision, 0u);
+}
+
+TEST(Protocol, unknown_command_keeps_the_connection_usable) {
+    TestServer server;
+    ASSERT_TRUE(server.start([](const cxxime::IPCRequest& request) {
+        return make_response(request.command == cxxime::IPCCommand::PING
+                                 ? cxxime::IPCStatus::OK
+                                 : cxxime::IPCStatus::ERR_UNKNOWN_COMMAND);
+    }));
+
+    cxxime::IpcClient client;
+    ASSERT_TRUE(client.connect(test_pipe_name(), 2000));
+    cxxime::IPCRequest request = {};
+    request.command = static_cast<cxxime::IPCCommand>(999);
+    cxxime::IPCResponse response = {};
+    ASSERT_TRUE(client.send_request(request, response));
+    ASSERT_EQ(response.status, cxxime::IPCStatus::ERR_UNKNOWN_COMMAND);
+
+    request = {};
+    request.command = cxxime::IPCCommand::PING;
+    response = {};
+    ASSERT_TRUE(client.send_request(request, response));
+    ASSERT_EQ(response.status, cxxime::IPCStatus::OK);
+}
+
+TEST(Protocol, disconnect_reports_only_sessions_without_end_session) {
+    HANDLE disconnected = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    ASSERT_TRUE(disconnected != nullptr);
+    uint32_t disconnected_session = 0;
+    uint32_t next_session = 40;
+    TestServer server;
+    server.server.set_disconnect_handler([&](uint32_t session_id) {
+        disconnected_session = session_id;
+        SetEvent(disconnected);
+    });
+    ASSERT_TRUE(server.start([&](const cxxime::IPCRequest& request) {
+        cxxime::IPCResponse response = {};
+        if (request.command == cxxime::IPCCommand::START_SESSION) {
+            response.highlighted = ++next_session;
+        }
+        return response;
+    }));
+
+    cxxime::IpcClient client;
+    ASSERT_TRUE(client.connect(test_pipe_name(), 2000));
+    uint32_t ended_session = 0;
+    uint32_t abandoned_session = 0;
+    ASSERT_TRUE(client.start_session(ended_session));
+    ASSERT_TRUE(client.start_session(abandoned_session));
+    ASSERT_TRUE(client.end_session(ended_session));
+    client.disconnect();
+
+    ASSERT_EQ(WaitForSingleObject(disconnected, 2000), WAIT_OBJECT_0);
+    ASSERT_EQ(disconnected_session, abandoned_session);
+    CloseHandle(disconnected);
 }
 
 TEST(Protocol, server_rejects_legacy_0_3_raw_request) {
@@ -199,6 +260,9 @@ TEST(Protocol, response_zero_init) {
     ASSERT_EQ(resp.candidate_count, (uint32_t)0);
     ASSERT_EQ(resp.key_handled, (uint32_t)0);
     ASSERT_EQ(resp.server_process_id, (uint32_t)0);
+    ASSERT_EQ(resp.candidate_revision, 0u);
+    ASSERT_EQ(resp.converted_prefix_bytes, 0u);
+    ASSERT_EQ(resp.candidate_annotations[0][0], '\0');
 }
 
 TEST(Protocol, candidate_text_over_old_capacity_round_trips) {

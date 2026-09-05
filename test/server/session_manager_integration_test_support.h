@@ -54,7 +54,8 @@ void delete_test_dictionary_bundle(const std::string& dict_path);
 std::string setup_test_dict();
 cxxime::KeyEvent make_key(uint32_t vk, bool shift = false, bool caps = false);
 ProcessKeyResult type_kao(SessionManager& manager, uint32_t id);
-bool candidate_contains(const cxxime::CandidatePage& page, const std::string& text);
+bool candidate_contains(const cxxime::CandidatePresentationPage& page,
+                        const std::string& text);
 bool wait_for_count(std::atomic<int>& value, int expected, int timeout_ms);
 
 #endif // CXXIME_TEST_SESSION_MANAGER_INTEGRATION_TEST_SUPPORT_H_

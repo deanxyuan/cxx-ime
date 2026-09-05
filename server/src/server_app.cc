@@ -14,6 +14,7 @@
 #include <cxxime/logging.h>
 #include <cxxime/ui_protocol.h>
 
+#include "ipc_response_builder.h"
 #include "lexicon_control_handler.h"
 
 namespace {
@@ -173,6 +174,8 @@ bool ServerApp::initialize(const std::string& dict_path, const std::string& conf
     });
 
     ipc_server_.set_handler([this](const cxxime::IPCRequest& req) { return handle_request(req); });
+    ipc_server_.set_disconnect_handler(
+        [this](uint32_t session_id) { session_mgr_.destroy_session(session_id); });
     if (!ipc_server_.start(cxxime::IPC_PIPE_BASE_NAME)) {
         session_mgr_.set_config_patch_handler({});
         config_writer_.stop();
@@ -336,12 +339,16 @@ cxxime::IPCResponse ServerApp::handle_request(const cxxime::IPCRequest& request)
     }
 
     case cxxime::IPCCommand::START_SESSION: {
-        uint32_t id = session_mgr_.create_session();
+        const uint32_t id = session_mgr_.create_session(request.client_capabilities);
         if (id == 0) {
             response.status = cxxime::IPCStatus::ERR_ENGINE_NOT_INITIALIZED;
             response.highlighted = 0;
         } else {
             response.highlighted = id;
+            response.candidate_revision =
+                (request.client_capabilities & cxxime::kClientCapabilitySegmentedSelection) != 0
+                ? 1
+                : 0;
         }
         CXXIME_LOG(L"START_SESSION: new session=%u", id);
         break;
@@ -368,132 +375,53 @@ cxxime::IPCResponse ServerApp::handle_request(const cxxime::IPCRequest& request)
         auto r =
             session_mgr_.process_key(request.session_id, event, visible_candidate_count);
 
-        if (r.status != cxxime::IPCStatus::OK) {
-            response.status = r.status;
-            break;
-        }
-
-        response.status = cxxime::IPCStatus::OK;
-        response.ascii_mode = !r.ime_status.chinese_mode();
-        response.composing = r.composing;
-        response.ime_status = r.ime_status;
+        fill_process_response(r, &response);
         response.key_handled =
             r.result == cxxime::ProcessResult::SWITCH_INPUT_MODE ||
             r.result == cxxime::ProcessResult::INPUT_MODE_SHORTCUT_HANDLED;
 
-        if (r.result == cxxime::ProcessResult::REJECTED) {
+        if (r.status == cxxime::IPCStatus::OK &&
+            r.result == cxxime::ProcessResult::REJECTED) {
             // If the engine rejected the key but cleared the composition
             // (e.g. CapsLock with "clear" style), return OK so the TSF
             // client can clean up its composition state.
-            if (!r.composing) {
-                response.status = cxxime::IPCStatus::OK;
-            } else {
+            if (r.composing) {
                 response.status = cxxime::IPCStatus::ERR_ENGINE_PROCESS_FAILED;
-            }
-            break;
-        }
-
-        if (r.composing) {
-            if (r.preedit_cursor > r.preedit.size()) {
-                response.status = cxxime::IPCStatus::ERR_ENGINE_PROCESS_FAILED;
-                break;
-            }
-            if (!response_copy_field(response.preedit, sizeof(response.preedit), r.preedit)) {
-                response.status = cxxime::IPCStatus::ERR_ENGINE_PROCESS_FAILED;
-                return response;
-            }
-            const size_t copied_preedit_length = strlen(response.preedit);
-            response.preedit_cursor = static_cast<uint32_t>(
-                (std::min)(r.preedit_cursor, copied_preedit_length));
-            response.candidate_count = (std::min)(
-                static_cast<uint32_t>(r.candidates.candidates.size()),
-                static_cast<uint32_t>(cxxime::kCandidateCapacity));
-            response.candidate_offset = static_cast<uint32_t>(r.candidates.page_offset);
-            response.candidate_total = static_cast<uint32_t>(r.candidates.total_count);
-            for (uint32_t i = 0; i < response.candidate_count; ++i) {
-                if (!cxxime::candidate_text_fits(r.candidates.candidates[i].text) ||
-                    !response_copy_field(response.candidates[i], sizeof(response.candidates[i]),
-                                         r.candidates.candidates[i].text)) {
-                    response.status = cxxime::IPCStatus::ERR_ENGINE_PROCESS_FAILED;
-                    return response;
-                }
-                if (!r.candidates.candidates[i].comment.empty()) {
-                    if (!response_copy_field(response.candidate_hints[i],
-                                             sizeof(response.candidate_hints[i]),
-                                             r.candidates.candidates[i].comment)) {
-                        response.status = cxxime::IPCStatus::ERR_ENGINE_PROCESS_FAILED;
-                        return response;
-                    }
-                }
-            }
-            response.highlighted = (uint32_t)r.candidates.highlighted;
-            response.page_current = (uint32_t)(r.candidates.page_index + 1);
-            int ps = r.candidates.page_size > 0 ? r.candidates.page_size : 9;
-            uint32_t fixed_page_total = (r.candidates.total_count > 0)
-                ? (uint32_t)((r.candidates.total_count + ps - 1) / ps)
-                : 1;
-            response.page_total = (std::max)(response.page_current, fixed_page_total);
-        }
-
-        if (r.result == cxxime::ProcessResult::COMMITTED) {
-            if (!response_copy_field(response.commit_text, sizeof(response.commit_text),
-                                     r.commit_text)) {
-                response.status = cxxime::IPCStatus::ERR_ENGINE_PROCESS_FAILED;
-                return response;
             }
         }
         break;
     }
 
     case cxxime::IPCCommand::SELECT_CANDIDATE: {
-        auto r = session_mgr_.select_candidate(request.session_id, request.candidate_index);
-        if (r.status != cxxime::IPCStatus::OK) {
-            response.status = r.status;
-            break;
-        }
-        response.status = cxxime::IPCStatus::OK;
-        response.ime_status = r.ime_status;
-        if (r.result == cxxime::ProcessResult::COMMITTED) {
-            if (!response_copy_field(response.commit_text, sizeof(response.commit_text),
-                                     r.commit_text)) {
-                response.status = cxxime::IPCStatus::ERR_ENGINE_PROCESS_FAILED;
-                return response;
-            }
-        } else {
-            response.status = cxxime::IPCStatus::ERR_ENGINE_PROCESS_FAILED;
-        }
+        const auto r = session_mgr_.select_candidate(
+            request.session_id, request.candidate_index, request.candidate_revision);
+        fill_process_response(r, &response);
         break;
     }
 
     case cxxime::IPCCommand::COMMIT_COMPOSITION: {
-        auto r = session_mgr_.commit_composition(request.session_id);
-        if (r.status != cxxime::IPCStatus::OK) {
-            response.status = r.status;
-            break;
-        }
-        response.status = cxxime::IPCStatus::OK;
-        response.ime_status = r.ime_status;
-        if (r.result == cxxime::ProcessResult::COMMITTED) {
-            if (!response_copy_field(response.commit_text, sizeof(response.commit_text),
-                                     r.commit_text)) {
-                response.status = cxxime::IPCStatus::ERR_ENGINE_PROCESS_FAILED;
-                return response;
-            }
-        }
+        const auto r = session_mgr_.commit_composition(request.session_id);
+        fill_process_response(r, &response);
         break;
     }
 
-    case cxxime::IPCCommand::CLEAR_COMPOSITION:
-        response.status = session_mgr_.clear_composition(request.session_id);
+    case cxxime::IPCCommand::CLEAR_COMPOSITION: {
+        const auto r = session_mgr_.clear_composition(request.session_id);
+        fill_process_response(r, &response);
         break;
+    }
 
-    case cxxime::IPCCommand::FOCUS_IN:
-        session_mgr_.touch_session(request.session_id);
+    case cxxime::IPCCommand::FOCUS_IN: {
+        const auto r = session_mgr_.focus_in(request.session_id);
+        fill_process_response(r, &response);
         break;
+    }
 
-    case cxxime::IPCCommand::FOCUS_OUT:
-        session_mgr_.focus_out(request.session_id);
+    case cxxime::IPCCommand::FOCUS_OUT: {
+        const auto r = session_mgr_.focus_out(request.session_id);
+        fill_process_response(r, &response);
         break;
+    }
 
     case cxxime::IPCCommand::TOGGLE_CHINESE: {
         auto [status, ime_status] = session_mgr_.toggle_chinese(request.session_id);
@@ -508,21 +436,8 @@ cxxime::IPCResponse ServerApp::handle_request(const cxxime::IPCRequest& request)
 
     case cxxime::IPCCommand::SET_CHINESE_MODE: {
         const bool chinese_mode = request.candidate_index != 0;
-        auto result = session_mgr_.set_chinese_mode(request.session_id, chinese_mode);
-        if (result.status != cxxime::IPCStatus::OK) {
-            response.status = result.status;
-            break;
-        }
-        response.ime_status = result.ime_status;
-        response.ascii_mode = !result.ime_status.chinese_mode();
-        response.composing = result.composing;
-        if (!result.commit_text.empty()) {
-            if (!response_copy_field(response.commit_text, sizeof(response.commit_text),
-                                     result.commit_text)) {
-                response.status = cxxime::IPCStatus::ERR_ENGINE_PROCESS_FAILED;
-                return response;
-            }
-        }
+        const auto result = session_mgr_.set_chinese_mode(request.session_id, chinese_mode);
+        fill_process_response(result, &response);
         break;
     }
 

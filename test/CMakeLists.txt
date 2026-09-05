@@ -107,7 +107,12 @@ add_cxxime_test(candidate_presentation_test
 target_sources(candidate_presentation_test PRIVATE
     ${CMAKE_SOURCE_DIR}/tsf/src/candidate_presentation.cpp
 )
-add_cxxime_test(ipc_test SOURCES ipc/ipc_test.cc DEPS cxxime-ipc)
+add_cxxime_test(ipc_test
+    SOURCES
+        ipc/ipc_test.cc
+        ipc/ipc_compatibility_test.cc
+    DEPS cxxime-ipc
+)
 add_cxxime_test(wubi_test SOURCES engine/wubi_test.cc DEPS cxxime-engine)
 add_cxxime_test(wubi_prefix_query_test
     SOURCES engine/wubi_prefix_query_test.cc
@@ -269,10 +274,13 @@ add_cxxime_test(session_manager_integration_test
     SOURCES
         server/session_manager_integration_test.cc
         server/session_manager_candidate_test.cc
+        server/ipc_response_builder_test.cc
+        server/session_manager_segmented_test.cc
         server/session_manager_lexicon_test.cc
         server/session_manager_lifecycle_test.cc
         server/session_manager_integration_test_support.cc
         ${CMAKE_SOURCE_DIR}/server/src/session_manager.cc
+        ${CMAKE_SOURCE_DIR}/server/src/ipc_response_builder.cc
         ${CMAKE_SOURCE_DIR}/server/src/lexicon_control_handler.cc
     DEPS
         cxxime-engine
