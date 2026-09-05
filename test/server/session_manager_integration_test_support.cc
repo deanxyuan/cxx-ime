@@ -254,8 +254,9 @@ ProcessKeyResult type_kao(SessionManager& mgr, uint32_t id) {
     return r;
 }
 
-bool candidate_contains(const cxxime::CandidatePage& page, const std::string& text) {
-    for (const auto& c : page.candidates) {
+bool candidate_contains(const cxxime::CandidatePresentationPage& page,
+                        const std::string& text) {
+    for (const auto& c : page.items) {
         if (c.text == text)
             return true;
     }

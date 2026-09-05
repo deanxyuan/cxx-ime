@@ -45,6 +45,7 @@ bool decode_request(const uint8_t* data, size_t size, IPCRequest* request) {
         memcpy(request, data + header.header_size, request_size);
         return true;
     }
+
     return false;
 }
 
@@ -165,14 +166,13 @@ void IpcServer::stop() {
     workers_.clear();
 
     // 5. Clean up any remaining contexts
+    std::vector<ClientContext*> remaining_contexts;
     {
         std::lock_guard<std::mutex> lk(contexts_mutex_);
-        for (auto* ctx : contexts_) {
-            DisconnectNamedPipe(ctx->pipe);
-            CloseHandle(ctx->pipe);
-            delete ctx;
-        }
-        contexts_.clear();
+        remaining_contexts.swap(contexts_);
+    }
+    for (auto* ctx : remaining_contexts) {
+        cleanup_client(ctx);
     }
 
     // 6. Release IOCP
@@ -184,6 +184,10 @@ void IpcServer::stop() {
 
 void IpcServer::set_handler(RequestHandler handler) {
     handler_ = std::move(handler);
+}
+
+void IpcServer::set_disconnect_handler(DisconnectHandler handler) {
+    disconnect_handler_ = std::move(handler);
 }
 
 // ============================================================
@@ -277,6 +281,16 @@ void IpcServer::worker_loop() {
                 memset(&ctx->response, 0, sizeof(ctx->response));
                 ctx->response.status = IPCStatus::ERR_ENGINE_NOT_INITIALIZED;
             }
+            if (ctx->request.command == IPCCommand::START_SESSION &&
+                ctx->response.status == IPCStatus::OK && ctx->response.highlighted != 0) {
+                ctx->session_ids.push_back(ctx->response.highlighted);
+            } else if (ctx->request.command == IPCCommand::END_SESSION) {
+                const auto found = std::find(ctx->session_ids.begin(), ctx->session_ids.end(),
+                                             ctx->request.session_id);
+                if (found != ctx->session_ids.end()) {
+                    ctx->session_ids.erase(found);
+                }
+            }
 
             ctx->read_pending = false;
             encode_response(ctx->response, &ctx->write_buffer);
@@ -322,6 +336,11 @@ void IpcServer::cleanup_client(ClientContext* ctx) {
         DisconnectNamedPipe(ctx->pipe);
         CloseHandle(ctx->pipe);
         ctx->pipe = nullptr;
+    }
+    if (disconnect_handler_) {
+        for (uint32_t session_id : ctx->session_ids) {
+            disconnect_handler_(session_id);
+        }
     }
     delete ctx;
 }

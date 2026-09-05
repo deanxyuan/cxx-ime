@@ -126,16 +126,16 @@ TEST(SessionIntegration, clear_composition_ok) {
     mgr.process_key(id, make_key('N'));
 
     // Clear
-    auto st = mgr.clear_composition(id);
-    ASSERT_EQ(st, cxxime::IPCStatus::OK);
+    auto result = mgr.clear_composition(id);
+    ASSERT_EQ(result.status, cxxime::IPCStatus::OK);
 }
 
 TEST(SessionIntegration, clear_composition_invalid) {
     SessionManager mgr;
     mgr.initialize(setup_test_dict());
 
-    auto st = mgr.clear_composition(999);
-    ASSERT_EQ(st, cxxime::IPCStatus::ERR_INVALID_SESSION);
+    auto result = mgr.clear_composition(999);
+    ASSERT_EQ(result.status, cxxime::IPCStatus::ERR_INVALID_SESSION);
 }
 
 // ============================================================
@@ -150,8 +150,8 @@ TEST(SessionIntegration, focus_out_ok) {
     auto [st0, s0] = mgr.get_ime_status(id);
     uint64_t rev_before = s0.revision;
 
-    auto st = mgr.focus_out(id);
-    ASSERT_EQ(st, cxxime::IPCStatus::OK);
+    auto result = mgr.focus_out(id);
+    ASSERT_EQ(result.status, cxxime::IPCStatus::OK);
 
     // focus_out only clears composition; it does not change this session's visible state.
     auto [st1, s1] = mgr.get_ime_status(id);
@@ -162,8 +162,8 @@ TEST(SessionIntegration, focus_out_invalid) {
     SessionManager mgr;
     mgr.initialize(setup_test_dict());
 
-    auto st = mgr.focus_out(999);
-    ASSERT_EQ(st, cxxime::IPCStatus::ERR_INVALID_SESSION);
+    auto result = mgr.focus_out(999);
+    ASSERT_EQ(result.status, cxxime::IPCStatus::ERR_INVALID_SESSION);
 }
 
 // ============================================================

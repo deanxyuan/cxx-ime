@@ -6,6 +6,7 @@ add_executable(cxxime-server WIN32
     src/candidate_preference_save_worker.cc
     src/diagnostic_log_maintenance_worker.cc
     src/input_method_hotkey.cc
+    src/ipc_response_builder.cc
     src/main.cc
     src/server_app.cc
     src/session_manager.cc

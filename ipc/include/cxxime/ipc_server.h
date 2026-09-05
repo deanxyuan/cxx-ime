@@ -20,6 +20,7 @@ namespace cxxime {
 class IpcServer {
 public:
     using RequestHandler = std::function<IPCResponse(const IPCRequest&)>;
+    using DisconnectHandler = std::function<void(uint32_t)>;
 
     IpcServer() = default;
     ~IpcServer();
@@ -30,6 +31,7 @@ public:
     bool start(const std::wstring& pipe_name = IPC_PIPE_BASE_NAME);
     void stop();
     void set_handler(RequestHandler handler);
+    void set_disconnect_handler(DisconnectHandler handler);
 
 private:
     struct ClientContext {
@@ -39,6 +41,7 @@ private:
         std::vector<uint8_t> write_buffer;
         IPCRequest request = {};
         IPCResponse response = {};
+        std::vector<uint32_t> session_ids;
         bool read_pending = true;
     };
 
@@ -50,6 +53,7 @@ private:
 
     std::wstring pipe_name_;
     RequestHandler handler_;
+    DisconnectHandler disconnect_handler_;
 
     HANDLE iocp_ = nullptr;
     std::thread accept_thread_;

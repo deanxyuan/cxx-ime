@@ -14,6 +14,7 @@
 #include <utility>
 #include <vector>
 
+#include <cxxime/candidate_presentation.h>
 #include <cxxime/composition_learning.h>
 #include <cxxime/config.h>
 #include <cxxime/engine.h>
@@ -110,6 +111,8 @@ struct SessionEntry {
     bool full_shape = false;
     bool chinese_punct = true;
     bool closing = false;
+    uint64_t client_capabilities = 0;
+    uint64_t candidate_revision = 0;
     SharedResourceSnapshot resources;
     std::mutex mutex;  // per-session concurrency protection
 };
@@ -121,7 +124,9 @@ struct ProcessKeyResult {
     bool composing = false;
     std::string preedit;
     size_t preedit_cursor = 0;
-    cxxime::CandidatePage candidates;
+    size_t converted_prefix_bytes = 0;
+    cxxime::CandidatePresentationPage presentation;
+    uint64_t candidate_revision = 0;
     cxxime::ImeStatus ime_status;
 };
 
@@ -132,9 +137,8 @@ public:
     bool initialize(const std::string& dict_path,
                     const std::shared_ptr<const cxxime::Config>& config =
                     std::make_shared<const cxxime::Config>());
-    uint32_t create_session();
+    uint32_t create_session(uint64_t client_capabilities = 0);
     void destroy_session(uint32_t id);
-    void touch_session(uint32_t id);
 
     size_t cleanup_idle_sessions(uint32_t timeout_ms);
     void apply_config(const std::shared_ptr<const cxxime::Config>& config);
@@ -155,10 +159,12 @@ public:
                                  uint32_t visible_candidate_count = 0);
     cxxime::CandidatePage search_candidates(const std::string& input);
     bool record_search_result(const std::string& input, const std::string& result);
-    ProcessKeyResult select_candidate(uint32_t id, int index);
+    ProcessKeyResult select_candidate(uint32_t id, int index,
+                                      uint64_t candidate_revision = 0);
     ProcessKeyResult commit_composition(uint32_t id);
-    cxxime::IPCStatus clear_composition(uint32_t id);
-    cxxime::IPCStatus focus_out(uint32_t id);
+    ProcessKeyResult clear_composition(uint32_t id);
+    ProcessKeyResult focus_in(uint32_t id);
+    ProcessKeyResult focus_out(uint32_t id);
 
     cxxime::IPCStatus add_user_entry(cxxime::UserDictKind kind, const std::string& text,
                                      const std::string& code);

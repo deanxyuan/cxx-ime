@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <fstream>
+#include <limits>
 
 #include <windows.h>
 
@@ -104,6 +105,72 @@ std::string manifest_role_path(const cxxime::DictionaryManifest& manifest,
 
 bool same_visible_status(const cxxime::ImeStatus& a, const cxxime::ImeStatus& b) {
     return a.flags == b.flags && a.input_mode == b.input_mode;
+}
+
+struct CandidateStateToken {
+    uint64_t composition_revision = 0;
+    cxxime::CandidatePresentationPage presentation;
+    bool composing = false;
+};
+
+CandidateStateToken candidate_state_token(const cxxime::Engine& engine) {
+    const cxxime::Context& context = engine.context();
+    CandidateStateToken token;
+    token.composition_revision = context.preedit_revision();
+    token.presentation = context.translation().presentation_page();
+    token.composing = context.is_composing();
+    return token;
+}
+
+bool same_candidate_item(const cxxime::CandidatePresentationItem& left,
+                         const cxxime::CandidatePresentationItem& right) {
+    return left.text == right.text && left.hint == right.hint &&
+           left.annotation == right.annotation;
+}
+
+bool same_candidate_page(const cxxime::CandidatePresentationPage& left,
+                         const cxxime::CandidatePresentationPage& right) {
+    if (left.page_index != right.page_index || left.page_offset != right.page_offset ||
+        left.page_size != right.page_size || left.total_count != right.total_count ||
+        left.highlighted != right.highlighted || left.items.size() != right.items.size()) {
+        return false;
+    }
+    return std::equal(left.items.begin(), left.items.end(), right.items.begin(),
+                      same_candidate_item);
+}
+
+bool same_candidate_state(const CandidateStateToken& left, const CandidateStateToken& right) {
+    return left.composition_revision == right.composition_revision &&
+           same_candidate_page(left.presentation, right.presentation) &&
+           left.composing == right.composing;
+}
+
+void advance_candidate_revision(SessionEntry& entry, const CandidateStateToken& previous,
+                                bool force = false) {
+    if (entry.candidate_revision == 0 ||
+        (!(force && previous.composing) &&
+         same_candidate_state(previous, candidate_state_token(*entry.engine)))) {
+        return;
+    }
+    if (entry.candidate_revision != (std::numeric_limits<uint64_t>::max)()) {
+        ++entry.candidate_revision;
+    }
+}
+
+void fill_session_presentation(const SessionEntry& entry, ProcessKeyResult& result) {
+    const cxxime::Context& context = entry.engine->context();
+    result.composing = context.is_composing();
+    result.candidate_revision = entry.candidate_revision;
+    result.ime_status = entry.ime_status;
+    if (!result.composing) {
+        return;
+    }
+    const cxxime::CompositionPresentation composition =
+        cxxime::derive_composition_presentation(context.composition());
+    result.preedit = composition.logical_preedit;
+    result.preedit_cursor = composition.cursor_bytes;
+    result.converted_prefix_bytes = composition.converted_prefix_bytes;
+    result.presentation = context.translation().presentation_page();
 }
 
 cxxime::InputMode next_input_mode(cxxime::InputMode mode) {
@@ -430,7 +497,7 @@ void SessionManager::align_session_to_global(SessionEntry& entry) {
     }
 }
 
-uint32_t SessionManager::create_session() {
+uint32_t SessionManager::create_session(uint64_t client_capabilities) {
     std::lock_guard<std::mutex> reload_lock(reload_mutex_);
     auto engine = std::make_unique<cxxime::Engine>();
     auto resources = shared_.snapshot();
@@ -454,6 +521,10 @@ uint32_t SessionManager::create_session() {
     entry->resources = std::move(resources);
     entry->full_shape = entry->resources.config->initial_full_shape;
     entry->chinese_punct = entry->resources.config->initial_chinese_punct;
+    entry->client_capabilities =
+        client_capabilities & cxxime::kClientCapabilitySegmentedSelection;
+    entry->candidate_revision = entry->client_capabilities != 0 ? 1 : 0;
+    entry->engine->set_partial_selection_enabled(entry->client_capabilities != 0);
     entry->ime_status.set_full_shape(entry->full_shape);
     entry->ime_status.set_chinese_punct(entry->chinese_punct);
     entry->engine->set_fuzzy_enabled(entry->resources.config->fuzzy_pinyin);
@@ -475,6 +546,7 @@ void SessionManager::destroy_session(uint32_t id) {
     }
     {
         std::lock_guard<std::mutex> lock(entry->mutex);
+        entry->engine->clear_composition();
         entry->closing = true;
     }
     std::lock_guard<std::mutex> lock(mutex_);
@@ -496,14 +568,6 @@ cxxime::Engine* SessionManager::get_engine(uint32_t id) {
     return entry ? entry->engine.get() : nullptr;
 }
 
-void SessionManager::touch_session(uint32_t id) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    auto it = sessions_.find(id);
-    if (it != sessions_.end()) {
-        it->second->last_activity = std::chrono::steady_clock::now();
-    }
-}
-
 size_t SessionManager::cleanup_idle_sessions(uint32_t timeout_ms) {
     std::lock_guard<std::mutex> lock(mutex_);
     auto now = std::chrono::steady_clock::now();
@@ -513,6 +577,7 @@ size_t SessionManager::cleanup_idle_sessions(uint32_t timeout_ms) {
             now - it->second->last_activity).count();
         if (static_cast<uint32_t>(idle) > timeout_ms) {
             std::lock_guard<std::mutex> entry_lock(it->second->mutex);
+            it->second->engine->clear_composition();
             it->second->closing = true;
             it = sessions_.erase(it);
             ++count;
@@ -916,6 +981,8 @@ void SessionManager::apply_config(const std::shared_ptr<const cxxime::Config>& c
         }
         for (auto& entry : entries) {
             std::lock_guard<std::mutex> lock(entry->mutex);
+            const CandidateStateToken candidate_state_before =
+                candidate_state_token(*entry->engine);
             apply_resource_snapshot(*entry, resources);
             if (resources.config.get() != entry->resources.config.get()) {
                 entry->engine->reload_config(*resources.config);
@@ -923,6 +990,7 @@ void SessionManager::apply_config(const std::shared_ptr<const cxxime::Config>& c
             }
             entry->engine->set_fuzzy_enabled(fuzzy);
             align_session_to_global(*entry);
+            advance_candidate_revision(*entry, candidate_state_before, true);
         }
     }
     CXXIME_LOG(L"SessionManager: config applied, %zu active sessions", entries.size());
@@ -955,8 +1023,10 @@ cxxime::IPCStatus SessionManager::reload_dictionaries() {
 
     auto resources = shared_.snapshot();
     for (auto& entry : entries) {
+        const CandidateStateToken candidate_state_before = candidate_state_token(*entry->engine);
         apply_resource_snapshot(*entry, resources);
         align_session_to_global(*entry);
+        advance_candidate_revision(*entry, candidate_state_before, true);
     }
 
     CXXIME_LOG(L"SessionManager: dictionaries reloaded, %zu active sessions", entries.size());
@@ -972,7 +1042,9 @@ std::pair<cxxime::IPCStatus, cxxime::ImeStatus> SessionManager::get_ime_status(u
     auto entry = lookup_session(id);
     if (!entry) return {cxxime::IPCStatus::ERR_INVALID_SESSION, {}};
     std::lock_guard<std::mutex> lock(entry->mutex);
+    const CandidateStateToken candidate_state_before = candidate_state_token(*entry->engine);
     align_session_to_global(*entry);
+    advance_candidate_revision(*entry, candidate_state_before);
     return {cxxime::IPCStatus::OK, entry->ime_status};
 }
 
@@ -980,8 +1052,10 @@ std::pair<cxxime::IPCStatus, cxxime::ImeStatus> SessionManager::toggle_chinese(u
     auto entry = lookup_session(id);
     if (!entry) return {cxxime::IPCStatus::ERR_INVALID_SESSION, {}};
     std::lock_guard<std::mutex> lock(entry->mutex);
+    const CandidateStateToken candidate_state_before = candidate_state_token(*entry->engine);
     entry->base_chinese_mode = !entry->base_chinese_mode;
     align_session_to_global(*entry);
+    advance_candidate_revision(*entry, candidate_state_before);
     return {cxxime::IPCStatus::OK, entry->ime_status};
 }
 
@@ -997,6 +1071,7 @@ ProcessKeyResult SessionManager::set_chinese_mode(uint32_t id, bool chinese_mode
     ProcessKeyResult result;
     result.status = cxxime::IPCStatus::OK;
     result.result = cxxime::ProcessResult::ACCEPTED;
+    const CandidateStateToken candidate_state_before = candidate_state_token(*entry->engine);
 
     const bool mode_changed = entry->base_chinese_mode != chinese_mode;
     if (mode_changed && entry->engine->context().is_composing()) {
@@ -1006,8 +1081,8 @@ ProcessKeyResult SessionManager::set_chinese_mode(uint32_t id, bool chinese_mode
 
     entry->base_chinese_mode = chinese_mode;
     align_session_to_global(*entry);
-    result.composing = entry->engine->context().is_composing();
-    result.ime_status = entry->ime_status;
+    advance_candidate_revision(*entry, candidate_state_before);
+    fill_session_presentation(*entry, result);
     return result;
 }
 
@@ -1015,8 +1090,10 @@ std::pair<cxxime::IPCStatus, cxxime::ImeStatus> SessionManager::toggle_shape(uin
     auto entry = lookup_session(id);
     if (!entry) return {cxxime::IPCStatus::ERR_INVALID_SESSION, {}};
     std::lock_guard<std::mutex> lock(entry->mutex);
+    const CandidateStateToken candidate_state_before = candidate_state_token(*entry->engine);
     entry->full_shape = !entry->full_shape;
     align_session_to_global(*entry);
+    advance_candidate_revision(*entry, candidate_state_before);
     return {cxxime::IPCStatus::OK, entry->ime_status};
 }
 
@@ -1024,21 +1101,26 @@ std::pair<cxxime::IPCStatus, cxxime::ImeStatus> SessionManager::toggle_punct(uin
     auto entry = lookup_session(id);
     if (!entry) return {cxxime::IPCStatus::ERR_INVALID_SESSION, {}};
     std::lock_guard<std::mutex> lock(entry->mutex);
+    const CandidateStateToken candidate_state_before = candidate_state_token(*entry->engine);
     entry->chinese_punct = !entry->chinese_punct;
     align_session_to_global(*entry);
+    advance_candidate_revision(*entry, candidate_state_before);
     return {cxxime::IPCStatus::OK, entry->ime_status};
 }
 
-std::pair<cxxime::IPCStatus, cxxime::ImeStatus> SessionManager::switch_input_mode(uint32_t id, cxxime::InputMode mode) {
+std::pair<cxxime::IPCStatus, cxxime::ImeStatus>
+SessionManager::switch_input_mode(uint32_t id, cxxime::InputMode mode) {
     auto entry = lookup_session(id);
     if (!entry) return {cxxime::IPCStatus::ERR_INVALID_SESSION, {}};
     std::lock_guard<std::mutex> lock(entry->mutex);
+    const CandidateStateToken candidate_state_before = candidate_state_token(*entry->engine);
     align_session_to_global(*entry);
     entry->engine->switch_mode(mode);
     GlobalVisibleState state = snapshot_global_state();
     state.input_mode = entry->engine->mode();
     commit_global_state(state);
     align_session_to_global(*entry);
+    advance_candidate_revision(*entry, candidate_state_before);
     persist_input_mode(entry->ime_status.input_mode);
     return {cxxime::IPCStatus::OK, entry->ime_status};
 }
@@ -1047,19 +1129,24 @@ cxxime::IPCStatus SessionManager::sync_ascii_mode(uint32_t id, bool ascii_mode) 
     auto entry = lookup_session(id);
     if (!entry) return cxxime::IPCStatus::ERR_INVALID_SESSION;
     std::lock_guard<std::mutex> lock(entry->mutex);
+    const CandidateStateToken candidate_state_before = candidate_state_token(*entry->engine);
     entry->base_chinese_mode = !ascii_mode;
     align_session_to_global(*entry);
+    advance_candidate_revision(*entry, candidate_state_before);
     return cxxime::IPCStatus::OK;
 }
 
-std::pair<cxxime::IPCStatus, cxxime::ImeStatus> SessionManager::sync_caps_lock(uint32_t id, bool caps_lock) {
+std::pair<cxxime::IPCStatus, cxxime::ImeStatus> SessionManager::sync_caps_lock(uint32_t id,
+                                                                               bool caps_lock) {
     auto entry = lookup_session(id);
     if (!entry) return {cxxime::IPCStatus::ERR_INVALID_SESSION, {}};
     std::lock_guard<std::mutex> lock(entry->mutex);
+    const CandidateStateToken candidate_state_before = candidate_state_token(*entry->engine);
     GlobalVisibleState state = snapshot_global_state();
     state.caps_lock = caps_lock;
     commit_global_state(state);
     align_session_to_global(*entry);
+    advance_candidate_revision(*entry, candidate_state_before);
     return {cxxime::IPCStatus::OK, entry->ime_status};
 }
 
@@ -1085,6 +1172,7 @@ ProcessKeyResult SessionManager::process_key(uint32_t id, const cxxime::KeyEvent
     }
     auto& s = *entry;
     auto& engine = *s.engine;
+    const CandidateStateToken candidate_state_before = candidate_state_token(engine);
     auto resources = shared_.snapshot();
     apply_resource_snapshot(s, resources);
     bool trace_enabled = false;
@@ -1180,13 +1268,8 @@ ProcessKeyResult SessionManager::process_key(uint32_t id, const cxxime::KeyEvent
     } else {
         ret.composing = engine.context().is_composing();
     }
-    if (ret.composing) {
-        const cxxime::CompositionPresentation presentation =
-            cxxime::derive_composition_presentation(engine.context().composition());
-        ret.preedit = presentation.logical_preedit;
-        ret.preedit_cursor = presentation.cursor_bytes;
-        ret.candidates = engine.context().candidate_page();
-    }
+    advance_candidate_revision(s, candidate_state_before);
+    fill_session_presentation(s, ret);
 
     // trace log
     if (trace_enabled && engine.last_trace().should_log()) {
@@ -1274,7 +1357,8 @@ bool SessionManager::record_search_result(const std::string& input,
     return search_engine.record_search_result(input, result);
 }
 
-ProcessKeyResult SessionManager::select_candidate(uint32_t id, int index) {
+ProcessKeyResult SessionManager::select_candidate(uint32_t id, int index,
+                                                  uint64_t candidate_revision) {
     std::shared_ptr<SessionEntry> entry;
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -1293,19 +1377,38 @@ ProcessKeyResult SessionManager::select_candidate(uint32_t id, int index) {
         return err;
     }
     auto& s = *entry;
+    const CandidateStateToken candidate_state_before_alignment = candidate_state_token(*s.engine);
     align_session_to_global(s);
+    advance_candidate_revision(s, candidate_state_before_alignment);
     auto opts = cxxime::OutputOptions::from(s.ime_status);
     ProcessKeyResult ret;
     ret.status = cxxime::IPCStatus::OK;
     ret.ime_status = s.ime_status;
 
+    const bool revision_required =
+        (s.client_capabilities & cxxime::kClientCapabilitySegmentedSelection) != 0;
+    if (revision_required && candidate_revision != s.candidate_revision) {
+        ret.status = cxxime::IPCStatus::ERR_STALE_CANDIDATE;
+        ret.result = cxxime::ProcessResult::REJECTED;
+        fill_session_presentation(s, ret);
+        return ret;
+    }
+
+    const CandidateStateToken candidate_state_before = candidate_state_token(*s.engine);
     if (s.engine->select_candidate(index)) {
-        auto [raw, source] = s.engine->take_commit_text_with_source();
-        ret.commit_text = cxxime::OutputComposer::transform(raw, opts, source);
-        ret.result = cxxime::ProcessResult::COMMITTED;
+        if (s.engine->context().is_composing()) {
+            ret.result = cxxime::ProcessResult::ACCEPTED;
+        } else {
+            auto [raw, source] = s.engine->take_commit_text_with_source();
+            ret.commit_text = cxxime::OutputComposer::transform(raw, opts, source);
+            ret.result = cxxime::ProcessResult::COMMITTED;
+        }
     } else {
+        ret.status = cxxime::IPCStatus::ERR_ENGINE_PROCESS_FAILED;
         ret.result = cxxime::ProcessResult::REJECTED;
     }
+    advance_candidate_revision(s, candidate_state_before);
+    fill_session_presentation(s, ret);
     return ret;
 }
 
@@ -1323,12 +1426,15 @@ ProcessKeyResult SessionManager::commit_composition(uint32_t id) {
     }
     std::lock_guard<std::mutex> lock(entry->mutex);
     auto& s = *entry;
+    const CandidateStateToken candidate_state_before_alignment = candidate_state_token(*s.engine);
     align_session_to_global(s);
+    advance_candidate_revision(s, candidate_state_before_alignment);
     auto opts = cxxime::OutputOptions::from(s.ime_status);
     ProcessKeyResult ret;
     ret.status = cxxime::IPCStatus::OK;
     ret.ime_status = s.ime_status;
 
+    const CandidateStateToken candidate_state_before = candidate_state_token(*s.engine);
     auto [raw, source] = s.engine->commit_composition_with_source();
     if (!raw.empty()) {
         ret.commit_text = cxxime::OutputComposer::transform(raw, opts, source);
@@ -1336,25 +1442,63 @@ ProcessKeyResult SessionManager::commit_composition(uint32_t id) {
     } else {
         ret.result = cxxime::ProcessResult::ACCEPTED;
     }
-    ret.composing = false;
-    ret.ime_status = s.ime_status;
+    advance_candidate_revision(s, candidate_state_before);
+    fill_session_presentation(s, ret);
     return ret;
 }
 
-cxxime::IPCStatus SessionManager::clear_composition(uint32_t id) {
+ProcessKeyResult SessionManager::clear_composition(uint32_t id) {
     auto entry = lookup_session(id);
-    if (!entry) return cxxime::IPCStatus::ERR_INVALID_SESSION;
+    if (!entry) {
+        ProcessKeyResult result;
+        result.status = cxxime::IPCStatus::ERR_INVALID_SESSION;
+        return result;
+    }
     std::lock_guard<std::mutex> lock(entry->mutex);
+    const CandidateStateToken candidate_state_before = candidate_state_token(*entry->engine);
     entry->engine->clear_composition();
-    return cxxime::IPCStatus::OK;
+    advance_candidate_revision(*entry, candidate_state_before);
+    ProcessKeyResult result;
+    result.status = cxxime::IPCStatus::OK;
+    result.result = cxxime::ProcessResult::ACCEPTED;
+    fill_session_presentation(*entry, result);
+    return result;
 }
 
-cxxime::IPCStatus SessionManager::focus_out(uint32_t id) {
+ProcessKeyResult SessionManager::focus_in(uint32_t id) {
     auto entry = lookup_session(id);
-    if (!entry) return cxxime::IPCStatus::ERR_INVALID_SESSION;
+    if (!entry) {
+        ProcessKeyResult result;
+        result.status = cxxime::IPCStatus::ERR_INVALID_SESSION;
+        return result;
+    }
     std::lock_guard<std::mutex> lock(entry->mutex);
+    const CandidateStateToken candidate_state_before = candidate_state_token(*entry->engine);
+    align_session_to_global(*entry);
+    advance_candidate_revision(*entry, candidate_state_before);
+    ProcessKeyResult result;
+    result.status = cxxime::IPCStatus::OK;
+    result.result = cxxime::ProcessResult::ACCEPTED;
+    fill_session_presentation(*entry, result);
+    return result;
+}
+
+ProcessKeyResult SessionManager::focus_out(uint32_t id) {
+    auto entry = lookup_session(id);
+    if (!entry) {
+        ProcessKeyResult result;
+        result.status = cxxime::IPCStatus::ERR_INVALID_SESSION;
+        return result;
+    }
+    std::lock_guard<std::mutex> lock(entry->mutex);
+    const CandidateStateToken candidate_state_before = candidate_state_token(*entry->engine);
     entry->engine->clear_composition();
-    return cxxime::IPCStatus::OK;
+    advance_candidate_revision(*entry, candidate_state_before);
+    ProcessKeyResult result;
+    result.status = cxxime::IPCStatus::OK;
+    result.result = cxxime::ProcessResult::ACCEPTED;
+    fill_session_presentation(*entry, result);
+    return result;
 }
 
 cxxime::IPCStatus SessionManager::add_user_entry(cxxime::UserDictKind kind,

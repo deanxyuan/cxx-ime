@@ -11,6 +11,12 @@
 
 namespace cxxime {
 
+struct CandidateSelectionCallResult {
+    bool transport_success = false;
+    IPCStatus status = IPCStatus::ERR_ENGINE_PROCESS_FAILED;
+    IPCResponse response = {};
+};
+
 class IpcClient {
 public:
     IpcClient() = default;
@@ -24,12 +30,14 @@ public:
     bool send_request(const IPCRequest& request, IPCResponse& response);
 
     // High-level methods
-    bool start_session(uint32_t& session_id);
+    bool start_session(uint32_t& session_id, uint64_t client_capabilities = 0);
     bool end_session(uint32_t session_id);
     bool process_key(uint32_t session_id, uint32_t key_code, uint32_t modifiers,
                      IPCResponse& response, bool is_key_up = false,
                      CandidateUiContext candidate_ui = {});
     bool select_candidate(uint32_t session_id, int index, IPCResponse& response);
+    CandidateSelectionCallResult select_candidate_with_revision(uint32_t session_id, int index,
+                                                                uint64_t candidate_revision);
     bool commit_composition(uint32_t session_id, IPCResponse& response);
     bool clear_composition(uint32_t session_id);
     bool focus_in(uint32_t session_id);

@@ -189,9 +189,10 @@ bool IpcClient::send_request(const IPCRequest& request, IPCResponse& response) {
 // ============================================================
 // High-level commands
 // ============================================================
-bool IpcClient::start_session(uint32_t& session_id) {
+bool IpcClient::start_session(uint32_t& session_id, uint64_t client_capabilities) {
     IPCRequest req = {};
     req.command = IPCCommand::START_SESSION;
+    req.client_capabilities = client_capabilities;
 
     IPCResponse resp = {};
     if (!send_request(req, resp))
@@ -232,6 +233,22 @@ bool IpcClient::select_candidate(uint32_t session_id, int index, IPCResponse& re
     req.session_id = session_id;
     req.candidate_index = static_cast<uint32_t>(index);
     return send_request(req, response) && response.status == IPCStatus::OK;
+}
+
+CandidateSelectionCallResult IpcClient::select_candidate_with_revision(
+    uint32_t session_id, int index, uint64_t candidate_revision) {
+    IPCRequest request = {};
+    request.command = IPCCommand::SELECT_CANDIDATE;
+    request.session_id = session_id;
+    request.candidate_index = static_cast<uint32_t>(index);
+    request.candidate_revision = candidate_revision;
+
+    CandidateSelectionCallResult result;
+    result.transport_success = send_request(request, result.response);
+    if (result.transport_success) {
+        result.status = result.response.status;
+    }
+    return result;
 }
 
 bool IpcClient::commit_composition(uint32_t session_id, IPCResponse& response) {
