@@ -9,6 +9,7 @@
 #include <utility>
 
 #include <cxxime/ascii_composer.h>
+#include <cxxime/composition_learning.h>
 #include <cxxime/composition_presentation.h>
 #include <cxxime/config.h>
 #include <cxxime/context.h>
@@ -76,6 +77,7 @@ public:
     void set_sentence_composition_enabled(bool enabled);
     bool sentence_composition_enabled() const { return sentence_composition_enabled_; }
     void clear_query_cache();
+    void set_composition_learning_service(CompositionLearningService* service);
     CandidatePage translate_for_search(const std::string& input, int limit = 10);
     bool record_search_result(const std::string& input, const std::string& result);
 
@@ -119,6 +121,7 @@ private:
     bool finalize_selection(const CandidateEntry& entry);
     bool replace_active_input(const ReplaceActiveInputAction& action,
                               const QueryDeadline& deadline);
+    void apply_commit_learning_plan();
     static CompositionScheme scheme_for_mode(InputMode mode);
 
     std::unique_ptr<IProcessor> processor_;
@@ -141,6 +144,7 @@ private:
     Syllabifier* syllabifier_ = nullptr;
     const Config* config_ = nullptr;
     const SymbolTable* symbol_table_ = nullptr;
+    CompositionLearningService* composition_learning_ = nullptr;
 
     // Input mode
     InputMode mode_ = InputMode::PINYIN;

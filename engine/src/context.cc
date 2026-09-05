@@ -190,7 +190,7 @@ void Context::reset() {
     clear_translation();
     reset_pagination();
     commit_source_ = CommitSource::kRawCode;
-    clear_commit_evidence();
+    commit_learning_plan_ = {};
     requested_candidate_index_.reset();
 }
 
@@ -204,14 +204,11 @@ bool Context::commit_entry(const CandidateEntry& entry) {
     if (!action || action->consumed_input_bytes != active_input().size()) {
         return false;
     }
-    const std::string typed_code = active_input();
-    const Candidate committed_candidate = entry.candidate;
+    CommitLearningPlan learning_plan = make_candidate_learning_plan(composition_, *action);
     if (!commit_selection(*action)) {
         return false;
     }
-    committed_candidate_ = committed_candidate;
-    committed_candidate_code_ = typed_code;
-    has_committed_candidate_ = true;
+    commit_learning_plan_ = std::move(learning_plan);
     return true;
 }
 
@@ -227,6 +224,7 @@ bool Context::commit_selection(const TextSelectionAction& action) {
 }
 
 bool Context::finalize_raw(CommitSource source) {
+    CommitLearningPlan learning_plan = make_raw_learning_plan(composition_);
     if (!composition_.finalize_raw(committed_text)) {
         return false;
     }
@@ -234,6 +232,7 @@ bool Context::finalize_raw(CommitSource source) {
     commit_source_ = source;
     clear_translation();
     composition_origin_.reset();
+    commit_learning_plan_ = std::move(learning_plan);
     return true;
 }
 
@@ -251,18 +250,10 @@ std::optional<int> Context::take_requested_candidate_selection() {
     return requested;
 }
 
-const Candidate* Context::committed_candidate() const {
-    return has_committed_candidate_ ? &committed_candidate_ : nullptr;
-}
-
-const std::string& Context::committed_candidate_code() const {
-    return committed_candidate_code_;
-}
-
-void Context::clear_commit_evidence() {
-    committed_candidate_ = {};
-    committed_candidate_code_.clear();
-    has_committed_candidate_ = false;
+CommitLearningPlan Context::take_commit_learning_plan() {
+    CommitLearningPlan plan = std::move(commit_learning_plan_);
+    commit_learning_plan_ = {};
+    return plan;
 }
 
 std::string Context::commit() {
@@ -276,6 +267,8 @@ std::pair<std::string, CommitSource> Context::commit_with_source() {
     std::string text;
     CommitSource source = commit_source_;
     bool finalized = false;
+    bool generated_learning_plan = false;
+CommitLearningPlan learning_plan;
     if (!committed_text.empty()) {
         text = std::move(committed_text);
         finalized = true;
@@ -286,26 +279,36 @@ std::pair<std::string, CommitSource> Context::commit_with_source() {
         const auto* action =
             entry ? std::get_if<TextSelectionAction>(&entry->selection) : nullptr;
         if (action) {
+            if (action->consumed_input_bytes == active_input().size()) {
+                learning_plan = make_candidate_learning_plan(composition_, *action);
+            }
             if (action->consumed_input_bytes == active_input().size() &&
                 composition_.finalize_candidate(*action, text)) {
                 source = CommitSource::kCandidate;
                 finalized_candidate = true;
                 finalized = true;
+                generated_learning_plan = true;
             } else if (action->consumed_input_bytes < active_input().size()) {
                 CompositionState next = composition_;
+                learning_plan = make_partial_raw_learning_plan(composition_, *action);
                 if (next.confirm_prefix(*action) && next.finalize_raw(text)) {
                     composition_ = std::move(next);
                     source = CommitSource::kCandidate;
                     finalized_candidate = true;
                     finalized = true;
+                    generated_learning_plan = true;
                 }
             }
+        }
+        if (!finalized_candidate) {
+            learning_plan = make_raw_learning_plan(composition_);
         }
         if (!finalized_candidate && composition_.finalize_raw(text)) {
             source = scheme == CompositionScheme::kInlineAscii
                          ? CommitSource::kRawCodePreserveCase
                          : CommitSource::kRawCode;
             finalized = true;
+            generated_learning_plan = true;
         }
     }
     if (!finalized) {
@@ -318,8 +321,10 @@ std::pair<std::string, CommitSource> Context::commit_with_source() {
     clear_translation();
     reset_pagination();
     commit_source_ = CommitSource::kRawCode;
-    clear_commit_evidence();
     composition_origin_.reset();
+    if (generated_learning_plan) {
+        commit_learning_plan_ = std::move(learning_plan);
+    }
     return {std::move(text), source};
 }
 

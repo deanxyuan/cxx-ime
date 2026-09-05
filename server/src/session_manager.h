@@ -14,6 +14,7 @@
 #include <utility>
 #include <vector>
 
+#include <cxxime/composition_learning.h>
 #include <cxxime/config.h>
 #include <cxxime/engine.h>
 #include <cxxime/ipc_protocol.h>
@@ -32,6 +33,7 @@ struct SharedResourceSnapshot {
     std::shared_ptr<const cxxime::SymbolTable> symbol_table;
     std::shared_ptr<const cxxime::Config> config;
     std::shared_ptr<const cxxime::PunctMapping> punct_mapping;
+    std::shared_ptr<cxxime::CompositionLearningService> composition_learning;
 };
 
 // Replaceable resources shared across all sessions.
@@ -43,6 +45,7 @@ struct SharedResources {
     std::shared_ptr<const cxxime::SymbolTable> symbol_table;
     std::shared_ptr<const cxxime::Config> config;
     std::shared_ptr<const cxxime::PunctMapping> punct_mapping;
+    std::shared_ptr<cxxime::CompositionLearningService> composition_learning;
     std::string punct_path;   // Stored for reload
     std::string dict_path;    // Stored for dictionary reload
     std::string wubi_dict_path;
@@ -96,6 +99,7 @@ struct SharedResources {
                                             std::uint64_t expected_version,
                                             bool* version_conflict);
     bool save_candidate_preferences(bool force);
+    bool freeze_and_stop_composition_learning();
 };
 
 struct SessionEntry {
@@ -195,6 +199,7 @@ public:
                                             bool* version_conflict);
     bool save_candidate_preferences(bool force);
     bool freeze_and_save_candidate_preferences();
+    bool freeze_and_stop_composition_learning();
 
 private:
     struct GlobalVisibleState {

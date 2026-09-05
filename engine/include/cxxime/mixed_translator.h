@@ -29,6 +29,7 @@ public:
     void clear_query_cache() override;
     void set_sentence_composition_enabled(bool enabled) override;
     void set_candidate_learning_enabled(bool enabled) override;
+    void set_composition_learning_service(CompositionLearningService* service) override;
 
 private:
     bool manually_ordered(const std::string& input, const Candidate& candidate) const;

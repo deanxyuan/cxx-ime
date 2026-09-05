@@ -52,6 +52,10 @@ add_cxxime_test(segmented_selection_test
     SOURCES engine/segmented_selection_test.cc
     DEPS cxxime-engine
 )
+add_cxxime_test(composition_learning_test
+    SOURCES engine/composition_learning_test.cc
+    DEPS cxxime-engine cxxime-test-topn-data
+)
 add_cxxime_test(segmentor_test SOURCES engine/segmentor_test.cc DEPS cxxime-engine)
 add_cxxime_test(syllabifier_completion_test
     SOURCES engine/syllabifier_completion_test.cc
