@@ -212,7 +212,6 @@ TEST(AsciiComposer, capslock_candidate_commits_first_candidate) {
 
     ASSERT_TRUE(ac.is_ascii_mode());
     ASSERT_EQ(ctx.committed_text, "你好");
-    ASSERT_TRUE(ctx.committed_candidate() == nullptr);
     ASSERT_TRUE(ctx.active_input().empty());
 }
 

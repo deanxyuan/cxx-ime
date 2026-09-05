@@ -191,6 +191,126 @@ TEST(SegmentedSelection, enter_commits_converted_prefix_and_raw_suffix) {
     ASSERT_EQ(fixture.engine.get_commit_text(), "华锐jishu");
 }
 
+TEST(SegmentedSelectionLearning, final_candidate_learns_segments_and_whole_composition) {
+    const std::string learning_path = make_temp_file("sgl");
+    cxxime::CompositionLearningService learning;
+    ASSERT_TRUE(learning.load(learning_path));
+    ASSERT_TRUE(learning.start());
+    {
+        SegmentedFixture fixture;
+        ASSERT_TRUE(fixture.initialize());
+        fixture.config.candidate_learning = true;
+        fixture.engine.reload_config(fixture.config);
+        fixture.engine.set_composition_learning_service(&learning);
+        fixture.type("huaruijishu");
+
+        auto find_consumed = [&](std::size_t consumed) {
+            const auto& entries = fixture.engine.context().translation().entries;
+            for (std::size_t index = 0; index < entries.size(); ++index) {
+                const auto* action =
+                    std::get_if<cxxime::TextSelectionAction>(&entries[index].selection);
+                if (action && action->consumed_input_bytes == consumed) {
+                    return static_cast<int>(index);
+                }
+            }
+            return -1;
+        };
+
+        const int prefix_index = find_consumed(6);
+        ASSERT_GE(prefix_index, 0);
+        const std::string prefix_text =
+            fixture.engine.context().translation().entries[prefix_index].candidate.text;
+        ASSERT_TRUE(fixture.engine.select_candidate(prefix_index));
+        const int suffix_index = find_consumed(5);
+        ASSERT_GE(suffix_index, 0);
+        const std::string suffix_text =
+            fixture.engine.context().translation().entries[suffix_index].candidate.text;
+        ASSERT_TRUE(fixture.engine.select_candidate(suffix_index));
+        const std::string committed = fixture.engine.get_commit_text();
+        ASSERT_EQ(committed, prefix_text + suffix_text);
+        ASSERT_TRUE(fixture.dict.has_candidate_preference(prefix_text, "huarui"));
+        ASSERT_TRUE(fixture.dict.has_candidate_preference(suffix_text, "jishu"));
+    }
+    ASSERT_TRUE(learning.freeze_and_stop());
+    const auto candidates = learning.lookup_candidates("huaruijishu", 10);
+    ASSERT_EQ(candidates.size(), static_cast<std::size_t>(1));
+    DeleteFileA(learning_path.c_str());
+}
+
+TEST(SegmentedSelectionLearning, raw_commit_learns_only_confirmed_segments) {
+    const std::string learning_path = make_temp_file("sgr");
+    cxxime::CompositionLearningService learning;
+    ASSERT_TRUE(learning.load(learning_path));
+    ASSERT_TRUE(learning.start());
+    {
+        SegmentedFixture fixture;
+        ASSERT_TRUE(fixture.initialize());
+        fixture.config.candidate_learning = true;
+        fixture.engine.reload_config(fixture.config);
+        fixture.engine.set_composition_learning_service(&learning);
+        fixture.type("huaruijishu");
+
+        int prefix_index = -1;
+        for (std::size_t index = 0;
+            index < fixture.engine.context().translation().entries.size();
+            ++index) {
+            const auto* action = std::get_if<cxxime::TextSelectionAction>(
+                &fixture.engine.context().translation().entries[index].selection);
+            if (action && action->consumed_input_bytes == 6) {
+                prefix_index = static_cast<int>(index);
+                break;
+            }
+        }
+        ASSERT_GE(prefix_index, 0);
+        const std::string prefix_text =
+            fixture.engine.context().translation().entries[prefix_index].candidate.text;
+        ASSERT_TRUE(fixture.engine.select_candidate(prefix_index));
+        ASSERT_EQ(fixture.engine.process_key(make_key(VK_RETURN)),
+                  cxxime::ProcessResult::COMMITTED);
+        fixture.engine.get_commit_text();
+        ASSERT_TRUE(fixture.dict.has_candidate_preference(prefix_text, "huarui"));
+    }
+    ASSERT_TRUE(learning.freeze_and_stop());
+    ASSERT_EQ(learning.entry_count(), static_cast<std::size_t>(0));
+    DeleteFileA(learning_path.c_str());
+}
+
+TEST(SegmentedSelectionLearning, cancelled_composition_does_not_learn_partial_selection) {
+    const std::string learning_path = make_temp_file("sgc");
+    cxxime::CompositionLearningService learning;
+    ASSERT_TRUE(learning.load(learning_path));
+    ASSERT_TRUE(learning.start());
+    {
+        SegmentedFixture fixture;
+        ASSERT_TRUE(fixture.initialize());
+        fixture.config.candidate_learning = true;
+        fixture.engine.reload_config(fixture.config);
+        fixture.engine.set_composition_learning_service(&learning);
+        fixture.type("huaruijishu");
+        int prefix = -1;
+        for (std::size_t index = 0;
+            index < fixture.engine.context().translation().entries.size();
+             ++index) {
+            const auto* action = std::get_if<cxxime::TextSelectionAction>(
+                &fixture.engine.context().translation().entries[index].selection);
+            if (action && action->consumed_input_bytes == 6) {
+                prefix = static_cast<int>(index);
+                break;
+            }
+        }
+        ASSERT_GE(prefix, 0);
+        const std::string prefix_text =
+            fixture.engine.context().translation().entries[prefix].candidate.text;
+        ASSERT_TRUE(fixture.engine.select_candidate(prefix));
+        ASSERT_EQ(fixture.engine.process_key(make_key(VK_ESCAPE)),
+                  cxxime::ProcessResult::ACCEPTED);
+        ASSERT_TRUE(!fixture.dict.has_candidate_preference(prefix_text, "huarui"));
+    }
+    ASSERT_TRUE(learning.freeze_and_stop());
+    ASSERT_EQ(learning.entry_count(), static_cast<std::size_t>(0));
+    DeleteFileA(learning_path.c_str());
+}
+
 TEST(SegmentedSelection, punctuation_finalizes_the_remaining_candidate_once) {
     SegmentedFixture fixture;
     ASSERT_TRUE(fixture.initialize());

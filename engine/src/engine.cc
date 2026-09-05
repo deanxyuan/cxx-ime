@@ -10,6 +10,7 @@
 
 #include <windows.h>
 
+#include <cxxime/composition_learning.h>
 #include <cxxime/input_limits.h>
 #include <cxxime/logging.h>
 #include <cxxime/mixed_translator.h>
@@ -204,8 +205,6 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
                                   int visible_candidate_count) {
     CXXIME_LOG(L"Engine::process_key: vk=%u, is_key_up=%d, composing=%d",
                event.keycode, event.is_key_up, context_.is_composing());
-    context_.clear_commit_evidence();
-
     const uint64_t input_revision_before = context_.preedit_revision();
     const int page_index_before = context_.page_index();
     const int page_offset_before = context_.page_offset();
@@ -299,6 +298,7 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
 
     // Check if AsciiComposer committed text (e.g. Shift toggle with code style)
     if (!context_.committed_text.empty()) {
+        apply_commit_learning_plan();
         record_total_us(trace_, total_start, trace_enabled_);
         return ProcessResult::COMMITTED;
     }
@@ -313,6 +313,7 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
     // Enter always submits the exact active preedit without changing the persistent mode.
     if (!event.is_key_up && event.keycode == VK_RETURN && context_.is_composing()) {
         context_.finalize_raw(CommitSource::kRawCodePreserveCase);
+        apply_commit_learning_plan();
         ascii_composer_.finish_temporary_ascii();
         record_total_us(trace_, total_start, trace_enabled_);
         return ProcessResult::COMMITTED;
@@ -427,9 +428,6 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
         return ProcessResult::REJECTED;
     }
 
-    std::string committed_code_override;
-    Candidate committed_candidate_override;
-    bool has_committed_candidate_override = false;
     bool wubi_continuation_commit = false;
     const bool symbol_trigger_enabled = symbol_input_enabled(opts);
     const bool symbol_trigger = symbol_trigger_enabled && !context_.is_composing() &&
@@ -477,9 +475,6 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
     if (!routed_result && fifth_key_action == WubiFifthKeyAction::kCommitFirstAndRestart) {
         const CandidateEntry* first = context_.candidate_entry(0);
         if (first && finalize_selection(*first)) {
-            committed_code_override = context_.committed_candidate_code();
-            committed_candidate_override = *context_.committed_candidate();
-            has_committed_candidate_override = true;
             const char restarted_code = static_cast<char>(event.keycode - 'A' + 'a');
             context_.start_composition(scheme_for_mode(mode_), std::string(1, restarted_code), 1);
             wubi_continuation_commit = true;
@@ -579,20 +574,10 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
 
     // Handle punctuation and full-width input only when the input processor rejects the key.
     if (result == ProcessResult::REJECTED && !SymbolProcessor::is_active(context_)) {
-        const bool has_pending_candidate = context_.is_composing() &&
-                                           context_.highlighted() >= 0 &&
-                                           context_.highlighted() < context_.candidate_count();
-        if (has_pending_candidate) {
-            committed_code_override = context_.active_input();
-            committed_candidate_override = *context_.candidate(context_.highlighted());
-        }
-
         if (handle_punctuation(event, context_, opts)) {
             result = ProcessResult::COMMITTED;
-            has_committed_candidate_override = has_pending_candidate;
         } else if (handle_full_shape(event, context_, opts)) {
             result = ProcessResult::COMMITTED;
-            has_committed_candidate_override = has_pending_candidate;
         }
     }
 
@@ -638,9 +623,6 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
                                                 *config_)) {
             const CandidateEntry* first = context_.candidate_entry(0);
             if (first && finalize_selection(*first)) {
-                committed_code_override = context_.committed_candidate_code();
-                committed_candidate_override = *context_.committed_candidate();
-                has_committed_candidate_override = true;
                 result = ProcessResult::COMMITTED;
             }
         }
@@ -657,21 +639,8 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
     CXXIME_LOG(L"Engine::process_key: result=%d, input='%S'",
                (int)result, context_.active_input().c_str());
 
-    // Record an explicit candidate selection; raw text and composed candidates are excluded.
-    if (config_->candidate_learning &&
-        result == ProcessResult::COMMITTED && !context_.committed_text.empty() &&
-        context_.commit_source() == CommitSource::kCandidate) {
-        const std::string typed_code = has_committed_candidate_override
-            ? committed_code_override
-            : context_.committed_candidate_code();
-        const Candidate* committed_candidate = has_committed_candidate_override
-            ? &committed_candidate_override
-            : context_.committed_candidate();
-        if (committed_candidate && committed_candidate->source != CandidateSource::kSymbol) {
-            const bool is_wubi = committed_candidate->source == CandidateSource::kWubi;
-            record_candidate_preference(is_wubi ? wubi_dict_ : pinyin_dict_,
-                                        committed_candidate, typed_code);
-        }
+    if (result == ProcessResult::COMMITTED) {
+        apply_commit_learning_plan();
     }
 
     // Finalize the query trace.
@@ -824,15 +793,11 @@ bool Engine::select_candidate(int index) {
     if (index < 0 || index >= context_.candidate_count()) {
         return false;
     }
-    const Candidate candidate = *context_.candidate(index);
-    const std::string typed_code = context_.active_input();
     if (!dispatch_candidate_selection(index, QueryDeadline::from_now(query_deadline_ms_))) {
         return false;
     }
-    if (!context_.is_composing() && config_->candidate_learning &&
-        candidate.source != CandidateSource::kSymbol) {
-        Dict* dictionary = candidate.source == CandidateSource::kWubi ? wubi_dict_ : pinyin_dict_;
-        record_candidate_preference(dictionary, &candidate, typed_code);
+    if (!context_.is_composing()) {
+        apply_commit_learning_plan();
     }
     return true;
 }
@@ -856,6 +821,7 @@ std::pair<std::string, CommitSource> Engine::take_commit_text_with_source() {
 
 std::pair<std::string, CommitSource> Engine::commit_composition_with_source() {
     auto result = context_.commit_with_source();
+    apply_commit_learning_plan();
     ascii_composer_.finish_temporary_ascii();
     return result;
 }
@@ -864,6 +830,7 @@ std::string Engine::commit_raw_composition() {
     if (!context_.finalize_raw(CommitSource::kRawCodePreserveCase)) {
         return {};
     }
+    apply_commit_learning_plan();
     std::string raw = std::move(context_.committed_text);
     reset_composition_state();
     return raw;
@@ -933,6 +900,25 @@ bool Engine::finalize_selection(const CandidateEntry& entry) {
         return false;
     }
     return true;
+}
+
+void Engine::apply_commit_learning_plan() {
+    CommitLearningPlan plan = context_.take_commit_learning_plan();
+    if (!config_ || !config_->candidate_learning || plan.empty()) {
+        return;
+    }
+    for (const CandidatePreferenceLearningEvent& event : plan.candidate_preferences) {
+        Dict* dictionary = nullptr;
+        if (event.target == LearningTarget::kPinyin) {
+            dictionary = pinyin_dict_;
+        } else if (event.target == LearningTarget::kWubi) {
+            dictionary = wubi_dict_;
+        }
+        record_candidate_preference(dictionary, &event.candidate, event.typed_code);
+    }
+    if (plan.composition && composition_learning_) {
+        composition_learning_->enqueue(*plan.composition);
+    }
 }
 
 bool Engine::replace_active_input(const ReplaceActiveInputAction& action,
@@ -1014,6 +1000,13 @@ void Engine::switch_mode(InputMode mode) {
     rebuild_pipeline(mode);
 }
 
+void Engine::set_composition_learning_service(CompositionLearningService* service) {
+    composition_learning_ = service;
+    if (translator_) {
+        translator_->set_composition_learning_service(service);
+    }
+}
+
 void Engine::rebuild_pipeline(InputMode mode, bool force) {
     // Fall back to pinyin when the optional Wubi dictionary is unavailable.
     if ((mode == InputMode::WUBI || mode == InputMode::MIXED) && !wubi_dict_)
@@ -1057,6 +1050,7 @@ void Engine::rebuild_pipeline(InputMode mode, bool force) {
     }
     translator_->set_sentence_composition_enabled(sentence_composition_enabled_);
     translator_->set_candidate_learning_enabled(config_->candidate_learning);
+    translator_->set_composition_learning_service(composition_learning_);
 }
 
 std::string Engine::derive_spellings_path(const std::string& dict_path) {

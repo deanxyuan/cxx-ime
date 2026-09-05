@@ -243,6 +243,9 @@ void ServerApp::prepare_user_data_shutdown() {
         return;
     }
     dictionary_monitor_.stop();
+    if (!session_mgr_.freeze_and_stop_composition_learning()) {
+        CXXIME_LOG(L"%s", L"composition_learning shutdown flush failed");
+    }
     if (!session_mgr_.freeze_and_save_candidate_preferences()) {
         CXXIME_LOG(L"%s", L"candidate_preference shutdown flush failed");
     }

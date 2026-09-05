@@ -486,4 +486,8 @@ void MixedTranslator::set_candidate_learning_enabled(bool enabled) {
     wubi_translator_.set_candidate_learning_enabled(enabled);
 }
 
+void MixedTranslator::set_composition_learning_service(CompositionLearningService* service) {
+    pinyin_translator_.set_composition_learning_service(service);
+}
+
 } // namespace cxxime

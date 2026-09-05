@@ -12,6 +12,7 @@
 #include <vector>
 
 #include <cxxime/ascii_composer.h>
+#include <cxxime/composition_learning.h>
 #include <cxxime/composition_state.h>
 #include <cxxime/output_options.h>
 #include <cxxime/translation_result.h>
@@ -65,13 +66,10 @@ public:
     void reset();
     bool commit_candidate(int index);
     bool commit_entry(const CandidateEntry& entry);
-    bool commit_selection(const TextSelectionAction& action);
     bool finalize_raw(CommitSource source);
     bool request_candidate_selection(int index);
     std::optional<int> take_requested_candidate_selection();
-    const Candidate* committed_candidate() const;
-    const std::string& committed_candidate_code() const;
-    void clear_commit_evidence();
+    CommitLearningPlan take_commit_learning_plan();
     std::string commit();
     void update_candidates(CandidatePage&& page);
     void update_translation(TranslationResult&& result);
@@ -102,15 +100,15 @@ private:
         int visible_candidate_count = 0;
     };
 
+    bool commit_selection(const TextSelectionAction& action);
+
     CompositionState composition_;
     CompositionScheme ime_scheme_ = CompositionScheme::kPinyin;
     TranslationResult translation_;
     std::vector<PageHistoryEntry> previous_pages_;
     int highlight_count_after_page_change_ = 0;
     CommitSource commit_source_ = CommitSource::kRawCode;
-    Candidate committed_candidate_;
-    std::string committed_candidate_code_;
-    bool has_committed_candidate_ = false;
+    CommitLearningPlan commit_learning_plan_;
     std::optional<int> requested_candidate_index_;
     std::optional<CompositionOrigin> composition_origin_;
 };

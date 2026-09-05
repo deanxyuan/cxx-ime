@@ -265,6 +265,16 @@ bool SharedResources::load(const std::string& dict_path,
     std::string loaded_punct_path = cxxime::data_path("punctuation.json");
     auto loaded_punct_mapping = load_punctuation_mapping(loaded_punct_path);
     auto loaded_symbol_table = load_symbol_table(cxxime::data_path("symbols.json"));
+    auto loaded_composition_learning =
+        std::make_shared<cxxime::CompositionLearningService>();
+    if (!loaded_composition_learning->load(
+            cxxime::user_data_path("learning_composition.tsv"))) {
+        CXXIME_LOG(L"%s", L"SharedResources: composition learning initialization disabled");
+        loaded_composition_learning.reset();
+    } else if (!loaded_composition_learning->start()) {
+        CXXIME_LOG(L"%s", L"SharedResources: composition learning worker disabled");
+        loaded_composition_learning.reset();
+    }
 
     {
         std::lock_guard<std::mutex> lock(mutex);
@@ -278,6 +288,7 @@ bool SharedResources::load(const std::string& dict_path,
         symbol_table = std::move(loaded_symbol_table);
         config = loaded_config;
         punct_mapping = std::move(loaded_punct_mapping);
+        composition_learning = std::move(loaded_composition_learning);
         punct_path = punct_mapping ? std::move(loaded_punct_path) : std::string{};
     }
 
@@ -294,6 +305,7 @@ SharedResourceSnapshot SharedResources::snapshot() const {
     s.symbol_table = symbol_table;
     s.config = config;
     s.punct_mapping = punct_mapping;
+    s.composition_learning = composition_learning;
     return s;
 }
 
@@ -432,6 +444,7 @@ uint32_t SessionManager::create_session() {
     if (resources.wubi_dict && resources.wubi_dict->is_open()) {
         engine->set_wubi_dict(resources.wubi_dict.get());
     }
+    engine->set_composition_learning_service(resources.composition_learning.get());
 
     std::lock_guard<std::mutex> lock(mutex_);
     uint32_t id = next_id_++;
@@ -535,6 +548,10 @@ static void apply_resource_snapshot(SessionEntry& entry, const SharedResourceSna
         }
         if (old_mode != entry.ime_status.input_mode)
             entry.ime_status.revision++;
+    }
+    if (entry.resources.composition_learning != resources.composition_learning) {
+        entry.engine->set_composition_learning_service(resources.composition_learning.get());
+        entry.resources.composition_learning = resources.composition_learning;
     }
     entry.resources.punct_mapping = resources.punct_mapping;
 }
@@ -855,6 +872,15 @@ bool SharedResources::save_candidate_preferences(bool force) {
                                             : wubi->save_candidate_preferences_if_due(
                                                   kSaveDelay));
     return pinyin_saved && wubi_saved;
+}
+
+bool SharedResources::freeze_and_stop_composition_learning() {
+    std::shared_ptr<cxxime::CompositionLearningService> service;
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        service = composition_learning;
+    }
+    return !service || service->freeze_and_stop();
 }
 
 void SessionManager::apply_config(const std::shared_ptr<const cxxime::Config>& config) {
@@ -1449,6 +1475,11 @@ bool SessionManager::freeze_and_save_candidate_preferences() {
         resources.wubi_dict->freeze_candidate_preferences();
     }
     return shared_.save_candidate_preferences(true);
+}
+
+bool SessionManager::freeze_and_stop_composition_learning() {
+    std::lock_guard<std::mutex> reload_lock(reload_mutex_);
+    return shared_.freeze_and_stop_composition_learning();
 }
 
 void SessionManager::persist_input_mode(cxxime::InputMode mode) {
