@@ -21,6 +21,8 @@ add_library(cxxime-shared STATIC
     src/diagnostics_config.cc
     src/mpscq.cc
     src/query_trace_log.cc
+    src/settings_launcher.cc
+    src/settings_launcher_util.cc
     src/tsf_factory.cc
     src/ui_presentation_trace.cc
     src/user_dict_validation.cc
@@ -35,7 +37,7 @@ target_include_directories(cxxime-shared PRIVATE
     ${CXXIME_GENERATED_INCLUDE_DIR}
 )
 
-target_link_libraries(cxxime-shared PUBLIC shell32 bcrypt)
+target_link_libraries(cxxime-shared PUBLIC shell32 bcrypt advapi32 user32)
 if(CXXIME_ENABLE_HOST_DIAGNOSTICS)
     target_compile_definitions(cxxime-shared PRIVATE CXXIME_ENABLE_HOST_DIAGNOSTICS=1)
     target_link_libraries(cxxime-shared PUBLIC dwmapi)

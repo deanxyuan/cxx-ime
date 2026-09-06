@@ -1,9 +1,7 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
-#include "settings_launcher.h"
+#include <cxxime/settings_launcher.h>
 
-#include <cwchar>
-#include <string>
 #include <vector>
 
 #include <windows.h>
@@ -12,7 +10,7 @@
 
 #include "settings_launcher_util.h"
 
-namespace cxxime_tsf {
+namespace cxxime {
 namespace {
 
 constexpr wchar_t kInstallRegistryKey[] =
@@ -49,8 +47,8 @@ private:
 
 std::wstring registered_settings_path() {
     HKEY key = nullptr;
-    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, kInstallRegistryKey, 0,
-                      KEY_QUERY_VALUE | KEY_WOW64_64KEY, &key) != ERROR_SUCCESS) {
+    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, kInstallRegistryKey, 0, KEY_QUERY_VALUE | KEY_WOW64_64KEY,
+                      &key) != ERROR_SUCCESS) {
         return {};
     }
 
@@ -98,73 +96,61 @@ std::wstring process_image_path(DWORD process_id) {
     return path;
 }
 
-struct SettingsWindowSearch {
-    const std::wstring* settings_path = nullptr;
-    HWND window = nullptr;
-};
-
-BOOL CALLBACK find_settings_window(HWND window, LPARAM parameter) {
-    auto* search = reinterpret_cast<SettingsWindowSearch*>(parameter);
-    const int title_length = GetWindowTextLengthW(window);
-    if (title_length <= 0) {
-        return TRUE;
+HWND find_settings_window(const std::wstring& path) {
+    HWND previous = nullptr;
+    for (;;) {
+        HWND window = FindWindowExW(nullptr, previous, kSettingsWindowClass, kSettingsWindowTitle);
+        if (!window) {
+            return nullptr;
+        }
+        DWORD process_id = 0;
+        GetWindowThreadProcessId(window, &process_id);
+        const std::wstring image_path = process_image_path(process_id);
+        if (!image_path.empty() && settings_paths_equal(image_path, path)) {
+            return window;
+        }
+        previous = window;
     }
-    std::vector<wchar_t> title(static_cast<std::size_t>(title_length) + 1);
-    if (GetWindowTextW(window, title.data(), static_cast<int>(title.size())) != title_length ||
-        wcscmp(title.data(), cxxime::kSettingsWindowTitle) != 0) {
-        return TRUE;
-    }
-
-    DWORD process_id = 0;
-    GetWindowThreadProcessId(window, &process_id);
-    const std::wstring image_path = process_image_path(process_id);
-    if (!image_path.empty() && settings_paths_equal(image_path, *search->settings_path)) {
-        search->window = window;
-        return FALSE;
-    }
-    return TRUE;
 }
 
-bool activate_existing_settings(const std::wstring& path, bool navigate,
-                                cxxime::SettingsPanel panel) {
-    SettingsWindowSearch search = {&path, nullptr};
-    EnumWindows(find_settings_window, reinterpret_cast<LPARAM>(&search));
-    if (!search.window) {
+bool activate_existing_settings(const std::wstring& path, SettingsPanel panel) {
+    HWND window = find_settings_window(path);
+    if (!window) {
         return false;
     }
 
-    if (navigate) {
-        const UINT message = RegisterWindowMessageW(cxxime::kSettingsNavigateMessage);
-        if (message != 0) {
-            PostMessageW(search.window, message, static_cast<WPARAM>(panel), 0);
-        }
+    const UINT message = RegisterWindowMessageW(kSettingsNavigateMessage);
+    if (message != 0) {
+        PostMessageW(window, message, static_cast<WPARAM>(panel), 0);
     }
-    ShowWindow(search.window, SW_RESTORE);
-    SetForegroundWindow(search.window);
+    ShowWindow(window, SW_RESTORE);
+    SetForegroundWindow(window);
     return true;
 }
 
-void launch_settings(bool navigate, cxxime::SettingsPanel panel) {
+} // namespace
+
+bool open_settings(SettingsPanel panel) {
     InstallationExclusion exclusion;
     if (!exclusion) {
-        CXXIME_LOG(L"%s", L"settings_launch source=tsf result=0 reason=installer_active");
-        return;
+        CXXIME_LOG(L"%s", L"settings_launch result=0 reason=installer_active");
+        return false;
     }
 
     const std::wstring path = registered_settings_path();
     if (path.empty()) {
-        CXXIME_LOG(L"%s", L"settings_launch source=tsf result=0 reason=active_path_unavailable");
-        return;
+        CXXIME_LOG(L"%s", L"settings_launch result=0 reason=active_path_unavailable");
+        return false;
     }
-    if (activate_existing_settings(path, navigate, panel)) {
-        return;
+    if (activate_existing_settings(path, panel)) {
+        return true;
     }
 
     std::wstring command_line;
     wchar_t* mutable_command_line = nullptr;
-    if (navigate && panel == cxxime::SettingsPanel::kDictionary) {
-        command_line = L"\"" + path + L"\" " + cxxime::kSettingsPanelArgument +
-                       L" " + cxxime::kSettingsDictionaryArgument;
+    if (panel == SettingsPanel::kDictionary) {
+        command_line =
+            L"\"" + path + L"\" " + kSettingsPanelArgument + L" " + kSettingsDictionaryArgument;
         mutable_command_line = &command_line[0];
     }
 
@@ -173,23 +159,12 @@ void launch_settings(bool navigate, cxxime::SettingsPanel panel) {
     PROCESS_INFORMATION process_info = {};
     if (!CreateProcessW(path.c_str(), mutable_command_line, nullptr, nullptr, FALSE, 0, nullptr,
                         nullptr, &startup_info, &process_info)) {
-        CXXIME_LOG(L"settings_launch source=tsf result=0 error=%lu", GetLastError());
-        return;
+        CXXIME_LOG(L"settings_launch result=0 error=%lu", GetLastError());
+        return false;
     }
-    if (process_info.hProcess) {
-        CloseHandle(process_info.hProcess);
-        CloseHandle(process_info.hThread);
-    }
+    CloseHandle(process_info.hProcess);
+    CloseHandle(process_info.hThread);
+    return true;
 }
 
-} // namespace
-
-void open_settings() {
-    launch_settings(false, cxxime::SettingsPanel::kInput);
-}
-
-void open_settings(cxxime::SettingsPanel panel) {
-    launch_settings(true, panel);
-}
-
-} // namespace cxxime_tsf
+} // namespace cxxime

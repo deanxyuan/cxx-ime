@@ -573,6 +573,23 @@ TEST(IPC, switch_input_mode_carries_target) {
     ASSERT_EQ(resp.ime_status.input_mode, cxxime::InputMode::WUBI);
 }
 
+TEST(IPC, open_settings_carries_session_and_panel) {
+    TestServer ts;
+    ASSERT_TRUE(ts.start([](const cxxime::IPCRequest& req) -> cxxime::IPCResponse {
+        cxxime::IPCResponse resp = {};
+        ASSERT_EQ(req.command, cxxime::IPCCommand::OPEN_SETTINGS);
+        ASSERT_EQ(req.session_id, static_cast<uint32_t>(7));
+        ASSERT_EQ(req.candidate_index,
+                  static_cast<uint32_t>(cxxime::SettingsPanel::kDictionary));
+        resp.status = cxxime::IPCStatus::OK;
+        return resp;
+    }));
+
+    cxxime::IpcClient client;
+    ASSERT_TRUE(client.connect(test_pipe_name(), 2000));
+    ASSERT_TRUE(client.open_settings(7, cxxime::SettingsPanel::kDictionary));
+}
+
 TEST(IPC, focus_in_out) {
     TestServer ts;
     ASSERT_TRUE(ts.start([](const cxxime::IPCRequest&) -> cxxime::IPCResponse {

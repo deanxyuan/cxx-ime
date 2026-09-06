@@ -246,9 +246,12 @@ add_cxxime_test(tsf_factory_test
     DEPS cxxime-shared ole32 uuid
 )
 
-add_cxxime_test(settings_launcher_util_test SOURCES tsf/settings_launcher_util_test.cc)
-target_sources(settings_launcher_util_test PRIVATE
-    ${CMAKE_SOURCE_DIR}/tsf/src/settings_launcher_util.cpp
+add_cxxime_test(settings_launcher_util_test
+    SOURCES shared/settings_launcher_test.cc
+    DEPS cxxime-shared
+)
+target_include_directories(settings_launcher_util_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/shared/src
 )
 
 add_cxxime_test(installer_lock_test

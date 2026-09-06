@@ -127,6 +127,7 @@ enum class IPCCommand : uint32_t {
     SET_CHINESE_MODE = 24,
     SEARCH_CANDIDATES = 25,
     SEARCH_CANDIDATE_RESULT = 26,
+    OPEN_SETTINGS = 27,
 };
 
 enum class IPCStatus : uint32_t {
@@ -186,7 +187,7 @@ struct IPCRequest {
     uint32_t session_id = 0;
     uint32_t key_code = 0;
     uint32_t modifiers = 0;
-    uint32_t candidate_index = 0;  // Candidate selection or target input mode.
+    uint32_t candidate_index = 0;  // Candidate, input mode, or settings panel by command.
     uint32_t is_key_up = 0;
     CandidateUiContext candidate_ui;
     // UTF-8 query for SEARCH_CANDIDATES; unused by input-session commands.
