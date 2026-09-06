@@ -4,7 +4,6 @@
 
 #include <cstdio>
 #include <string>
-#include <utility>
 
 #include "candidate_ui_element.h"
 #include "host_compatibility/host_classification_compatibility.h"
@@ -50,7 +49,8 @@ void TextService::_sync_candidate_ui_element_snapshot() {
     }
     if (_candidatePresentation.has_candidates()) {
         _candidateUiElement->set_page(
-            _candidatePresentation.page(), _candidatePresentation.page_current(),
+            _candidatePresentation.page(), _candidatePresentation.candidate_revision(),
+            _candidatePresentation.page_current(),
             _candidatePresentation.page_total());
     } else {
         _candidateUiElement->clear_page();
@@ -96,23 +96,6 @@ std::wstring TextService::utf8_to_wstring(const char* text) {
     return result;
 }
 
-cxxime::CandidatePage
-TextService::_candidate_page_from_response(const cxxime::IPCResponse& response) {
-    cxxime::CandidatePage page;
-    page.page_index = static_cast<int>(response.page_current) - 1;
-    page.page_offset = static_cast<int>(response.candidate_offset);
-    page.total_count = static_cast<int>(response.candidate_total);
-    page.highlighted = static_cast<int>(response.highlighted);
-    for (uint32_t i = 0;
-        i < response.candidate_count && i < cxxime::kCandidateCapacity; ++i) {
-        cxxime::Candidate candidate;
-        candidate.text = response.candidates[i];
-        candidate.comment = response.candidate_hints[i];
-        page.candidates.push_back(std::move(candidate));
-    }
-    return page;
-}
-
 cxxime::CandidateUiContext TextService::_candidate_ui_context() const {
     cxxime::CandidateUiContext context;
     context.session_generation = _uiSessionGeneration;
@@ -150,7 +133,7 @@ bool TextService::_publish_candidate_ui_element() {
 
     bool show_external = true;
     const uint32_t candidate_count =
-        static_cast<uint32_t>(_candidatePresentation.page().candidates.size());
+        static_cast<uint32_t>(_candidatePresentation.page().items.size());
     if (candidate_count > 0 && _candidateUiElement) {
         const bool was_active = _candidateUiElement->is_active();
         const bool prepare_before_begin =
@@ -243,13 +226,14 @@ void TextService::_prepare_host_candidate_compatibility() {
     }
 }
 
-bool TextService::select_candidate_from_ui(UINT index) {
+bool TextService::select_candidate_from_ui(UINT index, uint64_t candidate_revision) {
     if (!_candidatePresentation.has_candidates() ||
-        index >= _candidatePresentation.page().candidates.size()) {
+        index >= _candidatePresentation.page().items.size()) {
         return false;
     }
-    const std::string& comment = _candidatePresentation.page().candidates[index].comment;
-    if (index < 9 && comment.size() == 3 && comment.front() == '/') {
+    const std::string& hint = _candidatePresentation.page().items[index].hint;
+    if (_candidatePresentation.candidate_revision() == 0 && candidate_revision == 0 &&
+        index < 9 && hint.size() == 3 && hint.front() == '/') {
         ITfContext* context = _current_edit_context_for_composition();
         if (!context) {
             return false;
@@ -261,34 +245,29 @@ bool TextService::select_candidate_from_ui(UINT index) {
         return processed && eaten != FALSE;
     }
 
-    cxxime::IPCResponse resp = {};
-    if (!_ensure_ipc_session() || !_client.select_candidate(_sessionId, index, resp))
+    if (!_ensure_ipc_session()) {
         return false;
+    }
+    const cxxime::CandidateSelectionCallResult result =
+        _client.select_candidate_with_revision(_sessionId, index, candidate_revision);
+    if (!result.transport_success) {
+        return false;
+    }
 
-    if (resp.status == cxxime::IPCStatus::ERR_INVALID_SESSION) {
+    if (result.status == cxxime::IPCStatus::ERR_INVALID_SESSION) {
         _recreate_ipc_session_preserving_status();
         _hide_candidate_window("hide:select_invalid_session");
         _end_reading_ui_element("hide:select_invalid_session_reading");
         _composing = false;
         return false;
     }
-
-    std::wstring commit_text = utf8_to_wstring(resp.commit_text);
-    if (!commit_text.empty()) {
-        ITfContext* pContext = _current_edit_context_for_composition();
-
-        if (pContext) {
-            _commit_text(pContext, commit_text, true);
-            pContext->Release();
-        } else {
-            insert_text(commit_text, true);
-        }
-        _composing = false;
+    ITfContext* context = _current_edit_context_for_composition();
+    BOOL eaten = FALSE;
+    const bool applied = _apply_engine_response(context, result.response, &eaten);
+    if (context) {
+        context->Release();
     }
-
-    _hide_candidate_window("hide:select_commit");
-    _end_reading_ui_element("hide:select_commit_reading");
-    return true;
+    return applied;
 }
 
 bool TextService::navigate_candidate_page_from_ui(bool previous) {
@@ -299,26 +278,13 @@ bool TextService::navigate_candidate_page_from_ui(bool previous) {
                              _candidate_ui_context())) {
         return false;
     }
-    if (response.status != cxxime::IPCStatus::OK || !response.composing) {
-        return false;
+    ITfContext* context = _current_edit_context_for_composition();
+    BOOL eaten = FALSE;
+    const bool applied = _apply_engine_response(context, response, &eaten);
+    if (context) {
+        context->Release();
     }
-    if (response.candidate_count == 0) {
-        _hide_candidate_window("hide:page_navigation_empty");
-        return false;
-    }
-
-    _sync_ime_status(response.ime_status);
-    cxxime::CandidatePage page = _candidate_page_from_response(response);
-    _candidatePresentation.update_page(
-        page, static_cast<int>(response.page_current), static_cast<int>(response.page_total));
-    _sync_candidate_ui_element_snapshot();
-    bool show_external = _publish_candidate_ui_element();
-    if (!show_external) {
-        return true;
-    }
-    _publish_ui_presentation();
-
-    return true;
+    return applied;
 }
 
 void TextService::abort_candidate_ui_from_tsf() {
@@ -328,24 +294,19 @@ void TextService::abort_candidate_ui_from_tsf() {
 }
 
 HRESULT TextService::finalize_exact_candidate_ui_from_tsf() {
-    std::wstring commit_text = _lastInlineCompositionText;
-    if (commit_text.empty())
-        return E_NOTIMPL;
-
-    ITfContext* pContext = _current_edit_context_for_composition();
-
-    HRESULT hr = S_OK;
-    if (pContext) {
-        hr = _commit_text(pContext, commit_text, true);
-        pContext->Release();
-    } else {
-        hr = insert_text(commit_text, true);
+    if (!_ensure_ipc_session()) {
+        return E_FAIL;
     }
-    if (_sessionId && _client.is_connected())
-        _client.clear_composition(_sessionId);
-    _hide_candidate_window("hide:finalize_exact");
-    _end_reading_ui_element("hide:finalize_exact_reading");
-    _composing = false;
-    _lastInlineCompositionText.clear();
-    return hr;
+    cxxime::IPCResponse response = {};
+    if (!_client.commit_composition(_sessionId, response)) {
+        return E_FAIL;
+    }
+
+    ITfContext* context = _current_edit_context_for_composition();
+    BOOL eaten = FALSE;
+    const bool applied = _apply_engine_response(context, response, &eaten);
+    if (context) {
+        context->Release();
+    }
+    return applied && eaten != FALSE ? S_OK : E_FAIL;
 }

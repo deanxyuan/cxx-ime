@@ -4,28 +4,14 @@
 
 #include <chrono>
 #include <cstring>
-#include <new>
-#include <string>
-#include <utility>
-#include <vector>
 
 #include <cxxime/diagnostics_config.h>
 #include <cxxime/logging.h>
 
-#include "edit_session.h"
 #include "globals.h"
-#include "preedit_mode.h"
 #include "tsf_trace.h"
-#include "ui_presentation_batch.h"
 
 namespace {
-
-// Sync ime_status only when server filled valid data (OK or ENGINE_PROCESS_FAILED).
-// ERR_INVALID_SESSION means server did not fill ime_status; keep local state.
-bool should_sync_ime_status(cxxime::IPCStatus status) {
-    return status == cxxime::IPCStatus::OK ||
-           status == cxxime::IPCStatus::ERR_ENGINE_PROCESS_FAILED;
-}
 
 bool is_shift_key(WPARAM key) {
     return key == VK_LSHIFT || key == VK_RSHIFT || key == VK_SHIFT;
@@ -334,247 +320,15 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
         return false;
     }
 
-    CXXIME_LOG(L"_ProcessKeyEvent: ok, vk=%u, ascii=%u, commit='%S', preedit='%S', composing=%u",
-               (unsigned int)wParam, response.ascii_mode, response.commit_text, response.preedit, response.composing);
+    CXXIME_LOG(L"_ProcessKeyEvent: ok, vk=%u, ascii=%u, commit_len=%u, "
+               L"preedit_len=%u, composing=%u",
+               (unsigned int)wParam, response.ascii_mode,
+               static_cast<unsigned int>(strnlen_s(response.commit_text,
+                                                   sizeof(response.commit_text))),
+               static_cast<unsigned int>(strnlen_s(response.preedit, sizeof(response.preedit))),
+               response.composing);
 
-    // Sync mode state from engine only when server filled valid ime_status.
-    if (should_sync_ime_status(response.status)) {
-        _sync_ime_status(response.ime_status);
-    }
-
-    // Handle committed text (e.g. Shift toggle with commit_text, or normal candidate selection)
-    const bool has_committed_text = response.commit_text[0] != '\0';
-    const bool commit_continues_composition =
-        has_committed_text && response.composing && response.preedit[0] != '\0';
-    std::wstring commit_text;
-    if (has_committed_text) {
-        if (commit_continues_composition) {
-            _hide_external_candidate_window("hide:commit_continue_reposition");
-            // Prevent reentrant focus callbacks from restoring the previous page before the new
-            // composition exposes its caret.
-            _candidatePresentation.begin_composition_restart(
-                cxxime_tsf::CandidatePresentation::Clock::now());
-            _publish_ui_presentation();
-        } else {
-            _hide_candidate_window("hide:commit");
-            _end_reading_ui_element("hide:commit_reading");
-        }
-        commit_text = utf8_to_wstring(response.commit_text);
-        if (!commit_text.empty()) {
-            if (!commit_continues_composition) {
-                _commit_text(pic, commit_text, true);
-                _composing = false;
-                _lastInlineCompositionText.clear();
-            }
-            *pfEaten = TRUE;
-        }
-        trace.result = TsfResult::COMMITTED;
-        trace.candidate_count = response.candidate_count;
-    }
-    if (commit_continues_composition) {
-        _reset_trace_composition("commit_continue");
-    }
-    if (response.preedit[0] != '\0') {
-        ensure_trace_composition_id();
-        // Decode preedit
-        std::wstring preedit;
-        int len = MultiByteToWideChar(CP_UTF8, 0, response.preedit, -1, nullptr, 0);
-        if (len > 0) {
-            preedit.resize(len - 1);
-            MultiByteToWideChar(CP_UTF8, 0, response.preedit, -1, &preedit[0], len);
-        }
-
-        // Decode candidates
-        std::vector<std::wstring> candidate_texts;
-        for (uint32_t i = 0;
-            i < response.candidate_count && i < cxxime::kCandidateCapacity; ++i) {
-            int clen = MultiByteToWideChar(CP_UTF8, 0, response.candidates[i], -1, nullptr, 0);
-            if (clen > 0) {
-                std::wstring ct(clen - 1, L'\0');
-                MultiByteToWideChar(CP_UTF8, 0, response.candidates[i], -1, &ct[0], clen);
-                candidate_texts.push_back(std::move(ct));
-            }
-        }
-
-        const size_t preedit_cursor = cxxime_tsf::clamp_preedit_cursor(
-            response.preedit_cursor, preedit.size());
-        cxxime_tsf::UiPresentationBatch ui_presentation_batch(*this);
-        auto decision = cxxime_tsf::decide_preedit(
-            _config.inline_preedit, _config.preedit_type, preedit, preedit_cursor,
-            candidate_texts);
-
-        const bool ui_element_only =
-            (_activateFlags & TF_TMF_UIELEMENTENABLEDONLY) != 0;
-        const bool has_candidates = response.candidate_count > 0;
-        cxxime::CandidatePage page = _candidate_page_from_response(response);
-        std::string popup_preedit;
-        // CandidateListUIElement has no popup-preedit field. UIElement-only hosts therefore
-        // receive raw input through the composition; keep this mirror consistent with it.
-        if (ui_element_only || decision.show_preedit_in_popup) {
-            popup_preedit = response.preedit;
-        }
-        const bool has_preedit = !popup_preedit.empty();
-        _candidatePresentation.update_content(
-            page, popup_preedit, response.preedit_cursor, static_cast<int>(response.page_current),
-            static_cast<int>(response.page_total));
-        _sync_candidate_ui_element_snapshot();
-
-        CXXIME_LOG(L"_ProcessKeyEvent: start_comp=%d, _composing=%d, _composition=%d, inline='%s'",
-                   decision.start_composition, _composing, _composition != nullptr,
-                   decision.inline_text.c_str());
-
-        cxxime_tsf::trace_context(
-            trace_input_id(), trace_composition_id(), pic, _threadMgr,
-            ui_element_only ? "candidate_first_standard_tsf_compat" : "standard_tsf");
-
-        _caretRect = {};
-        bool external_candidate_window = true;
-        bool candidate_ui_published = false;
-        const bool composition_restart_was_active =
-            _candidatePresentation.composition_restart_active();
-        auto apply_composition = [&](const std::wstring& text, size_t cursor) {
-            if (commit_continues_composition) {
-                return _commit_then_restart_composition(pic, commit_text, text, cursor);
-            }
-            return update_composition(pic, text, cursor, true, TF_ES_SYNC);
-        };
-        HRESULT composition_result = S_OK;
-        if (ui_element_only) {
-            _end_reading_ui_element("hide:candidate_mirror_no_reading");
-            external_candidate_window = _publish_candidate_ui_element();
-            candidate_ui_published = true;
-            composition_result = apply_composition(preedit, preedit_cursor);
-        } else if (decision.start_composition) {
-            _update_reading_ui_element(pic, preedit);
-            composition_result = apply_composition(decision.inline_text, decision.inline_cursor);
-        } else {
-            _update_reading_ui_element(pic, preedit);
-            // Keep a popup-only TSF composition active so the host can terminate it
-            // consistently when its selection moves.
-            composition_result = apply_composition(L"", 0);
-        }
-        const bool composition_restart_failed =
-            composition_restart_was_active && FAILED(composition_result);
-        if (composition_restart_failed) {
-            handle_composition_restart_failure(_candidatePresentation.generation());
-        }
-        *pfEaten = TRUE;
-
-        CXXIME_LOG(L"_ProcessKeyEvent: has_cand=%d, has_preedit=%d, cand_count=%u",
-                   has_candidates, has_preedit, response.candidate_count);
-
-        auto window_start = std::chrono::steady_clock::now();
-
-        if (!composition_restart_failed && (has_candidates || has_preedit)) {
-            if (!candidate_ui_published) {
-                external_candidate_window = _publish_candidate_ui_element();
-            }
-            if (external_candidate_window) {
-                // Query the current caret before falling back to the cached rectangle. The cache may
-                // still point to the previous composition after a commit/new preedit boundary.
-                RECT caretRect = {};
-                bool caretResolved = false;
-                RECT trustedNativeRect = {};
-                bool hasTrustedNativeCaret =
-                    _resolve_context_native_caret_rect(pic, &trustedNativeRect);
-                EditSession* pCaretSession = new (std::nothrow) EditSession(this, pic);
-                if (pCaretSession) {
-                    pCaretSession->set_action(EditSession::Action::QUERY_CARET);
-                    HRESULT hr = E_FAIL;
-                    HRESULT request_hr = pic->RequestEditSession(_clientId, pCaretSession,
-                                                    TF_ES_READ | TF_ES_SYNC, &hr);
-                    if (SUCCEEDED(request_hr) && SUCCEEDED(hr))
-                        caretResolved = pCaretSession->get_caret_rect(caretRect);
-                    trace_caret_event("show_query", "sync_edit", caretResolved,
-                                      caretResolved ? &caretRect : nullptr,
-                                      FAILED(request_hr) ? request_hr : hr,
-                                      !caretResolved);
-                    pCaretSession->Release();
-                }
-                const bool wait_for_composition_layout =
-                    cxxime_tsf::should_wait_for_composition_layout(
-                    empty_composition_placeholder_active(), caretResolved,
-                    hasTrustedNativeCaret);
-                // The blank composition asks framework hosts to publish real layout. Do not show
-                // a generic Win32 fallback before that layout callback arrives.
-                // A native HWND caret can lag one paint after a synchronous commit. Retain a
-                // successful TSF selection result until the continuation composition catches up.
-                if (!caretResolved) {
-                    if (hasTrustedNativeCaret) {
-                        caretRect = trustedNativeRect;
-                        caretResolved = true;
-                    } else if (!wait_for_composition_layout) {
-                        caretRect = _resolve_caret_rect(pic);
-                        trace_caret_event("show_query", "fallback",
-                                          cxxime_tsf::is_valid_caret_rect(caretRect), &caretRect,
-                                          S_FALSE,
-                                          true);
-                        caretResolved = cxxime_tsf::is_valid_caret_rect(caretRect);
-                    }
-                } else if (hasTrustedNativeCaret && !commit_continues_composition) {
-                    caretRect = trustedNativeRect;
-                }
-
-                // Both TSF and HWND caret geometry can lag after a synchronous commit. Defer the
-                // continuation popup until the queued composition edit exposes its new position.
-                bool defer_show = commit_continues_composition ||
-                                  (!caretResolved && !hasTrustedNativeCaret);
-                if (defer_show) {
-                    const RECT* stale_rect = cxxime_tsf::is_valid_caret_rect(caretRect)
-                        ? &caretRect
-                        : nullptr;
-                    _candidatePresentation.begin_waiting_for_caret(
-                        commit_continues_composition, stale_rect,
-                        cxxime_tsf::CandidatePresentation::Clock::now());
-                    _publish_ui_presentation();
-                    _update_state_poll_timer();
-                    _request_candidate_position_update(pic, "show:preedit_layout_follow");
-                } else {
-                    _caretRect = caretRect;
-                    _candidatePresentation.accept_caret(_candidatePresentation.generation());
-                    trace_caret_event("show_move", "initial", true, &caretRect);
-                    _show_candidate_window("show:preedit");
-                    _request_candidate_position_update(pic, "show:preedit_layout_follow");
-                }
-            }
-        } else if (!composition_restart_failed) {
-            _hide_candidate_window("hide:no_candidates");
-        }
-
-        auto window_end = std::chrono::steady_clock::now();
-        _last_window_update_us = std::chrono::duration_cast<std::chrono::microseconds>(window_end - window_start).count();
-
-        trace.result = composition_restart_failed ? TsfResult::REJECTED : TsfResult::PREEDIT;
-        trace.candidate_count = response.candidate_count;
-        trace.preedit_len = (uint32_t)strlen(response.preedit);
-        trace.preedit_cursor = static_cast<uint32_t>(preedit_cursor);
-        trace.window_us = _last_window_update_us;
-
-        CXXIME_LOG(L"_ProcessKeyEvent: window_us=%lld, ipc_us=%lld", _last_window_update_us, _last_ipc_us);
-    } else if (!has_committed_text && response.status == cxxime::IPCStatus::OK) {
-        // Server accepted but no commit and no preedit (e.g. Escape cleared the buffer)
-        bool was_composing = _composing;
-        _hide_candidate_window("hide:clear");
-        _end_reading_ui_element("hide:clear_reading");
-        if (_composing && _composition) {
-            update_composition(pic, L"", 0);
-        }
-        _end_composition(pic);
-        _composing = false;
-        // Only eat the key if there was an active composition to clean up.
-        // Without this guard, keys like Backspace get eaten when not composing.
-        if (was_composing || response.key_handled)
-            *pfEaten = TRUE;
-        _lastInlineCompositionText.clear();
-        if (was_composing)
-            trace.result = TsfResult::CLEARED;
-        else if (response.key_handled)
-            trace.result = TsfResult::HANDLED;
-        else
-            trace.result = TsfResult::REJECTED;
-    } else if (!has_committed_text) {
-        trace.result = TsfResult::REJECTED;
-    }
+    _apply_engine_response(pic, response, pfEaten, &trace);
 
     // Finalize and enqueue trace (async, non-blocking)
     auto total_end = std::chrono::steady_clock::now();
@@ -589,9 +343,9 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
 
     cxxime_tsf::trace_key_result(
         trace_input_id(), trace_composition_id(), static_cast<uint32_t>(wParam), *pfEaten != FALSE,
-        response.preedit[0] ? strlen(response.preedit) : 0, response.preedit_cursor,
+        strnlen_s(response.preedit, sizeof(response.preedit)), response.preedit_cursor,
         response.candidate_count,
-        response.commit_text[0] ? strlen(response.commit_text) : 0, trace.result_string());
+        strnlen_s(response.commit_text, sizeof(response.commit_text)), trace.result_string());
 
     if (trace.result == TsfResult::COMMITTED || trace.result == TsfResult::CLEARED) {
         _reset_trace_composition(trace.result == TsfResult::COMMITTED ? "commit" : "clear");
@@ -644,117 +398,29 @@ bool TextService::_ProcessKeyUp(WPARAM wParam, LPARAM lParam) {
         trace_input_id(), trace_composition_id(), static_cast<uint32_t>(wParam), modifiers,
         engine_calls, ok ? "processed_key_up" : "ipc_failed_key_up");
 
-    CXXIME_LOG(L"_ProcessKeyUp: ok=%d, ascii_mode=%u, commit='%S', composing=%u",
-               ok, response.ascii_mode, response.commit_text, response.composing);
+    CXXIME_LOG(L"_ProcessKeyUp: ok=%d, ascii_mode=%u, commit_len=%u, composing=%u",
+               ok, response.ascii_mode,
+               static_cast<unsigned int>(strnlen_s(response.commit_text,
+                                         sizeof(response.commit_text))),
+               response.composing);
 
-    bool committed = false;
-    bool cleared = false;
+    BOOL eaten = FALSE;
     if (ok) {
-        if (response.status == cxxime::IPCStatus::OK ||
-            response.status == cxxime::IPCStatus::ERR_ENGINE_PROCESS_FAILED) {
-            _sync_ime_status(response.ime_status);
+        ITfContext* context = _current_edit_context_for_composition();
+        _apply_engine_response(context, response, &eaten);
+        if (context) {
+            context->Release();
         }
-        CXXIME_LOG(L"_ProcessKeyUp: _chinese_mode=%d, _composing=%d", _chinese_mode, _composing);
-
-        // Handle committed text from toggle (e.g. Shift with commit_text style)
-        if (response.commit_text[0] != '\0') {
-            std::wstring commit_text = utf8_to_wstring(response.commit_text);
-            if (!commit_text.empty()) {
-                ITfContext* pContext = _current_edit_context_for_composition();
-                if (pContext) {
-                    _commit_text(pContext, commit_text, true);
-                    pContext->Release();
-                } else {
-                    insert_text(commit_text, true);
-                }
-                _composing = false;
-                _lastInlineCompositionText.clear();
-                _hide_candidate_window("hide:key_up_commit");
-                _end_reading_ui_element("hide:key_up_commit_reading");
-                committed = true;
-            }
-            } else if (_candidatePresentation.has_candidates() && response.composing &&
-                       response.preedit[0] != '\0' && response.candidate_count == 0) {
-                // A modifier binding can convert an active IME/Symbol preedit to inline ASCII on
-                // key-up. Reapply the normal preedit policy while removing stale candidates.
-                const std::wstring preedit = utf8_to_wstring(response.preedit);
-                const size_t preedit_cursor =
-                    cxxime_tsf::clamp_preedit_cursor(response.preedit_cursor, preedit.size());
-                const std::vector<std::wstring> candidate_texts;
-                const auto decision = cxxime_tsf::decide_preedit(
-                    _config.inline_preedit, _config.preedit_type, preedit,
-                    preedit_cursor, candidate_texts);
-                const bool ui_element_only =
-                    (_activateFlags & TF_TMF_UIELEMENTENABLEDONLY) != 0;
-                const std::string popup_preedit =
-                    ui_element_only || decision.show_preedit_in_popup ? response.preedit : "";
-                cxxime_tsf::UiPresentationBatch ui_presentation_batch(*this);
-                _candidatePresentation.update_content(
-                    cxxime::CandidatePage(), popup_preedit, response.preedit_cursor, 0, 0);
-                _sync_candidate_ui_element_snapshot();
-
-                ITfContext* context = _current_edit_context_for_composition();
-                bool show_external = true;
-                if (ui_element_only) {
-                    _end_reading_ui_element("hide:key_up_inline_ascii_reading");
-                    show_external = _publish_candidate_ui_element();
-                    if (context) {
-                        update_composition(context, preedit, preedit_cursor, true, TF_ES_SYNC);
-                    }
-                } else {
-                    _update_reading_ui_element(context, preedit);
-                    if (context) {
-                        if (decision.start_composition) {
-                            update_composition(context, decision.inline_text,
-                                               decision.inline_cursor,
-                                               true, TF_ES_SYNC);
-                        } else {
-                            update_composition(context, L"", 0, true, TF_ES_SYNC);
-                        }
-                    }
-                    show_external = _publish_candidate_ui_element();
-                }
-                if (show_external) {
-                    _show_candidate_window("show:key_up_inline_ascii");
-                    if (context) {
-                        _request_candidate_position_update(
-                            context, "show:key_up_inline_ascii_layout_follow");
-                    }
-                }
-                if (context) {
-                    context->Release();
-                }
-            } else if (response.status == cxxime::IPCStatus::OK && _composing &&
-                       !response.composing) {
-                // CLEAR bindings run on modifier key-up. Mirror the normal key-down clear path so
-                // the TSF composition and its UI do not outlive the server-side composition.
-                _hide_candidate_window("hide:key_up_clear");
-                _end_reading_ui_element("hide:key_up_clear_reading");
-                ITfContext* context = _current_edit_context_for_composition();
-                if (context) {
-                    if (_composition) {
-                        update_composition(context, L"", 0);
-                    }
-                    _end_composition(context);
-                    context->Release();
-                }
-                _composing = false;
-                _lastInlineCompositionText.clear();
-                cleared = true;
-            }
     }
 
     const bool handled = ok && response.status == cxxime::IPCStatus::OK &&
-                         response.key_handled;
+                         (response.key_handled || eaten != FALSE);
     cxxime_tsf::trace_key_result(
         trace_input_id(), trace_composition_id(), static_cast<uint32_t>(wParam), handled,
-        response.preedit[0] ? strlen(response.preedit) : 0, response.preedit_cursor,
-        response.candidate_count, response.commit_text[0] ? strlen(response.commit_text) : 0,
-        committed ? "key_up_commit"
-                  : (cleared ? "key_up_clear" : (ok ? "key_up" : "key_up_failed")));
-    if (committed || cleared) {
-        _reset_trace_composition(committed ? "key_up_commit" : "key_up_clear");
-    }
+        strnlen_s(response.preedit, sizeof(response.preedit)), response.preedit_cursor,
+        response.candidate_count,
+        strnlen_s(response.commit_text, sizeof(response.commit_text)),
+        ok ? "key_up" : "key_up_failed");
     return handled;
 }
 

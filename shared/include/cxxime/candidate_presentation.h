@@ -28,9 +28,6 @@ inline std::string format_candidate_presentation(const CandidatePresentationItem
     if (!item.hint.empty()) {
         formatted.append("(").append(item.hint).append(")");
     }
-    if (!item.annotation.empty()) {
-        formatted.append(" [").append(item.annotation).append("]");
-    }
     return formatted;
 }
 

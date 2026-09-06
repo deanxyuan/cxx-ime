@@ -49,15 +49,17 @@ void fill_process_response(const ProcessKeyResult& result, cxxime::IPCResponse* 
     response->candidate_revision = result.candidate_revision;
 
     if (!result.commit_text.empty() &&
-        !response_copy_field(response->commit_text, sizeof(response->commit_text),
-                             result.commit_text)) {
+        (!is_valid_utf8_field(result.commit_text) ||
+         !response_copy_field(response->commit_text, sizeof(response->commit_text),
+                              result.commit_text))) {
         response->status = cxxime::IPCStatus::ERR_ENGINE_PROCESS_FAILED;
         return;
     }
     if (!result.composing) {
         return;
     }
-    if (!is_valid_utf8_field(result.preedit) ||
+    if (result.converted_prefix_bytes > result.preedit_cursor ||
+        !is_valid_utf8_field(result.preedit) ||
         !is_valid_utf8_offset(result.preedit, result.preedit_cursor) ||
         !is_valid_utf8_offset(result.preedit, result.converted_prefix_bytes) ||
         !response_copy_field(response->preedit, sizeof(response->preedit), result.preedit)) {
@@ -82,7 +84,8 @@ void fill_process_response(const ProcessKeyResult& result, cxxime::IPCResponse* 
 
     for (uint32_t index = 0; index < response->candidate_count; ++index) {
         const cxxime::CandidatePresentationItem& item = page.items[index];
-        if (!cxxime::candidate_text_fits(item.text) ||
+        if (!cxxime::candidate_text_fits(item.text) || !is_valid_utf8_field(item.text) ||
+            !is_valid_utf8_field(item.hint) ||
             !response_copy_field(response->candidates[index], sizeof(response->candidates[index]),
                                  item.text) ||
             (!item.hint.empty() &&

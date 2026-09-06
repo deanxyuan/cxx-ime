@@ -120,7 +120,7 @@ public:
 
     // Helper
     HRESULT insert_text(const std::wstring& text, bool sync = false);
-    bool select_candidate_from_ui(UINT index);
+    bool select_candidate_from_ui(UINT index, uint64_t candidate_revision);
     bool navigate_candidate_page_from_ui(bool previous);
     void abort_candidate_ui_from_tsf();
     HRESULT finalize_exact_candidate_ui_from_tsf();
@@ -141,8 +141,12 @@ public:
                                const std::wstring& preedit,
                                size_t preedit_cursor,
                                bool ensure = false,
-                               DWORD edit_session_mode = TF_ES_ASYNCDONTCARE);
-    bool apply_composition_display_attribute(ITfContext* pic, ITfRange* range, TfEditCookie ec);
+                               DWORD edit_session_mode = TF_ES_ASYNCDONTCARE,
+                               size_t converted_prefix_utf16 = 0);
+    bool apply_composition_display_attributes(ITfContext* pic,
+                                              ITfRange* range,
+                                              TfEditCookie ec,
+                                              size_t converted_prefix_utf16);
     ITfComposition* get_composition() const { return _composition; }
     void set_composition(ITfComposition* comp) { _composition = comp; }
     ITfContext* get_composition_context() const { return _compositionContext; }
@@ -216,12 +220,17 @@ private:
     HRESULT _register_preserved_key();
     HRESULT _unregister_preserved_key();
     bool _register_display_attribute_atom();
-    HRESULT _end_composition(ITfContext* pic);
+    HRESULT _end_composition(ITfContext* pic, bool sync = false);
     HRESULT _commit_text(ITfContext* pic, const std::wstring& text, bool sync = false);
     HRESULT _commit_then_restart_composition(ITfContext* pic,
                                              const std::wstring& commit_text,
                                              const std::wstring& preedit,
-                                             size_t preedit_cursor);
+                                             size_t preedit_cursor,
+                                             size_t converted_prefix_utf16);
+    bool _apply_engine_response(ITfContext* context,
+                                const cxxime::IPCResponse& response,
+                                BOOL* eaten,
+                                TsfTrace* trace = nullptr);
     bool _ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam, BOOL* pfEaten);
     bool _ProcessKeyUp(WPARAM wParam, LPARAM lParam);
     void _AbortComposition();
@@ -295,8 +304,6 @@ private:
     bool _publish_candidate_ui_element();
     void _sync_candidate_ui_element_snapshot();
     cxxime::CandidateUiContext _candidate_ui_context() const;
-    static cxxime::CandidatePage _candidate_page_from_response(
-        const cxxime::IPCResponse& response);
     static std::wstring utf8_to_wstring(const char* text);
     void _start_host_compatibility_runtime();
     void _stop_host_compatibility_runtime();
@@ -314,7 +321,7 @@ private:
     bool _start_ui_presentation_channel();
     void _stop_ui_presentation_channel();
     void _publish_ui_presentation();
-    bool _present_local_candidate_window(const cxxime::CandidatePage& page,
+    bool _present_local_candidate_window(const cxxime::CandidatePresentationPage& page,
                                          int page_current,
                                          int page_total,
                                          const std::string& preedit,
@@ -339,6 +346,7 @@ private:
     DWORD _dwTextEditSinkCookie = TF_INVALID_COOKIE;
     DWORD _dwTextLayoutSinkCookie = TF_INVALID_COOKIE;
     TfGuidAtom _displayAttributeAtom = 0;
+    TfGuidAtom _convertedDisplayAttributeAtom = 0;
     ITfContext* _textEditSinkContext = nullptr;
     ITfContext* _textLayoutSinkContext = nullptr;
     ITfDocumentMgr* _effectiveDocumentMgr = nullptr;

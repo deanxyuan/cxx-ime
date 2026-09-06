@@ -283,7 +283,7 @@ TEST(CandidatePresentation, zero_content_invalidates_previous_page) {
     presentation.update_content(cxxime::CandidatePage(), "", 0, 8, 9);
 
     ASSERT_EQ(presentation.content_state(), cxxime_tsf::CandidateContentState::kEmpty);
-    ASSERT_TRUE(presentation.page().candidates.empty());
+    ASSERT_TRUE(presentation.page().items.empty());
     ASSERT_EQ(presentation.page_current(), 0);
     ASSERT_EQ(presentation.page_total(), 0);
     ASSERT_EQ(presentation.ownership(), cxxime_tsf::CandidateOwnership::kNone);
@@ -301,6 +301,25 @@ TEST(CandidatePresentation, popup_preedit_is_presentable_without_candidates) {
     ASSERT_TRUE(presentation.external_window_expected());
 }
 
+TEST(CandidatePresentation, preserves_revision_converted_prefix_and_annotation) {
+    cxxime::CandidatePresentationPage page;
+    cxxime::CandidatePresentationItem item;
+    item.text = "candidate";
+    item.hint = "/rs";
+    item.annotation = "remaining";
+    page.items.push_back(item);
+
+    cxxime_tsf::CandidatePresentation presentation;
+    presentation.update_content(page, "prefix-code", 11, 6, 42, 1, 1);
+
+    ASSERT_EQ(presentation.candidate_revision(), static_cast<std::uint64_t>(42));
+    ASSERT_EQ(presentation.converted_prefix_bytes(), static_cast<std::size_t>(6));
+    ASSERT_EQ(presentation.page().items[0].hint, std::string("/rs"));
+    ASSERT_EQ(presentation.page().items[0].annotation, std::string("remaining"));
+    ASSERT_EQ(cxxime::format_candidate_presentation(presentation.page().items[0]),
+              std::string("candidate(/rs)"));
+}
+
 TEST(CandidatePresentation, candidate_to_popup_preedit_transition_keeps_presentation) {
     cxxime_tsf::CandidatePresentation presentation;
     presentation.update_content(page_with_candidate("stale"), "old", 3, 1, 1);
@@ -309,7 +328,7 @@ TEST(CandidatePresentation, candidate_to_popup_preedit_transition_keeps_presenta
     presentation.update_content(cxxime::CandidatePage(), "raw", 3, 0, 0);
 
     ASSERT_EQ(presentation.content_state(), cxxime_tsf::CandidateContentState::kPreeditOnly);
-    ASSERT_TRUE(presentation.page().candidates.empty());
+    ASSERT_TRUE(presentation.page().items.empty());
     ASSERT_EQ(presentation.popup_preedit(), "raw");
     ASSERT_EQ(presentation.popup_preedit_cursor(), static_cast<std::size_t>(3));
     ASSERT_TRUE(presentation.external_window_expected());
@@ -327,7 +346,7 @@ TEST(CandidatePresentation, finish_clears_all_presentation_state) {
     ASSERT_EQ(presentation.content_state(), cxxime_tsf::CandidateContentState::kEmpty);
     ASSERT_EQ(presentation.ownership(), cxxime_tsf::CandidateOwnership::kNone);
     ASSERT_EQ(presentation.position_state(), cxxime_tsf::CandidatePositionState::kReady);
-    ASSERT_TRUE(presentation.page().candidates.empty());
+    ASSERT_TRUE(presentation.page().items.empty());
     ASSERT_EQ(presentation.page_current(), 0);
     ASSERT_EQ(presentation.page_total(), 0);
 }

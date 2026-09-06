@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <string>
+#include <utility>
 
 #include <dwmapi.h>
 
@@ -476,6 +477,23 @@ void CandidateWindow::rebuild_render_context(const LayoutConfig& cfg, int window
             render_ctx_.page_indicator_rect = {};
         }
     }
+}
+
+void CandidateWindow::update(const CandidatePresentationPage& presentation) {
+    CandidatePage page;
+    page.page_index = presentation.page_index;
+    page.page_offset = presentation.page_offset;
+    page.page_size = presentation.page_size;
+    page.total_count = presentation.total_count;
+    page.highlighted = presentation.highlighted;
+    page.candidates.reserve(presentation.items.size());
+    for (const CandidatePresentationItem& item : presentation.items) {
+        Candidate candidate;
+        candidate.text = item.text;
+        candidate.comment = item.hint;
+        page.candidates.push_back(std::move(candidate));
+    }
+    update(page);
 }
 
 void CandidateWindow::update(const CandidatePage& page) {

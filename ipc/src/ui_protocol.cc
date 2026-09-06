@@ -46,6 +46,52 @@ bool valid_command_type(UiCommandType type) {
            type <= UiCommandType::kRefreshInputIndicator;
 }
 
+bool is_valid_utf8(const char* value, std::size_t length) {
+    std::size_t offset = 0;
+    while (offset < length) {
+        const unsigned char lead = static_cast<unsigned char>(value[offset]);
+        std::size_t sequence_length = 0;
+        std::uint32_t code_point = 0;
+        if (lead <= 0x7f) {
+            sequence_length = 1;
+            code_point = lead;
+        } else if (lead >= 0xc2 && lead <= 0xdf) {
+            sequence_length = 2;
+            code_point = lead & 0x1f;
+        } else if (lead >= 0xe0 && lead <= 0xef) {
+            sequence_length = 3;
+            code_point = lead & 0x0f;
+        } else if (lead >= 0xf0 && lead <= 0xf4) {
+            sequence_length = 4;
+            code_point = lead & 0x07;
+        } else {
+            return false;
+        }
+        if (offset + sequence_length > length) {
+            return false;
+        }
+        for (std::size_t index = 1; index < sequence_length; ++index) {
+            const unsigned char continuation = static_cast<unsigned char>(value[offset + index]);
+            if ((continuation & 0xc0) != 0x80) {
+                return false;
+            }
+            code_point = (code_point << 6) | (continuation & 0x3f);
+        }
+        if ((sequence_length == 3 && code_point < 0x800) ||
+            (sequence_length == 4 && code_point < 0x10000) ||
+            (code_point >= 0xd800 && code_point <= 0xdfff) || code_point > 0x10ffff) {
+            return false;
+        }
+        offset += sequence_length;
+    }
+    return true;
+}
+
+bool is_utf8_boundary(const char* value, std::size_t length, std::size_t offset) {
+    return offset <= length && (offset == 0 || offset == length ||
+                                (static_cast<unsigned char>(value[offset]) & 0xc0) != 0x80);
+}
+
 template <typename Payload>
 UiPacketParseResult decode_packet(const void* data, std::size_t size, UiPacketType type,
                                   std::size_t baseline_size, Payload* payload) {
@@ -126,6 +172,7 @@ bool build_ui_command_packet(const UiCommand& command, std::uint64_t sequence,
     normalized.type = command.type;
     normalized.candidate_index = command.candidate_index;
     normalized.value = command.value;
+    normalized.candidate_revision = command.candidate_revision;
     return build_packet(UiPacketType::kCommand, normalized, sequence, packet);
 }
 
@@ -160,6 +207,13 @@ bool is_valid_ui_snapshot(const UiPresentationSnapshot& snapshot) {
         (snapshot.flags & ~kKnownSnapshotFlags) != 0 || !valid_ownership(snapshot.ownership) ||
         snapshot.preedit_length > static_cast<std::uint32_t>(kUiPreeditCapacity) ||
         snapshot.preedit_cursor > snapshot.preedit_length ||
+        snapshot.converted_prefix_bytes > snapshot.preedit_cursor ||
+        snapshot.converted_prefix_bytes > snapshot.preedit_length ||
+        !is_valid_utf8(snapshot.preedit, snapshot.preedit_length) ||
+        !is_utf8_boundary(snapshot.preedit, snapshot.preedit_length,
+                          snapshot.preedit_cursor) ||
+        !is_utf8_boundary(snapshot.preedit, snapshot.preedit_length,
+                          snapshot.converted_prefix_bytes) ||
         snapshot.candidate_page.count > static_cast<std::uint32_t>(kCandidateCapacity)) {
         return false;
     }
@@ -171,7 +225,15 @@ bool is_valid_ui_snapshot(const UiPresentationSnapshot& snapshot) {
         const UiCandidate& candidate = snapshot.candidate_page.candidates[index];
         if (candidate.text_length == 0 ||
             candidate.text_length > static_cast<std::uint32_t>(kCandidateTextCapacity) ||
-            candidate.hint_length > static_cast<std::uint32_t>(kUiCandidateHintCapacity)) {
+            candidate.hint_length > static_cast<std::uint32_t>(kUiCandidateHintCapacity) ||
+            !is_valid_utf8(candidate.text, candidate.text_length) ||
+            !is_valid_utf8(candidate.hint, candidate.hint_length)) {
+            return false;
+        }
+        const std::size_t annotation_length = strnlen_s(
+            snapshot.candidate_annotations[index], kCandidateAnnotationCapacity);
+        if (annotation_length == kCandidateAnnotationCapacity ||
+            !is_valid_utf8(snapshot.candidate_annotations[index], annotation_length)) {
             return false;
         }
     }

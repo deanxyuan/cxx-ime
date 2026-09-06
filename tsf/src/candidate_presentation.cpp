@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <utility>
 
 namespace cxxime_tsf {
 
@@ -15,11 +16,31 @@ bool same_caret_position(const RECT& left, const RECT& right) {
            std::abs(left.top - right.top) <= kTolerancePx;
 }
 
+cxxime::CandidatePresentationPage project_candidate_page(const cxxime::CandidatePage& page) {
+    cxxime::CandidatePresentationPage presentation;
+    presentation.page_index = page.page_index;
+    presentation.page_offset = page.page_offset;
+    presentation.page_size = page.page_size;
+    presentation.total_count = page.total_count;
+    presentation.highlighted = page.highlighted;
+    presentation.items.reserve(page.candidates.size());
+    for (const cxxime::Candidate& candidate : page.candidates) {
+        cxxime::CandidatePresentationItem item;
+        item.text = candidate.text;
+        item.hint = candidate.comment;
+        presentation.items.push_back(std::move(item));
+    }
+    return presentation;
+}
+
 } // namespace
 
-void CandidatePresentation::update_content(const cxxime::CandidatePage& page,
+void CandidatePresentation::update_content(const cxxime::CandidatePresentationPage& page,
                                            const std::string& popup_preedit,
-                                           std::size_t popup_preedit_cursor, int page_current,
+                                           std::size_t popup_preedit_cursor,
+                                           std::size_t converted_prefix_bytes,
+                                           std::uint64_t candidate_revision,
+                                           int page_current,
                                            int page_total) {
     advance_generation();
     page_ = page;
@@ -27,8 +48,10 @@ void CandidatePresentation::update_content(const cxxime::CandidatePage& page,
     page_total_ = page_total;
     popup_preedit_ = popup_preedit;
     popup_preedit_cursor_ = (std::min)(popup_preedit_cursor, popup_preedit_.size());
+    converted_prefix_bytes_ = (std::min)(converted_prefix_bytes, popup_preedit_.size());
+    candidate_revision_ = candidate_revision;
 
-    if (!page_.candidates.empty()) {
+    if (!page_.items.empty()) {
         content_state_ = CandidateContentState::kCandidates;
     } else if (!popup_preedit_.empty()) {
         content_state_ = CandidateContentState::kPreeditOnly;
@@ -41,9 +64,20 @@ void CandidatePresentation::update_content(const cxxime::CandidatePage& page,
     }
 }
 
-void CandidatePresentation::update_page(const cxxime::CandidatePage& page, int page_current,
+void CandidatePresentation::update_content(const cxxime::CandidatePage& page,
+                                           const std::string& popup_preedit,
+                                           std::size_t popup_preedit_cursor, int page_current,
+                                           int page_total) {
+    update_content(project_candidate_page(page), popup_preedit, popup_preedit_cursor, 0, 0,
+                   page_current, page_total);
+}
+
+void CandidatePresentation::update_page(const cxxime::CandidatePresentationPage& page,
+                                        std::uint64_t candidate_revision,
+                                        int page_current,
                                         int page_total) {
-    update_content(page, popup_preedit_, popup_preedit_cursor_, page_current, page_total);
+    update_content(page, popup_preedit_, popup_preedit_cursor_, converted_prefix_bytes_,
+                   candidate_revision, page_current, page_total);
 }
 
 void CandidatePresentation::set_ownership(CandidateOwnership ownership) {
@@ -73,7 +107,7 @@ void CandidatePresentation::set_presenter(CandidatePresenter presenter) {
 
 void CandidatePresentation::set_local_visible_candidate_count(std::size_t count) {
     local_visible_candidate_count_ = presenter_ == CandidatePresenter::kLocal
-                                         ? (std::min)(count, page_.candidates.size())
+                                         ? (std::min)(count, page_.items.size())
                                          : 0;
 }
 
@@ -179,6 +213,8 @@ void CandidatePresentation::finish() {
     page_total_ = 0;
     popup_preedit_.clear();
     popup_preedit_cursor_ = 0;
+    converted_prefix_bytes_ = 0;
+    candidate_revision_ = 0;
     reset_position_state();
 }
 

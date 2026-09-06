@@ -93,6 +93,10 @@ struct UiPresentationSnapshot {
     std::uint32_t preedit_length = 0;
     char preedit[kUiPreeditCapacity] = {};
     UiCandidatePage candidate_page;
+    // Fields after candidate_page form the 0.5 append-only extension.
+    std::uint64_t candidate_revision = 0;
+    std::uint32_t converted_prefix_bytes = 0;
+    char candidate_annotations[kCandidateCapacity][kCandidateAnnotationCapacity] = {};
 };
 
 enum class UiCommandType : std::uint32_t {
@@ -123,6 +127,8 @@ struct UiCommand {
     UiCommandType type = UiCommandType::kNone;
     std::uint32_t candidate_index = 0;
     std::uint32_t value = 0;
+    // Fields after value form the 0.5 append-only extension.
+    std::uint64_t candidate_revision = 0;
 };
 
 #pragma pack(push, 1)
@@ -153,11 +159,15 @@ static_assert(offsetof(UiPresentationSnapshot, preedit) == 96,
               "UiPresentationSnapshot::preedit offset changed");
 static_assert(offsetof(UiPresentationSnapshot, candidate_page) == 352,
               "UiPresentationSnapshot::candidate_page offset changed");
+static_assert(offsetof(UiPresentationSnapshot, candidate_revision) == UI_SNAPSHOT_BASELINE_SIZE,
+              "UiPresentationSnapshot 0.5 extension moved into the 0.4 baseline");
 static_assert(sizeof(UiPresentationSnapshot) >= UI_SNAPSHOT_BASELINE_SIZE,
               "UiPresentationSnapshot cannot shrink below the 0.4.0 baseline");
 static_assert(alignof(UiCommand) == 8, "UiCommand alignment changed");
 static_assert(offsetof(UiCommand, type) == 40, "UiCommand::type offset changed");
 static_assert(offsetof(UiCommand, value) == 48, "UiCommand::value offset changed");
+static_assert(offsetof(UiCommand, candidate_revision) == UI_COMMAND_BASELINE_SIZE,
+              "UiCommand 0.5 extension moved into the 0.4 baseline");
 static_assert(sizeof(UiCommand) >= UI_COMMAND_BASELINE_SIZE,
               "UiCommand cannot shrink below the 0.4.0 baseline");
 static_assert(offsetof(UiPacketHeader, sequence) == 12, "UiPacketHeader::sequence offset changed");

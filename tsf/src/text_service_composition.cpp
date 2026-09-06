@@ -2,6 +2,7 @@
 
 #include "text_service.h"
 
+#include <climits>
 #include <new>
 
 #include <cxxime/logging.h>
@@ -177,9 +178,10 @@ HRESULT TextService::_commit_text(ITfContext* context,
 }
 
 HRESULT TextService::_commit_then_restart_composition(ITfContext* context,
-                                                       const std::wstring& commit_text,
-                                                       const std::wstring& preedit,
-                                                       size_t preedit_cursor) {
+                                                      const std::wstring& commit_text,
+                                                      const std::wstring& preedit,
+                                                      size_t preedit_cursor,
+                                                      size_t converted_prefix_utf16) {
     if (!context || commit_text.empty()) {
         return E_INVALIDARG;
     }
@@ -190,7 +192,8 @@ HRESULT TextService::_commit_then_restart_composition(ITfContext* context,
 
     // Let the host finish applying the committed selection before starting a popup-only
     // composition, which can legitimately contain no inline text.
-    return update_composition(context, preedit, preedit_cursor, true, TF_ES_ASYNCDONTCARE);
+    return update_composition(context, preedit, preedit_cursor, true, TF_ES_ASYNCDONTCARE,
+                              converted_prefix_utf16);
 }
 
 void TextService::handle_composition_restart_success(uint64_t expected_generation) {
@@ -225,7 +228,8 @@ HRESULT TextService::update_composition(ITfContext* context,
                                          const std::wstring& preedit,
                                          size_t preedit_cursor,
                                          bool ensure,
-                                         DWORD edit_session_mode) {
+                                         DWORD edit_session_mode,
+                                         size_t converted_prefix_utf16) {
     if (!context) {
         return E_POINTER;
     }
@@ -241,7 +245,7 @@ HRESULT TextService::update_composition(ITfContext* context,
     edit_session->set_composition_action(
         ensure ? EditSession::Action::ENSURE_COMPOSITION_TEXT
                : EditSession::Action::UPDATE_COMPOSITION,
-        preedit, preedit_cursor);
+        preedit, preedit_cursor, converted_prefix_utf16);
     if (ensure) {
         edit_session->set_candidate_presentation_request(
             _candidatePresentation.generation(), _effectiveEditTarget.context_identity);
@@ -291,9 +295,10 @@ HRESULT TextService::update_composition(ITfContext* context,
     return action_hr;
 }
 
-bool TextService::apply_composition_display_attribute(ITfContext* context,
+bool TextService::apply_composition_display_attributes(ITfContext* context,
                                                        ITfRange* range,
-                                                       TfEditCookie edit_cookie) {
+                                                       TfEditCookie edit_cookie,
+                                                       size_t converted_prefix_utf16) {
     if (!context || !range || !_displayAttributeAtom) {
         return false;
     }
@@ -304,23 +309,51 @@ bool TextService::apply_composition_display_attribute(ITfContext* context,
         return false;
     }
 
-    VARIANT value = {};
-    VariantInit(&value);
-    value.vt = VT_I4;
-    value.lVal = _displayAttributeAtom;
-    result = property->SetValue(edit_cookie, range, &value);
-    VariantClear(&value);
+    auto apply_atom = [&](ITfRange* target, TfGuidAtom atom) {
+        VARIANT value = {};
+        VariantInit(&value);
+        value.vt = VT_I4;
+        value.lVal = atom;
+        const HRESULT set_result = property->SetValue(edit_cookie, target, &value);
+        VariantClear(&value);
+        return set_result;
+    };
+    result = apply_atom(range, _displayAttributeAtom);
+    if (SUCCEEDED(result) && converted_prefix_utf16 > 0 && _convertedDisplayAttributeAtom) {
+        if (converted_prefix_utf16 > LONG_MAX) {
+            result = E_INVALIDARG;
+        } else {
+            ITfRange* converted_range = nullptr;
+            result = range->Clone(&converted_range);
+            if (SUCCEEDED(result) && converted_range) {
+                result = converted_range->Collapse(edit_cookie, TF_ANCHOR_START);
+                LONG shifted = 0;
+                if (SUCCEEDED(result)) {
+                    result = converted_range->ShiftEnd(
+                        edit_cookie, static_cast<LONG>(converted_prefix_utf16), &shifted, nullptr);
+                }
+                if (SUCCEEDED(result) &&
+                    shifted != static_cast<LONG>(converted_prefix_utf16)) {
+                    result = E_INVALIDARG;
+                }
+                if (SUCCEEDED(result)) {
+                    result = apply_atom(converted_range, _convertedDisplayAttributeAtom);
+                }
+                converted_range->Release();
+            }
+        }
+    }
     property->Release();
 
     if (FAILED(result)) {
-        CXXIME_LOG(L"Set composition display attribute failed: hr=0x%08x", result);
+        CXXIME_LOG(L"Set composition display attributes failed: hr=0x%08x", result);
         return false;
     }
     return true;
 }
 
-HRESULT TextService::_end_composition(ITfContext* context) {
-    if (!_composing || !_composition) {
+HRESULT TextService::_end_composition(ITfContext* context, bool sync) {
+    if (!_composition) {
         return S_OK;
     }
     if (!context) {
@@ -332,14 +365,29 @@ HRESULT TextService::_end_composition(ITfContext* context) {
         return E_OUTOFMEMORY;
     }
 
-    edit_session->set_action(EditSession::Action::END_COMPOSITION);
+    ITfComposition* composition = _composition;
+    edit_session->set_end_composition_action(composition);
 
     HRESULT edit_hr = E_FAIL;
-    context->RequestEditSession(
-        _clientId, edit_session, TF_ES_READWRITE | TF_ES_ASYNC, &edit_hr);
+    const DWORD mode = sync ? TF_ES_SYNC : TF_ES_ASYNC;
+    HRESULT request_hr =
+        context->RequestEditSession(_clientId, edit_session, TF_ES_READWRITE | mode, &edit_hr);
+    if (sync && FAILED(request_hr)) {
+        edit_hr = E_FAIL;
+        request_hr = context->RequestEditSession(
+            _clientId, edit_session, TF_ES_READWRITE | TF_ES_ASYNCDONTCARE, &edit_hr);
+    }
 
     edit_session->Release();
-    return edit_hr;
+    if (_composition == composition) {
+        _composition = nullptr;
+        set_composition_context(nullptr);
+        _composing = false;
+        _emptyCompositionPlaceholderActive = false;
+        _lastInlineCompositionText.clear();
+        composition->Release();
+    }
+    return FAILED(request_hr) ? request_hr : edit_hr;
 }
 
 void TextService::_AbortComposition() {

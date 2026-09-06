@@ -458,10 +458,15 @@ HRESULT get_or_create_composition_range(TextService* service,
 HRESULT clear_and_end_composition(TextService* service,
                                   ITfContext* context,
                                   TfEditCookie ec,
-                                  const std::wstring* commit_text) {
-    ITfComposition* composition = service ? service->get_composition() : nullptr;
+                                  const std::wstring* commit_text,
+                                  ITfComposition* expected_composition = nullptr) {
+    ITfComposition* composition =
+        expected_composition ? expected_composition
+                             : (service ? service->get_composition() : nullptr);
     if (!service || !composition)
         return E_INVALIDARG;
+
+    const bool current_composition = service->get_composition() == composition;
 
     HRESULT action_result = S_OK;
     ITfRange* committed_end = nullptr;
@@ -486,16 +491,19 @@ HRESULT clear_and_end_composition(TextService* service,
         action_result = FAILED(hr) ? hr : E_FAIL;
     }
 
-    service->set_composition(nullptr);
-    service->set_composition_context(nullptr);
-    service->set_composing(false);
-    service->set_empty_composition_placeholder_active(false);
-    service->set_applied_inline_composition_text(L"");
+    if (current_composition) {
+        service->set_composition(nullptr);
+        service->set_composition_context(nullptr);
+        service->set_composing(false);
+        service->set_empty_composition_placeholder_active(false);
+        service->set_applied_inline_composition_text(L"");
+    }
     hr = composition->EndComposition(ec);
     if (SUCCEEDED(action_result) && FAILED(hr)) {
         action_result = hr;
     }
-    composition->Release();
+    if (current_composition)
+        composition->Release();
 
     // EndComposition can reset the host selection. Apply the committed caret afterwards.
     if (SUCCEEDED(action_result) && committed_end) {
@@ -510,7 +518,8 @@ HRESULT clear_and_end_composition(TextService* service,
 
 HRESULT apply_composition_text(TextService* service, ITfContext* context, TfEditCookie ec,
                                ITfRange* range, const std::wstring& text, size_t selection_offset,
-                               bool has_selection_offset, bool composition_started) {
+                               bool has_selection_offset, size_t converted_prefix_utf16,
+                               bool composition_started) {
     if (!service || !context || !range) {
         return E_INVALIDARG;
     }
@@ -540,7 +549,8 @@ HRESULT apply_composition_text(TextService* service, ITfContext* context, TfEdit
     service->set_applied_inline_composition_text(text);
 
     set_composition_language(context, ec, range);
-    service->apply_composition_display_attribute(context, range, ec);
+    service->apply_composition_display_attributes(
+        context, range, ec, converted_prefix_utf16);
     result = has_selection_offset
         ? set_selection_to_range_offset(context, ec, range, selection_offset)
         : set_selection_to_range(context, ec, range);
@@ -587,6 +597,8 @@ EditSession::EditSession(TextService* service, ITfContext* context)
 }
 
 EditSession::~EditSession() {
+    if (_expectedComposition)
+        _expectedComposition->Release();
     if (_context)
         _context->Release();
     if (_service)
@@ -618,29 +630,44 @@ STDMETHODIMP_(ULONG) EditSession::Release() {
 }
 
 void EditSession::set_action(Action action, const std::wstring& text) {
+    if (_expectedComposition) {
+        _expectedComposition->Release();
+        _expectedComposition = nullptr;
+    }
     _action = action;
     _text = text;
     _selectionOffset = 0;
     _hasSelectionOffset = false;
+    _convertedPrefixUtf16 = 0;
     _actionResult = E_PENDING;
     _compositionStartAttempted = false;
     _compositionStartResult = E_PENDING;
     _compositionReturned = false;
 }
 
+void EditSession::set_end_composition_action(ITfComposition* composition) {
+    set_action(Action::END_COMPOSITION);
+    _expectedComposition = composition;
+    if (_expectedComposition)
+        _expectedComposition->AddRef();
+}
+
 void EditSession::set_composition_action(Action action, const std::wstring& text,
-                                         size_t selection_offset) {
+                                         size_t selection_offset,
+                                         size_t converted_prefix_utf16) {
     set_action(action, text);
     _selectionOffset = selection_offset;
     _hasSelectionOffset = true;
+    _convertedPrefixUtf16 = converted_prefix_utf16;
 }
 
 STDMETHODIMP EditSession::DoEditSession(TfEditCookie ec) {
     if (_action == Action::INSERT_TEXT && !_text.empty()) {
         _actionResult = insert_at_selection(_context, ec, _text);
-    } else if (_action == Action::END_COMPOSITION) {
-        _actionResult = clear_and_end_composition(_service, _context, ec, nullptr);
-    } else if (_action == Action::UPDATE_COMPOSITION) {
+} else if (_action == Action::END_COMPOSITION) {
+        _actionResult = clear_and_end_composition(
+            _service, _context, ec, nullptr, _expectedComposition);
+} else if (_action == Action::UPDATE_COMPOSITION) {
         ITfComposition* pComp = _service->get_composition();
         ITfRange* pRange = nullptr;
         _actionResult = pComp ? pComp->GetRange(&pRange) : E_UNEXPECTED;
@@ -650,7 +677,8 @@ STDMETHODIMP EditSession::DoEditSession(TfEditCookie ec) {
             if (SUCCEEDED(_actionResult)) {
                 _service->set_applied_inline_composition_text(_text);
                 set_composition_language(_context, ec, pRange);
-                _service->apply_composition_display_attribute(_context, pRange, ec);
+                _service->apply_composition_display_attributes(
+                    _context, pRange, ec, _convertedPrefixUtf16);
                 _actionResult = _hasSelectionOffset
                     ? set_selection_to_range_offset(
                         _context, ec, pRange, _selectionOffset)
@@ -681,7 +709,8 @@ STDMETHODIMP EditSession::DoEditSession(TfEditCookie ec) {
             if (SUCCEEDED(_actionResult) && range) {
                 _actionResult = apply_composition_text(
                     _service, _context, ec, range, _text, _selectionOffset,
-                    _hasSelectionOffset, _compositionStartAttempted);
+                    _hasSelectionOffset, _convertedPrefixUtf16,
+                    _compositionStartAttempted);
                 range->Release();
             }
             if (SUCCEEDED(_actionResult)) {

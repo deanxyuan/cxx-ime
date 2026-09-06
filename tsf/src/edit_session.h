@@ -32,9 +32,11 @@ public:
         UPDATE_CANDIDATE_POSITION
     };
     void set_action(Action action, const std::wstring& text = L"");
+    void set_end_composition_action(ITfComposition* composition);
     void set_composition_action(Action action,
                                 const std::wstring& text,
-                                size_t selection_offset);
+                                size_t selection_offset,
+                                size_t converted_prefix_utf16 = 0);
     void set_position_update_from_layout_change(bool from_layout_change) {
         _positionUpdateFromLayoutChange = from_layout_change;
     }
@@ -58,10 +60,12 @@ private:
     LONG _cRef = 1;
     TextService* _service;
     ITfContext* _context;
+    ITfComposition* _expectedComposition = nullptr;
     Action _action = Action::INSERT_TEXT;
     std::wstring _text;
     size_t _selectionOffset = 0;
     bool _hasSelectionOffset = false;
+    size_t _convertedPrefixUtf16 = 0;
     RECT _resultRect = {};
     bool _resultValid = false;
     bool _positionUpdateFromLayoutChange = false;

@@ -366,10 +366,18 @@ bool TextService::_register_display_attribute_atom() {
         return false;
 
     hr = category_mgr->RegisterGUID(c_guidDisplayAttribute, &_displayAttributeAtom);
-    category_mgr->Release();
     if (FAILED(hr)) {
         _displayAttributeAtom = 0;
+        category_mgr->Release();
         CXXIME_LOG(L"Register display attribute atom failed: hr=0x%08x", hr);
+        return false;
+    }
+    hr = category_mgr->RegisterGUID(
+        c_guidConvertedDisplayAttribute, &_convertedDisplayAttributeAtom);
+    category_mgr->Release();
+    if (FAILED(hr)) {
+        _convertedDisplayAttributeAtom = 0;
+        CXXIME_LOG(L"Register converted display attribute atom failed: hr=0x%08x", hr);
         return false;
     }
 
@@ -391,7 +399,12 @@ STDMETHODIMP TextService::GetDisplayAttributeInfo(REFGUID rguid,
     *ppInfo = nullptr;
 
     if (IsEqualGUID(rguid, c_guidDisplayAttribute)) {
-        auto* pInfo = new (std::nothrow) ::DisplayAttributeInfo();
+        auto* pInfo = new (std::nothrow) ::DisplayAttributeInfo(rguid, TF_ATTR_INPUT);
+        *ppInfo = pInfo;
+        return pInfo ? S_OK : E_OUTOFMEMORY;
+    }
+    if (IsEqualGUID(rguid, c_guidConvertedDisplayAttribute)) {
+        auto* pInfo = new (std::nothrow) ::DisplayAttributeInfo(rguid, TF_ATTR_CONVERTED);
         *ppInfo = pInfo;
         return pInfo ? S_OK : E_OUTOFMEMORY;
     }

@@ -4,9 +4,12 @@
 #define CXXIME_TSF_CANDIDATE_UI_ELEMENT_H_
 
 #include "pch.h"
-#include <cxxime/candidate.h>
+
+#include <cstdint>
 #include <string>
 #include <vector>
+
+#include <cxxime/candidate_presentation.h>
 
 class TextService;
 
@@ -53,7 +56,10 @@ public:
     STDMETHODIMP ShowCandidateNumbers(BOOL* show) override;
     STDMETHODIMP FinalizeExactCompositionString() override;
 
-    void set_page(const cxxime::CandidatePage& page, int page_current, int page_total);
+    void set_page(const cxxime::CandidatePresentationPage& page,
+                  std::uint64_t candidate_revision,
+                  int page_current,
+                  int page_total);
     void clear_page();
     bool begin(ITfThreadMgr* thread_mgr, ITfDocumentMgr* document_mgr = nullptr);
     void notify_update(ITfThreadMgr* thread_mgr);
@@ -77,6 +83,7 @@ private:
     DWORD _ui_element_id = TF_INVALID_UIELEMENTID;
     ITfDocumentMgr* _document_mgr = nullptr;
     std::vector<std::wstring> _candidates;
+    std::uint64_t _candidateRevision = 0;
     UINT _selection = 0;
 };
 
