@@ -10,8 +10,10 @@
 #include <cxxime/candidate.h>
 #include <cxxime/data_path.h>
 #include <cxxime/dictionary_manifest.h>
+#include <cxxime/ime_menu.h>
 #include <cxxime/ipc_protocol.h>
 #include <cxxime/logging.h>
+#include <cxxime/settings_launcher.h>
 #include <cxxime/ui_protocol.h>
 
 #include "ipc_response_builder.h"
@@ -22,6 +24,28 @@ namespace {
 constexpr UINT kPrepareConfigMessage = WM_APP + 1;
 constexpr UINT kCommitConfigMessage = WM_APP + 2;
 constexpr UINT kCancelConfigMessage = WM_APP + 3;
+
+std::optional<cxxime::SettingsPanel> settings_panel_for_ui_command(
+    const cxxime::UiCommand& command) {
+    if (command.type == cxxime::UiCommandType::kOpenSettings) {
+        return cxxime::SettingsPanel::kInput;
+    }
+    if (command.type == cxxime::UiCommandType::kOpenDictionary) {
+        return cxxime::SettingsPanel::kDictionary;
+    }
+    if (command.type != cxxime::UiCommandType::kMenuCommand) {
+        return std::nullopt;
+    }
+
+    const auto menu_command = static_cast<cxxime::ImeMenuCommand>(command.value);
+    if (menu_command == cxxime::ImeMenuCommand::kSettings) {
+        return cxxime::SettingsPanel::kInput;
+    }
+    if (menu_command == cxxime::ImeMenuCommand::kDictionary) {
+        return cxxime::SettingsPanel::kDictionary;
+    }
+    return std::nullopt;
+}
 
 std::wstring utf8_to_wide(const std::string& text) {
     if (text.empty()) {
@@ -187,6 +211,11 @@ bool ServerApp::initialize(const std::string& dict_path, const std::string& conf
     const bool ui_controller_started = ui_presentation_controller_.start(
         initial_config,
         [this](cxxime::UiEndpointId endpoint, const cxxime::UiCommand& command) {
+            const auto settings_panel = settings_panel_for_ui_command(command);
+            if (settings_panel) {
+                cxxime::open_settings(*settings_panel);
+                return;
+            }
             ui_presentation_router_.send_command(endpoint, command);
         },
         [this](int x, int y) {
@@ -494,6 +523,19 @@ cxxime::IPCResponse ServerApp::handle_request(const cxxime::IPCRequest& request)
         response.status = cxxime::IPCStatus::OK;
         response.ascii_mode = !ime_status.chinese_mode();
         response.ime_status = ime_status;
+        break;
+    }
+
+    case cxxime::IPCCommand::OPEN_SETTINGS: {
+        const auto panel = static_cast<cxxime::SettingsPanel>(request.candidate_index);
+        if (panel != cxxime::SettingsPanel::kInput &&
+            panel != cxxime::SettingsPanel::kDictionary) {
+            response.status = cxxime::IPCStatus::ERR_ENGINE_PROCESS_FAILED;
+            break;
+        }
+        response.status = cxxime::open_settings(panel)
+                              ? cxxime::IPCStatus::OK
+                              : cxxime::IPCStatus::ERR_ENGINE_PROCESS_FAILED;
         break;
     }
 

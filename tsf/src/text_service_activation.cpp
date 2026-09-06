@@ -12,7 +12,6 @@
 #include "display_attribute.h"
 #include "globals.h"
 #include "host_compatibility/host_classification_compatibility.h"
-#include "settings_launcher.h"
 #include "tsf_activation.h"
 #include "tsf_imm_mode.h"
 #include "tsf_ui_element_observer.h"
@@ -42,7 +41,10 @@ void TextService::_handle_ime_menu_command(cxxime::ImeMenuCommand command) {
 
     switch (command) {
     case cxxime::ImeMenuCommand::kDictionary:
-        cxxime_tsf::open_settings(cxxime::SettingsPanel::kDictionary);
+        if (!_ensure_ipc_session() ||
+            !_client.open_settings(_sessionId, cxxime::SettingsPanel::kDictionary)) {
+            CXXIME_LOG(L"%s", L"settings_request source=tsf panel=dictionary result=0");
+        }
         break;
     case cxxime::ImeMenuCommand::kToggleStatusWindow: {
         bool enabled = !_config.status_window.enable;
@@ -50,7 +52,10 @@ void TextService::_handle_ime_menu_command(cxxime::ImeMenuCommand command) {
         break;
     }
     case cxxime::ImeMenuCommand::kSettings:
-        cxxime_tsf::open_settings();
+        if (!_ensure_ipc_session() ||
+            !_client.open_settings(_sessionId, cxxime::SettingsPanel::kInput)) {
+            CXXIME_LOG(L"%s", L"settings_request source=tsf panel=input result=0");
+        }
         break;
     case cxxime::ImeMenuCommand::kAbout:
         show_about_dialog();

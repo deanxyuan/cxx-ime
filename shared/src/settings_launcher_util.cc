@@ -6,7 +6,7 @@
 
 #include <windows.h>
 
-namespace cxxime_tsf {
+namespace cxxime {
 namespace {
 
 bool is_drive_absolute_path(const std::wstring& path) {
@@ -82,4 +82,4 @@ bool settings_paths_equal(const std::wstring& left, const std::wstring& right) {
                                 TRUE) == CSTR_EQUAL;
 }
 
-} // namespace cxxime_tsf
+} // namespace cxxime

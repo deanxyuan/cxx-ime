@@ -18,6 +18,7 @@ enum class SettingsPanel : uint32_t {
 };
 
 inline constexpr wchar_t kSettingsWindowTitle[] = L"CxxIME 设置";
+inline constexpr wchar_t kSettingsWindowClass[] = L"CxxIMESettingsClass5";
 inline constexpr wchar_t kSettingsNavigateMessage[] = L"CxxIME.Settings.Navigate";
 inline constexpr wchar_t kSettingsPanelArgument[] = L"--panel";
 inline constexpr wchar_t kSettingsDictionaryArgument[] = L"dictionary";

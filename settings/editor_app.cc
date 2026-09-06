@@ -62,10 +62,10 @@ int EditorApp::run(HINSTANCE hInst,
         LoadImageW(hInst, MAKEINTRESOURCEW(IDI_CXXIME), IMAGE_ICON,
                 GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_SHARED));
     wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
-    wc.lpszClassName = L"CxxIMESettingsClass5";
+    wc.lpszClassName = cxxime::kSettingsWindowClass;
     RegisterClassExW(&wc);
 
-    app.hwnd_ = CreateWindowExW(0, L"CxxIMESettingsClass5", cxxime::kSettingsWindowTitle,
+    app.hwnd_ = CreateWindowExW(0, cxxime::kSettingsWindowClass, cxxime::kSettingsWindowTitle,
                                 WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_CLIPCHILDREN,
                                 CW_USEDEFAULT, CW_USEDEFAULT, S(700), S(450),
                                 nullptr, nullptr, hInst, &app);

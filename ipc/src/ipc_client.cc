@@ -374,4 +374,14 @@ bool IpcClient::set_search_result(const std::string& query, const std::string& r
     return send_request(req, response) && response.status == IPCStatus::OK;
 }
 
+bool IpcClient::open_settings(uint32_t session_id, SettingsPanel panel) {
+    IPCRequest request = {};
+    request.command = IPCCommand::OPEN_SETTINGS;
+    request.session_id = session_id;
+    request.candidate_index = static_cast<uint32_t>(panel);
+
+    IPCResponse response = {};
+    return send_request(request, response) && response.status == IPCStatus::OK;
+}
+
 } // namespace cxxime
