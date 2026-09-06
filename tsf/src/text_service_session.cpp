@@ -374,9 +374,6 @@ void TextService::_poll_runtime_state() {
             _runtimeTargetValidationFailures = 0;
         } else if (++_runtimeTargetValidationFailures >= kEditTargetValidationFailureLimit) {
             _clear_effective_edit_target("runtime_target_validation", true);
-            if (_sessionId && _client.is_connected()) {
-                _client.focus_out(_sessionId);
-            }
             return;
         }
     }

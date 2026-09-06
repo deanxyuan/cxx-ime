@@ -81,8 +81,6 @@ STDMETHODIMP TextService::OnSetFocus(BOOL fForeground) {
         // Switching away from CxxIME: hide status window immediately.
         // OnKillThreadFocus may not fire when switching IMEs within the same thread.
         _clear_effective_edit_target("ime_focus_lost");
-        if (_sessionId && _client.is_connected())
-            _client.focus_out(_sessionId);
     }
     return S_OK;
 }
