@@ -233,10 +233,6 @@ void TextService::_publish_ui_presentation() {
         cxxime::UiCandidate& target = snapshot.candidate_page.candidates[index];
         copy_packet_text(target.text, sizeof(target.text), &target.text_length, candidate.text);
         copy_packet_text(target.hint, sizeof(target.hint), &target.hint_length, candidate.hint);
-        std::uint32_t annotation_length = 0;
-        copy_packet_text(snapshot.candidate_annotations[index],
-                         sizeof(snapshot.candidate_annotations[index]), &annotation_length,
-                         candidate.annotation);
     }
     if (snapshot.candidate_page.count != 0) {
         snapshot.flags |= cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kHasCandidates);

@@ -78,11 +78,6 @@ cxxime::CandidatePresentationPage candidate_page_from_snapshot(
                                      sizeof(source_candidate.text));
         candidate.hint = packet_text(source_candidate.hint, source_candidate.hint_length,
                                      sizeof(source_candidate.hint));
-        candidate.annotation = packet_text(
-            snapshot.candidate_annotations[index],
-            static_cast<std::uint32_t>(strnlen_s(snapshot.candidate_annotations[index],
-                                                 cxxime::kCandidateAnnotationCapacity)),
-            cxxime::kCandidateAnnotationCapacity);
         page.items.push_back(std::move(candidate));
     }
     return page;

@@ -108,20 +108,26 @@ void rank_partial_candidates(Dict& dict,
     partials = std::move(ranked);
 }
 
-void annotate_action_collisions(std::vector<CandidateEntry>& entries, std::size_t input_size) {
-    for (std::size_t left = 0; left < entries.size(); ++left) {
-        for (std::size_t right = left + 1; right < entries.size(); ++right) {
-            if (entries[left].candidate.text != entries[right].candidate.text ||
-                same_selection_action(entries[left].selection, entries[right].selection)) {
-                continue;
-            }
-            const auto& left_action = std::get<TextSelectionAction>(entries[left].selection);
-            const auto& right_action = std::get<TextSelectionAction>(entries[right].selection);
-            entries[left].annotation =
-                left_action.consumed_input_bytes == input_size ? "整句" : "前段";
-            entries[right].annotation =
-                right_action.consumed_input_bytes == input_size ? "整句" : "前段";
+void merge_or_append_visible_candidate(std::vector<CandidateEntry>& entries,
+                                       CandidateEntry candidate, std::size_t input_size) {
+    const auto existing =
+        std::find_if(entries.begin(), entries.end(), [&](const CandidateEntry& entry) {
+            return entry.candidate.text == candidate.candidate.text;
+        });
+    if (existing == entries.end()) {
+        entries.push_back(std::move(candidate));
+        return;
+    }
+    if (same_selection_action(existing->selection, candidate.selection)) {
+        auto* existing_action = std::get_if<TextSelectionAction>(&existing->selection);
+        const auto* candidate_action = std::get_if<TextSelectionAction>(&candidate.selection);
+        if (existing_action && candidate_action) {
+            merge_candidate_variants(*existing_action, *candidate_action);
         }
+        return;
+    }
+    if (should_prefer_visible_selection(candidate.selection, existing->selection, input_size)) {
+        *existing = std::move(candidate);
     }
 }
 
@@ -224,9 +230,8 @@ void append_pinyin_partial_candidates(Dict& dict,
     rank_partial_candidates(dict, request, candidate_learning_enabled, partials,
                             static_cast<int>(limits.max_candidates_per_range));
     for (auto& partial : partials) {
-        entries.push_back(std::move(partial.entry));
+        merge_or_append_visible_candidate(entries, std::move(partial.entry), request.input.size());
     }
-    annotate_action_collisions(entries, request.input.size());
     if (request.trace) {
         request.trace->span_query_count += span_stats.range_queries;
         request.trace->span_entry_scan_count += span_stats.entry_scans;

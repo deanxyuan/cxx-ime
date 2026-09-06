@@ -413,6 +413,33 @@ TEST(SessionIntegration, composed_candidate_order_entry_is_not_available) {
     delete_test_dictionary_bundle(dict_path);
 }
 
+TEST(SessionIntegration, candidate_order_query_excludes_partial_candidates) {
+    const std::string dict_path = make_temp_path("test_full_candidate_order.bin");
+    create_test_dictionary_bundle(dict_path, {{"hua:rui:ji:shu", "华锐技术", 12000},
+                                              {"hua:rui", "华锐", 9000},
+                                              {"ji:shu", "技术", 10000}});
+    const std::string user_path = test_user_data_dir + "\\user_pinyin.tsv";
+    const std::string learning_path = test_user_data_dir + "\\learning_pinyin.tsv";
+    const std::string order_path = test_user_data_dir + "\\candidate_order_pinyin.tsv";
+    DeleteFileA(user_path.c_str());
+    DeleteFileA(learning_path.c_str());
+    DeleteFileA(order_path.c_str());
+
+    SessionManager manager;
+    ASSERT_TRUE(manager.initialize(dict_path));
+    const auto queried =
+        manager.query_candidate_order(cxxime::UserDictKind::PINYIN, "huaruijishu", 16);
+    ASSERT_TRUE(std::any_of(queried.entries.begin(), queried.entries.end(),
+                            [](const auto& entry) { return entry.text == "华锐技术"; }));
+    ASSERT_TRUE(std::none_of(queried.entries.begin(), queried.entries.end(),
+                             [](const auto& entry) { return entry.text == "华锐"; }));
+
+    DeleteFileA(user_path.c_str());
+    DeleteFileA(learning_path.c_str());
+    DeleteFileA(order_path.c_str());
+    delete_test_dictionary_bundle(dict_path);
+}
+
 TEST(SessionIntegration, stale_learned_candidate_order_entry_is_not_available) {
     const std::string dict_path = make_temp_path("test_stale_learned_candidate_order.bin");
     create_test_dictionary_bundle(dict_path, {{"ni:hao", "valid-candidate", 900}});

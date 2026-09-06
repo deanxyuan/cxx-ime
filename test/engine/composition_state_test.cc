@@ -126,19 +126,17 @@ TEST(CompositionState, context_restart_keeps_revision_monotonic) {
     ASSERT_GT(context.preedit_revision(), previous_revision);
 }
 
-TEST(CompositionState, candidate_presentation_keeps_hint_and_annotation_separate) {
+TEST(CompositionState, candidate_presentation_keeps_hint_separate) {
     cxxime::TranslationResult result;
     cxxime::Candidate candidate;
     candidate.text = "华锐";
     cxxime::CandidateEntry entry = cxxime::make_text_candidate_entry(std::move(candidate), 6);
     entry.hint = "abcd";
-    entry.annotation = "拼音·前段";
     result.entries.push_back(std::move(entry));
 
     const cxxime::CandidatePresentationPage page = result.presentation_page();
     ASSERT_EQ(page.items.size(), 1u);
     ASSERT_EQ(page.items[0].text, "华锐");
     ASSERT_EQ(page.items[0].hint, "abcd");
-    ASSERT_EQ(page.items[0].annotation, "拼音·前段");
     ASSERT_EQ(cxxime::format_candidate_presentation(page.items[0]), "华锐(abcd)");
 }

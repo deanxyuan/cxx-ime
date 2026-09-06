@@ -81,7 +81,6 @@ cxxime::UiPresentationSnapshot make_snapshot(std::uint64_t generation) {
     snapshot.candidate_page.total = 1;
     snapshot.candidate_page.candidates[0].text_length = 9;
     std::memcpy(snapshot.candidate_page.candidates[0].text, "candidate", 9);
-    std::memcpy(snapshot.candidate_annotations[0], "remaining", 9);
     return snapshot;
 }
 
@@ -102,7 +101,6 @@ TEST(UiChannel, protocol_round_trip) {
     ASSERT_EQ(actual.converted_prefix_bytes, static_cast<std::uint32_t>(1));
     ASSERT_EQ(actual.candidate_revision, static_cast<std::uint64_t>(71));
     ASSERT_EQ(actual.candidate_page.count, static_cast<std::uint32_t>(1));
-    ASSERT_EQ(std::string(actual.candidate_annotations[0]), std::string("remaining"));
 
     cxxime::UiCommand expected_command;
     expected_command.session_id = expected.session_id;
@@ -139,7 +137,7 @@ TEST(UiChannel, protocol_defaults_extension_fields_for_a_0_4_payload) {
     ASSERT_EQ(actual.target_generation, expected.target_generation);
     ASSERT_EQ(actual.candidate_revision, static_cast<std::uint64_t>(0));
     ASSERT_EQ(actual.converted_prefix_bytes, static_cast<std::uint32_t>(0));
-    ASSERT_EQ(actual.candidate_annotations[0][0], '\0');
+    ASSERT_EQ(actual.reserved, static_cast<std::uint32_t>(0));
 
     cxxime::UiCommand expected_command;
     expected_command.session_id = 17;
@@ -175,7 +173,6 @@ TEST(UiChannel, protocol_ignores_a_future_tail_after_current_fields) {
     ASSERT_TRUE(cxxime::parse_ui_snapshot_packet(packet.data(), packet.size(), &actual));
     ASSERT_EQ(actual.candidate_revision, expected.candidate_revision);
     ASSERT_EQ(actual.converted_prefix_bytes, expected.converted_prefix_bytes);
-    ASSERT_EQ(std::string(actual.candidate_annotations[0]), std::string("remaining"));
 
     cxxime::UiCommand expected_command;
     expected_command.session_id = 17;
@@ -214,11 +211,6 @@ TEST(UiChannel, protocol_rejects_invalid_payloads) {
     snapshot.preedit_length = static_cast<std::uint32_t>(multibyte_preedit.size());
     snapshot.preedit_cursor = snapshot.preedit_length;
     snapshot.converted_prefix_bytes = 1;
-    ASSERT_TRUE(!cxxime::build_ui_snapshot_packet(snapshot, 1, &packet));
-
-    snapshot = make_snapshot(1);
-    snapshot.candidate_annotations[0][0] = static_cast<char>(0xff);
-    snapshot.candidate_annotations[0][1] = '\0';
     ASSERT_TRUE(!cxxime::build_ui_snapshot_packet(snapshot, 1, &packet));
 
     snapshot = make_snapshot(1);

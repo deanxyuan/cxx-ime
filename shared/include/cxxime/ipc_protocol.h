@@ -139,7 +139,6 @@ enum class IPCStatus : uint32_t {
 };
 
 constexpr uint64_t kClientCapabilitySegmentedSelection = 1ULL << 0;
-constexpr std::size_t kCandidateAnnotationCapacity = 64;
 
 struct CandidateUiContext {
     enum class Presenter : uint32_t {
@@ -236,7 +235,8 @@ struct IPCResponse {
     // Fields after server_process_id form the 0.5 append-only extension.
     uint64_t candidate_revision = 0;
     uint32_t converted_prefix_bytes = 0;
-    char candidate_annotations[kCandidateCapacity][kCandidateAnnotationCapacity] = {};
+    // Explicitly occupies tail padding for append-only extensions; must remain zero.
+    uint32_t reserved = 0;
 };
 
 static_assert(std::is_standard_layout<IPCResponse>::value,
@@ -260,6 +260,8 @@ static_assert(sizeof(IPCResponse) >= IPC_RESPONSE_BASELINE_SIZE,
               "IPCResponse dropped fields from the 0.4.0 baseline");
 static_assert(offsetof(IPCResponse, candidate_revision) == IPC_RESPONSE_BASELINE_SIZE,
               "IPCResponse 0.5 extension moved into the 0.4 baseline");
+static_assert(offsetof(IPCResponse, reserved) == IPC_RESPONSE_BASELINE_SIZE + 12,
+              "IPCResponse::reserved offset changed");
 
 } // namespace cxxime
 

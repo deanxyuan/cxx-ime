@@ -173,5 +173,5 @@ TEST(IpcCompatibility, current_client_accepts_0_4_response_prefix) {
     ASSERT_EQ(response.highlighted, 7u);
     ASSERT_EQ(response.candidate_revision, 0u);
     ASSERT_EQ(response.converted_prefix_bytes, 0u);
-    ASSERT_EQ(response.candidate_annotations[0][0], '\0');
+    ASSERT_EQ(response.reserved, 0u);
 }

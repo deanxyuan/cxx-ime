@@ -81,41 +81,28 @@ void merge_variants(CandidateEntry& target, const CandidateEntry& source) {
     merge_candidate_variants(*target_action, *source_action);
 }
 
-std::string action_annotation(const CandidateEntry& entry, std::size_t full_input_bytes) {
-    std::string annotation =
-        entry.candidate.source == CandidateSource::kWubi ? "五笔" : "拼音";
-    const auto* action = std::get_if<TextSelectionAction>(&entry.selection);
-    annotation += action && action->consumed_input_bytes < full_input_bytes ? "·前段" : "·整句";
-    return annotation;
-}
-
-void annotate_action_collision(CandidateEntry& left, CandidateEntry& right,
-                               std::size_t full_input_bytes) {
-    left.annotation = action_annotation(left, full_input_bytes);
-    right.annotation = action_annotation(right, full_input_bytes);
-}
-
 void append_candidate(std::vector<CandidateEntry>& output, CandidateEntry candidate,
                       CandidateSource preferred_source, std::size_t full_input_bytes) {
-    auto same_action = std::find_if(output.begin(), output.end(), [&](const CandidateEntry& entry) {
-        return entry.candidate.text == candidate.candidate.text &&
-               same_selection_action(entry.selection, candidate.selection);
+    auto existing = std::find_if(output.begin(), output.end(), [&](const CandidateEntry& entry) {
+        return entry.candidate.text == candidate.candidate.text;
     });
-    if (same_action != output.end()) {
-        merge_variants(*same_action, candidate);
+    if (existing == output.end()) {
+        output.push_back(std::move(candidate));
+        return;
+    }
+    if (same_selection_action(existing->selection, candidate.selection)) {
+        merge_variants(*existing, candidate);
         if (candidate.candidate.source == preferred_source) {
             CandidateEntry replacement = std::move(candidate);
-            merge_variants(replacement, *same_action);
-            *same_action = std::move(replacement);
+            merge_variants(replacement, *existing);
+            *existing = std::move(replacement);
         }
         return;
     }
-    for (auto& existing : output) {
-        if (existing.candidate.text == candidate.candidate.text) {
-            annotate_action_collision(existing, candidate, full_input_bytes);
-        }
+    if (should_prefer_visible_selection(candidate.selection, existing->selection,
+                                        full_input_bytes)) {
+        *existing = std::move(candidate);
     }
-    output.push_back(std::move(candidate));
 }
 
 void append_all(std::vector<CandidateEntry>& output, std::vector<CandidateEntry>& source,
@@ -139,18 +126,6 @@ void append_interleaved(std::vector<CandidateEntry>& output,
         if (second_index < second.size()) {
             append_candidate(output, std::move(second[second_index++]), preferred_source,
                              full_input_bytes);
-        }
-    }
-}
-
-void annotate_action_collisions(std::vector<CandidateEntry>& entries,
-                                std::size_t full_input_bytes) {
-    for (std::size_t left = 0; left < entries.size(); ++left) {
-        for (std::size_t right = left + 1; right < entries.size(); ++right) {
-            if (entries[left].candidate.text == entries[right].candidate.text &&
-                !same_selection_action(entries[left].selection, entries[right].selection)) {
-                annotate_action_collision(entries[left], entries[right], full_input_bytes);
-            }
         }
     }
 }
@@ -263,8 +238,6 @@ TranslationResult MixedTranslator::translate(const TranslationRequest& request) 
         append_all(merged, pinyin.entries, CandidateSource::kPinyin, request.input.size());
         append_all(merged, wubi.entries, CandidateSource::kPinyin, request.input.size());
     }
-    annotate_action_collisions(merged, request.input.size());
-
     std::stable_partition(merged.begin(), merged.end(), [&](const CandidateEntry& entry) {
         const auto* action = std::get_if<TextSelectionAction>(&entry.selection);
         return action && action->consumed_input_bytes == request.input.size() &&
@@ -310,6 +283,7 @@ CandidatePage MixedTranslator::translate_page(const std::string& input, int page
     const std::vector<Candidate>& pinyin = pinyin_page.candidates;
     const std::vector<Candidate>& wubi = wubi_page.candidates;
 
+    // Full-only candidates all consume the complete input, so visible text is a sufficient key.
     std::vector<Candidate> merged;
     merged.reserve(pinyin.size() + wubi.size());
     std::unordered_set<std::string> seen;

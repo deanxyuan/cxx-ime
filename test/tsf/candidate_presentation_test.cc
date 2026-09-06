@@ -301,12 +301,11 @@ TEST(CandidatePresentation, popup_preedit_is_presentable_without_candidates) {
     ASSERT_TRUE(presentation.external_window_expected());
 }
 
-TEST(CandidatePresentation, preserves_revision_converted_prefix_and_annotation) {
+TEST(CandidatePresentation, preserves_revision_converted_prefix_and_hint) {
     cxxime::CandidatePresentationPage page;
     cxxime::CandidatePresentationItem item;
     item.text = "candidate";
     item.hint = "/rs";
-    item.annotation = "remaining";
     page.items.push_back(item);
 
     cxxime_tsf::CandidatePresentation presentation;
@@ -315,7 +314,6 @@ TEST(CandidatePresentation, preserves_revision_converted_prefix_and_annotation) 
     ASSERT_EQ(presentation.candidate_revision(), static_cast<std::uint64_t>(42));
     ASSERT_EQ(presentation.converted_prefix_bytes(), static_cast<std::size_t>(6));
     ASSERT_EQ(presentation.page().items[0].hint, std::string("/rs"));
-    ASSERT_EQ(presentation.page().items[0].annotation, std::string("remaining"));
     ASSERT_EQ(cxxime::format_candidate_presentation(presentation.page().items[0]),
               std::string("candidate(/rs)"));
 }
