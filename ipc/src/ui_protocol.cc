@@ -230,12 +230,6 @@ bool is_valid_ui_snapshot(const UiPresentationSnapshot& snapshot) {
             !is_valid_utf8(candidate.hint, candidate.hint_length)) {
             return false;
         }
-        const std::size_t annotation_length = strnlen_s(
-            snapshot.candidate_annotations[index], kCandidateAnnotationCapacity);
-        if (annotation_length == kCandidateAnnotationCapacity ||
-            !is_valid_utf8(snapshot.candidate_annotations[index], annotation_length)) {
-            return false;
-        }
     }
     return true;
 }

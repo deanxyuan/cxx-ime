@@ -94,12 +94,5 @@ void fill_process_response(const ProcessKeyResult& result, cxxime::IPCResponse* 
             response->status = cxxime::IPCStatus::ERR_ENGINE_PROCESS_FAILED;
             return;
         }
-        // Invalid annotations are omitted as a whole, never truncated mid-character.
-        if (!item.annotation.empty() &&
-            item.annotation.size() < sizeof(response->candidate_annotations[index]) &&
-            is_valid_utf8_field(item.annotation)) {
-            response_copy_field(response->candidate_annotations[index],
-                                sizeof(response->candidate_annotations[index]), item.annotation);
-        }
     }
 }

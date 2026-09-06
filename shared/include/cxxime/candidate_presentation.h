@@ -11,7 +11,6 @@ namespace cxxime {
 struct CandidatePresentationItem {
     std::string text;
     std::string hint;
-    std::string annotation;
 };
 
 struct CandidatePresentationPage {

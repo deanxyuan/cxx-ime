@@ -52,7 +52,9 @@ struct SegmentedFixture {
     cxxime::Config config;
     cxxime::Engine engine;
 
-    bool initialize(bool include_suffix = true, int extra_full_span_count = 0) {
+    bool initialize(bool include_suffix = true,
+                    int extra_full_span_count = 0,
+                    bool include_duplicate_visible_text = false) {
         std::vector<std::tuple<std::string, std::string, int>> entries = {
             {"hua:rui:ji:shu", "华锐技术", 12000},
             {"hua:rui", "华锐", 9000},
@@ -61,6 +63,10 @@ struct SegmentedFixture {
         };
         if (include_suffix) {
             entries.push_back({"ji:shu", "技术", 10000});
+        }
+        if (include_duplicate_visible_text) {
+            entries.push_back({"hua:rui:ji:shu", "华锐", 7000});
+            entries.push_back({"hua", "华锐", 6000});
         }
         for (int index = 0; index < extra_full_span_count; ++index) {
             entries.push_back(
@@ -655,7 +661,7 @@ TEST(SegmentedSelection, first_page_inserts_prefix_without_losing_a_full_candida
     DeleteFileA(spellings_path.c_str());
 }
 
-TEST(SegmentedSelection, mixed_keeps_same_text_with_different_actions) {
+TEST(SegmentedSelection, mixed_keeps_one_action_for_the_same_visible_text) {
     SegmentedFixture fixture;
     ASSERT_TRUE(fixture.initialize());
     const std::string wubi_path = make_temp_file("sgw");
@@ -682,15 +688,38 @@ TEST(SegmentedSelection, mixed_keeps_same_text_with_different_actions) {
         const auto* action = std::get_if<cxxime::TextSelectionAction>(&entry.selection);
         ASSERT_TRUE(action != nullptr);
         consumed.push_back(action->consumed_input_bytes);
-        ASSERT_TRUE(!entry.annotation.empty());
     }
-    std::sort(consumed.begin(), consumed.end());
-    ASSERT_EQ(consumed.size(), 2u);
+    ASSERT_EQ(consumed.size(), 1u);
     ASSERT_EQ(consumed[0], 6u);
-    ASSERT_EQ(consumed[1], 11u);
 
     wubi.close();
     DeleteFileA(wubi_path.c_str());
+}
+
+TEST(SegmentedSelection, pinyin_keeps_the_longest_partial_for_duplicate_text) {
+    SegmentedFixture fixture;
+    ASSERT_TRUE(fixture.initialize(true, 0, true));
+
+    cxxime::PinyinTranslator translator;
+    translator.set_dict(&fixture.dict);
+    translator.set_syllabifier(fixture.syllabifier.get());
+    cxxime::TranslationRequest request;
+    request.scheme = cxxime::CompositionScheme::kPinyin;
+    request.input = "huaruijishu";
+    request.page_size = 20;
+    request.policy.allow_partial_selection = true;
+    const cxxime::TranslationResult result = translator.translate(request);
+
+    std::vector<std::size_t> consumed;
+    for (const auto& entry : result.entries) {
+        if (entry.candidate.text == "华锐") {
+            const auto* action = std::get_if<cxxime::TextSelectionAction>(&entry.selection);
+            ASSERT_TRUE(action != nullptr);
+            consumed.push_back(action->consumed_input_bytes);
+        }
+    }
+    ASSERT_EQ(consumed.size(), 1u);
+    ASSERT_EQ(consumed[0], 6u);
 }
 
 TEST(SegmentedSelection, mixed_preserves_usable_provider_when_other_provider_fails) {
@@ -792,7 +821,6 @@ TEST(SegmentedSelection, mixed_merges_sources_for_the_same_text_and_action) {
         ASSERT_TRUE(action != nullptr);
         ASSERT_EQ(action->consumed_input_bytes, 11u);
         ASSERT_EQ(action->variants.size(), 2u);
-        ASSERT_TRUE(entry.annotation.empty());
     }
     ASSERT_EQ(matching_entries, 1);
 

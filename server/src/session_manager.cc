@@ -124,8 +124,7 @@ CandidateStateToken candidate_state_token(const cxxime::Engine& engine) {
 
 bool same_candidate_item(const cxxime::CandidatePresentationItem& left,
                          const cxxime::CandidatePresentationItem& right) {
-    return left.text == right.text && left.hint == right.hint &&
-           left.annotation == right.annotation;
+    return left.text == right.text && left.hint == right.hint;
 }
 
 bool same_candidate_page(const cxxime::CandidatePresentationPage& left,
@@ -773,30 +772,37 @@ cxxime::CandidateOrderQueryResult SharedResources::query_candidate_order(
         return result;
     }
 
-    cxxime::CandidatePage page;
     const auto resources = snapshot();
     const bool learning_enabled = resources.config && resources.config->candidate_learning;
+    cxxime::TranslationRequest request;
+    request.input = code;
+    request.page_size = static_cast<int>(limit);
+    request.policy.allow_partial_selection = false;
+    cxxime::TranslationResult translation;
     if (kind == cxxime::UserDictKind::WUBI) {
+        request.scheme = cxxime::CompositionScheme::kWubi;
         cxxime::WubiTranslator translator;
         translator.set_dict(dictionary.get());
         translator.set_candidate_learning_enabled(learning_enabled);
-        page = translator.translate_page(code, 0, static_cast<int>(limit));
+        translation = translator.translate(request);
     } else {
+        request.scheme = cxxime::CompositionScheme::kPinyin;
         cxxime::PinyinTranslator translator;
         translator.set_dict(dictionary.get());
         translator.set_syllabifier(resources.syllabifier.get());
         translator.set_short_cache(&dictionary->short_cache());
         translator.set_candidate_learning_enabled(learning_enabled);
-        page = translator.translate_page(code, 0, static_cast<int>(limit));
+        translation = translator.translate(request);
     }
 
     result.version = dictionary->manual_candidate_order_version();
     result.manual_entries = dictionary->manual_candidate_order(code);
-    result.has_more = page.total_count > static_cast<int>(page.candidates.size());
-    result.entries.reserve(page.candidates.size());
+    result.has_more = translation.total_count > static_cast<int>(translation.entries.size());
+    result.entries.reserve(translation.entries.size());
     const auto source = kind == cxxime::UserDictKind::WUBI ? cxxime::CandidateSource::kWubi
                                                            : cxxime::CandidateSource::kPinyin;
-    for (const auto& candidate : page.candidates) {
+    for (const auto& candidate_entry : translation.entries) {
+        const cxxime::Candidate& candidate = candidate_entry.candidate;
         cxxime::CandidateOrderEntryInfo entry;
         entry.text = candidate.text;
         entry.code = candidate.code;

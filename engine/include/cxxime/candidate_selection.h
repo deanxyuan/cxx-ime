@@ -93,6 +93,25 @@ inline bool same_selection_action(const CandidateSelection& left,
            left_replace.cursor == right_replace.cursor;
 }
 
+// Identical visible text appears once: prefer a continuing partial action, then the
+// partial action that consumes the longest prefix.
+inline bool should_prefer_visible_selection(const CandidateSelection& candidate,
+                                            const CandidateSelection& current,
+                                            std::size_t full_input_bytes) {
+    const auto* candidate_text = std::get_if<TextSelectionAction>(&candidate);
+    const auto* current_text = std::get_if<TextSelectionAction>(&current);
+    if (!candidate_text || !current_text) {
+        return false;
+    }
+    const bool candidate_is_partial = candidate_text->consumed_input_bytes < full_input_bytes;
+    const bool current_is_partial = current_text->consumed_input_bytes < full_input_bytes;
+    if (candidate_is_partial != current_is_partial) {
+        return candidate_is_partial;
+    }
+    return candidate_is_partial &&
+           candidate_text->consumed_input_bytes > current_text->consumed_input_bytes;
+}
+
 } // namespace cxxime
 
 #endif // CXXIME_CANDIDATE_SELECTION_H_

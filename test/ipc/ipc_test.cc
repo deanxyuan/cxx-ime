@@ -262,7 +262,7 @@ TEST(Protocol, response_zero_init) {
     ASSERT_EQ(resp.server_process_id, (uint32_t)0);
     ASSERT_EQ(resp.candidate_revision, 0u);
     ASSERT_EQ(resp.converted_prefix_bytes, 0u);
-    ASSERT_EQ(resp.candidate_annotations[0][0], '\0');
+    ASSERT_EQ(resp.reserved, 0u);
 }
 
 TEST(Protocol, candidate_text_over_old_capacity_round_trips) {

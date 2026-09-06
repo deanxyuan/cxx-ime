@@ -32,14 +32,13 @@ cxxime::IPCResponse make_response() {
     response.page_total = 1;
     copy_field(response.candidates[0], u8"技术");
     copy_field(response.candidate_hints[0], "/rs");
-    copy_field(response.candidate_annotations[0], u8"后续");
     response.candidate_revision = 7;
     return response;
 }
 
 } // namespace
 
-TEST(EngineResponse, decodes_converted_prefix_and_independent_candidate_fields) {
+TEST(EngineResponse, decodes_converted_prefix_and_candidate_hint) {
     const cxxime::IPCResponse response = make_response();
     cxxime_tsf::DecodedEnginePresentation presentation;
 
@@ -50,7 +49,6 @@ TEST(EngineResponse, decodes_converted_prefix_and_independent_candidate_fields) 
     ASSERT_EQ(presentation.candidates.items.size(), static_cast<std::size_t>(1));
     ASSERT_EQ(presentation.candidates.items[0].text, std::string(u8"技术"));
     ASSERT_EQ(presentation.candidates.items[0].hint, std::string("/rs"));
-    ASSERT_EQ(presentation.candidates.items[0].annotation, std::string(u8"后续"));
 }
 
 TEST(EngineResponse, rejects_offsets_inside_a_utf8_code_point) {
@@ -64,15 +62,6 @@ TEST(EngineResponse, rejects_offsets_inside_a_utf8_code_point) {
 TEST(EngineResponse, rejects_converted_prefix_after_the_cursor) {
     cxxime::IPCResponse response = make_response();
     response.preedit_cursor = 0;
-    cxxime_tsf::DecodedEnginePresentation presentation;
-
-    ASSERT_TRUE(!cxxime_tsf::decode_engine_presentation(response, &presentation));
-}
-
-TEST(EngineResponse, rejects_invalid_candidate_annotation_utf8) {
-    cxxime::IPCResponse response = make_response();
-    response.candidate_annotations[0][0] = static_cast<char>(0xff);
-    response.candidate_annotations[0][1] = '\0';
     cxxime_tsf::DecodedEnginePresentation presentation;
 
     ASSERT_TRUE(!cxxime_tsf::decode_engine_presentation(response, &presentation));

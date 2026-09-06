@@ -41,7 +41,6 @@ struct TranslationRequest {
 struct CandidateEntry {
     Candidate candidate;
     std::string hint;
-    std::string annotation;
     CandidateSelection selection;
 };
 
@@ -81,7 +80,7 @@ struct TranslationResult {
         page.highlighted = highlighted;
         page.items.reserve(entries.size());
         for (const auto& entry : entries) {
-            page.items.push_back({entry.candidate.text, entry.hint, entry.annotation});
+            page.items.push_back({entry.candidate.text, entry.hint});
         }
         return page;
     }

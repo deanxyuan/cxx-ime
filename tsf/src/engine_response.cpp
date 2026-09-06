@@ -82,13 +82,11 @@ bool decode_engine_presentation(const cxxime::IPCResponse& response,
     for (std::uint32_t index = 0; index < response.candidate_count; ++index) {
         cxxime::CandidatePresentationItem item;
         if (!read_field(response.candidates[index], &item.text) || item.text.empty() ||
-            !read_field(response.candidate_hints[index], &item.hint) ||
-            !read_field(response.candidate_annotations[index], &item.annotation)) {
+            !read_field(response.candidate_hints[index], &item.hint)) {
             return false;
         }
         std::wstring ignored;
-        if (!utf8_to_utf16(item.text, &ignored) || !utf8_to_utf16(item.hint, &ignored) ||
-            !utf8_to_utf16(item.annotation, &ignored)) {
+        if (!utf8_to_utf16(item.text, &ignored) || !utf8_to_utf16(item.hint, &ignored)) {
             return false;
         }
         page.items.push_back(std::move(item));
