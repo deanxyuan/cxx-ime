@@ -151,6 +151,9 @@ void TextService::_clear_effective_edit_target(const char* source, bool target_u
         return;
     }
 
+    if (_sessionId && _client.is_connected()) {
+        _client.focus_out(_sessionId);
+    }
     _AbortComposition();
     _unadvise_text_edit_sink();
     _unadvise_text_layout_sink();
@@ -339,9 +342,6 @@ STDMETHODIMP TextService::OnKillThreadFocus() {
     }
 
     _clear_effective_edit_target("thread_focus_lost");
-    if (_sessionId && _client.is_connected()) {
-        _client.focus_out(_sessionId);
-    }
     return S_OK;
 }
 

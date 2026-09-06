@@ -88,8 +88,7 @@ bool TextService::_apply_engine_response(ITfContext* context, const cxxime::IPCR
         }
         const std::size_t popup_converted_prefix =
             popup_preedit.empty() ? 0 : response.converted_prefix_bytes;
-        const bool restart_tsf_composition =
-            commit_continues && (ui_element_only || decision.start_composition);
+        const bool restart_tsf_composition = commit_continues;
         if (restart_tsf_composition) {
             _candidatePresentation.begin_composition_restart(
                 cxxime_tsf::CandidatePresentation::Clock::now());
@@ -133,14 +132,9 @@ bool TextService::_apply_engine_response(ITfContext* context, const cxxime::IPCR
                                                    decision.inline_converted_prefix);
         } else {
             _update_reading_ui_element(context, decoded.preedit);
-            if (commit_continues) {
-                composition_result = context ? _commit_text(context, commit_text, true)
-                                             : insert_text(commit_text, true);
-            }
-            if (SUCCEEDED(composition_result)) {
-                _composing = true;
-                _lastInlineCompositionText.clear();
-            }
+            // Popup-only mode still needs an empty TSF composition. Hosts such as Scintilla
+            // terminate that range when the user moves the selection with the mouse.
+            composition_result = apply_composition(L"", 0, 0);
         }
         const bool composition_restart_failed =
             composition_restart_was_active && FAILED(composition_result);
