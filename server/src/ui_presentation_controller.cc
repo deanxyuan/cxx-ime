@@ -6,6 +6,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstring>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -15,7 +16,7 @@
 #include <windows.h>
 #include <objbase.h>
 
-#include <cxxime/candidate.h>
+#include <cxxime/candidate_presentation.h>
 #include <cxxime/candidate_window.h>
 #include <cxxime/ime_menu.h>
 #include <cxxime/status_window.h>
@@ -60,23 +61,29 @@ std::string packet_text(const char* text, std::uint32_t length, std::size_t capa
     return std::string(text, text + safe_length);
 }
 
-cxxime::CandidatePage candidate_page_from_snapshot(const cxxime::UiPresentationSnapshot& snapshot) {
+cxxime::CandidatePresentationPage candidate_page_from_snapshot(
+    const cxxime::UiPresentationSnapshot& snapshot) {
     const cxxime::UiCandidatePage& source = snapshot.candidate_page;
-    cxxime::CandidatePage page;
+    cxxime::CandidatePresentationPage page;
     page.page_index = source.page_current > 0 ? static_cast<int>(source.page_current - 1) : 0;
     page.page_offset = static_cast<int>(source.offset);
     page.page_size = static_cast<int>(source.count);
     page.total_count = static_cast<int>(source.total);
     page.highlighted = source.count > 0 ? static_cast<int>(source.highlighted) : -1;
-    page.candidates.reserve(source.count);
+    page.items.reserve(source.count);
     for (std::uint32_t index = 0; index < source.count; ++index) {
         const cxxime::UiCandidate& source_candidate = source.candidates[index];
-        cxxime::Candidate candidate;
+        cxxime::CandidatePresentationItem candidate;
         candidate.text = packet_text(source_candidate.text, source_candidate.text_length,
                                      sizeof(source_candidate.text));
-        candidate.comment = packet_text(source_candidate.hint, source_candidate.hint_length,
-                                        sizeof(source_candidate.hint));
-        page.candidates.push_back(std::move(candidate));
+        candidate.hint = packet_text(source_candidate.hint, source_candidate.hint_length,
+                                     sizeof(source_candidate.hint));
+        candidate.annotation = packet_text(
+            snapshot.candidate_annotations[index],
+            static_cast<std::uint32_t>(strnlen_s(snapshot.candidate_annotations[index],
+                                                 cxxime::kCandidateAnnotationCapacity)),
+            cxxime::kCandidateAnnotationCapacity);
+        page.items.push_back(std::move(candidate));
     }
     return page;
 }
@@ -267,6 +274,7 @@ private:
             command.type = type;
             command.candidate_index = candidate_index;
             command.value = value;
+            command.candidate_revision = snapshot.candidate_revision;
             handler(rendered_presentation_->endpoint, command);
         }
     }

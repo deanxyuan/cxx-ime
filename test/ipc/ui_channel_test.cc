@@ -75,10 +75,13 @@ cxxime::UiPresentationSnapshot make_snapshot(std::uint64_t generation) {
     std::memcpy(snapshot.preedit, "ni", 2);
     snapshot.preedit_length = 2;
     snapshot.preedit_cursor = 2;
+    snapshot.converted_prefix_bytes = 1;
+    snapshot.candidate_revision = generation + 30;
     snapshot.candidate_page.count = 1;
     snapshot.candidate_page.total = 1;
     snapshot.candidate_page.candidates[0].text_length = 9;
     std::memcpy(snapshot.candidate_page.candidates[0].text, "candidate", 9);
+    std::memcpy(snapshot.candidate_annotations[0], "remaining", 9);
     return snapshot;
 }
 
@@ -96,7 +99,10 @@ TEST(UiChannel, protocol_round_trip) {
     ASSERT_EQ(actual.target_generation, expected.target_generation);
     ASSERT_EQ(actual.flags, expected.flags);
     ASSERT_EQ(actual.preedit_length, static_cast<std::uint32_t>(2));
+    ASSERT_EQ(actual.converted_prefix_bytes, static_cast<std::uint32_t>(1));
+    ASSERT_EQ(actual.candidate_revision, static_cast<std::uint64_t>(71));
     ASSERT_EQ(actual.candidate_page.count, static_cast<std::uint32_t>(1));
+    ASSERT_EQ(std::string(actual.candidate_annotations[0]), std::string("remaining"));
 
     cxxime::UiCommand expected_command;
     expected_command.session_id = expected.session_id;
@@ -106,6 +112,7 @@ TEST(UiChannel, protocol_round_trip) {
     expected_command.presentation_generation = expected.presentation_generation;
     expected_command.type = cxxime::UiCommandType::kSelectCandidate;
     expected_command.candidate_index = 0;
+    expected_command.candidate_revision = expected.candidate_revision;
     ASSERT_TRUE(cxxime::build_ui_command_packet(expected_command, 10, &packet));
 
     cxxime::UiCommand actual_command;
@@ -113,6 +120,78 @@ TEST(UiChannel, protocol_round_trip) {
     ASSERT_EQ(actual_command.type, cxxime::UiCommandType::kSelectCandidate);
     ASSERT_EQ(actual_command.composition_generation, expected.composition_generation);
     ASSERT_EQ(actual_command.presentation_generation, expected.presentation_generation);
+    ASSERT_EQ(actual_command.candidate_revision, expected.candidate_revision);
+}
+
+TEST(UiChannel, protocol_defaults_extension_fields_for_a_0_4_payload) {
+    const cxxime::UiPresentationSnapshot expected = make_snapshot(5);
+    std::vector<std::uint8_t> packet;
+    ASSERT_TRUE(cxxime::build_ui_snapshot_packet(expected, 1, &packet));
+
+    cxxime::UiPacketHeader header = {};
+    std::memcpy(&header, packet.data(), sizeof(header));
+    header.payload_size = static_cast<std::uint32_t>(cxxime::UI_SNAPSHOT_BASELINE_SIZE);
+    packet.resize(sizeof(header) + cxxime::UI_SNAPSHOT_BASELINE_SIZE);
+    std::memcpy(packet.data(), &header, sizeof(header));
+
+    cxxime::UiPresentationSnapshot actual;
+    ASSERT_TRUE(cxxime::parse_ui_snapshot_packet(packet.data(), packet.size(), &actual));
+    ASSERT_EQ(actual.target_generation, expected.target_generation);
+    ASSERT_EQ(actual.candidate_revision, static_cast<std::uint64_t>(0));
+    ASSERT_EQ(actual.converted_prefix_bytes, static_cast<std::uint32_t>(0));
+    ASSERT_EQ(actual.candidate_annotations[0][0], '\0');
+
+    cxxime::UiCommand expected_command;
+    expected_command.session_id = 17;
+    expected_command.session_generation = 3;
+    expected_command.presentation_generation = 1;
+    expected_command.type = cxxime::UiCommandType::kSelectCandidate;
+    expected_command.candidate_revision = 9;
+    ASSERT_TRUE(cxxime::build_ui_command_packet(expected_command, 2, &packet));
+    std::memcpy(&header, packet.data(), sizeof(header));
+    header.payload_size = static_cast<std::uint32_t>(cxxime::UI_COMMAND_BASELINE_SIZE);
+    packet.resize(sizeof(header) + cxxime::UI_COMMAND_BASELINE_SIZE);
+    std::memcpy(packet.data(), &header, sizeof(header));
+
+    cxxime::UiCommand actual_command;
+    ASSERT_TRUE(cxxime::parse_ui_command_packet(packet.data(), packet.size(), &actual_command));
+    ASSERT_EQ(actual_command.type, cxxime::UiCommandType::kSelectCandidate);
+    ASSERT_EQ(actual_command.candidate_revision, static_cast<std::uint64_t>(0));
+}
+
+TEST(UiChannel, protocol_ignores_a_future_tail_after_current_fields) {
+    const cxxime::UiPresentationSnapshot expected = make_snapshot(6);
+    std::vector<std::uint8_t> packet;
+    ASSERT_TRUE(cxxime::build_ui_snapshot_packet(expected, 1, &packet));
+
+    cxxime::UiPacketHeader header = {};
+    std::memcpy(&header, packet.data(), sizeof(header));
+    constexpr std::size_t kFutureTailSize = 16;
+    header.payload_size += static_cast<std::uint32_t>(kFutureTailSize);
+    packet.resize(packet.size() + kFutureTailSize, 0x5a);
+    std::memcpy(packet.data(), &header, sizeof(header));
+
+    cxxime::UiPresentationSnapshot actual;
+    ASSERT_TRUE(cxxime::parse_ui_snapshot_packet(packet.data(), packet.size(), &actual));
+    ASSERT_EQ(actual.candidate_revision, expected.candidate_revision);
+    ASSERT_EQ(actual.converted_prefix_bytes, expected.converted_prefix_bytes);
+    ASSERT_EQ(std::string(actual.candidate_annotations[0]), std::string("remaining"));
+
+    cxxime::UiCommand expected_command;
+    expected_command.session_id = 17;
+    expected_command.session_generation = 3;
+    expected_command.presentation_generation = 1;
+    expected_command.type = cxxime::UiCommandType::kSelectCandidate;
+    expected_command.candidate_revision = 77;
+    ASSERT_TRUE(cxxime::build_ui_command_packet(expected_command, 2, &packet));
+    std::memcpy(&header, packet.data(), sizeof(header));
+    header.payload_size += static_cast<std::uint32_t>(kFutureTailSize);
+    packet.resize(packet.size() + kFutureTailSize, 0x5a);
+    std::memcpy(packet.data(), &header, sizeof(header));
+
+    cxxime::UiCommand actual_command;
+    ASSERT_TRUE(cxxime::parse_ui_command_packet(packet.data(), packet.size(), &actual_command));
+    ASSERT_EQ(actual_command.candidate_revision, expected_command.candidate_revision);
 }
 
 TEST(UiChannel, protocol_rejects_invalid_payloads) {
@@ -123,6 +202,23 @@ TEST(UiChannel, protocol_rejects_invalid_payloads) {
 
     snapshot = make_snapshot(1);
     snapshot.preedit_cursor = snapshot.preedit_length + 1;
+    ASSERT_TRUE(!cxxime::build_ui_snapshot_packet(snapshot, 1, &packet));
+
+    snapshot = make_snapshot(1);
+    snapshot.preedit_cursor = 0;
+    ASSERT_TRUE(!cxxime::build_ui_snapshot_packet(snapshot, 1, &packet));
+
+    snapshot = make_snapshot(1);
+    const std::string multibyte_preedit = u8"你a";
+    std::memcpy(snapshot.preedit, multibyte_preedit.data(), multibyte_preedit.size());
+    snapshot.preedit_length = static_cast<std::uint32_t>(multibyte_preedit.size());
+    snapshot.preedit_cursor = snapshot.preedit_length;
+    snapshot.converted_prefix_bytes = 1;
+    ASSERT_TRUE(!cxxime::build_ui_snapshot_packet(snapshot, 1, &packet));
+
+    snapshot = make_snapshot(1);
+    snapshot.candidate_annotations[0][0] = static_cast<char>(0xff);
+    snapshot.candidate_annotations[0][1] = '\0';
     ASSERT_TRUE(!cxxime::build_ui_snapshot_packet(snapshot, 1, &packet));
 
     snapshot = make_snapshot(1);
@@ -219,6 +315,55 @@ TEST(UiChannel, server_keeps_connection_after_unknown_packet) {
 
     CloseHandle(pipe);
     server.stop();
+}
+
+TEST(UiChannel, client_keeps_connection_after_unknown_command) {
+    const std::wstring pipe_name = cxxime::make_user_pipe_name(test_pipe_name());
+    HANDLE pipe = CreateNamedPipeW(pipe_name.c_str(), PIPE_ACCESS_DUPLEX,
+                                   PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT, 1,
+                                   static_cast<DWORD>(cxxime::kUiMaxPacketSize),
+                                   static_cast<DWORD>(cxxime::kUiMaxPacketSize), 0, nullptr);
+    ASSERT_TRUE(pipe != INVALID_HANDLE_VALUE);
+
+    std::atomic<int> command_count{0};
+    cxxime::UiCommand received;
+    cxxime::UiChannelClient client;
+    ASSERT_TRUE(client.start(
+        [&](const cxxime::UiCommand& command) {
+            received = command;
+            command_count.fetch_add(1);
+        },
+        pipe_name));
+    ASSERT_TRUE(ConnectNamedPipe(pipe, nullptr) != FALSE ||
+                GetLastError() == ERROR_PIPE_CONNECTED);
+    ASSERT_TRUE(wait_for([&]() { return client.is_connected(); }));
+
+    cxxime::UiCommand command;
+    command.session_id = 17;
+    command.session_generation = 3;
+    command.presentation_generation = 1;
+    command.type = cxxime::UiCommandType::kPageNext;
+    std::vector<std::uint8_t> packet;
+    ASSERT_TRUE(cxxime::build_ui_command_packet(command, 1, &packet));
+    command.type = static_cast<cxxime::UiCommandType>(0xffff);
+    std::memcpy(packet.data() + sizeof(cxxime::UiPacketHeader), &command, sizeof(command));
+    DWORD transferred = 0;
+    ASSERT_TRUE(
+        WriteFile(pipe, packet.data(), static_cast<DWORD>(packet.size()), &transferred, nullptr));
+    ASSERT_EQ(transferred, static_cast<DWORD>(packet.size()));
+
+    command.type = cxxime::UiCommandType::kPageNext;
+    ASSERT_TRUE(cxxime::build_ui_command_packet(command, 2, &packet));
+    ASSERT_TRUE(
+        WriteFile(pipe, packet.data(), static_cast<DWORD>(packet.size()), &transferred, nullptr));
+    ASSERT_EQ(transferred, static_cast<DWORD>(packet.size()));
+    ASSERT_TRUE(wait_for([&]() { return command_count.load() == 1; }));
+    ASSERT_EQ(received.type, cxxime::UiCommandType::kPageNext);
+    ASSERT_TRUE(client.is_connected());
+
+    client.stop();
+    DisconnectNamedPipe(pipe);
+    CloseHandle(pipe);
 }
 
 TEST(UiChannel, queued_snapshots_coalesce_before_connect) {

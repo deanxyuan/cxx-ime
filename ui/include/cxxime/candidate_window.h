@@ -11,6 +11,7 @@
 #include <windows.h>
 
 #include <cxxime/candidate.h>
+#include <cxxime/candidate_presentation.h>
 #include <cxxime/config.h>
 #include <cxxime/layout.h>
 #include <cxxime/render_context.h>
@@ -38,6 +39,7 @@ public:
     void hide();
     bool is_visible() const;
     void set_config(const Config& config);
+    void update(const CandidatePresentationPage& page);
     void update(const CandidatePage& page);
     void set_preedit(const std::string& preedit);
     void set_preedit(const std::string& preedit, size_t cursor);

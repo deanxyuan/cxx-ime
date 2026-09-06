@@ -1,10 +1,12 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
 #include "candidate_ui_element.h"
+
+#include <algorithm>
+
 #include "globals.h"
 #include "text_service.h"
 #include "tsf_trace.h"
-#include <algorithm>
 
 namespace {
 
@@ -247,7 +249,8 @@ STDMETHODIMP CandidateUIElement::Finalize() {
     const UINT selection = _selection;
     HRESULT result = E_FAIL;
     if (_service && !_candidates.empty()) {
-        result = _service->select_candidate_from_ui(selection) ? S_OK : E_FAIL;
+        result = _service->select_candidate_from_ui(selection, _candidateRevision) ? S_OK
+            : E_FAIL;
     }
     cxxime_tsf::trace_candidate_behavior_number(
         _service, element_id, "Finalize", "selection", selection, result);
@@ -314,16 +317,17 @@ STDMETHODIMP CandidateUIElement::FinalizeExactCompositionString() {
     return _service->finalize_exact_candidate_ui_from_tsf();
 }
 
-void CandidateUIElement::set_page(const cxxime::CandidatePage& page,
+void CandidateUIElement::set_page(const cxxime::CandidatePresentationPage& page,
+                                  std::uint64_t candidate_revision,
                                   int page_current,
                                   int page_total) {
     _candidates.clear();
-    _candidates.reserve(page.candidates.size());
-    for (const auto& candidate : page.candidates) {
-        std::string formatted;
+    _candidates.reserve(page.items.size());
+    for (const auto& candidate : page.items) {
         _candidates.push_back(utf8_to_wstring(
-            cxxime::candidate_display_text(candidate, formatted)));
+            cxxime::format_candidate_presentation(candidate)));
     }
+    _candidateRevision = candidate_revision;
 
     if (_candidates.empty()) {
         _selection = 0;
@@ -339,6 +343,7 @@ void CandidateUIElement::set_page(const cxxime::CandidatePage& page,
 
 void CandidateUIElement::clear_page() {
     _candidates.clear();
+    _candidateRevision = 0;
     _selection = 0;
 }
 

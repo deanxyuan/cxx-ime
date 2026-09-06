@@ -7,7 +7,7 @@
 
 class DisplayAttributeInfo : public ITfDisplayAttributeInfo {
 public:
-    DisplayAttributeInfo();
+    DisplayAttributeInfo(REFGUID guid, TF_DA_ATTR_INFO attribute);
     ~DisplayAttributeInfo();
 
     // IUnknown
@@ -24,6 +24,8 @@ public:
 
 private:
     LONG _cRef = 1;
+    GUID _guid = {};
+    TF_DA_ATTR_INFO _attribute = TF_ATTR_INPUT;
 };
 
 class EnumDisplayAttributeInfo : public IEnumTfDisplayAttributeInfo {

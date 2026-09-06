@@ -82,7 +82,8 @@ bool TextService::_ensure_ipc_session() {
     }
 
     uint32_t session_id = 0;
-    if (!_client.start_session(session_id) || session_id == 0) {
+    if (!_client.start_session(session_id, cxxime::kClientCapabilitySegmentedSelection) ||
+        session_id == 0) {
         CXXIME_LOG(L"Failed to start IPC session");
         if (_ipcHealthy)
             _enqueue_event_trace("ipc_session", "start_failed", true);

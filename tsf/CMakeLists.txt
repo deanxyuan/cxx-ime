@@ -33,10 +33,12 @@ add_library(cxxime-tsf SHARED
     src/class_factory.cpp
     src/candidate_presentation.cpp
     src/effective_edit_target.cpp
+    src/engine_response.cpp
     src/edit_target.cc
     src/text_service.cpp
     src/text_service_focus.cpp
     src/text_service_key.cpp
+    src/text_service_response.cpp
     src/text_service_session.cpp
     src/text_service_context.cpp
     src/text_service_edit.cpp

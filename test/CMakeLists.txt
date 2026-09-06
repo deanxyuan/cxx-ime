@@ -107,6 +107,16 @@ add_cxxime_test(candidate_presentation_test
 target_sources(candidate_presentation_test PRIVATE
     ${CMAKE_SOURCE_DIR}/tsf/src/candidate_presentation.cpp
 )
+add_cxxime_test(engine_response_test
+    SOURCES tsf/engine_response_test.cc
+    DEPS cxxime-shared
+)
+target_sources(engine_response_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/tsf/src/engine_response.cpp
+)
+target_include_directories(engine_response_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/tsf/src
+)
 add_cxxime_test(ipc_test
     SOURCES
         ipc/ipc_test.cc

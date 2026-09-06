@@ -317,30 +317,42 @@ STDMETHODIMP TextService::Deactivate() {
     _stop_state_poll_timer();
     _unregister_conversion_compartment_sink();
 
+    if (_sessionId && _composing) {
+        cxxime::IPCResponse response = {};
+        if (_client.commit_composition(_sessionId, response)) {
+            ITfContext* context = _current_edit_context_for_composition();
+            BOOL eaten = FALSE;
+            _apply_engine_response(context, response, &eaten);
+            if (context) {
+                context->Release();
+            }
+        }
+    }
+    if (_composition) {
+        ITfComposition* composition = _composition;
+        ITfContext* context = _current_edit_context_for_composition();
+        if (context) {
+            const HRESULT result = _end_composition(context, true);
+            if (FAILED(result)) {
+                CXXIME_LOG(L"Deactivate local composition cleanup failed: hr=0x%08x", result);
+            }
+            context->Release();
+        }
+        if (_composition == composition) {
+            _composition = nullptr;
+            composition->Release();
+        }
+    }
+    _composing = false;
+    _emptyCompositionPlaceholderActive = false;
+    _lastInlineCompositionText.clear();
+
     _hide_status_window("hide:deactivate");
     _hide_candidate_window("hide:deactivate_candidates");
     _publish_ui_presentation();
     _stop_ui_presentation_channel();
 
     if (_sessionId) {
-        // Commit any pending composition before ending session
-        if (_composing) {
-            cxxime::IPCResponse resp = {};
-            _client.commit_composition(_sessionId, resp);
-            if (resp.commit_text[0] != '\0' && _threadMgr) {
-                std::wstring commit_text = utf8_to_wstring(resp.commit_text);
-                if (!commit_text.empty()) {
-                    ITfContext* pContext = _current_edit_context_for_composition();
-                    if (pContext) {
-                        _commit_text(pContext, commit_text, true);
-                        pContext->Release();
-                    } else {
-                        insert_text(commit_text, true);
-                    }
-                }
-            }
-            _composing = false;
-        }
         _client.end_session(_sessionId);
         _sessionId = 0;
     }

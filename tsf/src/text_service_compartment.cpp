@@ -4,6 +4,7 @@
 
 #include <cxxime/logging.h>
 
+#include "engine_response.h"
 #include "tsf_imm_mode.h"
 
 namespace {
@@ -205,37 +206,24 @@ STDMETHODIMP TextService::OnChange(REFGUID rguid) {
     trace_event.after_chinese_punct = response.ime_status.chinese_punct();
     trace_event.after_input_mode =
         static_cast<uint32_t>(response.ime_status.input_mode);
-    _sync_ime_status(response.ime_status);
 
-    bool commit_requested = false;
-    uint32_t commit_text_length = 0;
-    if (response.commit_text[0] != '\0') {
-        const std::wstring commit_text = utf8_to_wstring(response.commit_text);
-        if (!commit_text.empty()) {
-            ITfContext* context = _current_edit_context_for_composition();
-            if (context) {
-                _commit_text(context, commit_text, false);
-                context->Release();
-            } else {
-                insert_text(commit_text, false);
-            }
-            commit_requested = true;
-            commit_text_length = static_cast<uint32_t>(commit_text.length());
-        }
+    std::wstring commit_text;
+    const bool commit_requested = response.commit_text[0] != '\0' &&
+        cxxime_tsf::decode_engine_commit_text(
+            response, &commit_text) &&
+        !commit_text.empty();
+    const uint32_t commit_text_length = static_cast<uint32_t>(commit_text.length());
+    ITfContext* context = _current_edit_context_for_composition();
+    BOOL eaten = FALSE;
+    const bool applied = _apply_engine_response(context, response, &eaten);
+    if (context) {
+        context->Release();
     }
-
+    if (!applied) {
+        trace_change(true, false, commit_requested, commit_text_length, "response_failed");
+        return S_OK;
+    }
     if ((was_composing || commit_requested) && !response.composing) {
-        if (!commit_requested) {
-            ITfContext* context = _current_edit_context_for_composition();
-            if (context) {
-                _end_composition(context);
-                context->Release();
-            }
-        }
-        _composing = false;
-        _lastInlineCompositionText.clear();
-        _hide_candidate_window("hide:conversion_change_commit");
-        _end_reading_ui_element("hide:conversion_change_commit_reading");
         _reset_trace_composition("conversion_change_commit");
     }
 

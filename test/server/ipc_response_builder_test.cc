@@ -75,3 +75,17 @@ TEST(IpcResponseBuilder, rejects_non_utf8_preedit_boundaries) {
     ASSERT_EQ(response.status, cxxime::IPCStatus::ERR_ENGINE_PROCESS_FAILED);
     ASSERT_EQ(response.candidate_count, 0u);
 }
+
+TEST(IpcResponseBuilder, rejects_converted_prefix_after_the_cursor) {
+    ProcessKeyResult result;
+    result.status = cxxime::IPCStatus::OK;
+    result.composing = true;
+    result.preedit = u8"华锐jishu";
+    result.preedit_cursor = 0;
+    result.converted_prefix_bytes = std::string(u8"华锐").size();
+    cxxime::IPCResponse response;
+
+    fill_process_response(result, &response);
+
+    ASSERT_EQ(response.status, cxxime::IPCStatus::ERR_ENGINE_PROCESS_FAILED);
+}

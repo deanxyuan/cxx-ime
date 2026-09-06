@@ -47,6 +47,39 @@ TEST(PreeditMode, inline_preview_no_candidates) {
     ASSERT_TRUE(d.show_preedit_in_popup);
 }
 
+TEST(PreeditMode, segmented_preview_keeps_converted_prefix_and_previews_highlight) {
+    const std::wstring preedit = L"华锐jishu";
+    const std::vector<std::wstring> candidates = {L"技术", L"计数"};
+
+    const auto decision =
+        cxxime_tsf::decide_preedit(true, "preview", preedit, preedit.size(), candidates, 2, 1);
+
+    ASSERT_EQ(decision.inline_text, std::wstring(L"华锐计数"));
+    ASSERT_EQ(decision.inline_cursor, decision.inline_text.size());
+    ASSERT_EQ(decision.inline_converted_prefix, static_cast<size_t>(2));
+    ASSERT_TRUE(decision.show_preedit_in_popup);
+}
+
+TEST(PreeditMode, segmented_preview_keeps_active_code_without_candidates) {
+    const std::wstring preedit = L"华锐jishu";
+    const std::vector<std::wstring> candidates;
+
+    const auto decision =
+        cxxime_tsf::decide_preedit(true, "preview", preedit, preedit.size(), candidates, 2);
+
+    ASSERT_EQ(decision.inline_text, preedit);
+    ASSERT_EQ(decision.inline_cursor, preedit.size());
+    ASSERT_EQ(decision.inline_converted_prefix, static_cast<size_t>(2));
+    ASSERT_TRUE(decision.show_preedit_in_popup);
+}
+
+TEST(PreeditMode, commit_and_continue_waits_for_the_post_commit_caret) {
+    ASSERT_TRUE(cxxime_tsf::should_defer_candidate_show(true, true, true));
+    ASSERT_TRUE(cxxime_tsf::should_defer_candidate_show(false, false, false));
+    ASSERT_TRUE(!cxxime_tsf::should_defer_candidate_show(false, true, false));
+    ASSERT_TRUE(!cxxime_tsf::should_defer_candidate_show(false, false, true));
+}
+
 // -- inline_preedit=false: no TSF composition, candidate window shows raw input --
 
 TEST(PreeditMode, no_inline_composition) {

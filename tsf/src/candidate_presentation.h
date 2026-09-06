@@ -11,6 +11,7 @@
 #include <windows.h>
 
 #include <cxxime/candidate.h>
+#include <cxxime/candidate_presentation.h>
 
 namespace cxxime_tsf {
 
@@ -43,9 +44,22 @@ public:
     using Clock = std::chrono::steady_clock;
     using TimePoint = Clock::time_point;
 
-    void update_content(const cxxime::CandidatePage& page, const std::string& popup_preedit,
-                        std::size_t popup_preedit_cursor, int page_current, int page_total);
-    void update_page(const cxxime::CandidatePage& page, int page_current, int page_total);
+    void update_content(const cxxime::CandidatePresentationPage& page,
+                        const std::string& popup_preedit,
+                        std::size_t popup_preedit_cursor,
+                        std::size_t converted_prefix_bytes,
+                        std::uint64_t candidate_revision,
+                        int page_current,
+                        int page_total);
+    void update_content(const cxxime::CandidatePage& page,
+                        const std::string& popup_preedit,
+                        std::size_t popup_preedit_cursor,
+                        int page_current,
+                        int page_total);
+    void update_page(const cxxime::CandidatePresentationPage& page,
+                     std::uint64_t candidate_revision,
+                     int page_current,
+                     int page_total);
     void set_ownership(CandidateOwnership ownership);
     void set_presenter(CandidatePresenter presenter);
     void set_local_visible_candidate_count(std::size_t count);
@@ -65,11 +79,13 @@ public:
     CandidateOwnership ownership() const { return ownership_; }
     CandidatePresenter presenter() const { return presenter_; }
     CandidatePositionState position_state() const { return position_state_; }
-    const cxxime::CandidatePage& page() const { return page_; }
+    const cxxime::CandidatePresentationPage& page() const { return page_; }
     int page_current() const { return page_current_; }
     int page_total() const { return page_total_; }
     const std::string& popup_preedit() const { return popup_preedit_; }
     std::size_t popup_preedit_cursor() const { return popup_preedit_cursor_; }
+    std::size_t converted_prefix_bytes() const { return converted_prefix_bytes_; }
+    std::uint64_t candidate_revision() const { return candidate_revision_; }
     std::uint64_t generation() const { return generation_; }
     std::uint64_t presentation_generation() const { return presentation_generation_; }
     bool generation_matches(std::uint64_t generation) const {
@@ -96,11 +112,13 @@ private:
     CandidateOwnership ownership_ = CandidateOwnership::kNone;
     CandidatePresenter presenter_ = CandidatePresenter::kNone;
     CandidatePositionState position_state_ = CandidatePositionState::kReady;
-    cxxime::CandidatePage page_;
+    cxxime::CandidatePresentationPage page_;
     int page_current_ = 0;
     int page_total_ = 0;
     std::string popup_preedit_;
     std::size_t popup_preedit_cursor_ = 0;
+    std::size_t converted_prefix_bytes_ = 0;
+    std::uint64_t candidate_revision_ = 0;
     std::size_t local_visible_candidate_count_ = 0;
     std::uint64_t generation_ = 1;
     std::uint64_t presentation_generation_ = 1;

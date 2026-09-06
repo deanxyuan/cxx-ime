@@ -140,5 +140,5 @@ TEST(CompositionState, candidate_presentation_keeps_hint_and_annotation_separate
     ASSERT_EQ(page.items[0].text, "华锐");
     ASSERT_EQ(page.items[0].hint, "abcd");
     ASSERT_EQ(page.items[0].annotation, "拼音·前段");
-    ASSERT_EQ(cxxime::format_candidate_presentation(page.items[0]), "华锐(abcd) [拼音·前段]");
+    ASSERT_EQ(cxxime::format_candidate_presentation(page.items[0]), "华锐(abcd)");
 }

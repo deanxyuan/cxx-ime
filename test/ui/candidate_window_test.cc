@@ -133,7 +133,7 @@ TEST(CandidateWindow, candidate_to_preedit_only_clears_candidate_layout) {
     ASSERT_TRUE(window.visible_candidate_count() > 0);
 
     window.set_preedit("hsq");
-    window.update({});
+    window.update(cxxime::CandidatePage{});
     window.show();
 
     ASSERT_TRUE(window.is_visible());

@@ -4,7 +4,8 @@
 #include "globals.h"
 
 // DisplayAttributeInfo
-DisplayAttributeInfo::DisplayAttributeInfo() {
+DisplayAttributeInfo::DisplayAttributeInfo(REFGUID guid, TF_DA_ATTR_INFO attribute)
+    : _guid(guid), _attribute(attribute) {
     DllAddRef();
 }
 
@@ -37,7 +38,7 @@ STDMETHODIMP_(ULONG) DisplayAttributeInfo::Release() {
 
 STDMETHODIMP DisplayAttributeInfo::GetGUID(GUID* pguid) {
     if (pguid)
-        *pguid = c_guidDisplayAttribute;
+        *pguid = _guid;
     return S_OK;
 }
 
@@ -57,7 +58,7 @@ STDMETHODIMP DisplayAttributeInfo::GetAttributeInfo(TF_DISPLAYATTRIBUTE* pda) {
     pda->lsStyle = TF_LS_DOT;
     pda->fBoldLine = FALSE;
     pda->crLine.type = TF_CT_NONE;
-    pda->bAttr = TF_ATTR_INPUT;
+    pda->bAttr = _attribute;
     return S_OK;
 }
 
@@ -120,13 +121,16 @@ STDMETHODIMP EnumDisplayAttributeInfo::Next(ULONG ulCount, ITfDisplayAttributeIn
         return E_INVALIDARG;
 
     ULONG fetched = 0;
-    if (_index == 0 && ulCount > 0) {
-        auto* pInfo = new (std::nothrow) DisplayAttributeInfo();
-        if (pInfo) {
-            rgInfo[0] = pInfo;
-            fetched = 1;
-            _index = 1;
+    while (_index < 2 && fetched < ulCount) {
+        const bool converted = _index == 1;
+        auto* info = new (std::nothrow) DisplayAttributeInfo(
+            converted ? c_guidConvertedDisplayAttribute : c_guidDisplayAttribute,
+            converted ? TF_ATTR_CONVERTED : TF_ATTR_INPUT);
+        if (!info) {
+            break;
         }
+        rgInfo[fetched++] = info;
+        ++_index;
     }
 
     if (pcFetched)

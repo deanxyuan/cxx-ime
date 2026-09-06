@@ -74,7 +74,7 @@ bool current_process_is_elevated() {
 
 } // namespace
 
-bool TextService::_present_local_candidate_window(const cxxime::CandidatePage& page,
+bool TextService::_present_local_candidate_window(const cxxime::CandidatePresentationPage& page,
                                                   int page_current, int page_total,
                                                   const std::string& preedit,
                                                   std::size_t preedit_cursor) {
@@ -95,7 +95,8 @@ bool TextService::_present_local_candidate_window(const cxxime::CandidatePage& p
         }
         _localCandidateWindow->set_candidate_selection_callback(
             [this](std::size_t index) {
-                select_candidate_from_ui(static_cast<UINT>(index));
+                select_candidate_from_ui(
+                    static_cast<UINT>(index), _candidatePresentation.candidate_revision());
             });
         _localCandidateWindow->set_page_callback(
             [this](cxxime::CandidatePageDirection direction) {
@@ -211,9 +212,9 @@ void TextService::_publish_ui_presentation() {
         snapshot.flags |= cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kHasPreedit);
     }
 
-    const cxxime::CandidatePage& page = _candidatePresentation.page();
+    const cxxime::CandidatePresentationPage& page = _candidatePresentation.page();
     snapshot.candidate_page.count = static_cast<std::uint32_t>(
-        (std::min)(page.candidates.size(), static_cast<std::size_t>(cxxime::kCandidateCapacity)));
+        (std::min)(page.items.size(), static_cast<std::size_t>(cxxime::kCandidateCapacity)));
     snapshot.candidate_page.offset = static_cast<std::uint32_t>((std::max)(0, page.page_offset));
     snapshot.candidate_page.total = static_cast<std::uint32_t>((std::max)(0, page.total_count));
     snapshot.candidate_page.highlighted =
@@ -226,16 +227,23 @@ void TextService::_publish_ui_presentation() {
         static_cast<std::uint32_t>((std::max)(1, _candidatePresentation.page_current()));
     snapshot.candidate_page.page_total = static_cast<std::uint32_t>(
         (std::max)(snapshot.candidate_page.page_current,
-        static_cast<std::uint32_t>((std::max)(1, _candidatePresentation.page_total()))));
+                   static_cast<std::uint32_t>((std::max)(1, _candidatePresentation.page_total()))));
     for (std::uint32_t index = 0; index < snapshot.candidate_page.count; ++index) {
-        const cxxime::Candidate& candidate = page.candidates[index];
+        const cxxime::CandidatePresentationItem& candidate = page.items[index];
         cxxime::UiCandidate& target = snapshot.candidate_page.candidates[index];
         copy_packet_text(target.text, sizeof(target.text), &target.text_length, candidate.text);
-        copy_packet_text(target.hint, sizeof(target.hint), &target.hint_length, candidate.comment);
+        copy_packet_text(target.hint, sizeof(target.hint), &target.hint_length, candidate.hint);
+        std::uint32_t annotation_length = 0;
+        copy_packet_text(snapshot.candidate_annotations[index],
+                         sizeof(snapshot.candidate_annotations[index]), &annotation_length,
+                         candidate.annotation);
     }
     if (snapshot.candidate_page.count != 0) {
         snapshot.flags |= cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kHasCandidates);
     }
+    snapshot.candidate_revision = _candidatePresentation.candidate_revision();
+    snapshot.converted_prefix_bytes = static_cast<std::uint32_t>(
+        _candidatePresentation.converted_prefix_bytes());
 
     const bool candidate_visible = snapshot.ownership == cxxime::UiOwnership::kExternal &&
                                    _candidatePresentation.should_show_external_window(_composing) &&
@@ -325,6 +333,8 @@ bool TextService::_is_current_ui_command(const cxxime::UiCommand& command) const
         return command.composition_generation == _candidatePresentation.generation() &&
                command.presentation_generation ==
                    _candidatePresentation.presentation_generation() &&
+               (command.type != cxxime::UiCommandType::kSelectCandidate ||
+                command.candidate_revision == _candidatePresentation.candidate_revision()) &&
                _candidatePresentation.presenter() ==
                    cxxime_tsf::CandidatePresenter::kServer;
     case cxxime::UiCommandType::kCommitComposition:
@@ -345,7 +355,7 @@ void TextService::_handle_ui_command(const cxxime::UiCommand& command) {
     cxxime::IPCResponse response = {};
     switch (command.type) {
     case cxxime::UiCommandType::kSelectCandidate:
-        select_candidate_from_ui(command.candidate_index);
+        select_candidate_from_ui(command.candidate_index, command.candidate_revision);
         break;
     case cxxime::UiCommandType::kPagePrevious:
         navigate_candidate_page_from_ui(true);
