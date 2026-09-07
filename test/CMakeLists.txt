@@ -50,7 +50,7 @@ add_cxxime_test(engine_test
 )
 add_cxxime_test(segmented_selection_test
     SOURCES engine/segmented_selection_test.cc
-    DEPS cxxime-engine
+    DEPS cxxime-engine cxxime-test-topn-data
 )
 add_cxxime_test(composition_learning_test
     SOURCES engine/composition_learning_test.cc

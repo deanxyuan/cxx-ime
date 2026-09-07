@@ -24,6 +24,75 @@ namespace cxxime {
 namespace {
 
 constexpr int kDisabledTopnOverfetch = 16;
+// Keep fallback tiers aligned with scripts/build_pinyin_topn.py.
+constexpr int kExactCompleteBase = 100000000;
+constexpr int kFuzzyCompleteBase = 90000000;
+constexpr int kExactPrefixBase = 80000000;
+constexpr int kAbbreviationCompleteBase = 60000000;
+constexpr int kMixedCompleteBase = 50000000;
+constexpr int kFuzzyPrefixBase = 40000000;
+constexpr int kAbbreviationPrefixBase = 30000000;
+constexpr int kMixedPrefixBase = 20000000;
+constexpr int kMaxRankedSourceFrequency = 99999900;
+
+enum class PathMatchTier {
+    kNormal,
+    kFuzzy,
+    kAbbreviation,
+    kMixed,
+    kCompletion,
+};
+
+PathMatchTier classify_path(const SegmentedPath& path) {
+    bool has_normal_or_fuzzy = false;
+    bool has_fuzzy = false;
+    bool has_abbreviation = false;
+    bool has_completion = false;
+    for (uint8_t type : path.spelling_types) {
+        has_normal_or_fuzzy = has_normal_or_fuzzy || type <= kFuzzySpelling;
+        has_fuzzy = has_fuzzy || type == kFuzzySpelling;
+        has_abbreviation = has_abbreviation || type == kAbbreviation;
+        has_completion = has_completion || type == kCompletionSpelling;
+    }
+    if (has_completion) {
+        return PathMatchTier::kCompletion;
+    }
+    if (has_abbreviation) {
+        return has_normal_or_fuzzy ? PathMatchTier::kMixed : PathMatchTier::kAbbreviation;
+    }
+    return has_fuzzy ? PathMatchTier::kFuzzy : PathMatchTier::kNormal;
+}
+
+std::size_t candidate_syllable_count(const Candidate& candidate) {
+    if (candidate.syllables.empty()) {
+        return 0;
+    }
+    return 1 + static_cast<std::size_t>(
+                   std::count(candidate.syllables.begin(), candidate.syllables.end(), ':'));
+}
+
+void rank_fallback_candidate(Candidate& candidate, PathMatchTier tier,
+                             std::size_t query_syllable_count) {
+    const bool complete = candidate_syllable_count(candidate) == query_syllable_count;
+    int base = 0;
+    switch (tier) {
+        case PathMatchTier::kNormal:
+            base = complete ? kExactCompleteBase : kExactPrefixBase;
+            break;
+        case PathMatchTier::kFuzzy:
+        case PathMatchTier::kCompletion:
+            base = complete ? kFuzzyCompleteBase : kFuzzyPrefixBase;
+            break;
+        case PathMatchTier::kAbbreviation:
+            base = complete ? kAbbreviationCompleteBase : kAbbreviationPrefixBase;
+            break;
+        case PathMatchTier::kMixed:
+            base = complete ? kMixedCompleteBase : kMixedPrefixBase;
+            break;
+    }
+    const int source_frequency = (std::max)(0, candidate.source_frequency);
+    candidate.frequency = base + (std::min)(source_frequency, kMaxRankedSourceFrequency) / 100;
+}
 
 struct CompositionPathSpec {
     size_t id_sequence_index = 0;
@@ -310,7 +379,8 @@ void PinyinTranslator::store_query_cache(const std::string& input, int page_inde
 CandidatePage PinyinTranslator::translate_page(const std::string& pinyin, int page_index,
                                                int page_size, QueryTrace* trace,
                                                const QueryBudget* budget, QueryScratch* scratch,
-                                               int candidate_offset) {
+                                               int candidate_offset,
+                                               bool require_runtime_paths) {
     CandidatePage page;
     page.page_index = page_index;
     page.page_size = page_size;
@@ -324,7 +394,8 @@ CandidatePage PinyinTranslator::translate_page(const std::string& pinyin, int pa
     const int need = offset + fetch_limit + 1;
     const QueryCacheVersions cache_versions = query_cache_versions();
 
-    if (lookup_query_cache(pinyin, page_index, offset, page_size, cache_versions, page, trace))
+    if (!require_runtime_paths &&
+        lookup_query_cache(pinyin, page_index, offset, page_size, cache_versions, page, trace))
         return page;
 
     // Try the indexed path before syllabification for every valid pinyin key.
@@ -333,7 +404,7 @@ CandidatePage PinyinTranslator::translate_page(const std::string& pinyin, int pa
     if (is_indexable_key(pinyin)) {
         fast = lookup_indexed_fast(pinyin, need, trace);
         remove_oversized_candidates(fast.candidates);
-        if (fast.complete_index_hit &&
+        if (!require_runtime_paths && fast.complete_index_hit &&
             (!sentence_composition_enabled_ || (int)fast.candidates.size() >= need)) {
             // Enough candidates from cache for this page
             auto& sorted = fast.candidates;
@@ -368,8 +439,10 @@ CandidatePage PinyinTranslator::translate_page(const std::string& pinyin, int pa
     QueryScratch local_scratch;
     QueryScratch& scr = scratch ? *scratch : local_scratch;
     auto& id_sequences = scr.id_sequences;
+    std::vector<PathMatchTier> path_tiers;
 
-    auto add_path = [&](const std::vector<std::string>& syllables) -> size_t {
+    auto add_path = [&](const std::vector<std::string>& syllables,
+                        PathMatchTier tier) -> size_t {
         if (syllables.empty()) return SIZE_MAX;
         std::vector<uint32_t> ids;
         for (auto& s : syllables) {
@@ -378,6 +451,7 @@ CandidatePage PinyinTranslator::translate_page(const std::string& pinyin, int pa
             ids.push_back(id);
         }
         id_sequences.push_back(std::move(ids));
+        path_tiers.push_back(tier);
         return id_sequences.size() - 1;
     };
 
@@ -401,15 +475,16 @@ CandidatePage PinyinTranslator::translate_page(const std::string& pinyin, int pa
         } else {
             // Pass the deadline to the syllabifier for internal checks.
             segment_result = syllabifier_->segment(
-                pinyin, budget ? &budget->deadline : nullptr, false,
-                sentence_composition_enabled_);
+                pinyin, budget ? &budget->deadline : nullptr, false, true);
             id_sequences.reserve(std::min(segment_result.paths.size(), kMaxPaths) + 1);
+            path_tiers.reserve(std::min(segment_result.paths.size(), kMaxPaths) + 1);
             bool has_normal_composition_path = false;
             bool has_repeated_short_path = false;
             CompositionPathSpec repeated_short_spec;
             for (size_t i = 0; i < segment_result.paths.size() && i < kMaxPaths; ++i) {
                 const auto& segmented_path = segment_result.paths[i];
-                const size_t id_index = add_path(segmented_path.syllables);
+                const size_t id_index =
+                    add_path(segmented_path.syllables, classify_path(segmented_path));
                 if (id_index == SIZE_MAX) {
                     continue;
                 }
@@ -455,7 +530,7 @@ CandidatePage PinyinTranslator::translate_page(const std::string& pinyin, int pa
 
     // 2. Normal segmentation (skip if deadline already hit)
     if (!deadline_hit)
-        add_path(segmentor_.segment_best(pinyin));
+        add_path(segmentor_.segment_best(pinyin), PathMatchTier::kNormal);
 
     // If deadline hit, return empty page with trace flags
     if (deadline_hit) {
@@ -490,7 +565,7 @@ CandidatePage PinyinTranslator::translate_page(const std::string& pinyin, int pa
     // terminal syllable completion (for example, "ji" -> "jie").
     if (live_path_indices.empty() && syllabifier_ && !deadline_hit) {
         auto completion_result = syllabifier_->segment(
-            pinyin, budget ? &budget->deadline : nullptr, true);
+            pinyin, budget ? &budget->deadline : nullptr, true, true);
         if (completion_result.deadline_exceeded) {
             deadline_hit = true;
             if (trace) {
@@ -503,7 +578,8 @@ CandidatePage PinyinTranslator::translate_page(const std::string& pinyin, int pa
                 std::min(completion_result.paths.size(), kMaxPaths));
             for (size_t i = 0;
                  i < completion_result.paths.size() && i < kMaxPaths; ++i)
-                add_path(completion_result.paths[i].syllables);
+                add_path(completion_result.paths[i].syllables,
+                         classify_path(completion_result.paths[i]));
             collect_live_paths(first_completion);
         }
     }
@@ -554,6 +630,7 @@ CandidatePage PinyinTranslator::translate_page(const std::string& pinyin, int pa
         }
         auto candidates = dict_->lookup_by_ids(ids, offset + fetch_limit + 1, trace, budget);
         for (auto& c : candidates) {
+            rank_fallback_candidate(c, path_tiers[live_path_index], ids.size());
             if (!contains_text(merged.items(), c.text))
                 merged.offer(std::move(c));
         }
@@ -676,7 +753,7 @@ CandidatePage PinyinTranslator::translate_page(const std::string& pinyin, int pa
     if (!page.candidates.empty())
         page.highlighted = 0;
 
-    if (!deadline_hit && !(trace && trace->deadline_exceeded))
+    if (!require_runtime_paths && !deadline_hit && !(trace && trace->deadline_exceeded))
         store_query_cache(pinyin, page_index, offset, page_size, cache_versions, page);
 
     return page;
@@ -715,9 +792,14 @@ TranslationResult PinyinTranslator::translate(const TranslationRequest& request)
     effective_request.trace->scan_budget_truncated = false;
     effective_request.trace->composition_truncated = false;
 
-    const int fetch_count = request.page_offset + request.page_size + 1;
+    const int fetch_count = (std::max)(
+        request.page_offset + request.page_size + 1,
+        static_cast<int>(kLeadingFullSpanCandidateCount + kMaxSegmentedPartialCandidateCount + 1));
+    const bool require_runtime_paths =
+        syllabifier_ && syllabifier_->has_fuzzy_path(request.input);
     CandidatePage full = translate_page(request.input, 0, fetch_count, effective_request.trace,
-                                        request.budget, request.scratch, 0);
+                                        request.budget, request.scratch, 0,
+                                        require_runtime_paths);
     std::vector<CandidateEntry> merged;
     merged.reserve(full.candidates.size() + request.page_size);
     for (auto& candidate : full.candidates) {
@@ -735,25 +817,52 @@ TranslationResult PinyinTranslator::translate(const TranslationRequest& request)
         append_pinyin_partial_candidates(*dict_, *syllabifier_, effective_request,
                                          candidate_learning_enabled_, merged, result.status);
     }
-    const std::size_t partial_count = merged.size() - full_count;
+    const std::size_t added_partial_count = merged.size() - full_count;
+    const auto is_partial_entry = [&](const CandidateEntry& entry) {
+        const auto* action = std::get_if<TextSelectionAction>(&entry.selection);
+        return action && action->consumed_input_bytes < request.input.size();
+    };
+    const std::size_t visible_partial_count =
+        static_cast<std::size_t>(std::count_if(merged.begin(), merged.end(), is_partial_entry));
+    const std::size_t visible_full_count = merged.size() - visible_partial_count;
+    const std::size_t leading_full_count = (std::min)(
+        visible_full_count, kLeadingFullSpanCandidateCount);
 
-    // Preserve the leading full-span choices and reserve the last first-page slot
-    // for the longest partial action. Remaining partials keep stable later positions.
-    if (request.page_size > 1 && full_count >= static_cast<std::size_t>(request.page_size) &&
-        partial_count > 0) {
-        std::vector<CandidateEntry> partials(
-            std::make_move_iterator(merged.begin() + full_count),
-            std::make_move_iterator(merged.end()));
-        merged.erase(merged.begin() + full_count, merged.end());
-        merged.insert(merged.begin() + request.page_size - 1,
-                      std::make_move_iterator(partials.begin()),
-                      std::make_move_iterator(partials.end()));
+    // Keep a fixed number of leading full-span choices, then group all partials
+    // before lower-ranked full-span choices. The order is independent of page size.
+    if (visible_full_count > leading_full_count && visible_partial_count > 0) {
+        std::vector<CandidateEntry> partials;
+        std::vector<CandidateEntry> fulls;
+        partials.reserve(visible_partial_count);
+        fulls.reserve(visible_full_count);
+        for (auto& entry : merged) {
+            if (is_partial_entry(entry)) {
+                partials.push_back(std::move(entry));
+            } else {
+                fulls.push_back(std::move(entry));
+            }
+        }
+        merged.clear();
+        merged.reserve(fulls.size() + partials.size());
+
+        for (std::size_t index = 0; index < leading_full_count; ++index) {
+            merged.push_back(std::move(fulls[index]));
+        }
+
+        std::size_t full_index = leading_full_count;
+        std::size_t partial_index = 0;
+        while (partial_index < partials.size()) {
+            merged.push_back(std::move(partials[partial_index++]));
+        }
+        while (full_index < fulls.size()) {
+            merged.push_back(std::move(fulls[full_index++]));
+        }
     }
 
     result.page_index = request.page_index;
     result.page_offset = request.page_offset;
     result.page_size = request.page_size;
-    result.total_count = full.total_count + static_cast<int>(partial_count);
+    result.total_count = full.total_count + static_cast<int>(added_partial_count);
     const int available = static_cast<int>(merged.size());
     const int begin = (std::min)(request.page_offset, available);
     const int end = (std::min)(begin + request.page_size, available);

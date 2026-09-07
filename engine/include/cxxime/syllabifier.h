@@ -61,6 +61,7 @@ public:
     SegmentResult segment(const std::string& input, const QueryDeadline* deadline = nullptr,
                           bool enable_terminal_completion = false,
                           bool collect_path_metadata = false) const;
+    bool has_fuzzy_path(const std::string& input) const;
 
 private:
     const SpellingsIndex& spellings_;

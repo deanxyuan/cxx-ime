@@ -16,10 +16,12 @@
 #include <cxxime/mixed_translator.h>
 #include <cxxime/query_budget.h>
 #include <cxxime/query_trace.h>
+#include <cxxime/short_code_cache.h>
 #include <cxxime/symbol_table.h>
 #include <cxxime/wubi_input_policy.h>
 #include <cxxime/wubi_translator.h>
 
+#include "support/topn_test_data.h"
 #include "support/testutil.h"
 
 namespace {
@@ -577,7 +579,237 @@ TEST(SegmentedSelection, fuzzy_and_abbreviation_paths_use_input_boundaries) {
     DeleteFileA(spellings_path.c_str());
 }
 
-TEST(SegmentedSelection, first_page_inserts_prefix_without_losing_a_full_candidate) {
+TEST(SegmentedSelection, natural_path_suppresses_abbreviation_noise_and_keeps_deep_singles) {
+    const std::string dict_path = make_temp_file("sgn");
+    const std::string spellings_path = make_temp_file("sgb");
+    std::vector<std::tuple<std::string, std::string, int>> entries = {
+        {"wu:zong", "完整词", 20000},
+        {"wu:za:o", "错误三字", 19000},
+        {"wu:za:o:na", "错误四字", 18000},
+        {"zong", "总", 17000},
+    };
+    for (int index = 0; index < 11; ++index) {
+        entries.push_back({"wu", "single-" + std::to_string(index), 16000 - index});
+    }
+    entries.push_back({"wu", "乌", 1});
+
+    ASSERT_TRUE(cxxime::Dict::create_test_dict(dict_path, entries));
+    ASSERT_TRUE(cxxime::SpellingsIndex::create_test_trie(
+        spellings_path, {{"wu", "wu", cxxime::kNormalSpelling, 0.0f},
+                         {"zong", "zong", cxxime::kNormalSpelling, 0.0f},
+                         {"z", "za", cxxime::kAbbreviation, -1.0f},
+                         {"o", "o", cxxime::kNormalSpelling, 0.0f},
+                         {"n", "na", cxxime::kAbbreviation, -1.0f},
+                         {"g", "ga", cxxime::kAbbreviation, -1.0f}}));
+
+    cxxime::Dict dict;
+    cxxime::SpellingsIndex spellings;
+    ASSERT_TRUE(dict.open_dict(dict_path));
+    ASSERT_TRUE(spellings.load(spellings_path));
+    cxxime::Syllabifier syllabifier(spellings);
+    cxxime::PinyinTranslator translator;
+    translator.set_dict(&dict);
+    translator.set_syllabifier(&syllabifier);
+
+    cxxime::TranslationRequest request;
+    request.input = "wuzong";
+    request.page_size = 64;
+    request.policy.allow_partial_selection = true;
+    const cxxime::TranslationResult result = translator.translate(request);
+
+    bool found_wu = false;
+    for (const auto& entry : result.entries) {
+        const auto* action = std::get_if<cxxime::TextSelectionAction>(&entry.selection);
+        ASSERT_TRUE(action != nullptr);
+        if (action->consumed_input_bytes < request.input.size()) {
+            ASSERT_EQ(action->consumed_input_bytes, 2u);
+        }
+        if (entry.candidate.text == "乌") {
+            ASSERT_EQ(action->consumed_input_bytes, 2u);
+            found_wu = true;
+        }
+        ASSERT_NE(entry.candidate.text, "错误三字");
+        ASSERT_NE(entry.candidate.text, "错误四字");
+    }
+    ASSERT_TRUE(found_wu);
+
+    spellings.unload();
+    dict.close();
+    DeleteFileA(dict_path.c_str());
+    DeleteFileA(spellings_path.c_str());
+}
+
+TEST(SegmentedSelection, exact_full_path_outranks_fuzzy_and_prefix_frequency) {
+    const std::string dict_path = make_temp_file("sge");
+    const std::string spellings_path = make_temp_file("sgz");
+    ASSERT_TRUE(cxxime::Dict::create_test_dict(dict_path, {{"zong", "精确", 1},
+                                                           {"zhong", "模糊", 4000000},
+                                                           {"zong:tong", "长词一", 3000000},
+                                                           {"zong:guo", "长词二", 2000000},
+                                                           {"zong:ren", "长词三", 1000000}}));
+    ASSERT_TRUE(cxxime::SpellingsIndex::create_test_trie(
+        spellings_path, {{"zong", "zong", cxxime::kNormalSpelling, 0.0f},
+                         {"zong", "zhong", cxxime::kFuzzySpelling, -0.5f}}));
+
+    cxxime::Dict dict;
+    cxxime::SpellingsIndex spellings;
+    ASSERT_TRUE(dict.open_dict(dict_path));
+    ASSERT_TRUE(spellings.load(spellings_path));
+    cxxime::Syllabifier syllabifier(spellings);
+    cxxime::PinyinTranslator translator;
+    translator.set_dict(&dict);
+    translator.set_syllabifier(&syllabifier);
+
+    const cxxime::CandidatePage small_page = translator.translate_page("zong", 0, 2);
+    ASSERT_EQ(small_page.candidates.size(), 2u);
+    ASSERT_EQ(small_page.candidates[0].text, "精确");
+    ASSERT_EQ(small_page.candidates[1].text, "模糊");
+
+    const cxxime::CandidatePage full_page = translator.translate_page("zong", 0, 10);
+    ASSERT_EQ(full_page.candidates.size(), 5u);
+    ASSERT_EQ(full_page.candidates[0].text, "精确");
+    ASSERT_EQ(full_page.candidates[1].text, "模糊");
+    ASSERT_EQ(full_page.candidates[2].text, "长词一");
+    ASSERT_EQ(full_page.candidates[3].text, "长词二");
+    ASSERT_EQ(full_page.candidates[4].text, "长词三");
+
+    spellings.unload();
+    dict.close();
+    DeleteFileA(dict_path.c_str());
+    DeleteFileA(spellings_path.c_str());
+}
+
+TEST(SegmentedSelection, complete_topn_hit_still_merges_fuzzy_full_candidates) {
+    const std::string dict_path = make_temp_file("sgc");
+    const std::string spellings_path = make_temp_file("sgf");
+    const std::string topn_path = make_temp_file("sgi");
+    std::vector<std::tuple<std::string, std::string, int>> dictionary_entries = {
+        {"zong", "exact", 1}, {"zhong", "fuzzy", 4000000}};
+    std::vector<cxxime::Candidate> cached_candidates;
+    cxxime::Candidate cached_exact;
+    cached_exact.text = "exact";
+    cached_exact.syllables = "zong";
+    cached_exact.frequency = 100000000;
+    cached_candidates.push_back(cached_exact);
+    const int cached_prefix_count = static_cast<int>(
+        cxxime::kLeadingFullSpanCandidateCount + cxxime::kMaxSegmentedPartialCandidateCount + 1);
+    for (int index = 0; index < cached_prefix_count; ++index) {
+        const std::string text = "prefix-" + std::to_string(index);
+        dictionary_entries.push_back({"zong:tong", text, 3000000 - index});
+        cxxime::Candidate cached_prefix;
+        cached_prefix.text = text;
+        cached_prefix.syllables = "zong:tong";
+        cached_prefix.frequency = 80000000 - index;
+        cached_candidates.push_back(std::move(cached_prefix));
+    }
+
+    ASSERT_TRUE(cxxime::Dict::create_test_dict(dict_path, dictionary_entries));
+    ASSERT_TRUE(cxxime::SpellingsIndex::create_test_trie(
+        spellings_path, {{"zong", "zong", cxxime::kNormalSpelling, 0.0f},
+                         {"zong", "zhong", cxxime::kFuzzySpelling, -0.5f}}));
+    ASSERT_TRUE(cxxime::test::create_test_topn(topn_path, {{"zong", cached_candidates}}, true));
+
+    cxxime::Dict dict;
+    cxxime::SpellingsIndex spellings;
+    cxxime::ShortCodeCache cache;
+    ASSERT_TRUE(dict.open_dict(dict_path));
+    ASSERT_TRUE(spellings.load(spellings_path));
+    ASSERT_TRUE(cache.load(topn_path));
+    cxxime::Syllabifier syllabifier(spellings);
+    cxxime::PinyinTranslator translator;
+    translator.set_dict(&dict);
+    translator.set_syllabifier(&syllabifier);
+    translator.set_short_cache(&cache);
+
+    cxxime::TranslationRequest request;
+    request.input = "zong";
+    request.page_size = static_cast<int>(cxxime::kLeadingFullSpanCandidateCount);
+    request.policy.allow_partial_selection = true;
+    const cxxime::TranslationResult result = translator.translate(request);
+    ASSERT_EQ(result.entries.size(), cxxime::kLeadingFullSpanCandidateCount);
+    ASSERT_EQ(result.entries[0].candidate.text, "exact");
+    ASSERT_EQ(result.entries[1].candidate.text, "fuzzy");
+
+    cache.unload();
+    spellings.unload();
+    dict.close();
+    DeleteFileA(dict_path.c_str());
+    DeleteFileA(spellings_path.c_str());
+    DeleteFileA(topn_path.c_str());
+}
+
+TEST(SegmentedSelection, real_dictionary_can_select_wu_then_zong) {
+    cxxime::Dict dict;
+    cxxime::SpellingsIndex spellings;
+    ASSERT_TRUE(dict.open_dict(CXXIME_DATA_DIR "pinyin.dict.bin"));
+    ASSERT_TRUE(spellings.load(CXXIME_DATA_DIR "pinyin.spellings.bin"));
+    cxxime::Syllabifier syllabifier(spellings);
+    cxxime::Config config;
+    config.page_size = 7;
+
+    cxxime::Engine engine;
+    ASSERT_TRUE(engine.initialize(dict, spellings, &syllabifier, config));
+    engine.set_query_deadline_ms(0);
+    engine.set_partial_selection_enabled(true);
+    for (char ch : std::string("wuzong")) {
+        ASSERT_EQ(engine.process_key(make_key(static_cast<uint32_t>(ch - 'a' + 'A'))),
+                  cxxime::ProcessResult::ACCEPTED);
+    }
+
+    int wu_index = -1;
+    int wu_page = -1;
+    for (int page = 0; page < 4 && wu_index < 0; ++page) {
+        const auto& translation = engine.context().translation();
+        for (std::size_t index = 0; index < translation.entries.size(); ++index) {
+            const auto& entry = translation.entries[index];
+            const auto* action = std::get_if<cxxime::TextSelectionAction>(&entry.selection);
+            ASSERT_TRUE(action != nullptr);
+            const std::size_t global_position =
+                static_cast<std::size_t>(translation.page_offset) + index;
+            if (global_position < cxxime::kLeadingFullSpanCandidateCount) {
+                ASSERT_EQ(action->consumed_input_bytes, std::string("wuzong").size());
+                ASSERT_EQ(entry.candidate.text.size(), 6u);
+            } else {
+                ASSERT_EQ(action->consumed_input_bytes, 2u);
+            }
+            if (entry.candidate.text == "乌" && action->consumed_input_bytes == 2) {
+                wu_index = static_cast<int>(index);
+                wu_page = page;
+                break;
+            }
+        }
+        if (wu_index >= 0) {
+            break;
+        }
+        const int previous_offset = engine.context().page_offset();
+        ASSERT_EQ(engine.process_key(make_key(VK_NEXT)), cxxime::ProcessResult::ACCEPTED);
+        ASSERT_GT(engine.context().page_offset(), previous_offset);
+    }
+
+    ASSERT_GE(wu_index, 0);
+    ASSERT_GE(wu_page, 0);
+    ASSERT_LT(wu_page, 4);
+    ASSERT_TRUE(engine.select_candidate(wu_index));
+    ASSERT_EQ(engine.context().active_input(), "zong");
+
+    int zong_index = -1;
+    const auto& suffix_entries = engine.context().translation().entries;
+    for (std::size_t index = 0; index < suffix_entries.size(); ++index) {
+        if (suffix_entries[index].candidate.text == "总") {
+            zong_index = static_cast<int>(index);
+            break;
+        }
+    }
+    ASSERT_GE(zong_index, 0);
+    ASSERT_TRUE(engine.select_candidate(zong_index));
+    ASSERT_EQ(engine.get_commit_text(), "乌总");
+
+    engine.finalize();
+    spellings.unload();
+    dict.close();
+}
+
+TEST(SegmentedSelection, partial_group_follows_all_available_leading_full_candidates) {
     const std::string dict_path = make_temp_file("sgp");
     const std::string spellings_path = make_temp_file("sgq");
     ASSERT_TRUE(cxxime::Dict::create_test_dict(
@@ -610,24 +842,30 @@ TEST(SegmentedSelection, first_page_inserts_prefix_without_losing_a_full_candida
     request.page_size = 3;
     request.policy.allow_partial_selection = true;
     const cxxime::TranslationResult first = translator.translate(request);
-    ASSERT_EQ(first.entries[0].candidate.text, legacy.candidates[0].text);
-    ASSERT_TRUE(std::any_of(first.entries.begin(), first.entries.end(), [](const auto& entry) {
-        const auto* action = std::get_if<cxxime::TextSelectionAction>(&entry.selection);
-        return entry.candidate.text == "华锐" && action && action->consumed_input_bytes == 6;
-    }));
+    ASSERT_EQ(first.entries.size(), 3u);
+    for (std::size_t index = 0; index < first.entries.size(); ++index) {
+        ASSERT_EQ(first.entries[index].candidate.text, legacy.candidates[index].text);
+        const auto* action =
+            std::get_if<cxxime::TextSelectionAction>(&first.entries[index].selection);
+        ASSERT_TRUE(action != nullptr);
+        ASSERT_EQ(action->consumed_input_bytes, request.input.size());
+    }
 
     request.page_index = 1;
     request.page_offset = 3;
     const cxxime::TranslationResult second = translator.translate(request);
-    ASSERT_TRUE(!second.entries.empty());
-    ASSERT_TRUE(std::any_of(second.entries.begin(), second.entries.end(), [](const auto& entry) {
-        const auto* action = std::get_if<cxxime::TextSelectionAction>(&entry.selection);
-        return action && action->consumed_input_bytes == 3;
-    }));
-    ASSERT_TRUE(std::any_of(second.entries.begin(), second.entries.end(),
-                            [&](const auto& entry) {
-                                return entry.candidate.text == legacy.candidates[2].text;
-                            }));
+    ASSERT_EQ(second.entries.size(), 3u);
+    ASSERT_EQ(second.entries[0].candidate.text, legacy.candidates[3].text);
+    const auto* remaining_full =
+        std::get_if<cxxime::TextSelectionAction>(&second.entries[0].selection);
+    ASSERT_TRUE(remaining_full != nullptr);
+    ASSERT_EQ(remaining_full->consumed_input_bytes, request.input.size());
+    for (std::size_t index = 1; index < second.entries.size(); ++index) {
+        const auto* action =
+            std::get_if<cxxime::TextSelectionAction>(&second.entries[index].selection);
+        ASSERT_TRUE(action != nullptr);
+        ASSERT_LT(action->consumed_input_bytes, request.input.size());
+    }
 
     translator.clear_query_cache();
     cxxime::QueryBudget constrained;
@@ -654,6 +892,128 @@ TEST(SegmentedSelection, first_page_inserts_prefix_without_losing_a_full_candida
     ASSERT_EQ(constrained_trace.span_entry_scan_count,
               full_only_trace.span_entry_scan_count + constrained.max_exact_scan);
     ASSERT_TRUE(constrained_trace.truncated);
+    ASSERT_TRUE(constrained_trace.scan_budget_truncated);
+
+    spellings.unload();
+    dict.close();
+    DeleteFileA(dict_path.c_str());
+    DeleteFileA(spellings_path.c_str());
+}
+
+TEST(SegmentedSelection, single_candidate_pages_use_the_fixed_global_boundary) {
+    SegmentedFixture fixture;
+    ASSERT_TRUE(fixture.initialize(true, 12));
+
+    cxxime::PinyinTranslator translator;
+    translator.set_dict(&fixture.dict);
+    translator.set_syllabifier(fixture.syllabifier.get());
+
+    using VisibleAction = std::pair<std::string, std::size_t>;
+    auto collect = [&](int page_size) {
+        std::vector<VisibleAction> sequence;
+        int offset = 0;
+        int total_count = 1;
+        while (offset < total_count) {
+            cxxime::TranslationRequest request;
+            request.input = "huaruijishu";
+            request.page_index = offset / page_size;
+            request.page_offset = offset;
+            request.page_size = page_size;
+            request.policy.allow_partial_selection = true;
+            const cxxime::TranslationResult page = translator.translate(request);
+            ASSERT_TRUE(!page.entries.empty());
+            total_count = page.total_count;
+            for (const auto& entry : page.entries) {
+                const auto* action = std::get_if<cxxime::TextSelectionAction>(&entry.selection);
+                ASSERT_TRUE(action != nullptr);
+                sequence.push_back({entry.candidate.text, action->consumed_input_bytes});
+            }
+            offset += static_cast<int>(page.entries.size());
+        }
+        return sequence;
+    };
+
+    const std::vector<VisibleAction> single_pages = collect(1);
+    const std::vector<VisibleAction> seven_item_pages = collect(7);
+    ASSERT_EQ(single_pages.size(), seven_item_pages.size());
+    for (std::size_t index = 0; index < single_pages.size(); ++index) {
+        ASSERT_EQ(single_pages[index].first, seven_item_pages[index].first);
+        ASSERT_EQ(single_pages[index].second, seven_item_pages[index].second);
+    }
+
+    ASSERT_GT(single_pages.size(), cxxime::kLeadingFullSpanCandidateCount);
+    for (std::size_t index = 0; index < cxxime::kLeadingFullSpanCandidateCount; ++index) {
+        ASSERT_EQ(single_pages[index].second, std::string("huaruijishu").size());
+    }
+    ASSERT_LT(single_pages[cxxime::kLeadingFullSpanCandidateCount].second,
+              std::string("huaruijishu").size());
+}
+
+TEST(SegmentedSelection, duplicate_full_text_moves_into_the_partial_group) {
+    const std::string dict_path = make_temp_file("sgt");
+    const std::string spellings_path = make_temp_file("sgu");
+    std::vector<std::tuple<std::string, std::string, int>> entries;
+    for (int index = 0; index < 13; ++index) {
+        std::string text = "full-" + std::to_string(index);
+        if (index == 5) {
+            text = "重复甲";
+        } else if (index == 6) {
+            text = "重复乙";
+        }
+        entries.push_back({"hua:rui:ji:shu", text, 20000 - index});
+    }
+    entries.push_back({"hua:rui:ji", "较长前段", 10000});
+    entries.push_back({"hua:rui", "重复甲", 9000});
+    entries.push_back({"hua:rui", "重复乙", 8000});
+    ASSERT_TRUE(cxxime::Dict::create_test_dict(dict_path, entries));
+    ASSERT_TRUE(cxxime::SpellingsIndex::create_test_trie(
+        spellings_path, {{"hua", "hua", cxxime::kNormalSpelling, 0.0f},
+                         {"rui", "rui", cxxime::kNormalSpelling, 0.0f},
+                         {"ji", "ji", cxxime::kNormalSpelling, 0.0f},
+                         {"shu", "shu", cxxime::kNormalSpelling, 0.0f}}));
+
+    cxxime::Dict dict;
+    cxxime::SpellingsIndex spellings;
+    ASSERT_TRUE(dict.open_dict(dict_path));
+    ASSERT_TRUE(spellings.load(spellings_path));
+    cxxime::Syllabifier syllabifier(spellings);
+    cxxime::PinyinTranslator translator;
+    translator.set_dict(&dict);
+    translator.set_syllabifier(&syllabifier);
+
+    cxxime::TranslationRequest request;
+    request.input = "huaruijishu";
+    request.page_size = 7;
+    request.policy.allow_partial_selection = true;
+    const cxxime::TranslationResult first = translator.translate(request);
+    ASSERT_EQ(first.entries.size(), 7u);
+    for (const auto& entry : first.entries) {
+        const auto* action = std::get_if<cxxime::TextSelectionAction>(&entry.selection);
+        ASSERT_TRUE(action != nullptr);
+        ASSERT_EQ(action->consumed_input_bytes, request.input.size());
+    }
+
+    request.page_index = 1;
+    request.page_offset = 7;
+    const cxxime::TranslationResult second = translator.translate(request);
+    ASSERT_EQ(second.entries.size(), 7u);
+    const std::size_t full_count_on_second_page =
+        cxxime::kLeadingFullSpanCandidateCount - static_cast<std::size_t>(request.page_offset);
+    for (std::size_t index = 0; index < second.entries.size(); ++index) {
+        const auto* action =
+            std::get_if<cxxime::TextSelectionAction>(&second.entries[index].selection);
+        ASSERT_TRUE(action != nullptr);
+        if (index < full_count_on_second_page) {
+            ASSERT_EQ(action->consumed_input_bytes, request.input.size());
+        } else if (index < full_count_on_second_page + 3) {
+            ASSERT_LT(action->consumed_input_bytes, request.input.size());
+        } else {
+            ASSERT_EQ(action->consumed_input_bytes, request.input.size());
+        }
+    }
+    ASSERT_EQ(second.entries[full_count_on_second_page].candidate.text, "较长前段");
+    ASSERT_EQ(second.entries[full_count_on_second_page + 1].candidate.text, "重复甲");
+    ASSERT_EQ(second.entries[full_count_on_second_page + 2].candidate.text, "重复乙");
 
     spellings.unload();
     dict.close();
@@ -768,7 +1128,7 @@ TEST(SegmentedSelection, mixed_prefix_order_does_not_replace_the_full_span_first
     DeleteFileA(order_path.c_str());
 }
 
-TEST(SegmentedSelection, mixed_reserves_longest_partial_on_a_full_first_page) {
+TEST(SegmentedSelection, mixed_places_partial_after_the_fixed_leading_full_boundary) {
     SegmentedFixture fixture;
     ASSERT_TRUE(fixture.initialize(true, 12));
 
@@ -781,15 +1141,155 @@ TEST(SegmentedSelection, mixed_reserves_longest_partial_on_a_full_first_page) {
     request.page_size = 5;
     request.policy.allow_partial_selection = true;
 
-    const cxxime::TranslationResult result = translator.translate(request);
-    ASSERT_EQ(result.entries.size(), 5u);
-    const auto* first = std::get_if<cxxime::TextSelectionAction>(&result.entries[0].selection);
-    ASSERT_TRUE(first != nullptr);
-    ASSERT_EQ(first->consumed_input_bytes, request.input.size());
-    ASSERT_TRUE(std::any_of(result.entries.begin(), result.entries.end(), [&](const auto& entry) {
+    const cxxime::TranslationResult first = translator.translate(request);
+    ASSERT_EQ(first.entries.size(), 5u);
+    for (const auto& entry : first.entries) {
         const auto* action = std::get_if<cxxime::TextSelectionAction>(&entry.selection);
-        return action && action->consumed_input_bytes == 6;
-    }));
+        ASSERT_TRUE(action != nullptr);
+        ASSERT_EQ(action->consumed_input_bytes, request.input.size());
+    }
+
+    request.page_index = 2;
+    request.page_offset = static_cast<int>(cxxime::kLeadingFullSpanCandidateCount);
+    const cxxime::TranslationResult partial_page = translator.translate(request);
+    ASSERT_TRUE(!partial_page.entries.empty());
+    const auto* partial =
+        std::get_if<cxxime::TextSelectionAction>(&partial_page.entries[0].selection);
+    ASSERT_TRUE(partial != nullptr);
+    ASSERT_LT(partial->consumed_input_bytes, request.input.size());
+}
+
+TEST(SegmentedSelection, mixed_groups_all_partials_after_available_full_candidates) {
+    SegmentedFixture fixture;
+    // Fewer than the fixed leading allowance: all available full candidates stay first.
+    ASSERT_TRUE(fixture.initialize(true, 6));
+
+    cxxime::MixedTranslator translator;
+    translator.set_pinyin_dict(&fixture.dict);
+    translator.set_syllabifier(fixture.syllabifier.get());
+    cxxime::TranslationRequest request;
+    request.scheme = cxxime::CompositionScheme::kMixed;
+    request.input = "huaruijishu";
+    request.page_size = 3;
+    request.policy.allow_partial_selection = true;
+
+    const cxxime::TranslationResult first = translator.translate(request);
+    for (const auto& entry : first.entries) {
+        const auto* action = std::get_if<cxxime::TextSelectionAction>(&entry.selection);
+        ASSERT_TRUE(action != nullptr);
+        ASSERT_EQ(action->consumed_input_bytes, request.input.size());
+    }
+
+    request.page_index = 2;
+    request.page_offset = 6;
+    const cxxime::TranslationResult boundary_page = translator.translate(request);
+    ASSERT_EQ(boundary_page.entries.size(), 3u);
+    const auto* final_full =
+        std::get_if<cxxime::TextSelectionAction>(&boundary_page.entries[0].selection);
+    ASSERT_TRUE(final_full != nullptr);
+    ASSERT_EQ(final_full->consumed_input_bytes, request.input.size());
+    for (std::size_t index = 1; index < boundary_page.entries.size(); ++index) {
+        const auto* action =
+            std::get_if<cxxime::TextSelectionAction>(&boundary_page.entries[index].selection);
+        ASSERT_TRUE(action != nullptr);
+        ASSERT_LT(action->consumed_input_bytes, request.input.size());
+    }
+    ASSERT_TRUE(std::any_of(boundary_page.entries.begin(), boundary_page.entries.end(),
+                            [&](const auto& entry) {
+                                const auto* action =
+                                    std::get_if<cxxime::TextSelectionAction>(&entry.selection);
+                                return action && action->consumed_input_bytes == 3;
+                            }));
+}
+
+TEST(SegmentedSelection, mixed_wubi_first_does_not_hide_later_pinyin_partial) {
+    constexpr int kPageSize = 7;
+    const std::string pinyin_path = make_temp_file("sgy");
+    const std::string spellings_path = make_temp_file("sgk");
+    const std::string wubi_path = make_temp_file("sgj");
+    ASSERT_TRUE(cxxime::Dict::create_test_dict(
+        pinyin_path,
+        {{"wu:zong:guo", "拼音整词", 1000}, {"wu:zong", "乌总", 900}, {"wu", "乌", 800}}));
+    ASSERT_TRUE(cxxime::SpellingsIndex::create_test_trie(
+        spellings_path, {{"wu", "wu", cxxime::kNormalSpelling, 0.0f},
+                         {"z", "zong", cxxime::kAbbreviation, -1.0f},
+                         {"g", "guo", cxxime::kAbbreviation, -1.0f}}));
+
+    std::vector<std::tuple<std::string, std::string, int>> wubi_entries;
+    for (int index = 0; index < 12; ++index) {
+        wubi_entries.push_back({"wuzg", "wubi-" + std::to_string(index), 100000000 - index});
+    }
+    ASSERT_TRUE(cxxime::Dict::create_test_dict(wubi_path, wubi_entries));
+
+    cxxime::Dict pinyin;
+    cxxime::Dict wubi;
+    cxxime::SpellingsIndex spellings;
+    ASSERT_TRUE(pinyin.open_dict(pinyin_path));
+    ASSERT_TRUE(wubi.open_dict(wubi_path));
+    ASSERT_TRUE(spellings.load(spellings_path));
+    cxxime::Syllabifier syllabifier(spellings);
+    cxxime::MixedTranslator translator;
+    translator.set_pinyin_dict(&pinyin);
+    translator.set_wubi_dict(&wubi);
+    translator.set_syllabifier(&syllabifier);
+
+    cxxime::TranslationRequest request;
+    request.scheme = cxxime::CompositionScheme::kMixed;
+    request.input = "wuzg";
+    request.page_size = kPageSize;
+    request.policy.allow_partial_selection = true;
+    const cxxime::TranslationResult first = translator.translate(request);
+    ASSERT_EQ(first.entries.size(), static_cast<std::size_t>(kPageSize));
+    for (const auto& entry : first.entries) {
+        const auto* action = std::get_if<cxxime::TextSelectionAction>(&entry.selection);
+        ASSERT_TRUE(action != nullptr);
+        ASSERT_EQ(action->consumed_input_bytes, request.input.size());
+    }
+
+    request.page_index = 1;
+    request.page_offset = kPageSize;
+    const cxxime::TranslationResult second = translator.translate(request);
+    ASSERT_EQ(second.entries.size(), static_cast<std::size_t>(kPageSize));
+    for (std::size_t index = 0;
+         index < cxxime::kLeadingFullSpanCandidateCount - static_cast<std::size_t>(kPageSize);
+         ++index) {
+        const auto* action =
+            std::get_if<cxxime::TextSelectionAction>(&second.entries[index].selection);
+        ASSERT_TRUE(action != nullptr);
+        ASSERT_EQ(action->consumed_input_bytes, request.input.size());
+    }
+    const std::size_t first_partial_index =
+        cxxime::kLeadingFullSpanCandidateCount - static_cast<std::size_t>(kPageSize);
+    const auto* first_partial =
+        std::get_if<cxxime::TextSelectionAction>(&second.entries[first_partial_index].selection);
+    ASSERT_TRUE(first_partial != nullptr);
+    ASSERT_LT(first_partial->consumed_input_bytes, request.input.size());
+
+    request.page_size = 1;
+    for (std::size_t offset = 0; offset < cxxime::kLeadingFullSpanCandidateCount; ++offset) {
+        request.page_index = static_cast<int>(offset);
+        request.page_offset = static_cast<int>(offset);
+        const cxxime::TranslationResult page = translator.translate(request);
+        ASSERT_EQ(page.entries.size(), 1u);
+        const auto* full = std::get_if<cxxime::TextSelectionAction>(&page.entries[0].selection);
+        ASSERT_TRUE(full != nullptr);
+        ASSERT_EQ(full->consumed_input_bytes, request.input.size());
+    }
+    request.page_index = static_cast<int>(cxxime::kLeadingFullSpanCandidateCount);
+    request.page_offset = static_cast<int>(cxxime::kLeadingFullSpanCandidateCount);
+    const cxxime::TranslationResult single_partial_page = translator.translate(request);
+    ASSERT_EQ(single_partial_page.entries.size(), 1u);
+    const auto* single_partial =
+        std::get_if<cxxime::TextSelectionAction>(&single_partial_page.entries[0].selection);
+    ASSERT_TRUE(single_partial != nullptr);
+    ASSERT_LT(single_partial->consumed_input_bytes, request.input.size());
+
+    spellings.unload();
+    pinyin.close();
+    wubi.close();
+    DeleteFileA(pinyin_path.c_str());
+    DeleteFileA(spellings_path.c_str());
+    DeleteFileA(wubi_path.c_str());
 }
 
 TEST(SegmentedSelection, mixed_merges_sources_for_the_same_text_and_action) {

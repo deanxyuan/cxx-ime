@@ -48,7 +48,8 @@ public:
                                  int page_size = 9, QueryTrace* trace = nullptr,
                                  const QueryBudget* budget = nullptr,
                                  QueryScratch* scratch = nullptr,
-                                 int candidate_offset = -1);
+                                 int candidate_offset = -1,
+                                 bool require_runtime_paths = false);
 
 private:
     static bool is_indexable_key(const std::string& pinyin);

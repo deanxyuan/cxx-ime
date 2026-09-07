@@ -48,9 +48,7 @@ bool pinyin_top_is_stronger(const std::vector<CandidateType>& pinyin,
         candidate.origin != CandidateOrigin::kCache) {
         return false;
     }
-    const int frequency = candidate.origin == CandidateOrigin::kCache
-                              ? candidate.source_frequency
-                              : candidate.frequency;
+    const int frequency = candidate.source_frequency;
     return frequency >= 500000 && frequency >= candidate_value(wubi.front()).frequency * 2;
 }
 
@@ -101,6 +99,17 @@ void append_candidate(std::vector<CandidateEntry>& output, CandidateEntry candid
     }
     if (should_prefer_visible_selection(candidate.selection, existing->selection,
                                         full_input_bytes)) {
+        const auto* existing_action = std::get_if<TextSelectionAction>(&existing->selection);
+        const auto* candidate_action = std::get_if<TextSelectionAction>(&candidate.selection);
+        const bool moves_from_full_to_partial =
+            existing_action && candidate_action &&
+            existing_action->consumed_input_bytes == full_input_bytes &&
+            candidate_action->consumed_input_bytes < full_input_bytes;
+        if (moves_from_full_to_partial) {
+            output.erase(existing);
+            output.push_back(std::move(candidate));
+            return;
+        }
         *existing = std::move(candidate);
     }
 }
@@ -130,27 +139,46 @@ void append_interleaved(std::vector<CandidateEntry>& output,
     }
 }
 
-void reserve_longest_partial_on_first_page(std::vector<CandidateEntry>& entries,
-                                           std::size_t full_input_bytes, int page_size) {
-    if (page_size <= 1 || entries.size() <= static_cast<std::size_t>(page_size)) {
+void group_partial_candidates(std::vector<CandidateEntry>& entries,
+                              std::size_t full_input_bytes) {
+    auto is_partial = [&](const CandidateEntry& entry) {
+        const auto* action = std::get_if<TextSelectionAction>(&entry.selection);
+        return action && action->consumed_input_bytes < full_input_bytes;
+    };
+    const std::size_t partial_count =
+        static_cast<std::size_t>(std::count_if(entries.begin(), entries.end(), is_partial));
+    const std::size_t full_count = entries.size() - partial_count;
+    const std::size_t leading_full_count =
+        (std::min)(full_count, kLeadingFullSpanCandidateCount);
+    if (partial_count == 0) {
         return;
     }
-    auto longest = entries.end();
-    std::size_t longest_consumed = 0;
-    for (auto current = entries.begin(); current != entries.end(); ++current) {
-        const auto* action = std::get_if<TextSelectionAction>(&current->selection);
-        if (action && action->consumed_input_bytes < full_input_bytes &&
-            action->consumed_input_bytes > longest_consumed) {
-            longest = current;
-            longest_consumed = action->consumed_input_bytes;
+
+    std::vector<CandidateEntry> partials;
+    std::vector<CandidateEntry> fulls;
+    partials.reserve(partial_count);
+    fulls.reserve(full_count);
+    for (auto& entry : entries) {
+        if (is_partial(entry)) {
+            partials.push_back(std::move(entry));
+        } else {
+            fulls.push_back(std::move(entry));
         }
     }
-    if (longest == entries.end() || longest < entries.begin() + page_size) {
-        return;
+
+    entries.clear();
+    entries.reserve(fulls.size() + partials.size());
+    for (std::size_t index = 0; index < leading_full_count; ++index) {
+        entries.push_back(std::move(fulls[index]));
     }
-    CandidateEntry reserved = std::move(*longest);
-    entries.erase(longest);
-    entries.insert(entries.begin() + page_size - 1, std::move(reserved));
+    std::size_t full_index = leading_full_count;
+    std::size_t partial_index = 0;
+    while (partial_index < partials.size()) {
+        entries.push_back(std::move(partials[partial_index++]));
+    }
+    while (full_index < fulls.size()) {
+        entries.push_back(std::move(fulls[full_index++]));
+    }
 }
 
 } // namespace
@@ -208,7 +236,11 @@ TranslationResult MixedTranslator::translate(const TranslationRequest& request) 
     effective_request.trace->scan_budget_truncated = false;
     effective_request.trace->composition_truncated = false;
 
-    const int need = request.page_offset + request.page_size * 2;
+    const int need = (std::max)(
+        request.page_offset + request.page_size * 2,
+        static_cast<int>(kLeadingFullSpanCandidateCount +
+                         kMaxSegmentedPartialCandidateCount) +
+            request.page_size * 2);
     TranslationRequest source_request = effective_request;
     source_request.page_index = 0;
     source_request.page_offset = 0;
@@ -243,7 +275,7 @@ TranslationResult MixedTranslator::translate(const TranslationRequest& request) 
         return action && action->consumed_input_bytes == request.input.size() &&
                manually_ordered(request.input, entry);
     });
-    reserve_longest_partial_on_first_page(merged, request.input.size(), request.page_size);
+    group_partial_candidates(merged, request.input.size());
 
     if (pinyin.status == TranslationStatus::kFailed &&
         wubi.status == TranslationStatus::kFailed) {

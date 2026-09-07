@@ -20,6 +20,7 @@
 #include "wubi_prefix_index.h"
 
 static const char DICT_MAGIC_V2[] = "CXDIC\x02\x00\x00";
+static constexpr int kExactSpanCollectionBoost = 100000000;
 
 namespace cxxime {
 
@@ -79,6 +80,7 @@ void Dict::fill_system_candidate(uint32_t entry_index, Candidate& candidate,
     candidate.text.assign(dict_strings_ + entry.text_offset, entry.text_len);
     set_candidate_code(candidate, dict_strings_ + entry.syllable_ids_offset,
                        entry.syllable_ids_len);
+    candidate.source_frequency = entry.frequency;
     candidate.frequency = entry.frequency + frequency_boost;
 }
 
@@ -784,7 +786,7 @@ std::vector<Candidate> Dict::lookup_by_ids(const std::vector<uint32_t>& query_id
             break;
         }
         Candidate c;
-        fill_system_candidate(id_index_[pos].index, c, 100000);
+        fill_system_candidate(id_index_[pos].index, c, kExactSpanCollectionBoost);
         if (filter_disabled && is_system_entry_disabled(c.text)) {
             ++pos;
             ++exact_count;

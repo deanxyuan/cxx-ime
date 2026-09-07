@@ -262,4 +262,34 @@ SegmentResult Syllabifier::segment(const std::string& input, const QueryDeadline
     return result;
 }
 
+bool Syllabifier::has_fuzzy_path(const std::string& input) const {
+    const SyllableGraph graph = build_graph(input, false);
+    std::vector<uint8_t> reachable_without_fuzzy(input.size() + 1, 0);
+    std::vector<uint8_t> reachable_with_fuzzy(input.size() + 1, 0);
+    reachable_without_fuzzy[0] = 1;
+
+    for (std::size_t position = 0; position < input.size(); ++position) {
+        if (!reachable_without_fuzzy[position] && !reachable_with_fuzzy[position]) {
+            continue;
+        }
+        const auto edge_groups = graph.find(position);
+        if (edge_groups == graph.end()) {
+            continue;
+        }
+        for (const auto& group : edge_groups->second) {
+            for (const SyllableEdge& edge : group.second) {
+                if (edge.type == kFuzzySpelling) {
+                    reachable_with_fuzzy[group.first] = 1;
+                } else {
+                    reachable_without_fuzzy[group.first] =
+                        reachable_without_fuzzy[group.first] || reachable_without_fuzzy[position];
+                    reachable_with_fuzzy[group.first] =
+                        reachable_with_fuzzy[group.first] || reachable_with_fuzzy[position];
+                }
+            }
+        }
+    }
+    return !input.empty() && reachable_with_fuzzy[input.size()] != 0;
+}
+
 } // namespace cxxime
