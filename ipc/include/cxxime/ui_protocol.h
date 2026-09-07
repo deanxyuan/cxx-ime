@@ -96,8 +96,9 @@ struct UiPresentationSnapshot {
     // Fields after candidate_page form the 0.5 append-only extension.
     std::uint64_t candidate_revision = 0;
     std::uint32_t converted_prefix_bytes = 0;
-    // Explicitly occupies tail padding for append-only extensions; must remain zero.
-    std::uint32_t reserved = 0;
+    std::uint32_t focused_preedit_start_bytes = 0;
+    std::uint32_t focused_preedit_end_bytes = 0;
+    std::uint32_t preedit_presentation_flags = 0;
 };
 
 enum class UiCommandType : std::uint32_t {
@@ -162,8 +163,15 @@ static_assert(offsetof(UiPresentationSnapshot, candidate_page) == 352,
               "UiPresentationSnapshot::candidate_page offset changed");
 static_assert(offsetof(UiPresentationSnapshot, candidate_revision) == UI_SNAPSHOT_BASELINE_SIZE,
               "UiPresentationSnapshot 0.5 extension moved into the 0.4 baseline");
-static_assert(offsetof(UiPresentationSnapshot, reserved) == UI_SNAPSHOT_BASELINE_SIZE + 12,
-              "UiPresentationSnapshot::reserved offset changed");
+static_assert(offsetof(UiPresentationSnapshot, focused_preedit_start_bytes) ==
+                  UI_SNAPSHOT_BASELINE_SIZE + 12,
+              "UiPresentationSnapshot focused preedit extension moved");
+static_assert(offsetof(UiPresentationSnapshot, focused_preedit_end_bytes) ==
+                  UI_SNAPSHOT_BASELINE_SIZE + 16,
+              "UiPresentationSnapshot focused preedit end extension moved");
+static_assert(offsetof(UiPresentationSnapshot, preedit_presentation_flags) ==
+                  UI_SNAPSHOT_BASELINE_SIZE + 20,
+              "UiPresentationSnapshot preedit presentation flags extension moved");
 static_assert(sizeof(UiPresentationSnapshot) >= UI_SNAPSHOT_BASELINE_SIZE,
               "UiPresentationSnapshot cannot shrink below the 0.4.0 baseline");
 static_assert(alignof(UiCommand) == 8, "UiCommand alignment changed");

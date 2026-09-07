@@ -144,6 +144,50 @@ TEST(CandidateWindow, candidate_to_preedit_only_clears_candidate_layout) {
     window.destroy();
 }
 
+TEST(CandidateWindow, focused_syllable_geometry_keeps_separator_outside) {
+    cxxime::Config config;
+    config.render_backend = "gdi";
+
+    cxxime::CandidatePage page;
+    cxxime::Candidate candidate;
+    candidate.text = "candidate";
+    page.candidates.push_back(candidate);
+
+    cxxime::CandidateWindow window;
+    ASSERT_TRUE(window.create(nullptr, config));
+    const std::string converted = u8"华锐";
+    const std::string preedit = converted + "ji'shu";
+    window.set_preedit(preedit, converted.size(), converted.size(), converted.size(),
+                       converted.size() + 2, true);
+    window.update(page);
+
+    const RECT active = window.preedit_active_rect_for_test();
+    const RECT cursor = window.preedit_cursor_rect_for_test();
+    ASSERT_TRUE(active.right > active.left);
+    ASSERT_GT(cursor.left, active.left);
+    bool found_separator = false;
+    for (const auto& run : window.preedit_runs_for_test()) {
+        if (run.kind == cxxime::PreeditRunKind::Separator) {
+            ASSERT_GT(run.rect.left, active.right);
+            ASSERT_TRUE(!run.focused);
+            found_separator = true;
+            break;
+        }
+    }
+    ASSERT_TRUE(found_separator);
+
+    window.set_preedit("abcd", 4, 0, 4, 4, false);
+    window.update(page);
+    const RECT unfocused = window.preedit_active_rect_for_test();
+    ASSERT_EQ(unfocused.right - unfocused.left, 0);
+
+    window.set_preedit("don't", 5, 0, 5, 5, false);
+    window.update(page);
+    ASSERT_EQ(window.preedit_runs_for_test().size(), static_cast<std::size_t>(1));
+    ASSERT_EQ(window.preedit_runs_for_test()[0].text, std::string("don't"));
+    window.destroy();
+}
+
 TEST(CandidateWindow, dpi_relayout_notifies_controller) {
     cxxime::Config config;
     config.render_backend = "gdi";

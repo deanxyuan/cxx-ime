@@ -29,6 +29,10 @@ TEST(IpcResponseBuilder, serializes_complete_segmented_presentation) {
     ASSERT_EQ(std::string(response.preedit), result.preedit);
     ASSERT_EQ(response.preedit_cursor, static_cast<uint32_t>(result.preedit.size()));
     ASSERT_EQ(response.converted_prefix_bytes, static_cast<uint32_t>(std::string("华锐").size()));
+    ASSERT_EQ(response.focused_preedit_start_bytes,
+              static_cast<uint32_t>(std::string("华锐").size()));
+    ASSERT_EQ(response.focused_preedit_end_bytes,
+              static_cast<uint32_t>(result.preedit.size()));
     ASSERT_EQ(response.candidate_revision, 9u);
     ASSERT_EQ(response.candidate_count, 1u);
     ASSERT_EQ(std::string(response.candidates[0]), "技术");
@@ -38,6 +42,25 @@ TEST(IpcResponseBuilder, serializes_complete_segmented_presentation) {
     ASSERT_EQ(response.page_current, 2u);
     ASSERT_EQ(response.page_total, 3u);
     ASSERT_EQ(response.highlighted, 1u);
+}
+
+TEST(IpcResponseBuilder, serializes_explicit_focused_preedit_range) {
+    ProcessKeyResult result;
+    result.status = cxxime::IPCStatus::OK;
+    result.composing = true;
+    result.preedit = "ji'shu";
+    result.preedit_cursor = result.preedit.size();
+    result.focused_preedit_end_bytes = 2;
+    result.preedit_presentation_flags = cxxime::preedit_presentation_flag(
+        cxxime::PreeditPresentationFlag::SyllableBoundaries);
+
+    cxxime::IPCResponse response = {};
+    fill_process_response(result, &response);
+
+    ASSERT_EQ(response.status, cxxime::IPCStatus::OK);
+    ASSERT_EQ(response.focused_preedit_start_bytes, static_cast<uint32_t>(0));
+    ASSERT_EQ(response.focused_preedit_end_bytes, static_cast<uint32_t>(2));
+    ASSERT_EQ(response.preedit_presentation_flags, result.preedit_presentation_flags);
 }
 
 TEST(IpcResponseBuilder, rejects_non_utf8_preedit_boundaries) {

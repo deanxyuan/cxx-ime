@@ -121,11 +121,20 @@ STDMETHODIMP EnumDisplayAttributeInfo::Next(ULONG ulCount, ITfDisplayAttributeIn
         return E_INVALIDARG;
 
     ULONG fetched = 0;
-    while (_index < 2 && fetched < ulCount) {
-        const bool converted = _index == 1;
-        auto* info = new (std::nothrow) DisplayAttributeInfo(
-            converted ? c_guidConvertedDisplayAttribute : c_guidDisplayAttribute,
-            converted ? TF_ATTR_CONVERTED : TF_ATTR_INPUT);
+    while (_index < 4 && fetched < ulCount) {
+        const GUID* guid = &c_guidDisplayAttribute;
+        TF_DA_ATTR_INFO attribute = TF_ATTR_INPUT;
+        if (_index == 1) {
+            guid = &c_guidConvertedDisplayAttribute;
+            attribute = TF_ATTR_CONVERTED;
+        } else if (_index == 2) {
+            guid = &c_guidFocusedDisplayAttribute;
+            attribute = TF_ATTR_TARGET_NOTCONVERTED;
+        } else if (_index == 3) {
+            guid = &c_guidFocusedConvertedDisplayAttribute;
+            attribute = TF_ATTR_TARGET_CONVERTED;
+        }
+        auto* info = new (std::nothrow) DisplayAttributeInfo(*guid, attribute);
         if (!info) {
             break;
         }

@@ -36,7 +36,10 @@ public:
     void set_composition_action(Action action,
                                 const std::wstring& text,
                                 size_t selection_offset,
-                                size_t converted_prefix_utf16 = 0);
+                                size_t converted_prefix_utf16 = 0,
+                                size_t focused_start_utf16 = 0,
+                                size_t focused_end_utf16 = 0,
+                                bool focused_converted = false);
     void set_position_update_from_layout_change(bool from_layout_change) {
         _positionUpdateFromLayoutChange = from_layout_change;
     }
@@ -66,6 +69,9 @@ private:
     size_t _selectionOffset = 0;
     bool _hasSelectionOffset = false;
     size_t _convertedPrefixUtf16 = 0;
+    size_t _focusedStartUtf16 = 0;
+    size_t _focusedEndUtf16 = 0;
+    bool _focusedConverted = false;
     RECT _resultRect = {};
     bool _resultValid = false;
     bool _positionUpdateFromLayoutChange = false;

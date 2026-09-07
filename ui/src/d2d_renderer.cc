@@ -46,12 +46,19 @@ static IDWriteTextFormat* mkfmt(IDWriteFactory* f, const wchar_t* name, float sz
 
 bool D2DRenderer::initialize(HWND hwnd, const Theme& theme, UINT dpi) {
     HRESULT hr = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &d2d_factory_);
-    if (FAILED(hr)) return false;
+    if (FAILED(hr)) {
+        finalize();
+        return false;
+    }
     RECT rc; GetClientRect(hwnd, &rc);
     hr = d2d_factory_->CreateHwndRenderTarget(
         D2D1::RenderTargetProperties(),
-        D2D1::HwndRenderTargetProperties(hwnd, D2D1::SizeU(rc.right-rc.left, rc.bottom-rc.top)), &render_target_);
-    if (FAILED(hr)) return false;
+        D2D1::HwndRenderTargetProperties(hwnd, D2D1::SizeU(rc.right - rc.left, rc.bottom - rc.top)),
+        &render_target_);
+    if (FAILED(hr)) {
+        finalize();
+        return false;
+    }
     // CandidateWindow computes layout and HWND size in physical pixels.
     // Keep D2D coordinates in the same pixel space; otherwise high-DPI render
     // targets interpret our rectangles as DIP and the content gets clipped.
@@ -63,13 +70,31 @@ bool D2DRenderer::initialize(HWND hwnd, const Theme& theme, UINT dpi) {
     render_target_->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &highlight_text_brush_);
     render_target_->CreateSolidColorBrush(D2D1::ColorF(0.68f, 0.85f, 1.0f, 0.5f), &hover_brush_);
     render_target_->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Gray), &preedit_brush_);
+    render_target_->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Gray),
+                                          &preedit_separator_brush_);
+    render_target_->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White),
+                                          &preedit_active_back_brush_);
+    render_target_->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Gray),
+                                          &preedit_active_border_brush_);
     render_target_->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::DodgerBlue),
                                           &preedit_cursor_brush_);
     render_target_->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Gray), &label_brush_);
     render_target_->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Gray), &nav_brush_);
     render_target_->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Gray), &border_brush_);
-    hr = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), reinterpret_cast<IUnknown**>(&dwrite_factory_));
-    if (FAILED(hr)) return false;
+    if (!text_brush_ || !comment_brush_ || !bg_brush_ || !highlight_brush_ ||
+        !highlight_text_brush_ || !hover_brush_ || !preedit_brush_ ||
+        !preedit_separator_brush_ || !preedit_active_back_brush_ ||
+        !preedit_active_border_brush_ || !preedit_cursor_brush_ || !label_brush_ ||
+        !nav_brush_ || !border_brush_) {
+        finalize();
+        return false;
+    }
+    hr = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory),
+                             reinterpret_cast<IUnknown**>(&dwrite_factory_));
+    if (FAILED(hr)) {
+        finalize();
+        return false;
+    }
     float fsize = (float)theme.font_size * dpi / 72.0f;
     float psize = (float)theme.preedit_font_size * dpi / 72.0f;
     fmt_left_ = mkfmt(dwrite_factory_, theme.font_name.c_str(), fsize,
@@ -80,14 +105,19 @@ bool D2DRenderer::initialize(HWND hwnd, const Theme& theme, UINT dpi) {
                          DWRITE_TEXT_ALIGNMENT_LEADING);
     fmt_small_ = mkfmt(dwrite_factory_, theme.font_name.c_str(), 9.0f * dpi / 72.0f,
                         DWRITE_TEXT_ALIGNMENT_CENTER);
-    return fmt_left_ && fmt_right_ && fmt_preedit_ && fmt_small_;
+    if (!fmt_left_ || !fmt_right_ || !fmt_preedit_ || !fmt_small_) {
+        finalize();
+        return false;
+    }
+    return true;
 }
 
 void D2DRenderer::finalize() {
     for (auto* p : {&fmt_small_, &fmt_preedit_, &fmt_right_, &fmt_left_}) { if (*p) { (*p)->Release(); *p = nullptr; } }
     if (dwrite_factory_) { dwrite_factory_->Release(); dwrite_factory_ = nullptr; }
     for (auto* p : {&border_brush_, &nav_brush_, &label_brush_, &preedit_cursor_brush_,
-                    &preedit_brush_, &hover_brush_,
+                    &preedit_active_border_brush_, &preedit_active_back_brush_,
+                    &preedit_separator_brush_, &preedit_brush_, &hover_brush_,
                     &highlight_text_brush_, &highlight_brush_, &bg_brush_, &comment_brush_,
                     &text_brush_})
     { if (*p) { (*p)->Release(); *p = nullptr; } }
@@ -96,57 +126,53 @@ void D2DRenderer::finalize() {
 }
 
 void D2DRenderer::draw_preedit(const RenderContext& ctx) {
-    if (ctx.preedit.empty() || ctx.preedit_rect.right <= ctx.preedit_rect.left || !preedit_brush_) {
+    if (ctx.preedit.empty() || ctx.preedit_rect.right <= ctx.preedit_rect.left ||
+        !preedit_brush_ || !ctx.theme) {
         return;
     }
 
-    const std::wstring preedit = dec(ctx.preedit);
-    if (preedit.empty()) {
-        return;
+    if (ctx.preedit_active_rect.right > ctx.preedit_active_rect.left &&
+        preedit_active_back_brush_ && preedit_active_border_brush_) {
+        const D2D1_ROUNDED_RECT active = {
+            D2D1::RectF(static_cast<float>(ctx.preedit_active_rect.left),
+                        static_cast<float>(ctx.preedit_active_rect.top),
+                        static_cast<float>(ctx.preedit_active_rect.right),
+                        static_cast<float>(ctx.preedit_active_rect.bottom)),
+            static_cast<float>(ctx.preedit_corner_radius),
+            static_cast<float>(ctx.preedit_corner_radius),
+        };
+        render_target_->FillRoundedRectangle(active, preedit_active_back_brush_);
+        render_target_->DrawRoundedRectangle(active, preedit_active_border_brush_, 1.0f);
     }
 
-    const D2D1_RECT_F rect = {
-        static_cast<float>(ctx.preedit_rect.left),
-        static_cast<float>(ctx.preedit_rect.top),
-        static_cast<float>(ctx.preedit_rect.right),
-        static_cast<float>(ctx.preedit_rect.bottom),
-    };
-    render_target_->DrawText(preedit.c_str(), static_cast<UINT32>(preedit.length()), fmt_preedit_,
-                             rect, preedit_brush_);
-
-    if (!ctx.show_preedit_cursor || !preedit_cursor_brush_ || !dwrite_factory_) {
-        return;
-    }
-
-    const size_t cursor = (std::min)(ctx.preedit_cursor, ctx.preedit.size());
-    const std::wstring prefix = dec(ctx.preedit.substr(0, cursor));
-    float prefix_width = 0.0f;
-    if (!prefix.empty()) {
-        IDWriteTextLayout* layout = nullptr;
-        const float width = (std::max)(1.0f, rect.right - rect.left);
-        const float height = (std::max)(1.0f, rect.bottom - rect.top);
-        const HRESULT hr = dwrite_factory_->CreateTextLayout(
-            prefix.c_str(), static_cast<UINT32>(prefix.length()), fmt_preedit_, width, height,
-            &layout);
-        if (SUCCEEDED(hr) && layout) {
-            DWRITE_TEXT_METRICS metrics = {};
-            if (SUCCEEDED(layout->GetMetrics(&metrics))) {
-                prefix_width = metrics.widthIncludingTrailingWhitespace;
-            }
-            layout->Release();
+    for (const auto& run : ctx.preedit_runs) {
+        const std::wstring text = dec(run.text);
+        ID2D1SolidColorBrush* brush = preedit_brush_;
+        if (run.kind == PreeditRunKind::Converted) {
+            brush = text_brush_;
+        } else if (run.kind == PreeditRunKind::Separator) {
+            brush = preedit_separator_brush_;
         }
+        if (ctx.high_contrast && run.focused) {
+            brush = highlight_text_brush_;
+        }
+        const D2D1_RECT_F rect = {
+            static_cast<float>(run.rect.left), static_cast<float>(run.rect.top),
+            static_cast<float>(run.rect.right), static_cast<float>(run.rect.bottom),
+        };
+        render_target_->DrawText(text.c_str(), static_cast<UINT32>(text.length()), fmt_preedit_,
+                                 rect, brush);
     }
 
-    const float cursor_width = static_cast<float>((std::max)(1, ctx.preedit_cursor_width));
-    const float cursor_left = (std::max)(
-        rect.left, (std::min)(rect.left + prefix_width, rect.right - cursor_width));
-    const D2D1_RECT_F cursor_rect = {
-        cursor_left,
-        rect.top + 1.0f,
-        (std::min)(cursor_left + cursor_width, rect.right),
-        rect.bottom - 1.0f,
-    };
-    render_target_->FillRectangle(cursor_rect, preedit_cursor_brush_);
+    if (ctx.show_preedit_cursor && preedit_cursor_brush_ &&
+        ctx.preedit_cursor_rect.right > ctx.preedit_cursor_rect.left) {
+        render_target_->FillRectangle(
+            D2D1::RectF(static_cast<float>(ctx.preedit_cursor_rect.left),
+                        static_cast<float>(ctx.preedit_cursor_rect.top),
+                        static_cast<float>(ctx.preedit_cursor_rect.right),
+                        static_cast<float>(ctx.preedit_cursor_rect.bottom)),
+            preedit_cursor_brush_);
+    }
 }
 
 void D2DRenderer::render(const RenderContext& ctx) {
@@ -163,6 +189,9 @@ void D2DRenderer::render(const RenderContext& ctx) {
         highlight_brush_->SetColor(c2d(ctx.theme->hilited_back));
         highlight_text_brush_->SetColor(c2d(ctx.theme->hilited_text));
         preedit_brush_->SetColor(c2d(ctx.theme->preedit_text));
+        preedit_separator_brush_->SetColor(c2d(ctx.theme->preedit_separator));
+        preedit_active_back_brush_->SetColor(c2d(ctx.theme->preedit_active_back));
+        preedit_active_border_brush_->SetColor(c2d(ctx.theme->preedit_active_border));
         preedit_cursor_brush_->SetColor(c2d(ctx.theme->preedit_cursor));
         label_brush_->SetColor(c2d(ctx.theme->label_text));
         nav_brush_->SetColor(c2d(ctx.theme->prev_page));
@@ -171,6 +200,14 @@ void D2DRenderer::render(const RenderContext& ctx) {
                                 (ctx.theme->background.g + ctx.theme->hilited_back.g) / 2.0f / 255.0f,
                                 (ctx.theme->background.b + ctx.theme->hilited_back.b) / 2.0f / 255.0f, 1.0f);
         hover_brush_->SetColor(hover_col);
+        if (ctx.high_contrast) {
+            const bool cursor_focused =
+                ctx.preedit_active_rect.right > ctx.preedit_active_rect.left &&
+                ctx.preedit_cursor_rect.left >= ctx.preedit_active_rect.left &&
+                ctx.preedit_cursor_rect.left <= ctx.preedit_active_rect.right;
+            preedit_cursor_brush_->SetColor(
+                c2d(cursor_focused ? ctx.theme->hilited_text : ctx.theme->preedit_cursor));
+        }
     }
 
     D2D1_SIZE_F sz = render_target_->GetSize();
@@ -181,11 +218,13 @@ void D2DRenderer::render(const RenderContext& ctx) {
             !preedit_brush_)
             return;
         float sep_y = (float)ctx.preedit_rect.bottom + (cfg ? (float)cfg->spacing/3 : 5.0f);
-        preedit_brush_->SetColor(separator_color(ctx.theme));
+        preedit_brush_->SetColor(ctx.high_contrast ? c2d(ctx.theme->border)
+                                                   : separator_color(ctx.theme));
         render_target_->DrawLine({margin + 2.0f, sep_y}, {sz.width - margin - 2.0f, sep_y},
                                  preedit_brush_, 1.0f);
-        if (ctx.theme)
+        if (ctx.theme) {
             preedit_brush_->SetColor(c2d(ctx.theme->preedit_text));
+        }
     };
 
     auto draw_border = [&]() {

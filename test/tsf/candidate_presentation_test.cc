@@ -37,6 +37,14 @@ TEST(CandidatePresentation, external_ready_expects_window) {
     ASSERT_TRUE(presentation.should_show_external_window(true));
 }
 
+TEST(CandidatePresentation, legacy_content_update_does_not_focus_nonempty_preedit) {
+    cxxime_tsf::CandidatePresentation presentation;
+    presentation.update_content(page_with_candidate("candidate"), "ni", 2, 1, 1);
+
+    ASSERT_EQ(presentation.focused_preedit_start(), static_cast<std::size_t>(2));
+    ASSERT_EQ(presentation.focused_preedit_end(), static_cast<std::size_t>(2));
+}
+
 TEST(CandidatePresentation, host_ownership_never_expects_external_window) {
     cxxime_tsf::CandidatePresentation presentation;
     presentation.update_content(page_with_candidate("candidate"), "", 0, 1, 1);

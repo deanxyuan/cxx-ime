@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <utility>
+#include <vector>
 
 #include <windows.h>
 
@@ -38,6 +39,11 @@ bool utf8_prefix_to_utf16(const std::string& text, std::size_t bytes, std::size_
     return true;
 }
 
+bool is_utf8_offset(const std::string& text, std::size_t bytes) {
+    std::size_t ignored = 0;
+    return utf8_prefix_to_utf16(text, bytes, &ignored);
+}
+
 bool utf8_to_utf16(const std::string& text, std::wstring* result) {
     if (text.empty()) {
         result->clear();
@@ -62,15 +68,60 @@ bool decode_engine_presentation(const cxxime::IPCResponse& response,
     }
 
     std::string preedit;
-    if (response.converted_prefix_bytes > response.preedit_cursor ||
-        !read_field(response.preedit, &preedit) ||
-        !utf8_to_utf16(preedit, &presentation->preedit) ||
-        !utf8_prefix_to_utf16(preedit, response.preedit_cursor,
-                              &presentation->preedit_cursor_utf16) ||
-        !utf8_prefix_to_utf16(preedit, response.converted_prefix_bytes,
-                              &presentation->converted_prefix_utf16)) {
+    if (!read_field(response.preedit, &preedit)) {
         return false;
     }
+    constexpr std::uint32_t kSyllableBoundaryFlag = cxxime::preedit_presentation_flag(
+        cxxime::PreeditPresentationFlag::SyllableBoundaries);
+    if ((response.preedit_presentation_flags & ~kSyllableBoundaryFlag) != 0) {
+        return false;
+    }
+    presentation->has_syllable_boundaries =
+        (response.preedit_presentation_flags & kSyllableBoundaryFlag) != 0;
+    std::size_t focused_start = response.focused_preedit_start_bytes;
+    std::size_t focused_end = response.focused_preedit_end_bytes;
+    if (focused_start == 0 && focused_end == 0) {
+        if (response.ime_status.input_mode == cxxime::InputMode::PINYIN) {
+            focused_start = response.converted_prefix_bytes;
+            focused_end = preedit.size();
+        } else {
+            focused_start = preedit.size();
+            focused_end = preedit.size();
+        }
+    }
+    if (response.converted_prefix_bytes > response.preedit_cursor ||
+        focused_start < response.converted_prefix_bytes || focused_start > focused_end ||
+        focused_end > preedit.size() ||
+        !utf8_to_utf16(preedit, &presentation->display_preedit)) {
+        return false;
+    }
+    std::string logical_preedit;
+    logical_preedit.reserve(preedit.size());
+    std::vector<std::size_t> logical_offsets(preedit.size() + 1, 0);
+    for (std::size_t index = 0; index < preedit.size(); ++index) {
+        logical_offsets[index] = logical_preedit.size();
+        if (!presentation->has_syllable_boundaries || index < response.converted_prefix_bytes ||
+            preedit[index] != '\'') {
+            logical_preedit.push_back(preedit[index]);
+        }
+    }
+    logical_offsets[preedit.size()] = logical_preedit.size();
+    if (!is_utf8_offset(preedit, response.preedit_cursor) ||
+        !is_utf8_offset(preedit, response.converted_prefix_bytes) ||
+        !is_utf8_offset(preedit, focused_start) || !is_utf8_offset(preedit, focused_end) ||
+        !utf8_to_utf16(logical_preedit, &presentation->preedit) ||
+        !utf8_prefix_to_utf16(logical_preedit, logical_offsets[response.preedit_cursor],
+                              &presentation->preedit_cursor_utf16) ||
+        !utf8_prefix_to_utf16(logical_preedit, logical_offsets[response.converted_prefix_bytes],
+                              &presentation->converted_prefix_utf16) ||
+        !utf8_prefix_to_utf16(logical_preedit, logical_offsets[focused_start],
+                              &presentation->focused_preedit_start_utf16) ||
+        !utf8_prefix_to_utf16(logical_preedit, logical_offsets[focused_end],
+                              &presentation->focused_preedit_end_utf16)) {
+        return false;
+    }
+    presentation->display_focused_preedit_start_bytes = focused_start;
+    presentation->display_focused_preedit_end_bytes = focused_end;
 
     cxxime::CandidatePresentationPage page;
     page.page_index = response.page_current > 0 ? static_cast<int>(response.page_current - 1) : 0;

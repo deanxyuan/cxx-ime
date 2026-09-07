@@ -43,6 +43,9 @@ public:
     void update(const CandidatePage& page);
     void set_preedit(const std::string& preedit);
     void set_preedit(const std::string& preedit, size_t cursor);
+    void set_preedit(const std::string& preedit, size_t cursor,
+                     size_t converted_prefix, size_t focused_start, size_t focused_end,
+                     bool has_syllable_boundaries);
     void set_layout(const std::string& layout);
     void move_to_caret(const RECT& caretRect);
     void move_to_screen_position(int x, int y);
@@ -69,6 +72,11 @@ public:
         return index < candidate_rects_.size() ? candidate_rects_[index].highlight_rect
                                                : RECT{};
     }
+    RECT preedit_active_rect_for_test() const { return render_ctx_.preedit_active_rect; }
+    RECT preedit_cursor_rect_for_test() const { return render_ctx_.preedit_cursor_rect; }
+    const std::vector<PreeditTextRun>& preedit_runs_for_test() const {
+        return render_ctx_.preedit_runs;
+    }
 
 private:
     void rebuild_render_context(const LayoutConfig& cfg, int window_width);
@@ -88,6 +96,10 @@ private:
     CandidatePage page_;
     std::string preedit_text_;
     size_t preedit_cursor_ = 0;
+    size_t converted_prefix_ = 0;
+    size_t focused_preedit_start_ = 0;
+    size_t focused_preedit_end_ = 0;
+    bool preedit_has_syllable_boundaries_ = false;
     int preedit_cursor_width_ = 1;
     std::string layout_orientation_ = "horizontal";
     CandidateSelectionCallback candidate_selection_cb_;
@@ -97,6 +109,8 @@ private:
     std::vector<CandidateRect> candidate_rects_;
     RenderContext render_ctx_;
     Theme theme_;
+    // Runtime theme derived from theme_, with Windows high-contrast colors applied when active.
+    Theme render_theme_;
     RenderBackend backend_ = RenderBackend::GDI;
     const Config* config_ = nullptr;
 

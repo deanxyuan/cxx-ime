@@ -253,7 +253,10 @@ TEST(SessionIntegration, wubi_fifth_key_returns_commit_and_next_composition) {
     ASSERT_EQ(mgr.process_key(id, make_key('A')).result, cxxime::ProcessResult::ACCEPTED);
     ASSERT_EQ(mgr.process_key(id, make_key('B')).result, cxxime::ProcessResult::ACCEPTED);
     ASSERT_EQ(mgr.process_key(id, make_key('C')).result, cxxime::ProcessResult::ACCEPTED);
-    ASSERT_EQ(mgr.process_key(id, make_key('D')).result, cxxime::ProcessResult::ACCEPTED);
+    const ProcessKeyResult fourth = mgr.process_key(id, make_key('D'));
+    ASSERT_EQ(fourth.result, cxxime::ProcessResult::ACCEPTED);
+    ASSERT_EQ(fourth.focused_preedit_start_bytes, fourth.preedit.size());
+    ASSERT_EQ(fourth.focused_preedit_end_bytes, fourth.preedit.size());
 
     const auto result = mgr.process_key(id, make_key('E'));
     ASSERT_EQ(result.status, cxxime::IPCStatus::OK);

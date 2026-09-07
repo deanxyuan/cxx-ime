@@ -140,6 +140,15 @@ enum class IPCStatus : uint32_t {
 };
 
 constexpr uint64_t kClientCapabilitySegmentedSelection = 1ULL << 0;
+constexpr uint64_t kClientCapabilitySegmentedPreeditPresentation = 1ULL << 1;
+
+enum class PreeditPresentationFlag : uint32_t {
+    SyllableBoundaries = 1u << 0,
+};
+
+constexpr uint32_t preedit_presentation_flag(PreeditPresentationFlag flag) noexcept {
+    return static_cast<uint32_t>(flag);
+}
 
 struct CandidateUiContext {
     enum class Presenter : uint32_t {
@@ -236,8 +245,9 @@ struct IPCResponse {
     // Fields after server_process_id form the 0.5 append-only extension.
     uint64_t candidate_revision = 0;
     uint32_t converted_prefix_bytes = 0;
-    // Explicitly occupies tail padding for append-only extensions; must remain zero.
-    uint32_t reserved = 0;
+    uint32_t focused_preedit_start_bytes = 0;
+    uint32_t focused_preedit_end_bytes = 0;
+    uint32_t preedit_presentation_flags = 0;
 };
 
 static_assert(std::is_standard_layout<IPCResponse>::value,
@@ -261,8 +271,15 @@ static_assert(sizeof(IPCResponse) >= IPC_RESPONSE_BASELINE_SIZE,
               "IPCResponse dropped fields from the 0.4.0 baseline");
 static_assert(offsetof(IPCResponse, candidate_revision) == IPC_RESPONSE_BASELINE_SIZE,
               "IPCResponse 0.5 extension moved into the 0.4 baseline");
-static_assert(offsetof(IPCResponse, reserved) == IPC_RESPONSE_BASELINE_SIZE + 12,
-              "IPCResponse::reserved offset changed");
+static_assert(offsetof(IPCResponse, focused_preedit_start_bytes) ==
+                  IPC_RESPONSE_BASELINE_SIZE + 12,
+              "IPCResponse focused preedit extension moved");
+static_assert(offsetof(IPCResponse, focused_preedit_end_bytes) ==
+                  IPC_RESPONSE_BASELINE_SIZE + 16,
+              "IPCResponse focused preedit end extension moved");
+static_assert(offsetof(IPCResponse, preedit_presentation_flags) ==
+                  IPC_RESPONSE_BASELINE_SIZE + 20,
+              "IPCResponse preedit presentation flags extension moved");
 
 } // namespace cxxime
 

@@ -4,6 +4,10 @@
 
 namespace {
 
+constexpr uint64_t kSegmentedPreeditClientCapabilities =
+    cxxime::kClientCapabilitySegmentedSelection |
+    cxxime::kClientCapabilitySegmentedPreeditPresentation;
+
 std::string setup_segmented_session_dict() {
     const std::string dict_path = make_temp_path("session_segmented_dict.bin");
     create_test_dictionary_bundle(dict_path, {
@@ -72,12 +76,30 @@ TEST(SessionSegmented, legacy_session_keeps_full_span_selection_and_zero_revisio
     delete_test_dictionary_bundle(dict_path);
 }
 
+TEST(SessionSegmented, earlier_segmented_client_keeps_logical_preedit) {
+    const std::string dict_path = setup_segmented_session_dict();
+    {
+        SessionManager manager;
+        ASSERT_TRUE(manager.initialize(dict_path));
+        const uint32_t id =
+            manager.create_session(cxxime::kClientCapabilitySegmentedSelection);
+
+        const ProcessKeyResult typed = type_code(manager, id, "huaruijishu");
+        ASSERT_GE(find_presentation_item(typed, "华锐"), 0);
+        ASSERT_EQ(typed.preedit, "huaruijishu");
+        ASSERT_EQ(typed.focused_preedit_start_bytes, typed.preedit.size());
+        ASSERT_EQ(typed.focused_preedit_end_bytes, typed.preedit.size());
+        ASSERT_EQ(typed.preedit_presentation_flags, static_cast<uint32_t>(0));
+    }
+    delete_test_dictionary_bundle(dict_path);
+}
+
 TEST(SessionSegmented, stale_selection_refreshes_without_changing_composition) {
     const std::string dict_path = setup_segmented_session_dict();
     {
         SessionManager manager;
         ASSERT_TRUE(manager.initialize(dict_path));
-        const uint32_t id = manager.create_session(cxxime::kClientCapabilitySegmentedSelection);
+        const uint32_t id = manager.create_session(kSegmentedPreeditClientCapabilities);
 
         const ProcessKeyResult typed = type_code(manager, id, "huaruijishu");
         const int prefix_index = find_presentation_item(typed, "华锐");
@@ -90,7 +112,12 @@ TEST(SessionSegmented, stale_selection_refreshes_without_changing_composition) {
         ASSERT_EQ(stale.result, cxxime::ProcessResult::REJECTED);
         ASSERT_TRUE(stale.commit_text.empty());
         ASSERT_TRUE(stale.composing);
-        ASSERT_EQ(stale.preedit, "huaruijishu");
+        ASSERT_EQ(stale.preedit, "hua'rui'ji'shu");
+        ASSERT_EQ(stale.focused_preedit_start_bytes, static_cast<std::size_t>(0));
+        ASSERT_EQ(stale.focused_preedit_end_bytes, stale.preedit.size());
+        ASSERT_EQ(stale.preedit_presentation_flags,
+                  cxxime::preedit_presentation_flag(
+                      cxxime::PreeditPresentationFlag::SyllableBoundaries));
         ASSERT_EQ(stale.candidate_revision, typed.candidate_revision);
         ASSERT_EQ(stale.presentation.items.size(), typed.presentation.items.size());
     }
@@ -102,7 +129,7 @@ TEST(SessionSegmented, current_revision_confirms_prefix_then_finalizes_suffix) {
     {
         SessionManager manager;
         ASSERT_TRUE(manager.initialize(dict_path));
-        const uint32_t id = manager.create_session(cxxime::kClientCapabilitySegmentedSelection);
+        const uint32_t id = manager.create_session(kSegmentedPreeditClientCapabilities);
 
         const ProcessKeyResult typed = type_code(manager, id, "huaruijishu");
         const int prefix_index = find_presentation_item(typed, "华锐");
@@ -114,8 +141,10 @@ TEST(SessionSegmented, current_revision_confirms_prefix_then_finalizes_suffix) {
         ASSERT_EQ(prefix.result, cxxime::ProcessResult::ACCEPTED);
         ASSERT_TRUE(prefix.commit_text.empty());
         ASSERT_TRUE(prefix.composing);
-        ASSERT_EQ(prefix.preedit, "华锐jishu");
+        ASSERT_EQ(prefix.preedit, "华锐ji'shu");
         ASSERT_EQ(prefix.converted_prefix_bytes, std::string("华锐").size());
+        ASSERT_EQ(prefix.focused_preedit_start_bytes, prefix.converted_prefix_bytes);
+        ASSERT_EQ(prefix.focused_preedit_end_bytes, prefix.preedit.size());
         ASSERT_GT(prefix.candidate_revision, typed.candidate_revision);
 
         const ProcessKeyResult stale = manager.select_candidate(id, 0, typed.candidate_revision);
@@ -140,7 +169,7 @@ TEST(SessionSegmented, invalid_selection_and_cursor_motion_preserve_revision) {
     {
         SessionManager manager;
         ASSERT_TRUE(manager.initialize(dict_path));
-        const uint32_t id = manager.create_session(cxxime::kClientCapabilitySegmentedSelection);
+        const uint32_t id = manager.create_session(kSegmentedPreeditClientCapabilities);
 
         const ProcessKeyResult typed = type_code(manager, id, "huaruijishu");
         const ProcessKeyResult moved = manager.process_key(id, make_key(VK_LEFT));
@@ -159,7 +188,7 @@ TEST(SessionSegmented, paging_and_partial_undo_advance_revision) {
     {
         SessionManager manager;
         ASSERT_TRUE(manager.initialize(dict_path));
-        const uint32_t id = manager.create_session(cxxime::kClientCapabilitySegmentedSelection);
+        const uint32_t id = manager.create_session(kSegmentedPreeditClientCapabilities);
 
         const ProcessKeyResult typed = type_code(manager, id, "huaruijishu", 2);
         const ProcessKeyResult next_page = manager.process_key(id, make_key(VK_NEXT), 2);
@@ -175,7 +204,7 @@ TEST(SessionSegmented, paging_and_partial_undo_advance_revision) {
         const ProcessKeyResult home = manager.process_key(id, make_key(VK_HOME));
         ASSERT_EQ(home.candidate_revision, prefix.candidate_revision);
         const ProcessKeyResult undone = manager.process_key(id, make_key(VK_BACK));
-        ASSERT_EQ(undone.preedit, "huaruijishu");
+        ASSERT_EQ(undone.preedit, "hua'rui'ji'shu");
         ASSERT_GT(undone.candidate_revision, prefix.candidate_revision);
 
         const ProcessKeyResult stale = manager.select_candidate(id, 0, prefix.candidate_revision);

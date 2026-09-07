@@ -117,6 +117,34 @@ TEST(PreeditMode, composition_maps_cursor_directly) {
     ASSERT_TRUE(!d.show_preedit_in_popup);
 }
 
+TEST(PreeditMode, composition_preserves_focused_syllable_range) {
+    const std::wstring preedit = L"华锐ji'shu";
+    const std::vector<std::wstring> candidates = {L"技术"};
+
+    const auto decision = cxxime_tsf::decide_preedit(
+        true, "composition", preedit, preedit.size(), candidates, 2, 0, 2, 4);
+
+    ASSERT_EQ(decision.inline_text, preedit);
+    ASSERT_EQ(decision.inline_converted_prefix, static_cast<std::size_t>(2));
+    ASSERT_EQ(decision.inline_focused_start, static_cast<std::size_t>(2));
+    ASSERT_EQ(decision.inline_focused_end, static_cast<std::size_t>(4));
+    ASSERT_TRUE(!decision.inline_focus_converted);
+    ASSERT_EQ(decision.inline_text[decision.inline_focused_end], L'\'');
+}
+
+TEST(PreeditMode, preview_focuses_the_selected_candidate_text) {
+    const std::wstring preedit = L"华锐ji'shu";
+    const std::vector<std::wstring> candidates = {L"技术", L"计数"};
+
+    const auto decision = cxxime_tsf::decide_preedit(
+        true, "preview", preedit, preedit.size(), candidates, 2, 1, 2, 4);
+
+    ASSERT_EQ(decision.inline_text, std::wstring(L"华锐计数"));
+    ASSERT_EQ(decision.inline_focused_start, static_cast<std::size_t>(2));
+    ASSERT_EQ(decision.inline_focused_end, decision.inline_text.size());
+    ASSERT_TRUE(decision.inline_focus_converted);
+}
+
 TEST(PreeditMode, preview_keeps_roles_stable_for_interior_cursor) {
     std::wstring preedit = L"nihao";
     std::vector<std::wstring> candidates = {L"你好"};

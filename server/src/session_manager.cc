@@ -164,11 +164,43 @@ void fill_session_presentation(const SessionEntry& entry, ProcessKeyResult& resu
     if (!result.composing) {
         return;
     }
-    const cxxime::CompositionPresentation composition =
-        cxxime::derive_composition_presentation(context.composition());
-    result.preedit = composition.logical_preedit;
-    result.preedit_cursor = composition.cursor_bytes;
-    result.converted_prefix_bytes = composition.converted_prefix_bytes;
+    std::size_t focused_input_bytes = context.active_input().size();
+    std::string preferred_syllables;
+    const bool supports_segmented_preedit =
+        (entry.client_capabilities & cxxime::kClientCapabilitySegmentedPreeditPresentation) != 0;
+    bool decorate_pinyin_preedit = supports_segmented_preedit &&
+        context.composition_scheme() == cxxime::CompositionScheme::kPinyin;
+    const cxxime::CandidateEntry* highlighted = context.candidate_entry(context.highlighted());
+    if (highlighted) {
+        if (const auto* action =
+                std::get_if<cxxime::TextSelectionAction>(&highlighted->selection)) {
+            focused_input_bytes = action->consumed_input_bytes;
+            if (action->primary_variant < action->variants.size()) {
+                preferred_syllables = action->variants[action->primary_variant].syllables;
+            }
+        }
+        if (supports_segmented_preedit &&
+            context.composition_scheme() == cxxime::CompositionScheme::kMixed) {
+            decorate_pinyin_preedit =
+                highlighted->candidate.source == cxxime::CandidateSource::kPinyin;
+        }
+    }
+    const cxxime::CompositionPresentation composition = cxxime::derive_composition_presentation(
+        context.composition(), entry.resources.syllabifier.get(), focused_input_bytes,
+        decorate_pinyin_preedit, preferred_syllables);
+    result.preedit = composition.display_preedit;
+    result.preedit_cursor = composition.display_cursor_bytes;
+    result.converted_prefix_bytes = composition.display_converted_prefix_bytes;
+    result.focused_preedit_start_bytes = composition.focused_preedit_start_bytes;
+    result.focused_preedit_end_bytes = composition.focused_preedit_end_bytes;
+    result.preedit_presentation_flags = decorate_pinyin_preedit
+            ? cxxime::preedit_presentation_flag(
+                cxxime::PreeditPresentationFlag::SyllableBoundaries)
+            : 0;
+    if (!decorate_pinyin_preedit) {
+        result.focused_preedit_start_bytes = result.preedit.size();
+        result.focused_preedit_end_bytes = result.preedit.size();
+    }
     result.presentation = context.translation().presentation_page();
 }
 
@@ -521,9 +553,12 @@ uint32_t SessionManager::create_session(uint64_t client_capabilities) {
     entry->full_shape = entry->resources.config->initial_full_shape;
     entry->chinese_punct = entry->resources.config->initial_chinese_punct;
     entry->client_capabilities =
-        client_capabilities & cxxime::kClientCapabilitySegmentedSelection;
-    entry->candidate_revision = entry->client_capabilities != 0 ? 1 : 0;
-    entry->engine->set_partial_selection_enabled(entry->client_capabilities != 0);
+        client_capabilities & (cxxime::kClientCapabilitySegmentedSelection |
+                               cxxime::kClientCapabilitySegmentedPreeditPresentation);
+    const bool segmented_selection =
+        (entry->client_capabilities & cxxime::kClientCapabilitySegmentedSelection) != 0;
+    entry->candidate_revision = segmented_selection ? 1 : 0;
+    entry->engine->set_partial_selection_enabled(segmented_selection);
     entry->ime_status.set_full_shape(entry->full_shape);
     entry->ime_status.set_chinese_punct(entry->chinese_punct);
     entry->engine->set_fuzzy_enabled(entry->resources.config->fuzzy_pinyin);

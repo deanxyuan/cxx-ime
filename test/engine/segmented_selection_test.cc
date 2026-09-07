@@ -158,6 +158,61 @@ TEST(SegmentedSelection, keyboard_confirms_prefix_and_finalizes_once) {
     ASSERT_TRUE(!fixture.engine.context().is_composing());
 }
 
+TEST(SegmentedSelection, presentation_keeps_boundary_after_focused_syllable) {
+    SegmentedFixture fixture;
+    ASSERT_TRUE(fixture.initialize());
+    fixture.type("huaruijishu");
+
+    const cxxime::CompositionPresentation initial = cxxime::derive_composition_presentation(
+        fixture.engine.context().composition(), fixture.syllabifier.get(), 6, true);
+    ASSERT_EQ(initial.display_preedit, "hua'rui'ji'shu");
+    ASSERT_EQ(initial.focused_preedit_start_bytes, static_cast<std::size_t>(0));
+    ASSERT_EQ(initial.focused_preedit_end_bytes, std::string("hua'rui").size());
+    ASSERT_EQ(initial.display_preedit[initial.focused_preedit_end_bytes], '\'');
+
+    const int prefix = fixture.find("华锐", 6);
+    ASSERT_GE(prefix, 0);
+    ASSERT_TRUE(fixture.engine.select_candidate(prefix));
+    const std::size_t converted_bytes = std::string("华锐").size();
+    const cxxime::CompositionPresentation continued = cxxime::derive_composition_presentation(
+        fixture.engine.context().composition(), fixture.syllabifier.get(), 2, true);
+    ASSERT_EQ(continued.display_preedit, "华锐ji'shu");
+    ASSERT_EQ(continued.display_converted_prefix_bytes, converted_bytes);
+    ASSERT_EQ(continued.focused_preedit_start_bytes, converted_bytes);
+    ASSERT_EQ(continued.focused_preedit_end_bytes, converted_bytes + 2);
+    ASSERT_EQ(continued.display_preedit[continued.focused_preedit_end_bytes], '\'');
+}
+
+TEST(SegmentedSelection, presentation_follows_highlighted_ambiguous_syllable_path) {
+    const std::string spellings_path = make_temp_file("sgv");
+    ASSERT_TRUE(cxxime::SpellingsIndex::create_test_trie(
+        spellings_path,
+        {{"xian", "xian", cxxime::kNormalSpelling, 0.0f},
+         {"xi", "xi", cxxime::kNormalSpelling, 0.0f},
+         {"an", "an", cxxime::kNormalSpelling, 0.0f}}));
+    cxxime::SpellingsIndex spellings;
+    ASSERT_TRUE(spellings.load(spellings_path));
+    cxxime::Syllabifier syllabifier(spellings);
+    cxxime::CompositionState state;
+    ASSERT_TRUE(state.set_active_input("xian", 4));
+
+    const cxxime::CompositionPresentation single = cxxime::derive_composition_presentation(
+        state, &syllabifier, 4, true, "xian");
+    ASSERT_EQ(single.display_preedit, "xian");
+
+    const cxxime::CompositionPresentation split = cxxime::derive_composition_presentation(
+        state, &syllabifier, 4, true, "xi:an");
+    ASSERT_EQ(split.display_preedit, "xi'an");
+
+    const cxxime::CompositionPresentation partial = cxxime::derive_composition_presentation(
+        state, &syllabifier, 2, true, "xi");
+    ASSERT_EQ(partial.display_preedit, "xi'an");
+    ASSERT_EQ(partial.focused_preedit_end_bytes, static_cast<std::size_t>(2));
+
+    spellings.unload();
+    DeleteFileA(spellings_path.c_str());
+}
+
 TEST(SegmentedSelection, mouse_selection_uses_the_same_action_dispatcher) {
     SegmentedFixture fixture;
     ASSERT_TRUE(fixture.initialize());

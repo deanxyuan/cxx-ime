@@ -519,6 +519,8 @@ HRESULT clear_and_end_composition(TextService* service,
 HRESULT apply_composition_text(TextService* service, ITfContext* context, TfEditCookie ec,
                                ITfRange* range, const std::wstring& text, size_t selection_offset,
                                bool has_selection_offset, size_t converted_prefix_utf16,
+                               size_t focused_start_utf16, size_t focused_end_utf16,
+                               bool focused_converted,
                                bool composition_started) {
     if (!service || !context || !range) {
         return E_INVALIDARG;
@@ -550,7 +552,8 @@ HRESULT apply_composition_text(TextService* service, ITfContext* context, TfEdit
 
     set_composition_language(context, ec, range);
     service->apply_composition_display_attributes(
-        context, range, ec, converted_prefix_utf16);
+        context, range, ec, converted_prefix_utf16, focused_start_utf16,
+        focused_end_utf16, focused_converted);
     result = has_selection_offset
         ? set_selection_to_range_offset(context, ec, range, selection_offset)
         : set_selection_to_range(context, ec, range);
@@ -639,6 +642,9 @@ void EditSession::set_action(Action action, const std::wstring& text) {
     _selectionOffset = 0;
     _hasSelectionOffset = false;
     _convertedPrefixUtf16 = 0;
+    _focusedStartUtf16 = 0;
+    _focusedEndUtf16 = 0;
+    _focusedConverted = false;
     _actionResult = E_PENDING;
     _compositionStartAttempted = false;
     _compositionStartResult = E_PENDING;
@@ -654,11 +660,17 @@ void EditSession::set_end_composition_action(ITfComposition* composition) {
 
 void EditSession::set_composition_action(Action action, const std::wstring& text,
                                          size_t selection_offset,
-                                         size_t converted_prefix_utf16) {
+                                         size_t converted_prefix_utf16,
+                                         size_t focused_start_utf16,
+                                         size_t focused_end_utf16,
+                                         bool focused_converted) {
     set_action(action, text);
     _selectionOffset = selection_offset;
     _hasSelectionOffset = true;
     _convertedPrefixUtf16 = converted_prefix_utf16;
+    _focusedStartUtf16 = focused_start_utf16;
+    _focusedEndUtf16 = focused_end_utf16;
+    _focusedConverted = focused_converted;
 }
 
 STDMETHODIMP EditSession::DoEditSession(TfEditCookie ec) {
@@ -678,7 +690,8 @@ STDMETHODIMP EditSession::DoEditSession(TfEditCookie ec) {
                 _service->set_applied_inline_composition_text(_text);
                 set_composition_language(_context, ec, pRange);
                 _service->apply_composition_display_attributes(
-                    _context, pRange, ec, _convertedPrefixUtf16);
+                    _context, pRange, ec, _convertedPrefixUtf16, _focusedStartUtf16,
+                    _focusedEndUtf16, _focusedConverted);
                 _actionResult = _hasSelectionOffset
                     ? set_selection_to_range_offset(
                         _context, ec, pRange, _selectionOffset)
@@ -709,7 +722,8 @@ STDMETHODIMP EditSession::DoEditSession(TfEditCookie ec) {
             if (SUCCEEDED(_actionResult) && range) {
                 _actionResult = apply_composition_text(
                     _service, _context, ec, range, _text, _selectionOffset,
-                    _hasSelectionOffset, _convertedPrefixUtf16,
+                    _hasSelectionOffset, _convertedPrefixUtf16, _focusedStartUtf16,
+                    _focusedEndUtf16, _focusedConverted,
                     _compositionStartAttempted);
                 range->Release();
             }

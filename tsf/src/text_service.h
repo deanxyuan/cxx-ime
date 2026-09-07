@@ -142,11 +142,17 @@ public:
                                size_t preedit_cursor,
                                bool ensure = false,
                                DWORD edit_session_mode = TF_ES_ASYNCDONTCARE,
-                               size_t converted_prefix_utf16 = 0);
+                               size_t converted_prefix_utf16 = 0,
+                               size_t focused_start_utf16 = 0,
+                               size_t focused_end_utf16 = 0,
+                               bool focused_converted = false);
     bool apply_composition_display_attributes(ITfContext* pic,
                                               ITfRange* range,
                                               TfEditCookie ec,
-                                              size_t converted_prefix_utf16);
+                                              size_t converted_prefix_utf16,
+                                              size_t focused_start_utf16,
+                                              size_t focused_end_utf16,
+                                              bool focused_converted);
     ITfComposition* get_composition() const { return _composition; }
     void set_composition(ITfComposition* comp) { _composition = comp; }
     ITfContext* get_composition_context() const { return _compositionContext; }
@@ -226,7 +232,10 @@ private:
                                              const std::wstring& commit_text,
                                              const std::wstring& preedit,
                                              size_t preedit_cursor,
-                                             size_t converted_prefix_utf16);
+                                             size_t converted_prefix_utf16,
+                                             size_t focused_start_utf16,
+                                             size_t focused_end_utf16,
+                                             bool focused_converted);
     bool _apply_engine_response(ITfContext* context,
                                 const cxxime::IPCResponse& response,
                                 BOOL* eaten,
@@ -347,6 +356,8 @@ private:
     DWORD _dwTextLayoutSinkCookie = TF_INVALID_COOKIE;
     TfGuidAtom _displayAttributeAtom = 0;
     TfGuidAtom _convertedDisplayAttributeAtom = 0;
+    TfGuidAtom _focusedDisplayAttributeAtom = 0;
+    TfGuidAtom _focusedConvertedDisplayAttributeAtom = 0;
     ITfContext* _textEditSinkContext = nullptr;
     ITfContext* _textLayoutSinkContext = nullptr;
     ITfDocumentMgr* _effectiveDocumentMgr = nullptr;

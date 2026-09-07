@@ -22,6 +22,9 @@ struct Theme {
     Color comment_text{102, 102, 102, 255}; // normal candidate comment text
     Color label_text{128, 128, 128, 255};   // label "1. " text
     Color preedit_text{128, 128, 128, 255}; // preedit text
+    Color preedit_separator{102, 102, 102, 255};
+    Color preedit_active_back{232, 240, 248, 255};
+    Color preedit_active_border{176, 200, 224, 255};
     Color preedit_cursor{0, 120, 215, 255}; // static cursor in popup preedit
     Color hilited_text{255, 255, 255, 255}; // highlighted candidate text
     Color hilited_back{0, 120, 215, 255};   // highlighted candidate background
@@ -63,6 +66,14 @@ Theme build_theme_from_config(const Config& cfg);
 
 struct LayoutConfig;
 enum class CandidateHoverTarget { None, Candidate, PreviousPage, NextPage };
+enum class PreeditRunKind { Converted, Active, Separator };
+
+struct PreeditTextRun {
+    std::string text;
+    RECT rect{};
+    PreeditRunKind kind = PreeditRunKind::Active;
+    bool focused = false;
+};
 
 struct RenderContext {
     const std::vector<CandidateRect>* rects = nullptr;
@@ -77,6 +88,11 @@ struct RenderContext {
     CandidateHoverTarget hovered_target = CandidateHoverTarget::None;
     int hovered_candidate_index = -1;
     RECT preedit_rect{};
+    RECT preedit_active_rect{};
+    RECT preedit_cursor_rect{};
+    int preedit_corner_radius = 3;
+    bool high_contrast = false;
+    std::vector<PreeditTextRun> preedit_runs;
     RECT page_indicator_rect{};
     RECT prev_button_rect{};
     RECT next_button_rect{};

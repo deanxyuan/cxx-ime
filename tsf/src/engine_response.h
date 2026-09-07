@@ -13,8 +13,14 @@ namespace cxxime_tsf {
 
 struct DecodedEnginePresentation {
     std::wstring preedit;
+    std::wstring display_preedit;
     std::size_t preedit_cursor_utf16 = 0;
     std::size_t converted_prefix_utf16 = 0;
+    std::size_t focused_preedit_start_utf16 = 0;
+    std::size_t focused_preedit_end_utf16 = 0;
+    std::size_t display_focused_preedit_start_bytes = 0;
+    std::size_t display_focused_preedit_end_bytes = 0;
+    bool has_syllable_boundaries = false;
     cxxime::CandidatePresentationPage candidates;
 };
 

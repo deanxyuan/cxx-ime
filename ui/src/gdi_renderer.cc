@@ -32,7 +32,8 @@ static void draw_preedit_separator(HDC dc, const RECT& clip, const RenderContext
                                    int margin) {
     auto* cfg = ctx.layout_cfg;
     int sep_y = ctx.preedit_rect.bottom + (cfg ? cfg->spacing / 3 : 5);
-    HPEN sep = CreatePen(PS_SOLID, 1, clr(separator_color(ctx.theme)));
+    const Color color = ctx.high_contrast ? ctx.theme->border : separator_color(ctx.theme);
+    HPEN sep = CreatePen(PS_SOLID, 1, clr(color));
     HPEN old_p = (HPEN)SelectObject(dc, sep);
     MoveToEx(dc, margin + 2, sep_y, nullptr);
     LineTo(dc, clip.right - margin - 2, sep_y);
@@ -58,40 +59,56 @@ static void draw_border(HDC dc, const RECT& clip, const RenderContext& ctx) {
 
 static void draw_preedit(HDC dc, const RenderContext& ctx, HFONT font, COLORREF text_color,
                          COLORREF cursor_color) {
-    if (ctx.preedit.empty() || ctx.preedit_rect.right <= ctx.preedit_rect.left || !font) {
+    if (ctx.preedit.empty() || ctx.preedit_rect.right <= ctx.preedit_rect.left || !font ||
+        !ctx.theme) {
         return;
     }
 
     HFONT old_font = static_cast<HFONT>(SelectObject(dc, font));
-    const std::wstring preedit = to_wstr(ctx.preedit);
-    if (!preedit.empty()) {
-        SetBkMode(dc, TRANSPARENT);
-        SetTextColor(dc, text_color);
-        DrawTextW(dc, preedit.c_str(), -1, const_cast<RECT*>(&ctx.preedit_rect),
+    if (ctx.preedit_active_rect.right > ctx.preedit_active_rect.left) {
+        const COLORREF active_back = clr(ctx.theme->preedit_active_back);
+        const COLORREF active_border = clr(ctx.theme->preedit_active_border);
+        HBRUSH brush = CreateSolidBrush(active_back);
+        HPEN pen = CreatePen(PS_SOLID, 1, active_border);
+        HBRUSH old_brush = static_cast<HBRUSH>(SelectObject(dc, brush));
+        HPEN old_pen = static_cast<HPEN>(SelectObject(dc, pen));
+        RoundRect(dc, ctx.preedit_active_rect.left, ctx.preedit_active_rect.top,
+                  ctx.preedit_active_rect.right, ctx.preedit_active_rect.bottom,
+                  ctx.preedit_corner_radius, ctx.preedit_corner_radius);
+        SelectObject(dc, old_pen);
+        SelectObject(dc, old_brush);
+        DeleteObject(pen);
+        DeleteObject(brush);
+    }
+
+    SetBkMode(dc, TRANSPARENT);
+    for (const auto& run : ctx.preedit_runs) {
+        COLORREF color = ctx.high_contrast ? clr(ctx.theme->preedit_text) : text_color;
+        if (ctx.high_contrast && run.focused) {
+            color = clr(ctx.theme->hilited_text);
+        } else if (!ctx.high_contrast && run.kind == PreeditRunKind::Converted) {
+            color = clr(ctx.theme->text);
+        } else if (!ctx.high_contrast && run.kind == PreeditRunKind::Separator) {
+            color = clr(ctx.theme->preedit_separator);
+        }
+        SetTextColor(dc, color);
+        const std::wstring text = to_wstr(run.text);
+        DrawTextW(dc, text.c_str(), -1, const_cast<RECT*>(&run.rect),
                   DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     }
 
-    if (ctx.show_preedit_cursor) {
-        const size_t cursor = (std::min)(ctx.preedit_cursor, ctx.preedit.size());
-        const std::wstring prefix = to_wstr(ctx.preedit.substr(0, cursor));
-        SIZE extent = {};
-        if (!prefix.empty()) {
-            GetTextExtentPoint32W(dc, prefix.c_str(), static_cast<int>(prefix.length()), &extent);
+    if (ctx.show_preedit_cursor &&
+        ctx.preedit_cursor_rect.right > ctx.preedit_cursor_rect.left) {
+        if (ctx.high_contrast) {
+            const bool cursor_focused =
+                ctx.preedit_active_rect.right > ctx.preedit_active_rect.left &&
+                ctx.preedit_cursor_rect.left >= ctx.preedit_active_rect.left &&
+                ctx.preedit_cursor_rect.left <= ctx.preedit_active_rect.right;
+            cursor_color = clr(cursor_focused ? ctx.theme->hilited_text
+                                              : ctx.theme->preedit_cursor);
         }
-        const int cursor_width = (std::max)(1, ctx.preedit_cursor_width);
-        const int prefix_width = static_cast<int>(extent.cx);
-        const int rect_left = static_cast<int>(ctx.preedit_rect.left);
-        const int rect_right = static_cast<int>(ctx.preedit_rect.right);
-        const int cursor_left = (std::max)(
-            rect_left, (std::min)(rect_left + prefix_width, rect_right - cursor_width));
-        RECT cursor_rect = {
-            cursor_left,
-            ctx.preedit_rect.top + 1,
-            (std::min)(cursor_left + cursor_width, rect_right),
-            ctx.preedit_rect.bottom - 1,
-        };
         HBRUSH cursor_brush = CreateSolidBrush(cursor_color);
-        FillRect(dc, &cursor_rect, cursor_brush);
+        FillRect(dc, &ctx.preedit_cursor_rect, cursor_brush);
         DeleteObject(cursor_brush);
     }
 

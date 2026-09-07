@@ -464,9 +464,25 @@ private:
         candidate_window_.set_page_info(static_cast<int>(current.candidate_page.page_current),
                                         static_cast<int>(current.candidate_page.page_total));
         if (has_flag(current, cxxime::UiSnapshotFlag::kHasPreedit)) {
+            std::size_t focused_start = current.focused_preedit_start_bytes;
+            std::size_t focused_end = current.focused_preedit_end_bytes;
+            if (focused_start == 0 && focused_end == 0) {
+                if (current.ime_status.input_mode == cxxime::InputMode::PINYIN) {
+                    focused_start = current.converted_prefix_bytes;
+                    focused_end = current.preedit_length;
+                } else {
+                    focused_start = current.preedit_length;
+                    focused_end = current.preedit_length;
+                }
+            }
             candidate_window_.set_preedit(
                 packet_text(current.preedit, current.preedit_length, sizeof(current.preedit)),
-                static_cast<std::size_t>(current.preedit_cursor));
+                static_cast<std::size_t>(current.preedit_cursor),
+                static_cast<std::size_t>(current.converted_prefix_bytes),
+                focused_start, focused_end,
+                (current.preedit_presentation_flags &
+                 cxxime::preedit_presentation_flag(
+                     cxxime::PreeditPresentationFlag::SyllableBoundaries)) != 0);
         } else {
             candidate_window_.set_preedit({});
         }

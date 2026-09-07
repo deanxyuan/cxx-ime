@@ -379,10 +379,25 @@ bool TextService::_register_display_attribute_atom() {
     }
     hr = category_mgr->RegisterGUID(
         c_guidConvertedDisplayAttribute, &_convertedDisplayAttributeAtom);
-    category_mgr->Release();
     if (FAILED(hr)) {
         _convertedDisplayAttributeAtom = 0;
+        category_mgr->Release();
         CXXIME_LOG(L"Register converted display attribute atom failed: hr=0x%08x", hr);
+        return false;
+    }
+    hr = category_mgr->RegisterGUID(c_guidFocusedDisplayAttribute, &_focusedDisplayAttributeAtom);
+    if (FAILED(hr)) {
+        _focusedDisplayAttributeAtom = 0;
+        category_mgr->Release();
+        CXXIME_LOG(L"Register focused display attribute atom failed: hr=0x%08x", hr);
+        return false;
+    }
+    hr = category_mgr->RegisterGUID(c_guidFocusedConvertedDisplayAttribute,
+                                    &_focusedConvertedDisplayAttributeAtom);
+    category_mgr->Release();
+    if (FAILED(hr)) {
+        _focusedConvertedDisplayAttributeAtom = 0;
+        CXXIME_LOG(L"Register focused converted display attribute atom failed: hr=0x%08x", hr);
         return false;
     }
 
@@ -410,6 +425,18 @@ STDMETHODIMP TextService::GetDisplayAttributeInfo(REFGUID rguid,
     }
     if (IsEqualGUID(rguid, c_guidConvertedDisplayAttribute)) {
         auto* pInfo = new (std::nothrow) ::DisplayAttributeInfo(rguid, TF_ATTR_CONVERTED);
+        *ppInfo = pInfo;
+        return pInfo ? S_OK : E_OUTOFMEMORY;
+    }
+    if (IsEqualGUID(rguid, c_guidFocusedDisplayAttribute)) {
+        auto* pInfo = new (std::nothrow) ::DisplayAttributeInfo(
+            rguid, TF_ATTR_TARGET_NOTCONVERTED);
+        *ppInfo = pInfo;
+        return pInfo ? S_OK : E_OUTOFMEMORY;
+    }
+    if (IsEqualGUID(rguid, c_guidFocusedConvertedDisplayAttribute)) {
+        auto* pInfo = new (std::nothrow) ::DisplayAttributeInfo(
+            rguid, TF_ATTR_TARGET_CONVERTED);
         *ppInfo = pInfo;
         return pInfo ? S_OK : E_OUTOFMEMORY;
     }

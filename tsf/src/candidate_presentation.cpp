@@ -41,7 +41,10 @@ void CandidatePresentation::update_content(const cxxime::CandidatePresentationPa
                                            std::size_t converted_prefix_bytes,
                                            std::uint64_t candidate_revision,
                                            int page_current,
-                                           int page_total) {
+                                           int page_total,
+                                           std::size_t focused_preedit_start,
+                                           std::size_t focused_preedit_end,
+                                           bool has_syllable_boundaries) {
     advance_generation();
     page_ = page;
     page_current_ = page_current;
@@ -49,6 +52,18 @@ void CandidatePresentation::update_content(const cxxime::CandidatePresentationPa
     popup_preedit_ = popup_preedit;
     popup_preedit_cursor_ = (std::min)(popup_preedit_cursor, popup_preedit_.size());
     converted_prefix_bytes_ = (std::min)(converted_prefix_bytes, popup_preedit_.size());
+    focused_preedit_start_ = (std::min)(focused_preedit_start, popup_preedit_.size());
+    focused_preedit_end_ = (std::min)(focused_preedit_end, popup_preedit_.size());
+    has_syllable_boundaries_ = has_syllable_boundaries && !popup_preedit_.empty();
+    if (focused_preedit_start_ < converted_prefix_bytes_ ||
+        focused_preedit_end_ < focused_preedit_start_) {
+        focused_preedit_start_ = popup_preedit_.size();
+        focused_preedit_end_ = popup_preedit_.size();
+    } else if (focused_preedit_start_ == 0 && focused_preedit_end_ == 0 &&
+               !popup_preedit_.empty()) {
+        focused_preedit_start_ = popup_preedit_.size();
+        focused_preedit_end_ = popup_preedit_.size();
+    }
     candidate_revision_ = candidate_revision;
 
     if (!page_.items.empty()) {
@@ -69,7 +84,7 @@ void CandidatePresentation::update_content(const cxxime::CandidatePage& page,
                                            std::size_t popup_preedit_cursor, int page_current,
                                            int page_total) {
     update_content(project_candidate_page(page), popup_preedit, popup_preedit_cursor, 0, 0,
-                   page_current, page_total);
+                   page_current, page_total, popup_preedit.size(), popup_preedit.size(), false);
 }
 
 void CandidatePresentation::update_page(const cxxime::CandidatePresentationPage& page,
@@ -77,7 +92,8 @@ void CandidatePresentation::update_page(const cxxime::CandidatePresentationPage&
                                         int page_current,
                                         int page_total) {
     update_content(page, popup_preedit_, popup_preedit_cursor_, converted_prefix_bytes_,
-                   candidate_revision, page_current, page_total);
+                   candidate_revision, page_current, page_total, focused_preedit_start_,
+                   focused_preedit_end_, has_syllable_boundaries_);
 }
 
 void CandidatePresentation::set_ownership(CandidateOwnership ownership) {
@@ -214,6 +230,9 @@ void CandidatePresentation::finish() {
     popup_preedit_.clear();
     popup_preedit_cursor_ = 0;
     converted_prefix_bytes_ = 0;
+    focused_preedit_start_ = 0;
+    focused_preedit_end_ = 0;
+    has_syllable_boundaries_ = false;
     candidate_revision_ = 0;
     reset_position_state();
 }

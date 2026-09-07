@@ -79,7 +79,8 @@ bool TextService::_apply_engine_response(ITfContext* context, const cxxime::IPCR
         const auto decision = cxxime_tsf::decide_preedit(
             _config.inline_preedit, _config.preedit_type, decoded.preedit,
             decoded.preedit_cursor_utf16, candidate_texts, decoded.converted_prefix_utf16,
-            decoded.candidates.highlighted);
+            decoded.candidates.highlighted, decoded.focused_preedit_start_utf16,
+            decoded.focused_preedit_end_utf16);
         const bool ui_element_only = (_activateFlags & TF_TMF_UIELEMENTENABLEDONLY) != 0;
         const bool has_candidates = !decoded.candidates.items.empty();
         std::string popup_preedit;
@@ -88,6 +89,10 @@ bool TextService::_apply_engine_response(ITfContext* context, const cxxime::IPCR
         }
         const std::size_t popup_converted_prefix =
             popup_preedit.empty() ? 0 : response.converted_prefix_bytes;
+        const std::size_t popup_focused_start =
+            popup_preedit.empty() ? 0 : decoded.display_focused_preedit_start_bytes;
+        const std::size_t popup_focused_end =
+            popup_preedit.empty() ? 0 : decoded.display_focused_preedit_end_bytes;
         const bool restart_tsf_composition = commit_continues;
         if (restart_tsf_composition) {
             _candidatePresentation.begin_composition_restart(
@@ -97,7 +102,8 @@ bool TextService::_apply_engine_response(ITfContext* context, const cxxime::IPCR
         _candidatePresentation.update_content(
             decoded.candidates, popup_preedit, response.preedit_cursor, popup_converted_prefix,
             response.candidate_revision, static_cast<int>(response.page_current),
-            static_cast<int>(response.page_total));
+            static_cast<int>(response.page_total), popup_focused_start, popup_focused_end,
+            decoded.has_syllable_boundaries);
         _sync_candidate_ui_element_snapshot();
 
         cxxime_tsf::trace_context(trace_input_id(), trace_composition_id(), context, _threadMgr,
@@ -109,15 +115,18 @@ bool TextService::_apply_engine_response(ITfContext* context, const cxxime::IPCR
         const bool composition_restart_was_active =
             _candidatePresentation.composition_restart_active();
         auto apply_composition = [&](const std::wstring& text, size_t cursor,
-                                     size_t converted_prefix) {
+                                     size_t converted_prefix, size_t focused_start,
+                                     size_t focused_end, bool focused_converted) {
             if (!context) {
                 return E_POINTER;
             }
             if (commit_continues) {
                 return _commit_then_restart_composition(context, commit_text, text, cursor,
-                                                        converted_prefix);
+                                                        converted_prefix, focused_start,
+                                                        focused_end, focused_converted);
             }
-            return update_composition(context, text, cursor, true, TF_ES_SYNC, converted_prefix);
+            return update_composition(context, text, cursor, true, TF_ES_SYNC, converted_prefix,
+                                      focused_start, focused_end, focused_converted);
         };
         HRESULT composition_result = S_OK;
         if (ui_element_only) {
@@ -125,16 +134,21 @@ bool TextService::_apply_engine_response(ITfContext* context, const cxxime::IPCR
             external_candidate_window = _publish_candidate_ui_element();
             candidate_ui_published = true;
             composition_result = apply_composition(decoded.preedit, decoded.preedit_cursor_utf16,
-                                                   decoded.converted_prefix_utf16);
+                                                   decoded.converted_prefix_utf16,
+                                                   decoded.focused_preedit_start_utf16,
+                                                   decoded.focused_preedit_end_utf16, false);
         } else if (decision.start_composition) {
             _update_reading_ui_element(context, decoded.preedit);
             composition_result = apply_composition(decision.inline_text, decision.inline_cursor,
-                                                   decision.inline_converted_prefix);
+                                                   decision.inline_converted_prefix,
+                                                   decision.inline_focused_start,
+                                                   decision.inline_focused_end,
+                                                   decision.inline_focus_converted);
         } else {
             _update_reading_ui_element(context, decoded.preedit);
             // Popup-only mode still needs an empty TSF composition. Hosts such as Scintilla
             // terminate that range when the user moves the selection with the mouse.
-            composition_result = apply_composition(L"", 0, 0);
+            composition_result = apply_composition(L"", 0, 0, 0, 0, false);
         }
         const bool composition_restart_failed =
             composition_restart_was_active && FAILED(composition_result);

@@ -118,7 +118,11 @@ bool TextService::_present_local_candidate_window(const cxxime::CandidatePresent
     }
 
     _localCandidateWindow->set_page_info(page_current, page_total);
-    _localCandidateWindow->set_preedit(preedit, preedit_cursor);
+    _localCandidateWindow->set_preedit(
+        preedit, preedit_cursor, _candidatePresentation.converted_prefix_bytes(),
+        _candidatePresentation.focused_preedit_start(),
+        _candidatePresentation.focused_preedit_end(),
+        _candidatePresentation.has_syllable_boundaries());
     _localCandidateWindow->update(page);
     _localCandidateWindow->move_to_caret(_caretRect);
     _localCandidateWindow->show();
@@ -240,6 +244,14 @@ void TextService::_publish_ui_presentation() {
     snapshot.candidate_revision = _candidatePresentation.candidate_revision();
     snapshot.converted_prefix_bytes = static_cast<std::uint32_t>(
         _candidatePresentation.converted_prefix_bytes());
+    snapshot.focused_preedit_start_bytes = static_cast<std::uint32_t>(
+        _candidatePresentation.focused_preedit_start());
+    snapshot.focused_preedit_end_bytes = static_cast<std::uint32_t>(
+        _candidatePresentation.focused_preedit_end());
+    snapshot.preedit_presentation_flags = _candidatePresentation.has_syllable_boundaries()
+            ? cxxime::preedit_presentation_flag(
+                cxxime::PreeditPresentationFlag::SyllableBoundaries)
+            : 0;
 
     const bool candidate_visible = snapshot.ownership == cxxime::UiOwnership::kExternal &&
                                    _candidatePresentation.should_show_external_window(_composing) &&

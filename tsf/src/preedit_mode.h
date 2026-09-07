@@ -3,6 +3,7 @@
 #ifndef CXXIME_TSF_PREEDIT_MODE_H_
 #define CXXIME_TSF_PREEDIT_MODE_H_
 
+#include <algorithm>
 #include <cstddef>
 #include <string>
 #include <vector>
@@ -13,6 +14,9 @@ struct PreeditDecision {
     std::wstring inline_text;   // Text written to TSF composition (app inline area)
     size_t inline_cursor = 0;   // UTF-16 offset within inline_text
     size_t inline_converted_prefix = 0;
+    size_t inline_focused_start = 0;
+    size_t inline_focused_end = 0;
+    bool inline_focus_converted = false;
     bool show_preedit_in_popup; // Whether candidate window shows raw input
     bool start_composition;     // Whether to start TSF composition
 };
@@ -34,10 +38,20 @@ inline PreeditDecision decide_preedit(bool inline_preedit, const std::string& pr
                                       const std::wstring& preedit, size_t preedit_cursor,
                                       const std::vector<std::wstring>& candidates,
                                       size_t converted_prefix = 0,
-                                      int highlighted = 0) {
+                                      int highlighted = 0,
+                                      size_t focused_start = 0,
+                                      size_t focused_end = 0) {
     PreeditDecision d;
     preedit_cursor = clamp_preedit_cursor(preedit_cursor, preedit.size());
     converted_prefix = clamp_preedit_cursor(converted_prefix, preedit_cursor);
+    if (focused_start == 0 && focused_end == 0) {
+        focused_start = converted_prefix;
+        focused_end = preedit.size();
+    }
+    focused_start = (std::max)(converted_prefix,
+                               clamp_preedit_cursor(focused_start, preedit.size()));
+    focused_end = (std::max)(focused_start,
+                             clamp_preedit_cursor(focused_end, preedit.size()));
 
     if (!inline_preedit) {
         d.inline_text.clear();
@@ -56,15 +70,22 @@ inline PreeditDecision decide_preedit(bool inline_preedit, const std::string& pr
                 d.inline_text = preedit.substr(0, converted_prefix) + candidates[selected];
                 d.inline_cursor = d.inline_text.size();
                 d.inline_converted_prefix = converted_prefix;
+                d.inline_focused_start = converted_prefix;
+                d.inline_focused_end = d.inline_text.size();
+                d.inline_focus_converted = true;
             } else if (converted_prefix > 0) {
                 d.inline_text = preedit;
                 d.inline_cursor = preedit_cursor;
                 d.inline_converted_prefix = converted_prefix;
+                d.inline_focused_start = focused_start;
+                d.inline_focused_end = focused_end;
             }
         } else {
             d.inline_text = preedit;
             d.inline_cursor = preedit_cursor;
             d.inline_converted_prefix = converted_prefix;
+            d.inline_focused_start = focused_start;
+            d.inline_focused_end = focused_end;
         }
         d.show_preedit_in_popup = preview_mode;
     }

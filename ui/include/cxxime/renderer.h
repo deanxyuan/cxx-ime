@@ -30,6 +30,9 @@ private:
     ID2D1SolidColorBrush* highlight_text_brush_ = nullptr;
     ID2D1SolidColorBrush* hover_brush_ = nullptr;
     ID2D1SolidColorBrush* preedit_brush_ = nullptr;
+    ID2D1SolidColorBrush* preedit_separator_brush_ = nullptr;
+    ID2D1SolidColorBrush* preedit_active_back_brush_ = nullptr;
+    ID2D1SolidColorBrush* preedit_active_border_brush_ = nullptr;
     ID2D1SolidColorBrush* preedit_cursor_brush_ = nullptr;
     ID2D1SolidColorBrush* label_brush_ = nullptr;
     ID2D1SolidColorBrush* nav_brush_ = nullptr;

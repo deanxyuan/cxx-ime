@@ -181,7 +181,10 @@ HRESULT TextService::_commit_then_restart_composition(ITfContext* context,
                                                       const std::wstring& commit_text,
                                                       const std::wstring& preedit,
                                                       size_t preedit_cursor,
-                                                      size_t converted_prefix_utf16) {
+                                                      size_t converted_prefix_utf16,
+                                                      size_t focused_start_utf16,
+                                                      size_t focused_end_utf16,
+                                                      bool focused_converted) {
     if (!context || commit_text.empty()) {
         return E_INVALIDARG;
     }
@@ -193,7 +196,8 @@ HRESULT TextService::_commit_then_restart_composition(ITfContext* context,
     // Let the host finish applying the committed selection before starting a popup-only
     // composition, which can legitimately contain no inline text.
     return update_composition(context, preedit, preedit_cursor, true, TF_ES_ASYNCDONTCARE,
-                              converted_prefix_utf16);
+                              converted_prefix_utf16, focused_start_utf16,
+                              focused_end_utf16, focused_converted);
 }
 
 void TextService::handle_composition_restart_success(uint64_t expected_generation) {
@@ -229,7 +233,10 @@ HRESULT TextService::update_composition(ITfContext* context,
                                          size_t preedit_cursor,
                                          bool ensure,
                                          DWORD edit_session_mode,
-                                         size_t converted_prefix_utf16) {
+                                         size_t converted_prefix_utf16,
+                                         size_t focused_start_utf16,
+                                         size_t focused_end_utf16,
+                                         bool focused_converted) {
     if (!context) {
         return E_POINTER;
     }
@@ -245,7 +252,8 @@ HRESULT TextService::update_composition(ITfContext* context,
     edit_session->set_composition_action(
         ensure ? EditSession::Action::ENSURE_COMPOSITION_TEXT
                : EditSession::Action::UPDATE_COMPOSITION,
-        preedit, preedit_cursor, converted_prefix_utf16);
+        preedit, preedit_cursor, converted_prefix_utf16, focused_start_utf16,
+        focused_end_utf16, focused_converted);
     if (ensure) {
         edit_session->set_candidate_presentation_request(
             _candidatePresentation.generation(), _effectiveEditTarget.context_identity);
@@ -298,8 +306,15 @@ HRESULT TextService::update_composition(ITfContext* context,
 bool TextService::apply_composition_display_attributes(ITfContext* context,
                                                        ITfRange* range,
                                                        TfEditCookie edit_cookie,
-                                                       size_t converted_prefix_utf16) {
+                                                       size_t converted_prefix_utf16,
+                                                       size_t focused_start_utf16,
+                                                       size_t focused_end_utf16,
+                                                       bool focused_converted) {
     if (!context || !range || !_displayAttributeAtom) {
+        return false;
+    }
+    if (converted_prefix_utf16 > focused_start_utf16 ||
+        focused_start_utf16 > focused_end_utf16 || focused_end_utf16 > LONG_MAX) {
         return false;
     }
 
@@ -318,30 +333,47 @@ bool TextService::apply_composition_display_attributes(ITfContext* context,
         VariantClear(&value);
         return set_result;
     };
-    result = apply_atom(range, _displayAttributeAtom);
-    if (SUCCEEDED(result) && converted_prefix_utf16 > 0 && _convertedDisplayAttributeAtom) {
-        if (converted_prefix_utf16 > LONG_MAX) {
-            result = E_INVALIDARG;
-        } else {
-            ITfRange* converted_range = nullptr;
-            result = range->Clone(&converted_range);
-            if (SUCCEEDED(result) && converted_range) {
-                result = converted_range->Collapse(edit_cookie, TF_ANCHOR_START);
-                LONG shifted = 0;
-                if (SUCCEEDED(result)) {
-                    result = converted_range->ShiftEnd(
-                        edit_cookie, static_cast<LONG>(converted_prefix_utf16), &shifted, nullptr);
-                }
-                if (SUCCEEDED(result) &&
-                    shifted != static_cast<LONG>(converted_prefix_utf16)) {
-                    result = E_INVALIDARG;
-                }
-                if (SUCCEEDED(result)) {
-                    result = apply_atom(converted_range, _convertedDisplayAttributeAtom);
-                }
-                converted_range->Release();
-            }
+    auto apply_range = [&](size_t start, size_t end, TfGuidAtom atom) {
+        if (start == end || !atom) {
+            return S_OK;
         }
+        ITfRange* target = nullptr;
+        HRESULT range_result = range->Clone(&target);
+        if (FAILED(range_result) || !target) {
+            return range_result;
+        }
+        range_result = target->Collapse(edit_cookie, TF_ANCHOR_START);
+        LONG shifted_end = 0;
+        if (SUCCEEDED(range_result)) {
+            range_result = target->ShiftEnd(edit_cookie, static_cast<LONG>(end), &shifted_end,
+                                            nullptr);
+        }
+        if (SUCCEEDED(range_result) && shifted_end != static_cast<LONG>(end)) {
+            range_result = E_INVALIDARG;
+        }
+        LONG shifted_start = 0;
+        if (SUCCEEDED(range_result) && start > 0) {
+            range_result = target->ShiftStart(edit_cookie, static_cast<LONG>(start),
+                                              &shifted_start, nullptr);
+        }
+        if (SUCCEEDED(range_result) && shifted_start != static_cast<LONG>(start)) {
+            range_result = E_INVALIDARG;
+        }
+        if (SUCCEEDED(range_result)) {
+            range_result = apply_atom(target, atom);
+        }
+        target->Release();
+        return range_result;
+    };
+    result = apply_atom(range, _displayAttributeAtom);
+    if (SUCCEEDED(result)) {
+        result = apply_range(0, converted_prefix_utf16, _convertedDisplayAttributeAtom);
+    }
+    if (SUCCEEDED(result)) {
+        const TfGuidAtom focused_atom = focused_converted
+                                            ? _focusedConvertedDisplayAttributeAtom
+                                            : _focusedDisplayAttributeAtom;
+        result = apply_range(focused_start_utf16, focused_end_utf16, focused_atom);
     }
     property->Release();
 

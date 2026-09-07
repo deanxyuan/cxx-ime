@@ -125,6 +125,9 @@ struct ProcessKeyResult {
     std::string preedit;
     size_t preedit_cursor = 0;
     size_t converted_prefix_bytes = 0;
+    size_t focused_preedit_start_bytes = 0;
+    size_t focused_preedit_end_bytes = 0;
+    uint32_t preedit_presentation_flags = 0;
     cxxime::CandidatePresentationPage presentation;
     uint64_t candidate_revision = 0;
     cxxime::ImeStatus ime_status;

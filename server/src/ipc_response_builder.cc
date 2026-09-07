@@ -58,10 +58,24 @@ void fill_process_response(const ProcessKeyResult& result, cxxime::IPCResponse* 
     if (!result.composing) {
         return;
     }
+    std::size_t focused_start = result.focused_preedit_start_bytes;
+    std::size_t focused_end = result.focused_preedit_end_bytes;
+    if (focused_start == 0 && focused_end == 0) {
+        focused_start = result.converted_prefix_bytes;
+        focused_end = result.preedit.size();
+    }
+    constexpr uint32_t kKnownPreeditPresentationFlags =
+        cxxime::preedit_presentation_flag(
+            cxxime::PreeditPresentationFlag::SyllableBoundaries);
     if (result.converted_prefix_bytes > result.preedit_cursor ||
+        focused_start > focused_end || focused_start < result.converted_prefix_bytes ||
+        focused_end > result.preedit.size() ||
         !is_valid_utf8_field(result.preedit) ||
         !is_valid_utf8_offset(result.preedit, result.preedit_cursor) ||
         !is_valid_utf8_offset(result.preedit, result.converted_prefix_bytes) ||
+        !is_valid_utf8_offset(result.preedit, focused_start) ||
+        !is_valid_utf8_offset(result.preedit, focused_end) ||
+        (result.preedit_presentation_flags & ~kKnownPreeditPresentationFlags) != 0 ||
         !response_copy_field(response->preedit, sizeof(response->preedit), result.preedit)) {
         response->status = cxxime::IPCStatus::ERR_ENGINE_PROCESS_FAILED;
         return;
@@ -69,6 +83,9 @@ void fill_process_response(const ProcessKeyResult& result, cxxime::IPCResponse* 
 
     response->preedit_cursor = static_cast<uint32_t>(result.preedit_cursor);
     response->converted_prefix_bytes = static_cast<uint32_t>(result.converted_prefix_bytes);
+    response->focused_preedit_start_bytes = static_cast<uint32_t>(focused_start);
+    response->focused_preedit_end_bytes = static_cast<uint32_t>(focused_end);
+    response->preedit_presentation_flags = result.preedit_presentation_flags;
     const cxxime::CandidatePresentationPage& page = result.presentation;
     response->candidate_count =
         static_cast<uint32_t>((std::min)(page.items.size(), cxxime::kCandidateCapacity));

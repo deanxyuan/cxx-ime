@@ -76,6 +76,10 @@ cxxime::UiPresentationSnapshot make_snapshot(std::uint64_t generation) {
     snapshot.preedit_length = 2;
     snapshot.preedit_cursor = 2;
     snapshot.converted_prefix_bytes = 1;
+    snapshot.focused_preedit_start_bytes = 1;
+    snapshot.focused_preedit_end_bytes = 2;
+    snapshot.preedit_presentation_flags = cxxime::preedit_presentation_flag(
+        cxxime::PreeditPresentationFlag::SyllableBoundaries);
     snapshot.candidate_revision = generation + 30;
     snapshot.candidate_page.count = 1;
     snapshot.candidate_page.total = 1;
@@ -99,6 +103,11 @@ TEST(UiChannel, protocol_round_trip) {
     ASSERT_EQ(actual.flags, expected.flags);
     ASSERT_EQ(actual.preedit_length, static_cast<std::uint32_t>(2));
     ASSERT_EQ(actual.converted_prefix_bytes, static_cast<std::uint32_t>(1));
+    ASSERT_EQ(actual.focused_preedit_start_bytes, static_cast<std::uint32_t>(1));
+    ASSERT_EQ(actual.focused_preedit_end_bytes, static_cast<std::uint32_t>(2));
+    ASSERT_EQ(actual.preedit_presentation_flags,
+              cxxime::preedit_presentation_flag(
+                  cxxime::PreeditPresentationFlag::SyllableBoundaries));
     ASSERT_EQ(actual.candidate_revision, static_cast<std::uint64_t>(71));
     ASSERT_EQ(actual.candidate_page.count, static_cast<std::uint32_t>(1));
 
@@ -137,7 +146,9 @@ TEST(UiChannel, protocol_defaults_extension_fields_for_a_0_4_payload) {
     ASSERT_EQ(actual.target_generation, expected.target_generation);
     ASSERT_EQ(actual.candidate_revision, static_cast<std::uint64_t>(0));
     ASSERT_EQ(actual.converted_prefix_bytes, static_cast<std::uint32_t>(0));
-    ASSERT_EQ(actual.reserved, static_cast<std::uint32_t>(0));
+    ASSERT_EQ(actual.focused_preedit_start_bytes, static_cast<std::uint32_t>(0));
+    ASSERT_EQ(actual.focused_preedit_end_bytes, static_cast<std::uint32_t>(0));
+    ASSERT_EQ(actual.preedit_presentation_flags, static_cast<std::uint32_t>(0));
 
     cxxime::UiCommand expected_command;
     expected_command.session_id = 17;
