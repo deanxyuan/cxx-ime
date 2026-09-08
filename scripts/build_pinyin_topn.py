@@ -75,7 +75,7 @@ def generate_keys(syllable_ids, text, frequency):
     """Generate (key, score, flags) tuples for a single dict entry.
 
     syllable_ids: colon-separated syllable string, e.g. "shu:ru:fa"
-    Returns list of (key_string, score, flags) tuples.
+    Returns list of (key_string, score, flags, has_complete_match) tuples.
     """
     syllables = syllable_ids.split(":")
     if not syllables:
@@ -86,15 +86,15 @@ def generate_keys(syllable_ids, text, frequency):
 
     frequency_score = min(max(frequency, 0), MAX_FREQUENCY) // FREQUENCY_SCALE
 
-    def offer(key, base, flags, proximity=0):
+    def offer(key, base, flags, proximity=0, has_complete_match=False):
         score = base + proximity + frequency_score
         existing = results.get(key)
         if existing is None:
-            results[key] = (score, flags)
+            results[key] = (score, flags, has_complete_match)
         elif score > existing[0]:
-            results[key] = (score, flags | existing[1])
+            results[key] = (score, flags | existing[1], has_complete_match or existing[2])
         else:
-            results[key] = (existing[0], flags | existing[1])
+            results[key] = (existing[0], flags | existing[1], has_complete_match or existing[2])
 
     def prefix_base(flags):
         if flags & SHORT_KEY_EXACT:
@@ -125,7 +125,21 @@ def generate_keys(syllable_ids, text, frequency):
                 complete_keys.append((m, MIXED_COMPLETE_BASE, SHORT_KEY_MIXED))
 
     for key, base, flags in complete_keys:
-        offer(key, base, flags)
+        complete_proximity = 0
+        is_two_syllable_initial_full = (
+            n == 2 and
+            flags & SHORT_KEY_MIXED and
+            key == syllables[0][0] + syllables[1]
+        )
+        if is_two_syllable_initial_full:
+            complete_proximity = proximity_bonus(exact, key)
+        offer(
+            key,
+            base,
+            flags,
+            proximity=complete_proximity,
+            has_complete_match=True,
+        )
 
     # Prefixes retain their source match type. The strongest path wins when the
     # same key can be generated as both an exact prefix and a mixed complete key.
@@ -137,7 +151,10 @@ def generate_keys(syllable_ids, text, frequency):
                 offer(prefix, prefix_base(flags), flags | SHORT_KEY_PREFIX,
                       proximity_bonus(key, prefix))
 
-    return [(key, score, flags) for key, (score, flags) in results.items()]
+    return [
+        (key, score, flags, has_complete_match)
+        for key, (score, flags, has_complete_match) in results.items()
+    ]
 
 
 def _generate_mixed(syllables):
@@ -176,14 +193,14 @@ def _generate_mixed(syllables):
     # Mode B: first syllable full + rest first letter
     results.add(syllables[0] + rest_first)
 
+    rest_first_from_3 = "".join(s[0] for s in syllables[2:])
+
     # Mode C: first 2 syllables full + rest first letter (3+ syllables)
     if n >= 3:
-        rest_first_from_3 = "".join(s[0] for s in syllables[2:])
         results.add(syllables[0] + syllables[1] + rest_first_from_3)
 
-    # Mode D: first letter + second syllable full + rest first letter (3+ syllables)
-    if n >= 3:
-        results.add(syllables[0][0] + syllables[1] + rest_first_from_3)
+    # Mode D: first letter + second syllable full + rest first letter (2+ syllables)
+    results.add(syllables[0][0] + syllables[1] + rest_first_from_3)
 
     # Mode E: first 2 chars of first syllable + rest first letter
     if len(syllables[0]) >= 2:
@@ -203,7 +220,7 @@ def build_cache(db_path):
     conn = sqlite3.connect(db_path)
     cursor = conn.execute("SELECT text, code, frequency, syllable_ids FROM dict")
 
-    # key -> list of (text, syllables, frequency, score, flags)
+    # key -> list of (text, syllables, frequency, score, flags, has_complete_match)
     key_candidates = defaultdict(list)
     seen_keys_text = defaultdict(set)  # key -> set of text (for dedup)
 
@@ -213,14 +230,16 @@ def build_cache(db_path):
             continue
 
         keys = generate_keys(syllable_ids, text, frequency)
-        for key, score, flags in keys:
+        for key, score, flags, has_complete_match in keys:
             if len(key) == 0:
                 continue
             # Dedup by text within each key
             if text in seen_keys_text[key]:
                 continue
             seen_keys_text[key].add(text)
-            key_candidates[key].append((text, syllable_ids, frequency, score, flags))
+            key_candidates[key].append(
+                (text, syllable_ids, frequency, score, flags, has_complete_match)
+            )
 
         count += 1
         if count % 100000 == 0:
@@ -276,13 +295,18 @@ def serialize(key_candidates, output_path):
         key_off, key_len = intern_str(key)
 
         flags = 0
+        has_complete_candidate = False
         for candidate in cands:
-            flags |= candidate[4]
-        if len(key) <= MAX_MATERIALIZED_PREFIX_LENGTH:
+            candidate_flags = candidate[4]
+            flags |= candidate_flags
+            has_complete_candidate = has_complete_candidate or candidate[5]
+        # Cached prefix candidates still seed runtime lookup. A materialized short
+        # key may bypass syllabification only when it also has a complete candidate.
+        if len(key) <= MAX_MATERIALIZED_PREFIX_LENGTH and has_complete_candidate:
             flags |= SHORT_KEY_PREFIX_COMPLETE
 
         cand_start = len(cand_entries)
-        for text, syllables, freq, score, _ in cands:
+        for text, syllables, freq, score, _, _ in cands:
             text_off, text_len = intern_str(text)
             syllables_off, syllables_len = intern_str(syllables)
             cand_entries.append(

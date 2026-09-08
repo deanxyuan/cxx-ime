@@ -36,6 +36,11 @@ def create_test_db(db_path):
         ("high-frequency-ni-prefix", "nian", 90000000, "nian"),
         ("near-nih", "nihao", 100, "ni:hao"),
         ("far-nih", "ninhaimeiyou", 90000000, "nin:hai:mei:you"),
+        ("two-syllable-nhao", "nihao", 9000, "ni:hao"),
+        ("less-specific-nhao", "ninhao", 90000000, "nin:hao"),
+        ("long-nhao-prefix", "nihaoa", 90000000, "ni:hao:a"),
+        ("prefix-only-probe", "mangguo", 100, "mang:guo"),
+        ("long-key-child", "zhongguoren", 100, "zhong:guo:ren"),
         ("北京", "beijing", 7000, "bei:jing"),
         ("的", "de", 99999, "de"),
         (
@@ -192,6 +197,8 @@ def main():
                 missing.append("zhg")
             if "zhrmghg" not in found_db:
                 missing.append("zhrmghg")
+            if "nhao" not in found_db:
+                missing.append("nhao")
             if LONG_EXACT not in found_db:
                 missing.append(LONG_EXACT)
             if LONG_ABBR not in found_db:
@@ -207,18 +214,33 @@ def main():
             print("Test 5: exact and near-prefix matches outrank distant prefixes ...", end=" ")
             ni = read_candidates(out_db, "ni")
             nih = read_candidates(out_db, "nih")
+            nhao = read_candidates(out_db, "nhao")
             ni_texts = [candidate[0] for candidate in ni]
             nih_texts = [candidate[0] for candidate in nih]
+            nhao_texts = [candidate[0] for candidate in nhao]
             required_ni = {"exact-ni", "high-frequency-ni-prefix"}
             required_nih = {"near-nih", "far-nih"}
-            valid = required_ni.issubset(ni_texts) and required_nih.issubset(nih_texts)
+            required_nhao = {
+                "two-syllable-nhao",
+                "less-specific-nhao",
+                "long-nhao-prefix",
+            }
+            valid = (
+                required_ni.issubset(ni_texts) and
+                required_nih.issubset(nih_texts) and
+                required_nhao.issubset(nhao_texts)
+            )
             if valid:
                 valid = (
                     ni_texts.index("exact-ni") < ni_texts.index("high-frequency-ni-prefix") and
-                    nih_texts.index("near-nih") < nih_texts.index("far-nih")
+                    nih_texts.index("near-nih") < nih_texts.index("far-nih") and
+                    nhao_texts.index("two-syllable-nhao") <
+                    nhao_texts.index("less-specific-nhao") and
+                    nhao_texts.index("two-syllable-nhao") <
+                    nhao_texts.index("long-nhao-prefix")
                 )
             if not valid:
-                print(f"FAIL (ni={ni_texts}, nih={nih_texts})")
+                print(f"FAIL (ni={ni_texts}, nih={nih_texts}, nhao={nhao_texts})")
                 ok = False
             else:
                 print("OK")
@@ -233,16 +255,24 @@ def main():
                 print("OK")
 
         if ok:
-            print("Test 7: prefix-complete metadata matches materialization ...", end=" ")
+            print("Test 7: cache authority requires a complete snapshot ...", end=" ")
             flags_by_key = read_key_flags(out_db)
             prefix_complete = 0x10
             valid = (
                 (flags_by_key["ni"] & prefix_complete) != 0 and
+                (flags_by_key["nih"] & prefix_complete) != 0 and
+                (flags_by_key["nhao"] & prefix_complete) != 0 and
+                (flags_by_key["manggu"] & prefix_complete) == 0 and
+                (flags_by_key["zhongguo"] & prefix_complete) == 0 and
                 (flags_by_key[LONG_EXACT] & prefix_complete) == 0
             )
             if not valid:
                 print(
                     f"FAIL (ni={flags_by_key['ni']:#x}, "
+                    f"nih={flags_by_key['nih']:#x}, "
+                    f"nhao={flags_by_key['nhao']:#x}, "
+                    f"manggu={flags_by_key['manggu']:#x}, "
+                    f"zhongguo={flags_by_key['zhongguo']:#x}, "
                     f"long={flags_by_key[LONG_EXACT]:#x})"
                 )
                 ok = False

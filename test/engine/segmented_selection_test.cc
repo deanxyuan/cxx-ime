@@ -864,6 +864,41 @@ TEST(SegmentedSelection, real_dictionary_can_select_wu_then_zong) {
     dict.close();
 }
 
+TEST(SegmentedSelection, real_dictionary_middle_deletion_reparses_nhao) {
+    cxxime::Dict dict;
+    cxxime::SpellingsIndex spellings;
+    ASSERT_TRUE(dict.open_dict(CXXIME_DATA_DIR "pinyin.dict.bin"));
+    ASSERT_TRUE(spellings.load(CXXIME_DATA_DIR "pinyin.spellings.bin"));
+    cxxime::Syllabifier syllabifier(spellings);
+    cxxime::Config config;
+    config.page_size = 7;
+
+    cxxime::Engine engine;
+    ASSERT_TRUE(engine.initialize(dict, spellings, &syllabifier, config));
+    engine.set_query_deadline_ms(0);
+    engine.set_partial_selection_enabled(true);
+    for (char ch : std::string("nihao")) {
+        ASSERT_EQ(engine.process_key(make_key(static_cast<uint32_t>(ch - 'a' + 'A'))),
+                  cxxime::ProcessResult::ACCEPTED);
+    }
+    ASSERT_TRUE(!engine.context().candidate_page().candidates.empty());
+    ASSERT_EQ(engine.context().candidate_page().candidates[0].text, "你好");
+
+    for (int index = 0; index < 3; ++index) {
+        ASSERT_EQ(engine.process_key(make_key(VK_LEFT)), cxxime::ProcessResult::ACCEPTED);
+    }
+    ASSERT_EQ(engine.context().preedit_cursor(), 2u);
+    ASSERT_EQ(engine.process_key(make_key(VK_BACK)), cxxime::ProcessResult::ACCEPTED);
+    ASSERT_EQ(engine.context().active_input(), "nhao");
+    ASSERT_EQ(engine.context().preedit_cursor(), 1u);
+    ASSERT_TRUE(!engine.context().candidate_page().candidates.empty());
+    ASSERT_EQ(engine.context().candidate_page().candidates[0].text, "你好");
+
+    engine.finalize();
+    spellings.unload();
+    dict.close();
+}
+
 TEST(SegmentedSelection, partial_group_follows_all_available_leading_full_candidates) {
     const std::string dict_path = make_temp_file("sgp");
     const std::string spellings_path = make_temp_file("sgq");

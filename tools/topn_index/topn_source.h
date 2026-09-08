@@ -9,6 +9,7 @@
 
 namespace cxxime::topn {
 
+// The source explicitly marks a complete materialized prefix snapshot.
 constexpr uint16_t kSourcePrefixComplete = 0x0001;
 
 struct SourceCandidate {

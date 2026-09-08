@@ -19,6 +19,18 @@
       "require_cache_hit": true
     },
     {
+      "id": "pinyin-mixed-nhao-prefers-complete-two-syllable-word",
+      "mode": "pinyin",
+      "input": "nhao",
+      "contains": [
+        { "text": "你好", "max_rank": 1 }
+      ],
+      "expect_sources": {
+        "你好": "pinyin"
+      },
+      "require_cache_hit": true
+    },
+    {
       "id": "pinyin-short-ni-prefers-exact-syllable",
       "mode": "pinyin",
       "input": "ni",
@@ -479,6 +491,18 @@
       "input": "nihao",
       "contains": [
         { "text": "你好", "max_rank": 1 }
+      ],
+      "expect_sources": {
+        "你好": "pinyin"
+      },
+      "require_cache_hit": true
+    },
+    {
+      "id": "mixed-nhao-keeps-complete-pinyin-word-visible",
+      "mode": "mixed",
+      "input": "nhao",
+      "contains": [
+        { "text": "你好", "max_rank": 2 }
       ],
       "expect_sources": {
         "你好": "pinyin"

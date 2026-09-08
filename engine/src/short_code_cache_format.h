@@ -13,6 +13,7 @@ namespace cxxime {
 constexpr char kShortCacheMagic[8] = {'C', 'X', 'T', 'O', 'P', 'N', '\x03', '\0'};
 constexpr uint32_t kShortCacheVersion = 3;
 constexpr uint32_t kShortCacheLayoutDat16 = 2;
+// The posting contains a complete candidate and may satisfy the query without fallback.
 constexpr uint16_t kShortPostingPrefixComplete = 0x0001;
 constexpr uint16_t kShortPostingKnownFlags = kShortPostingPrefixComplete;
 
