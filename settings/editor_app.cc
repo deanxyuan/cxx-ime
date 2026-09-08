@@ -281,6 +281,12 @@ bool EditorApp::load_config() {
     set_edit_int(hCandEdits_[10], config_.layout_config.round_corner);
     set_edit_int(hCandEdits_[11], config_.layout_config.round_corner_ex);
     set_edit_int(hCandEdits_[12], config_.layout_config.border_width);
+    set_edit_int(hCandEdits_[13], config_.layout_config.preedit_highlight_padding_x);
+    set_edit_int(hCandEdits_[14], config_.layout_config.preedit_highlight_padding_y);
+    set_edit_int(hCandEdits_[15], config_.layout_config.preedit_confirmed_gap);
+    set_edit_int(hCandEdits_[16], config_.layout_config.preedit_boundary_gap);
+    set_edit_int(hCandEdits_[17], config_.layout_config.preedit_highlight_corner);
+    set_edit_int(hCandEdits_[18], config_.layout_config.preedit_highlight_border_width);
     sync_candidate_controls_from_edits();
 
     set_edit_int(hPageSize_, config_.page_size);

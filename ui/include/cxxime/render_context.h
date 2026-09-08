@@ -91,6 +91,7 @@ struct RenderContext {
     RECT preedit_active_rect{};
     RECT preedit_cursor_rect{};
     int preedit_corner_radius = 3;
+    int preedit_border_width = 1;
     bool high_contrast = false;
     std::vector<PreeditTextRun> preedit_runs;
     RECT page_indicator_rect{};

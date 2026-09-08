@@ -157,6 +157,20 @@ static int default_preedit_cursor_color(const Config::SchemeColors& colors) {
     return alternate;
 }
 
+static int default_preedit_active_back_color(const Config::SchemeColors& colors, bool dark) {
+    constexpr double minimum_contrast = 4.5;
+    double amount = dark ? 0.20 : 0.12;
+    while (amount > 0.0) {
+        const int candidate =
+            blend_color(colors.back_color, colors.hilited_candidate_back_color, amount);
+        if (contrast_ratio(candidate, colors.hilited_text_color) >= minimum_contrast) {
+            return candidate;
+        }
+        amount -= 0.02;
+    }
+    return colors.back_color;
+}
+
 static void apply_config_json(Config& config, nlohmann::json& j) {
     if (j.contains("engine") && j["engine"].is_object()) {
         auto& e = j["engine"];
@@ -218,6 +232,15 @@ static void apply_config_json(Config& config, nlohmann::json& j) {
         load_int(l, "round_corner_ex", config.layout_config.round_corner_ex);
         load_int(l, "label_font_point", config.layout_config.label_font_point);
         load_int(l, "border_width", config.layout_config.border_width);
+        load_int(l, "preedit_highlight_padding_x",
+                 config.layout_config.preedit_highlight_padding_x);
+        load_int(l, "preedit_highlight_padding_y",
+                 config.layout_config.preedit_highlight_padding_y);
+        load_int(l, "preedit_confirmed_gap", config.layout_config.preedit_confirmed_gap);
+        load_int(l, "preedit_boundary_gap", config.layout_config.preedit_boundary_gap);
+        load_int(l, "preedit_highlight_corner", config.layout_config.preedit_highlight_corner);
+        load_int(l, "preedit_highlight_border_width",
+                    config.layout_config.preedit_highlight_border_width);
     }
 
     load_string(j, "theme", config.theme);
@@ -278,6 +301,8 @@ static bool apply_color_schemes(Config& config, Json& schemes) {
         load_int(sc, "comment_text_color", c.comment_text_color);
         load_int(sc, "prevpage_color", c.prevpage_color);
         load_int(sc, "nextpage_color", c.nextpage_color);
+        load_int(sc, "preedit_active_back_color", c.preedit_active_back_color);
+        load_int(sc, "preedit_active_border_color", c.preedit_active_border_color);
         // Weasel-style fallback chain (resolved at load time, not render time)
         if (c.text_color == -1) c.text_color = 0xff000000; // black
         if (c.back_color == -1) c.back_color = 0xffffffff; // white
@@ -296,6 +321,14 @@ static bool apply_color_schemes(Config& config, Json& schemes) {
             c.preedit_cursor_color = default_preedit_cursor_color(c);
         if (c.prevpage_color == -1) c.prevpage_color = c.text_color;
         if (c.nextpage_color == -1) c.nextpage_color = c.text_color;
+        const bool dark = relative_luminance(c.back_color) < 0.5;
+        if (c.preedit_active_back_color == -1) {
+            c.preedit_active_back_color = default_preedit_active_back_color(c, dark);
+        }
+        if (c.preedit_active_border_color == -1) {
+            c.preedit_active_border_color = blend_color(
+                c.back_color, c.hilited_candidate_back_color, dark ? 0.40 : 0.30);
+        }
         parsed_schemes[name] = c;
         parsed_order.push_back(name);
     }
@@ -449,6 +482,15 @@ static nlohmann::json build_config_json(const Config& config, bool include_diagn
     j["layout"]["round_corner_ex"] = config.layout_config.round_corner_ex;
     j["layout"]["label_font_point"] = config.layout_config.label_font_point;
     j["layout"]["border_width"] = config.layout_config.border_width;
+    j["layout"]["preedit_highlight_padding_x"] =
+        config.layout_config.preedit_highlight_padding_x;
+    j["layout"]["preedit_highlight_padding_y"] =
+        config.layout_config.preedit_highlight_padding_y;
+    j["layout"]["preedit_confirmed_gap"] = config.layout_config.preedit_confirmed_gap;
+    j["layout"]["preedit_boundary_gap"] = config.layout_config.preedit_boundary_gap;
+    j["layout"]["preedit_highlight_corner"] = config.layout_config.preedit_highlight_corner;
+    j["layout"]["preedit_highlight_border_width"] =
+        config.layout_config.preedit_highlight_border_width;
 
     j["theme"] = config.theme;
 
@@ -509,6 +551,8 @@ std::string Config::to_runtime_json() const {
         scheme["comment_text_color"] = colors.comment_text_color;
         scheme["prevpage_color"] = colors.prevpage_color;
         scheme["nextpage_color"] = colors.nextpage_color;
+        scheme["preedit_active_back_color"] = colors.preedit_active_back_color;
+        scheme["preedit_active_border_color"] = colors.preedit_active_border_color;
     }
     return j.dump(4);
 }

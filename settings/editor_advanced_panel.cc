@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstring>
 #include <fstream>
+#include <initializer_list>
 
 #include <json.hpp>
 
@@ -37,6 +38,15 @@ void load_layout_config_from_json(const nlohmann::json& object, LayoutConfig& la
     load_preset_int(object, "round_corner_ex", layout.round_corner_ex);
     load_preset_int(object, "label_font_point", layout.label_font_point);
     load_preset_int(object, "border_width", layout.border_width);
+    load_preset_int(object, "preedit_highlight_padding_x",
+        layout.preedit_highlight_padding_x);
+    load_preset_int(object, "preedit_highlight_padding_y",
+        layout.preedit_highlight_padding_y);
+    load_preset_int(object, "preedit_confirmed_gap", layout.preedit_confirmed_gap);
+    load_preset_int(object, "preedit_boundary_gap", layout.preedit_boundary_gap);
+    load_preset_int(object, "preedit_highlight_corner", layout.preedit_highlight_corner);
+    load_preset_int(object, "preedit_highlight_border_width",
+                     layout.preedit_highlight_border_width);
 }
 
 LayoutConfig built_in_candidate_layout_preset(const char* preset, bool vertical,
@@ -65,6 +75,12 @@ LayoutConfig built_in_candidate_layout_preset(const char* preset, bool vertical,
         layout.round_corner_ex = 5;
         layout.border_width = 1;
         layout.label_font_point = 0;
+        layout.preedit_highlight_padding_x = 5;
+        layout.preedit_highlight_padding_y = vertical ? 2 : 3;
+        layout.preedit_confirmed_gap = 7;
+        layout.preedit_boundary_gap = 1;
+        layout.preedit_highlight_corner = 4;
+        layout.preedit_highlight_border_width = 1;
         return layout;
     }
 
@@ -120,19 +136,26 @@ void EditorApp::create_advanced_layout_panel(HWND panel) {
         L"最小宽度:",   L"最大宽度:", L"最大高度:",     L"水平边距:",     L"垂直边距:",
         L"预编辑间距:", L"候选间距:", L"高亮横向留白:", L"高亮纵向留白:", L"高亮内部间距:",
         L"高亮圆角:",   L"窗口圆角:", L"边框宽度:",
+        L"预编辑横向留白:", L"预编辑纵向留白:", L"确认前缀间距:", L"音节边界间距:",
+        L"预编辑圆角:", L"预编辑边框:",
     };
-    const int column_width = S(250);
-    const int label_width = S(120);
-    const int edit_width = S(60);
+    RECT panel_rect = {};
+    GetClientRect(panel, &panel_rect);
+    const int panel_width = static_cast<int>(panel_rect.right - panel_rect.left);
+    const int column_width =
+        (std::max)(S(150), (panel_width - kPanelPadLeft * 2) / 3);
+    const int edit_width = S(48);
+    const int label_width = column_width - edit_width - S(8);
     SetWindowSubclass(panel, PanelForwardProc, 2000, reinterpret_cast<DWORD_PTR>(hwnd_));
 
-    for (int i = 0; i < 13; ++i) {
-        int column = i / 7;
-        int row = i % 7;
+    for (int i = 0; i < 19; ++i) {
+        int column = i < 13 ? i / 7 : 2;
+        int row = i < 13 ? i % 7 : i - 13;
         int x = kPanelPadLeft + column * column_width;
         int y = top + row * kRowH;
         int control_x = make_aligned_label(names[i], x, label_width, y, panel);
-        hCandEdits_[i] = make_edit(1200 + i, control_x, y, edit_width, panel);
+        const int control_id = i < 13 ? 1200 + i : 1230 + i - 13;
+        hCandEdits_[i] = make_edit(control_id, control_x, y, edit_width, panel);
     }
 
     const int preset_y = top + kRowH * 7;
@@ -143,6 +166,14 @@ void EditorApp::create_advanced_layout_panel(HWND panel) {
         control_x, preset_y, S(110), kCtrlH, panel,
         reinterpret_cast<HMENU>(static_cast<INT_PTR>(1220)), GetModuleHandle(nullptr), nullptr);
     SendMessageW(hCandRecommendBtn_, WM_SETFONT, reinterpret_cast<WPARAM>(get_font()), TRUE);
+    const int scenario_x =
+        make_aligned_label(L"预览场景:", kPanelPadLeft + column_width * 2, S(64), preset_y, panel);
+    hCandPreviewScenarios_[1] = make_combo(1236, scenario_x, preset_y, S(90), panel);
+    for (const wchar_t* scenario : {L"拼音整词", L"拼音分段", L"确认前缀", L"五笔编码",
+                                    L"混输五笔"}) {
+        combo_add(hCandPreviewScenarios_[1], scenario);
+    }
+    combo_set_index(hCandPreviewScenarios_[1], 1);
     const int preview_y = preset_y + kRowH;
     const int preview_x =
         make_aligned_label(L"候选预览:", kPanelPadLeft, S(90), preview_y, panel);
@@ -158,7 +189,14 @@ bool EditorApp::handle_advanced_layout_command(int control_id, int notification)
         apply_candidate_control(control_id);
         return true;
     }
-    if (notification == EN_CHANGE && control_id >= 1200 && control_id <= 1212) {
+    if (control_id == 1236 && notification == CBN_SELCHANGE) {
+        combo_set_index(hCandPreviewScenarios_[0], combo_index(hCandPreviewScenarios_[1]));
+        update_cand_preview();
+        return true;
+    }
+    if (notification == EN_CHANGE &&
+        ((control_id >= 1200 && control_id <= 1212) ||
+         (control_id >= 1230 && control_id <= 1235))) {
         if (!updatingCandControls_) {
             sync_candidate_controls_from_edits();
             update_cand_preview();
@@ -183,6 +221,15 @@ LayoutConfig EditorApp::candidate_layout_from_edits() const {
     layout.round_corner = std::clamp(get_edit_int(hCandEdits_[10]), 0, 256);
     layout.round_corner_ex = std::clamp(get_edit_int(hCandEdits_[11]), 0, 256);
     layout.border_width = std::clamp(get_edit_int(hCandEdits_[12]), 0, 32);
+    layout.preedit_highlight_padding_x =
+        std::clamp(get_edit_int(hCandEdits_[13]), 0, 32);
+    layout.preedit_highlight_padding_y =
+        std::clamp(get_edit_int(hCandEdits_[14]), 0, 32);
+    layout.preedit_confirmed_gap = std::clamp(get_edit_int(hCandEdits_[15]), 0, 32);
+    layout.preedit_boundary_gap = std::clamp(get_edit_int(hCandEdits_[16]), 0, 32);
+    layout.preedit_highlight_corner = std::clamp(get_edit_int(hCandEdits_[17]), 0, 32);
+    layout.preedit_highlight_border_width =
+        std::clamp(get_edit_int(hCandEdits_[18]), 0, 8);
     layout.label_font_point = std::clamp(get_edit_int(hLabelFontPt_), 0, 72);
     return layout;
 }
@@ -202,6 +249,12 @@ void EditorApp::apply_candidate_layout_to_edits(const LayoutConfig& layout) {
     set_edit_int(hCandEdits_[10], layout.round_corner);
     set_edit_int(hCandEdits_[11], layout.round_corner_ex);
     set_edit_int(hCandEdits_[12], layout.border_width);
+    set_edit_int(hCandEdits_[13], layout.preedit_highlight_padding_x);
+    set_edit_int(hCandEdits_[14], layout.preedit_highlight_padding_y);
+    set_edit_int(hCandEdits_[15], layout.preedit_confirmed_gap);
+    set_edit_int(hCandEdits_[16], layout.preedit_boundary_gap);
+    set_edit_int(hCandEdits_[17], layout.preedit_highlight_corner);
+    set_edit_int(hCandEdits_[18], layout.preedit_highlight_border_width);
     set_edit_int(hLabelFontPt_, layout.label_font_point);
     updatingCandControls_ = false;
     sync_candidate_controls_from_edits();
@@ -251,34 +304,42 @@ void EditorApp::sync_candidate_controls_from_edits() {
     bool vertical = SendMessageW(hLayoutV_, BM_GETCHECK, 0, 0) == BST_CHECKED;
     int density = 1;
     if (vertical) {
-        if (layout.margin_x <= 8 && layout.margin_y <= 7 && layout.candidate_spacing <= 1) {
+        if (layout.margin_x <= 8 && layout.margin_y <= 7 && layout.candidate_spacing <= 1 &&
+            layout.preedit_confirmed_gap <= 4) {
             density = 0;
         } else if (layout.margin_x >= 14 || layout.margin_y >= 11 ||
-                   layout.candidate_spacing >= 5) {
+                   layout.candidate_spacing >= 5 || layout.preedit_confirmed_gap >= 8) {
             density = 2;
         }
     } else {
-        if (layout.margin_x <= 9 && layout.margin_y <= 9 && layout.candidate_spacing <= 8) {
+        if (layout.margin_x <= 9 && layout.margin_y <= 9 && layout.candidate_spacing <= 8 &&
+            layout.preedit_confirmed_gap <= 4) {
             density = 0;
         } else if (layout.margin_x >= 15 || layout.margin_y >= 15 ||
-                   layout.candidate_spacing >= 14) {
+                   layout.candidate_spacing >= 14 || layout.preedit_confirmed_gap >= 8) {
             density = 2;
         }
     }
     combo_set_index(hCandDensity_, density);
 
     int highlight = 1;
-    if (layout.hilite_padding_x <= 3 && layout.hilite_padding_y <= 1) {
+    if (layout.hilite_padding_x <= 3 && layout.hilite_padding_y <= 1 &&
+        layout.preedit_highlight_padding_x <= 3 &&
+        layout.preedit_highlight_padding_y <= 1) {
         highlight = 0;
-    } else if (layout.hilite_padding_x >= 7 || layout.hilite_padding_y >= 4) {
+    } else if (layout.hilite_padding_x >= 7 || layout.hilite_padding_y >= 4 ||
+               layout.preedit_highlight_padding_x >= 6 ||
+               layout.preedit_highlight_padding_y >= 3) {
         highlight = 2;
     }
     combo_set_index(hCandHighlight_, highlight);
 
     int corner = 1;
-    if (layout.round_corner <= 0 && layout.round_corner_ex <= 0) {
+    if (layout.round_corner <= 0 && layout.round_corner_ex <= 0 &&
+        layout.preedit_highlight_corner <= 0) {
         corner = 0;
-    } else if (layout.round_corner >= 8 || layout.round_corner_ex >= 8) {
+    } else if (layout.round_corner >= 8 || layout.round_corner_ex >= 8 ||
+               layout.preedit_highlight_corner >= 6) {
         corner = 2;
     }
     combo_set_index(hCandCorner_, corner);
@@ -305,18 +366,24 @@ void EditorApp::apply_candidate_control(int control_id) {
                 layout.margin_y = 7;
                 layout.spacing = 5;
                 layout.candidate_spacing = 1;
+                layout.preedit_confirmed_gap = 4;
+                layout.preedit_boundary_gap = 1;
                 break;
             case 2:
                 layout.margin_x = 14;
                 layout.margin_y = 11;
                 layout.spacing = 8;
                 layout.candidate_spacing = 5;
+                layout.preedit_confirmed_gap = 8;
+                layout.preedit_boundary_gap = 2;
                 break;
             default:
                 layout.margin_x = 10;
                 layout.margin_y = 8;
                 layout.spacing = 6;
                 layout.candidate_spacing = 2;
+                layout.preedit_confirmed_gap = 6;
+                layout.preedit_boundary_gap = 1;
                 break;
             }
         } else {
@@ -326,18 +393,24 @@ void EditorApp::apply_candidate_control(int control_id) {
                 layout.margin_y = 8;
                 layout.spacing = 6;
                 layout.candidate_spacing = 7;
+                layout.preedit_confirmed_gap = 4;
+                layout.preedit_boundary_gap = 1;
                 break;
             case 2:
                 layout.margin_x = 16;
                 layout.margin_y = 14;
                 layout.spacing = 14;
                 layout.candidate_spacing = 16;
+                layout.preedit_confirmed_gap = 8;
+                layout.preedit_boundary_gap = 2;
                 break;
             default:
                 layout.margin_x = 12;
                 layout.margin_y = 12;
                 layout.spacing = 10;
                 layout.candidate_spacing = 11;
+                layout.preedit_confirmed_gap = 6;
+                layout.preedit_boundary_gap = 1;
                 break;
             }
         }
@@ -348,16 +421,22 @@ void EditorApp::apply_candidate_control(int control_id) {
             layout.hilite_padding_x = 3;
             layout.hilite_padding_y = 1;
             layout.hilite_spacing = 3;
+            layout.preedit_highlight_padding_x = 3;
+            layout.preedit_highlight_padding_y = 1;
             break;
         case 2:
             layout.hilite_padding_x = 8;
             layout.hilite_padding_y = 4;
             layout.hilite_spacing = 6;
+            layout.preedit_highlight_padding_x = 6;
+            layout.preedit_highlight_padding_y = 3;
             break;
         default:
             layout.hilite_padding_x = 5;
             layout.hilite_padding_y = 2;
             layout.hilite_spacing = 4;
+            layout.preedit_highlight_padding_x = 4;
+            layout.preedit_highlight_padding_y = 2;
             break;
         }
         break;
@@ -366,14 +445,17 @@ void EditorApp::apply_candidate_control(int control_id) {
         case 0:
             layout.round_corner = 0;
             layout.round_corner_ex = 0;
+            layout.preedit_highlight_corner = 0;
             break;
         case 2:
             layout.round_corner = 10;
             layout.round_corner_ex = 10;
+            layout.preedit_highlight_corner = 6;
             break;
         default:
             layout.round_corner = 4;
             layout.round_corner_ex = 4;
+            layout.preedit_highlight_corner = 3;
             break;
         }
         break;

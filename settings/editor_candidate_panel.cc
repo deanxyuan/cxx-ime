@@ -3,7 +3,9 @@
 #include "editor_app.h"
 
 #include <algorithm>
+#include <initializer_list>
 #include <utility>
+#include <vector>
 
 #include <commdlg.h>
 
@@ -17,7 +19,7 @@ namespace settings {
 void EditorApp::create_candidate_panel(HWND panel) {
     const int top = kPanelPadTop;
     const int column_one = kPanelPadLeft;
-    const int column_two = kPanelPadLeft + S(250);
+    const int column_two = kPanelPadLeft + S(260);
     const int label_width = S(90);
     const int control_width = S(125);
     SetWindowSubclass(panel, PanelForwardProc, 1000, reinterpret_cast<DWORD_PTR>(hwnd_));
@@ -38,63 +40,71 @@ void EditorApp::create_candidate_panel(HWND panel) {
         GetModuleHandle(nullptr), nullptr);
     SendMessageW(hFontBtn_, WM_SETFONT, reinterpret_cast<WPARAM>(get_font()), TRUE);
 
-    control_x = make_aligned_label(L"候选字号:", column_one, label_width, top + kRowH * 2, panel);
-    hFontSize_ = make_edit(1102, control_x, top + kRowH * 2, S(50), panel);
+    control_x = make_aligned_label(L"候选字号:", column_two, label_width, top + kRowH, panel);
+    hFontSize_ = make_edit(1102, control_x, top + kRowH, S(50), panel);
 
-    control_x = make_aligned_label(L"预编辑字号:", column_two, label_width, top + kRowH * 2, panel);
+    control_x = make_aligned_label(L"预编辑字号:", column_one, label_width, top + kRowH * 2, panel);
     hLabelFontPt_ = make_edit(1108, control_x, top + kRowH * 2, S(50), panel);
     HWND hint = CreateWindowExW(0, L"STATIC", L"0 表示自动", WS_CHILD | WS_VISIBLE | SS_LEFT,
                                 control_x + S(56), top + kRowH * 2, S(90), kCtrlH, panel, nullptr,
                                 GetModuleHandle(nullptr), nullptr);
     SendMessageW(hint, WM_SETFONT, reinterpret_cast<WPARAM>(get_font()), TRUE);
 
-    control_x = make_aligned_label(L"布局方向:", column_one, label_width, top + kRowH * 3, panel);
-    hLayoutH_ = make_radio(1103, L"横向", control_x, top + kRowH * 3, S(60), panel, true);
-    hLayoutV_ = make_radio(1104, L"纵向", control_x + S(68), top + kRowH * 3, S(60), panel, false);
+    control_x = make_aligned_label(L"布局方向:", column_two, label_width, top + kRowH * 2, panel);
+    hLayoutH_ = make_radio(1103, L"横向", control_x, top + kRowH * 2, S(60), panel, true);
+    hLayoutV_ = make_radio(1104, L"纵向", control_x + S(68), top + kRowH * 2, S(60), panel, false);
 
-    control_x = make_aligned_label(L"内容密度:", column_one, label_width, top + kRowH * 4, panel);
-    hCandDensity_ = make_combo(1214, control_x, top + kRowH * 4, control_width, panel);
+    control_x = make_aligned_label(L"内容密度:", column_one, label_width, top + kRowH * 3, panel);
+    hCandDensity_ = make_combo(1214, control_x, top + kRowH * 3, control_width, panel);
     combo_add(hCandDensity_, L"紧凑");
     combo_add(hCandDensity_, L"标准");
     combo_add(hCandDensity_, L"宽松");
 
-    control_x = make_aligned_label(L"高亮区域:", column_two, label_width, top + kRowH * 4, panel);
-    hCandHighlight_ = make_combo(1215, control_x, top + kRowH * 4, control_width, panel);
+    control_x = make_aligned_label(L"焦点区域:", column_two, label_width, top + kRowH * 3, panel);
+    hCandHighlight_ = make_combo(1215, control_x, top + kRowH * 3, control_width, panel);
     combo_add(hCandHighlight_, L"紧凑");
     combo_add(hCandHighlight_, L"标准");
     combo_add(hCandHighlight_, L"宽松");
 
-    control_x = make_aligned_label(L"窗口圆角:", column_one, label_width, top + kRowH * 5, panel);
-    hCandCorner_ = make_combo(1216, control_x, top + kRowH * 5, control_width, panel);
+    control_x = make_aligned_label(L"圆角风格:", column_one, label_width, top + kRowH * 4, panel);
+    hCandCorner_ = make_combo(1216, control_x, top + kRowH * 4, control_width, panel);
     combo_add(hCandCorner_, L"直角");
     combo_add(hCandCorner_, L"轻微");
     combo_add(hCandCorner_, L"圆润");
 
-    control_x = make_aligned_label(L"窗口边框:", column_two, label_width, top + kRowH * 5, panel);
-    hCandBorder_ = make_combo(1217, control_x, top + kRowH * 5, control_width, panel);
+    control_x = make_aligned_label(L"窗口边框:", column_two, label_width, top + kRowH * 4, panel);
+    hCandBorder_ = make_combo(1217, control_x, top + kRowH * 4, control_width, panel);
     combo_add(hCandBorder_, L"无");
     combo_add(hCandBorder_, L"细");
     combo_add(hCandBorder_, L"明显");
 
-    control_x = make_aligned_label(L"窗口宽度:", column_one, label_width, top + kRowH * 6, panel);
-    hCandWidth_ = make_combo(1218, control_x, top + kRowH * 6, control_width, panel);
+    control_x = make_aligned_label(L"窗口宽度:", column_one, label_width, top + kRowH * 5, panel);
+    hCandWidth_ = make_combo(1218, control_x, top + kRowH * 5, control_width, panel);
     combo_add(hCandWidth_, L"自动");
     combo_add(hCandWidth_, L"限制");
 
-    const int render_y = top + kRowH * 7;
+    control_x = make_aligned_label(L"预览场景:", column_two, label_width, top + kRowH * 5, panel);
+    hCandPreviewScenarios_[0] = make_combo(1110, control_x, top + kRowH * 5, S(125), panel);
+    for (const wchar_t* scenario : {L"拼音整词", L"拼音分段", L"确认前缀", L"五笔编码",
+                                    L"混输五笔"}) {
+        combo_add(hCandPreviewScenarios_[0], scenario);
+    }
+    combo_set_index(hCandPreviewScenarios_[0], 1);
+
+    const int render_y = top + kRowH * 6;
     control_x = make_aligned_label(L"渲染方式:", column_one, label_width, render_y, panel);
     hRenderD2D_ = make_radio(1105, L"默认渲染 (D2D)", control_x, render_y, S(125), panel, true);
     hRenderGDI_ =
         make_radio(1106, L"兼容渲染 (GDI)", control_x + S(132), render_y, S(125), panel, false);
 
-    const int status_y = top + kRowH * 8;
+    const int status_y = top + kRowH * 7;
     control_x = make_aligned_label(L"状态窗口:", column_one, label_width, status_y, panel);
     hStatusWindow_ = make_check(1107, L"显示", control_x, status_y, S(60), panel);
     hStatusAutoDock_ =
         make_check(1109, L"自动停靠", control_x + S(68), status_y, S(85), panel);
 
-    const int default_y = top + kRowH * 9;
-    control_x = make_aligned_label(L"默认设置:", column_one, label_width, default_y, panel);
+    const int default_y = top + kRowH * 7;
+    control_x = make_aligned_label(L"默认设置:", column_two, label_width, default_y, panel);
     hCandDefaultBtn_ = CreateWindowExW(
         0, L"BUTTON", L"恢复默认", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
         control_x, default_y, S(80), kCtrlH, panel,
@@ -160,6 +170,11 @@ bool EditorApp::handle_candidate_command(int control_id, int notification) {
     }
     if (control_id == 1100 && notification == CBN_SELCHANGE) {
         update_preview();
+        return true;
+    }
+    if (control_id == 1110 && notification == CBN_SELCHANGE) {
+        combo_set_index(hCandPreviewScenarios_[1], combo_index(hCandPreviewScenarios_[0]));
+        update_cand_preview();
         return true;
     }
     if (notification == BN_CLICKED && control_id >= 1103 && control_id <= 1104) {
@@ -301,15 +316,54 @@ void EditorApp::update_cand_preview() {
     }
 
     candPreviewWindow_.set_layout(candPreviewConfig_.layout);
-    candPreviewWindow_.set_preedit("ni'hao", 2);
     candPreviewWindow_.set_page_info(1, 2);
 
     CandidatePage page;
     page.highlighted = 0;
     page.page_size = 7;
-    const char* words[] = {
-        "你好", "您好", "中华人民共和国", "Visual Studio Code", "拟态", "腻烦", "匿藏",
-    };
+    std::string preedit;
+    std::size_t converted = 0;
+    std::size_t focused_start = 0;
+    std::size_t focused_end = 0;
+    bool syllable_boundaries = false;
+    std::vector<const char*> words;
+    switch (combo_index(hCandPreviewScenarios_[0])) {
+    case 0:
+        preedit = "wu'zong";
+        focused_end = preedit.size();
+        syllable_boundaries = true;
+        words = {"无踪", "五宗", "武总", "吴总", "物种", "五总", "务总"};
+        break;
+    case 2:
+        preedit = u8"华锐ji'shu";
+        converted = std::string(u8"华锐").size();
+        focused_start = converted;
+        focused_end = converted + 2;
+        syllable_boundaries = true;
+        words = {"技术", "计数", "基数", "级数", "奇数", "记述", "集数"};
+        break;
+    case 3:
+        preedit = "wxyz";
+        focused_end = preedit.size();
+        words = {"测试", "程序", "输入", "编码", "窗口", "布局", "主题"};
+        break;
+    case 4:
+        preedit = u8"华锐wxyz";
+        converted = std::string(u8"华锐").size();
+        focused_start = converted;
+        focused_end = preedit.size();
+        words = {"测试", "程序", "输入", "编码", "窗口", "布局", "主题"};
+        break;
+    case 1:
+    default:
+        preedit = "wu'zong";
+        focused_end = 2;
+        syllable_boundaries = true;
+        words = {"乌", "吴", "屋", "物", "五", "无", "武"};
+        break;
+    }
+    candPreviewWindow_.set_preedit(preedit, preedit.size(), converted, focused_start,
+                                   focused_end, syllable_boundaries);
     for (const char* word : words) {
         Candidate candidate;
         candidate.text = word;

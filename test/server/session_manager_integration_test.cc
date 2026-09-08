@@ -271,6 +271,47 @@ TEST(SessionIntegration, wubi_fifth_key_returns_commit_and_next_composition) {
     delete_test_dictionary_bundle(dict_path);
 }
 
+TEST(SessionIntegration, segmented_preedit_focuses_wubi_and_mixed_wubi_candidates) {
+    const std::string dict_path = make_temp_path("test_wubi_preedit_focus_session.bin");
+    create_test_dictionary_bundle_with_wubi(dict_path, {{"a", "拼", 100}},
+                                            {{"abcd", "五笔首选", 300}, {"abcd", "五笔次选", 200}});
+    constexpr uint64_t kCapabilities = cxxime::kClientCapabilitySegmentedSelection |
+                                       cxxime::kClientCapabilitySegmentedPreeditPresentation;
+
+    for (cxxime::InputMode mode : {cxxime::InputMode::WUBI, cxxime::InputMode::MIXED}) {
+        auto config = std::make_shared<cxxime::Config>();
+        config->input_mode = static_cast<int>(mode);
+        config->mixed_candidate_preference = cxxime::MixedCandidatePreference::kWubi;
+        SessionManager manager;
+        ASSERT_TRUE(manager.initialize(dict_path, config));
+        const uint32_t id = manager.create_session(kCapabilities);
+
+        ProcessKeyResult result;
+        for (char key : std::string("ABCD")) {
+            result = manager.process_key(id, make_key(static_cast<uint32_t>(key)));
+        }
+        ASSERT_TRUE(result.composing);
+        ASSERT_TRUE(!result.presentation.items.empty());
+        ASSERT_EQ(result.preedit, "abcd");
+        ASSERT_EQ(result.focused_preedit_start_bytes, static_cast<std::size_t>(0));
+        ASSERT_EQ(result.focused_preedit_end_bytes, result.preedit.size());
+        ASSERT_EQ(result.preedit_presentation_flags, static_cast<uint32_t>(0));
+        if (mode == cxxime::InputMode::WUBI) {
+            ASSERT_EQ(manager.clear_composition(id).status, cxxime::IPCStatus::OK);
+            for (char key : std::string("ZZZZ")) {
+                result = manager.process_key(id, make_key(static_cast<uint32_t>(key)));
+            }
+            ASSERT_TRUE(result.composing);
+            ASSERT_TRUE(result.presentation.items.empty());
+            ASSERT_EQ(result.focused_preedit_start_bytes, result.preedit.size());
+            ASSERT_EQ(result.focused_preedit_end_bytes, result.preedit.size());
+        }
+        manager.destroy_session(id);
+    }
+
+    delete_test_dictionary_bundle(dict_path);
+}
+
 TEST(SessionIntegration, process_key_invalid_session) {
     SessionManager mgr;
     mgr.initialize(setup_test_dict());

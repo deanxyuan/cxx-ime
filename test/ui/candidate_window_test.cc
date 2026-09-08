@@ -188,6 +188,66 @@ TEST(CandidateWindow, focused_syllable_geometry_keeps_separator_outside) {
     window.destroy();
 }
 
+TEST(CandidateWindow, preedit_highlight_uses_advanced_layout_metrics) {
+    cxxime::Config config;
+    config.render_backend = "gdi";
+    config.layout_config.preedit_highlight_padding_x = 9;
+    config.layout_config.preedit_highlight_padding_y = 5;
+    config.layout_config.preedit_boundary_gap = 7;
+    config.layout_config.preedit_highlight_corner = 11;
+    config.layout_config.preedit_highlight_border_width = 3;
+
+    cxxime::CandidatePage page;
+    cxxime::Candidate candidate;
+    candidate.text = "candidate";
+    page.candidates.push_back(candidate);
+
+    cxxime::CandidateWindow window;
+    ASSERT_TRUE(window.create(nullptr, config));
+    window.set_preedit("ji'shu", 0, 0, 0, 2, true);
+    window.update(page);
+
+    const float scale = window.dpi() / 96.0f;
+    const int expected_padding_x = static_cast<int>(9 * scale);
+    const int expected_padding_y = static_cast<int>(5 * scale);
+    const int expected_boundary_gap = static_cast<int>(7 * scale);
+    const RECT active = window.preedit_active_rect_for_test();
+    const RECT cursor = window.preedit_cursor_rect_for_test();
+    ASSERT_EQ(cursor.left - active.left, expected_padding_x);
+    ASSERT_EQ(window.preedit_corner_radius_for_test(), static_cast<int>(11 * scale));
+    ASSERT_EQ(window.preedit_border_width_for_test(), static_cast<int>(3 * scale));
+
+    bool found_focused = false;
+    bool found_separator = false;
+    for (const auto& run : window.preedit_runs_for_test()) {
+        if (run.focused) {
+            ASSERT_EQ(run.rect.top - active.top, expected_padding_y);
+            found_focused = true;
+        } else if (run.kind == cxxime::PreeditRunKind::Separator) {
+            ASSERT_EQ(run.rect.left - active.right, expected_boundary_gap);
+            found_separator = true;
+        }
+    }
+    ASSERT_TRUE(found_focused);
+    ASSERT_TRUE(found_separator);
+
+    config.layout_config.max_width = 160;
+    config.layout_config.preedit_highlight_padding_x = 20;
+    window.set_config(config);
+    const std::string long_preedit(128, 'w');
+    window.set_preedit(long_preedit, long_preedit.size(), 0, 0, long_preedit.size(), false);
+    window.update(page);
+    const SIZE constrained = window.layout_size();
+    ASSERT_LE(window.preedit_active_rect_for_test().right, constrained.cx);
+    ASSERT_LE(window.preedit_cursor_rect_for_test().right, constrained.cx);
+    ASSERT_GT(window.preedit_cursor_rect_for_test().right,
+              window.preedit_cursor_rect_for_test().left);
+    for (const auto& run : window.preedit_runs_for_test()) {
+        ASSERT_LE(run.rect.right, constrained.cx);
+    }
+    window.destroy();
+}
+
 TEST(CandidateWindow, dpi_relayout_notifies_controller) {
     cxxime::Config config;
     config.render_backend = "gdi";

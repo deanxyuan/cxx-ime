@@ -23,12 +23,6 @@ class CandidateWindow::D2DRenderer : public cxxime::D2DRenderer {};
 
 namespace {
 
-constexpr int kPreeditPaddingXDip = 4;
-constexpr int kPreeditPaddingYDip = 2;
-constexpr int kConvertedActiveGapDip = 6;
-constexpr int kFocusedBoundaryGapDip = 1;
-constexpr int kPreeditCornerRadiusDip = 3;
-
 bool system_high_contrast_enabled() {
     HIGHCONTRASTW high_contrast = {sizeof(high_contrast)};
     return SystemParametersInfoW(SPI_GETHIGHCONTRAST, sizeof(high_contrast), &high_contrast, 0) &&
@@ -654,6 +648,15 @@ void CandidateWindow::update(const CandidatePage& page) {
     scaled_cfg_.round_corner = (int)(scaled_cfg_.round_corner * s);
     scaled_cfg_.round_corner_ex = (int)(scaled_cfg_.round_corner_ex * s);
     scaled_cfg_.border_width = (int)(scaled_cfg_.border_width * s);
+    scaled_cfg_.preedit_highlight_padding_x =
+        (int)(scaled_cfg_.preedit_highlight_padding_x * s);
+    scaled_cfg_.preedit_highlight_padding_y =
+        (int)(scaled_cfg_.preedit_highlight_padding_y * s);
+    scaled_cfg_.preedit_confirmed_gap = (int)(scaled_cfg_.preedit_confirmed_gap * s);
+    scaled_cfg_.preedit_boundary_gap = (int)(scaled_cfg_.preedit_boundary_gap * s);
+    scaled_cfg_.preedit_highlight_corner = (int)(scaled_cfg_.preedit_highlight_corner * s);
+    scaled_cfg_.preedit_highlight_border_width =
+        (int)(scaled_cfg_.preedit_highlight_border_width * s);
     scaled_cfg_.min_width = (int)(scaled_cfg_.min_width * s);
     scaled_cfg_.max_width = (int)(scaled_cfg_.max_width * s);
     scaled_cfg_.max_height = (int)(scaled_cfg_.max_height * s);
@@ -710,14 +713,13 @@ void CandidateWindow::update(const CandidatePage& page) {
     } else {
         render_theme_ = theme_for_rendering(theme_, high_contrast);
     }
-    const int preedit_padding_x = (std::max)(1, static_cast<int>(kPreeditPaddingXDip * s));
-    const int preedit_padding_y = (std::max)(1, static_cast<int>(kPreeditPaddingYDip * s));
-    const int converted_active_gap =
-        (std::max)(1, static_cast<int>(kConvertedActiveGapDip * s));
-    const int focused_boundary_gap =
-        (std::max)(1, static_cast<int>(kFocusedBoundaryGapDip * s));
-    render_ctx_.preedit_corner_radius =
-        (std::max)(1, static_cast<int>(kPreeditCornerRadiusDip * s));
+    const int preedit_padding_x = (std::max)(0, cfg.preedit_highlight_padding_x);
+    const int preedit_padding_y = (std::max)(0, cfg.preedit_highlight_padding_y);
+    const int converted_active_gap = (std::max)(0, cfg.preedit_confirmed_gap);
+    const int focused_boundary_gap = (std::max)(0, cfg.preedit_boundary_gap);
+    render_ctx_.preedit_corner_radius = (std::max)(0, cfg.preedit_highlight_corner);
+    render_ctx_.preedit_border_width =
+        (std::max)(0, cfg.preedit_highlight_border_width);
 
     // Preedit layout is measured once and shared by GDI and D2D renderers.
     if (!preedit_text_.empty()) {
@@ -773,7 +775,7 @@ void CandidateWindow::update(const CandidatePage& page) {
             if (focused_end < preedit_text_.size()) {
                 x = render_ctx_.preedit_active_rect.right + focused_boundary_gap;
             } else {
-                x = focused_text_left + measure_text_width(hdc, hf, focused_text);
+                x = render_ctx_.preedit_active_rect.right;
             }
         }
         const std::string after_focus = preedit_text_.substr(focused_end);
@@ -829,6 +831,24 @@ void CandidateWindow::update(const CandidatePage& page) {
         }
         if (preedit_w > lr.width) {
             lr.width = preedit_w;
+        }
+        const LONG preedit_clip_left = static_cast<LONG>(cfg.margin_x);
+        const LONG preedit_clip_right = (std::max)(
+            preedit_clip_left, static_cast<LONG>(lr.width - cfg.margin_x));
+        auto clip_preedit_rect = [&](RECT& rect) {
+            rect.left = (std::clamp)(rect.left, preedit_clip_left, preedit_clip_right);
+            rect.right = (std::clamp)(rect.right, rect.left, preedit_clip_right);
+        };
+        clip_preedit_rect(render_ctx_.preedit_active_rect);
+        const LONG cursor_width = (std::max)(
+            1L, render_ctx_.preedit_cursor_rect.right - render_ctx_.preedit_cursor_rect.left);
+        render_ctx_.preedit_cursor_rect.left = (std::clamp)(
+            render_ctx_.preedit_cursor_rect.left, preedit_clip_left,
+            (std::max)(preedit_clip_left, preedit_clip_right - cursor_width));
+        render_ctx_.preedit_cursor_rect.right =
+            (std::min)(preedit_clip_right, render_ctx_.preedit_cursor_rect.left + cursor_width);
+        for (auto& run : render_ctx_.preedit_runs) {
+            clip_preedit_rect(run.rect);
         }
         render_ctx_.preedit_rect = {cfg.margin_x, cfg.margin_y,
                                     lr.width - cfg.margin_x, cfg.margin_y + content_height};

@@ -23,16 +23,6 @@ static Color to_color(int v) {
     return {(uint8_t)v, (uint8_t)(v>>8), (uint8_t)(v>>16), 255};
 }
 
-static double channel_luminance(uint8_t channel) {
-    const double value = channel / 255.0;
-    return value <= 0.04045 ? value / 12.92 : std::pow((value + 0.055) / 1.055, 2.4);
-}
-
-static double color_luminance(const Color& color) {
-    return 0.2126 * channel_luminance(color.r) + 0.7152 * channel_luminance(color.g) +
-           0.0722 * channel_luminance(color.b);
-}
-
 static Color blend(const Color& source, const Color& target, double amount) {
     auto channel = [&](uint8_t left, uint8_t right) {
         return static_cast<uint8_t>(std::round(left * (1.0 - amount) + right * amount));
@@ -91,9 +81,8 @@ Theme build_theme_from_config(const Config& cfg) {
     t.hilited_back = to_color(s->hilited_candidate_back_color);
     t.preedit_text = to_color(s->hilited_text_color);
     t.preedit_separator = t.comment_text;
-    const bool dark = color_luminance(t.background) < 0.5;
-    t.preedit_active_back = blend(t.background, t.hilited_back, dark ? 0.20 : 0.12);
-    t.preedit_active_border = blend(t.background, t.hilited_back, dark ? 0.40 : 0.30);
+    t.preedit_active_back = to_color(s->preedit_active_back_color);
+    t.preedit_active_border = to_color(s->preedit_active_border_color);
     t.preedit_cursor = to_color(s->preedit_cursor_color);
     t.prev_page    = to_color(s->prevpage_color);
     t.next_page    = to_color(s->nextpage_color);

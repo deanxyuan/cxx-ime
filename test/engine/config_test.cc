@@ -31,6 +31,12 @@ TEST(Config, defaults) {
     ASSERT_TRUE(!cfg.activate_ime_shortcut.enabled());
     ASSERT_TRUE(!cfg.initial_full_shape);
     ASSERT_TRUE(cfg.initial_chinese_punct);
+    ASSERT_EQ(cfg.layout_config.preedit_highlight_padding_x, 4);
+    ASSERT_EQ(cfg.layout_config.preedit_highlight_padding_y, 2);
+    ASSERT_EQ(cfg.layout_config.preedit_confirmed_gap, 6);
+    ASSERT_EQ(cfg.layout_config.preedit_boundary_gap, 1);
+    ASSERT_EQ(cfg.layout_config.preedit_highlight_corner, 3);
+    ASSERT_EQ(cfg.layout_config.preedit_highlight_border_width, 1);
     ASSERT_EQ(cfg.diagnostics.trace_mode, cxxime::DiagnosticTraceMode::kOff);
 }
 
@@ -128,6 +134,25 @@ TEST(Config, json_round_trip_preserves_wubi_options_and_candidate_learning) {
     ASSERT_TRUE(loaded.wubi_code_hint);
     ASSERT_TRUE(loaded.candidate_learning);
     ASSERT_EQ(loaded.mixed_candidate_preference, cxxime::MixedCandidatePreference::kWubi);
+}
+
+TEST(Config, json_round_trip_preserves_preedit_highlight_layout) {
+    cxxime::Config saved;
+    saved.layout_config.preedit_highlight_padding_x = 7;
+    saved.layout_config.preedit_highlight_padding_y = 4;
+    saved.layout_config.preedit_confirmed_gap = 9;
+    saved.layout_config.preedit_boundary_gap = 3;
+    saved.layout_config.preedit_highlight_corner = 8;
+    saved.layout_config.preedit_highlight_border_width = 2;
+
+    cxxime::Config loaded;
+    ASSERT_TRUE(loaded.load_json(saved.to_user_json()));
+    ASSERT_EQ(loaded.layout_config.preedit_highlight_padding_x, 7);
+    ASSERT_EQ(loaded.layout_config.preedit_highlight_padding_y, 4);
+    ASSERT_EQ(loaded.layout_config.preedit_confirmed_gap, 9);
+    ASSERT_EQ(loaded.layout_config.preedit_boundary_gap, 3);
+    ASSERT_EQ(loaded.layout_config.preedit_highlight_corner, 8);
+    ASSERT_EQ(loaded.layout_config.preedit_highlight_border_width, 2);
 }
 
 TEST(Config, invalid_mixed_candidate_preference_falls_back_to_auto) {
@@ -232,6 +257,20 @@ TEST(Config, production_runtime_snapshot_fits_control_payload) {
     const std::string snapshot = config.to_runtime_json();
     ASSERT_TRUE(!snapshot.empty());
     ASSERT_TRUE(snapshot.size() <= cxxime::CONTROL_MAX_PAYLOAD);
+}
+
+TEST(Config, built_in_themes_define_preedit_active_colors) {
+    std::ifstream file(std::string(CXXIME_DATA_DIR) + "themes.json");
+    ASSERT_TRUE(file.is_open());
+    const nlohmann::json themes = nlohmann::json::parse(file);
+    ASSERT_TRUE(themes.contains("preset_color_schemes"));
+    ASSERT_EQ(themes["preset_color_schemes"].size(), 12u);
+    for (const auto& item : themes["preset_color_schemes"].items()) {
+        ASSERT_TRUE(item.value().contains("preedit_active_back_color"));
+        ASSERT_TRUE(item.value().contains("preedit_active_border_color"));
+        ASSERT_TRUE(item.value()["preedit_active_back_color"].is_number_integer());
+        ASSERT_TRUE(item.value()["preedit_active_border_color"].is_number_integer());
+    }
 }
 
 TEST(Config, themes_preserve_file_order_and_fallback_to_first_theme) {
@@ -341,6 +380,36 @@ TEST(Config, theme_derives_preedit_cursor_color_unless_explicitly_configured) {
     ASSERT_EQ(config.preset_color_schemes["explicit"].preedit_cursor_color, 0x123456);
     ASSERT_EQ(config.preset_color_schemes["explicit_black"].preedit_cursor_color, 0);
 
+    std::remove(path);
+}
+
+TEST(Config, theme_derives_preedit_active_colors_unless_explicitly_configured) {
+    const char* path = "test_preedit_active_color_themes.json";
+    {
+        std::ofstream file(path);
+        file << R"({"preset_color_schemes":{
+            "derived":{"back_color":16777215,"hilited_candidate_back_color":0},
+            "contrast_protected":{"back_color":16777215,"hilited_text_color":7105644,
+            "hilited_candidate_back_color":7105644},
+            "explicit":{"back_color":16777215,"hilited_candidate_back_color":0,
+            "preedit_active_back_color":1193046,
+            "preedit_active_border_color":6636321}
+        }})";
+    }
+
+    cxxime::Config config;
+    config.theme = "derived";
+    ASSERT_TRUE(config.load_themes(path));
+    ASSERT_EQ(config.preset_color_schemes["derived"].preedit_active_back_color, 0xe0e0e0);
+    ASSERT_EQ(config.preset_color_schemes["derived"].preedit_active_border_color, 0xb3b3b3);
+    ASSERT_EQ(config.preset_color_schemes["contrast_protected"].preedit_active_back_color,
+              0xf0f0f0);
+    ASSERT_EQ(config.preset_color_schemes["explicit"].preedit_active_back_color, 0x123456);
+    ASSERT_EQ(config.preset_color_schemes["explicit"].preedit_active_border_color, 0x654321);
+
+    const auto derived_theme = cxxime::build_theme_from_config(config);
+    ASSERT_EQ(derived_theme.preedit_active_back.r, 0xe0);
+    ASSERT_EQ(derived_theme.preedit_active_border.r, 0xb3);
     std::remove(path);
 }
 

@@ -74,6 +74,8 @@ public:
     }
     RECT preedit_active_rect_for_test() const { return render_ctx_.preedit_active_rect; }
     RECT preedit_cursor_rect_for_test() const { return render_ctx_.preedit_cursor_rect; }
+    int preedit_corner_radius_for_test() const { return render_ctx_.preedit_corner_radius; }
+    int preedit_border_width_for_test() const { return render_ctx_.preedit_border_width; }
     const std::vector<PreeditTextRun>& preedit_runs_for_test() const {
         return render_ctx_.preedit_runs;
     }

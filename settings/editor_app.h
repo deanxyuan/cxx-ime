@@ -166,7 +166,8 @@ private:
     HWND hCandRecommendBtn_ = nullptr;
     HWND hCandDefaultBtn_ = nullptr;
     HWND hCandPreviewBtns_[2] = {};
-    HWND hCandEdits_[13] = {};
+    HWND hCandPreviewScenarios_[2] = {};
+    HWND hCandEdits_[19] = {};
     bool updatingCandControls_ = false;
 
     // Shortcuts

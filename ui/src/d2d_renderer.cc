@@ -142,7 +142,11 @@ void D2DRenderer::draw_preedit(const RenderContext& ctx) {
             static_cast<float>(ctx.preedit_corner_radius),
         };
         render_target_->FillRoundedRectangle(active, preedit_active_back_brush_);
-        render_target_->DrawRoundedRectangle(active, preedit_active_border_brush_, 1.0f);
+        if (ctx.preedit_border_width > 0) {
+            render_target_->DrawRoundedRectangle(
+                active, preedit_active_border_brush_,
+                static_cast<float>(ctx.preedit_border_width));
+        }
     }
 
     for (const auto& run : ctx.preedit_runs) {

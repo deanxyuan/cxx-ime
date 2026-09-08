@@ -32,6 +32,12 @@ struct LayoutConfig {
     int round_corner_ex = 4;   // window corner radius
     int border_width = 1;      // window border
     int label_font_point = 0;  // preedit font size, 0 = derive from font_point
+    int preedit_highlight_padding_x = 4;    // focused input horizontal padding
+    int preedit_highlight_padding_y = 2;    // focused input vertical padding
+    int preedit_confirmed_gap = 6;          // confirmed text to active input
+    int preedit_boundary_gap = 1;           // focused input to following syllable mark
+    int preedit_highlight_corner = 3;       // focused input corner radius
+    int preedit_highlight_border_width = 1; // focused input border
 };
 
 struct Config {
@@ -111,6 +117,8 @@ struct Config {
         int comment_text_color = -1;
         int prevpage_color = -1;
         int nextpage_color = -1;
+        int preedit_active_back_color = -1;
+        int preedit_active_border_color = -1;
     };
     std::unordered_map<std::string, SchemeColors> preset_color_schemes;
     std::vector<std::string> preset_color_scheme_order;

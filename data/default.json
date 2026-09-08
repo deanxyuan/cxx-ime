@@ -44,7 +44,13 @@
         "round_corner": 4,
         "round_corner_ex": 4,
         "label_font_point": 0,
-        "border_width": 1
+        "border_width": 1,
+        "preedit_highlight_padding_x": 4,
+        "preedit_highlight_padding_y": 2,
+        "preedit_confirmed_gap": 6,
+        "preedit_boundary_gap": 1,
+        "preedit_highlight_corner": 3,
+        "preedit_highlight_border_width": 1
     },
     "ascii_composer": {
         "switch_key": {

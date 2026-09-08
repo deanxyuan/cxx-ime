@@ -166,6 +166,7 @@ void fill_session_presentation(const SessionEntry& entry, ProcessKeyResult& resu
     }
     std::size_t focused_input_bytes = context.active_input().size();
     std::string preferred_syllables;
+    bool has_focused_selection = false;
     const bool supports_segmented_preedit =
         (entry.client_capabilities & cxxime::kClientCapabilitySegmentedPreeditPresentation) != 0;
     bool decorate_pinyin_preedit = supports_segmented_preedit &&
@@ -175,6 +176,7 @@ void fill_session_presentation(const SessionEntry& entry, ProcessKeyResult& resu
         if (const auto* action =
                 std::get_if<cxxime::TextSelectionAction>(&highlighted->selection)) {
             focused_input_bytes = action->consumed_input_bytes;
+            has_focused_selection = true;
             if (action->primary_variant < action->variants.size()) {
                 preferred_syllables = action->variants[action->primary_variant].syllables;
             }
@@ -197,7 +199,7 @@ void fill_session_presentation(const SessionEntry& entry, ProcessKeyResult& resu
             ? cxxime::preedit_presentation_flag(
                 cxxime::PreeditPresentationFlag::SyllableBoundaries)
             : 0;
-    if (!decorate_pinyin_preedit) {
+    if (!supports_segmented_preedit || !has_focused_selection) {
         result.focused_preedit_start_bytes = result.preedit.size();
         result.focused_preedit_end_bytes = result.preedit.size();
     }

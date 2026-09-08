@@ -69,15 +69,20 @@ static void draw_preedit(HDC dc, const RenderContext& ctx, HFONT font, COLORREF 
         const COLORREF active_back = clr(ctx.theme->preedit_active_back);
         const COLORREF active_border = clr(ctx.theme->preedit_active_border);
         HBRUSH brush = CreateSolidBrush(active_back);
-        HPEN pen = CreatePen(PS_SOLID, 1, active_border);
+        HPEN pen = ctx.preedit_border_width > 0
+                       ? CreatePen(PS_SOLID, ctx.preedit_border_width, active_border)
+                       : static_cast<HPEN>(GetStockObject(NULL_PEN));
         HBRUSH old_brush = static_cast<HBRUSH>(SelectObject(dc, brush));
         HPEN old_pen = static_cast<HPEN>(SelectObject(dc, pen));
+        const int corner_diameter = ctx.preedit_corner_radius * 2;
         RoundRect(dc, ctx.preedit_active_rect.left, ctx.preedit_active_rect.top,
                   ctx.preedit_active_rect.right, ctx.preedit_active_rect.bottom,
-                  ctx.preedit_corner_radius, ctx.preedit_corner_radius);
+                  corner_diameter, corner_diameter);
         SelectObject(dc, old_pen);
         SelectObject(dc, old_brush);
-        DeleteObject(pen);
+        if (ctx.preedit_border_width > 0) {
+            DeleteObject(pen);
+        }
         DeleteObject(brush);
     }
 
