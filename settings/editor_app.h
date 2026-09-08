@@ -127,7 +127,6 @@ private:
     HWND hInputModeMixed_ = nullptr;
     HWND hMixedCandidatePreference_ = nullptr;
     HWND hInlinePreedit_ = nullptr;
-    HWND hPreeditCursor_ = nullptr;
     HWND hPreeditTypeComposition_ = nullptr;
     HWND hPreeditTypePreview_ = nullptr;
     HWND hFuzzyPinyin_ = nullptr;

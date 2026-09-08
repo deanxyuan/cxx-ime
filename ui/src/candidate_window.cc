@@ -23,6 +23,9 @@ class CandidateWindow::D2DRenderer : public cxxime::D2DRenderer {};
 
 namespace {
 
+constexpr int kPreeditCursorWidthPixels = 1;
+constexpr int kPreeditCursorHeightPercent = 65;
+
 bool system_high_contrast_enabled() {
     HIGHCONTRASTW high_contrast = {sizeof(high_contrast)};
     return SystemParametersInfoW(SPI_GETHIGHCONTRAST, sizeof(high_contrast), &high_contrast, 0) &&
@@ -130,14 +133,6 @@ void append_preedit_runs(RenderContext& context, HDC hdc, HFONT font, const std:
 
 } // namespace
 
-static int system_caret_width() {
-    DWORD width = 1;
-    if (!SystemParametersInfoW(SPI_GETCARETWIDTH, 0, &width, 0) || width == 0) {
-        return 1;
-    }
-    return static_cast<int>(width);
-}
-
 CandidateWindow::~CandidateWindow() {
     destroy();
 }
@@ -173,7 +168,6 @@ bool CandidateWindow::create(HWND owner, const Config& config) {
         if (dpi_scale_ <= 0.0f) {
             dpi_scale_ = 1.0f;
         }
-        preedit_cursor_width_ = system_caret_width();
         init_gdi_renderer();
     }
     return hwnd_ != nullptr;
@@ -263,18 +257,8 @@ bool CandidateWindow::refresh_dpi_scale() {
     return true;
 }
 
-bool CandidateWindow::refresh_preedit_cursor_width() {
-    const int next_width = system_caret_width();
-    if (next_width == preedit_cursor_width_) {
-        return false;
-    }
-    preedit_cursor_width_ = next_width;
-    return true;
-}
-
 void CandidateWindow::recreate_renderers_for_dpi() {
     ScopedDpiAwarenessContext dpi_context(GetWindowDpiAwarenessContext(hwnd_));
-    refresh_preedit_cursor_width();
     if (gdi_renderer_) {
         gdi_renderer_->finalize();
         gdi_renderer_->initialize(hwnd_, render_theme_, GetDpiForWindow(hwnd_));
@@ -398,7 +382,6 @@ bool CandidateWindow::get_window_rect(RECT* rect) const {
 }
 void CandidateWindow::set_config(const Config& config) {
     config_ = &config;
-    refresh_preedit_cursor_width();
     set_theme(build_theme_from_config(config));
     RenderBackend next_backend = config.render_backend != "gdi" ? RenderBackend::D2D : RenderBackend::GDI;
     if (d2d_renderer_) {
@@ -572,9 +555,6 @@ void CandidateWindow::rebuild_render_context(const LayoutConfig& cfg, int window
     render_ctx_.layout_cfg = &cfg;
     render_ctx_.preedit = preedit_text_;
     render_ctx_.preedit_cursor = preedit_cursor_;
-    render_ctx_.preedit_cursor_width = preedit_cursor_width_;
-    render_ctx_.show_preedit_cursor =
-        config_ && config_->show_preedit_cursor && !preedit_text_.empty();
     render_ctx_.page_current = page_current_;
     render_ctx_.page_total = page_total_;
     render_ctx_.highlighted = page_.candidates.empty() ? -1 : page_.highlighted;
@@ -702,6 +682,7 @@ void CandidateWindow::update(const CandidatePage& page) {
     render_ctx_.preedit_runs.clear();
     render_ctx_.preedit_active_rect = {};
     render_ctx_.preedit_cursor_rect = {};
+    render_ctx_.preedit_cursor_in_focus = false;
     const bool high_contrast = system_high_contrast_enabled();
     if (render_ctx_.high_contrast != high_contrast) {
         render_ctx_.high_contrast = high_contrast;
@@ -809,13 +790,22 @@ void CandidateWindow::update(const CandidatePage& page) {
             return position + measure_text_width(
                                   hdc, hf, preedit_text_.substr(focused_end, cursor - focused_end));
         };
-        const int caret_x = cursor_x(preedit_cursor_);
-        render_ctx_.preedit_cursor_rect = {
-            caret_x,
-            text_top + 1,
-            caret_x + (std::max)(1, preedit_cursor_width_),
-            text_top + text_height - 1,
-        };
+        const bool draw_preedit_cursor = preedit_cursor_ < preedit_text_.size();
+        if (draw_preedit_cursor) {
+            const int caret_x = cursor_x(preedit_cursor_);
+            const int cursor_height = (std::max)(
+                1, (text_height * kPreeditCursorHeightPercent + 50) / 100);
+            const int cursor_top = text_top + (text_height - cursor_height) / 2;
+            render_ctx_.preedit_cursor_rect = {
+                caret_x,
+                cursor_top,
+                caret_x + kPreeditCursorWidthPixels,
+                cursor_top + cursor_height,
+            };
+            render_ctx_.preedit_cursor_in_focus =
+                !focused_text.empty() && preedit_cursor_ >= focused_start &&
+                preedit_cursor_ <= focused_end;
+        }
 
         const int preedit_h = content_height + cfg.spacing;
         for (auto& cr : lr.rects) {
@@ -824,7 +814,7 @@ void CandidateWindow::update(const CandidatePage& page) {
             cr.comment_rect.top += preedit_h;     cr.comment_rect.bottom += preedit_h;
             cr.highlight_rect.top += preedit_h;   cr.highlight_rect.bottom += preedit_h;
         }
-        int cursor_reserve = config_->show_preedit_cursor ? preedit_cursor_width_ : 0;
+        const int cursor_reserve = draw_preedit_cursor ? kPreeditCursorWidthPixels : 0;
         int preedit_w = x + cfg.margin_x + cursor_reserve;
         if (cfg.max_width > 0) {
             preedit_w = (std::min)(preedit_w, cfg.max_width);
@@ -840,13 +830,19 @@ void CandidateWindow::update(const CandidatePage& page) {
             rect.right = (std::clamp)(rect.right, rect.left, preedit_clip_right);
         };
         clip_preedit_rect(render_ctx_.preedit_active_rect);
-        const LONG cursor_width = (std::max)(
-            1L, render_ctx_.preedit_cursor_rect.right - render_ctx_.preedit_cursor_rect.left);
-        render_ctx_.preedit_cursor_rect.left = (std::clamp)(
-            render_ctx_.preedit_cursor_rect.left, preedit_clip_left,
-            (std::max)(preedit_clip_left, preedit_clip_right - cursor_width));
-        render_ctx_.preedit_cursor_rect.right =
-            (std::min)(preedit_clip_right, render_ctx_.preedit_cursor_rect.left + cursor_width);
+        if (render_ctx_.preedit_active_rect.right <= render_ctx_.preedit_active_rect.left) {
+            render_ctx_.preedit_cursor_in_focus = false;
+        }
+        if (draw_preedit_cursor) {
+            const LONG cursor_width = render_ctx_.preedit_cursor_rect.right -
+                                      render_ctx_.preedit_cursor_rect.left;
+            render_ctx_.preedit_cursor_rect.left = (std::clamp)(
+                render_ctx_.preedit_cursor_rect.left, preedit_clip_left,
+                (std::max)(preedit_clip_left, preedit_clip_right - cursor_width));
+            render_ctx_.preedit_cursor_rect.right =
+                (std::min)(preedit_clip_right,
+                           render_ctx_.preedit_cursor_rect.left + cursor_width);
+        }
         for (auto& run : render_ctx_.preedit_runs) {
             clip_preedit_rect(run.rect);
         }
@@ -1028,7 +1024,6 @@ LRESULT CALLBACK CandidateWindow::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM
         return 0;
     case WM_SETTINGCHANGE:
         if (self) {
-            self->refresh_preedit_cursor_width();
             self->update(self->page_);
             if (self->layout_changed_cb_) {
                 self->layout_changed_cb_();

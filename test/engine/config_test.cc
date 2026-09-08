@@ -502,18 +502,11 @@ TEST(Config, inline_preedit_false) {
     std::remove(path);
 }
 
-TEST(Config, preedit_cursor_defaults_enabled) {
-    cxxime::Config cfg;
-    ASSERT_TRUE(cfg.show_preedit_cursor);
-}
-
-TEST(Config, preedit_cursor_disabled_round_trip) {
-    cxxime::Config saved;
-    saved.show_preedit_cursor = false;
-
-    cxxime::Config loaded;
-    ASSERT_TRUE(loaded.load_json(saved.to_user_json()));
-    ASSERT_TRUE(!loaded.show_preedit_cursor);
+TEST(Config, legacy_preedit_cursor_setting_is_ignored) {
+    cxxime::Config config;
+    ASSERT_TRUE(config.load_json(R"({"style":{"show_preedit_cursor":false}})"));
+    const nlohmann::json saved = nlohmann::json::parse(config.to_user_json());
+    ASSERT_TRUE(!saved["style"].contains("show_preedit_cursor"));
 }
 
 TEST(Config, preedit_type_preview) {

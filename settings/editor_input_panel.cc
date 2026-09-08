@@ -26,8 +26,6 @@ void EditorApp::create_input_panel(HWND panel) {
     make_aligned_label(L"内联显示:", top + kRowH * 2, panel);
     hInlinePreedit_ =
         make_check(1001, L"在应用中显示", input_x, top + kRowH * 2, S(180), panel);
-    hPreeditCursor_ =
-        make_check(1006, L"候选窗显示光标", input_x + S(190), top + kRowH * 2, S(160), panel);
 
     make_aligned_label(L"内联内容:", top + kRowH * 3, panel);
     hPreeditTypeComposition_ =
@@ -83,10 +81,8 @@ bool EditorApp::handle_input_command(int control_id, int notification) {
 
 void EditorApp::update_preedit_type_enabled() {
     const bool inline_preedit = get_check(hInlinePreedit_);
-    const bool preview = get_check(hPreeditTypePreview_);
     EnableWindow(hPreeditTypeComposition_, inline_preedit);
     EnableWindow(hPreeditTypePreview_, inline_preedit);
-    EnableWindow(hPreeditCursor_, !inline_preedit || preview);
 }
 
 void EditorApp::update_input_mode_enabled() {

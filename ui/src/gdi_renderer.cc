@@ -102,15 +102,10 @@ static void draw_preedit(HDC dc, const RenderContext& ctx, HFONT font, COLORREF 
                   DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     }
 
-    if (ctx.show_preedit_cursor &&
-        ctx.preedit_cursor_rect.right > ctx.preedit_cursor_rect.left) {
-        if (ctx.high_contrast) {
-            const bool cursor_focused =
-                ctx.preedit_active_rect.right > ctx.preedit_active_rect.left &&
-                ctx.preedit_cursor_rect.left >= ctx.preedit_active_rect.left &&
-                ctx.preedit_cursor_rect.left <= ctx.preedit_active_rect.right;
-            cursor_color = clr(cursor_focused ? ctx.theme->hilited_text
-                                              : ctx.theme->preedit_cursor);
+    if (ctx.preedit_cursor_rect.right > ctx.preedit_cursor_rect.left) {
+        if (ctx.preedit_cursor_in_focus) {
+            cursor_color = clr(ctx.high_contrast ? ctx.theme->hilited_text
+                                                 : ctx.theme->preedit_text);
         }
         HBRUSH cursor_brush = CreateSolidBrush(cursor_color);
         FillRect(dc, &ctx.preedit_cursor_rect, cursor_brush);

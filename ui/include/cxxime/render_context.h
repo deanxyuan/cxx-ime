@@ -81,8 +81,7 @@ struct RenderContext {
     const LayoutConfig* layout_cfg = nullptr;
     std::string preedit;
     size_t preedit_cursor = 0;
-    int preedit_cursor_width = 1;
-    bool show_preedit_cursor = false;
+    bool preedit_cursor_in_focus = false;
     int page_current = 1, page_total = 1;
     int highlighted = -1;
     CandidateHoverTarget hovered_target = CandidateHoverTarget::None;

@@ -293,7 +293,6 @@ bool EditorApp::load_config() {
     set_edit_int(hLabelFontPt_, config_.layout_config.label_font_point);
 
     set_check(hInlinePreedit_, config_.inline_preedit);
-    set_check(hPreeditCursor_, config_.show_preedit_cursor);
     if (config_.preedit_type == "preview") {
         SendMessageW(hPreeditTypePreview_, BM_SETCHECK, BST_CHECKED, 0);
     } else {
@@ -329,7 +328,6 @@ bool EditorApp::load_config() {
 void EditorApp::readback(HWND) {
     auto& c = config_;
     c.inline_preedit = get_check(hInlinePreedit_);
-    c.show_preedit_cursor = get_check(hPreeditCursor_);
     c.fuzzy_pinyin = get_check(hFuzzyPinyin_);
     c.wubi_auto_commit = get_check(hWubiAutoCommit_);
     c.wubi_commit_first_on_fifth_key = get_check(hWubiCommitFirstOnFifthKey_);

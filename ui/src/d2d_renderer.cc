@@ -168,7 +168,7 @@ void D2DRenderer::draw_preedit(const RenderContext& ctx) {
                                  rect, brush);
     }
 
-    if (ctx.show_preedit_cursor && preedit_cursor_brush_ &&
+    if (preedit_cursor_brush_ &&
         ctx.preedit_cursor_rect.right > ctx.preedit_cursor_rect.left) {
         render_target_->FillRectangle(
             D2D1::RectF(static_cast<float>(ctx.preedit_cursor_rect.left),
@@ -196,7 +196,10 @@ void D2DRenderer::render(const RenderContext& ctx) {
         preedit_separator_brush_->SetColor(c2d(ctx.theme->preedit_separator));
         preedit_active_back_brush_->SetColor(c2d(ctx.theme->preedit_active_back));
         preedit_active_border_brush_->SetColor(c2d(ctx.theme->preedit_active_border));
-        preedit_cursor_brush_->SetColor(c2d(ctx.theme->preedit_cursor));
+        const Color cursor_color = ctx.preedit_cursor_in_focus
+                ? (ctx.high_contrast ? ctx.theme->hilited_text : ctx.theme->preedit_text)
+                : ctx.theme->preedit_cursor;
+        preedit_cursor_brush_->SetColor(c2d(cursor_color));
         label_brush_->SetColor(c2d(ctx.theme->label_text));
         nav_brush_->SetColor(c2d(ctx.theme->prev_page));
         border_brush_->SetColor(c2d(ctx.theme->border));
@@ -204,14 +207,6 @@ void D2DRenderer::render(const RenderContext& ctx) {
                                 (ctx.theme->background.g + ctx.theme->hilited_back.g) / 2.0f / 255.0f,
                                 (ctx.theme->background.b + ctx.theme->hilited_back.b) / 2.0f / 255.0f, 1.0f);
         hover_brush_->SetColor(hover_col);
-        if (ctx.high_contrast) {
-            const bool cursor_focused =
-                ctx.preedit_active_rect.right > ctx.preedit_active_rect.left &&
-                ctx.preedit_cursor_rect.left >= ctx.preedit_active_rect.left &&
-                ctx.preedit_cursor_rect.left <= ctx.preedit_active_rect.right;
-            preedit_cursor_brush_->SetColor(
-                c2d(cursor_focused ? ctx.theme->hilited_text : ctx.theme->preedit_cursor));
-        }
     }
 
     D2D1_SIZE_F sz = render_target_->GetSize();

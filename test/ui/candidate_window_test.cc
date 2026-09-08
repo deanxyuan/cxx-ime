@@ -165,6 +165,9 @@ TEST(CandidateWindow, focused_syllable_geometry_keeps_separator_outside) {
     const RECT cursor = window.preedit_cursor_rect_for_test();
     ASSERT_TRUE(active.right > active.left);
     ASSERT_GT(cursor.left, active.left);
+    ASSERT_EQ(cursor.right - cursor.left, 1);
+    ASSERT_LT(cursor.bottom - cursor.top, active.bottom - active.top);
+    ASSERT_TRUE(window.preedit_cursor_in_focus_for_test());
     bool found_separator = false;
     for (const auto& run : window.preedit_runs_for_test()) {
         if (run.kind == cxxime::PreeditRunKind::Separator) {
@@ -180,6 +183,9 @@ TEST(CandidateWindow, focused_syllable_geometry_keeps_separator_outside) {
     window.update(page);
     const RECT unfocused = window.preedit_active_rect_for_test();
     ASSERT_EQ(unfocused.right - unfocused.left, 0);
+    const RECT end_cursor = window.preedit_cursor_rect_for_test();
+    ASSERT_EQ(end_cursor.right - end_cursor.left, 0);
+    ASSERT_EQ(end_cursor.bottom - end_cursor.top, 0);
 
     window.set_preedit("don't", 5, 0, 5, 5, false);
     window.update(page);
@@ -214,6 +220,11 @@ TEST(CandidateWindow, preedit_highlight_uses_advanced_layout_metrics) {
     const RECT active = window.preedit_active_rect_for_test();
     const RECT cursor = window.preedit_cursor_rect_for_test();
     ASSERT_EQ(cursor.left - active.left, expected_padding_x);
+    ASSERT_EQ(cursor.right - cursor.left, 1);
+    const int text_height = active.bottom - active.top - expected_padding_y * 2;
+    const int expected_cursor_height = (std::max)(1, (text_height * 65 + 50) / 100);
+    ASSERT_EQ(cursor.bottom - cursor.top, expected_cursor_height);
+    ASSERT_TRUE(window.preedit_cursor_in_focus_for_test());
     ASSERT_EQ(window.preedit_corner_radius_for_test(), static_cast<int>(11 * scale));
     ASSERT_EQ(window.preedit_border_width_for_test(), static_cast<int>(3 * scale));
 
@@ -239,12 +250,28 @@ TEST(CandidateWindow, preedit_highlight_uses_advanced_layout_metrics) {
     window.update(page);
     const SIZE constrained = window.layout_size();
     ASSERT_LE(window.preedit_active_rect_for_test().right, constrained.cx);
-    ASSERT_LE(window.preedit_cursor_rect_for_test().right, constrained.cx);
-    ASSERT_GT(window.preedit_cursor_rect_for_test().right,
-              window.preedit_cursor_rect_for_test().left);
+    ASSERT_EQ(window.preedit_cursor_rect_for_test().right -
+                  window.preedit_cursor_rect_for_test().left,
+              0);
     for (const auto& run : window.preedit_runs_for_test()) {
         ASSERT_LE(run.rect.right, constrained.cx);
     }
+
+    window.set_preedit(long_preedit, 64, 0, 0, long_preedit.size(), false);
+    window.update(page);
+    ASSERT_EQ(window.preedit_cursor_rect_for_test().right -
+                  window.preedit_cursor_rect_for_test().left,
+              1);
+    ASSERT_LE(window.preedit_cursor_rect_for_test().right, window.layout_size().cx);
+    ASSERT_TRUE(window.preedit_cursor_in_focus_for_test());
+
+    window.set_preedit("ji'shu", 3, 0, 0, 2, true);
+    window.update(page);
+    ASSERT_EQ(window.preedit_cursor_rect_for_test().right -
+                  window.preedit_cursor_rect_for_test().left,
+              1);
+    ASSERT_TRUE(!window.preedit_cursor_in_focus_for_test());
+
     window.destroy();
 }
 

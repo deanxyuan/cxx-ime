@@ -278,7 +278,6 @@ std::string EditorApp::selected_theme_id() const {
 
 Config EditorApp::build_appearance_preview_config() {
     Config config = config_;
-    config.show_preedit_cursor = get_check(hPreeditCursor_);
     config.theme = selected_theme_id();
     config.font_name = config_.font_name;
     config.font_size = std::clamp(get_edit_int(hFontSize_), 8, 72);
