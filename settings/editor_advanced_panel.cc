@@ -144,8 +144,15 @@ void EditorApp::create_advanced_layout_panel(HWND panel) {
     const int panel_width = static_cast<int>(panel_rect.right - panel_rect.left);
     const int column_width =
         (std::max)(S(150), (panel_width - kPanelPadLeft * 2) / 3);
-    const int edit_width = S(48);
-    const int label_width = column_width - edit_width - S(8);
+    const int edit_width = S(44);
+    const int column_right_padding = S(8);
+    const int maximum_label_width =
+        column_width - edit_width - S(8) - column_right_padding;
+    const int label_widths[] = {
+        (std::min)(S(88), maximum_label_width),
+        (std::min)(S(96), maximum_label_width),
+        maximum_label_width,
+    };
     SetWindowSubclass(panel, PanelForwardProc, 2000, reinterpret_cast<DWORD_PTR>(hwnd_));
 
     for (int i = 0; i < 19; ++i) {
@@ -153,7 +160,7 @@ void EditorApp::create_advanced_layout_panel(HWND panel) {
         int row = i < 13 ? i % 7 : i - 13;
         int x = kPanelPadLeft + column * column_width;
         int y = top + row * kRowH;
-        int control_x = make_aligned_label(names[i], x, label_width, y, panel);
+        int control_x = make_aligned_label(names[i], x, label_widths[column], y, panel);
         const int control_id = i < 13 ? 1200 + i : 1230 + i - 13;
         hCandEdits_[i] = make_edit(control_id, control_x, y, edit_width, panel);
     }
@@ -166,9 +173,11 @@ void EditorApp::create_advanced_layout_panel(HWND panel) {
         control_x, preset_y, S(110), kCtrlH, panel,
         reinterpret_cast<HMENU>(static_cast<INT_PTR>(1220)), GetModuleHandle(nullptr), nullptr);
     SendMessageW(hCandRecommendBtn_, WM_SETFONT, reinterpret_cast<WPARAM>(get_font()), TRUE);
-    const int scenario_x =
-        make_aligned_label(L"预览场景:", kPanelPadLeft + column_width * 2, S(64), preset_y, panel);
-    hCandPreviewScenarios_[1] = make_combo(1236, scenario_x, preset_y, S(90), panel);
+    const int scenario_label_width = S(64);
+    const int scenario_x = make_aligned_label(
+        L"预览场景:", kPanelPadLeft + column_width * 2, scenario_label_width, preset_y, panel);
+    const int scenario_width = column_width - scenario_label_width - S(8) - column_right_padding;
+    hCandPreviewScenarios_[1] = make_combo(1236, scenario_x, preset_y, scenario_width, panel);
     for (const wchar_t* scenario : {L"拼音整词", L"拼音分段", L"确认前缀", L"五笔编码",
                                     L"混输五笔"}) {
         combo_add(hCandPreviewScenarios_[1], scenario);
