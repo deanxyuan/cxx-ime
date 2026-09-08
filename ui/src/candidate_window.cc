@@ -23,8 +23,14 @@ class CandidateWindow::D2DRenderer : public cxxime::D2DRenderer {};
 
 namespace {
 
-constexpr int kPreeditCursorWidthPixels = 1;
-constexpr int kPreeditCursorHeightPercent = 65;
+constexpr int kPreeditCursorMinimumWidthDips = 2;
+constexpr int kPreeditCursorMaximumWidthDips = 20;
+constexpr int kPreeditCursorHeightPercent = 80;
+constexpr int kPreeditCursorBorderGapDips = 1;
+constexpr int kPreeditCursorTextGapDips = 1;
+constexpr int kPreeditCursorIdleAccentPercent = 65;
+constexpr UINT_PTR kPreeditCursorEmphasisTimerId = 1;
+constexpr UINT kPreeditCursorEmphasisDurationMs = 160;
 
 bool system_high_contrast_enabled() {
     HIGHCONTRASTW high_contrast = {sizeof(high_contrast)};
@@ -32,9 +38,31 @@ bool system_high_contrast_enabled() {
            (high_contrast.dwFlags & HCF_HIGHCONTRASTON) != 0;
 }
 
+DWORD system_caret_width() {
+    DWORD width = 1;
+    if (!SystemParametersInfoW(SPI_GETCARETWIDTH, 0, &width, 0) || width == 0) {
+        return 1;
+    }
+    return width;
+}
+
 Color system_color(int index) {
     const COLORREF color = GetSysColor(index);
     return {GetRValue(color), GetGValue(color), GetBValue(color), 255};
+}
+
+Color blend_color(const Color& source, const Color& target, int target_percent) {
+    const int source_percent = 100 - target_percent;
+    const auto blend_channel = [&](uint8_t source_channel, uint8_t target_channel) {
+        return static_cast<uint8_t>(
+            (source_channel * source_percent + target_channel * target_percent + 50) / 100);
+    };
+    return {
+        blend_channel(source.r, target.r),
+        blend_channel(source.g, target.g),
+        blend_channel(source.b, target.b),
+        255,
+    };
 }
 
 Theme theme_for_rendering(const Theme& configured, bool high_contrast) {
@@ -131,6 +159,49 @@ void append_preedit_runs(RenderContext& context, HDC hdc, HFONT font, const std:
     }
 }
 
+void insert_preedit_cursor_slot(RenderContext& context, HDC hdc, HFONT font, std::size_t cursor,
+                                int caret_x, int slot_width) {
+    std::vector<PreeditTextRun> adjusted;
+    adjusted.reserve(context.preedit_runs.size() + 1);
+    std::size_t run_begin = 0;
+    bool inserted = false;
+
+    for (const PreeditTextRun& original : context.preedit_runs) {
+        const std::size_t run_end = run_begin + original.text.size();
+        if (inserted) {
+            PreeditTextRun shifted = original;
+            shifted.rect.left += slot_width;
+            shifted.rect.right += slot_width;
+            adjusted.push_back(std::move(shifted));
+        } else if (cursor == run_begin) {
+            inserted = true;
+            PreeditTextRun shifted = original;
+            shifted.rect.left += slot_width;
+            shifted.rect.right += slot_width;
+            adjusted.push_back(std::move(shifted));
+        } else if (cursor > run_begin && cursor < run_end) {
+            inserted = true;
+            const std::size_t split = cursor - run_begin;
+            PreeditTextRun prefix = original;
+            prefix.text = original.text.substr(0, split);
+            prefix.rect.right = prefix.rect.left + measure_text_width(hdc, font, prefix.text);
+            adjusted.push_back(std::move(prefix));
+
+            PreeditTextRun suffix = original;
+            suffix.text = original.text.substr(split);
+            suffix.rect.left = caret_x + slot_width;
+            const int run_height = static_cast<int>(suffix.rect.bottom - suffix.rect.top);
+            suffix.rect.right = suffix.rect.left + measure_text_width(hdc, font, suffix.text) +
+                                (std::max)(2, run_height / 4);
+            adjusted.push_back(std::move(suffix));
+        } else {
+            adjusted.push_back(original);
+        }
+        run_begin = run_end;
+    }
+    context.preedit_runs = std::move(adjusted);
+}
+
 } // namespace
 
 CandidateWindow::~CandidateWindow() {
@@ -168,6 +239,7 @@ bool CandidateWindow::create(HWND owner, const Config& config) {
         if (dpi_scale_ <= 0.0f) {
             dpi_scale_ = 1.0f;
         }
+        refresh_preedit_cursor_width();
         init_gdi_renderer();
     }
     return hwnd_ != nullptr;
@@ -257,8 +329,40 @@ bool CandidateWindow::refresh_dpi_scale() {
     return true;
 }
 
+bool CandidateWindow::refresh_preedit_cursor_width() {
+    const UINT window_dpi = hwnd_ ? GetDpiForWindow(hwnd_) : 96;
+    const int minimum_width =
+        (std::max)(1, MulDiv(kPreeditCursorMinimumWidthDips, static_cast<int>(window_dpi), 96));
+    int maximum_width = (std::max)(minimum_width, MulDiv(kPreeditCursorMaximumWidthDips,
+                                                         static_cast<int>(window_dpi), 96));
+    const int work_width = monitor_work_width();
+    if (work_width > 0) {
+        maximum_width =
+            (std::max)(minimum_width, (std::min)(maximum_width, (std::max)(1, work_width / 4)));
+    }
+    const DWORD requested_width = system_caret_width();
+    const int bounded_system_width = requested_width > static_cast<DWORD>(maximum_width)
+                                         ? maximum_width
+                                         : static_cast<int>(requested_width);
+    const int next_width = (std::max)(bounded_system_width, minimum_width);
+    if (next_width == preedit_cursor_width_) {
+        return false;
+    }
+    preedit_cursor_width_ = next_width;
+    return true;
+}
+
+void CandidateWindow::clear_preedit_cursor_emphasis() {
+    if (hwnd_) {
+        KillTimer(hwnd_, kPreeditCursorEmphasisTimerId);
+    }
+    preedit_cursor_emphasized_ = false;
+    render_ctx_.preedit_cursor_emphasized = false;
+}
+
 void CandidateWindow::recreate_renderers_for_dpi() {
     ScopedDpiAwarenessContext dpi_context(GetWindowDpiAwarenessContext(hwnd_));
+    refresh_preedit_cursor_width();
     if (gdi_renderer_) {
         gdi_renderer_->finalize();
         gdi_renderer_->initialize(hwnd_, render_theme_, GetDpiForWindow(hwnd_));
@@ -273,6 +377,7 @@ void CandidateWindow::recreate_renderers_for_dpi() {
 }
 
 void CandidateWindow::destroy() {
+    clear_preedit_cursor_emphasis();
     if (gdi_renderer_) { gdi_renderer_->finalize(); delete gdi_renderer_; gdi_renderer_ = nullptr; }
     if (d2d_renderer_) { d2d_renderer_->finalize(); delete d2d_renderer_; d2d_renderer_ = nullptr; }
     if (hwnd_) { DestroyWindow(hwnd_); hwnd_ = nullptr; }
@@ -312,6 +417,7 @@ void CandidateWindow::show() {
     RedrawWindow(hwnd_, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE);
 }
 void CandidateWindow::hide() {
+    clear_preedit_cursor_emphasis();
     if (hwnd_ && IsWindowVisible(hwnd_))
         ShowWindow(hwnd_, SW_HIDE);
     set_owner(nullptr);
@@ -382,6 +488,7 @@ bool CandidateWindow::get_window_rect(RECT* rect) const {
 }
 void CandidateWindow::set_config(const Config& config) {
     config_ = &config;
+    refresh_preedit_cursor_width();
     set_theme(build_theme_from_config(config));
     RenderBackend next_backend = config.render_backend != "gdi" ? RenderBackend::D2D : RenderBackend::GDI;
     if (d2d_renderer_) {
@@ -396,6 +503,9 @@ void CandidateWindow::set_theme(const Theme& t) {
     theme_ = t;
     render_ctx_.high_contrast = system_high_contrast_enabled();
     render_theme_ = theme_for_rendering(theme_, render_ctx_.high_contrast);
+    render_ctx_.preedit_cursor_idle = blend_color(
+        render_theme_.preedit_text, render_theme_.preedit_cursor,
+        kPreeditCursorIdleAccentPercent);
     if (gdi_renderer_) {
         gdi_renderer_->finalize();
         gdi_renderer_->initialize(hwnd_, render_theme_, GetDpiForWindow(hwnd_));
@@ -419,8 +529,18 @@ void CandidateWindow::set_preedit(const std::string& preedit, size_t cursor) {
 void CandidateWindow::set_preedit(const std::string& preedit, size_t cursor,
                                   size_t converted_prefix, size_t focused_start,
                                   size_t focused_end, bool has_syllable_boundaries) {
+    const size_t next_cursor = clamp_utf8_boundary(preedit, cursor);
+    const bool text_changed = preedit != preedit_text_;
+    const bool cursor_moved = !text_changed && next_cursor != preedit_cursor_;
+    if (text_changed) {
+        clear_preedit_cursor_emphasis();
+    } else if (cursor_moved) {
+        preedit_cursor_emphasized_ =
+            hwnd_ && SetTimer(hwnd_, kPreeditCursorEmphasisTimerId,
+                              kPreeditCursorEmphasisDurationMs, nullptr) != 0;
+    }
     preedit_text_ = preedit;
-    preedit_cursor_ = clamp_utf8_boundary(preedit, cursor);
+    preedit_cursor_ = next_cursor;
     converted_prefix_ = clamp_utf8_boundary(preedit, converted_prefix);
     focused_preedit_start_ = clamp_utf8_boundary(preedit, focused_start);
     focused_preedit_end_ = clamp_utf8_boundary(preedit, focused_end);
@@ -555,6 +675,10 @@ void CandidateWindow::rebuild_render_context(const LayoutConfig& cfg, int window
     render_ctx_.layout_cfg = &cfg;
     render_ctx_.preedit = preedit_text_;
     render_ctx_.preedit_cursor = preedit_cursor_;
+    render_ctx_.preedit_cursor_emphasized = preedit_cursor_emphasized_;
+    render_ctx_.preedit_cursor_idle = blend_color(
+        render_theme_.preedit_text, render_theme_.preedit_cursor,
+        kPreeditCursorIdleAccentPercent);
     render_ctx_.page_current = page_current_;
     render_ctx_.page_total = page_total_;
     render_ctx_.highlighted = page_.candidates.empty() ? -1 : page_.highlighted;
@@ -701,6 +825,20 @@ void CandidateWindow::update(const CandidatePage& page) {
     render_ctx_.preedit_corner_radius = (std::max)(0, cfg.preedit_highlight_corner);
     render_ctx_.preedit_border_width =
         (std::max)(0, cfg.preedit_highlight_border_width);
+    const int preedit_cursor_border_gap = (std::max)(
+        1, MulDiv(kPreeditCursorBorderGapDips, static_cast<int>(window_dpi), 96));
+    const int preedit_cursor_text_gap = (std::max)(
+        1, MulDiv(kPreeditCursorTextGapDips, static_cast<int>(window_dpi), 96));
+    const int preedit_cursor_slot_width =
+        preedit_cursor_width_ + preedit_cursor_text_gap * 2;
+    const int preedit_cursor_safe_inset =
+        (render_ctx_.preedit_border_width + 1) / 2 + preedit_cursor_border_gap;
+    const int preedit_cursor_horizontal_safe_inset =
+        preedit_cursor_safe_inset + render_ctx_.preedit_corner_radius;
+    const int focused_padding_left =
+        (std::max)(preedit_padding_x, preedit_cursor_horizontal_safe_inset);
+    const int focused_padding_right =
+        (std::max)(preedit_padding_x, preedit_cursor_horizontal_safe_inset);
 
     // Preedit layout is measured once and shared by GDI and D2D renderers.
     if (!preedit_text_.empty()) {
@@ -743,14 +881,13 @@ void CandidateWindow::update(const CandidatePage& page) {
         const std::string focused_text =
             preedit_text_.substr(focused_start, focused_end - focused_start);
         if (!focused_text.empty()) {
-            x += preedit_padding_x;
-            const int focused_text_left = x;
+            x += focused_padding_left;
             append_preedit_runs(render_ctx_, hdc, hf, focused_text, PreeditRunKind::Active,
                                 preedit_has_syllable_boundaries_, true, text_top, text_height, x);
             render_ctx_.preedit_active_rect = {
                 focus_left,
                 text_top - preedit_padding_y,
-                x + preedit_padding_x,
+                x + focused_padding_right,
                 text_top + text_height + preedit_padding_y,
             };
             if (focused_end < preedit_text_.size()) {
@@ -779,13 +916,13 @@ void CandidateWindow::update(const CandidatePage& page) {
             }
             position += measure_text_width(hdc, hf, before_focus);
             if (!focused_text.empty()) {
-                position += preedit_padding_x;
+                position += focused_padding_left;
             }
             if (cursor <= focused_end) {
                 return position + measure_text_width(
                     hdc, hf, preedit_text_.substr(focused_start, cursor - focused_start));
             }
-            position += measure_text_width(hdc, hf, focused_text) + preedit_padding_x +
+            position += measure_text_width(hdc, hf, focused_text) + focused_padding_right +
                         focused_boundary_gap;
             return position + measure_text_width(
                                   hdc, hf, preedit_text_.substr(focused_end, cursor - focused_end));
@@ -793,18 +930,43 @@ void CandidateWindow::update(const CandidatePage& page) {
         const bool draw_preedit_cursor = preedit_cursor_ < preedit_text_.size();
         if (draw_preedit_cursor) {
             const int caret_x = cursor_x(preedit_cursor_);
-            const int cursor_height = (std::max)(
-                1, (text_height * kPreeditCursorHeightPercent + 50) / 100);
-            const int cursor_top = text_top + (text_height - cursor_height) / 2;
-            render_ctx_.preedit_cursor_rect = {
-                caret_x,
-                cursor_top,
-                caret_x + kPreeditCursorWidthPixels,
-                cursor_top + cursor_height,
-            };
             render_ctx_.preedit_cursor_in_focus =
                 !focused_text.empty() && preedit_cursor_ >= focused_start &&
                 preedit_cursor_ <= focused_end;
+            int safe_top = text_top;
+            int safe_bottom = text_top + text_height;
+            if (render_ctx_.preedit_cursor_in_focus) {
+                safe_top = (std::max)(safe_top,
+                                        static_cast<int>(render_ctx_.preedit_active_rect.top) +
+                                             preedit_cursor_safe_inset);
+                safe_bottom = (std::min)(safe_bottom,
+                                         static_cast<int>(render_ctx_.preedit_active_rect.bottom) -
+                                             preedit_cursor_safe_inset);
+            }
+            const int available_height = safe_bottom - safe_top;
+            const int desired_height = (std::max)(
+                1, (text_height * kPreeditCursorHeightPercent + 50) / 100);
+            if (available_height > 0) {
+                const int cursor_height = (std::min)(desired_height, available_height);
+                const int centered_top = text_top + (text_height - cursor_height) / 2;
+                const int cursor_top = (std::clamp)(
+                    centered_top, safe_top, safe_bottom - cursor_height);
+                render_ctx_.preedit_cursor_rect = {
+                    caret_x + preedit_cursor_text_gap,
+                    cursor_top,
+                    caret_x + preedit_cursor_text_gap + preedit_cursor_width_,
+                    cursor_top + cursor_height,
+                };
+            }
+            insert_preedit_cursor_slot(render_ctx_, hdc, hf, preedit_cursor_, caret_x,
+                                      preedit_cursor_slot_width);
+            x += preedit_cursor_slot_width;
+            if (render_ctx_.preedit_cursor_in_focus) {
+                render_ctx_.preedit_active_rect.right += preedit_cursor_slot_width;
+            } else if (!focused_text.empty() && preedit_cursor_ < focused_start) {
+                render_ctx_.preedit_active_rect.left += preedit_cursor_slot_width;
+                render_ctx_.preedit_active_rect.right += preedit_cursor_slot_width;
+            }
         }
 
         const int preedit_h = content_height + cfg.spacing;
@@ -814,8 +976,7 @@ void CandidateWindow::update(const CandidatePage& page) {
             cr.comment_rect.top += preedit_h;     cr.comment_rect.bottom += preedit_h;
             cr.highlight_rect.top += preedit_h;   cr.highlight_rect.bottom += preedit_h;
         }
-        const int cursor_reserve = draw_preedit_cursor ? kPreeditCursorWidthPixels : 0;
-        int preedit_w = x + cfg.margin_x + cursor_reserve;
+        int preedit_w = x + cfg.margin_x;
         if (cfg.max_width > 0) {
             preedit_w = (std::min)(preedit_w, cfg.max_width);
         }
@@ -836,12 +997,31 @@ void CandidateWindow::update(const CandidatePage& page) {
         if (draw_preedit_cursor) {
             const LONG cursor_width = render_ctx_.preedit_cursor_rect.right -
                                       render_ctx_.preedit_cursor_rect.left;
-            render_ctx_.preedit_cursor_rect.left = (std::clamp)(
-                render_ctx_.preedit_cursor_rect.left, preedit_clip_left,
-                (std::max)(preedit_clip_left, preedit_clip_right - cursor_width));
-            render_ctx_.preedit_cursor_rect.right =
-                (std::min)(preedit_clip_right,
-                           render_ctx_.preedit_cursor_rect.left + cursor_width);
+            LONG cursor_clip_left = preedit_clip_left;
+            LONG cursor_clip_right = preedit_clip_right;
+            if (render_ctx_.preedit_cursor_in_focus) {
+                cursor_clip_left = (std::max)(
+                    cursor_clip_left,
+                    render_ctx_.preedit_active_rect.left +
+                        preedit_cursor_horizontal_safe_inset);
+                cursor_clip_right = (std::min)(
+                    cursor_clip_right,
+                    render_ctx_.preedit_active_rect.right -
+                        preedit_cursor_horizontal_safe_inset);
+            }
+            const LONG available_width = cursor_clip_right - cursor_clip_left;
+            if (available_width <= 0 || cursor_width <= 0) {
+                render_ctx_.preedit_cursor_rect = {};
+            } else {
+                render_ctx_.preedit_cursor_rect.left = (std::max)(
+                    render_ctx_.preedit_cursor_rect.left, cursor_clip_left);
+                render_ctx_.preedit_cursor_rect.right = (std::min)(
+                    render_ctx_.preedit_cursor_rect.right, cursor_clip_right);
+                if (render_ctx_.preedit_cursor_rect.right <=
+                    render_ctx_.preedit_cursor_rect.left) {
+                    render_ctx_.preedit_cursor_rect = {};
+                }
+            }
         }
         for (auto& run : render_ctx_.preedit_runs) {
             clip_preedit_rect(run.rect);
@@ -1004,6 +1184,15 @@ LRESULT CALLBACK CandidateWindow::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM
     case WM_MOUSEACTIVATE: return MA_NOACTIVATE;  // prevent focus theft on click
     case WM_NCHITTEST: return HTCLIENT;  // prevent resize cursor at edges
     case WM_ERASEBKGND: return 1;
+    case WM_TIMER:
+        if (self && wp == kPreeditCursorEmphasisTimerId) {
+            const RECT cursor_rect = self->render_ctx_.preedit_cursor_rect;
+            self->clear_preedit_cursor_emphasis();
+            if (cursor_rect.right > cursor_rect.left) {
+                InvalidateRect(hwnd, &cursor_rect, FALSE);
+            }
+        }
+        return 0;
     case WM_DPICHANGED:
         if (self) {
             float next_scale = HIWORD(wp) / 96.0f;
@@ -1024,6 +1213,7 @@ LRESULT CALLBACK CandidateWindow::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM
         return 0;
     case WM_SETTINGCHANGE:
         if (self) {
+            self->refresh_preedit_cursor_width();
             self->update(self->page_);
             if (self->layout_changed_cb_) {
                 self->layout_changed_cb_();

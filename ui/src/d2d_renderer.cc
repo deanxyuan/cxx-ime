@@ -196,9 +196,14 @@ void D2DRenderer::render(const RenderContext& ctx) {
         preedit_separator_brush_->SetColor(c2d(ctx.theme->preedit_separator));
         preedit_active_back_brush_->SetColor(c2d(ctx.theme->preedit_active_back));
         preedit_active_border_brush_->SetColor(c2d(ctx.theme->preedit_active_border));
-        const Color cursor_color = ctx.preedit_cursor_in_focus
-                ? (ctx.high_contrast ? ctx.theme->hilited_text : ctx.theme->preedit_text)
-                : ctx.theme->preedit_cursor;
+        Color cursor_color = ctx.theme->preedit_cursor;
+        if (ctx.preedit_cursor_in_focus) {
+            if (ctx.high_contrast) {
+                cursor_color = ctx.theme->hilited_text;
+            } else if (!ctx.preedit_cursor_emphasized) {
+                cursor_color = ctx.preedit_cursor_idle;
+            }
+        }
         preedit_cursor_brush_->SetColor(c2d(cursor_color));
         label_brush_->SetColor(c2d(ctx.theme->label_text));
         nav_brush_->SetColor(c2d(ctx.theme->prev_page));

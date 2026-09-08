@@ -1,5 +1,7 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
+#include <algorithm>
+#include <cstring>
 #include <string>
 #include <utility>
 
@@ -165,9 +167,20 @@ TEST(CandidateWindow, focused_syllable_geometry_keeps_separator_outside) {
     const RECT cursor = window.preedit_cursor_rect_for_test();
     ASSERT_TRUE(active.right > active.left);
     ASSERT_GT(cursor.left, active.left);
-    ASSERT_EQ(cursor.right - cursor.left, 1);
+    const int minimum_cursor_width =
+        (std::max)(1, MulDiv(2, static_cast<int>(window.dpi()), 96));
+    ASSERT_GE(cursor.right - cursor.left, minimum_cursor_width);
     ASSERT_LT(cursor.bottom - cursor.top, active.bottom - active.top);
     ASSERT_TRUE(window.preedit_cursor_in_focus_for_test());
+    ASSERT_TRUE(!window.preedit_cursor_emphasized_for_test());
+    const cxxime::Theme cursor_theme = cxxime::build_theme_from_config(config);
+    const cxxime::Color idle_cursor = window.preedit_cursor_idle_for_test();
+    ASSERT_TRUE(idle_cursor.r != cursor_theme.preedit_text.r ||
+                idle_cursor.g != cursor_theme.preedit_text.g ||
+                idle_cursor.b != cursor_theme.preedit_text.b);
+    ASSERT_TRUE(idle_cursor.r != cursor_theme.preedit_cursor.r ||
+                idle_cursor.g != cursor_theme.preedit_cursor.g ||
+                idle_cursor.b != cursor_theme.preedit_cursor.b);
     bool found_separator = false;
     for (const auto& run : window.preedit_runs_for_test()) {
         if (run.kind == cxxime::PreeditRunKind::Separator) {
@@ -219,12 +232,25 @@ TEST(CandidateWindow, preedit_highlight_uses_advanced_layout_metrics) {
     const int expected_boundary_gap = static_cast<int>(7 * scale);
     const RECT active = window.preedit_active_rect_for_test();
     const RECT cursor = window.preedit_cursor_rect_for_test();
-    ASSERT_EQ(cursor.left - active.left, expected_padding_x);
-    ASSERT_EQ(cursor.right - cursor.left, 1);
+    const int minimum_cursor_width =
+        (std::max)(1, MulDiv(2, static_cast<int>(window.dpi()), 96));
+    ASSERT_GE(cursor.right - cursor.left, minimum_cursor_width);
     const int text_height = active.bottom - active.top - expected_padding_y * 2;
-    const int expected_cursor_height = (std::max)(1, (text_height * 65 + 50) / 100);
+    const int expected_cursor_height = (std::max)(1, (text_height * 80 + 50) / 100);
     ASSERT_EQ(cursor.bottom - cursor.top, expected_cursor_height);
+    const int border_gap = (std::max)(
+        1, MulDiv(1, static_cast<int>(window.dpi()), 96));
+    const int safe_inset = (window.preedit_border_width_for_test() + 1) / 2 + border_gap;
+    const int horizontal_safe_inset =
+        safe_inset + window.preedit_corner_radius_for_test();
+    const int text_gap = (std::max)(
+        1, MulDiv(1, static_cast<int>(window.dpi()), 96));
+    ASSERT_EQ(cursor.left - active.left,
+              (std::max)(expected_padding_x, horizontal_safe_inset) + text_gap);
+    ASSERT_GE(cursor.top, active.top + safe_inset);
+    ASSERT_LE(cursor.bottom, active.bottom - safe_inset);
     ASSERT_TRUE(window.preedit_cursor_in_focus_for_test());
+    ASSERT_TRUE(!window.preedit_cursor_emphasized_for_test());
     ASSERT_EQ(window.preedit_corner_radius_for_test(), static_cast<int>(11 * scale));
     ASSERT_EQ(window.preedit_border_width_for_test(), static_cast<int>(3 * scale));
 
@@ -261,16 +287,103 @@ TEST(CandidateWindow, preedit_highlight_uses_advanced_layout_metrics) {
     window.update(page);
     ASSERT_EQ(window.preedit_cursor_rect_for_test().right -
                   window.preedit_cursor_rect_for_test().left,
-              1);
+              0);
     ASSERT_LE(window.preedit_cursor_rect_for_test().right, window.layout_size().cx);
     ASSERT_TRUE(window.preedit_cursor_in_focus_for_test());
 
+    window.set_preedit(long_preedit, 5, 0, 0, long_preedit.size(), false);
+    window.update(page);
+    const RECT near_edge_cursor = window.preedit_cursor_rect_for_test();
+    ASSERT_GT(near_edge_cursor.right, near_edge_cursor.left);
+    const auto& near_edge_runs = window.preedit_runs_for_test();
+    const std::string near_edge_suffix = long_preedit.substr(5);
+    const auto near_edge_run =
+        std::find_if(near_edge_runs.begin(), near_edge_runs.end(), [&](const auto& run) {
+            return run.text == near_edge_suffix;
+        });
+    ASSERT_TRUE(near_edge_run != near_edge_runs.end());
+    ASSERT_LE(near_edge_cursor.right + text_gap, near_edge_run->rect.left);
+
     window.set_preedit("ji'shu", 3, 0, 0, 2, true);
     window.update(page);
-    ASSERT_EQ(window.preedit_cursor_rect_for_test().right -
+    ASSERT_GE(window.preedit_cursor_rect_for_test().right -
                   window.preedit_cursor_rect_for_test().left,
-              1);
+              minimum_cursor_width);
     ASSERT_TRUE(!window.preedit_cursor_in_focus_for_test());
+
+    window.set_preedit("ji'shu", 1, 0, 0, 2, true);
+    window.update(page);
+    ASSERT_TRUE(window.preedit_cursor_in_focus_for_test());
+    ASSERT_TRUE(window.preedit_cursor_emphasized_for_test());
+
+    int emphasis_layout_callback_count = 0;
+    window.set_layout_changed_callback(
+        [&emphasis_layout_callback_count]() { ++emphasis_layout_callback_count; });
+    constexpr WPARAM kPreeditCursorEmphasisTimerId = 1;
+    SendMessageW(window.hwnd_for_test(), WM_TIMER, kPreeditCursorEmphasisTimerId, 0);
+    ASSERT_TRUE(!window.preedit_cursor_emphasized_for_test());
+    ASSERT_EQ(emphasis_layout_callback_count, 0);
+
+    window.set_preedit("ji'shu", 0, 0, 0, 2, true);
+    window.update(page);
+    ASSERT_TRUE(window.preedit_cursor_emphasized_for_test());
+    window.set_preedit("ji'shux", 1, 0, 0, 2, true);
+    window.update(page);
+    ASSERT_TRUE(!window.preedit_cursor_emphasized_for_test());
+
+    config.layout_config.max_width = 0;
+    config.layout_config.preedit_highlight_padding_x = 0;
+    config.layout_config.preedit_highlight_padding_y = 0;
+    config.layout_config.preedit_highlight_border_width = 3;
+    window.set_config(config);
+    window.set_preedit("ji'shu", 0, 0, 0, 2, true);
+    window.update(page);
+    const RECT tight_active = window.preedit_active_rect_for_test();
+    const RECT start_cursor = window.preedit_cursor_rect_for_test();
+    const int tight_safe_inset =
+        (window.preedit_border_width_for_test() + 1) / 2 + border_gap;
+    const int tight_horizontal_safe_inset =
+        tight_safe_inset + window.preedit_corner_radius_for_test();
+    ASSERT_GT(start_cursor.right, start_cursor.left);
+    ASSERT_GE(start_cursor.left, tight_active.left + tight_horizontal_safe_inset);
+    ASSERT_LE(start_cursor.right, tight_active.right - tight_horizontal_safe_inset);
+    ASSERT_GE(start_cursor.top, tight_active.top + tight_safe_inset);
+    ASSERT_LE(start_cursor.bottom, tight_active.bottom - tight_safe_inset);
+
+    window.set_preedit("ji'shu", 2, 0, 0, 2, true);
+    window.update(page);
+    const RECT end_active = window.preedit_active_rect_for_test();
+    const RECT focused_end_cursor = window.preedit_cursor_rect_for_test();
+    ASSERT_GT(focused_end_cursor.right, focused_end_cursor.left);
+    ASSERT_GE(focused_end_cursor.left, end_active.left + tight_horizontal_safe_inset);
+    ASSERT_LE(focused_end_cursor.right, end_active.right - tight_horizontal_safe_inset);
+    ASSERT_GE(focused_end_cursor.top, end_active.top + tight_safe_inset);
+    ASSERT_LE(focused_end_cursor.bottom, end_active.bottom - tight_safe_inset);
+
+    config.layout_config.preedit_highlight_padding_x = 4;
+    config.layout_config.preedit_highlight_padding_y = 2;
+    config.layout_config.preedit_highlight_corner = 3;
+    config.layout_config.preedit_highlight_border_width = 1;
+    window.set_config(config);
+    auto assert_cursor_before_run = [&](const char* preedit, std::size_t cursor,
+                                        const char* suffix_text, bool syllable_boundaries) {
+        window.set_preedit(preedit, cursor, 0, 0, std::strlen(preedit),
+                           syllable_boundaries);
+        window.update(page);
+        const RECT slot_cursor = window.preedit_cursor_rect_for_test();
+        ASSERT_GT(slot_cursor.right, slot_cursor.left);
+        const auto& runs = window.preedit_runs_for_test();
+        const auto suffix = std::find_if(runs.begin(), runs.end(), [&](const auto& run) {
+            return run.text == suffix_text;
+        });
+        ASSERT_TRUE(suffix != runs.end());
+        ASSERT_LE(slot_cursor.right + text_gap, suffix->rect.left);
+    };
+    assert_cursor_before_run("ni'hao", 3, "hao", true);
+    assert_cursor_before_run("ni", 1, "i", false);
+    assert_cursor_before_run("ni'hao", 2, "'", true);
+    const std::string first_chinese_character = u8"你";
+    assert_cursor_before_run(u8"你好", first_chinese_character.size(), u8"好", false);
 
     window.destroy();
 }

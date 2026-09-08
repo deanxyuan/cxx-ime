@@ -82,6 +82,8 @@ struct RenderContext {
     std::string preedit;
     size_t preedit_cursor = 0;
     bool preedit_cursor_in_focus = false;
+    bool preedit_cursor_emphasized = false;
+    Color preedit_cursor_idle{};
     int page_current = 1, page_total = 1;
     int highlighted = -1;
     CandidateHoverTarget hovered_target = CandidateHoverTarget::None;

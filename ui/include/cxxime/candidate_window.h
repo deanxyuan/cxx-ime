@@ -75,6 +75,10 @@ public:
     RECT preedit_active_rect_for_test() const { return render_ctx_.preedit_active_rect; }
     RECT preedit_cursor_rect_for_test() const { return render_ctx_.preedit_cursor_rect; }
     bool preedit_cursor_in_focus_for_test() const { return render_ctx_.preedit_cursor_in_focus; }
+    bool preedit_cursor_emphasized_for_test() const {
+        return render_ctx_.preedit_cursor_emphasized;
+    }
+    Color preedit_cursor_idle_for_test() const { return render_ctx_.preedit_cursor_idle; }
     int preedit_corner_radius_for_test() const { return render_ctx_.preedit_corner_radius; }
     int preedit_border_width_for_test() const { return render_ctx_.preedit_border_width; }
     const std::vector<PreeditTextRun>& preedit_runs_for_test() const {
@@ -84,6 +88,8 @@ public:
 private:
     void rebuild_render_context(const LayoutConfig& cfg, int window_width);
     bool refresh_dpi_scale();
+    bool refresh_preedit_cursor_width();
+    void clear_preedit_cursor_emphasis();
     void recreate_renderers_for_dpi();
     void init_gdi_renderer();
     void init_d2d_renderer();
@@ -102,6 +108,8 @@ private:
     size_t focused_preedit_start_ = 0;
     size_t focused_preedit_end_ = 0;
     bool preedit_has_syllable_boundaries_ = false;
+    int preedit_cursor_width_ = 1;
+    bool preedit_cursor_emphasized_ = false;
     std::string layout_orientation_ = "horizontal";
     CandidateSelectionCallback candidate_selection_cb_;
     LayoutChangedCallback layout_changed_cb_;
