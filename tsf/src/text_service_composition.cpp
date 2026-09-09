@@ -4,12 +4,53 @@
 
 #include <climits>
 #include <new>
+#include <vector>
 
 #include <cxxime/logging.h>
 
+#include "composition_termination.h"
 #include "edit_session.h"
 #include "preedit_mode.h"
 #include "tsf_composition.h"
+
+namespace {
+
+HRESULT replace_composition_text_if_unchanged(ITfRange* range, TfEditCookie edit_cookie,
+                                              const std::wstring& expected,
+                                              const std::wstring& replacement) {
+    if (!range || expected.empty() || expected == replacement) {
+        return E_INVALIDARG;
+    }
+    if (expected.size() >= ULONG_MAX || replacement.size() > LONG_MAX) {
+        return E_INVALIDARG;
+    }
+    HRESULT operation_result = S_OK;
+    const cxxime_tsf::HostTerminationTextResult result =
+        cxxime_tsf::normalize_host_termination_text(
+            expected, replacement,
+            [&](std::wstring* current) {
+                std::vector<wchar_t> buffer(expected.size() + 1, L'\0');
+                ULONG fetched = 0;
+                operation_result = range->GetText(edit_cookie, 0, buffer.data(),
+                                                  static_cast<ULONG>(buffer.size()), &fetched);
+                if (FAILED(operation_result)) {
+                    return false;
+                }
+                current->assign(buffer.data(), fetched);
+                return true;
+            },
+            [&](const std::wstring& text) {
+                operation_result =
+                    range->SetText(edit_cookie, 0, text.c_str(), static_cast<LONG>(text.size()));
+                return SUCCEEDED(operation_result);
+            });
+    if (result == cxxime_tsf::HostTerminationTextResult::kUnchanged) {
+        return S_FALSE;
+    }
+    return result == cxxime_tsf::HostTerminationTextResult::kReplaced ? S_OK : operation_result;
+}
+
+} // namespace
 
 void TextService::set_composition_context(ITfContext* context) {
     if (_compositionContext == context) {
@@ -56,11 +97,20 @@ STDMETHODIMP TextService::OnCompositionTerminated(TfEditCookie ecWrite,
 
     const bool host_terminated = _composition != nullptr;
     bool clear_succeeded = false;
+    const bool normalization_requested =
+        host_terminated && _hostTerminationCompositionText.has_value();
+    HRESULT normalization_result = normalization_requested ? E_POINTER : S_FALSE;
     if (host_terminated) {
-        if (_emptyCompositionPlaceholderActive && pComposition) {
+        if ((_emptyCompositionPlaceholderActive || normalization_requested) && pComposition) {
             ITfRange* range = nullptr;
             if (SUCCEEDED(pComposition->GetRange(&range)) && range) {
-                range->SetText(ecWrite, 0, nullptr, 0);
+                if (_emptyCompositionPlaceholderActive) {
+                    range->SetText(ecWrite, 0, nullptr, 0);
+                } else {
+                    normalization_result = replace_composition_text_if_unchanged(
+                        range, ecWrite, _lastInlineCompositionText,
+                        *_hostTerminationCompositionText);
+                }
                 range->Release();
             }
         }
@@ -71,15 +121,19 @@ STDMETHODIMP TextService::OnCompositionTerminated(TfEditCookie ecWrite,
         _reset_trace_composition("host_terminated");
     }
 
-    char detail[112] = {};
-    snprintf(detail, sizeof(detail), "source=%s action=%s clear_succeeded=%d",
-            host_terminated ? "host" : "self", host_terminated ? "cancel" : "cleanup",
-            clear_succeeded ? 1 : 0);
-    _enqueue_event_trace("composition_terminated", detail, host_terminated && !clear_succeeded);
+    char detail[160] = {};
+    snprintf(detail, sizeof(detail),
+             "source=%s action=%s clear_succeeded=%d normalize_requested=%d normalize=0x%08lx",
+             host_terminated ? "host" : "self", host_terminated ? "cancel" : "cleanup",
+             clear_succeeded ? 1 : 0, normalization_requested ? 1 : 0,
+             static_cast<unsigned long>(normalization_result));
+    _enqueue_event_trace("composition_terminated", detail,
+                         (host_terminated && !clear_succeeded) ||
+                             (normalization_requested && FAILED(normalization_result)));
 
     _composing = false;
     _emptyCompositionPlaceholderActive = false;
-    _lastInlineCompositionText.clear();
+    clear_applied_inline_composition_text();
     _end_reading_ui_element("hide:composition_terminated_reading");
     if (_composition) {
         _composition->Release();
@@ -184,7 +238,9 @@ HRESULT TextService::_commit_then_restart_composition(ITfContext* context,
                                                       size_t converted_prefix_utf16,
                                                       size_t focused_start_utf16,
                                                       size_t focused_end_utf16,
-                                                      bool focused_converted) {
+                                                      bool focused_converted,
+                                                      const std::optional<std::wstring>&
+                                                          host_termination_text) {
     if (!context || commit_text.empty()) {
         return E_INVALIDARG;
     }
@@ -197,7 +253,8 @@ HRESULT TextService::_commit_then_restart_composition(ITfContext* context,
     // composition, which can legitimately contain no inline text.
     return update_composition(context, preedit, preedit_cursor, true, TF_ES_ASYNCDONTCARE,
                               converted_prefix_utf16, focused_start_utf16,
-                              focused_end_utf16, focused_converted);
+                              focused_end_utf16, focused_converted,
+                              host_termination_text);
 }
 
 void TextService::handle_composition_restart_success(uint64_t expected_generation) {
@@ -224,7 +281,7 @@ bool TextService::handle_composition_restart_failure(uint64_t expected_generatio
     _enqueue_event_trace("candidate_presentation", "restart_failed", true);
     _hide_candidate_projection("hide:composition_restart_failed");
     _end_reading_ui_element("hide:composition_restart_failed_reading");
-    _lastInlineCompositionText.clear();
+    clear_applied_inline_composition_text();
     return true;
 }
 
@@ -236,7 +293,9 @@ HRESULT TextService::update_composition(ITfContext* context,
                                          size_t converted_prefix_utf16,
                                          size_t focused_start_utf16,
                                          size_t focused_end_utf16,
-                                         bool focused_converted) {
+                                         bool focused_converted,
+                                         const std::optional<std::wstring>&
+                                             host_termination_text) {
     if (!context) {
         return E_POINTER;
     }
@@ -253,7 +312,7 @@ HRESULT TextService::update_composition(ITfContext* context,
         ensure ? EditSession::Action::ENSURE_COMPOSITION_TEXT
                : EditSession::Action::UPDATE_COMPOSITION,
         preedit, preedit_cursor, converted_prefix_utf16, focused_start_utf16,
-        focused_end_utf16, focused_converted);
+        focused_end_utf16, focused_converted, host_termination_text);
     if (ensure) {
         edit_session->set_candidate_presentation_request(
             _candidatePresentation.generation(), _effectiveEditTarget.context_identity);
@@ -416,7 +475,7 @@ HRESULT TextService::_end_composition(ITfContext* context, bool sync) {
         set_composition_context(nullptr);
         _composing = false;
         _emptyCompositionPlaceholderActive = false;
-        _lastInlineCompositionText.clear();
+        clear_applied_inline_composition_text();
         composition->Release();
     }
     return FAILED(request_hr) ? request_hr : edit_hr;
@@ -425,7 +484,7 @@ HRESULT TextService::_end_composition(ITfContext* context, bool sync) {
 void TextService::_AbortComposition() {
     _hide_candidate_window("hide:abort_composition");
     _end_reading_ui_element("hide:abort_composition_reading");
-    _lastInlineCompositionText.clear();
+    clear_applied_inline_composition_text();
     if (_composing) {
         ITfContext* pContext = _current_edit_context_for_composition();
         if (pContext) {

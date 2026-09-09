@@ -145,7 +145,9 @@ public:
                                size_t converted_prefix_utf16 = 0,
                                size_t focused_start_utf16 = 0,
                                size_t focused_end_utf16 = 0,
-                               bool focused_converted = false);
+                               bool focused_converted = false,
+                               const std::optional<std::wstring>& host_termination_text =
+                                   std::nullopt);
     bool apply_composition_display_attributes(ITfContext* pic,
                                               ITfRange* range,
                                               TfEditCookie ec,
@@ -168,8 +170,17 @@ public:
     void set_empty_composition_placeholder_active(bool active) {
         _emptyCompositionPlaceholderActive = active;
     }
-    void set_applied_inline_composition_text(const std::wstring& text) {
+    void set_applied_inline_composition_text(
+        const std::wstring& text,
+        const std::optional<std::wstring>& host_termination_text = std::nullopt) {
         _lastInlineCompositionText = text;
+        _hostTerminationCompositionText =
+            host_termination_text && text != *host_termination_text
+                ? host_termination_text
+                : std::nullopt;
+    }
+    void clear_applied_inline_composition_text() {
+        set_applied_inline_composition_text(L"");
     }
     bool inline_composition_requires_placeholder(const std::wstring& next_text) const;
     void set_caret_rect(const RECT& rc) { _caretRect = rc; }
@@ -235,7 +246,9 @@ private:
                                              size_t converted_prefix_utf16,
                                              size_t focused_start_utf16,
                                              size_t focused_end_utf16,
-                                             bool focused_converted);
+                                             bool focused_converted,
+                                             const std::optional<std::wstring>&
+                                                 host_termination_text);
     bool _apply_engine_response(ITfContext* context,
                                 const cxxime::IPCResponse& response,
                                 BOOL* eaten,
@@ -391,6 +404,7 @@ private:
     bool _ipcHealthy = true;
     std::string _lastInputBlockReason;
     std::wstring _lastInlineCompositionText;
+    std::optional<std::wstring> _hostTerminationCompositionText;
     cxxime_tsf::CandidatePresentation _candidatePresentation;
     CandidateUIElement* _candidateUiElement = nullptr;
     ReadingUIElement* _readingUiElement = nullptr;

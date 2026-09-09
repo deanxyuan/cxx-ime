@@ -51,7 +51,7 @@ bool TextService::_apply_engine_response(ITfContext* context, const cxxime::IPCR
                 return false;
             }
             _composing = false;
-            _lastInlineCompositionText.clear();
+            clear_applied_inline_composition_text();
         }
         *eaten = TRUE;
         if (trace) {
@@ -77,10 +77,9 @@ bool TextService::_apply_engine_response(ITfContext* context, const cxxime::IPCR
             candidate_texts.push_back(utf8_to_wstring(item.text.c_str()));
         }
         const auto decision = cxxime_tsf::decide_preedit(
-            _config.inline_preedit, _config.preedit_type, decoded.preedit,
-            decoded.preedit_cursor_utf16, candidate_texts, decoded.converted_prefix_utf16,
-            decoded.candidates.highlighted, decoded.focused_preedit_start_utf16,
-            decoded.focused_preedit_end_utf16);
+            _config.inline_preedit, _config.preedit_type, decoded.logical_preedit,
+            decoded.display_preedit, candidate_texts, decoded.candidates.highlighted,
+            decoded.has_syllable_boundaries);
         const bool ui_element_only = (_activateFlags & TF_TMF_UIELEMENTENABLEDONLY) != 0;
         const bool has_candidates = !decoded.candidates.items.empty();
         std::string popup_preedit;
@@ -116,39 +115,50 @@ bool TextService::_apply_engine_response(ITfContext* context, const cxxime::IPCR
             _candidatePresentation.composition_restart_active();
         auto apply_composition = [&](const std::wstring& text, size_t cursor,
                                      size_t converted_prefix, size_t focused_start,
-                                     size_t focused_end, bool focused_converted) {
+                                     size_t focused_end, bool focused_converted,
+                                     const std::optional<std::wstring>&
+                                        host_termination_text) {
             if (!context) {
                 return E_POINTER;
             }
             if (commit_continues) {
                 return _commit_then_restart_composition(context, commit_text, text, cursor,
                                                         converted_prefix, focused_start,
-                                                        focused_end, focused_converted);
+                                                        focused_end, focused_converted,
+                                                        host_termination_text);
             }
             return update_composition(context, text, cursor, true, TF_ES_SYNC, converted_prefix,
-                                      focused_start, focused_end, focused_converted);
+                                      focused_start, focused_end, focused_converted,
+                                      host_termination_text);
         };
         HRESULT composition_result = S_OK;
         if (ui_element_only) {
             _end_reading_ui_element("hide:candidate_mirror_no_reading");
             external_candidate_window = _publish_candidate_ui_element();
             candidate_ui_published = true;
-            composition_result = apply_composition(decoded.preedit, decoded.preedit_cursor_utf16,
-                                                   decoded.converted_prefix_utf16,
-                                                   decoded.focused_preedit_start_utf16,
-                                                   decoded.focused_preedit_end_utf16, false);
+            const bool use_decorated_inline =
+                _config.inline_preedit && _config.preedit_type == "composition";
+            const cxxime_tsf::PreeditText& inline_preedit = use_decorated_inline
+                ? decoded.display_preedit
+                : decoded.logical_preedit;
+            composition_result = apply_composition(
+                inline_preedit.text, inline_preedit.cursor,
+                inline_preedit.converted_prefix, inline_preedit.focused_start,
+                inline_preedit.focused_end, false,
+                use_decorated_inline ? decision.host_termination_text : std::nullopt);
         } else if (decision.start_composition) {
-            _update_reading_ui_element(context, decoded.preedit);
+            _update_reading_ui_element(context, decoded.logical_preedit.text);
             composition_result = apply_composition(decision.inline_text, decision.inline_cursor,
                                                    decision.inline_converted_prefix,
                                                    decision.inline_focused_start,
                                                    decision.inline_focused_end,
-                                                   decision.inline_focus_converted);
+                                                   decision.inline_focus_converted,
+                                                   decision.host_termination_text);
         } else {
-            _update_reading_ui_element(context, decoded.preedit);
+            _update_reading_ui_element(context, decoded.logical_preedit.text);
             // Popup-only mode still needs an empty TSF composition. Hosts such as Scintilla
             // terminate that range when the user moves the selection with the mouse.
-            composition_result = apply_composition(L"", 0, 0, 0, 0, false);
+            composition_result = apply_composition(L"", 0, 0, 0, 0, false, std::nullopt);
         }
         const bool composition_restart_failed =
             composition_restart_was_active && FAILED(composition_result);
@@ -253,7 +263,7 @@ bool TextService::_apply_engine_response(ITfContext* context, const cxxime::IPCR
             _end_composition(context);
         }
         _composing = false;
-        _lastInlineCompositionText.clear();
+        clear_applied_inline_composition_text();
         if (was_composing || response.key_handled) {
             *eaten = TRUE;
         }

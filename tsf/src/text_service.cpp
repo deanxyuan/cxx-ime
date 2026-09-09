@@ -345,7 +345,7 @@ STDMETHODIMP TextService::Deactivate() {
     }
     _composing = false;
     _emptyCompositionPlaceholderActive = false;
-    _lastInlineCompositionText.clear();
+    clear_applied_inline_composition_text();
 
     _hide_status_window("hide:deactivate");
     _hide_candidate_window("hide:deactivate_candidates");

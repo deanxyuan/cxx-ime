@@ -92,7 +92,7 @@ bool decode_engine_presentation(const cxxime::IPCResponse& response,
     if (response.converted_prefix_bytes > response.preedit_cursor ||
         focused_start < response.converted_prefix_bytes || focused_start > focused_end ||
         focused_end > preedit.size() ||
-        !utf8_to_utf16(preedit, &presentation->display_preedit)) {
+        !utf8_to_utf16(preedit, &presentation->display_preedit.text)) {
         return false;
     }
     std::string logical_preedit;
@@ -109,15 +109,23 @@ bool decode_engine_presentation(const cxxime::IPCResponse& response,
     if (!is_utf8_offset(preedit, response.preedit_cursor) ||
         !is_utf8_offset(preedit, response.converted_prefix_bytes) ||
         !is_utf8_offset(preedit, focused_start) || !is_utf8_offset(preedit, focused_end) ||
-        !utf8_to_utf16(logical_preedit, &presentation->preedit) ||
+        !utf8_to_utf16(logical_preedit, &presentation->logical_preedit.text) ||
         !utf8_prefix_to_utf16(logical_preedit, logical_offsets[response.preedit_cursor],
-                              &presentation->preedit_cursor_utf16) ||
+                              &presentation->logical_preedit.cursor) ||
         !utf8_prefix_to_utf16(logical_preedit, logical_offsets[response.converted_prefix_bytes],
-                              &presentation->converted_prefix_utf16) ||
+                              &presentation->logical_preedit.converted_prefix) ||
         !utf8_prefix_to_utf16(logical_preedit, logical_offsets[focused_start],
-                              &presentation->focused_preedit_start_utf16) ||
+                              &presentation->logical_preedit.focused_start) ||
         !utf8_prefix_to_utf16(logical_preedit, logical_offsets[focused_end],
-                              &presentation->focused_preedit_end_utf16)) {
+                              &presentation->logical_preedit.focused_end) ||
+        !utf8_prefix_to_utf16(preedit, response.preedit_cursor,
+                              &presentation->display_preedit.cursor) ||
+        !utf8_prefix_to_utf16(preedit, response.converted_prefix_bytes,
+                              &presentation->display_preedit.converted_prefix) ||
+        !utf8_prefix_to_utf16(preedit, focused_start,
+                              &presentation->display_preedit.focused_start) ||
+        !utf8_prefix_to_utf16(preedit, focused_end,
+                              &presentation->display_preedit.focused_end)) {
         return false;
     }
     presentation->display_focused_preedit_start_bytes = focused_start;

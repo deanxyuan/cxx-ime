@@ -46,22 +46,24 @@ TEST(EngineResponse, decodes_converted_prefix_and_candidate_hint) {
     cxxime_tsf::DecodedEnginePresentation presentation;
 
     ASSERT_TRUE(cxxime_tsf::decode_engine_presentation(response, &presentation));
-    ASSERT_EQ(presentation.preedit, std::wstring(L"华锐jishu"));
-    ASSERT_EQ(presentation.preedit_cursor_utf16, static_cast<std::size_t>(7));
-    ASSERT_EQ(presentation.converted_prefix_utf16, static_cast<std::size_t>(2));
-    ASSERT_EQ(presentation.focused_preedit_start_utf16, static_cast<std::size_t>(2));
-    ASSERT_EQ(presentation.focused_preedit_end_utf16, static_cast<std::size_t>(7));
+    ASSERT_EQ(presentation.logical_preedit.text, std::wstring(L"华锐jishu"));
+    ASSERT_EQ(presentation.display_preedit.text, presentation.logical_preedit.text);
+    ASSERT_EQ(presentation.logical_preedit.cursor, static_cast<std::size_t>(7));
+    ASSERT_EQ(presentation.logical_preedit.converted_prefix, static_cast<std::size_t>(2));
+    ASSERT_EQ(presentation.logical_preedit.focused_start, static_cast<std::size_t>(2));
+    ASSERT_EQ(presentation.logical_preedit.focused_end, static_cast<std::size_t>(7));
     ASSERT_EQ(presentation.candidates.items.size(), static_cast<std::size_t>(1));
     ASSERT_EQ(presentation.candidates.items[0].text, std::string(u8"技术"));
     ASSERT_EQ(presentation.candidates.items[0].hint, std::string("/rs"));
 }
 
-TEST(EngineResponse, decodes_explicit_focus_before_a_syllable_separator) {
+TEST(EngineResponse, decodes_display_and_logical_offsets_at_a_syllable_boundary) {
     cxxime::IPCResponse response = make_response();
     const std::string converted = u8"华锐";
     const std::string preedit = converted + "ji'shu";
     copy_field(response.preedit, preedit);
-    response.preedit_cursor = static_cast<std::uint32_t>(preedit.size());
+    response.preedit_cursor =
+        static_cast<std::uint32_t>(converted.size() + std::string("ji'").size());
     response.focused_preedit_start_bytes = static_cast<std::uint32_t>(converted.size());
     response.focused_preedit_end_bytes =
         static_cast<std::uint32_t>(converted.size() + std::string("ji").size());
@@ -70,11 +72,15 @@ TEST(EngineResponse, decodes_explicit_focus_before_a_syllable_separator) {
     cxxime_tsf::DecodedEnginePresentation presentation;
 
     ASSERT_TRUE(cxxime_tsf::decode_engine_presentation(response, &presentation));
-    ASSERT_EQ(presentation.display_preedit, std::wstring(L"华锐ji'shu"));
-    ASSERT_EQ(presentation.preedit, std::wstring(L"华锐jishu"));
-    ASSERT_EQ(presentation.focused_preedit_start_utf16, static_cast<std::size_t>(2));
-    ASSERT_EQ(presentation.focused_preedit_end_utf16, static_cast<std::size_t>(4));
-    ASSERT_EQ(presentation.display_preedit[4], L'\'');
+    ASSERT_EQ(presentation.display_preedit.text, std::wstring(L"华锐ji'shu"));
+    ASSERT_EQ(presentation.logical_preedit.text, std::wstring(L"华锐jishu"));
+    ASSERT_EQ(presentation.logical_preedit.cursor, static_cast<std::size_t>(4));
+    ASSERT_EQ(presentation.display_preedit.cursor, static_cast<std::size_t>(5));
+    ASSERT_EQ(presentation.logical_preedit.focused_start, static_cast<std::size_t>(2));
+    ASSERT_EQ(presentation.logical_preedit.focused_end, static_cast<std::size_t>(4));
+    ASSERT_EQ(presentation.display_preedit.focused_start, static_cast<std::size_t>(2));
+    ASSERT_EQ(presentation.display_preedit.focused_end, static_cast<std::size_t>(4));
+    ASSERT_EQ(presentation.display_preedit.text[4], L'\'');
 }
 
 TEST(EngineResponse, unflagged_apostrophe_remains_in_logical_preedit) {
@@ -87,7 +93,8 @@ TEST(EngineResponse, unflagged_apostrophe_remains_in_logical_preedit) {
     cxxime_tsf::DecodedEnginePresentation presentation;
 
     ASSERT_TRUE(cxxime_tsf::decode_engine_presentation(response, &presentation));
-    ASSERT_EQ(presentation.preedit, std::wstring(L"don't"));
+    ASSERT_EQ(presentation.logical_preedit.text, std::wstring(L"don't"));
+    ASSERT_EQ(presentation.display_preedit.text, presentation.logical_preedit.text);
     ASSERT_TRUE(!presentation.has_syllable_boundaries);
 }
 
@@ -102,8 +109,10 @@ TEST(EngineResponse, responses_without_focus_fields_keep_wubi_and_mixed_unfocuse
         cxxime_tsf::DecodedEnginePresentation presentation;
 
         ASSERT_TRUE(cxxime_tsf::decode_engine_presentation(response, &presentation));
-        ASSERT_EQ(presentation.focused_preedit_start_utf16, static_cast<std::size_t>(4));
-        ASSERT_EQ(presentation.focused_preedit_end_utf16, static_cast<std::size_t>(4));
+        ASSERT_EQ(presentation.logical_preedit.focused_start, static_cast<std::size_t>(4));
+        ASSERT_EQ(presentation.logical_preedit.focused_end, static_cast<std::size_t>(4));
+        ASSERT_EQ(presentation.display_preedit.focused_start, static_cast<std::size_t>(4));
+        ASSERT_EQ(presentation.display_preedit.focused_end, static_cast<std::size_t>(4));
         ASSERT_EQ(presentation.display_focused_preedit_start_bytes, static_cast<std::size_t>(4));
         ASSERT_EQ(presentation.display_focused_preedit_end_bytes, static_cast<std::size_t>(4));
     }
