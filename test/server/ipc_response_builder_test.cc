@@ -18,7 +18,8 @@ TEST(IpcResponseBuilder, serializes_complete_segmented_presentation) {
     result.presentation.page_index = 1;
     result.presentation.page_offset = 5;
     result.presentation.page_size = 5;
-    result.presentation.total_count = 11;
+    result.presentation.extent.known_count = 11;
+    result.presentation.extent.state = cxxime::CandidateExtentState::kHasMore;
     result.presentation.highlighted = 1;
     result.presentation.items.push_back({"技术", "a"});
 
@@ -39,6 +40,9 @@ TEST(IpcResponseBuilder, serializes_complete_segmented_presentation) {
     ASSERT_EQ(std::string(response.candidate_hints[0]), "a");
     ASSERT_EQ(response.candidate_offset, 5u);
     ASSERT_EQ(response.candidate_total, 11u);
+    ASSERT_EQ(response.candidate_known_count, 11u);
+    ASSERT_EQ(response.candidate_extent_state, cxxime::CandidateExtentState::kHasMore);
+    ASSERT_EQ(response.candidate_extent_complete, 1u);
     ASSERT_EQ(response.page_current, 2u);
     ASSERT_EQ(response.page_total, 3u);
     ASSERT_EQ(response.highlighted, 1u);
@@ -61,6 +65,33 @@ TEST(IpcResponseBuilder, serializes_explicit_focused_preedit_range) {
     ASSERT_EQ(response.focused_preedit_start_bytes, static_cast<uint32_t>(0));
     ASSERT_EQ(response.focused_preedit_end_bytes, static_cast<uint32_t>(2));
     ASSERT_EQ(response.preedit_presentation_flags, result.preedit_presentation_flags);
+}
+
+TEST(IpcResponseBuilder, indeterminate_short_page_projects_a_next_page) {
+    ProcessKeyResult result;
+    result.status = cxxime::IPCStatus::OK;
+    result.composing = true;
+    result.preedit = "huaruijishu";
+    result.preedit_cursor = result.preedit.size();
+    result.presentation.page_size = 7;
+    result.presentation.extent.known_count = 4;
+    result.presentation.extent.state = cxxime::CandidateExtentState::kIndeterminate;
+    result.presentation.extent.complete = false;
+    result.presentation.highlighted = 0;
+    for (int index = 0; index < 4; ++index) {
+        result.presentation.items.push_back({"candidate" + std::to_string(index), {}});
+    }
+
+    cxxime::IPCResponse response = {};
+    fill_process_response(result, &response);
+
+    ASSERT_EQ(response.status, cxxime::IPCStatus::OK);
+    ASSERT_EQ(response.candidate_count, 4u);
+    ASSERT_EQ(response.candidate_known_count, 4u);
+    ASSERT_EQ(response.candidate_extent_state, cxxime::CandidateExtentState::kIndeterminate);
+    ASSERT_EQ(response.candidate_extent_complete, 0u);
+    ASSERT_EQ(response.page_current, 1u);
+    ASSERT_EQ(response.page_total, 2u);
 }
 
 TEST(IpcResponseBuilder, rejects_non_utf8_preedit_boundaries) {

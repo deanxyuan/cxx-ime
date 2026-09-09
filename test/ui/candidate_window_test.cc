@@ -86,6 +86,37 @@ TEST(CandidateWindow, page_buttons_use_page_callback) {
     window.destroy();
 }
 
+TEST(CandidateWindow, indeterminate_extent_keeps_next_page_available) {
+    cxxime::Config config;
+    config.render_backend = "gdi";
+    cxxime::CandidatePage page;
+    for (int index = 0; index < 4; ++index) {
+        cxxime::Candidate candidate;
+        candidate.text = "candidate" + std::to_string(index);
+        page.candidates.push_back(std::move(candidate));
+    }
+    page.extent.known_count = 4;
+    page.extent.state = cxxime::CandidateExtentState::kIndeterminate;
+    page.extent.complete = false;
+
+    cxxime::CandidateWindow window;
+    ASSERT_TRUE(window.create(nullptr, config));
+    int callback_count = 0;
+    window.set_page_callback([&](cxxime::CandidatePageDirection direction) {
+        ASSERT_EQ(direction, cxxime::CandidatePageDirection::Next);
+        ++callback_count;
+    });
+    window.set_page_info(1, 1);
+    window.update(page);
+
+    const RECT next = window.page_button_rect_for_test(cxxime::CandidatePageDirection::Next);
+    ASSERT_TRUE(next.right > next.left);
+    SendMessageW(window.hwnd_for_test(), WM_LBUTTONDOWN, 0,
+                 MAKELPARAM((next.left + next.right) / 2, (next.top + next.bottom) / 2));
+    ASSERT_EQ(callback_count, 1);
+    window.destroy();
+}
+
 TEST(CandidateWindow, recreate_resets_native_window_size_cache) {
     cxxime::Config config;
     config.render_backend = "gdi";
@@ -548,7 +579,8 @@ TEST(CandidateWindow, width_is_clamped_to_monitor_work_area) {
     cxxime::Candidate candidate;
     candidate.text.assign(4096, 'w');
     page.candidates.push_back(std::move(candidate));
-    page.total_count = 2;
+    page.extent.known_count = 2;
+    page.extent.state = cxxime::CandidateExtentState::kHasMore;
 
     cxxime::CandidateWindow window;
     ASSERT_TRUE(window.create(nullptr, config));

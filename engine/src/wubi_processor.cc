@@ -74,9 +74,9 @@ ProcessResult WubiProcessor::process_key(const KeyEvent& event, Context& context
     if (vk == VK_PRIOR || vk == VK_NEXT || shortcut_page_up || shortcut_page_down) {
         if (context.is_composing() && context.candidate_count() > 0) {
             if (vk == VK_NEXT || shortcut_page_down) {  // Page Down
-                context.move_to_next_page();
+                context.request_next_page();
             } else {  // Page Up
-                context.move_to_previous_page();
+                context.request_previous_page();
             }
             return ProcessResult::ACCEPTED;
         }

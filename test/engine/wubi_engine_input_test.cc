@@ -89,6 +89,9 @@ TEST(WubiEngine, engine_paginates_from_visible_candidate_count_without_skipping)
 
     ASSERT_EQ(engine.process_key(make_key('A')), cxxime::ProcessResult::ACCEPTED);
     ASSERT_EQ(engine.context().candidate_page().candidates.size(), 7u);
+    ASSERT_TRUE(engine.context().translation().extent.complete);
+    ASSERT_EQ(engine.context().translation().extent.state,
+        cxxime::CandidateExtentState::kHasMore);
     std::string expected_second_page_first = engine.context().candidate_page().candidates[2].text;
 
     cxxime::OutputOptions options;
@@ -96,6 +99,7 @@ TEST(WubiEngine, engine_paginates_from_visible_candidate_count_without_skipping)
     ASSERT_EQ(engine.context().page_index(), 1);
     ASSERT_EQ(engine.context().page_offset(), 2);
     ASSERT_EQ(engine.context().candidate_page().candidates[0].text, expected_second_page_first);
+    ASSERT_TRUE(engine.context().translation().extent.complete);
 
     engine.finalize();
     wubi_dict.close();

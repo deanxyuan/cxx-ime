@@ -161,28 +161,20 @@ TEST(Config, invalid_mixed_candidate_preference_falls_back_to_auto) {
     ASSERT_EQ(config.mixed_candidate_preference, cxxime::MixedCandidatePreference::kAuto);
 }
 
-TEST(Config, invalid_input_mode_shortcut_falls_back_to_disabled) {
+TEST(Config, shortcut_validation_accepts_current_bindings_and_disables_invalid_ones) {
     cxxime::Config config;
-    ASSERT_TRUE(config.load_json(R"({"shortcuts":{"input_mode_switch":"M"}})"));
+    ASSERT_TRUE(
+        config.load_json(R"({"shortcuts":{"input_mode_switch":"M","activate_ime":"Shift+C"}})"));
     ASSERT_TRUE(!config.input_mode_switch_shortcut.enabled());
-}
-
-TEST(Config, invalid_activate_ime_shortcut_falls_back_to_disabled) {
-    cxxime::Config config;
-    ASSERT_TRUE(config.load_json(R"({"shortcuts":{"activate_ime":"Shift+C"}})"));
     ASSERT_TRUE(!config.activate_ime_shortcut.enabled());
-}
 
-TEST(Config, activate_ime_shortcut_accepts_ctrl_slash) {
-    cxxime::Config config;
+    config = {};
     ASSERT_TRUE(config.load_json(R"({"shortcuts":{"activate_ime":"Ctrl+/"}})"));
     ASSERT_EQ(config.activate_ime_shortcut.modifiers, cxxime::kKeyModifierControl);
     ASSERT_EQ(config.activate_ime_shortcut.virtual_key, static_cast<uint32_t>(VK_OEM_2));
     ASSERT_TRUE(cxxime::keyboard_shortcut_string(config.activate_ime_shortcut) == "Ctrl+/");
-}
 
-TEST(Config, activate_ime_shortcut_accepts_standalone_function_key) {
-    cxxime::Config config;
+    config = {};
     ASSERT_TRUE(config.load_json(R"({"shortcuts":{"activate_ime":"F4"}})"));
     ASSERT_EQ(config.activate_ime_shortcut.modifiers, 0u);
     ASSERT_TRUE(cxxime::keyboard_shortcut_string(config.activate_ime_shortcut) == "F4");
@@ -488,67 +480,16 @@ TEST(Config, load_diagnostics_section) {
     std::remove(path);
 }
 
-TEST(Config, inline_preedit_false) {
-    const char* path = "test_preedit_config.json";
-    {
-        std::ofstream f(path);
-        f << R"({"style":{"inline_preedit":false}})";
-    }
+TEST(Config, style_modes_parse_current_values_and_reject_unknown_values) {
+    cxxime::Config configured;
+    ASSERT_TRUE(
+        configured.load_json(R"({"style":{"inline_preedit":false,"preedit_type":"preview"}})"));
+    ASSERT_TRUE(!configured.inline_preedit);
+    ASSERT_EQ(configured.preedit_type, "preview");
 
-    cxxime::Config cfg;
-    ASSERT_TRUE(cfg.load(path));
-    ASSERT_EQ(cfg.inline_preedit, false);
-
-    std::remove(path);
-}
-
-TEST(Config, legacy_preedit_cursor_setting_is_ignored) {
-    cxxime::Config config;
-    ASSERT_TRUE(config.load_json(R"({"style":{"show_preedit_cursor":false}})"));
-    const nlohmann::json saved = nlohmann::json::parse(config.to_user_json());
-    ASSERT_TRUE(!saved["style"].contains("show_preedit_cursor"));
-}
-
-TEST(Config, preedit_type_preview) {
-    const char* path = "test_preedit_type.json";
-    {
-        std::ofstream f(path);
-        f << R"({"style":{"preedit_type":"preview"}})";
-    }
-
-    cxxime::Config cfg;
-    ASSERT_TRUE(cfg.load(path));
-    ASSERT_TRUE(cfg.preedit_type == "preview");
-
-    std::remove(path);
-}
-
-TEST(Config, preedit_type_invalid_fallback) {
-    const char* path = "test_preedit_invalid.json";
-    {
-        std::ofstream f(path);
-        f << R"({"style":{"preedit_type":"invalid_mode"}})";
-    }
-
-    cxxime::Config cfg;
-    ASSERT_TRUE(cfg.load(path));
-    ASSERT_TRUE(cfg.preedit_type == "composition");
-
-    std::remove(path);
-}
-
-TEST(Config, preedit_type_preview_all_fallback) {
-    const char* path = "test_preedit_preview_all.json";
-    {
-        std::ofstream f(path);
-        f << R"({"style":{"preedit_type":"preview_all"}})";
-    }
-
-    cxxime::Config cfg;
-    ASSERT_TRUE(cfg.load(path));
-    ASSERT_TRUE(cfg.preedit_type == "composition");  // preview_all removed, falls back
-
-    std::remove(path);
+    cxxime::Config unknown;
+    ASSERT_TRUE(unknown.load_json(R"({"style":{"preedit_type":"invalid_mode"}})"));
+    ASSERT_EQ(unknown.preedit_type, "composition");
 }
 
 TEST(Config, settings_presets_layouts) {

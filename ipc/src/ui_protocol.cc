@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <limits>
 
 namespace cxxime {
 namespace {
@@ -28,6 +29,12 @@ bool build_packet(UiPacketType type, const Payload& payload, std::uint64_t seque
 bool valid_ownership(UiOwnership ownership) {
     return ownership == UiOwnership::kNone || ownership == UiOwnership::kExternal ||
            ownership == UiOwnership::kHost;
+}
+
+bool valid_candidate_extent_state(CandidateExtentState state) {
+    return state == CandidateExtentState::kExhausted ||
+           state == CandidateExtentState::kHasMore ||
+           state == CandidateExtentState::kIndeterminate;
 }
 
 constexpr std::uint32_t kKnownSnapshotFlags =
@@ -143,6 +150,24 @@ UiPacketParseResult decode_ui_snapshot_packet(const void* data, std::size_t size
     if (result != UiPacketParseResult::kAccepted) {
         return result;
     }
+    UiPacketHeader header = {};
+    std::memcpy(&header, data, sizeof(header));
+    constexpr std::size_t kCandidateExtentPayloadSize =
+        offsetof(UiPresentationSnapshot, candidate_extent_complete) + sizeof(std::uint32_t);
+    if (header.payload_size < kCandidateExtentPayloadSize) {
+        const std::uint64_t returned_end =
+            static_cast<std::uint64_t>(parsed.candidate_page.offset) +
+            parsed.candidate_page.count;
+        if (returned_end > (std::numeric_limits<std::uint32_t>::max)()) {
+            return UiPacketParseResult::kInvalid;
+        }
+        parsed.candidate_known_count = (std::max)(
+            parsed.candidate_page.total, static_cast<std::uint32_t>(returned_end));
+        parsed.candidate_extent_state = parsed.candidate_page.total > returned_end
+                                            ? CandidateExtentState::kHasMore
+                                            : CandidateExtentState::kExhausted;
+        parsed.candidate_extent_complete = 1;
+    }
     if ((parsed.flags & ~kKnownSnapshotFlags) != 0 || !valid_ownership(parsed.ownership)) {
         return UiPacketParseResult::kIgnored;
     }
@@ -228,7 +253,12 @@ bool is_valid_ui_snapshot(const UiPresentationSnapshot& snapshot) {
                           snapshot.focused_preedit_start_bytes) ||
         !is_utf8_boundary(snapshot.preedit, snapshot.preedit_length,
                           snapshot.focused_preedit_end_bytes) ||
-        snapshot.candidate_page.count > static_cast<std::uint32_t>(kCandidateCapacity)) {
+        snapshot.candidate_page.count > static_cast<std::uint32_t>(kCandidateCapacity) ||
+        !valid_candidate_extent_state(snapshot.candidate_extent_state) ||
+        snapshot.candidate_extent_complete > 1 ||
+        static_cast<std::uint64_t>(snapshot.candidate_known_count) <
+            static_cast<std::uint64_t>(snapshot.candidate_page.offset) +
+                snapshot.candidate_page.count) {
         return false;
     }
     if (snapshot.candidate_page.count != 0 &&

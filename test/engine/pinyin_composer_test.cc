@@ -153,7 +153,7 @@ TEST(PinyinComposer, exact_span_query_honors_scan_and_deadline_limits) {
     ASSERT_TRUE(stats.truncated);
 }
 
-TEST(PinyinComposer, appends_missing_sentence_after_legacy_candidates) {
+TEST(PinyinComposer, appends_composed_sentence_after_existing_candidates) {
     ComposerFixture fixture;
     ASSERT_TRUE(fixture.initialize(
         {
@@ -217,11 +217,11 @@ TEST(PinyinComposer, composes_complete_and_repeated_short_code_paths) {
     translator.set_syllabifier(&syllabifier);
 
     const auto five_a = translator.translate_page("aaaaa", 0, 10);
-    const size_t legacy_index = candidate_index(five_a, "啊啊啊啊啊啊");
+    const size_t existing_index = candidate_index(five_a, "啊啊啊啊啊啊");
     const size_t composed_index = candidate_index(five_a, "啊啊啊啊啊");
-    ASSERT_NE(legacy_index, SIZE_MAX);
+    ASSERT_NE(existing_index, SIZE_MAX);
     ASSERT_NE(composed_index, SIZE_MAX);
-    ASSERT_TRUE(legacy_index < composed_index);
+    ASSERT_TRUE(existing_index < composed_index);
     ASSERT_TRUE(five_a.candidates[composed_index].origin == cxxime::CandidateOrigin::kComposed);
 
     const auto seven_a = translator.translate_page("aaaaaaa", 0, 10);

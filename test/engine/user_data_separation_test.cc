@@ -331,7 +331,7 @@ TEST(UserDataSeparation, user_lexicon_rejects_non_current_column_counts) {
     const std::string user_path = make_temp_path("udf");
     {
         std::ofstream output(user_path, std::ios::binary | std::ios::trunc);
-        output << "legacy\tlg\n";
+        output << "too-few\tfew\n";
         output << "future\tftr\t8\tfu:ture\textra\n";
         output << "current\tcur\t7\n";
     }
@@ -392,7 +392,7 @@ TEST(UserDataSeparation, candidate_preference_rejects_non_current_column_counts)
     const std::string preference_path = make_temp_path("udp");
     {
         std::ofstream output(preference_path, std::ios::binary | std::ios::trunc);
-        output << "legacy\tlg\tlg\t1\t1\n";
+        output << "too-few\tfew\tfew\t1\t1\n";
         output << "future\tftr\tftr\t3\t2\t\textra\n";
         output << "current\tcur\tcur\t2\t1\t\n";
     }

@@ -1,12 +1,17 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
-#include "support/testutil.h"
+#include <string>
+#include <vector>
+
+#include <windows.h>
+
+#include <cxxime/dict.h>
+#include <cxxime/engine.h>
+#include <cxxime/key_event.h>
 #include <cxxime/output_composer.h>
 #include <cxxime/output_options.h>
-#include <cxxime/key_event.h>
-#include <cxxime/engine.h>
-#include <cxxime/dict.h>
-#include <windows.h>
+
+#include "support/testutil.h"
 
 // 辅助函数：构造 KeyEvent
 static cxxime::KeyEvent make_key(uint32_t vk, bool shift = false, bool caps = false, bool up = false) {
@@ -28,212 +33,80 @@ static cxxime::OutputOptions make_opts(bool chinese = false, bool full = true, b
     return o;
 }
 
-TEST(OutputComposer, transform_raw_code_pretransformed) {
-    cxxime::OutputOptions opts = make_opts(false, false, true);
-    auto r = cxxime::OutputComposer::transform("N", opts, cxxime::CommitSource::kRawCodePretransformed);
-    ASSERT_EQ(r, "N");
+TEST(OutputComposer, intercepts_only_unmodified_digits_in_english_full_shape) {
+    struct Case {
+        cxxime::KeyEvent key;
+        cxxime::OutputOptions options;
+        bool intercepted;
+        const char* output;
+    };
+    const Case cases[] = {
+        {make_key('1'), make_opts(false, true), true, u8"１"},
+        {make_key('0'), make_opts(false, true), true, u8"０"},
+        {make_key('1', false, true), make_opts(false, true, true), true, u8"１"},
+        {make_key('1', true), make_opts(false, true), false, ""},
+        {make_key('A'), make_opts(false, true), false, ""},
+        {make_key(VK_SPACE), make_opts(false, true), false, ""},
+        {make_key(VK_RETURN), make_opts(false, true), false, ""},
+        {make_key('1'), make_opts(true, true), false, ""},
+        {make_key('1'), make_opts(false, false), false, ""},
+        {make_key('1', false, false, true), make_opts(false, true), false, ""},
+    };
+
+    for (const Case& item : cases) {
+        std::string output;
+        ASSERT_EQ(cxxime::OutputComposer::intercept_key(item.key, item.options, output),
+                  item.intercepted);
+        ASSERT_EQ(output, item.output);
+    }
 }
 
-// ============================================================
-// intercept_key 测试
-// ============================================================
+TEST(OutputComposer, transforms_only_raw_code_case) {
+    struct Case {
+        const char* input;
+        cxxime::OutputOptions options;
+        const char* output;
+    };
+    const Case cases[] = {
+        {"abc", make_opts(false, false, true), "ABC"},
+        {"ABC", make_opts(false, false, true), "abc"},
+        {u8"ab你好cd", make_opts(false, true, true), u8"AB你好CD"},
+        {u8"你好", make_opts(false, false, true), u8"你好"},
+        {"123", make_opts(false, false, true), "123"},
+        {"abc", make_opts(false, true), "abc"},
+        {"123", make_opts(false, true), "123"},
+        {" ", make_opts(false, true), " "},
+        {u8"hi你好", make_opts(false, true), u8"hi你好"},
+        {"a\r\nb", make_opts(false, true), "a\r\nb"},
+        {".,;:!?()[]{}", make_opts(false, true), ".,;:!?()[]{}"},
+        {"", make_opts(false, true), ""},
+    };
 
-TEST(OutputComposer, intercept_digit_english_fullwidth) {
-    // 英文 + 全角 + 数字键 → 拦截
-    std::string out;
-    auto r = cxxime::OutputComposer::intercept_key(make_key(0x31), make_opts(false, true), out);
-    ASSERT_TRUE(r);
-    ASSERT_EQ(out, "１");
+    for (const Case& item : cases) {
+        ASSERT_EQ(cxxime::OutputComposer::transform(item.input, item.options,
+                                                   cxxime::CommitSource::kRawCode),
+                  item.output);
+    }
 }
 
-TEST(OutputComposer, intercept_digit_0) {
-    std::string out;
-    auto r = cxxime::OutputComposer::intercept_key(make_key(0x30), make_opts(false, true), out);
-    ASSERT_TRUE(r);
-    ASSERT_EQ(out, "０");
-}
+TEST(OutputComposer, preserves_non_raw_commit_sources) {
+    struct Case {
+        const char* input;
+        cxxime::OutputOptions options;
+        cxxime::CommitSource source;
+    };
+    const Case cases[] = {
+        {"N", make_opts(false, false, true), cxxime::CommitSource::kRawCodePretransformed},
+        {"WiFi", make_opts(false, true, true), cxxime::CommitSource::kCandidate},
+        {u8"C++编程", make_opts(false, true, true), cxxime::CommitSource::kCandidate},
+        {"nihaoSD", make_opts(false, false, true), cxxime::CommitSource::kRawCodePreserveCase},
+        {u8"AB你好", make_opts(false, false, true), cxxime::CommitSource::kRawCodePreserveCase},
+    };
 
-TEST(OutputComposer, no_intercept_shift_digit) {
-    // Shift+数字 → 不拦截
-    std::string out;
-    auto r = cxxime::OutputComposer::intercept_key(make_key(0x31, true), make_opts(false, true), out);
-    ASSERT_TRUE(!r);
-}
-
-TEST(OutputComposer, no_intercept_letter) {
-    // 字母 → 不拦截
-    std::string out;
-    auto r = cxxime::OutputComposer::intercept_key(make_key(0x41), make_opts(false, true), out);
-    ASSERT_TRUE(!r);
-}
-
-TEST(OutputComposer, no_intercept_space) {
-    std::string out;
-    auto r = cxxime::OutputComposer::intercept_key(make_key(0x20), make_opts(false, true), out);
-    ASSERT_TRUE(!r);
-}
-
-TEST(OutputComposer, no_intercept_enter) {
-    std::string out;
-    auto r = cxxime::OutputComposer::intercept_key(make_key(0x0D), make_opts(false, true), out);
-    ASSERT_TRUE(!r);
-}
-
-TEST(OutputComposer, no_intercept_chinese_mode) {
-    // 中文模式 → 不拦截
-    std::string out;
-    auto r = cxxime::OutputComposer::intercept_key(make_key(0x31), make_opts(true, true), out);
-    ASSERT_TRUE(!r);
-}
-
-TEST(OutputComposer, no_intercept_not_fullwidth) {
-    // 非全角 → 不拦截
-    std::string out;
-    auto r = cxxime::OutputComposer::intercept_key(make_key(0x31), make_opts(false, false), out);
-    ASSERT_TRUE(!r);
-}
-
-TEST(OutputComposer, no_intercept_key_up) {
-    std::string out;
-    auto r = cxxime::OutputComposer::intercept_key(make_key(0x31, false, false, true), make_opts(false, true), out);
-    ASSERT_TRUE(!r);
-}
-
-TEST(OutputComposer, intercept_digit_with_capslock) {
-    // 全角 + CapsLock + 数字 → 拦截（数字不受 CapsLock 影响）
-    std::string out;
-    auto r = cxxime::OutputComposer::intercept_key(make_key(0x31, false, true), make_opts(false, true, true), out);
-    ASSERT_TRUE(r);
-    ASSERT_EQ(out, "１");
-}
-
-// ============================================================
-// transform 测试
-// ============================================================
-
-TEST(OutputComposer, transform_fullwidth_letters) {
-    cxxime::OutputOptions opts = make_opts(false, true);
-    auto r = cxxime::OutputComposer::transform("abc", opts, cxxime::CommitSource::kRawCode);
-    ASSERT_EQ(r, "abc");
-}
-
-TEST(OutputComposer, transform_fullwidth_digits) {
-    cxxime::OutputOptions opts = make_opts(false, true);
-    auto r = cxxime::OutputComposer::transform("123", opts, cxxime::CommitSource::kRawCode);
-    ASSERT_EQ(r, "123");
-}
-
-TEST(OutputComposer, transform_fullwidth_space) {
-    cxxime::OutputOptions opts = make_opts(false, true);
-    auto r = cxxime::OutputComposer::transform(" ", opts, cxxime::CommitSource::kRawCode);
-    ASSERT_EQ(r, " ");
-}
-
-TEST(OutputComposer, transform_fullwidth_chinese_unaffected) {
-    cxxime::OutputOptions opts = make_opts(false, true);
-    auto r = cxxime::OutputComposer::transform("你好", opts, cxxime::CommitSource::kRawCode);
-    ASSERT_EQ(r, "你好");
-}
-
-TEST(OutputComposer, transform_fullwidth_mixed) {
-    cxxime::OutputOptions opts = make_opts(false, true);
-    auto r = cxxime::OutputComposer::transform("hi你好", opts, cxxime::CommitSource::kRawCode);
-    ASSERT_EQ(r, "hi你好");
-}
-
-TEST(OutputComposer, transform_capslock_lowercase) {
-    cxxime::OutputOptions opts = make_opts(false, false, true);
-    auto r = cxxime::OutputComposer::transform("abc", opts, cxxime::CommitSource::kRawCode);
-    ASSERT_EQ(r, "ABC");
-}
-
-TEST(OutputComposer, transform_capslock_uppercase) {
-    cxxime::OutputOptions opts = make_opts(false, false, true);
-    auto r = cxxime::OutputComposer::transform("ABC", opts, cxxime::CommitSource::kRawCode);
-    ASSERT_EQ(r, "abc");
-}
-
-TEST(OutputComposer, transform_capslock_chinese_unaffected) {
-    cxxime::OutputOptions opts = make_opts(false, false, true);
-    auto r = cxxime::OutputComposer::transform("你好", opts, cxxime::CommitSource::kRawCode);
-    ASSERT_EQ(r, "你好");
-}
-
-TEST(OutputComposer, transform_capslock_mixed) {
-    cxxime::OutputOptions opts = make_opts(false, false, true);
-    auto r = cxxime::OutputComposer::transform("ab你好", opts, cxxime::CommitSource::kRawCode);
-    ASSERT_EQ(r, "AB你好");
-}
-
-TEST(OutputComposer, transform_capslock_digits_unaffected) {
-    cxxime::OutputOptions opts = make_opts(false, false, true);
-    auto r = cxxime::OutputComposer::transform("123", opts, cxxime::CommitSource::kRawCode);
-    ASSERT_EQ(r, "123");
-}
-
-TEST(OutputComposer, transform_candidate_no_conversion) {
-    // kCandidate → 不转换
-    cxxime::OutputOptions opts = make_opts(false, true, true);
-    auto r = cxxime::OutputComposer::transform("WiFi", opts, cxxime::CommitSource::kCandidate);
-    ASSERT_EQ(r, "WiFi");
-}
-
-TEST(OutputComposer, transform_candidate_chinese_mixed) {
-    cxxime::OutputOptions opts = make_opts(false, true, true);
-    auto r = cxxime::OutputComposer::transform("C++编程", opts, cxxime::CommitSource::kCandidate);
-    ASSERT_EQ(r, "C++编程");
-}
-
-TEST(OutputComposer, transform_fullwidth_capslock_combined) {
-    // CapsLock 反转大小写，全角不再由 transform 处理
-    cxxime::OutputOptions opts = make_opts(false, true, true);
-    auto r = cxxime::OutputComposer::transform("abc", opts, cxxime::CommitSource::kRawCode);
-    ASSERT_EQ(r, "ABC");
-}
-
-TEST(OutputComposer, transform_fullwidth_capslock_mixed) {
-    cxxime::OutputOptions opts = make_opts(false, true, true);
-    auto r = cxxime::OutputComposer::transform("ab你好cd", opts, cxxime::CommitSource::kRawCode);
-    ASSERT_EQ(r, "AB你好CD");
-}
-
-TEST(OutputComposer, transform_control_chars_preserved) {
-    cxxime::OutputOptions opts = make_opts(false, true);
-    auto r = cxxime::OutputComposer::transform("a\r\nb", opts, cxxime::CommitSource::kRawCode);
-    ASSERT_EQ(r, "a\r\nb");
-}
-
-TEST(OutputComposer, transform_empty_string) {
-    cxxime::OutputOptions opts = make_opts(false, true);
-    auto r = cxxime::OutputComposer::transform("", opts, cxxime::CommitSource::kRawCode);
-    ASSERT_EQ(r, "");
-}
-
-TEST(OutputComposer, transform_no_conversion) {
-    // 无 full_shape 无 caps_lock → 原样
-    cxxime::OutputOptions opts = make_opts(false, false, false);
-    auto r = cxxime::OutputComposer::transform("abc", opts, cxxime::CommitSource::kRawCode);
-    ASSERT_EQ(r, "abc");
-}
-
-TEST(OutputComposer, transform_fullwidth_punctuation) {
-    cxxime::OutputOptions opts = make_opts(false, true);
-    auto r = cxxime::OutputComposer::transform(".,;:!?()[]{}", opts, cxxime::CommitSource::kRawCode);
-    // transform 不再做全角转换，应保持 ASCII 标点
-    ASSERT_EQ(r, ".,;:!?()[]{}");
-}
-
-TEST(OutputComposer, transform_raw_code_preserve_case) {
-    // kRawCodePreserveCase: caps_lock=true 但不做大小写反转
-    cxxime::OutputOptions opts = make_opts(false, false, true);
-    auto r = cxxime::OutputComposer::transform("nihaoSD", opts, cxxime::CommitSource::kRawCodePreserveCase);
-    ASSERT_EQ(r, "nihaoSD");
-}
-
-TEST(OutputComposer, transform_raw_code_preserve_case_mixed) {
-    cxxime::OutputOptions opts = make_opts(false, false, true);
-    auto r = cxxime::OutputComposer::transform("AB你好", opts, cxxime::CommitSource::kRawCodePreserveCase);
-    ASSERT_EQ(r, "AB你好");
+    for (const Case& item : cases) {
+        ASSERT_EQ(cxxime::OutputComposer::transform(item.input, item.options, item.source),
+                  item.input);
+    }
 }
 
 // ============================================================
@@ -253,27 +126,28 @@ static cxxime::PunctMapping make_punct_mapping() {
     cxxime::PunctMapping pm;
     // half_shape: used when chinese_punct=true
     // "。" = U+3002
-    pm.half_shape["."] = {cxxime::PunctType::COMMIT, "\xe3\x80\x82", {}, {}};
+    pm.half_shape["."] = {cxxime::PunctType::COMMIT, u8"。", {}, {}};
     // "，" = U+FF0C
-    pm.half_shape[","] = {cxxime::PunctType::COMMIT, "\xef\xbc\x8c", {}, {}};
+    pm.half_shape[","] = {cxxime::PunctType::COMMIT, u8"，", {}, {}};
     // pair: U+2018 left, U+2019 right
     cxxime::PunctEntry single_quote;
     single_quote.type = cxxime::PunctType::PAIR;
     single_quote.commit = "";
-    single_quote.pair = {"\xe2\x80\x98", "\xe2\x80\x99"};
+    single_quote.pair = {u8"‘", u8"’"};
     single_quote.alternatives = {};
     pm.half_shape["'"] = single_quote;
     // pair: U+201C left, U+201D right
     cxxime::PunctEntry double_quote;
     double_quote.type = cxxime::PunctType::PAIR;
     double_quote.commit = "";
-    double_quote.pair = {"\xe2\x80\x9c", "\xe2\x80\x9d"};
+    double_quote.pair = {u8"“", u8"”"};
     double_quote.alternatives = {};
     pm.half_shape["\""] = double_quote;
     // alternatives: U+2014, U+2013, U+00B7
-    pm.half_shape["-"] = {cxxime::PunctType::ALTERNATIVES, {}, {}, {"\xe2\x80\x94", "\xe2\x80\x93", "\xc2\xb7"}};
+    pm.half_shape["-"] = {
+        cxxime::PunctType::ALTERNATIVES, {}, {}, {u8"—", u8"–", u8"·"}};
     // "【" = U+3010
-    pm.half_shape["["] = {cxxime::PunctType::COMMIT, "\xe3\x80\x90", {}, {}};
+    pm.half_shape["["] = {cxxime::PunctType::COMMIT, u8"【", {}, {}};
     return pm;
 }
 
@@ -323,103 +197,38 @@ TEST(OutputComposer, punct_chinese_comma) {
     DeleteFileA(dp.c_str());
 }
 
-TEST(OutputComposer, punct_chinese_pair_single_quote) {
+TEST(OutputComposer, punct_pairs_and_alternatives_follow_exact_sequences) {
     auto pm = make_punct_mapping();
-
-    // Verify mapping is correct
-    auto it = pm.half_shape.find("'");
-    ASSERT_TRUE(it != pm.half_shape.end()) << "Single quote not found in mapping";
-    ASSERT_EQ(it->second.type, cxxime::PunctType::PAIR);
-    ASSERT_TRUE(it->second.commit.empty()) << "commit should be empty for PAIR type";
-    ASSERT_EQ(it->second.pair.size(), 2u) << "pair should have 2 elements";
-
     std::string dp = punct_tmp("punct3.bin");
     cxxime::Dict::create_test_dict(dp, {{"de", "的", 1}});
-    cxxime::Engine engine;
-    ASSERT_TRUE(engine.initialize(dp));
-    engine.set_trace_enabled(false);
 
     cxxime::OutputOptions opts;
     opts.chinese_mode = true;
     opts.chinese_punct = true;
     opts.punct_mapping = &pm;
 
-    // First press: should produce some punctuation (not rejected)
-    auto r1 = engine.process_key(make_key(0xDE), opts);  // VK_OEM_7, no shift
-    ASSERT_EQ(r1, cxxime::ProcessResult::COMMITTED);
-    auto text1 = engine.context().committed_text;
-    ASSERT_TRUE(!text1.empty()) << "First press should commit punctuation";
+    struct Case {
+        uint32_t keycode;
+        bool shift;
+        std::vector<std::string> expected;
+    };
+    const std::vector<Case> cases = {
+        {0xDE, false, {u8"‘", u8"’", u8"‘"}},
+        {0xDE, true, {u8"“", u8"”", u8"“"}},
+        {0xBD, false, {u8"—", u8"–", u8"·", u8"—"}},
+    };
+    for (const Case& item : cases) {
+        cxxime::Engine engine;
+        ASSERT_TRUE(engine.initialize(dp));
+        engine.set_trace_enabled(false);
+        for (const std::string& expected : item.expected) {
+            ASSERT_EQ(engine.process_key(make_key(item.keycode, item.shift), opts),
+                      cxxime::ProcessResult::COMMITTED);
+            ASSERT_EQ(engine.get_commit_text(), expected);
+        }
+        engine.finalize();
+    }
 
-    // Second press: pair alternation should produce something
-    auto r2 = engine.process_key(make_key(0xDE), opts);
-    ASSERT_EQ(r2, cxxime::ProcessResult::COMMITTED);
-    auto text2 = engine.context().committed_text;
-    ASSERT_TRUE(!text2.empty()) << "Second press should commit punctuation";
-
-    engine.finalize();
-    DeleteFileA(dp.c_str());
-}
-
-TEST(OutputComposer, punct_chinese_pair_double_quote) {
-    auto pm = make_punct_mapping();
-    std::string dp = punct_tmp("punct4.bin");
-    cxxime::Dict::create_test_dict(dp, {{"de", "的", 1}});
-    cxxime::Engine engine;
-    ASSERT_TRUE(engine.initialize(dp));
-    engine.set_trace_enabled(false);
-
-    cxxime::OutputOptions opts;
-    opts.chinese_mode = true;
-    opts.chinese_punct = true;
-    opts.punct_mapping = &pm;
-
-    // First press Shift+' → should produce punctuation
-    auto r1 = engine.process_key(make_key(0xDE, true), opts);  // VK_OEM_7 + shift
-    ASSERT_EQ(r1, cxxime::ProcessResult::COMMITTED);
-    auto text1 = engine.context().committed_text;
-    ASSERT_TRUE(!text1.empty()) << "First press should commit punctuation";
-
-    // Second press Shift+' → should produce punctuation
-    auto r2 = engine.process_key(make_key(0xDE, true), opts);
-    ASSERT_EQ(r2, cxxime::ProcessResult::COMMITTED);
-    auto text2 = engine.context().committed_text;
-    ASSERT_TRUE(!text2.empty()) << "Second press should commit punctuation";
-
-    engine.finalize();
-    DeleteFileA(dp.c_str());
-}
-
-TEST(OutputComposer, punct_chinese_alternatives) {
-    auto pm = make_punct_mapping();
-    std::string dp = punct_tmp("punct5.bin");
-    cxxime::Dict::create_test_dict(dp, {{"de", "的", 1}});
-    cxxime::Engine engine;
-    ASSERT_TRUE(engine.initialize(dp));
-    engine.set_trace_enabled(false);
-
-    cxxime::OutputOptions opts;
-    opts.chinese_mode = true;
-    opts.chinese_punct = true;
-    opts.punct_mapping = &pm;
-
-    // VK_OEM_MINUS '-' → alternatives: U+2014 U+2013 U+00B7
-    auto r1 = engine.process_key(make_key(0xBD), opts);
-    ASSERT_EQ(r1, cxxime::ProcessResult::COMMITTED);
-    ASSERT_TRUE(!engine.context().committed_text.empty());
-
-    auto r2 = engine.process_key(make_key(0xBD), opts);
-    ASSERT_EQ(r2, cxxime::ProcessResult::COMMITTED);
-    ASSERT_TRUE(!engine.context().committed_text.empty());
-
-    auto r3 = engine.process_key(make_key(0xBD), opts);
-    ASSERT_EQ(r3, cxxime::ProcessResult::COMMITTED);
-    ASSERT_TRUE(!engine.context().committed_text.empty());
-
-    auto r4 = engine.process_key(make_key(0xBD), opts);
-    ASSERT_EQ(r4, cxxime::ProcessResult::COMMITTED);
-    ASSERT_TRUE(!engine.context().committed_text.empty());
-
-    engine.finalize();
     DeleteFileA(dp.c_str());
 }
 

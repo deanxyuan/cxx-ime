@@ -385,7 +385,7 @@ TEST(ControlChannel, lexicon_codec_rejects_invalid_requests) {
         &request));
     ASSERT_TRUE(!cxxime::decode_lexicon_request(
         R"({"operation":"delete","kind":"pinyin","resource":"user_lexicon",)"
-        R"("text":"legacy","code":"legacy"})",
+        R"("text":"entry","code":"code"})",
         &request));
 
     request = {};

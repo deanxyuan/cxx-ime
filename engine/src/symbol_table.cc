@@ -102,12 +102,14 @@ CandidatePage SymbolTable::translate_page(const std::string& code, int page_inde
         page.page_index = page_index;
         page.page_offset = offset;
         page.page_size = category_page_size;
-        page.total_count = static_cast<int>(category_order_.size());
-        if (offset < 0 || offset >= page.total_count) {
+        const int known_count = static_cast<int>(category_order_.size());
+        page.extent = make_candidate_extent(
+            known_count, (std::min)(offset + category_page_size, known_count), false);
+        if (offset < 0 || offset >= known_count) {
             return page;
         }
 
-        const int end = (std::min)(offset + category_page_size, page.total_count);
+        const int end = (std::min)(offset + category_page_size, known_count);
         page.candidates.reserve(end - offset);
         for (int index = offset; index < end; ++index) {
             const std::string& category_code = category_order_[index];
@@ -137,12 +139,14 @@ CandidatePage SymbolTable::translate_page(const std::string& code, int page_inde
     page.page_index = page_index;
     page.page_offset = offset;
     page.page_size = page_size;
-    page.total_count = static_cast<int>(category->second.candidates.size());
-    if (offset < 0 || offset >= page.total_count) {
+    const int known_count = static_cast<int>(category->second.candidates.size());
+    page.extent = make_candidate_extent(
+        known_count, (std::min)(offset + page_size, known_count), false);
+    if (offset < 0 || offset >= known_count) {
         return page;
     }
 
-    const int end = (std::min)(offset + page_size, page.total_count);
+    const int end = (std::min)(offset + page_size, known_count);
     page.candidates.reserve(end - offset);
     for (int index = offset; index < end; ++index) {
         Candidate candidate;
@@ -164,7 +168,7 @@ TranslationResult SymbolTable::translate(const TranslationRequest& request) cons
     result.page_index = page.page_index;
     result.page_offset = page.page_offset;
     result.page_size = page.page_size;
-    result.total_count = page.total_count;
+    result.extent = page.extent;
     result.highlighted = page.highlighted;
     result.entries.reserve(page.candidates.size());
     for (auto& candidate : page.candidates) {

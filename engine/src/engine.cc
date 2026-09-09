@@ -6,6 +6,7 @@
 #include <cctype>
 #include <chrono>
 #include <cstring>
+#include <iterator>
 #include <optional>
 
 #include <windows.h>
@@ -206,8 +207,6 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
     CXXIME_LOG(L"Engine::process_key: vk=%u, is_key_up=%d, composing=%d",
                event.keycode, event.is_key_up, context_.is_composing());
     const uint64_t input_revision_before = context_.preedit_revision();
-    const int page_index_before = context_.page_index();
-    const int page_offset_before = context_.page_offset();
     context_.visible_candidate_count = (std::max)(0, visible_candidate_count);
 
     // Initialize the trace for this query when tracing is enabled.
@@ -537,12 +536,23 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
             result = ProcessResult::ACCEPTED;
         }
     }
+    const std::optional<CandidateNavigationRequest> navigation =
+        context_.take_candidate_navigation();
     const bool input_changed = context_.preedit_revision() != input_revision_before;
     if (input_changed) {
         context_.reset_pagination();
     }
-    const bool pagination_changed = context_.page_index() != page_index_before ||
-                                    context_.page_offset() != page_offset_before;
+    const bool previous_page_requested =
+        navigation && navigation->direction == CandidateNavigation::kPreviousPage;
+    const bool next_page_requested =
+        navigation && navigation->direction == CandidateNavigation::kNextPage;
+    const bool previous_page_applied =
+        !input_changed && previous_page_requested &&
+        context_.apply_previous_page(navigation->highlight_last);
+    CandidateNavigationOutcome navigation_outcome = previous_page_applied
+                                                        ? CandidateNavigationOutcome::kMovedPrevious
+                                                        : CandidateNavigationOutcome::kNone;
+    uint32_t continuation_effort = 0;
     if (trace_enabled_) {
         t1 = std::chrono::steady_clock::now();
         trace_.processor_us = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
@@ -590,7 +600,7 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
         bool append_raw = context_.composition_scheme() == CompositionScheme::kInlineAscii ||
                                 context_.commit_source() == CommitSource::kRawCodePreserveCase;
         const bool refresh_candidates =
-            !candidate_action_applied && (input_changed || pagination_changed);
+            !candidate_action_applied && (input_changed || next_page_requested);
         if (refresh_candidates) {
             // Skip translate if deadline already expired (e.g. slow ascii_composer/processor)
             if (per_query_deadline.enabled && per_query_deadline.expired()) {
@@ -598,10 +608,54 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
                     trace_.deadline_exceeded = true;
                     trace_.truncated = true;
                 }
-                context_.clear_translation();
+                if (input_changed) {
+                    context_.clear_translation();
+                } else if (next_page_requested) {
+                    navigation_outcome = CandidateNavigationOutcome::kRetryable;
+                }
             } else if (append_raw) {
                 context_.clear_translation();
                 context_.reset_pagination();
+            } else if (next_page_requested && !input_changed) {
+                const int visible_count = context_.selectable_candidate_count();
+                const int target_offset = context_.page_offset() + visible_count;
+                const CandidateExtent current_extent = context_.translation().extent;
+                const bool anchored_continuation =
+                    context_.composition_scheme() != CompositionScheme::kSymbol;
+                if (visible_count > 0 &&
+                    candidate_extent_may_continue(current_extent, target_offset)) {
+                    continuation_effort = !current_extent.complete
+                                              ? context_.begin_candidate_continuation()
+                                              : 0;
+                    bool sequence_invalidated = false;
+                    TranslationResult translated =
+                        anchored_continuation
+                            ? translate_after_visible_anchor(per_query_deadline, visible_count,
+                                                             target_offset, continuation_effort,
+                                                             &sequence_invalidated)
+                            : translate_composition(context_.composition(),
+                                                    context_.page_index() + 1, target_offset,
+                                                    per_query_deadline);
+                    if (sequence_invalidated && translated.usable()) {
+                        context_.replace_candidate_sequence(std::move(translated));
+                        navigation_outcome = CandidateNavigationOutcome::kSequenceReset;
+                    } else if (translated.usable() && !translated.entries.empty()) {
+                        if (context_.apply_next_page(std::move(translated), visible_count)) {
+                            navigation_outcome = CandidateNavigationOutcome::kMovedNext;
+                        }
+                    } else if (translated.usable()) {
+                            context_.update_current_extent(translated.extent);
+                            navigation_outcome =
+                                translated.extent.state == CandidateExtentState::kExhausted
+                                    ? CandidateNavigationOutcome::kConfirmedEnd
+                                    : CandidateNavigationOutcome::kRetryable;
+                    } else {
+                        context_.update_current_extent(translated.extent);
+                        navigation_outcome = CandidateNavigationOutcome::kRetryable;
+                    }
+                } else {
+                    navigation_outcome = CandidateNavigationOutcome::kConfirmedEnd;
+                }
             } else {
                 TranslationResult translated = translate_current_composition(per_query_deadline);
                 if (translated.usable()) {
@@ -613,10 +667,18 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
         }
         if (trace_enabled_) {
             trace_.candidate_count = context_.candidate_count();
+            trace_.candidate_known_count = context_.translation().extent.known_count;
+            trace_.candidate_extent_state =
+                static_cast<uint32_t>(context_.translation().extent.state);
+            trace_.candidate_extent_complete = context_.translation().extent.complete ? 1u : 0u;
+            trace_.navigation_outcome = navigation_outcome;
+            trace_.continuation_effort = continuation_effort;
+            trace_.page_index = context_.page_index();
         }
 
         // Auto-commit a unique 4-code Wubi candidate in Wubi or mixed mode.
-        if (refresh_candidates && !append_raw && result == ProcessResult::ACCEPTED &&
+        if ((refresh_candidates || previous_page_applied) && !append_raw &&
+            result == ProcessResult::ACCEPTED &&
             WubiInputPolicy::should_auto_commit(context_.composition_scheme(),
                                                 context_.active_input(),
                                                 context_.translation(),
@@ -859,27 +921,31 @@ TranslationResult Engine::translate_current_composition(const QueryDeadline& dea
 TranslationResult Engine::translate_composition(const CompositionState& state,
                                                 int page_index,
                                                 int page_offset,
-                                                const QueryDeadline& deadline) {
+                                                const QueryDeadline& deadline,
+                                                int candidate_limit,
+                                                uint32_t continuation_effort) {
     if (state.active().scheme == CompositionScheme::kSymbol) {
         TranslationRequest request;
         request.scheme = CompositionScheme::kSymbol;
         request.input = state.active().input.substr(1);
         request.page_index = page_index;
         request.page_offset = page_offset;
-        request.page_size = config_->page_size;
+        request.page_size = candidate_limit > 0 ? candidate_limit : config_->page_size;
         return symbol_table_ ? symbol_table_->translate(request) : TranslationResult{};
     }
 
     scratch_.reset_for_query();
     QueryBudget effective_budget =
-        make_budget(static_cast<int>(state.active().input.size()), config_->page_size);
+        make_budget(static_cast<int>(state.active().input.size()),
+            candidate_limit > 0 ? candidate_limit : config_->page_size);
+    effective_budget = scale_query_budget(effective_budget, continuation_effort);
     effective_budget.deadline = deadline;
     TranslationRequest request;
     request.scheme = state.active().scheme;
     request.input = state.active().input;
     request.page_index = page_index;
     request.page_offset = page_offset;
-    request.page_size = config_->page_size;
+    request.page_size = candidate_limit > 0 ? candidate_limit : config_->page_size;
     request.policy = translation_policy_;
     request.trace = trace_enabled_ ? &trace_ : nullptr;
     request.budget = &effective_budget;
@@ -889,6 +955,83 @@ TranslationResult Engine::translate_composition(const CompositionState& state,
         add_wubi_code_hints(state.active().input, result);
     }
     return result;
+}
+
+TranslationResult Engine::translate_after_visible_anchor(const QueryDeadline& deadline,
+                                                         int visible_count, int target_offset,
+                                                         uint32_t continuation_effort,
+                                                         bool* sequence_invalidated) {
+    if (sequence_invalidated) {
+        *sequence_invalidated = false;
+    }
+    TranslationResult unavailable;
+    unavailable.status = TranslationStatus::kFailed;
+    unavailable.extent.state = CandidateExtentState::kIndeterminate;
+    unavailable.extent.complete = false;
+    const CandidateEntry* anchor = context_.candidate_entry(visible_count - 1);
+    if (!anchor) {
+        return unavailable;
+    }
+
+    const int prefix_limit = target_offset + config_->page_size + 1;
+    TranslationResult prefix = translate_composition(context_.composition(), 0, 0, deadline,
+                                                     prefix_limit, continuation_effort);
+    if (!prefix.usable()) {
+        return unavailable;
+    }
+    const auto anchor_position = std::find_if(
+        prefix.entries.begin(), prefix.entries.end(),
+        [&](const CandidateEntry& entry) { return same_candidate_entry_identity(entry, *anchor); });
+    if (anchor_position == prefix.entries.end()) {
+        if (!prefix.extent.complete) {
+            return unavailable;
+        }
+        if (sequence_invalidated) {
+            *sequence_invalidated = true;
+        }
+        prefix.page_index = 0;
+        prefix.page_offset = 0;
+        prefix.page_size = config_->page_size;
+        if (static_cast<int>(prefix.entries.size()) > config_->page_size) {
+            prefix.entries.resize(config_->page_size);
+        }
+        const bool prefix_incomplete = !prefix.extent.complete;
+        prefix.extent = make_candidate_extent(
+            prefix.extent.known_count, static_cast<int>(prefix.entries.size()), prefix_incomplete);
+        prefix.highlighted = prefix.entries.empty() ? -1 : 0;
+        return prefix;
+    }
+
+    const int anchor_end = static_cast<int>(anchor_position - prefix.entries.begin()) + 1;
+    std::vector<CandidateEntry> remaining;
+    remaining.reserve(prefix.entries.size() - static_cast<std::size_t>(anchor_end));
+    for (auto entry = prefix.entries.begin() + anchor_end; entry != prefix.entries.end(); ++entry) {
+        if (!context_.candidate_was_published(*entry, visible_count)) {
+            remaining.push_back(std::move(*entry));
+        }
+    }
+    const int available_after_anchor = static_cast<int>(remaining.size());
+    const int next_count = (std::min)(config_->page_size, available_after_anchor);
+    TranslationResult next;
+    next.status = prefix.status;
+    next.page_index = context_.page_index() + 1;
+    next.page_offset = target_offset;
+    next.page_size = config_->page_size;
+    next.entries.assign(std::make_move_iterator(remaining.begin()),
+                        std::make_move_iterator(remaining.begin() + next_count));
+    if (!next.entries.empty()) {
+        next.highlighted = 0;
+    }
+    const int unmaterialized_known =
+        (std::max)(0, prefix.extent.known_count - static_cast<int>(prefix.entries.size()));
+    const int known_count = target_offset + available_after_anchor + unmaterialized_known;
+    const bool prefix_incomplete = !prefix.extent.complete;
+    next.extent = make_candidate_extent(known_count, target_offset + next_count, prefix_incomplete);
+    if (next.extent.state == CandidateExtentState::kIndeterminate &&
+        next.status == TranslationStatus::kSuccess) {
+        next.status = TranslationStatus::kStableDegraded;
+    }
+    return next;
 }
 
 bool Engine::finalize_selection(const CandidateEntry& entry) {

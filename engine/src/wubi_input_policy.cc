@@ -29,12 +29,15 @@ WubiFifthKeyAction WubiInputPolicy::fifth_key_action(CompositionScheme scheme,
     }
     const bool wubi_mode = scheme == CompositionScheme::kWubi;
     const bool mixed_mode = scheme == CompositionScheme::kMixed;
+    const bool multiple_candidates = result.extent.known_count > 1 ||
+                                     result.extent.state != CandidateExtentState::kExhausted;
     if (config.wubi_commit_first_on_fifth_key && (wubi_mode || mixed_mode) &&
-        result.total_count > 1 && first_candidate_is_wubi(result)) {
+        multiple_candidates && first_candidate_is_wubi(result)) {
         return WubiFifthKeyAction::kCommitFirstAndRestart;
     }
-    if (config.wubi_restart_on_fifth_after_miss && wubi_mode && result.total_count == 0 &&
-        result.entries.empty()) {
+    if (config.wubi_restart_on_fifth_after_miss && wubi_mode && result.entries.empty() &&
+        result.extent.known_count == 0 &&
+        result.extent.state == CandidateExtentState::kExhausted) {
         return WubiFifthKeyAction::kRestartAfterMiss;
     }
     return WubiFifthKeyAction::kNone;

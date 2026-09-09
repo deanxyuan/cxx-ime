@@ -56,7 +56,7 @@ int find_presentation_item(const ProcessKeyResult& result, const std::string& te
 
 } // namespace
 
-TEST(SessionSegmented, legacy_session_keeps_full_span_selection_and_zero_revision) {
+TEST(SessionSegmented, client_without_segmented_capability_uses_full_span_selection) {
     const std::string dict_path = setup_segmented_session_dict();
     {
         SessionManager manager;
@@ -274,7 +274,7 @@ TEST(SessionSegmented, dictionary_reload_invalidates_the_visible_page) {
     delete_test_dictionary_bundle(dict_path);
 }
 
-TEST(SessionSegmented, selection_aligns_before_validating_an_old_revision) {
+TEST(SessionSegmented, selection_aligns_before_validating_a_stale_revision) {
     const std::string dict_path = setup_segmented_session_dict();
     {
         SessionManager manager;
@@ -301,7 +301,7 @@ TEST(SessionSegmented, selection_aligns_before_validating_an_old_revision) {
     delete_test_dictionary_bundle(dict_path);
 }
 
-TEST(SessionSegmented, prior_status_alignment_still_rejects_an_old_revision) {
+TEST(SessionSegmented, prior_status_alignment_still_rejects_a_stale_revision) {
     const std::string dict_path = setup_segmented_session_dict();
     {
         SessionManager manager;

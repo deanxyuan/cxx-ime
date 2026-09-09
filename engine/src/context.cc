@@ -3,6 +3,7 @@
 #include <cxxime/context.h>
 
 #include <algorithm>
+#include <limits>
 #include <tuple>
 
 #include <windows.h>
@@ -192,6 +193,8 @@ void Context::reset() {
     commit_source_ = CommitSource::kRawCode;
     commit_learning_plan_ = {};
     requested_candidate_index_.reset();
+    requested_navigation_.reset();
+    continuation_effort_ = 0;
 }
 
 bool Context::commit_candidate(int index) {
@@ -336,6 +339,9 @@ void Context::update_translation(TranslationResult&& result) {
     const int highlight_count = highlight_count_after_page_change_;
     highlight_count_after_page_change_ = 0;
     translation_ = std::move(result);
+    if (translation_.extent.complete) {
+        continuation_effort_ = 0;
+    }
     const int selectable_count = selectable_candidate_count();
     const int count = candidate_count();
     if (count <= 0) {
@@ -350,6 +356,8 @@ void Context::update_translation(TranslationResult&& result) {
 
 void Context::clear_translation() {
     translation_ = {};
+    requested_navigation_.reset();
+    continuation_effort_ = 0;
 }
 
 void Context::replace_composition(CompositionState&& state, TranslationResult&& result) {
@@ -357,6 +365,8 @@ void Context::replace_composition(CompositionState&& state, TranslationResult&& 
     previous_pages_.clear();
     highlight_count_after_page_change_ = 0;
     visible_candidate_count = 0;
+    requested_navigation_.reset();
+    continuation_effort_ = 0;
     update_translation(std::move(result));
 }
 
@@ -366,6 +376,8 @@ void Context::reset_pagination() {
     visible_candidate_count = 0;
     previous_pages_.clear();
     highlight_count_after_page_change_ = 0;
+    requested_navigation_.reset();
+    continuation_effort_ = 0;
 }
 
 int Context::selectable_candidate_count() const {
@@ -376,25 +388,97 @@ int Context::selectable_candidate_count() const {
     return count;
 }
 
-void Context::move_to_next_page() {
-    const int step = selectable_candidate_count();
-    if (step <= 0 || page_offset() + step >= translation_.total_count) {
+void Context::request_next_page() {
+    if (selectable_candidate_count() <= 0) {
         return;
     }
-    previous_pages_.push_back({page_offset(), step});
-    translation_.page_offset += step;
-    ++translation_.page_index;
+    requested_navigation_ = {CandidateNavigation::kNextPage, false};
 }
 
-void Context::move_to_previous_page(bool highlight_last) {
+void Context::request_previous_page(bool highlight_last) {
     if (previous_pages_.empty()) {
         return;
     }
-    translation_.page_offset = previous_pages_.back().offset;
-    highlight_count_after_page_change_ =
-        highlight_last ? previous_pages_.back().visible_candidate_count : 0;
+    requested_navigation_ = {CandidateNavigation::kPreviousPage, highlight_last};
+}
+
+std::optional<CandidateNavigationRequest> Context::take_candidate_navigation() {
+    std::optional<CandidateNavigationRequest> request = requested_navigation_;
+    requested_navigation_.reset();
+    return request;
+}
+
+bool Context::apply_next_page(TranslationResult&& result, int visible_count) {
+    if (visible_count <= 0 || result.entries.empty() ||
+        result.page_index != translation_.page_index + 1 ||
+        result.page_offset != translation_.page_offset + visible_count) {
+        return false;
+    }
+    PageHistoryEntry history;
+    history.translation = std::move(translation_);
+    history.visible_candidate_count = visible_count;
+    history.continuation_effort = continuation_effort_;
+    previous_pages_.push_back(std::move(history));
+    update_translation(std::move(result));
+    return true;
+}
+
+bool Context::apply_previous_page(bool highlight_last) {
+    if (previous_pages_.empty()) {
+        return false;
+    }
+    PageHistoryEntry history = std::move(previous_pages_.back());
+    highlight_count_after_page_change_ = highlight_last ? history.visible_candidate_count : 0;
+    continuation_effort_ = history.continuation_effort;
     previous_pages_.pop_back();
-    --translation_.page_index;
+    update_translation(std::move(history.translation));
+    return true;
+}
+
+void Context::update_current_extent(CandidateExtent extent) {
+    const int current_end =
+        translation_.page_offset + static_cast<int>(translation_.entries.size());
+    translation_.extent.known_count =
+        extent.state == CandidateExtentState::kExhausted
+            ? (std::max)(current_end, extent.known_count)
+            : (std::max)(translation_.extent.known_count, extent.known_count);
+    translation_.extent.state = extent.state;
+    translation_.extent.complete = extent.complete;
+    if (extent.complete) {
+        continuation_effort_ = 0;
+    }
+}
+
+uint32_t Context::begin_candidate_continuation() {
+    if (continuation_effort_ != (std::numeric_limits<uint32_t>::max)()) {
+        ++continuation_effort_;
+    }
+    return continuation_effort_;
+}
+
+bool Context::candidate_was_published(const CandidateEntry& entry,
+                                      int current_visible_count) const {
+    const auto page_contains = [&](const TranslationResult& page, int visible_count) {
+        const int count =
+            (std::min)((std::max)(0, visible_count), static_cast<int>(page.entries.size()));
+        return std::any_of(page.entries.begin(), page.entries.begin() + count,
+                           [&](const CandidateEntry& published) {
+                               return same_candidate_entry_identity(published, entry);
+                           });
+    };
+    for (const PageHistoryEntry& history : previous_pages_) {
+        if (page_contains(history.translation, history.visible_candidate_count)) {
+            return true;
+        }
+    }
+    return page_contains(translation_, current_visible_count);
+}
+
+void Context::replace_candidate_sequence(TranslationResult&& result) {
+    previous_pages_.clear();
+    visible_candidate_count = 0;
+    continuation_effort_ = 0;
+    update_translation(std::move(result));
 }
 
 void Context::move_to_next_candidate() {
@@ -406,11 +490,7 @@ void Context::move_to_next_candidate() {
         ++translation_.highlighted;
         return;
     }
-    const int previous_offset = page_offset();
-    move_to_next_page();
-    if (page_offset() != previous_offset) {
-        translation_.highlighted = 0;
-    }
+    request_next_page();
 }
 
 void Context::move_to_previous_candidate() {
@@ -421,7 +501,7 @@ void Context::move_to_previous_candidate() {
         --translation_.highlighted;
         return;
     }
-    move_to_previous_page(true);
+    request_previous_page(true);
 }
 
 } // namespace cxxime

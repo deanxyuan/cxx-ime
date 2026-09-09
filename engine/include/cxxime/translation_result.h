@@ -3,6 +3,7 @@
 #ifndef CXXIME_TRANSLATION_RESULT_H_
 #define CXXIME_TRANSLATION_RESULT_H_
 
+#include <algorithm>
 #include <cstddef>
 #include <string>
 #include <utility>
@@ -21,7 +22,7 @@ struct QueryTrace;
 
 enum class TranslationStatus {
     kSuccess,
-    // A complete-span baseline exists, but lower-priority work exhausted its budget.
+    // A stable candidate prefix exists, but the requested extent could not be completed.
     kStableDegraded,
     kFailed,
 };
@@ -44,12 +45,17 @@ struct CandidateEntry {
     CandidateSelection selection;
 };
 
+inline bool same_candidate_entry_identity(const CandidateEntry& left, const CandidateEntry& right) {
+    return left.candidate.text == right.candidate.text &&
+           same_selection_action(left.selection, right.selection);
+}
+
 struct TranslationResult {
     TranslationStatus status = TranslationStatus::kSuccess;
     int page_index = 0;
     int page_offset = 0;
     int page_size = 9;
-    int total_count = 0;
+    CandidateExtent extent;
     int highlighted = -1;
     std::vector<CandidateEntry> entries;
 
@@ -60,7 +66,10 @@ struct TranslationResult {
         page.page_index = page_index;
         page.page_offset = page_offset;
         page.page_size = page_size;
-        page.total_count = total_count;
+        page.extent = extent;
+        page.extent.known_count = (std::max)(
+            page.extent.known_count,
+            page.page_offset + static_cast<int>(entries.size()));
         page.highlighted = highlighted;
         page.candidates.reserve(entries.size());
         for (const auto& entry : entries) {
@@ -76,7 +85,10 @@ struct TranslationResult {
         page.page_index = page_index;
         page.page_offset = page_offset;
         page.page_size = page_size;
-        page.total_count = total_count;
+        page.extent = extent;
+        page.extent.known_count = (std::max)(
+            page.extent.known_count,
+            page.page_offset + static_cast<int>(entries.size()));
         page.highlighted = highlighted;
         page.items.reserve(entries.size());
         for (const auto& entry : entries) {
@@ -120,7 +132,10 @@ inline TranslationResult make_translation_result(CandidatePage page,
     result.page_index = page.page_index;
     result.page_offset = page.page_offset;
     result.page_size = page.page_size;
-    result.total_count = page.total_count;
+    result.extent = page.extent;
+    result.extent.known_count = (std::max)(
+        result.extent.known_count,
+        result.page_offset + static_cast<int>(page.candidates.size()));
     result.highlighted = page.highlighted;
     result.entries.reserve(page.candidates.size());
     for (auto& candidate : page.candidates) {

@@ -37,7 +37,7 @@ TEST(CandidatePresentation, external_ready_expects_window) {
     ASSERT_TRUE(presentation.should_show_external_window(true));
 }
 
-TEST(CandidatePresentation, legacy_content_update_does_not_focus_nonempty_preedit) {
+TEST(CandidatePresentation, content_update_without_focus_keeps_preedit_unfocused) {
     cxxime_tsf::CandidatePresentation presentation;
     presentation.update_content(page_with_candidate("candidate"), "ni", 2, 1, 1);
 
@@ -53,7 +53,7 @@ TEST(CandidatePresentation, host_ownership_never_expects_external_window) {
     ASSERT_TRUE(!presentation.external_window_expected());
 }
 
-TEST(CandidatePresentation, local_visible_count_controls_selection_and_pagination) {
+TEST(CandidatePresentation, local_visible_count_resets_when_content_or_presenter_changes) {
     cxxime_tsf::CandidatePresentation presentation;
     presentation.update_content(page_with_candidates(2), "", 0, 1, 1);
     presentation.set_ownership(cxxime_tsf::CandidateOwnership::kExternal);
@@ -61,29 +61,13 @@ TEST(CandidatePresentation, local_visible_count_controls_selection_and_paginatio
     presentation.set_local_visible_candidate_count(2);
 
     ASSERT_EQ(presentation.local_visible_candidate_count(), 2u);
-}
-
-TEST(CandidatePresentation, content_update_invalidates_local_visible_count) {
-    cxxime_tsf::CandidatePresentation presentation;
-    presentation.update_content(page_with_candidates(2), "", 0, 1, 1);
-    presentation.set_ownership(cxxime_tsf::CandidateOwnership::kExternal);
-    presentation.set_presenter(cxxime_tsf::CandidatePresenter::kLocal);
-    presentation.set_local_visible_candidate_count(2);
-
     presentation.update_content(page_with_candidates(3), "", 0, 1, 1);
     presentation.set_ownership(cxxime_tsf::CandidateOwnership::kExternal);
-
     ASSERT_EQ(presentation.local_visible_candidate_count(), 0u);
-}
 
-TEST(CandidatePresentation, server_presenter_invalidates_local_visible_count) {
-    cxxime_tsf::CandidatePresentation presentation;
-    presentation.update_content(page_with_candidates(3), "", 0, 1, 1);
-    presentation.set_ownership(cxxime_tsf::CandidateOwnership::kExternal);
     presentation.set_presenter(cxxime_tsf::CandidatePresenter::kLocal);
     presentation.set_local_visible_candidate_count(2);
     presentation.set_presenter(cxxime_tsf::CandidatePresenter::kServer);
-
     ASSERT_EQ(presentation.local_visible_candidate_count(), 0u);
 }
 

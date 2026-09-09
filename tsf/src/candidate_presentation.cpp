@@ -21,7 +21,10 @@ cxxime::CandidatePresentationPage project_candidate_page(const cxxime::Candidate
     presentation.page_index = page.page_index;
     presentation.page_offset = page.page_offset;
     presentation.page_size = page.page_size;
-    presentation.total_count = page.total_count;
+    presentation.extent = page.extent;
+    presentation.extent.known_count = (std::max)(
+        presentation.extent.known_count,
+        presentation.page_offset + static_cast<int>(page.candidates.size()));
     presentation.highlighted = page.highlighted;
     presentation.items.reserve(page.candidates.size());
     for (const cxxime::Candidate& candidate : page.candidates) {

@@ -368,7 +368,8 @@ void EditorApp::update_cand_preview() {
         candidate.text = word;
         page.candidates.push_back(std::move(candidate));
     }
-    page.total_count = static_cast<int>(page.candidates.size()) * 2;
+    page.extent.known_count = static_cast<int>(page.candidates.size()) * 2;
+    page.extent.state = CandidateExtentState::kHasMore;
 
     candPreviewWindow_.update(page);
     if (should_position) {

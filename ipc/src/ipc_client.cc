@@ -7,7 +7,9 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstddef>
 #include <cstring>
+#include <limits>
 #include <vector>
 
 #include <windows.h>
@@ -172,6 +174,29 @@ bool IpcClient::send_request(const IPCRequest& request, IPCResponse& response) {
             const size_t response_size =
                 (std::min)(static_cast<size_t>(response_header.payload_size), sizeof(response));
             memcpy(&response, response_wire.data() + response_header.header_size, response_size);
+            constexpr size_t kCandidateExtentPayloadSize =
+                offsetof(IPCResponse, candidate_extent_complete) + sizeof(uint32_t);
+            const uint64_t returned_end = static_cast<uint64_t>(response.candidate_offset) +
+                                          response.candidate_count;
+            if (returned_end > (std::numeric_limits<uint32_t>::max)()) {
+                disconnect();
+                continue;
+            }
+            if (response_header.payload_size < kCandidateExtentPayloadSize) {
+                response.candidate_known_count = (std::max)(
+                    response.candidate_total, static_cast<uint32_t>(returned_end));
+                response.candidate_extent_state = response.candidate_total > returned_end
+                        ? CandidateExtentState::kHasMore
+                        : CandidateExtentState::kExhausted;
+                response.candidate_extent_complete = 1;
+            } else if ((response.candidate_extent_state != CandidateExtentState::kExhausted &&
+                        response.candidate_extent_state != CandidateExtentState::kHasMore &&
+                        response.candidate_extent_state != CandidateExtentState::kIndeterminate) ||
+                       response.candidate_extent_complete > 1 ||
+                       response.candidate_known_count < returned_end) {
+                disconnect();
+                continue;
+            }
         } else {
             disconnect();
             continue;

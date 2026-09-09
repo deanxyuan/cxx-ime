@@ -220,7 +220,13 @@ void TextService::_publish_ui_presentation() {
     snapshot.candidate_page.count = static_cast<std::uint32_t>(
         (std::min)(page.items.size(), static_cast<std::size_t>(cxxime::kCandidateCapacity)));
     snapshot.candidate_page.offset = static_cast<std::uint32_t>((std::max)(0, page.page_offset));
-    snapshot.candidate_page.total = static_cast<std::uint32_t>((std::max)(0, page.total_count));
+    const int returned_end = page.page_offset + static_cast<int>(snapshot.candidate_page.count);
+    snapshot.candidate_known_count = static_cast<std::uint32_t>(
+        (std::max)(page.extent.known_count, returned_end));
+    snapshot.candidate_extent_state = page.extent.state;
+    snapshot.candidate_extent_complete = page.extent.complete ? 1u : 0u;
+    snapshot.candidate_page.total = static_cast<std::uint32_t>((std::max)(
+        0, cxxime::legacy_candidate_total(page.extent, returned_end)));
     snapshot.candidate_page.highlighted =
         snapshot.candidate_page.count == 0
             ? 0

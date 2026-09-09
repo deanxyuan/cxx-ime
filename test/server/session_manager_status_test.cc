@@ -243,7 +243,7 @@ static std::shared_ptr<const cxxime::Config> setup_capslock_config() {
 // Toggle Tests
 // ============================================================
 
-TEST(SessionStatus, toggle_chinese) {
+TEST(SessionStatus, toggles_update_flags_and_revision) {
     SessionManager mgr;
     mgr.initialize(setup_test_dict());
     uint32_t id = mgr.create_session();
@@ -262,6 +262,16 @@ TEST(SessionStatus, toggle_chinese) {
     auto [st2, s2] = mgr.toggle_chinese(id);
     ASSERT_EQ(s2.chinese_mode(), true);
     ASSERT_EQ(s2.revision, (uint64_t)2);
+
+    auto [shape_status, shape] = mgr.toggle_shape(id);
+    ASSERT_EQ(shape_status, cxxime::IPCStatus::OK);
+    ASSERT_TRUE(shape.full_shape());
+    ASSERT_EQ(shape.revision, (uint64_t)3);
+
+    auto [punct_status, punct] = mgr.toggle_punct(id);
+    ASSERT_EQ(punct_status, cxxime::IPCStatus::OK);
+    ASSERT_TRUE(!punct.chinese_punct());
+    ASSERT_EQ(punct.revision, (uint64_t)4);
 }
 
 TEST(SessionStatus, set_chinese_mode_is_idempotent) {
@@ -292,44 +302,6 @@ TEST(SessionStatus, set_chinese_mode_is_idempotent) {
     ASSERT_EQ(third.status, cxxime::IPCStatus::OK);
     ASSERT_EQ(third.ime_status.chinese_mode(), true);
     ASSERT_EQ(third.ime_status.revision, first.ime_status.revision + 1);
-}
-
-TEST(SessionStatus, toggle_shape) {
-    SessionManager mgr;
-    mgr.initialize(setup_test_dict());
-    uint32_t id = mgr.create_session();
-    ASSERT_GT(id, (uint32_t)0);
-
-    auto [st0, s0] = mgr.get_ime_status(id);
-    ASSERT_EQ(s0.full_shape(), false);
-
-    auto [st1, s1] = mgr.toggle_shape(id);
-    ASSERT_EQ(st1, cxxime::IPCStatus::OK);
-    ASSERT_EQ(s1.full_shape(), true);
-    ASSERT_EQ(s1.revision, (uint64_t)1);
-
-    auto [st2, s2] = mgr.toggle_shape(id);
-    ASSERT_EQ(s2.full_shape(), false);
-    ASSERT_EQ(s2.revision, (uint64_t)2);
-}
-
-TEST(SessionStatus, toggle_punct) {
-    SessionManager mgr;
-    mgr.initialize(setup_test_dict());
-    uint32_t id = mgr.create_session();
-    ASSERT_GT(id, (uint32_t)0);
-
-    auto [st0, s0] = mgr.get_ime_status(id);
-    ASSERT_EQ(s0.chinese_punct(), true);
-
-    auto [st1, s1] = mgr.toggle_punct(id);
-    ASSERT_EQ(st1, cxxime::IPCStatus::OK);
-    ASSERT_EQ(s1.chinese_punct(), false);
-    ASSERT_EQ(s1.revision, (uint64_t)1);
-
-    auto [st2, s2] = mgr.toggle_punct(id);
-    ASSERT_EQ(s2.chinese_punct(), true);
-    ASSERT_EQ(s2.revision, (uint64_t)2);
 }
 
 TEST(SessionStatus, switch_input_mode_sets_target) {
@@ -589,39 +561,15 @@ TEST(SessionStatus, get_ime_status) {
 // Invalid Session Tests
 // ============================================================
 
-TEST(SessionStatus, invalid_session_toggle_chinese) {
+TEST(SessionStatus, status_commands_reject_an_unknown_session) {
     SessionManager mgr;
     mgr.initialize(setup_test_dict());
-    auto [st, s] = mgr.toggle_chinese(999);
-    ASSERT_EQ(st, cxxime::IPCStatus::ERR_INVALID_SESSION);
-}
-
-TEST(SessionStatus, invalid_session_toggle_shape) {
-    SessionManager mgr;
-    mgr.initialize(setup_test_dict());
-    auto [st, s] = mgr.toggle_shape(999);
-    ASSERT_EQ(st, cxxime::IPCStatus::ERR_INVALID_SESSION);
-}
-
-TEST(SessionStatus, invalid_session_toggle_punct) {
-    SessionManager mgr;
-    mgr.initialize(setup_test_dict());
-    auto [st, s] = mgr.toggle_punct(999);
-    ASSERT_EQ(st, cxxime::IPCStatus::ERR_INVALID_SESSION);
-}
-
-TEST(SessionStatus, invalid_session_switch_input_mode) {
-    SessionManager mgr;
-    mgr.initialize(setup_test_dict());
-    auto [st, s] = mgr.switch_input_mode(999, cxxime::InputMode::PINYIN);
-    ASSERT_EQ(st, cxxime::IPCStatus::ERR_INVALID_SESSION);
-}
-
-TEST(SessionStatus, invalid_session_get_ime_status) {
-    SessionManager mgr;
-    mgr.initialize(setup_test_dict());
-    auto [st, s] = mgr.get_ime_status(999);
-    ASSERT_EQ(st, cxxime::IPCStatus::ERR_INVALID_SESSION);
+    ASSERT_EQ(mgr.toggle_chinese(999).first, cxxime::IPCStatus::ERR_INVALID_SESSION);
+    ASSERT_EQ(mgr.toggle_shape(999).first, cxxime::IPCStatus::ERR_INVALID_SESSION);
+    ASSERT_EQ(mgr.toggle_punct(999).first, cxxime::IPCStatus::ERR_INVALID_SESSION);
+    ASSERT_EQ(mgr.switch_input_mode(999, cxxime::InputMode::PINYIN).first,
+              cxxime::IPCStatus::ERR_INVALID_SESSION);
+    ASSERT_EQ(mgr.get_ime_status(999).first, cxxime::IPCStatus::ERR_INVALID_SESSION);
 }
 
 // ============================================================

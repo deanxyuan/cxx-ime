@@ -408,7 +408,9 @@ CandidatePage PinyinTranslator::translate_page(const std::string& pinyin, int pa
             (!sentence_composition_enabled_ || (int)fast.candidates.size() >= need)) {
             // Enough candidates from cache for this page
             auto& sorted = fast.candidates;
-            page.total_count = (int)sorted.size();
+            const int known_count = static_cast<int>(sorted.size());
+            const int returned_end = (std::min)(offset + fetch_limit, known_count);
+            page.extent = make_candidate_extent(known_count, returned_end, false);
             if (offset > 0 && offset < (int)sorted.size())
                 sorted.erase(sorted.begin(), sorted.begin() + offset);
             if ((int)sorted.size() > fetch_limit) {
@@ -538,6 +540,8 @@ CandidatePage PinyinTranslator::translate_page(const std::string& pinyin, int pa
             trace->deadline_exceeded = true;
             trace->truncated = true;
         }
+        page.extent.state = CandidateExtentState::kIndeterminate;
+        page.extent.complete = false;
         return page;
     }
 
@@ -735,8 +739,17 @@ CandidatePage PinyinTranslator::translate_page(const std::string& pinyin, int pa
     }
     dict_->apply_manual_candidate_order(pinyin, CandidateSource::kPinyin, sorted, need);
 
-    // total_count before pagination (includes extra one for next-page detection)
-    page.total_count = (int)sorted.size();
+    const int known_count = static_cast<int>(sorted.size());
+    const int returned_end = (std::min)(offset + fetch_limit, known_count);
+    const bool collector_capacity_incomplete = budget &&
+        budget->max_results_before_merge > 0 &&
+        budget->max_results_before_merge < static_cast<uint32_t>(need) &&
+        (!trace || trace->topk_truncated);
+    const bool incomplete = deadline_hit ||
+        (trace && (trace->deadline_exceeded || trace->scan_budget_truncated ||
+                   trace->composition_truncated)) ||
+        collector_capacity_incomplete;
+    page.extent = make_candidate_extent(known_count, returned_end, incomplete);
 
     // Apply pagination
     if (offset >= (int)sorted.size()) {
@@ -753,7 +766,7 @@ CandidatePage PinyinTranslator::translate_page(const std::string& pinyin, int pa
     if (!page.candidates.empty())
         page.highlighted = 0;
 
-    if (!require_runtime_paths && !deadline_hit && !(trace && trace->deadline_exceeded))
+    if (!require_runtime_paths && page.extent.complete)
         store_query_cache(pinyin, page_index, offset, page_size, cache_versions, page);
 
     return page;
@@ -775,7 +788,8 @@ TranslationResult PinyinTranslator::translate(const TranslationRequest& request)
         const bool incomplete = (request.trace &&
                                 (request.trace->deadline_exceeded ||
                                  request.trace->scan_budget_truncated ||
-                                 request.trace->composition_truncated));
+                                 request.trace->composition_truncated)) ||
+                                !result.extent.complete;
         if (incomplete) {
             result.status = result.entries.empty() ? TranslationStatus::kFailed
                                                    : TranslationStatus::kStableDegraded;
@@ -790,11 +804,15 @@ TranslationResult PinyinTranslator::translate(const TranslationRequest& request)
     }
     effective_request.trace->deadline_exceeded = false;
     effective_request.trace->scan_budget_truncated = false;
+    effective_request.trace->topk_truncated = false;
     effective_request.trace->composition_truncated = false;
 
+    // Only the leading full-span group must be materialized before partial candidates. Fetching
+    // enough trailing full-span entries for every possible partial up front spends the latency
+    // budget on candidates ranked after the partial group.
     const int fetch_count = (std::max)(
         request.page_offset + request.page_size + 1,
-        static_cast<int>(kLeadingFullSpanCandidateCount + kMaxSegmentedPartialCandidateCount + 1));
+        static_cast<int>(kLeadingFullSpanCandidateCount + 1));
     const bool require_runtime_paths =
         syllabifier_ && syllabifier_->has_fuzzy_path(request.input);
     CandidatePage full = translate_page(request.input, 0, fetch_count, effective_request.trace,
@@ -807,7 +825,8 @@ TranslationResult PinyinTranslator::translate(const TranslationRequest& request)
     }
     const bool full_query_incomplete = effective_request.trace->deadline_exceeded ||
                                        effective_request.trace->scan_budget_truncated ||
-                                       effective_request.trace->composition_truncated;
+                                       effective_request.trace->composition_truncated ||
+                                       !full.extent.complete;
     if (full_query_incomplete) {
         result.status = merged.empty() ? TranslationStatus::kFailed
                                        : TranslationStatus::kStableDegraded;
@@ -862,10 +881,14 @@ TranslationResult PinyinTranslator::translate(const TranslationRequest& request)
     result.page_index = request.page_index;
     result.page_offset = request.page_offset;
     result.page_size = request.page_size;
-    result.total_count = full.total_count + static_cast<int>(added_partial_count);
     const int available = static_cast<int>(merged.size());
     const int begin = (std::min)(request.page_offset, available);
     const int end = (std::min)(begin + request.page_size, available);
+    const int known_count = (std::max)(
+        available, full.extent.known_count + static_cast<int>(added_partial_count));
+    const bool incomplete = result.status != TranslationStatus::kSuccess ||
+                            !full.extent.complete;
+    result.extent = make_candidate_extent(known_count, end, incomplete);
     result.entries.assign(std::make_move_iterator(merged.begin() + begin),
                           std::make_move_iterator(merged.begin() + end));
     if (!result.entries.empty()) {

@@ -3,8 +3,9 @@
 #ifndef CXXIME_QUERY_BUDGET_H_
 #define CXXIME_QUERY_BUDGET_H_
 
-#include <cstdint>
 #include <chrono>
+#include <cstdint>
+#include <limits>
 
 namespace cxxime {
 
@@ -59,6 +60,25 @@ inline QueryBudget make_budget(int input_len, int page_size) {
     else                     { b.max_exact_scan = 1024; b.max_prefix_scan = 4096; b.max_results_before_merge = 96; }
     b.topk = (uint32_t)page_size;
     return b;
+}
+
+inline uint32_t scale_query_limit(uint32_t limit, uint32_t effort) {
+    if (limit == 0) {
+        return 0;
+    }
+    const uint32_t maximum = (std::numeric_limits<uint32_t>::max)();
+    while (effort-- > 0 && limit < maximum) {
+        limit = limit > maximum / 2 ? maximum : limit * 2;
+    }
+    return limit;
+}
+
+inline QueryBudget scale_query_budget(QueryBudget budget, uint32_t effort) {
+    budget.max_exact_scan = scale_query_limit(budget.max_exact_scan, effort);
+    budget.max_prefix_scan = scale_query_limit(budget.max_prefix_scan, effort);
+    budget.max_results_before_merge = scale_query_limit(budget.max_results_before_merge, effort);
+    budget.max_user_scan = scale_query_limit(budget.max_user_scan, effort);
+    return budget;
 }
 
 } // namespace cxxime

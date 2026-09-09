@@ -179,7 +179,7 @@ TEST(SessionIntegration, inline_ascii_binding_restores_chinese_mode_after_deleti
         ASSERT_TRUE(candidates.composing);
         ASSERT_TRUE(!candidates.presentation.items.empty())
             << "delete=" << use_delete << " preedit=" << candidates.preedit
-            << " total=" << candidates.presentation.total_count;
+            << " known=" << candidates.presentation.extent.known_count;
         ASSERT_TRUE(candidates.ime_status.chinese_mode());
     }
 }
@@ -193,8 +193,8 @@ static bool wait_for_count(std::atomic<int>& value, int expected, int timeout_ms
     return true;
 }
 
-TEST(SessionIntegration, initialize_rejects_legacy_wubi_index_role) {
-    const std::string dict_path = make_temp_path("test_legacy_wubi_role_dict.bin");
+TEST(SessionIntegration, initialize_rejects_unknown_wubi_index_role) {
+    const std::string dict_path = make_temp_path("test_unknown_wubi_role_dict.bin");
     create_test_dictionary_bundle(dict_path, {{"ni", "你", 100}});
     write_manifest_for_files(dict_path, {
         {"pinyin_dict", dict_path},

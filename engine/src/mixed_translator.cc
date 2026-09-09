@@ -219,7 +219,8 @@ TranslationResult MixedTranslator::translate(const TranslationRequest& request) 
         const bool incomplete = (request.trace &&
                                 (request.trace->deadline_exceeded ||
                                  request.trace->scan_budget_truncated ||
-                                 request.trace->composition_truncated));
+                                 request.trace->composition_truncated)) ||
+                                !result.extent.complete;
         if (incomplete) {
             result.status = result.entries.empty() ? TranslationStatus::kFailed
                                                    : TranslationStatus::kStableDegraded;
@@ -234,13 +235,12 @@ TranslationResult MixedTranslator::translate(const TranslationRequest& request) 
     }
     effective_request.trace->deadline_exceeded = false;
     effective_request.trace->scan_budget_truncated = false;
+    effective_request.trace->topk_truncated = false;
     effective_request.trace->composition_truncated = false;
 
-    const int need = (std::max)(
-        request.page_offset + request.page_size * 2,
-        static_cast<int>(kLeadingFullSpanCandidateCount +
-                         kMaxSegmentedPartialCandidateCount) +
-            request.page_size * 2);
+    // Each source only needs enough materialized entries to fill the requested mixed prefix.
+    // Pinyin owns its full/partial ordering and extends that sequence on later pages.
+    const int need = request.page_offset + request.page_size * 2 + 1;
     TranslationRequest source_request = effective_request;
     source_request.page_index = 0;
     source_request.page_offset = 0;
@@ -287,9 +287,13 @@ TranslationResult MixedTranslator::translate(const TranslationRequest& request) 
     result.page_index = request.page_index;
     result.page_offset = request.page_offset;
     result.page_size = request.page_size;
-    result.total_count = static_cast<int>(merged.size());
-    const int begin = (std::min)(request.page_offset, result.total_count);
-    const int end = (std::min)(begin + request.page_size, result.total_count);
+    const int known_count = static_cast<int>(merged.size());
+    const int begin = (std::min)(request.page_offset, known_count);
+    const int end = (std::min)(begin + request.page_size, known_count);
+    const bool source_incomplete =
+        !pinyin.extent.complete || !wubi.extent.complete ||
+        result.status != TranslationStatus::kSuccess;
+    result.extent = make_candidate_extent(known_count, end, source_incomplete);
     result.entries.assign(std::make_move_iterator(merged.begin() + begin),
                           std::make_move_iterator(merged.begin() + end));
     if (!result.entries.empty()) {
@@ -431,11 +435,15 @@ CandidatePage MixedTranslator::translate_page(const std::string& input, int page
     result.page_index = page_index;
     result.page_offset = offset;
     result.page_size = page_size;
-    result.total_count = static_cast<int>(merged.size());
-    if (offset >= result.total_count) {
+    const int known_count = static_cast<int>(merged.size());
+    const int returned_end = (std::min)(offset + page_size, known_count);
+    const bool source_incomplete =
+        !pinyin_page.extent.complete || !wubi_page.extent.complete;
+    result.extent = make_candidate_extent(known_count, returned_end, source_incomplete);
+    if (offset >= known_count) {
         return result;
     }
-    const int end = (std::min)(offset + page_size, result.total_count);
+    const int end = (std::min)(offset + page_size, known_count);
     result.candidates.assign(merged.begin() + offset, merged.begin() + end);
     if (!result.candidates.empty()) {
         result.highlighted = 0;

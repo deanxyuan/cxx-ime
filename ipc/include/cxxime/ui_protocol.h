@@ -99,6 +99,9 @@ struct UiPresentationSnapshot {
     std::uint32_t focused_preedit_start_bytes = 0;
     std::uint32_t focused_preedit_end_bytes = 0;
     std::uint32_t preedit_presentation_flags = 0;
+    std::uint32_t candidate_known_count = 0;
+    CandidateExtentState candidate_extent_state = CandidateExtentState::kExhausted;
+    std::uint32_t candidate_extent_complete = 1;
 };
 
 enum class UiCommandType : std::uint32_t {
@@ -172,6 +175,15 @@ static_assert(offsetof(UiPresentationSnapshot, focused_preedit_end_bytes) ==
 static_assert(offsetof(UiPresentationSnapshot, preedit_presentation_flags) ==
                   UI_SNAPSHOT_BASELINE_SIZE + 20,
               "UiPresentationSnapshot preedit presentation flags extension moved");
+static_assert(offsetof(UiPresentationSnapshot, candidate_known_count) ==
+                  UI_SNAPSHOT_BASELINE_SIZE + 24,
+              "UiPresentationSnapshot candidate known count extension moved");
+static_assert(offsetof(UiPresentationSnapshot, candidate_extent_state) ==
+                  UI_SNAPSHOT_BASELINE_SIZE + 28,
+              "UiPresentationSnapshot candidate extent extension moved");
+static_assert(offsetof(UiPresentationSnapshot, candidate_extent_complete) ==
+                  UI_SNAPSHOT_BASELINE_SIZE + 32,
+              "UiPresentationSnapshot candidate extent completeness extension moved");
 static_assert(sizeof(UiPresentationSnapshot) >= UI_SNAPSHOT_BASELINE_SIZE,
               "UiPresentationSnapshot cannot shrink below the 0.4.0 baseline");
 static_assert(alignof(UiCommand) == 8, "UiCommand alignment changed");

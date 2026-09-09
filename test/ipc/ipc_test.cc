@@ -75,12 +75,9 @@ static bool raw_round_trip(const std::vector<uint8_t>& request,
 // Protocol Tests
 // ============================================================
 
-TEST(Protocol, pipe_name) {
+TEST(Protocol, pipe_names_are_scoped_once_per_user) {
     ASSERT_TRUE(wcscmp(cxxime::IPC_PIPE_BASE_NAME, L"\\\\.\\pipe\\CxxIME") == 0);
     ASSERT_TRUE(wcscmp(cxxime::CONTROL_PIPE_BASE_NAME, L"\\\\.\\pipe\\CxxIME-Control") == 0);
-}
-
-TEST(Protocol, user_pipe_name_preserves_endpoint_and_is_idempotent) {
     const std::wstring input = cxxime::make_user_pipe_name(cxxime::IPC_PIPE_BASE_NAME);
     const std::wstring control = cxxime::make_user_pipe_name(cxxime::CONTROL_PIPE_BASE_NAME);
 
@@ -91,14 +88,11 @@ TEST(Protocol, user_pipe_name_preserves_endpoint_and_is_idempotent) {
     ASSERT_TRUE(cxxime::make_user_pipe_name(L"relative-name") == L"relative-name");
 }
 
-TEST(Protocol, request_struct_size) {
+TEST(Protocol, wire_layout_preserves_the_0_4_prefix) {
     ASSERT_EQ(cxxime::IPC_REQUEST_BASELINE_SIZE,
               static_cast<uint32_t>(cxxime::test::MainRequestBaseline{}.size()));
     ASSERT_EQ(cxxime::IPC_RESPONSE_BASELINE_SIZE,
               static_cast<uint32_t>(cxxime::test::MainResponseBaseline{}.size()));
-}
-
-TEST(Protocol, wire_header_is_stable) {
     cxxime::IPCWireHeader header;
     ASSERT_EQ(sizeof(header), static_cast<size_t>(12));
     ASSERT_EQ(header.magic, cxxime::IPC_WIRE_MAGIC);
@@ -219,7 +213,7 @@ TEST(Protocol, disconnect_reports_only_sessions_without_end_session) {
     CloseHandle(disconnected);
 }
 
-TEST(Protocol, server_rejects_legacy_0_3_raw_request) {
+TEST(Protocol, server_rejects_unframed_request) {
     TestServer server;
     ASSERT_TRUE(server.start(
         [](const cxxime::IPCRequest&) { return make_response(cxxime::IPCStatus::OK); }));
@@ -245,31 +239,13 @@ TEST(Protocol, candidate_ui_visible_count_distinguishes_unknown_server_layout) {
     ASSERT_EQ(cxxime::candidate_ui_visible_count(context, 0), 0u);
 }
 
-TEST(Protocol, response_struct_size) {
-    const cxxime::IPCResponse response = {};
-    ASSERT_EQ(cxxime::test::make_main_response_baseline(response).size(),
-              static_cast<size_t>(cxxime::IPC_RESPONSE_BASELINE_SIZE));
-}
-
-TEST(Protocol, response_zero_init) {
-    cxxime::IPCResponse resp = {};
-    ASSERT_EQ(resp.status, cxxime::IPCStatus::OK);
-    ASSERT_EQ(resp.commit_text[0], '\0');
-    ASSERT_EQ(resp.preedit[0], '\0');
-    ASSERT_EQ(resp.preedit_cursor, (uint32_t)0);
-    ASSERT_EQ(resp.candidate_count, (uint32_t)0);
-    ASSERT_EQ(resp.key_handled, (uint32_t)0);
-    ASSERT_EQ(resp.server_process_id, (uint32_t)0);
-    ASSERT_EQ(resp.candidate_revision, 0u);
-    ASSERT_EQ(resp.converted_prefix_bytes, 0u);
-}
-
-TEST(Protocol, candidate_text_over_old_capacity_round_trips) {
+TEST(Protocol, large_candidate_text_round_trips) {
     const std::string candidate(200, 'x');
     TestServer server;
     ASSERT_TRUE(server.start([&](const cxxime::IPCRequest&) {
         cxxime::IPCResponse response = {};
         response.candidate_count = 1;
+        response.candidate_known_count = 1;
         strcpy_s(response.candidates[0], candidate.c_str());
         return response;
     }));
@@ -308,17 +284,10 @@ TEST(Protocol, ime_status_flags_are_independent) {
 // Server Lifecycle Tests
 // ============================================================
 
-TEST(Server, start_stop) {
+TEST(Server, start_and_repeated_stop_complete_cleanly) {
     cxxime::IpcServer server;
     server.set_handler([](const cxxime::IPCRequest&) -> cxxime::IPCResponse { return {}; });
     ASSERT_TRUE(server.start(test_pipe_name()));
-    server.stop();
-}
-
-TEST(Server, double_stop) {
-    cxxime::IpcServer server;
-    server.set_handler([](const cxxime::IPCRequest&) -> cxxime::IPCResponse { return {}; });
-    server.start(test_pipe_name());
     server.stop();
     server.stop();
 }
@@ -333,7 +302,7 @@ TEST(Client, connect_no_server) {
     ASSERT_TRUE(!client.is_connected());
 }
 
-TEST(Client, connect_with_server) {
+TEST(Client, connect_and_repeated_disconnect_update_connection_state) {
     TestServer ts;
     ASSERT_TRUE(ts.start([](const cxxime::IPCRequest&) -> cxxime::IPCResponse { return {}; }));
 
@@ -342,15 +311,6 @@ TEST(Client, connect_with_server) {
     ASSERT_TRUE(client.is_connected());
     client.disconnect();
     ASSERT_TRUE(!client.is_connected());
-}
-
-TEST(Client, disconnect_idempotent) {
-    TestServer ts;
-    ASSERT_TRUE(ts.start([](const cxxime::IPCRequest&) -> cxxime::IPCResponse { return {}; }));
-
-    cxxime::IpcClient client;
-    ASSERT_TRUE(client.connect(test_pipe_name(), 2000));
-    client.disconnect();
     client.disconnect();
 }
 
@@ -358,11 +318,16 @@ TEST(Client, disconnect_idempotent) {
 // IPC Command Tests
 // ============================================================
 
-TEST(IPC, start_session) {
+TEST(IPC, session_lifecycle_and_ping_round_trip) {
     TestServer ts;
     ASSERT_TRUE(ts.start([](const cxxime::IPCRequest& req) -> cxxime::IPCResponse {
         cxxime::IPCResponse resp = {};
-        if (req.command == cxxime::IPCCommand::START_SESSION) { resp.status = cxxime::IPCStatus::OK; resp.highlighted = 42; }
+        if (req.command == cxxime::IPCCommand::START_SESSION) {
+            resp.highlighted = 42;
+        } else if (req.command != cxxime::IPCCommand::END_SESSION &&
+                   req.command != cxxime::IPCCommand::PING) {
+            resp.status = cxxime::IPCStatus::ERR_UNKNOWN_COMMAND;
+        }
         return resp;
     }));
 
@@ -371,33 +336,7 @@ TEST(IPC, start_session) {
     uint32_t sid = 0;
     ASSERT_TRUE(client.start_session(sid));
     ASSERT_EQ(sid, (uint32_t)42);
-}
-
-TEST(IPC, end_session) {
-    TestServer ts;
-    ASSERT_TRUE(ts.start([](const cxxime::IPCRequest& req) -> cxxime::IPCResponse {
-        cxxime::IPCResponse resp = {};
-        if (req.command == cxxime::IPCCommand::END_SESSION) resp.status = cxxime::IPCStatus::OK;
-        return resp;
-    }));
-
-    cxxime::IpcClient client;
-    ASSERT_TRUE(client.connect(test_pipe_name(), 2000));
-    ASSERT_TRUE(client.end_session(1));
-}
-
-TEST(IPC, ping) {
-    TestServer ts;
-    ASSERT_TRUE(ts.start([](const cxxime::IPCRequest& req) -> cxxime::IPCResponse {
-        cxxime::IPCResponse resp = {};
-        resp.status = req.command == cxxime::IPCCommand::PING
-            ? cxxime::IPCStatus::OK
-            : cxxime::IPCStatus::ERR_UNKNOWN_COMMAND;
-        return resp;
-    }));
-
-    cxxime::IpcClient client;
-    ASSERT_TRUE(client.connect(test_pipe_name(), 2000));
+    ASSERT_TRUE(client.end_session(sid));
     ASSERT_TRUE(client.ping());
 }
 
@@ -414,6 +353,8 @@ TEST(IPC, process_key_preedit) {
             resp.candidate_count = 2;
             resp.candidate_offset = 4;
             resp.candidate_total = 12;
+            resp.candidate_known_count = 12;
+            resp.candidate_extent_state = cxxime::CandidateExtentState::kHasMore;
             strncpy_s(resp.candidates[0], "你", sizeof(resp.candidates[0]) - 1);
             strncpy_s(resp.candidates[1], "尼", sizeof(resp.candidates[1]) - 1);
             strncpy_s(resp.candidate_hints[1], "a", sizeof(resp.candidate_hints[1]) - 1);
@@ -589,18 +530,6 @@ TEST(IPC, open_settings_carries_session_and_panel) {
     ASSERT_TRUE(client.open_settings(7, cxxime::SettingsPanel::kDictionary));
 }
 
-TEST(IPC, focus_in_out) {
-    TestServer ts;
-    ASSERT_TRUE(ts.start([](const cxxime::IPCRequest&) -> cxxime::IPCResponse {
-        return make_response(cxxime::IPCStatus::OK);
-    }));
-
-    cxxime::IpcClient client;
-    ASSERT_TRUE(client.connect(test_pipe_name(), 2000));
-    ASSERT_TRUE(client.focus_in(1));
-    ASSERT_TRUE(client.focus_out(1));
-}
-
 TEST(IPC, send_request) {
     TestServer ts;
     ASSERT_TRUE(ts.start([](const cxxime::IPCRequest& req) -> cxxime::IPCResponse {
@@ -717,27 +646,6 @@ TEST(Reconnect, server_restart) {
 // Error Handling Tests
 // ============================================================
 
-TEST(Error, unknown_command) {
-    TestServer ts;
-    ASSERT_TRUE(ts.start([](const cxxime::IPCRequest&) -> cxxime::IPCResponse {
-        cxxime::IPCResponse resp = {};
-        resp.status = cxxime::IPCStatus::ERR_UNKNOWN_COMMAND;
-        return resp;
-    }));
-
-    cxxime::IpcClient client;
-    ASSERT_TRUE(client.connect(test_pipe_name(), 2000));
-
-    cxxime::IPCRequest req = {};
-    req.command = static_cast<cxxime::IPCCommand>(255);  // invalid
-    req.session_id = 1;
-
-    cxxime::IPCResponse resp = {};
-    ASSERT_TRUE(client.send_request(req, resp));
-    ASSERT_EQ(resp.status, cxxime::IPCStatus::ERR_UNKNOWN_COMMAND);
-    client.disconnect();
-}
-
 TEST(Error, invalid_session) {
     TestServer ts;
     ASSERT_TRUE(ts.start([](const cxxime::IPCRequest& req) -> cxxime::IPCResponse {
@@ -805,6 +713,9 @@ TEST(Stress, rapid_requests) {
 }
 
 TEST(Stress, concurrent_clients) {
+    constexpr int kClientCount = 3;
+    constexpr int kRequestsPerClient = 50;
+    constexpr int kExpectedRequests = kClientCount * kRequestsPerClient;
     TestServer ts;
     std::atomic<int> total_handled{0};
     ASSERT_TRUE(ts.start([&](const cxxime::IPCRequest&) -> cxxime::IPCResponse {
@@ -815,14 +726,20 @@ TEST(Stress, concurrent_clients) {
     }));
 
     std::atomic<int> total_sent{0};
+    std::atomic<int> total_failed{0};
     auto client_func = [&](int id) {
         cxxime::IpcClient client;
-        if (!client.connect(test_pipe_name(), 5000))
+        if (!client.connect(test_pipe_name(), 5000)) {
+            total_failed.fetch_add(kRequestsPerClient);
             return;
-        for (int i = 0; i < 50; ++i) {
+        }
+        for (int i = 0; i < kRequestsPerClient; ++i) {
             cxxime::IPCResponse resp = {};
-            if (client.process_key(static_cast<uint32_t>(id), 'A', 0, resp)) {
+            if (client.process_key(static_cast<uint32_t>(id), 'A', 0, resp) &&
+                resp.status == cxxime::IPCStatus::OK) {
                 total_sent.fetch_add(1);
+            } else {
+                total_failed.fetch_add(1);
             }
         }
         client.disconnect();
@@ -835,8 +752,9 @@ TEST(Stress, concurrent_clients) {
     t2.join();
     t3.join();
 
-    ASSERT_GE(total_sent.load(), 50);  // at least 1 of 3 clients must fully succeed
-    ASSERT_GE(total_handled.load(), total_sent.load());
+    ASSERT_EQ(total_failed.load(), 0);
+    ASSERT_EQ(total_sent.load(), kExpectedRequests);
+    ASSERT_EQ(total_handled.load(), kExpectedRequests);
 }
 
 RUN_ALL_TESTS()

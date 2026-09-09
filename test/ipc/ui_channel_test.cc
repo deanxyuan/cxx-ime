@@ -83,6 +83,9 @@ cxxime::UiPresentationSnapshot make_snapshot(std::uint64_t generation) {
     snapshot.candidate_revision = generation + 30;
     snapshot.candidate_page.count = 1;
     snapshot.candidate_page.total = 1;
+    snapshot.candidate_known_count = 1;
+    snapshot.candidate_extent_state = cxxime::CandidateExtentState::kExhausted;
+    snapshot.candidate_extent_complete = 1;
     snapshot.candidate_page.candidates[0].text_length = 9;
     std::memcpy(snapshot.candidate_page.candidates[0].text, "candidate", 9);
     return snapshot;
@@ -110,6 +113,9 @@ TEST(UiChannel, protocol_round_trip) {
                   cxxime::PreeditPresentationFlag::SyllableBoundaries));
     ASSERT_EQ(actual.candidate_revision, static_cast<std::uint64_t>(71));
     ASSERT_EQ(actual.candidate_page.count, static_cast<std::uint32_t>(1));
+    ASSERT_EQ(actual.candidate_known_count, static_cast<std::uint32_t>(1));
+    ASSERT_EQ(actual.candidate_extent_state, cxxime::CandidateExtentState::kExhausted);
+    ASSERT_EQ(actual.candidate_extent_complete, static_cast<std::uint32_t>(1));
 
     cxxime::UiCommand expected_command;
     expected_command.session_id = expected.session_id;
@@ -130,25 +136,38 @@ TEST(UiChannel, protocol_round_trip) {
     ASSERT_EQ(actual_command.candidate_revision, expected.candidate_revision);
 }
 
-TEST(UiChannel, protocol_defaults_extension_fields_for_a_0_4_payload) {
-    const cxxime::UiPresentationSnapshot expected = make_snapshot(5);
+TEST(UiChannel, protocol_defaults_extension_fields_for_a_baseline_payload) {
     std::vector<std::uint8_t> packet;
-    ASSERT_TRUE(cxxime::build_ui_snapshot_packet(expected, 1, &packet));
-
     cxxime::UiPacketHeader header = {};
-    std::memcpy(&header, packet.data(), sizeof(header));
-    header.payload_size = static_cast<std::uint32_t>(cxxime::UI_SNAPSHOT_BASELINE_SIZE);
-    packet.resize(sizeof(header) + cxxime::UI_SNAPSHOT_BASELINE_SIZE);
-    std::memcpy(packet.data(), &header, sizeof(header));
+    struct Case {
+        std::uint32_t total;
+        cxxime::CandidateExtentState extent_state;
+    };
+    const Case cases[] = {
+        {1, cxxime::CandidateExtentState::kExhausted},
+        {2, cxxime::CandidateExtentState::kHasMore},
+    };
+    for (const Case& item : cases) {
+        cxxime::UiPresentationSnapshot expected = make_snapshot(5);
+        expected.candidate_page.total = item.total;
+        ASSERT_TRUE(cxxime::build_ui_snapshot_packet(expected, 1, &packet));
+        std::memcpy(&header, packet.data(), sizeof(header));
+        header.payload_size = static_cast<std::uint32_t>(cxxime::UI_SNAPSHOT_BASELINE_SIZE);
+        packet.resize(sizeof(header) + cxxime::UI_SNAPSHOT_BASELINE_SIZE);
+        std::memcpy(packet.data(), &header, sizeof(header));
 
-    cxxime::UiPresentationSnapshot actual;
-    ASSERT_TRUE(cxxime::parse_ui_snapshot_packet(packet.data(), packet.size(), &actual));
-    ASSERT_EQ(actual.target_generation, expected.target_generation);
-    ASSERT_EQ(actual.candidate_revision, static_cast<std::uint64_t>(0));
-    ASSERT_EQ(actual.converted_prefix_bytes, static_cast<std::uint32_t>(0));
-    ASSERT_EQ(actual.focused_preedit_start_bytes, static_cast<std::uint32_t>(0));
-    ASSERT_EQ(actual.focused_preedit_end_bytes, static_cast<std::uint32_t>(0));
-    ASSERT_EQ(actual.preedit_presentation_flags, static_cast<std::uint32_t>(0));
+        cxxime::UiPresentationSnapshot actual;
+        ASSERT_TRUE(cxxime::parse_ui_snapshot_packet(packet.data(), packet.size(), &actual));
+        ASSERT_EQ(actual.target_generation, expected.target_generation);
+        ASSERT_EQ(actual.candidate_revision, static_cast<std::uint64_t>(0));
+        ASSERT_EQ(actual.converted_prefix_bytes, static_cast<std::uint32_t>(0));
+        ASSERT_EQ(actual.focused_preedit_start_bytes, static_cast<std::uint32_t>(0));
+        ASSERT_EQ(actual.focused_preedit_end_bytes, static_cast<std::uint32_t>(0));
+        ASSERT_EQ(actual.preedit_presentation_flags, static_cast<std::uint32_t>(0));
+        ASSERT_EQ(actual.candidate_known_count, item.total);
+        ASSERT_EQ(actual.candidate_extent_state, item.extent_state);
+        ASSERT_EQ(actual.candidate_extent_complete, static_cast<std::uint32_t>(1));
+    }
 
     cxxime::UiCommand expected_command;
     expected_command.session_id = 17;
@@ -214,6 +233,14 @@ TEST(UiChannel, protocol_rejects_invalid_payloads) {
 
     snapshot = make_snapshot(1);
     snapshot.preedit_cursor = 0;
+    ASSERT_TRUE(!cxxime::build_ui_snapshot_packet(snapshot, 1, &packet));
+
+    snapshot = make_snapshot(1);
+    snapshot.candidate_extent_state = static_cast<cxxime::CandidateExtentState>(99);
+    ASSERT_TRUE(!cxxime::build_ui_snapshot_packet(snapshot, 1, &packet));
+
+    snapshot = make_snapshot(1);
+    snapshot.candidate_extent_complete = 2;
     ASSERT_TRUE(!cxxime::build_ui_snapshot_packet(snapshot, 1, &packet));
 
     snapshot = make_snapshot(1);

@@ -124,9 +124,9 @@ ProcessResult SymbolProcessor::process_key(const KeyEvent& event, Context& conte
         shortcut_page_down) {
         if (context.candidate_count() > 0) {
             if (event.keycode == VK_NEXT || shortcut_page_down) {
-                context.move_to_next_page();
+                context.request_next_page();
             } else {
-                context.move_to_previous_page();
+                context.request_previous_page();
             }
             return ProcessResult::ACCEPTED;
         }

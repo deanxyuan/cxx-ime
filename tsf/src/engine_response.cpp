@@ -127,7 +127,12 @@ bool decode_engine_presentation(const cxxime::IPCResponse& response,
     page.page_index = response.page_current > 0 ? static_cast<int>(response.page_current - 1) : 0;
     page.page_offset = static_cast<int>(response.candidate_offset);
     page.page_size = response.candidate_count > 0 ? static_cast<int>(response.candidate_count) : 9;
-    page.total_count = static_cast<int>(response.candidate_total);
+    page.extent.known_count = static_cast<int>(response.candidate_known_count);
+    page.extent.state = response.candidate_extent_state;
+    page.extent.complete = response.candidate_extent_complete != 0;
+    page.extent.known_count = (std::max)(
+        page.extent.known_count,
+        page.page_offset + static_cast<int>(response.candidate_count));
     page.highlighted = response.candidate_count > 0 ? static_cast<int>(response.highlighted) : -1;
     page.items.reserve(response.candidate_count);
     for (std::uint32_t index = 0; index < response.candidate_count; ++index) {

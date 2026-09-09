@@ -6,6 +6,8 @@
 #include <string>
 #include <vector>
 
+#include <cxxime/candidate.h>
+
 namespace cxxime {
 
 struct CandidatePresentationItem {
@@ -17,7 +19,7 @@ struct CandidatePresentationPage {
     int page_index = 0;
     int page_offset = 0;
     int page_size = 9;
-    int total_count = 0;
+    CandidateExtent extent;
     int highlighted = -1;
     std::vector<CandidatePresentationItem> items;
 };

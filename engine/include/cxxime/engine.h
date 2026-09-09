@@ -116,7 +116,14 @@ private:
     TranslationResult translate_composition(const CompositionState& state,
                                             int page_index,
                                             int page_offset,
-                                            const QueryDeadline& deadline);
+                                            const QueryDeadline& deadline,
+                                            int candidate_limit = 0,
+                                            uint32_t continuation_effort = 0);
+    TranslationResult translate_after_visible_anchor(const QueryDeadline& deadline,
+                                                     int visible_count,
+                                                     int target_offset,
+                                                     uint32_t continuation_effort,
+                                                     bool* sequence_invalidated);
     bool dispatch_candidate_selection(int index, const QueryDeadline& deadline);
     bool finalize_selection(const CandidateEntry& entry);
     bool replace_active_input(const ReplaceActiveInputAction& action,

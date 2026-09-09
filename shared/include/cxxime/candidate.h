@@ -3,6 +3,8 @@
 #ifndef CXXIME_CANDIDATE_H_
 #define CXXIME_CANDIDATE_H_
 
+#include <algorithm>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -35,6 +37,40 @@ struct Candidate {
     int source_frequency = 0;  // Raw dictionary frequency when ranking uses a derived score.
 };
 
+enum class CandidateExtentState : std::uint32_t {
+    kExhausted = 0,
+    kHasMore = 1,
+    kIndeterminate = 2,
+};
+
+struct CandidateExtent {
+    int known_count = 0;
+    CandidateExtentState state = CandidateExtentState::kExhausted;
+    bool complete = true;
+};
+
+inline CandidateExtent make_candidate_extent(int known_count, int returned_end, bool incomplete) {
+    CandidateExtent extent;
+    extent.known_count = (std::max)(0, (std::max)(known_count, returned_end));
+    extent.complete = !incomplete;
+    if (extent.known_count > returned_end) {
+        extent.state = CandidateExtentState::kHasMore;
+    } else if (incomplete) {
+        extent.state = CandidateExtentState::kIndeterminate;
+    }
+    return extent;
+}
+
+inline bool candidate_extent_may_continue(const CandidateExtent& extent, int returned_end) {
+    return extent.known_count > returned_end || extent.state != CandidateExtentState::kExhausted;
+}
+
+inline int legacy_candidate_total(const CandidateExtent& extent, int returned_end) {
+    const int continuation_count =
+        extent.state == CandidateExtentState::kExhausted ? returned_end : returned_end + 1;
+    return (std::max)(extent.known_count, continuation_count);
+}
+
 inline bool candidate_text_fits(const std::string& text) {
     return text.size() < kCandidateTextCapacity;
 }
@@ -57,7 +93,7 @@ struct CandidatePage {
     int page_index = 0;
     int page_offset = 0;
     int page_size = 9;
-    int total_count = 0;
+    CandidateExtent extent;
     int highlighted = -1;
     std::vector<Candidate> candidates;
 };

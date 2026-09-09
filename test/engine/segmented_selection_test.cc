@@ -183,6 +183,119 @@ TEST(SegmentedSelection, presentation_keeps_boundary_after_focused_syllable) {
     ASSERT_EQ(continued.display_preedit[continued.focused_preedit_end_bytes], '\'');
 }
 
+TEST(SegmentedSelection, paging_freezes_published_prefix_across_manual_reorder) {
+    SegmentedFixture fixture;
+    ASSERT_TRUE(fixture.initialize(true, 12));
+    fixture.type("huaruijishu");
+    const std::vector<cxxime::CandidateEntry> published =
+        fixture.engine.context().translation().entries;
+    ASSERT_EQ(published.size(), 5u);
+
+    const std::string order_path = make_temp_file("sgm");
+    ASSERT_TRUE(fixture.dict.load_manual_candidate_order(order_path, cxxime::kMaxInputCodeLength));
+    ASSERT_TRUE(fixture.dict.replace_manual_candidate_order_and_save(
+        "huaruijishu", {{"full-10", "huaruijishu", "hua:rui:ji:shu"}}));
+
+    ASSERT_EQ(fixture.engine.process_key(make_key(VK_NEXT)), cxxime::ProcessResult::ACCEPTED);
+    ASSERT_EQ(fixture.engine.context().page_offset(), 5);
+    for (const cxxime::CandidateEntry& entry : fixture.engine.context().translation().entries) {
+        ASSERT_TRUE(std::none_of(published.begin(), published.end(),
+                                 [&](const cxxime::CandidateEntry& previous) {
+                                     return cxxime::same_candidate_entry_identity(previous, entry);
+                                 }));
+    }
+    DeleteFileA(order_path.c_str());
+}
+
+TEST(SegmentedSelection, missing_page_anchor_rebuilds_the_first_page) {
+    SegmentedFixture fixture;
+    ASSERT_TRUE(fixture.initialize(true, 12));
+    fixture.type("huaruijishu");
+    const int anchor_index = fixture.engine.context().selectable_candidate_count() - 1;
+    ASSERT_GE(anchor_index, 0);
+    const std::string anchor_text =
+        fixture.engine.context().translation().entries[anchor_index].candidate.text;
+    ASSERT_TRUE(fixture.dict.disable_system_entry(anchor_text));
+
+    ASSERT_EQ(fixture.engine.process_key(make_key(VK_NEXT)), cxxime::ProcessResult::ACCEPTED);
+    ASSERT_EQ(fixture.engine.context().page_offset(), 0);
+    for (const cxxime::CandidateEntry& entry : fixture.engine.context().translation().entries) {
+        ASSERT_NE(entry.candidate.text, anchor_text);
+    }
+}
+
+TEST(SegmentedSelection, incomplete_page_continuation_is_transactional) {
+    SegmentedFixture fixture;
+    ASSERT_TRUE(fixture.initialize(true, 12));
+    fixture.engine.set_trace_enabled(true);
+    fixture.type("huaruijishu");
+
+    cxxime::TranslationResult& first_page = fixture.engine.context().translation();
+    ASSERT_GE(first_page.entries.size(), 5u);
+    first_page.entries.resize(4);
+    first_page.highlighted = 2;
+    first_page.extent.known_count = 4;
+    first_page.extent.state = cxxime::CandidateExtentState::kIndeterminate;
+    first_page.extent.complete = false;
+    const std::vector<cxxime::CandidateEntry> published = first_page.entries;
+
+    fixture.dict.unload_dict();
+    for (uint32_t effort = 1; effort <= 2; ++effort) {
+        ASSERT_EQ(fixture.engine.process_key(make_key(VK_NEXT)), cxxime::ProcessResult::ACCEPTED);
+        const cxxime::TranslationResult& retained = fixture.engine.context().translation();
+        ASSERT_EQ(retained.page_offset, 0);
+        ASSERT_EQ(retained.highlighted, 2);
+        ASSERT_EQ(retained.entries.size(), published.size());
+        for (std::size_t index = 0; index < published.size(); ++index) {
+            ASSERT_TRUE(
+                cxxime::same_candidate_entry_identity(retained.entries[index], published[index]));
+        }
+        ASSERT_EQ(fixture.engine.last_trace().navigation_outcome,
+                  cxxime::CandidateNavigationOutcome::kRetryable);
+        ASSERT_EQ(fixture.engine.last_trace().continuation_effort, effort);
+    }
+
+    ASSERT_TRUE(fixture.dict.open_dict(fixture.dict_path));
+    ASSERT_EQ(fixture.engine.process_key(make_key(VK_NEXT)), cxxime::ProcessResult::ACCEPTED);
+    ASSERT_EQ(fixture.engine.context().page_offset(), 4);
+    ASSERT_EQ(fixture.engine.context().highlighted(), 0);
+    ASSERT_EQ(fixture.engine.last_trace().navigation_outcome,
+              cxxime::CandidateNavigationOutcome::kMovedNext);
+    ASSERT_EQ(fixture.engine.last_trace().continuation_effort, 3u);
+    for (const cxxime::CandidateEntry& entry : fixture.engine.context().translation().entries) {
+        ASSERT_TRUE(std::none_of(published.begin(), published.end(),
+                                 [&](const cxxime::CandidateEntry& previous) {
+                                     return cxxime::same_candidate_entry_identity(previous, entry);
+                                 }));
+    }
+
+    SegmentedFixture exhausted;
+    ASSERT_TRUE(exhausted.initialize(false));
+    exhausted.engine.set_trace_enabled(true);
+    exhausted.type("huaruijishu");
+    cxxime::TranslationResult& last_page = exhausted.engine.context().translation();
+    ASSERT_TRUE(last_page.extent.complete);
+    ASSERT_EQ(last_page.extent.state, cxxime::CandidateExtentState::kExhausted);
+    last_page.extent.state = cxxime::CandidateExtentState::kIndeterminate;
+    last_page.extent.complete = false;
+    const std::vector<cxxime::CandidateEntry> final_candidates = last_page.entries;
+    const int final_highlight = last_page.highlighted;
+
+    ASSERT_EQ(exhausted.engine.process_key(make_key(VK_NEXT)), cxxime::ProcessResult::ACCEPTED);
+    ASSERT_EQ(exhausted.engine.context().page_offset(), 0);
+    ASSERT_EQ(exhausted.engine.context().highlighted(), final_highlight);
+    ASSERT_EQ(exhausted.engine.context().translation().entries.size(), final_candidates.size());
+    for (std::size_t index = 0; index < final_candidates.size(); ++index) {
+        ASSERT_TRUE(cxxime::same_candidate_entry_identity(
+            exhausted.engine.context().translation().entries[index], final_candidates[index]));
+    }
+    ASSERT_EQ(exhausted.engine.context().translation().extent.state,
+              cxxime::CandidateExtentState::kExhausted);
+    ASSERT_TRUE(exhausted.engine.context().translation().extent.complete);
+    ASSERT_EQ(exhausted.engine.last_trace().navigation_outcome,
+              cxxime::CandidateNavigationOutcome::kConfirmedEnd);
+}
+
 TEST(SegmentedSelection, presentation_follows_highlighted_ambiguous_syllable_path) {
     const std::string spellings_path = make_temp_file("sgv");
     ASSERT_TRUE(cxxime::SpellingsIndex::create_test_trie(
@@ -519,26 +632,27 @@ TEST(SegmentedSelection, escape_after_prefix_confirmation_cancels_the_whole_comp
     ASSERT_TRUE(fixture.engine.context().committed_text.empty());
 }
 
-TEST(SegmentedSelection, disabled_policy_preserves_legacy_page) {
+TEST(SegmentedSelection, full_span_policy_preserves_standard_page) {
     SegmentedFixture fixture;
     ASSERT_TRUE(fixture.initialize());
 
     cxxime::PinyinTranslator translator;
     translator.set_dict(&fixture.dict);
     translator.set_syllabifier(fixture.syllabifier.get());
-    const cxxime::CandidatePage legacy = translator.translate_page("huaruijishu", 0, 5);
+    const cxxime::CandidatePage standard = translator.translate_page("huaruijishu", 0, 5);
 
     cxxime::TranslationRequest request;
     request.input = "huaruijishu";
     request.page_size = 5;
     const cxxime::CandidatePage current = translator.translate(request).candidate_page();
-    ASSERT_EQ(current.total_count, legacy.total_count);
-    ASSERT_EQ(current.highlighted, legacy.highlighted);
-    ASSERT_EQ(current.candidates.size(), legacy.candidates.size());
-    for (std::size_t index = 0; index < legacy.candidates.size(); ++index) {
-        ASSERT_EQ(current.candidates[index].text, legacy.candidates[index].text);
-        ASSERT_EQ(current.candidates[index].code, legacy.candidates[index].code);
-        ASSERT_EQ(current.candidates[index].syllables, legacy.candidates[index].syllables);
+    ASSERT_EQ(current.extent.known_count, standard.extent.known_count);
+    ASSERT_EQ(current.extent.state, standard.extent.state);
+    ASSERT_EQ(current.highlighted, standard.highlighted);
+    ASSERT_EQ(current.candidates.size(), standard.candidates.size());
+    for (std::size_t index = 0; index < standard.candidates.size(); ++index) {
+        ASSERT_EQ(current.candidates[index].text, standard.candidates[index].text);
+        ASSERT_EQ(current.candidates[index].code, standard.candidates[index].code);
+        ASSERT_EQ(current.candidates[index].syllables, standard.candidates[index].syllables);
     }
 }
 
@@ -925,8 +1039,8 @@ TEST(SegmentedSelection, partial_group_follows_all_available_leading_full_candid
     translator.set_dict(&dict);
     translator.set_syllabifier(&syllabifier);
 
-    const cxxime::CandidatePage legacy = translator.translate_page("huaruijishu", 0, 6);
-    ASSERT_GE(legacy.candidates.size(), 4u);
+    const cxxime::CandidatePage full_span = translator.translate_page("huaruijishu", 0, 6);
+    ASSERT_GE(full_span.candidates.size(), 4u);
     cxxime::TranslationRequest request;
     request.input = "huaruijishu";
     request.page_size = 3;
@@ -934,7 +1048,7 @@ TEST(SegmentedSelection, partial_group_follows_all_available_leading_full_candid
     const cxxime::TranslationResult first = translator.translate(request);
     ASSERT_EQ(first.entries.size(), 3u);
     for (std::size_t index = 0; index < first.entries.size(); ++index) {
-        ASSERT_EQ(first.entries[index].candidate.text, legacy.candidates[index].text);
+        ASSERT_EQ(first.entries[index].candidate.text, full_span.candidates[index].text);
         const auto* action =
             std::get_if<cxxime::TextSelectionAction>(&first.entries[index].selection);
         ASSERT_TRUE(action != nullptr);
@@ -945,7 +1059,7 @@ TEST(SegmentedSelection, partial_group_follows_all_available_leading_full_candid
     request.page_offset = 3;
     const cxxime::TranslationResult second = translator.translate(request);
     ASSERT_EQ(second.entries.size(), 3u);
-    ASSERT_EQ(second.entries[0].candidate.text, legacy.candidates[3].text);
+    ASSERT_EQ(second.entries[0].candidate.text, full_span.candidates[3].text);
     const auto* remaining_full =
         std::get_if<cxxime::TextSelectionAction>(&second.entries[0].selection);
     ASSERT_TRUE(remaining_full != nullptr);
@@ -964,7 +1078,8 @@ TEST(SegmentedSelection, partial_group_follows_all_available_leading_full_candid
     cxxime::TranslationRequest full_only_request = request;
     full_only_request.page_index = 0;
     full_only_request.page_offset = 0;
-    full_only_request.page_size = request.page_size + 1;
+    full_only_request.page_size =
+        static_cast<int>(cxxime::kLeadingFullSpanCandidateCount + 1);
     full_only_request.policy.allow_partial_selection = false;
     full_only_request.budget = &constrained;
     full_only_request.trace = &full_only_trace;
@@ -978,6 +1093,7 @@ TEST(SegmentedSelection, partial_group_follows_all_available_leading_full_candid
     request.trace = &constrained_trace;
     const cxxime::TranslationResult degraded = translator.translate(request);
     ASSERT_EQ(degraded.status, cxxime::TranslationStatus::kStableDegraded);
+    ASSERT_TRUE(!degraded.extent.complete);
     ASSERT_TRUE(!degraded.entries.empty());
     ASSERT_EQ(constrained_trace.span_entry_scan_count,
               full_only_trace.span_entry_scan_count + constrained.max_exact_scan);
@@ -1002,8 +1118,8 @@ TEST(SegmentedSelection, single_candidate_pages_use_the_fixed_global_boundary) {
     auto collect = [&](int page_size) {
         std::vector<VisibleAction> sequence;
         int offset = 0;
-        int total_count = 1;
-        while (offset < total_count) {
+        bool may_continue = true;
+        while (may_continue) {
             cxxime::TranslationRequest request;
             request.input = "huaruijishu";
             request.page_index = offset / page_size;
@@ -1012,13 +1128,13 @@ TEST(SegmentedSelection, single_candidate_pages_use_the_fixed_global_boundary) {
             request.policy.allow_partial_selection = true;
             const cxxime::TranslationResult page = translator.translate(request);
             ASSERT_TRUE(!page.entries.empty());
-            total_count = page.total_count;
             for (const auto& entry : page.entries) {
                 const auto* action = std::get_if<cxxime::TextSelectionAction>(&entry.selection);
                 ASSERT_TRUE(action != nullptr);
                 sequence.push_back({entry.candidate.text, action->consumed_input_bytes});
             }
             offset += static_cast<int>(page.entries.size());
+            may_continue = cxxime::candidate_extent_may_continue(page.extent, offset);
         }
         return sequence;
     };
@@ -1443,7 +1559,8 @@ TEST(SegmentedSelection, wubi_policy_depends_on_the_visible_candidate_source) {
     cxxime::Config config;
     config.wubi_commit_first_on_fifth_key = true;
     cxxime::TranslationResult result;
-    result.total_count = 2;
+    result.extent.known_count = 2;
+    result.extent.state = cxxime::CandidateExtentState::kExhausted;
     result.entries.push_back(cxxime::make_text_candidate_entry(
         cxxime::Candidate{"拼音", {}, 100, cxxime::CandidateSource::kPinyin}, 4));
     ASSERT_EQ(cxxime::WubiInputPolicy::fifth_key_action(cxxime::CompositionScheme::kMixed, "abcd",

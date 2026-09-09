@@ -130,7 +130,10 @@ bool same_candidate_item(const cxxime::CandidatePresentationItem& left,
 bool same_candidate_page(const cxxime::CandidatePresentationPage& left,
                          const cxxime::CandidatePresentationPage& right) {
     if (left.page_index != right.page_index || left.page_offset != right.page_offset ||
-        left.page_size != right.page_size || left.total_count != right.total_count ||
+        left.page_size != right.page_size ||
+        left.extent.known_count != right.extent.known_count ||
+        left.extent.state != right.extent.state ||
+        left.extent.complete != right.extent.complete ||
         left.highlighted != right.highlighted || left.items.size() != right.items.size()) {
         return false;
     }
@@ -834,7 +837,9 @@ cxxime::CandidateOrderQueryResult SharedResources::query_candidate_order(
 
     result.version = dictionary->manual_candidate_order_version();
     result.manual_entries = dictionary->manual_candidate_order(code);
-    result.has_more = translation.total_count > static_cast<int>(translation.entries.size());
+    result.has_more = cxxime::candidate_extent_may_continue(
+        translation.extent,
+        translation.page_offset + static_cast<int>(translation.entries.size()));
     result.entries.reserve(translation.entries.size());
     const auto source = kind == cxxime::UserDictKind::WUBI ? cxxime::CandidateSource::kWubi
                                                            : cxxime::CandidateSource::kPinyin;
@@ -1370,7 +1375,8 @@ cxxime::CandidatePage SessionManager::search_candidates(const std::string& input
         }
     }
     page.candidates = std::move(filtered);
-    page.total_count = static_cast<int>(page.candidates.size());
+    page.extent.known_count = static_cast<int>(page.candidates.size());
+    page.extent.state = cxxime::CandidateExtentState::kExhausted;
     page.page_index = 0;
     page.page_offset = 0;
     page.page_size = 10;

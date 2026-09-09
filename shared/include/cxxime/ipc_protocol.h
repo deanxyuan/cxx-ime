@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <type_traits>
 
+#include <cxxime/candidate.h>
 #include <cxxime/input_limits.h>
 
 namespace cxxime {
@@ -248,6 +249,9 @@ struct IPCResponse {
     uint32_t focused_preedit_start_bytes = 0;
     uint32_t focused_preedit_end_bytes = 0;
     uint32_t preedit_presentation_flags = 0;
+    uint32_t candidate_known_count = 0;
+    CandidateExtentState candidate_extent_state = CandidateExtentState::kExhausted;
+    uint32_t candidate_extent_complete = 1;
 };
 
 static_assert(std::is_standard_layout<IPCResponse>::value,
@@ -280,6 +284,15 @@ static_assert(offsetof(IPCResponse, focused_preedit_end_bytes) ==
 static_assert(offsetof(IPCResponse, preedit_presentation_flags) ==
                   IPC_RESPONSE_BASELINE_SIZE + 20,
               "IPCResponse preedit presentation flags extension moved");
+static_assert(offsetof(IPCResponse, candidate_known_count) ==
+                IPC_RESPONSE_BASELINE_SIZE + 24,
+              "IPCResponse candidate known count extension moved");
+static_assert(offsetof(IPCResponse, candidate_extent_state) ==
+                IPC_RESPONSE_BASELINE_SIZE + 28,
+              "IPCResponse candidate extent extension moved");
+static_assert(offsetof(IPCResponse, candidate_extent_complete) ==
+                  IPC_RESPONSE_BASELINE_SIZE + 32,
+              "IPCResponse candidate extent completeness extension moved");
 
 } // namespace cxxime
 

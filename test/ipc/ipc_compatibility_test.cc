@@ -85,6 +85,8 @@ private:
                 cxxime::IPCResponse response = {};
                 response.status = cxxime::IPCStatus::OK;
                 response.highlighted = 7;
+                response.candidate_count = 1;
+                response.candidate_total = 2;
                 response.candidate_revision = 99;
                 const auto payload = cxxime::test::make_main_response_baseline(response);
                 cxxime::IPCWireHeader header;
@@ -176,4 +178,7 @@ TEST(IpcCompatibility, current_client_accepts_0_4_response_prefix) {
     ASSERT_EQ(response.focused_preedit_start_bytes, 0u);
     ASSERT_EQ(response.focused_preedit_end_bytes, 0u);
     ASSERT_EQ(response.preedit_presentation_flags, 0u);
+    ASSERT_EQ(response.candidate_known_count, response.candidate_total);
+    ASSERT_EQ(response.candidate_extent_state, cxxime::CandidateExtentState::kHasMore);
+    ASSERT_EQ(response.candidate_extent_complete, 1u);
 }

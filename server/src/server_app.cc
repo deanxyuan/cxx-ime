@@ -329,12 +329,21 @@ cxxime::IPCResponse ServerApp::handle_request(const cxxime::IPCRequest& request)
         const auto page = session_mgr_.search_candidates(query);
         response.candidate_count = static_cast<uint32_t>(
             (std::min)(page.candidates.size(), static_cast<size_t>(cxxime::kCandidateCapacity)));
-        response.candidate_total = static_cast<uint32_t>(page.total_count);
+        const int returned_end = page.page_offset + static_cast<int>(response.candidate_count);
+        response.candidate_known_count = static_cast<uint32_t>(
+            (std::max)(page.extent.known_count, returned_end));
+        response.candidate_extent_state = page.extent.state;
+        response.candidate_extent_complete = page.extent.complete ? 1u : 0u;
+        response.candidate_total = static_cast<uint32_t>((std::max)(
+            cxxime::legacy_candidate_total(page.extent, returned_end), 0));
         response.page_current = static_cast<uint32_t>(page.page_index + 1);
         const int page_size = page.page_size > 0 ? page.page_size : 10;
-        response.page_total = page.total_count > 0
-            ? static_cast<uint32_t>((page.total_count + page_size - 1) / page_size)
-            : 1;
+        response.page_total = response.candidate_total > 0
+                ? static_cast<uint32_t>((response.candidate_total + page_size - 1) / page_size)
+                : 1;
+        if (cxxime::candidate_extent_may_continue(page.extent, returned_end)) {
+            response.page_total = (std::max)(response.page_total, response.page_current + 1);
+        }
         response.highlighted = page.highlighted >= 0
             ? static_cast<uint32_t>(page.highlighted)
             : 0;
@@ -379,7 +388,8 @@ cxxime::IPCResponse ServerApp::handle_request(const cxxime::IPCRequest& request)
                 ? 1
                 : 0;
         }
-        CXXIME_LOG(L"START_SESSION: new session=%u", id);
+        CXXIME_LOG(L"START_SESSION: new session=%u capabilities=0x%llx", id,
+                   static_cast<unsigned long long>(request.client_capabilities));
         break;
     }
 

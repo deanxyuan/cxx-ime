@@ -1,11 +1,6 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
 #include "engine_test_support.h"
-TEST(Engine, init) {
-    cxxime::Engine engine;
-    ASSERT_TRUE(true);
-}
-
 TEST(Engine, process_letter_key) {
     cxxime::Engine engine;
     cxxime::Context ctx;

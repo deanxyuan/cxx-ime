@@ -28,6 +28,9 @@ cxxime::IPCResponse make_response() {
     response.converted_prefix_bytes = static_cast<std::uint32_t>(converted.size());
     response.candidate_count = 1;
     response.candidate_total = 1;
+    response.candidate_known_count = 1;
+    response.candidate_extent_state = cxxime::CandidateExtentState::kExhausted;
+    response.candidate_extent_complete = 1;
     response.page_current = 1;
     response.page_total = 1;
     copy_field(response.candidates[0], u8"技术");
@@ -88,7 +91,7 @@ TEST(EngineResponse, unflagged_apostrophe_remains_in_logical_preedit) {
     ASSERT_TRUE(!presentation.has_syllable_boundaries);
 }
 
-TEST(EngineResponse, old_wubi_and_mixed_responses_default_to_no_focus) {
+TEST(EngineResponse, responses_without_focus_fields_keep_wubi_and_mixed_unfocused) {
     for (cxxime::InputMode mode : {cxxime::InputMode::WUBI, cxxime::InputMode::MIXED}) {
         cxxime::IPCResponse response = {};
         response.status = cxxime::IPCStatus::OK;

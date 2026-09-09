@@ -217,9 +217,9 @@ TEST(TemporaryAscii, shifted_zero_commits_ime_candidate_with_right_parenthesis) 
 
     ASSERT_EQ(engine.process_key(make_key('D')), cxxime::ProcessResult::ACCEPTED);
     const std::string expected =
-        engine.context().candidate_page().candidates.front().text + "\xef\xbc\x89";
+        engine.context().candidate_page().candidates.front().text + u8"）";
     cxxime::PunctMapping punctuation;
-    punctuation.half_shape[")"] = {cxxime::PunctType::COMMIT, "\xef\xbc\x89", {}, {}};
+    punctuation.half_shape[")"] = {cxxime::PunctType::COMMIT, u8"）", {}, {}};
     cxxime::OutputOptions options;
     options.punct_mapping = &punctuation;
 
@@ -263,14 +263,14 @@ TEST(TemporaryAscii, full_shape_commits_candidate_or_raw_code_before_character) 
     ASSERT_EQ(engine.process_key(make_key(VK_OEM_PLUS, true), options),
               cxxime::ProcessResult::COMMITTED);
     auto candidate = engine.take_commit_text_with_source();
-    ASSERT_EQ(candidate.first, "的\xef\xbc\x8b");
+    ASSERT_EQ(candidate.first, u8"的＋");
     ASSERT_EQ(candidate.second, cxxime::CommitSource::kCandidate);
 
     ASSERT_EQ(engine.process_key(make_key('Z'), options), cxxime::ProcessResult::ACCEPTED);
     ASSERT_EQ(engine.process_key(make_key(VK_OEM_PLUS, true), options),
               cxxime::ProcessResult::COMMITTED);
     auto raw = engine.take_commit_text_with_source();
-    ASSERT_EQ(raw.first, "z\xef\xbc\x8b");
+    ASSERT_EQ(raw.first, u8"z＋");
     ASSERT_EQ(raw.second, cxxime::CommitSource::kRawCodePreserveCase);
 
     engine.finalize();

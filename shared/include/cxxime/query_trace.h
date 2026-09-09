@@ -12,6 +12,15 @@ namespace cxxime {
 // sampling and must keep the line free of a trailing newline.
 void enqueue_server_trace_json(const char* json, int length);
 
+enum class CandidateNavigationOutcome : uint32_t {
+    kNone = 0,
+    kMovedNext = 1,
+    kConfirmedEnd = 2,
+    kRetryable = 3,
+    kMovedPrevious = 4,
+    kSequenceReset = 5,
+};
+
 // Lightweight trace structure for query observability.
 // All fields are POD types - no heap allocation, can be memcpy'd.
 // Use QueryPerformanceCounter for timing (convert to microseconds).
@@ -27,6 +36,11 @@ struct QueryTrace {
     int syllable_path_count = 0;
     int live_path_count = 0;
     int candidate_count = 0;
+    int candidate_known_count = 0;
+    uint32_t candidate_extent_state = 0;
+    uint32_t candidate_extent_complete = 1;
+    CandidateNavigationOutcome navigation_outcome = CandidateNavigationOutcome::kNone;
+    uint32_t continuation_effort = 0;
     uint32_t composition_path_count = 0;
     uint32_t composition_repeated_short_path_count = 0;
     uint32_t span_query_count = 0;

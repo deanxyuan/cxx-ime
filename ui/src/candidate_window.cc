@@ -719,7 +719,7 @@ void CandidateWindow::update(const CandidatePresentationPage& presentation) {
     page.page_index = presentation.page_index;
     page.page_offset = presentation.page_offset;
     page.page_size = presentation.page_size;
-    page.total_count = presentation.total_count;
+    page.extent = presentation.extent;
     page.highlighted = presentation.highlighted;
     page.candidates.reserve(presentation.items.size());
     for (const CandidatePresentationItem& item : presentation.items) {
@@ -792,9 +792,11 @@ void CandidateWindow::update(const CandidatePage& page) {
             hdc, page.candidates, config_->font_name, config_->font_size, cfg, window_dpi);
     };
     LayoutResult lr = calculate_layout();
-    if (page.total_count > 0) {
+    if (page.extent.known_count > 0 ||
+        page.extent.state != CandidateExtentState::kExhausted) {
         int visible_count = static_cast<int>(lr.rects.size());
-        bool has_next = page.page_offset + visible_count < page.total_count;
+        bool has_next = candidate_extent_may_continue(
+            page.extent, page.page_offset + visible_count);
         int adjusted_page_total = page_current_ + (has_next ? 1 : 0);
         bool nav_visibility_changed = (page_total_ > 1) != (adjusted_page_total > 1);
         page_total_ = adjusted_page_total;

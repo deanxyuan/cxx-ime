@@ -68,7 +68,9 @@ cxxime::CandidatePresentationPage candidate_page_from_snapshot(
     page.page_index = source.page_current > 0 ? static_cast<int>(source.page_current - 1) : 0;
     page.page_offset = static_cast<int>(source.offset);
     page.page_size = static_cast<int>(source.count);
-    page.total_count = static_cast<int>(source.total);
+    page.extent.known_count = static_cast<int>(snapshot.candidate_known_count);
+    page.extent.state = snapshot.candidate_extent_state;
+    page.extent.complete = snapshot.candidate_extent_complete != 0;
     page.highlighted = source.count > 0 ? static_cast<int>(source.highlighted) : -1;
     page.items.reserve(source.count);
     for (std::uint32_t index = 0; index < source.count; ++index) {

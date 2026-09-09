@@ -90,14 +90,24 @@ void fill_process_response(const ProcessKeyResult& result, cxxime::IPCResponse* 
     response->candidate_count =
         static_cast<uint32_t>((std::min)(page.items.size(), cxxime::kCandidateCapacity));
     response->candidate_offset = static_cast<uint32_t>((std::max)(page.page_offset, 0));
-    response->candidate_total = static_cast<uint32_t>((std::max)(page.total_count, 0));
+    const int returned_end = page.page_offset + static_cast<int>(response->candidate_count);
+    response->candidate_known_count = static_cast<uint32_t>(
+        (std::max)(page.extent.known_count, returned_end));
+    response->candidate_extent_state = page.extent.state;
+    response->candidate_extent_complete = page.extent.complete ? 1u : 0u;
+    response->candidate_total = static_cast<uint32_t>(
+        (std::max)(cxxime::legacy_candidate_total(page.extent, returned_end), 0));
     response->highlighted = page.highlighted >= 0 ? static_cast<uint32_t>(page.highlighted) : 0;
     response->page_current = static_cast<uint32_t>((std::max)(page.page_index + 1, 1));
     const int page_size = page.page_size > 0 ? page.page_size : 9;
-    const uint32_t page_total =
-        page.total_count > 0 ? static_cast<uint32_t>((page.total_count + page_size - 1) / page_size)
-                             : 1;
-    response->page_total = (std::max)(response->page_current, page_total);
+    const uint32_t page_total = response->candidate_total > 0
+            ? static_cast<uint32_t>((response->candidate_total + page_size - 1) / page_size)
+            : 1;
+    const uint32_t continuation_page_total =
+        cxxime::candidate_extent_may_continue(page.extent, returned_end)
+            ? response->page_current + 1
+            : response->page_current;
+    response->page_total = (std::max)(continuation_page_total, page_total);
 
     for (uint32_t index = 0; index < response->candidate_count; ++index) {
         const cxxime::CandidatePresentationItem& item = page.items[index];

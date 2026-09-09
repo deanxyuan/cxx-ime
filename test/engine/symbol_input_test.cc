@@ -90,8 +90,8 @@ void type_symbol_code(cxxime::Engine& engine, const char* code,
 
 cxxime::PunctMapping make_enumeration_punctuation() {
     cxxime::PunctMapping punctuation;
-    punctuation.half_shape["/"] = {cxxime::PunctType::COMMIT, "\xe3\x80\x81", {}, {}};
-    punctuation.half_shape["\\"] = {cxxime::PunctType::COMMIT, "\xe3\x80\x81", {}, {}};
+    punctuation.half_shape["/"] = {cxxime::PunctType::COMMIT, u8"、", {}, {}};
+    punctuation.half_shape["\\"] = {cxxime::PunctType::COMMIT, u8"、", {}, {}};
     return punctuation;
 }
 
@@ -136,7 +136,8 @@ TEST(SymbolInput, bare_trigger_navigates_categories_without_committing) {
     type_symbol_code(fixture.engine(), "");
 
     const auto categories = fixture.engine().context().candidate_page();
-    ASSERT_EQ(categories.total_count, 14);
+    ASSERT_EQ(categories.extent.known_count, 14);
+    ASSERT_EQ(categories.extent.state, cxxime::CandidateExtentState::kHasMore);
     ASSERT_EQ(categories.candidates[0].text, "标点");
     ASSERT_EQ(categories.candidates[0].comment, "\\bd");
 
@@ -204,7 +205,7 @@ TEST(SymbolInput, slash_commits_enumeration_comma_while_idle) {
 
     ASSERT_EQ(fixture.engine().process_key(make_key(VK_OEM_2), options),
               cxxime::ProcessResult::COMMITTED);
-    ASSERT_EQ(fixture.engine().take_commit_text_with_source().first, "\xe3\x80\x81");
+    ASSERT_EQ(fixture.engine().take_commit_text_with_source().first, u8"、");
     ASSERT_TRUE(!fixture.engine().context().is_composing());
 }
 
@@ -229,15 +230,15 @@ TEST(SymbolInput, main_symbols_use_full_shape_while_idle) {
         bool shift;
         const char* full_width;
     } cases[] = {
-        {VK_OEM_PERIOD, false, "\xef\xbc\x8e"},
-        {VK_OEM_2, false, "\xef\xbc\x8f"},
-        {VK_OEM_5, false, "\xef\xbc\xbc"},
-        {VK_OEM_MINUS, false, "\xef\xbc\x8d"},
-        {VK_OEM_4, false, "\xef\xbc\xbb"},
-        {VK_OEM_COMMA, true, "\xef\xbc\x9c"},
-        {VK_OEM_7, false, "\xef\xbc\x87"},
-        {VK_OEM_7, true, "\xef\xbc\x82"},
-        {'1', true, "\xef\xbc\x81"},
+        {VK_OEM_PERIOD, false, u8"．"},
+        {VK_OEM_2, false, u8"／"},
+        {VK_OEM_5, false, u8"＼"},
+        {VK_OEM_MINUS, false, u8"－"},
+        {VK_OEM_4, false, u8"［"},
+        {VK_OEM_COMMA, true, u8"＜"},
+        {VK_OEM_7, false, u8"＇"},
+        {VK_OEM_7, true, u8"＂"},
+        {'1', true, u8"！"},
     };
     for (const auto& test_case : cases) {
         SymbolEngineFixture fixture;
@@ -289,7 +290,7 @@ TEST(SymbolInput, slash_and_backslash_commit_ime_candidate_with_enumeration_comm
         ASSERT_GE(fixture.engine().context().candidate_page().candidates.size(), 2u);
         fixture.engine().context().translation().highlighted = 1;
         const std::string expected =
-            fixture.engine().context().candidate_page().candidates[1].text + "\xe3\x80\x81";
+            fixture.engine().context().candidate_page().candidates[1].text + u8"、";
         ASSERT_EQ(fixture.engine().process_key(make_key(key), options),
                   cxxime::ProcessResult::COMMITTED);
         const auto committed = fixture.engine().take_commit_text_with_source();
@@ -330,8 +331,8 @@ TEST(SymbolInput, slash_and_backslash_preserve_full_shape_composition_behavior) 
         uint32_t key;
         const char* full_width;
     } cases[] = {
-        {VK_OEM_2, "\xef\xbc\x8f"},
-        {VK_OEM_5, "\xef\xbc\xbc"},
+        {VK_OEM_2, u8"／"},
+        {VK_OEM_5, u8"＼"},
     };
     for (const auto& test_case : cases) {
         SymbolEngineFixture candidate_fixture;
@@ -451,9 +452,9 @@ TEST(SymbolInput, shifted_zero_commits_candidate_with_right_parenthesis) {
     const int highlighted = fixture.engine().context().translation().highlighted;
     ASSERT_GE(highlighted, 0);
     const std::string expected =
-        fixture.engine().context().candidate_page().candidates[highlighted].text + "\xef\xbc\x89";
+        fixture.engine().context().candidate_page().candidates[highlighted].text + u8"）";
     cxxime::PunctMapping punctuation;
-    punctuation.half_shape[")"] = {cxxime::PunctType::COMMIT, "\xef\xbc\x89", {}, {}};
+    punctuation.half_shape[")"] = {cxxime::PunctType::COMMIT, u8"）", {}, {}};
     cxxime::OutputOptions options;
     options.punct_mapping = &punctuation;
 

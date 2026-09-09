@@ -267,6 +267,7 @@ TEST(WubiEngine, engine_mixed_candidate_source_tagging) {
         }
     }
     ASSERT_TRUE(has_wubi);
+    ASSERT_TRUE(has_pinyin);
 
     engine.finalize();
     wubi_dict.close();

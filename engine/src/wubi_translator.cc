@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <limits>
 
+#include <cxxime/query_budget.h>
 #include <cxxime/query_trace.h>
 
 namespace cxxime {
@@ -103,7 +104,14 @@ CandidatePage WubiTranslator::translate_page(const std::string& code, int page_i
         int query_limit = (std::max)(required_count, doubled_limit);
         auto results = lookup_candidates(code, query_limit, trace, budget);
         snapshot_query_limit_ = query_limit;
-        snapshot_exhausted_ = (int)results.size() < query_limit;
+        const bool collector_capacity_incomplete = budget &&
+            budget->max_results_before_merge > 0 &&
+            budget->max_results_before_merge < static_cast<uint32_t>(query_limit) &&
+            results.size() >= budget->max_results_before_merge &&
+            (!trace || trace->topk_truncated);
+        const bool query_incomplete = collector_capacity_incomplete ||
+            (trace && (trace->deadline_exceeded || trace->scan_budget_truncated));
+        snapshot_exhausted_ = !query_incomplete && (int)results.size() < query_limit;
 
         size_t previous_size = snapshot_candidates_.size();
         for (auto& candidate : results) {
@@ -114,13 +122,12 @@ CandidatePage WubiTranslator::translate_page(const std::string& code, int page_i
                 snapshot_candidates_.push_back(std::move(candidate));
             }
         }
+        if (query_incomplete) {
+            break;
+        }
         if (snapshot_candidates_.size() == previous_size) {
             snapshot_exhausted_ = true;
         }
-    }
-
-    if (snapshot_candidates_.empty()) {
-        return {};
     }
 
     // 分页
@@ -128,13 +135,17 @@ CandidatePage WubiTranslator::translate_page(const std::string& code, int page_i
     page.page_index = page_index;
     page.page_offset = offset;
     page.page_size = page_size;
-    page.total_count = (int)snapshot_candidates_.size();
+    const int known_count = static_cast<int>(snapshot_candidates_.size());
+    const int returned_end = (std::min)(offset + page_size, known_count);
+    const bool query_incomplete =
+        trace && (trace->deadline_exceeded || trace->scan_budget_truncated);
+    page.extent = make_candidate_extent(known_count, returned_end, query_incomplete);
 
-    if (offset >= (int)snapshot_candidates_.size()) {
+    if (offset >= known_count) {
         return page;
     }
 
-    int end = std::min(offset + page_size, (int)snapshot_candidates_.size());
+    int end = std::min(offset + page_size, known_count);
     page.candidates.assign(snapshot_candidates_.begin() + offset,
                            snapshot_candidates_.begin() + end);
     page.highlighted = 0;
@@ -156,13 +167,14 @@ TranslationResult WubiTranslator::translate(const TranslationRequest& request) {
     if (trace) {
         trace->deadline_exceeded = false;
         trace->scan_budget_truncated = false;
+        trace->topk_truncated = false;
     }
     CandidatePage page = translate_page(request.input, request.page_index, request.page_size,
                                         trace, request.budget, request.scratch,
                                         request.page_offset);
     result = make_translation_result(std::move(page), request.input.size());
-    const bool query_incomplete =
-        trace && (trace->deadline_exceeded || trace->scan_budget_truncated);
+    const bool query_incomplete = !result.extent.complete ||
+        (trace && (trace->deadline_exceeded || trace->scan_budget_truncated));
     if (query_incomplete) {
         result.status = result.entries.empty() ? TranslationStatus::kFailed
                                                : TranslationStatus::kStableDegraded;

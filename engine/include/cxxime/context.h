@@ -21,6 +21,16 @@ namespace cxxime {
 
 struct KeyEvent;
 
+enum class CandidateNavigation {
+    kPreviousPage,
+    kNextPage,
+};
+
+struct CandidateNavigationRequest {
+    CandidateNavigation direction = CandidateNavigation::kNextPage;
+    bool highlight_last = false;
+};
+
 struct CompositionOrigin {
     CompositionScheme scheme = CompositionScheme::kPinyin;
     std::string input;
@@ -76,8 +86,16 @@ public:
     void clear_translation();
     void replace_composition(CompositionState&& state, TranslationResult&& result);
     void reset_pagination();
-    void move_to_next_page();
-    void move_to_previous_page(bool highlight_last = false);
+    void request_next_page();
+    void request_previous_page(bool highlight_last = false);
+    std::optional<CandidateNavigationRequest> take_candidate_navigation();
+    bool apply_next_page(TranslationResult&& result, int visible_candidate_count);
+    bool apply_previous_page(bool highlight_last = false);
+    void update_current_extent(CandidateExtent extent);
+    uint32_t begin_candidate_continuation();
+    bool candidate_was_published(const CandidateEntry& entry,
+                                 int current_visible_count) const;
+    void replace_candidate_sequence(TranslationResult&& result);
     void move_to_next_candidate();
     void move_to_previous_candidate();
     int selectable_candidate_count() const;
@@ -96,8 +114,9 @@ public:
 
 private:
     struct PageHistoryEntry {
-        int offset = 0;
+        TranslationResult translation;
         int visible_candidate_count = 0;
+        uint32_t continuation_effort = 0;
     };
 
     bool commit_selection(const TextSelectionAction& action);
@@ -110,6 +129,8 @@ private:
     CommitSource commit_source_ = CommitSource::kRawCode;
     CommitLearningPlan commit_learning_plan_;
     std::optional<int> requested_candidate_index_;
+    std::optional<CandidateNavigationRequest> requested_navigation_;
+    uint32_t continuation_effort_ = 0;
     std::optional<CompositionOrigin> composition_origin_;
 };
 

@@ -28,12 +28,8 @@ TEST(InstallerLock, reports_process_holding_file) {
     ASSERT_TRUE(file != INVALID_HANDLE_VALUE);
 
     const auto result = cxxime::installer::query_file_locks({temp_path});
-    if (result.status == cxxime::installer::LockQueryStatus::kFailed &&
-        result.error_code == ERROR_WRITE_FAULT) {
-        CloseHandle(file);
-        DeleteFileW(temp_path);
-        return;
-    }
+    CloseHandle(file);
+    DeleteFileW(temp_path);
 
     const DWORD process_id = GetCurrentProcessId();
     const auto current_process =
@@ -48,9 +44,6 @@ TEST(InstallerLock, reports_process_holding_file) {
     ASSERT_TRUE(result.status == cxxime::installer::LockQueryStatus::kSuccess || detected_self)
         << "status=" << result.status << " reboot_reasons=" << result.reboot_reasons;
     ASSERT_TRUE(current_process != result.applications.end());
-
-    CloseHandle(file);
-    DeleteFileW(temp_path);
 }
 
 TEST(InstallerLock, formats_bounded_application_list) {

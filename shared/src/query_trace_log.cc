@@ -349,7 +349,9 @@ int QueryTrace::to_json(char* buf, int buf_size) const {
     int written = snprintf(buf, buf_size,
         "{\"q\":%llu,\"sid\":%u,\"rev\":%llu,\"input\":\"%s\","
         "\"page\":%d,\"page_size\":%d,"
-        "\"paths\":%d,\"live\":%d,\"candidates\":%d,"
+        "\"paths\":%d,\"live\":%d,\"candidates\":%d,\"known_candidates\":%d,"
+        "\"candidate_extent\":%u,\"candidate_extent_complete\":%u,"
+        "\"navigation\":%u,\"continuation_effort\":%u,"
         "\"composition_paths\":%u,\"composition_repeat_paths\":%u,"
         "\"span_queries\":%u,\"span_scans\":%u,\"composition_states\":%u,"
         "\"composed_candidates\":%u,\"composition_truncated\":%s,"
@@ -364,7 +366,9 @@ int QueryTrace::to_json(char* buf, int buf_size) const {
         (unsigned long long)revision,
         escaped_input,
         page_index, page_size,
-        syllable_path_count, live_path_count, candidate_count,
+        syllable_path_count, live_path_count, candidate_count, candidate_known_count,
+        candidate_extent_state, candidate_extent_complete,
+        static_cast<unsigned>(navigation_outcome), continuation_effort,
         composition_path_count, composition_repeated_short_path_count,
         span_query_count, span_entry_scan_count, composition_state_count,
         composed_candidate_count, composition_truncated ? "true" : "false",

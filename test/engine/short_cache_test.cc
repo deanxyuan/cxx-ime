@@ -215,40 +215,25 @@ TEST(ShortCache, bad_magic_rejected) {
     DeleteFileA(path.c_str());
 }
 
-TEST(ShortCache, legacy_v1_rejected) {
-    std::string path = make_temp_path("test_topn_v1.bin");
-    HANDLE file = CreateFileA(path.c_str(), GENERIC_WRITE, 0, nullptr,
-                              CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-    ASSERT_TRUE(file != INVALID_HANDLE_VALUE);
-    char header[80] = {};
-    std::memcpy(header, "CXTOPN\x01\x00", 8);
-    DWORD written = 0;
-    ASSERT_TRUE(WriteFile(file, header, sizeof(header), &written, nullptr));
-    ASSERT_EQ(written, sizeof(header));
-    CloseHandle(file);
+TEST(ShortCache, rejects_unsupported_versions) {
+    for (char version : {'\x01', '\x02'}) {
+        std::string path = make_temp_path("test_topn_unsupported.bin");
+        HANDLE file = CreateFileA(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
+                                  FILE_ATTRIBUTE_NORMAL, nullptr);
+        ASSERT_TRUE(file != INVALID_HANDLE_VALUE);
+        char header[80] = {};
+        std::memcpy(header, "CXTOPN", 6);
+        header[6] = version;
+        DWORD written = 0;
+        ASSERT_TRUE(WriteFile(file, header, sizeof(header), &written, nullptr));
+        ASSERT_EQ(written, sizeof(header));
+        CloseHandle(file);
 
-    cxxime::ShortCodeCache cache;
-    ASSERT_TRUE(!cache.load(path));
-    ASSERT_TRUE(!cache.is_loaded());
-    DeleteFileA(path.c_str());
-}
-
-TEST(ShortCache, legacy_v2_rejected) {
-    std::string path = make_temp_path("test_topn_v2.bin");
-    HANDLE file = CreateFileA(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
-                              FILE_ATTRIBUTE_NORMAL, nullptr);
-    ASSERT_TRUE(file != INVALID_HANDLE_VALUE);
-    char header[80] = {};
-    std::memcpy(header, "CXTOPN\x02\x00", 8);
-    DWORD written = 0;
-    ASSERT_TRUE(WriteFile(file, header, sizeof(header), &written, nullptr));
-    ASSERT_EQ(written, sizeof(header));
-    CloseHandle(file);
-
-    cxxime::ShortCodeCache cache;
-    ASSERT_TRUE(!cache.load(path));
-    ASSERT_TRUE(!cache.is_loaded());
-    DeleteFileA(path.c_str());
+        cxxime::ShortCodeCache cache;
+        ASSERT_TRUE(!cache.load(path));
+        ASSERT_TRUE(!cache.is_loaded());
+        DeleteFileA(path.c_str());
+    }
 }
 
 TEST(ShortCache, empty_candidate_identity_rejected) {

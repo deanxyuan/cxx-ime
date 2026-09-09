@@ -27,7 +27,8 @@ TEST(SymbolTable, loads_categories_and_paginates) {
     ASSERT_TRUE(table.load(project_data_path("symbols.json")));
 
     cxxime::CandidatePage first = table.translate_page("bd", 0, 7);
-    ASSERT_EQ(first.total_count, 46);
+    ASSERT_EQ(first.extent.known_count, 46);
+    ASSERT_EQ(first.extent.state, cxxime::CandidateExtentState::kHasMore);
     ASSERT_EQ(first.candidates.size(), 7u);
     ASSERT_EQ(first.candidates[0].text, "。");
     ASSERT_EQ(first.candidates[0].code, "\\bd");
@@ -45,7 +46,8 @@ TEST(SymbolTable, lists_category_navigation_in_source_order) {
     ASSERT_TRUE(table.load(project_data_path("symbols.json")));
 
     cxxime::CandidatePage first = table.translate_page("", 0, 7);
-    ASSERT_EQ(first.total_count, 14);
+    ASSERT_EQ(first.extent.known_count, 14);
+    ASSERT_EQ(first.extent.state, cxxime::CandidateExtentState::kHasMore);
     ASSERT_EQ(first.candidates.size(), 7u);
     ASSERT_EQ(first.candidates[0].text, "标点");
     ASSERT_EQ(first.candidates[0].comment, "\\bd");

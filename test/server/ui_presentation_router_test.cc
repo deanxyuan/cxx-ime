@@ -49,6 +49,8 @@ cxxime::UiPresentationSnapshot make_snapshot(std::uint64_t target_generation, bo
                           cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kHasCandidates);
         snapshot.candidate_page.count = 1;
         snapshot.candidate_page.total = 1;
+        snapshot.candidate_known_count = 1;
+        snapshot.candidate_extent_state = cxxime::CandidateExtentState::kExhausted;
         snapshot.candidate_page.candidates[0].text_length = 1;
         snapshot.candidate_page.candidates[0].text[0] = 'a';
     }
