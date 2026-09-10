@@ -12,6 +12,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include <cxxime/user_data_merge.h>
 #include <cxxime/user_dict.h>
 
 namespace cxxime {
@@ -19,6 +20,9 @@ namespace cxxime {
 class ManualCandidateOrder {
 public:
     bool load(const std::string& path, std::size_t max_code_length);
+    static bool validate_contents(const std::string& contents,
+                                  std::size_t max_code_length);
+    bool merge_contents_and_save(const std::string& imported, UserDataMergeResult* result);
 
     std::vector<ManualCandidateOrderEntry> entries_for(const std::string& input_code) const;
     bool contains(const std::string& input_code, const std::string& text,
@@ -36,6 +40,8 @@ private:
     using Orders = std::unordered_map<std::string, std::vector<ManualCandidateOrderEntry>>;
 
     static bool validate_orders(const Orders& orders, std::size_t max_code_length);
+    static bool parse_contents(const std::string& contents,
+                               std::size_t max_code_length, Orders* orders);
     static std::string serialize(const Orders& orders);
     bool replace_and_save_locked(const std::string& input_code,
                                  const std::vector<ManualCandidateOrderEntry>& entries);

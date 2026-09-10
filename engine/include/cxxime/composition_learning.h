@@ -13,6 +13,7 @@
 
 #include <cxxime/candidate.h>
 #include <cxxime/candidate_selection.h>
+#include <cxxime/user_data_merge.h>
 
 namespace cxxime {
 
@@ -58,8 +59,11 @@ public:
 
     bool load(const std::string& path);
     bool start();
+    static bool validate_contents(const std::string& contents);
     bool enqueue(const CompositionLearningEvent& event);
+    bool flush();
     bool freeze_and_stop();
+    bool merge_contents_and_save(const std::string& imported, UserDataMergeResult* result);
 
     std::vector<Candidate> lookup_candidates(const std::string& code,
                                              std::size_t limit) const;

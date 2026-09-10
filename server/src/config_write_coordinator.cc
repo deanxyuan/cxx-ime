@@ -33,6 +33,7 @@ struct WriteRequest {
     bool succeeded = false;
     unsigned long error_code = ERROR_OPERATION_ABORTED;
     std::string config_json;
+    bool snapshot = false;
 };
 
 void complete_request(const std::shared_ptr<WriteRequest>& request, bool succeeded,
@@ -118,6 +119,32 @@ public:
         return request && enqueue(request);
     }
 
+    bool snapshot_user_config(std::string* user_config_json, unsigned long* error_code) {
+        if (!user_config_json) {
+            if (error_code) {
+                *error_code = ERROR_INVALID_PARAMETER;
+            }
+            return false;
+        }
+        auto request = std::make_shared<WriteRequest>();
+        request->snapshot = true;
+        request->wait_for_result = true;
+        request->enqueued_at = std::chrono::steady_clock::now();
+        if (!enqueue(request)) {
+            if (error_code) {
+                *error_code = ERROR_OPERATION_ABORTED;
+            }
+            return false;
+        }
+        std::unique_lock<std::mutex> lock(request->mutex);
+        request->completed_event.wait(lock, [&request]() { return request->completed; });
+        *user_config_json = request->config_json;
+        if (error_code) {
+            *error_code = request->error_code;
+        }
+        return request->succeeded;
+    }
+
 private:
     std::shared_ptr<WriteRequest> make_request(cxxime::UserConfigMutationKind kind,
                                                const std::string& payload, bool wait_for_result) {
@@ -146,9 +173,10 @@ private:
         return true;
     }
 
-    bool replace_is_waiting() const {
+    bool ordering_barrier_is_waiting() const {
         for (const auto& request : queue_) {
-            if (request->kind == cxxime::UserConfigMutationKind::kReplace) {
+            if (request->snapshot ||
+                request->kind == cxxime::UserConfigMutationKind::kReplace) {
                 return true;
             }
         }
@@ -157,17 +185,19 @@ private:
 
     std::vector<std::shared_ptr<WriteRequest>> take_batch(std::unique_lock<std::mutex>* lock) {
         std::vector<std::shared_ptr<WriteRequest>> batch;
-        if (queue_.front()->kind == cxxime::UserConfigMutationKind::kReplace) {
+        if (queue_.front()->snapshot ||
+            queue_.front()->kind == cxxime::UserConfigMutationKind::kReplace) {
             batch.push_back(queue_.front());
             queue_.pop_front();
             return batch;
         }
 
         const auto deadline = queue_.front()->enqueued_at + kPatchBatchWindow;
-        while (running_ && !replace_is_waiting() && std::chrono::steady_clock::now() < deadline) {
+        while (running_ && !ordering_barrier_is_waiting() &&
+               std::chrono::steady_clock::now() < deadline) {
             queue_event_.wait_until(*lock, deadline);
         }
-        while (!queue_.empty() &&
+        while (!queue_.empty() && !queue_.front()->snapshot &&
                queue_.front()->kind == cxxime::UserConfigMutationKind::kMergePatch) {
             batch.push_back(queue_.front());
             queue_.pop_front();
@@ -185,6 +215,12 @@ private:
                     return;
                 }
                 requests = take_batch(&lock);
+            }
+
+            if (requests.front()->snapshot) {
+                complete_request(requests.front(), true, ERROR_SUCCESS,
+                                 store_->user_config_json());
+                continue;
             }
 
             std::vector<ConfigMutation> mutations;
@@ -254,4 +290,9 @@ bool ConfigWriteCoordinator::submit(cxxime::UserConfigMutationKind kind, const s
 
 bool ConfigWriteCoordinator::enqueue_patch(const std::string& merge_patch_json) {
     return impl_->enqueue_patch(merge_patch_json);
+}
+
+bool ConfigWriteCoordinator::snapshot_user_config(std::string* user_config_json,
+                                                  unsigned long* error_code) {
+    return impl_->snapshot_user_config(user_config_json, error_code);
 }

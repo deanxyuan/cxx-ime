@@ -19,6 +19,7 @@ inline constexpr UINT kDiagnosticsCleanupCompleteMessage = WM_APP + 103;
 inline constexpr UINT kLexiconCodeCompleteMessage = WM_APP + 104;
 inline constexpr UINT kLexiconImportCompleteMessage = WM_APP + 105;
 inline constexpr UINT kLexiconBatchAddCompleteMessage = WM_APP + 106;
+inline constexpr UINT kUserBackupCompleteMessage = WM_APP + 107;
 inline constexpr UINT_PTR kLexiconCodeTimerId = 4100;
 
 extern float g_dpi;

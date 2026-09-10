@@ -32,6 +32,7 @@ public:
     bool submit(cxxime::UserConfigMutationKind kind, const std::string& payload,
                 std::string* config_json, unsigned long* error_code);
     bool enqueue_patch(const std::string& merge_patch_json);
+    bool snapshot_user_config(std::string* user_config_json, unsigned long* error_code);
 
 private:
     class Impl;

@@ -13,6 +13,7 @@
 #include <vector>
 
 #include <cxxime/candidate.h>
+#include <cxxime/user_data_merge.h>
 #include <cxxime/user_dict.h>
 
 namespace cxxime {
@@ -30,6 +31,7 @@ class UserLexicon {
 public:
     bool load(const std::string& path);
     bool save();
+    static bool validate_contents(const std::string& contents);
 
     void set_scoring_profile(UserScoringProfile profile);
     bool add_entry(const std::string& text, const std::string& code,
@@ -43,6 +45,7 @@ public:
     bool replace_entry_and_save(const std::string& old_text, const std::string& old_code,
                                 const std::string& new_text, const std::string& new_code);
     bool import_file(const std::string& source_path);
+    bool merge_contents_and_save(const std::string& imported, UserDataMergeResult* result);
 
     std::vector<UserDictEntryInfo> query_entries(const std::string& query, std::size_t offset,
                                                  std::size_t limit,

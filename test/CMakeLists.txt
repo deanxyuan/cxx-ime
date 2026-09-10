@@ -46,6 +46,7 @@ add_cxxime_test(engine_test
         engine/engine_ascii_composition_test.cc
         engine/engine_deadline_test.cc
         engine/composition_state_test.cc
+        engine/user_data_merge_test.cc
     DEPS cxxime-engine
 )
 add_cxxime_test(segmented_selection_test
@@ -79,6 +80,8 @@ add_cxxime_test(dictionary_manifest_test
     SOURCES shared/dictionary_manifest_test.cc
     DEPS cxxime-shared
 )
+add_cxxime_test(user_backup_test SOURCES shared/user_backup_test.cc DEPS cxxime-shared)
+target_link_libraries(user_backup_test PRIVATE miniz)
 add_cxxime_test(config_test
     SOURCES engine/config_test.cc
     DEPS cxxime-engine cxxime-ipc cxxime-ui
@@ -291,10 +294,14 @@ add_cxxime_test(session_manager_integration_test
         server/session_manager_segmented_test.cc
         server/session_manager_lexicon_test.cc
         server/session_manager_lifecycle_test.cc
+        server/user_backup_service_test.cc
         server/session_manager_integration_test_support.cc
         ${CMAKE_SOURCE_DIR}/server/src/session_manager.cc
         ${CMAKE_SOURCE_DIR}/server/src/ipc_response_builder.cc
         ${CMAKE_SOURCE_DIR}/server/src/lexicon_control_handler.cc
+        ${CMAKE_SOURCE_DIR}/server/src/config_store.cc
+        ${CMAKE_SOURCE_DIR}/server/src/config_write_coordinator.cc
+        ${CMAKE_SOURCE_DIR}/server/src/user_backup_service.cc
     DEPS
         cxxime-engine
         cxxime-ipc

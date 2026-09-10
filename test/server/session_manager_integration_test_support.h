@@ -11,6 +11,7 @@
 #include <cstring>
 #include <fstream>
 #include <iterator>
+#include <map>
 #include <memory>
 #include <string>
 #include <thread>
@@ -52,6 +53,8 @@ void create_test_dictionary_bundle_with_wubi(const std::string& dict_path,
                                              const std::vector<TestDictEntry>& wubi_entries);
 void delete_test_dictionary_bundle(const std::string& dict_path);
 std::string setup_test_dict();
+void merge_user_data_for_test(SessionManager& manager,
+                              const std::map<std::string, std::string>& files);
 cxxime::KeyEvent make_key(uint32_t vk, bool shift = false, bool caps = false);
 ProcessKeyResult type_kao(SessionManager& manager, uint32_t id);
 bool candidate_contains(const cxxime::CandidatePresentationPage& page,

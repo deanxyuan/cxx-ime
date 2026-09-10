@@ -1,6 +1,9 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
+#include <map>
+
 #include "session_manager_integration_test_support.h"
+
 TEST(SessionIntegration, shape_and_punctuation_toggles_preserve_composition) {
     SessionManager manager;
     manager.initialize(setup_test_dict());
@@ -425,6 +428,72 @@ TEST(SessionIntegration, append_enter_preserves_case_through_output_composer) {
     DeleteFileA(cfg_path.c_str());
 }
 
+TEST(SessionIntegration, user_data_merge_updates_live_lexicon_and_skips_invalid_rows) {
+    SessionManager manager;
+    ASSERT_TRUE(manager.initialize(setup_test_dict()));
+
+    const std::map<std::string, std::string> replacement = {
+        {"user_pinyin.tsv", "备份词\tbeifenci\t100\tbei:fen:ci\n"},
+    };
+    merge_user_data_for_test(manager, replacement);
+    const auto imported = manager.query_lexicon_entries(
+        cxxime::LexiconResource::kUserLexicon, "备份词", cxxime::UserDictKind::PINYIN, 0, 16, true);
+    ASSERT_EQ(imported.entries.size(), static_cast<std::size_t>(1));
+    ASSERT_EQ(imported.entries[0].code, "beifenci");
+
+    const std::map<std::string, std::string> invalid_files[] = {
+        {{"user_pinyin.tsv", "invalid"}},
+        {{"learning_pinyin.tsv", "invalid"}},
+        {{"candidate_order_pinyin.tsv", "invalid"}},
+        {{"disabled_pinyin.tsv", "invalid\tentry"}},
+        {{"learning_composition.tsv", "invalid"}},
+    };
+    for (const auto& invalid : invalid_files) {
+        std::size_t imported = 0;
+        std::size_t skipped = 0;
+        manager.merge_user_data(invalid, &imported, &skipped);
+        ASSERT_EQ(imported, static_cast<std::size_t>(0));
+        ASSERT_TRUE(skipped != 0);
+    }
+    ASSERT_EQ(manager
+                    .query_lexicon_entries(cxxime::LexiconResource::kUserLexicon, "备份词",
+                                            cxxime::UserDictKind::PINYIN, 0, 16, true)
+                    .entries.size(),
+                static_cast<std::size_t>(1));
+
+}
+
+TEST(SessionIntegration, user_data_merge_skips_failed_file_and_continues) {
+    SessionManager manager;
+    ASSERT_TRUE(manager.initialize(setup_test_dict()));
+    const std::string learning_path = test_user_data_dir + "\\learning_composition.tsv";
+    DeleteFileA(learning_path.c_str());
+    RemoveDirectoryA(learning_path.c_str());
+    ASSERT_TRUE(CreateDirectoryA(learning_path.c_str(), nullptr) != FALSE);
+
+    const std::map<std::string, std::string> imported_data = {
+        {"learning_composition.tsv", "你好\tnihao\tni:hao\t2\t3\n"},
+        {"user_pinyin.tsv", "继续导入\tjixudaoru\t5\tji:xu:dao:ru\n"},
+    };
+    std::size_t imported = 0;
+    std::size_t skipped = 0;
+    manager.merge_user_data(imported_data, &imported, &skipped);
+    ASSERT_EQ(imported, static_cast<std::size_t>(1));
+    ASSERT_TRUE(skipped != 0);
+    ASSERT_EQ(manager
+                  .query_lexicon_entries(cxxime::LexiconResource::kUserLexicon, "继续导入",
+                                         cxxime::UserDictKind::PINYIN, 0, 16, true)
+                  .entries.size(),
+              static_cast<std::size_t>(1));
+
+    ASSERT_TRUE(RemoveDirectoryA(learning_path.c_str()) != FALSE);
+    manager.merge_user_data({{"learning_composition.tsv", "你好\tnihao\tni:hao\t2\t3\n"}},
+                            &imported, &skipped);
+    ASSERT_EQ(imported, static_cast<std::size_t>(1));
+    ASSERT_EQ(skipped, static_cast<std::size_t>(0));
+    DeleteFileA(learning_path.c_str());
+}
+
 int main() {
     GetTempPathA(MAX_PATH, temp_path);
     const std::string directory_name =
@@ -438,6 +507,9 @@ int main() {
     DeleteFileA((test_user_data_dir + "\\disabled_wubi.tsv").c_str());
     DeleteFileA((test_user_data_dir + "\\candidate_order_pinyin.tsv").c_str());
     DeleteFileA((test_user_data_dir + "\\candidate_order_wubi.tsv").c_str());
+    DeleteFileA((test_user_data_dir + "\\learning_pinyin.tsv").c_str());
+    DeleteFileA((test_user_data_dir + "\\learning_wubi.tsv").c_str());
+    DeleteFileA((test_user_data_dir + "\\learning_composition.tsv").c_str());
 
     cxxime::set_data_dir(CXXIME_DATA_DIR);
     cxxime::set_user_data_dir(test_user_data_dir);
@@ -450,6 +522,9 @@ int main() {
     DeleteFileA((test_user_data_dir + "\\disabled_wubi.tsv").c_str());
     DeleteFileA((test_user_data_dir + "\\candidate_order_pinyin.tsv").c_str());
     DeleteFileA((test_user_data_dir + "\\candidate_order_wubi.tsv").c_str());
+    DeleteFileA((test_user_data_dir + "\\learning_pinyin.tsv").c_str());
+    DeleteFileA((test_user_data_dir + "\\learning_wubi.tsv").c_str());
+    DeleteFileA((test_user_data_dir + "\\learning_composition.tsv").c_str());
     RemoveDirectoryA(test_user_data_dir.c_str());
     return result;
 }

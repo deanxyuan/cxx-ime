@@ -84,6 +84,10 @@ bool Dict::import_user_dict(const std::string& source_path) {
     return user_lexicon_->import_file(source_path);
 }
 
+bool Dict::merge_user_dict_contents(const std::string& imported, UserDataMergeResult* result) {
+    return user_lexicon_->merge_contents_and_save(imported, result);
+}
+
 std::string Dict::reverse_lookup(const std::string& text) {
     std::string code = user_lexicon_->reverse_lookup(text);
     if (!code.empty()) {
@@ -133,6 +137,11 @@ bool Dict::load_candidate_preferences(const std::string& path) {
 }
 
 bool Dict::save_candidate_preferences() { return candidate_preference_->save(); }
+
+bool Dict::merge_candidate_preference_contents(const std::string& imported,
+                                                UserDataMergeResult* result) {
+    return candidate_preference_->merge_contents_and_save(imported, result);
+}
 
 bool Dict::save_candidate_preferences_if_due(std::chrono::milliseconds delay) {
     return candidate_preference_->save_if_due(delay);
@@ -257,6 +266,11 @@ uint64_t Dict::candidate_preference_version() const { return candidate_preferenc
 
 bool Dict::load_manual_candidate_order(const std::string& path, std::size_t max_code_length) {
     return manual_candidate_order_->load(path, max_code_length);
+}
+
+bool Dict::merge_manual_candidate_order_contents(const std::string& imported,
+                                                  UserDataMergeResult* result) {
+    return manual_candidate_order_->merge_contents_and_save(imported, result);
 }
 
 bool Dict::resolve_manual_candidate(const ManualCandidateOrderEntry& entry, CandidateSource source,
@@ -396,6 +410,11 @@ uint64_t Dict::manual_candidate_order_version() const {
 
 bool Dict::load_disabled_system_entries(const std::string& path) {
     return disabled_system_lexicon_->load(path);
+}
+
+bool Dict::merge_disabled_system_contents(const std::string& imported,
+                                          UserDataMergeResult* result) {
+    return disabled_system_lexicon_->merge_contents_and_save(imported, result);
 }
 
 bool Dict::save_disabled_system_entries() { return disabled_system_lexicon_->save(); }

@@ -15,6 +15,7 @@ enum class SettingsPanel : uint32_t {
     kDictionary = 4,
     kDiagnostics = 5,
     kAbout = 6,
+    kBackup = 7,
 };
 
 inline constexpr wchar_t kSettingsWindowTitle[] = L"CxxIME 设置";

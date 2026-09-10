@@ -79,6 +79,20 @@ documentation to the public domain. The authoritative statement is available
 at https://www.sqlite.org/copyright.html.
 
 
+miniz 3.1.2
+-----------
+
+Upstream: https://github.com/richgel999/miniz
+Vendored commit: 77d0dce8627735138c51770d1799a1ef48f2117d
+License: MIT
+
+Copyright 2013-2014 RAD Game Tools and Valve Software
+Copyright 2010-2014 Rich Geldreich and Tenacious Software LLC
+
+The complete license text is distributed in licenses/miniz-MIT.txt and beside
+the vendored source in third_party/miniz/LICENSE.
+
+
 rime-ice dictionary data
 ------------------------
 

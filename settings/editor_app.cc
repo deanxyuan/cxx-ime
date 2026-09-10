@@ -26,13 +26,27 @@ namespace {
 EditorApp* g_app = nullptr;
 
 const wchar_t* kPanelNames[] = {
-    L"输入", L"界面", L"高级布局", L"快捷键", L"词库管理", L"故障排查", L"关于"
+    L"输入", L"界面", L"高级布局", L"快捷键", L"词库管理", L"备份与导入",
+    L"故障排查", L"关于"
 };
-const int kPanelCount = 7;
+const int kPanelCount = 8;
 
 UINT settings_navigate_message() {
     static const UINT message = RegisterWindowMessageW(cxxime::kSettingsNavigateMessage);
     return message;
+}
+
+int settings_panel_index(cxxime::SettingsPanel panel) {
+    switch (panel) {
+    case cxxime::SettingsPanel::kBackup:
+        return 5;
+    case cxxime::SettingsPanel::kDiagnostics:
+        return 6;
+    case cxxime::SettingsPanel::kAbout:
+        return 7;
+    default:
+        return static_cast<int>(panel);
+    }
 }
 
 } // namespace
@@ -140,8 +154,9 @@ void EditorApp::create_controls(HWND window) {
     create_advanced_layout_panel(hPanels_[2]);
     create_shortcuts_panel(hPanels_[3]);
     create_dictionary_panel(hPanels_[4], panel_width);
-    create_diagnostics_panel(hPanels_[5]);
-    create_about_panel(hPanels_[6], panel_width);
+    create_backup_panel(hPanels_[5], panel_width);
+    create_diagnostics_panel(hPanels_[6]);
+    create_about_panel(hPanels_[7], panel_width);
 
     CreateWindowExW(0, L"BUTTON", L"确定", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
                     save_x, button_y, button_width, button_height, window,
@@ -321,7 +336,7 @@ bool EditorApp::load_config() {
     combo_set_index(hMixedCandidatePreference_, mixed_candidate_preference);
     update_input_mode_enabled();
 
-    show_panel(static_cast<int>(initial_panel_));
+    show_panel(settings_panel_index(initial_panel_));
     return true;
 }
 
@@ -422,6 +437,9 @@ LRESULT CALLBACK EditorApp::wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     case kLexiconBatchAddCompleteMessage:
         a->handle_lexicon_batch_add_complete(lp);
+        return 0;
+    case kUserBackupCompleteMessage:
+        a->handle_backup_complete(lp);
         return 0;
     case WM_TIMER:
         if (wp == kLexiconCodeTimerId) {
@@ -530,6 +548,8 @@ LRESULT CALLBACK EditorApp::wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         a->lexiconImportRunning_ = false;
         a->lexiconBatchAddToken_.reset();
         a->lexiconBatchAddRunning_ = false;
+        a->backupToken_.reset();
+        a->backupRunning_ = false;
         a->readback(hwnd);
         a->destroy_candidate_preview_window();
         a->release_fonts();
@@ -563,6 +583,7 @@ LRESULT CALLBACK EditorApp::wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             a->handle_advanced_layout_command(control_id, notification) ||
             a->handle_shortcuts_command(control_id, notification) ||
             a->handle_dictionary_command(control_id, notification) ||
+            a->handle_backup_command(control_id, notification) ||
             a->handle_diagnostics_command(control_id, notification)) {
             return 0;
         }

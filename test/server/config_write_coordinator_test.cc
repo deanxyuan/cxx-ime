@@ -1,12 +1,9 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
 #include <atomic>
-#include <chrono>
 #include <fstream>
-#include <functional>
 #include <memory>
 #include <string>
-#include <thread>
 
 #include <windows.h>
 
@@ -17,17 +14,6 @@
 #include "support/testutil.h"
 
 namespace {
-
-bool wait_for(const std::function<bool()>& condition, int timeout_ms = 3000) {
-    auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
-    while (!condition()) {
-        if (std::chrono::steady_clock::now() >= deadline) {
-            return false;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
-    }
-    return true;
-}
 
 std::string test_user_config_path(const char* suffix) {
     char directory[MAX_PATH] = {};
@@ -73,10 +59,13 @@ TEST(ConfigWriteCoordinator, batches_ordered_patches_without_dropping_fields) {
     ASSERT_TRUE(coordinator.enqueue_patch(R"({"status_window":{"enable":false}})"));
     ASSERT_TRUE(coordinator.enqueue_patch(R"({"status_window":{"x":120}})"));
     ASSERT_TRUE(coordinator.enqueue_patch(R"({"status_window":{"y":240}})"));
-    ASSERT_TRUE(wait_for([&]() { return apply_count.load() == 1; }));
-    std::this_thread::sleep_for(std::chrono::milliseconds(40));
+    std::string snapshot;
+    unsigned long error_code = ERROR_SUCCESS;
+    ASSERT_TRUE(coordinator.snapshot_user_config(&snapshot, &error_code));
+    ASSERT_EQ(error_code, static_cast<unsigned long>(ERROR_SUCCESS));
     ASSERT_EQ(apply_count.load(), 1);
     ASSERT_TRUE(file_was_visible.load());
+    ASSERT_EQ(nlohmann::json::parse(snapshot)["status_window"]["x"].get<int>(), 120);
 
     nlohmann::json saved = read_json(user_path);
     ASSERT_EQ(saved["status_window"]["enable"].get<bool>(), false);

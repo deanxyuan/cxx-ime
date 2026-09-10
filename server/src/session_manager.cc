@@ -3,20 +3,27 @@
 #include "session_manager.h"
 
 #include <algorithm>
+#include <array>
 #include <fstream>
 #include <limits>
+#include <map>
 
 #include <windows.h>
 
 #include <json.hpp>
 
 #include <cxxime/data_path.h>
+#include <cxxime/candidate_preference.h>
 #include <cxxime/diagnostics_config.h>
+#include <cxxime/disabled_system_lexicon.h>
 #include <cxxime/dictionary_manifest.h>
 #include <cxxime/input_limits.h>
 #include <cxxime/logging.h>
+#include <cxxime/manual_candidate_order.h>
 #include <cxxime/query_trace.h>
 #include <cxxime/translator.h>
+#include <cxxime/user_data_merge.h>
+#include <cxxime/user_lexicon.h>
 #include <cxxime/wubi_translator.h>
 
 namespace {
@@ -55,8 +62,86 @@ std::string disabled_system_lexicon_path_for(cxxime::UserDictKind kind) {
                                       : "disabled_pinyin.tsv");
 }
 
-std::shared_ptr<cxxime::Dict>& dict_slot_for(SharedResources& shared,
-                                             cxxime::UserDictKind kind) {
+constexpr std::array<const char*, 9> kUserDataFiles = {
+    "user_pinyin.tsv",
+    "user_wubi.tsv",
+    "candidate_order_pinyin.tsv",
+    "candidate_order_wubi.tsv",
+    "learning_pinyin.tsv",
+    "learning_wubi.tsv",
+    "learning_composition.tsv",
+    "disabled_pinyin.tsv",
+    "disabled_wubi.tsv",
+};
+
+bool known_user_data_file(const std::string& name) {
+    return std::find(kUserDataFiles.begin(), kUserDataFiles.end(), name) != kUserDataFiles.end();
+}
+
+bool valid_user_data_file_contents(const std::string& name, const std::string& contents) {
+    if (name == "user_pinyin.tsv" || name == "user_wubi.tsv") {
+        return cxxime::UserLexicon::validate_contents(contents);
+    }
+    if (name == "learning_pinyin.tsv" || name == "learning_wubi.tsv") {
+        return cxxime::CandidatePreference::validate_contents(contents);
+    }
+    if (name == "candidate_order_pinyin.tsv" || name == "candidate_order_wubi.tsv") {
+        return cxxime::ManualCandidateOrder::validate_contents(
+            contents, name == "candidate_order_wubi.tsv" ? cxxime::kMaxWubiCodeLength
+                                                         : cxxime::kMaxInputCodeLength);
+    }
+    if (name == "disabled_pinyin.tsv" || name == "disabled_wubi.tsv") {
+        return cxxime::DisabledSystemLexicon::validate_contents(contents);
+    }
+    if (name == "learning_composition.tsv") {
+        return cxxime::CompositionLearningService::validate_contents(contents);
+    }
+    return false;
+}
+
+std::wstring utf8_path_to_wide(const std::string& path) {
+    if (path.empty()) {
+        return {};
+    }
+    const int count = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, path.data(),
+                                          static_cast<int>(path.size()), nullptr, 0);
+    if (count <= 0) {
+        return {};
+    }
+    std::wstring result(static_cast<std::size_t>(count), L'\0');
+    return MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, path.data(),
+                               static_cast<int>(path.size()), &result[0], count) == count
+               ? result
+               : std::wstring();
+}
+
+bool read_user_data_file(const std::string& name, std::string* contents) {
+    const std::wstring path = utf8_path_to_wide(cxxime::user_data_path(name.c_str()));
+    HANDLE file = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
+                              FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) {
+        if (GetLastError() == ERROR_FILE_NOT_FOUND || GetLastError() == ERROR_PATH_NOT_FOUND) {
+            contents->clear();
+            return true;
+        }
+        return false;
+    }
+    LARGE_INTEGER size = {};
+    bool succeeded = GetFileSizeEx(file, &size) != FALSE && size.QuadPart >= 0 &&
+                     size.QuadPart <= 64LL * 1024LL * 1024LL;
+    if (succeeded) {
+        contents->resize(static_cast<std::size_t>(size.QuadPart));
+        DWORD read = 0;
+        succeeded =
+            contents->empty() || (ReadFile(file, &(*contents)[0],
+                                           static_cast<DWORD>(contents->size()), &read, nullptr) &&
+                                  read == contents->size());
+    }
+    CloseHandle(file);
+    return succeeded;
+}
+
+std::shared_ptr<cxxime::Dict>& dict_slot_for(SharedResources& shared, cxxime::UserDictKind kind) {
     return kind == cxxime::UserDictKind::WUBI ? shared.wubi_dict : shared.dict;
 }
 
@@ -1656,6 +1741,96 @@ cxxime::IPCStatus SessionManager::clear_candidate_order(cxxime::UserDictKind kin
 bool SessionManager::save_candidate_preferences(bool force) {
     std::lock_guard<std::mutex> reload_lock(reload_mutex_);
     return shared_.save_candidate_preferences(force);
+}
+
+bool SessionManager::snapshot_user_data(const std::vector<std::string>& file_names,
+                                        std::map<std::string, std::string>* files) {
+    if (!files || file_names.empty()) {
+        return false;
+    }
+    const SharedResourceSnapshot resources = shared_.snapshot();
+    std::map<std::string, std::string> snapshot;
+    for (const std::string& name : file_names) {
+        const bool wubi = name.find("wubi") != std::string::npos;
+        const auto dict = wubi ? resources.wubi_dict : resources.dict;
+        bool ready = known_user_data_file(name);
+        if (ready && name == "learning_composition.tsv") {
+            ready = resources.composition_learning && resources.composition_learning->flush();
+        } else if (ready && !dict) {
+            ready = false;
+        } else if (ready && name.find("user_") == 0) {
+            ready = dict->save_user_dict();
+        } else if (ready && name.find("learning_") == 0) {
+            ready = dict->save_candidate_preferences();
+        } else if (ready && name.find("disabled_") == 0) {
+            ready = dict->save_disabled_system_entries();
+        }
+        if (!ready || !read_user_data_file(name, &snapshot[name]) ||
+            !valid_user_data_file_contents(name, snapshot[name])) {
+            return false;
+        }
+    }
+    *files = std::move(snapshot);
+    return true;
+}
+
+void SessionManager::merge_user_data(const std::map<std::string, std::string>& files,
+                                     std::size_t* imported_count, std::size_t* skipped_count) {
+    std::size_t imported = 0;
+    std::size_t skipped = 0;
+    bool changed = false;
+    for (const auto& item : files) {
+        std::lock_guard<std::mutex> reload_lock(reload_mutex_);
+        const SharedResourceSnapshot resources = shared_.snapshot();
+        const bool wubi = item.first.find("wubi") != std::string::npos;
+        const auto dict = wubi ? resources.wubi_dict : resources.dict;
+        const bool composition = item.first == "learning_composition.tsv";
+        cxxime::UserDataMergeResult merged;
+        bool ready = known_user_data_file(item.first) && (composition || dict);
+        if (ready && composition) {
+            ready = resources.composition_learning &&
+                    resources.composition_learning->merge_contents_and_save(item.second, &merged);
+        } else if (ready && item.first.find("user_") == 0) {
+            ready = dict->merge_user_dict_contents(item.second, &merged);
+        } else if (ready && item.first.find("learning_") == 0) {
+            ready = dict->merge_candidate_preference_contents(item.second, &merged);
+        } else if (ready && item.first.find("candidate_order_") == 0) {
+            ready = dict->merge_manual_candidate_order_contents(item.second, &merged);
+        } else if (ready && item.first.find("disabled_") == 0) {
+            ready = dict->merge_disabled_system_contents(item.second, &merged);
+        }
+        if (ready) {
+            imported += merged.imported_count;
+            skipped += merged.skipped_count;
+            changed = changed || merged.imported_count != 0;
+        } else {
+            skipped += merged.imported_count + merged.skipped_count + 1;
+        }
+    }
+
+    if (changed) {
+        std::vector<std::shared_ptr<SessionEntry>> entries;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            for (const auto& item : sessions_) {
+                entries.push_back(item.second);
+            }
+        }
+        const SharedResourceSnapshot refreshed = shared_.snapshot();
+        for (const auto& entry : entries) {
+            std::lock_guard<std::mutex> lock(entry->mutex);
+            const CandidateStateToken before = candidate_state_token(*entry->engine);
+            apply_resource_snapshot(*entry, refreshed);
+            entry->engine->clear_query_cache();
+            advance_candidate_revision(*entry, before, true);
+        }
+    }
+    if (imported_count) {
+        *imported_count = imported;
+    }
+    if (skipped_count) {
+        *skipped_count = skipped;
+    }
 }
 
 bool SessionManager::freeze_and_save_candidate_preferences() {

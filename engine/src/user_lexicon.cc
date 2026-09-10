@@ -115,6 +115,12 @@ bool UserLexicon::parse_entries(const std::string& contents, bool reject_invalid
     return true;
 }
 
+bool UserLexicon::validate_contents(const std::string& contents) {
+    std::vector<Entry> entries;
+    std::uint64_t sequence = 0;
+    return parse_entries(contents, true, &entries, &sequence);
+}
+
 std::string UserLexicon::serialize_entries(const std::vector<Entry>& entries) {
     std::ostringstream output;
     for (const auto& entry : entries) {
@@ -390,6 +396,37 @@ bool UserLexicon::import_file(const std::string& source_path) {
         return false;
     }
     publish_snapshot(std::move(next), false);
+    return true;
+}
+
+bool UserLexicon::merge_contents_and_save(const std::string& imported,
+                                          UserDataMergeResult* result) {
+    if (!result) {
+        return false;
+    }
+    std::lock_guard<std::mutex> transaction_lock(transaction_mutex_);
+    Snapshot current = snapshot();
+    UserDataMergeResult merged;
+    const char* file_name =
+        current.scoring_profile == UserScoringProfile::kWubi ? "user_wubi.tsv" : "user_pinyin.tsv";
+    if (current.path.empty() ||
+        !merge_user_data_contents(file_name, serialize_entries(current.entries), imported,
+                                  &merged)) {
+        return false;
+    }
+    std::vector<Entry> entries;
+    std::uint64_t sequence = 0;
+    if (!parse_entries(merged.contents, true, &entries, &sequence)) {
+        return false;
+    }
+    current.entries = std::move(entries);
+    current.sequence = sequence;
+    current = prepare_snapshot(std::move(current));
+    if (!write_user_data_file_atomically(current.path, serialize_entries(current.entries))) {
+        return false;
+    }
+    publish_snapshot(std::move(current), false);
+    *result = std::move(merged);
     return true;
 }
 

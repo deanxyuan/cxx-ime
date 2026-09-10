@@ -4,6 +4,7 @@
 #ifndef CXXIME_SETTINGS_EDITOR_APP_H_
 #define CXXIME_SETTINGS_EDITOR_APP_H_
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -17,6 +18,7 @@
 #include <cxxime/render_context.h>
 #include <cxxime/settings_route.h>
 #include <cxxime/user_dict.h>
+#include <cxxime/user_backup_control.h>
 
 #include "lexicon_panel_model.h"
 #include "lexicon_view_tabs.h"
@@ -45,6 +47,7 @@ private:
     void create_advanced_layout_panel(HWND panel);
     void create_shortcuts_panel(HWND panel);
     void create_dictionary_panel(HWND panel, int panel_width);
+    void create_backup_panel(HWND panel, int panel_width);
     void create_diagnostics_panel(HWND panel);
     void create_about_panel(HWND panel, int panel_width);
     bool handle_input_command(int control_id, int notification);
@@ -53,6 +56,14 @@ private:
     bool handle_shortcuts_command(int control_id, int notification);
     bool handle_dictionary_command(int control_id, int notification);
     bool handle_dictionary_notify(LPARAM notification);
+    bool handle_backup_command(int control_id, int notification);
+    void handle_backup_complete(LPARAM completion);
+    void export_user_backup();
+    void select_user_backup();
+    void import_user_backup();
+    void run_user_backup_operation(cxxime::UserBackupOperation operation,
+                                   const std::string& path,
+                                   std::uint32_t components);
     void handle_lexicon_query_complete(WPARAM generation, LPARAM completion);
     void handle_lexicon_code_complete(WPARAM generation, LPARAM completion);
     bool handle_diagnostics_command(int control_id, int notification);
@@ -107,6 +118,8 @@ private:
     void position_candidate_preview_window();
     void update_candidate_preview_buttons();
     void release_fonts();
+    std::uint32_t selected_backup_components(bool importing) const;
+    void set_backup_controls_enabled(bool enabled);
 
     HWND hwnd_ = nullptr;
     HWND hList_ = nullptr;
@@ -119,7 +132,7 @@ private:
     cxxime::SettingsPanel initial_panel_ = cxxime::SettingsPanel::kInput;
 
     // Panel container windows
-    HWND hPanels_[7] = {};
+    HWND hPanels_[8] = {};
 
     // Input panel controls
     HWND hInputModePinyin_ = nullptr;
@@ -230,6 +243,18 @@ private:
     bool lexiconDisabledStateAvailable_ = false;
     bool updatingLexiconForm_ = false;
     bool lexiconCodeManuallyEdited_ = false;
+
+    // Backup panel
+    HWND hBackupExportComponents_[6] = {};
+    HWND hBackupImportComponents_[6] = {};
+    HWND hBackupExport_ = nullptr;
+    HWND hBackupSelect_ = nullptr;
+    HWND hBackupImport_ = nullptr;
+    HWND hBackupStatus_ = nullptr;
+    std::string selectedBackupPath_;
+    std::uint32_t availableBackupComponents_ = 0;
+    bool backupRunning_ = false;
+    std::shared_ptr<const bool> backupToken_ = std::make_shared<const bool>(true);
     std::uint64_t candidateOrderVersion_ = 0;
     std::vector<ManualCandidateOrderEntry> candidateOrderPins_;
     std::string candidateOrderCode_;

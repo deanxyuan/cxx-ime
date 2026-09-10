@@ -37,6 +37,7 @@ public:
     bool prepare_update(const std::vector<ConfigMutation>& mutations, PreparedConfigUpdate* update,
                         unsigned long* error_code);
     bool commit_update(const PreparedConfigUpdate& update, unsigned long* error_code);
+    const std::string& user_config_json() const { return user_config_json_; }
 
 private:
     bool build_effective_config(const std::string& user_config_json,

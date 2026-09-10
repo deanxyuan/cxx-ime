@@ -668,12 +668,12 @@ def copy_installer_scripts(config: str, host_diagnostics: bool) -> None:
     shutil.copy2(notices_src, os.path.join(DIST_DIR, "THIRD_PARTY_NOTICES.txt"))
     print("  THIRD_PARTY_NOTICES.txt")
 
-    data_license_name = "rime-ice-GPL-3.0.txt"
-    data_license_src = os.path.join(DATA, "licenses", data_license_name)
     data_license_dir = os.path.join(DIST_DIR, "licenses")
     os.makedirs(data_license_dir, exist_ok=True)
-    shutil.copy2(data_license_src, os.path.join(data_license_dir, data_license_name))
-    print(f"  licenses/{data_license_name}")
+    for data_license_name in ("rime-ice-GPL-3.0.txt", "miniz-MIT.txt"):
+        data_license_src = os.path.join(DATA, "licenses", data_license_name)
+        shutil.copy2(data_license_src, os.path.join(data_license_dir, data_license_name))
+        print(f"  licenses/{data_license_name}")
 
 
 def build_nsis(

@@ -13,6 +13,7 @@
 #include <vector>
 
 #include <cxxime/candidate.h>
+#include <cxxime/user_data_merge.h>
 #include <cxxime/user_dict.h>
 
 namespace cxxime {
@@ -21,6 +22,8 @@ class DisabledSystemLexicon {
 public:
     bool load(const std::string& path);
     bool save();
+    static bool validate_contents(const std::string& contents);
+    bool merge_contents_and_save(const std::string& imported, UserDataMergeResult* result);
 
     bool disable(const std::string& text);
     bool restore(const std::string& text);

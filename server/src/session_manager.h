@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -207,6 +208,10 @@ public:
                                             std::uint64_t expected_version,
                                             bool* version_conflict);
     bool save_candidate_preferences(bool force);
+    bool snapshot_user_data(const std::vector<std::string>& file_names,
+                            std::map<std::string, std::string>* files);
+    void merge_user_data(const std::map<std::string, std::string>& files,
+                         std::size_t* imported_count, std::size_t* skipped_count);
     bool freeze_and_save_candidate_preferences();
     bool freeze_and_stop_composition_learning();
 

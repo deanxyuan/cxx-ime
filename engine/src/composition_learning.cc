@@ -20,6 +20,7 @@
 #include <cxxime/composition_state.h>
 #include <cxxime/logging.h>
 #include <cxxime/user_dict_validation.h>
+#include <cxxime/user_data_merge.h>
 
 #include "user_data_file.h"
 
@@ -306,6 +307,7 @@ struct CompositionLearningService::Impl {
             }
 
             const RecordMap batch = pending;
+            const std::uint64_t batch_generation = enqueued_generation;
             RecordMap merged = merge_records(persisted, batch);
             const std::string contents = serialize_records(merged);
             const std::string output_path = path;
@@ -318,9 +320,12 @@ struct CompositionLearningService::Impl {
                 saved = false;
             }
             lock.lock();
+            ++save_attempt;
+            last_save_succeeded = saved;
 
             if (saved) {
                 persisted = std::move(merged);
+                persisted_generation = batch_generation;
                 for (const auto& item : batch) {
                     auto current = pending.find(item.first);
                     if (current == pending.end()) {
@@ -334,10 +339,10 @@ struct CompositionLearningService::Impl {
                 }
                 published = make_snapshot(persisted);
                 version.fetch_add(1, std::memory_order_acq_rel);
-                condition.notify_all();
             } else {
                 CXXIME_LOG(L"%s", L"composition_learning event=save result=0");
             }
+            condition.notify_all();
 
             if (stopping) {
                 if (!saved || pending.empty()) {
@@ -361,9 +366,13 @@ struct CompositionLearningService::Impl {
     std::shared_ptr<const PublishedSnapshot> published;
     std::atomic<std::uint64_t> version{0};
     std::uint64_t sequence = 0;
+    std::uint64_t enqueued_generation = 0;
+    std::uint64_t persisted_generation = 0;
+    std::uint64_t save_attempt = 0;
     bool loaded = false;
     bool accepting = false;
     bool stopping = false;
+    bool last_save_succeeded = true;
 };
 
 CommitLearningPlan make_candidate_learning_plan(const CompositionState& state,
@@ -440,10 +449,40 @@ bool CompositionLearningService::load(const std::string& path) {
     impl_->pending.clear();
     impl_->published = make_snapshot(impl_->persisted);
     impl_->sequence = sequence;
+    impl_->enqueued_generation = 0;
+    impl_->persisted_generation = 0;
+    impl_->save_attempt = 0;
     impl_->loaded = true;
     impl_->accepting = false;
     impl_->stopping = false;
+    impl_->last_save_succeeded = true;
     impl_->version.fetch_add(1, std::memory_order_acq_rel);
+    return true;
+}
+
+bool CompositionLearningService::validate_contents(const std::string& contents) {
+    if (contents.size() > kMaxFileSize) {
+        return false;
+    }
+    std::istringstream input(contents);
+    std::string line;
+    while (std::getline(input, line)) {
+        if (!line.empty() && line.back() == '\r') {
+            line.pop_back();
+        }
+        if (line.empty()) {
+            continue;
+        }
+        const std::vector<std::string> fields = split_tsv_line(line);
+        std::uint64_t selection_count = 0;
+        std::uint64_t sequence = 0;
+        if (fields.size() < 5 || !parse_unsigned(fields[3], &selection_count) ||
+            selection_count == 0 || selection_count > UINT_MAX ||
+            !parse_unsigned(fields[4], &sequence) || sequence == 0 ||
+            !valid_event({fields[0], fields[1], fields[2]})) {
+            return false;
+        }
+    }
     return true;
 }
 
@@ -472,6 +511,10 @@ bool CompositionLearningService::enqueue(const CompositionLearningEvent& event) 
         return false;
     }
     const std::string key = record_key(event);
+    if (impl_->enqueued_generation !=
+        (std::numeric_limits<std::uint64_t>::max)()) {
+        ++impl_->enqueued_generation;
+    }
     auto found = impl_->pending.find(key);
     if (found == impl_->pending.end()) {
         LearningRecord record;
@@ -507,6 +550,24 @@ bool CompositionLearningService::enqueue(const CompositionLearningEvent& event) 
     return true;
 }
 
+bool CompositionLearningService::flush() {
+    std::unique_lock<std::mutex> lock(impl_->mutex);
+    const std::uint64_t target_generation = impl_->enqueued_generation;
+    if (impl_->persisted_generation >= target_generation) {
+        return true;
+    }
+    if (!impl_->worker.joinable()) {
+        return false;
+    }
+    const std::uint64_t initial_attempt = impl_->save_attempt;
+    impl_->condition.notify_one();
+    impl_->condition.wait(lock, [&]() {
+        return impl_->persisted_generation >= target_generation ||
+               (impl_->save_attempt > initial_attempt && !impl_->last_save_succeeded);
+    });
+    return impl_->persisted_generation >= target_generation;
+}
+
 bool CompositionLearningService::freeze_and_stop() {
     {
         std::lock_guard<std::mutex> lock(impl_->mutex);
@@ -521,6 +582,39 @@ bool CompositionLearningService::freeze_and_stop() {
     std::lock_guard<std::mutex> lock(impl_->mutex);
     impl_->stopping = false;
     return impl_->pending.empty();
+}
+
+bool CompositionLearningService::merge_contents_and_save(const std::string& imported,
+                                                         UserDataMergeResult* result) {
+    if (!result || !freeze_and_stop()) {
+        start();
+        return false;
+    }
+    std::string current;
+    std::string path;
+    {
+        std::lock_guard<std::mutex> lock(impl_->mutex);
+        current = serialize_records(impl_->persisted);
+        path = impl_->path;
+    }
+    UserDataMergeResult merged;
+    const bool merged_ok = !path.empty() && merge_user_data_contents("learning_composition.tsv",
+                                                                     current, imported, &merged);
+    bool saved = false;
+    if (merged_ok) {
+        try {
+            saved = impl_->write_callback(path, merged.contents);
+        } catch (...) {
+            saved = false;
+        }
+    }
+    const bool loaded = saved && load(path);
+    const bool started = start();
+    if (!loaded || !started) {
+        return false;
+    }
+    *result = std::move(merged);
+    return true;
 }
 
 std::vector<Candidate> CompositionLearningService::lookup_candidates(const std::string& code,

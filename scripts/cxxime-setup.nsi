@@ -240,6 +240,7 @@ Section "Install"
 
     SetOutPath "$StageDir\licenses"
     File "licenses\rime-ice-GPL-3.0.txt"
+    File "licenses\miniz-MIT.txt"
 
     !ifdef HOST_DIAGNOSTICS
         SetOutPath "$StageDir"

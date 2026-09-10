@@ -3,6 +3,7 @@
 #include <cxxime/candidate_preference.h>
 
 #include <algorithm>
+#include <cerrno>
 #include <climits>
 #include <cstdlib>
 #include <sstream>
@@ -11,6 +12,8 @@
 #include <windows.h>
 
 #include <cxxime/input_limits.h>
+#include <cxxime/user_dict_validation.h>
+#include <cxxime/user_data_merge.h>
 
 #include "user_data_file.h"
 
@@ -84,6 +87,38 @@ std::string CandidatePreference::serialize_entries(const std::vector<Entry>& ent
     return output.str();
 }
 
+bool CandidatePreference::validate_contents(const std::string& contents) {
+    std::istringstream input(contents);
+    std::string line;
+    while (std::getline(input, line)) {
+        if (!line.empty() && line.back() == '\r') {
+            line.pop_back();
+        }
+        if (line.empty()) {
+            continue;
+        }
+        const std::vector<std::string> fields = split_tsv_line(line);
+        char* frequency_end = nullptr;
+        char* sequence_end = nullptr;
+        errno = 0;
+        const long frequency =
+            fields.size() == 6 ? std::strtol(fields[3].c_str(), &frequency_end, 10) : 0;
+        const int frequency_error = errno;
+        errno = 0;
+        const unsigned long long sequence =
+            fields.size() == 6 ? std::strtoull(fields[4].c_str(), &sequence_end, 10) : 0;
+        if (fields.size() != 6 || !is_valid_user_dict_text(fields[0]) ||
+            !is_valid_user_dict_code(fields[1]) || !is_valid_user_dict_code(fields[2]) ||
+            !is_valid_user_dict_syllables(fields[5]) || frequency_error != 0 || !frequency_end ||
+            *frequency_end != '\0' || frequency < 1 || frequency > INT_MAX || errno != 0 ||
+            !sequence_end || *sequence_end != '\0' || fields[4].empty() ||
+            fields[4].front() == '-' || sequence == 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool CandidatePreference::load(const std::string& path) {
     std::lock_guard<std::mutex> save_lock(save_mutex_);
     std::string contents;
@@ -125,6 +160,57 @@ bool CandidatePreference::load(const std::string& path) {
     accepting_updates_ = true;
     last_update_ms_.store(0, std::memory_order_release);
     version_.fetch_add(1, std::memory_order_acq_rel);
+    return true;
+}
+
+bool CandidatePreference::merge_contents_and_save(const std::string& imported,
+                                                  UserDataMergeResult* result) {
+    if (!result) {
+        return false;
+    }
+    std::lock_guard<std::mutex> save_lock(save_mutex_);
+    std::unique_lock<std::shared_mutex> lock(mutex_);
+    const std::string current = serialize_entries(entries_);
+    const std::string path = path_;
+    UserDataMergeResult merged;
+    if (path.empty() ||
+        !merge_user_data_contents("learning_pinyin.tsv", current, imported, &merged)) {
+        return false;
+    }
+
+    std::vector<Entry> entries;
+    std::uint64_t sequence = 0;
+    std::istringstream input(merged.contents);
+    std::string line;
+    while (std::getline(input, line)) {
+        if (!line.empty() && line.back() == '\r') {
+            line.pop_back();
+        }
+        const std::vector<std::string> values = split_tsv_line(line);
+        if (values.size() != 6) {
+            return false;
+        }
+        Entry entry;
+        entry.text = values[0];
+        entry.code = values[1];
+        entry.candidate_code = values[2];
+        entry.frequency = parse_frequency(values[3]);
+        entry.sequence = parse_sequence(values[4]);
+        entry.syllables = values[5];
+        trim_trailing_space(entry.syllables);
+        sequence = (std::max)(sequence, entry.sequence);
+        entries.push_back(std::move(entry));
+    }
+    if (!write_user_data_file_atomically(path, merged.contents)) {
+        return false;
+    }
+    entries_ = std::move(entries);
+    sequence_ = sequence;
+    rebuild_indexes_locked();
+    dirty_.store(false, std::memory_order_release);
+    last_update_ms_.store(0, std::memory_order_release);
+    version_.fetch_add(1, std::memory_order_acq_rel);
+    *result = std::move(merged);
     return true;
 }
 

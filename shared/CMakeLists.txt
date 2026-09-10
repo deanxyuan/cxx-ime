@@ -25,6 +25,7 @@ add_library(cxxime-shared STATIC
     src/settings_launcher_util.cc
     src/tsf_factory.cc
     src/ui_presentation_trace.cc
+    src/user_backup.cc
     src/user_dict_validation.cc
     ${CXXIME_SHARED_DIAGNOSTIC_SOURCES}
 )
@@ -43,3 +44,4 @@ if(CXXIME_ENABLE_HOST_DIAGNOSTICS)
     target_link_libraries(cxxime-shared PUBLIC dwmapi)
 endif()
 target_link_libraries(cxxime-shared PUBLIC nlohmann_json)
+target_link_libraries(cxxime-shared PRIVATE miniz)

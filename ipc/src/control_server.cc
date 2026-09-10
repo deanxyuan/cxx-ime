@@ -424,15 +424,23 @@ private:
                 return write_packet(client->pipe, client->stop_event, packet);
             }
 
-            case ControlMessageType::kLexiconRequest: {
+            case ControlMessageType::kLexiconRequest:
+            case ControlMessageType::kUserBackupRequest: {
+                const ControlMessageType expected_response =
+                    message.type == ControlMessageType::kLexiconRequest
+                        ? ControlMessageType::kLexiconResult
+                        : ControlMessageType::kUserBackupResult;
+                ControlMessageType response_type = expected_response;
                 std::string response_payload;
                 if (message.generation != ConfigGeneration{} || !request_handler_ ||
-                    !request_handler_(message.payload, &response_payload) ||
-                    response_payload.empty() || response_payload.size() > CONTROL_MAX_PAYLOAD) {
+                    !request_handler_(message.type, message.payload, &response_type,
+                                      &response_payload) ||
+                    response_type != expected_response || response_payload.empty() ||
+                    response_payload.size() > CONTROL_MAX_PAYLOAD) {
                     return false;
                 }
-                auto packet = make_packet(ControlMessageType::kLexiconResult, {},
-                                          response_payload.data(), response_payload.size());
+                auto packet = make_packet(response_type, {}, response_payload.data(),
+                                          response_payload.size());
                 return write_packet(client->pipe, client->stop_event, packet);
             }
 

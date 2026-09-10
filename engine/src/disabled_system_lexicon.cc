@@ -7,6 +7,7 @@
 #include <utility>
 
 #include <cxxime/user_dict_validation.h>
+#include <cxxime/user_data_merge.h>
 
 #include "user_data_file.h"
 
@@ -47,6 +48,61 @@ bool DisabledSystemLexicon::load(const std::string& path) {
     entry_count_.store(entries_.size(), std::memory_order_release);
     dirty_.store(false, std::memory_order_release);
     version_.fetch_add(1, std::memory_order_acq_rel);
+    return true;
+}
+
+bool DisabledSystemLexicon::merge_contents_and_save(const std::string& imported,
+                                                    UserDataMergeResult* result) {
+    if (!result) {
+        return false;
+    }
+    std::lock_guard<std::mutex> transaction_lock(transaction_mutex_);
+    std::unordered_set<std::string> current;
+    std::string path;
+    {
+        std::shared_lock<std::shared_mutex> lock(mutex_);
+        current = entries_;
+        path = path_;
+    }
+    UserDataMergeResult merged;
+    if (path.empty() || !merge_user_data_contents("disabled_pinyin.tsv", serialize_entries(current),
+                                                  imported, &merged)) {
+        return false;
+    }
+    std::unordered_set<std::string> next;
+    std::istringstream input(merged.contents);
+    std::string line;
+    while (std::getline(input, line)) {
+        if (!line.empty() && line.back() == '\r') {
+            line.pop_back();
+        }
+        if (!line.empty()) {
+            next.insert(std::move(line));
+        }
+    }
+    if (!write_user_data_file_atomically(path, merged.contents)) {
+        return false;
+    }
+    std::unique_lock<std::shared_mutex> lock(mutex_);
+    entries_ = std::move(next);
+    entry_count_.store(entries_.size(), std::memory_order_release);
+    dirty_.store(false, std::memory_order_release);
+    version_.fetch_add(1, std::memory_order_acq_rel);
+    *result = std::move(merged);
+    return true;
+}
+
+bool DisabledSystemLexicon::validate_contents(const std::string& contents) {
+    std::istringstream input(contents);
+    std::string line;
+    while (std::getline(input, line)) {
+        if (!line.empty() && line.back() == '\r') {
+            line.pop_back();
+        }
+        if (!line.empty() && !is_valid_entry(line)) {
+            return false;
+        }
+    }
     return true;
 }
 

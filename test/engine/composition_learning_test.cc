@@ -128,6 +128,10 @@ TEST(CompositionLearningService, persists_and_reloads_valid_records) {
     ASSERT_TRUE(service.load(path));
     ASSERT_TRUE(service.start());
     ASSERT_TRUE(service.enqueue(learning_event("learned", "huaruijishu")));
+    ASSERT_TRUE(service.flush());
+    ASSERT_EQ(service.pending_count(), static_cast<std::size_t>(0));
+    ASSERT_EQ(service.lookup_candidates("huaruijishu", 10).size(),
+              static_cast<std::size_t>(1));
     ASSERT_TRUE(service.freeze_and_stop());
 
     cxxime::CompositionLearningService reloaded;

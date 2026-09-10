@@ -18,7 +18,9 @@ public:
         std::function<bool(UserConfigMutationKind kind, const std::string& payload,
                            std::string* config_json, unsigned long* error_code)>;
     using RequestHandler =
-        std::function<bool(const std::string& payload, std::string* response_payload)>;
+        std::function<bool(ControlMessageType request_type, const std::string& payload,
+                           ControlMessageType* response_type,
+                           std::string* response_payload)>;
 
     ControlServer();
     ~ControlServer();

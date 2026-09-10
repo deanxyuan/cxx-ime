@@ -15,6 +15,7 @@
 #include <cxxime/candidate.h>
 #include <cxxime/short_code_cache.h>
 #include <cxxime/user_dict.h>
+#include <cxxime/user_data_merge.h>
 
 namespace cxxime {
 
@@ -122,12 +123,15 @@ public:
                                      const std::string& new_text,
                                      const std::string& new_code);
     bool import_user_dict(const std::string& source_path);
+    bool merge_user_dict_contents(const std::string& imported, UserDataMergeResult* result);
 
     // User dictionary persistence
     bool load_user_dict(const std::string& path);
     bool save_user_dict();
     bool load_candidate_preferences(const std::string& path);
     bool save_candidate_preferences();
+    bool merge_candidate_preference_contents(const std::string& imported,
+                                             UserDataMergeResult* result);
     bool save_candidate_preferences_if_due(std::chrono::milliseconds delay);
     void freeze_candidate_preferences();
     bool record_candidate_preference(const Candidate& candidate, const std::string& code);
@@ -144,6 +148,8 @@ public:
     size_t candidate_preference_count() const;
     uint64_t candidate_preference_version() const;
     bool load_manual_candidate_order(const std::string& path, std::size_t max_code_length);
+    bool merge_manual_candidate_order_contents(const std::string& imported,
+                                               UserDataMergeResult* result);
     void apply_manual_candidate_order(const std::string& code, CandidateSource source,
                                       std::vector<Candidate>& candidates, int limit) const;
     std::vector<ManualCandidateOrderEntry> manual_candidate_order(
@@ -162,6 +168,8 @@ public:
                                       CandidateSource source) const;
     uint64_t manual_candidate_order_version() const;
     bool load_disabled_system_entries(const std::string& path);
+    bool merge_disabled_system_contents(const std::string& imported,
+                                        UserDataMergeResult* result);
     bool save_disabled_system_entries();
     bool disable_system_entry(const std::string& text);
     bool restore_system_entry(const std::string& text);

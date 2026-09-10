@@ -20,6 +20,15 @@ std::string read_text_file(const std::string& path) {
     return std::string(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
 }
 
+void merge_user_data_for_test(SessionManager& manager,
+                              const std::map<std::string, std::string>& files) {
+    std::size_t imported = 0;
+    std::size_t skipped = 0;
+    manager.merge_user_data(files, &imported, &skipped);
+    ASSERT_TRUE(imported != 0 || files.empty());
+    ASSERT_EQ(skipped, static_cast<std::size_t>(0));
+}
+
 static std::string basename_of(const std::string& path) {
     size_t pos = path.find_last_of("\\/");
     return pos == std::string::npos ? path : path.substr(pos + 1);

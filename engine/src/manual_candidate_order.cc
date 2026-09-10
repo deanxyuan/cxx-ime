@@ -11,6 +11,7 @@
 
 #include <cxxime/input_limits.h>
 #include <cxxime/user_dict_validation.h>
+#include <cxxime/user_data_merge.h>
 
 #include "user_data_file.h"
 
@@ -71,16 +72,11 @@ std::uint64_t version_token(std::string_view contents) {
 
 } // namespace
 
-bool ManualCandidateOrder::load(const std::string& path, std::size_t max_code_length) {
-    if (max_code_length == 0 || max_code_length > kMaxInputCodeLength) {
+bool ManualCandidateOrder::parse_contents(const std::string& contents, std::size_t max_code_length,
+                                          Orders* orders) {
+    if (!orders || max_code_length == 0 || max_code_length > kMaxInputCodeLength) {
         return false;
     }
-    std::lock_guard<std::mutex> mutation_lock(mutation_mutex_);
-    std::string contents;
-    if (!read_user_data_file(path, kMaxFileSize, &contents)) {
-        return false;
-    }
-
     Orders loaded;
     if (!contents.empty()) {
         std::istringstream input(contents);
@@ -121,6 +117,27 @@ bool ManualCandidateOrder::load(const std::string& path, std::size_t max_code_le
     if (!validate_orders(loaded, max_code_length)) {
         return false;
     }
+    *orders = std::move(loaded);
+    return true;
+}
+
+bool ManualCandidateOrder::validate_contents(const std::string& contents,
+                                             std::size_t max_code_length) {
+    Orders orders;
+    return contents.size() <= kMaxFileSize && parse_contents(contents, max_code_length, &orders);
+}
+
+bool ManualCandidateOrder::load(const std::string& path, std::size_t max_code_length) {
+    std::lock_guard<std::mutex> mutation_lock(mutation_mutex_);
+    std::string contents;
+    if (!read_user_data_file(path, kMaxFileSize, &contents)) {
+        return false;
+    }
+
+    Orders loaded;
+    if (!parse_contents(contents, max_code_length, &loaded)) {
+        return false;
+    }
 
     const std::uint64_t version = version_token(serialize(loaded));
     std::unique_lock<std::shared_mutex> lock(mutex_);
@@ -128,6 +145,39 @@ bool ManualCandidateOrder::load(const std::string& path, std::size_t max_code_le
     path_ = path;
     max_code_length_ = max_code_length;
     version_.store(version, std::memory_order_release);
+    return true;
+}
+
+bool ManualCandidateOrder::merge_contents_and_save(const std::string& imported,
+                                                   UserDataMergeResult* result) {
+    if (!result) {
+        return false;
+    }
+    std::lock_guard<std::mutex> mutation_lock(mutation_mutex_);
+    Orders current;
+    std::string path;
+    std::size_t max_code_length = 0;
+    {
+        std::shared_lock<std::shared_mutex> lock(mutex_);
+        current = orders_;
+        path = path_;
+        max_code_length = max_code_length_;
+    }
+    UserDataMergeResult merged;
+    Orders next;
+    if (path.empty() ||
+        !merge_user_data_contents(max_code_length == kMaxWubiCodeLength
+                                      ? "candidate_order_wubi.tsv"
+                                      : "candidate_order_pinyin.tsv",
+                                  serialize(current), imported, &merged) ||
+        !parse_contents(merged.contents, max_code_length, &next) ||
+        !write_user_data_file_atomically(path, merged.contents)) {
+        return false;
+    }
+    std::unique_lock<std::shared_mutex> lock(mutex_);
+    orders_ = std::move(next);
+    version_.store(version_token(merged.contents), std::memory_order_release);
+    *result = std::move(merged);
     return true;
 }
 

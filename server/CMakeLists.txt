@@ -14,6 +14,7 @@ add_executable(cxxime-server WIN32
     src/lexicon_control_handler.cc
     src/ui_presentation_controller.cc
     src/ui_presentation_router.cc
+    src/user_backup_service.cc
 )
 
 target_include_directories(cxxime-server PRIVATE

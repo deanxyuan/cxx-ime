@@ -14,6 +14,7 @@
 #include <vector>
 
 #include <cxxime/candidate.h>
+#include <cxxime/user_data_merge.h>
 #include <cxxime/user_dict.h>
 
 namespace cxxime {
@@ -22,7 +23,9 @@ class CandidatePreference {
 public:
     bool load(const std::string& path);
     bool save();
+    static bool validate_contents(const std::string& contents);
     bool save_if_due(std::chrono::milliseconds delay);
+    bool merge_contents_and_save(const std::string& imported, UserDataMergeResult* result);
     void freeze();
 
     bool record(const Candidate& candidate, const std::string& code);

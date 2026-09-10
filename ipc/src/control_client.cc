@@ -429,9 +429,10 @@ bool send_control_request(ControlMessageType request_type, const std::string& re
     bool request_built = build_control_packet(request_type, {}, request_payload.data(),
                                               request_payload.size(), &request);
     std::vector<std::uint8_t> response_packet;
-    const DWORD read_timeout = static_cast<DWORD>(response_timeout_ms > 0
-                                                  ? response_timeout_ms
-                                                  : timeout_ms);
+    const DWORD read_timeout =
+        response_timeout_ms < 0
+            ? INFINITE
+            : static_cast<DWORD>(response_timeout_ms > 0 ? response_timeout_ms : timeout_ms);
     bool ok = stop_event && request_built && write_packet(pipe, stop_event, request, timeout_ms) &&
               read_packet(pipe, stop_event, &response_packet, read_timeout);
 

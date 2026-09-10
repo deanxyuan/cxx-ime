@@ -16,6 +16,7 @@
 
 #include <cxxime/control_client.h>
 #include <cxxime/control_protocol.h>
+#include <cxxime/user_backup_control.h>
 #include <cxxime/control_server.h>
 #include <cxxime/ipc_protocol.h>
 #include <cxxime/lexicon_control.h>
@@ -493,6 +494,55 @@ TEST(ControlChannel, candidate_order_codec_preserves_entries_and_version) {
               cxxime::CandidateOrderReason::kManual);
 }
 
+TEST(ControlChannel, user_backup_codec_and_client_preserve_summary) {
+    cxxime::UserBackupControlRequest request;
+    request.operation = cxxime::UserBackupOperation::kImport;
+    request.path = "C:\\backup\\profile.cxxime-backup";
+    request.components = cxxime::kPortableUserBackupComponents;
+    std::string payload;
+    ASSERT_TRUE(cxxime::encode_user_backup_request(request, &payload));
+    cxxime::UserBackupControlRequest decoded_request;
+    ASSERT_TRUE(cxxime::decode_user_backup_request(payload, &decoded_request));
+    ASSERT_EQ(decoded_request.path, request.path);
+    ASSERT_EQ(decoded_request.components, request.components);
+    ASSERT_EQ(decoded_request.operation, cxxime::UserBackupOperation::kImport);
+
+    const std::wstring pipe_name = test_pipe_name();
+    cxxime::ControlServer server;
+    ASSERT_TRUE(server.start(
+        R"({"theme":"azure"})", {},
+        [&](cxxime::ControlMessageType request_type, const std::string& request_payload,
+            cxxime::ControlMessageType* response_type,
+            std::string* response_payload) {
+            ASSERT_EQ(request_type, cxxime::ControlMessageType::kUserBackupRequest);
+            cxxime::UserBackupControlRequest received;
+            ASSERT_TRUE(cxxime::decode_user_backup_request(request_payload, &received));
+            cxxime::UserBackupControlResult result;
+            result.operation = received.operation;
+            result.succeeded = true;
+            result.summary.format_version = cxxime::kUserBackupFormatVersion;
+            result.summary.components = cxxime::kPortableUserBackupComponents;
+            result.summary.app_version = "0.5.0";
+            result.summary.created_at_utc = "2026-09-09T10:00:00Z";
+            result.summary.entry_count = 10;
+            result.summary.total_size = 4096;
+            result.imported_count = 7;
+            result.skipped_count = 2;
+            *response_type = cxxime::ControlMessageType::kUserBackupResult;
+            return cxxime::encode_user_backup_result(result, response_payload);
+        },
+        pipe_name));
+
+    cxxime::UserBackupControlClient client(3000, pipe_name);
+    cxxime::UserBackupControlResult result;
+    ASSERT_TRUE(client.import_backup(request.path, request.components, &result));
+    ASSERT_EQ(result.summary.entry_count, static_cast<std::size_t>(10));
+    ASSERT_EQ(result.summary.total_size, 4096ULL);
+    ASSERT_EQ(result.imported_count, static_cast<std::size_t>(7));
+    ASSERT_EQ(result.skipped_count, static_cast<std::size_t>(2));
+    server.stop();
+}
+
 TEST(ControlChannel, lexicon_client_supports_all_operations) {
     const std::wstring pipe_name = test_pipe_name();
     std::atomic<int> request_count{0};
@@ -500,7 +550,11 @@ TEST(ControlChannel, lexicon_client_supports_all_operations) {
     cxxime::ControlServer server;
     ASSERT_TRUE(server.start(
         R"({"theme":"azure"})", {},
-        [&](const std::string& payload, std::string* response_payload) {
+        [&](cxxime::ControlMessageType request_type, const std::string& payload,
+            cxxime::ControlMessageType* response_type,
+            std::string* response_payload) {
+            ASSERT_EQ(request_type, cxxime::ControlMessageType::kLexiconRequest);
+            *response_type = cxxime::ControlMessageType::kLexiconResult;
             cxxime::LexiconControlRequest request;
             ASSERT_TRUE(cxxime::decode_lexicon_request(payload, &request));
             request_count.fetch_add(1);

@@ -18,6 +18,7 @@
 
 #include "ipc_response_builder.h"
 #include "lexicon_control_handler.h"
+#include "user_backup_service.h"
 
 namespace {
 
@@ -182,8 +183,23 @@ bool ServerApp::initialize(const std::string& dict_path, const std::string& conf
                    std::string* config_json, unsigned long* error_code) {
                 return config_writer_.submit(kind, payload, config_json, error_code);
             },
-            [this](const std::string& payload, std::string* response_payload) {
-                return handle_lexicon_control_request(session_mgr_, payload, response_payload);
+            [this](cxxime::ControlMessageType request_type, const std::string& payload,
+                   cxxime::ControlMessageType* response_type,
+                   std::string* response_payload) {
+                if (!response_type) {
+                    return false;
+                }
+                if (request_type == cxxime::ControlMessageType::kLexiconRequest) {
+                    *response_type = cxxime::ControlMessageType::kLexiconResult;
+                    return handle_lexicon_control_request(
+                        session_mgr_, payload, response_payload);
+                }
+                if (request_type == cxxime::ControlMessageType::kUserBackupRequest) {
+                    *response_type = cxxime::ControlMessageType::kUserBackupResult;
+                    UserBackupService backup(&session_mgr_, &config_writer_);
+                    return backup.handle_request(payload, response_payload);
+                }
+                return false;
             })) {
         config_writer_.stop();
         MessageBoxW(nullptr, L"Failed to start config control server.",
