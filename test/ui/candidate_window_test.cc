@@ -165,12 +165,15 @@ TEST(CandidateWindow, candidate_to_preedit_only_clears_candidate_layout) {
     window.show();
     ASSERT_TRUE(window.visible_candidate_count() > 0);
 
-    window.set_preedit("hsq");
+    window.set_preedit("hse", 3, 0, 0, 3, false);
     window.update(cxxime::CandidatePage{});
     window.show();
 
     ASSERT_TRUE(window.is_visible());
     ASSERT_EQ(window.visible_candidate_count(), 0);
+    const RECT active = window.preedit_active_rect_for_test();
+    ASSERT_GT(active.right, active.left);
+    ASSERT_GT(active.bottom, active.top);
     const RECT stale_candidate = window.candidate_rect_for_test(0);
     ASSERT_EQ(stale_candidate.right - stale_candidate.left, 0);
     ASSERT_EQ(stale_candidate.bottom - stale_candidate.top, 0);

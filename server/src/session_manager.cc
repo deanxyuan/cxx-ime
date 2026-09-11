@@ -287,8 +287,13 @@ void fill_session_presentation(const SessionEntry& entry, ProcessKeyResult& resu
             ? cxxime::preedit_presentation_flag(
                 cxxime::PreeditPresentationFlag::SyllableBoundaries)
             : 0;
-    if (!supports_segmented_preedit || !has_focused_selection) {
+    if (!supports_segmented_preedit) {
         result.focused_preedit_start_bytes = result.preedit.size();
+        result.focused_preedit_end_bytes = result.preedit.size();
+    } else if (!has_focused_selection) {
+        result.focused_preedit_start_bytes = context.translation().entries.empty()
+            ? result.converted_prefix_bytes
+            : result.preedit.size();
         result.focused_preedit_end_bytes = result.preedit.size();
     }
     result.presentation = context.translation().presentation_page();

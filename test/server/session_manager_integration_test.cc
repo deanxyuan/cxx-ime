@@ -299,16 +299,15 @@ TEST(SessionIntegration, segmented_preedit_focuses_wubi_and_mixed_wubi_candidate
         ASSERT_EQ(result.focused_preedit_start_bytes, static_cast<std::size_t>(0));
         ASSERT_EQ(result.focused_preedit_end_bytes, result.preedit.size());
         ASSERT_EQ(result.preedit_presentation_flags, static_cast<uint32_t>(0));
-        if (mode == cxxime::InputMode::WUBI) {
-            ASSERT_EQ(manager.clear_composition(id).status, cxxime::IPCStatus::OK);
-            for (char key : std::string("ZZZZ")) {
-                result = manager.process_key(id, make_key(static_cast<uint32_t>(key)));
-            }
-            ASSERT_TRUE(result.composing);
-            ASSERT_TRUE(result.presentation.items.empty());
-            ASSERT_EQ(result.focused_preedit_start_bytes, result.preedit.size());
-            ASSERT_EQ(result.focused_preedit_end_bytes, result.preedit.size());
+        ASSERT_EQ(manager.clear_composition(id).status, cxxime::IPCStatus::OK);
+        for (char key : std::string("HSE")) {
+            result = manager.process_key(id, make_key(static_cast<uint32_t>(key)));
         }
+        ASSERT_TRUE(result.composing);
+        ASSERT_EQ(result.preedit, "hse");
+        ASSERT_TRUE(result.presentation.items.empty());
+        ASSERT_EQ(result.focused_preedit_start_bytes, static_cast<std::size_t>(0));
+        ASSERT_EQ(result.focused_preedit_end_bytes, result.preedit.size());
         manager.destroy_session(id);
     }
 
