@@ -33,6 +33,8 @@ def check_required_files(
         "cxxime-installer-helper.exe",
         "collect_diagnostics.ps1",
         "cxxime-setup.nsi",
+        "install-manifest.json",
+        "install_payload.nsh",
         "cxxime.ico",
         "license.txt",
         "THIRD_PARTY_NOTICES.txt",

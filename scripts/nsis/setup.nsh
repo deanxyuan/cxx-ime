@@ -19,6 +19,14 @@ Function AcquireInstallerMutex
         SetErrorLevel 1
         Abort
     ${EndIf}
+    StrCpy $InstallMutexHandle $1
+FunctionEnd
+
+Function ReleaseInstallerMutex
+    StrCmp $InstallMutexHandle "0" release_installer_mutex_done
+        System::Call 'kernel32::CloseHandle(p $InstallMutexHandle)'
+        StrCpy $InstallMutexHandle 0
+    release_installer_mutex_done:
 FunctionEnd
 
 Function .onInit
@@ -28,22 +36,31 @@ Function .onInit
     StrCpy $ServerRestartResult 0
     StrCpy $InstallStateVerified 1
     StrCpy $InstallBaseHandle 0
+    StrCpy $InstallMutexHandle 0
+    StrCpy $LegacyUninstallPerformed 0
+    StrCpy $LegacyUninstallPending 0
+    StrCpy $InstalledVersion ""
+    StrCpy $AllowDowngrade 0
+    ${GetParameters} $0
+    ClearErrors
+    ${GetOptions} $0 "/ALLOWDOWNGRADE" $1
+    ${IfNot} ${Errors}
+        StrCpy $AllowDowngrade 1
+    ${EndIf}
     StrCpy $InitialServerWasRunning 0
     StrCpy $TransactionServerWasRunning ""
     StrCpy $ServerStopResult 0
     StrCpy $ServerProcessId 0
     StrCpy $InstallBaseDir "$PROGRAMFILES64\CxxIME"
     StrCpy $PreviousInstallDir ""
-    StrCpy $OldPreviousInstallDir ""
-    StrCpy $PreviousVersionDir ""
     StrCpy $MultiVersionInstall 0
     StrCpy $ActiveServerDir "$PROGRAMFILES64\CxxIME"
     StrCpy $StateInstallDir "$PROGRAMFILES64\CxxIME"
     StrCpy $InstallTargetDir "$PROGRAMFILES64\CxxIME\${VERSION}"
     StrCpy $InstallTargetPrepared 0
-    StrCpy $PreviousInstallFlat 0
     StrCpy $OldTipX64Present 0
     StrCpy $OldTipX86Present 0
+    StrCpy $LifecycleScheduled 0
     ${IfNot} ${RunningX64}
         StrCpy $FailureMessage "CxxIME 需要 64 位 Windows。"
         IfSilent installer_requires_x64_silent
@@ -67,6 +84,11 @@ Function .onInit
         StrCpy $PreviousInstallDir $0
         StrCpy $INSTDIR $0
         ClearErrors
+        ReadRegStr $InstalledVersion HKLM "${UNINSTALL_KEY}" "DisplayVersion"
+        ${If} ${Errors}
+            StrCpy $InstalledVersion ""
+        ${EndIf}
+        ClearErrors
         ReadRegStr $1 HKLM "${UNINSTALL_KEY}" "InstallBaseLocation"
         ${IfNot} ${Errors}
         ${AndIf} $1 != ""
@@ -74,27 +96,71 @@ Function .onInit
         ${Else}
             StrCpy $InstallBaseDir $0
         ${EndIf}
-        ClearErrors
-        ReadRegStr $PreviousVersionDir HKLM "${UNINSTALL_KEY}" "PreviousInstallLocation"
-        ${If} ${Errors}
-            StrCpy $PreviousVersionDir ""
-        ${EndIf}
+        IfFileExists "$InstallBaseDir\maintenance\install-state.json" setup_lifecycle_install
+        IfFileExists "$RegisteredInstallDir\${LEGACY_UNINSTALL_DEFERRED_MARKER}" \
+            setup_mark_legacy_install
+        IfFileExists "$RegisteredInstallDir\${INSTALL_MARKER}" 0 setup_unknown_install
+        IfFileExists "$RegisteredInstallDir\uninstall.exe" 0 setup_unknown_install
+        IfFileExists "$RegisteredInstallDir\cxxime-server.exe" setup_mark_legacy_install
+        IfFileExists "$RegisteredInstallDir\cxxime_tsf_x64.dll" setup_mark_legacy_install
+        setup_unknown_install:
+        StrCpy $FailureMessage \
+            "检测到无法自动升级的 CxxIME 安装。请先卸载当前版本，再运行此安装程序。"
+        IfSilent setup_unknown_install_silent
+            MessageBox MB_ICONSTOP "$FailureMessage"
+        setup_unknown_install_silent:
+        DetailPrint "$FailureMessage"
+        SetErrorLevel 1
+        Abort
+        setup_lifecycle_install:
         StrCpy $INSTDIR $InstallBaseDir
         StrCpy $InstallTargetDir "$InstallBaseDir\${VERSION}"
-        StrCmp $InstallTargetDir $RegisteredInstallDir setup_existing_same_version 0
-            StrCpy $MultiVersionInstall 1
-            Goto setup_install_layout_ready
-        setup_existing_same_version:
-            StrCpy $InstallTargetDir "$InstallBaseDir\${VERSION}.next"
-            StrCpy $MultiVersionInstall 1
+        StrCpy $MultiVersionInstall 1
     ${EndIf}
-    setup_install_layout_ready:
+    Return
+
+    setup_mark_legacy_install:
+    StrCpy $LegacyUninstallPending 1
+FunctionEnd
+
+Function CheckInstallVersion
+    StrCmp $InstalledVersion "" check_install_version_done
+    nsExec::Exec \
+        '"$PLUGINSDIR\cxxime-installer-helper.exe" compare-version \
+        "$InstalledVersion" "${VERSION}"'
+    Pop $0
+    StrCmp $0 "0" check_install_version_done
+    StrCmp $0 "1" check_install_version_done
+    StrCmp $0 "2" check_install_version_downgrade
+        StrCpy $FailureMessage \
+            "无法比较已安装版本 $InstalledVersion 与安装包版本 ${VERSION}。"
+        Goto check_install_version_failed
+
+    check_install_version_downgrade:
+    StrCmp $AllowDowngrade "1" check_install_version_done
+    IfSilent check_install_version_silent_downgrade
+        MessageBox MB_YESNO|MB_ICONEXCLAMATION|MB_DEFBUTTON2 \
+            "当前已安装 CxxIME $InstalledVersion。继续将降级到 ${VERSION}。$\r$\n$\r$\n是否继续？" \
+            IDYES check_install_version_done
+        StrCpy $FailureMessage "用户取消了 CxxIME 降级安装。"
+        Goto check_install_version_cancelled
+    check_install_version_silent_downgrade:
+    StrCpy $FailureMessage \
+        "静默安装默认不允许从 $InstalledVersion 降级到 ${VERSION}。请显式使用 /ALLOWDOWNGRADE。"
+    check_install_version_failed:
+    IfSilent check_install_version_report
+        MessageBox MB_ICONSTOP "$FailureMessage"
+    check_install_version_report:
+    DetailPrint "$FailureMessage"
+    check_install_version_cancelled:
+    SetErrorLevel 2
+    Abort
+    check_install_version_done:
 FunctionEnd
 
 Function RefreshInstallLayoutAfterRecovery
     StrCpy $RegisteredInstallDir ""
     StrCpy $PreviousInstallDir ""
-    StrCpy $PreviousVersionDir ""
     StrCpy $MultiVersionInstall 0
     ClearErrors
     ReadRegStr $0 HKLM "${UNINSTALL_KEY}" "InstallLocation"
@@ -114,89 +180,15 @@ Function RefreshInstallLayoutAfterRecovery
     ${Else}
         StrCpy $InstallBaseDir $0
     ${EndIf}
-    ClearErrors
-    ReadRegStr $PreviousVersionDir HKLM "${UNINSTALL_KEY}" "PreviousInstallLocation"
-    ${If} ${Errors}
-        StrCpy $PreviousVersionDir ""
-    ${EndIf}
     StrCpy $InstallTargetDir "$InstallBaseDir\${VERSION}"
-    StrCmp $InstallTargetDir $RegisteredInstallDir refresh_install_layout_same_version
-        StrCpy $INSTDIR $InstallTargetDir
-        Return
-    refresh_install_layout_same_version:
-        StrCpy $InstallTargetDir "$InstallBaseDir\${VERSION}.next"
-        StrCpy $INSTDIR $InstallTargetDir
-        Return
+    StrCpy $INSTDIR $InstallTargetDir
+    Return
 
     refresh_install_layout_fresh:
     StrCpy $ActiveServerDir $InstallBaseDir
     StrCpy $StateInstallDir $InstallBaseDir
     StrCpy $InstallTargetDir "$InstallBaseDir\${VERSION}"
     StrCpy $INSTDIR $InstallTargetDir
-FunctionEnd
-
-Function RecoverPendingSystemIme
-    IfFileExists "$InstallBaseDir\${SYSTEM_IME_UPDATE_MARKER}" recover_pending_system_ime
-    IfFileExists "$InstallBaseDir\${SYSTEM_IME_X64_PENDING}" recover_pending_system_ime
-    IfFileExists "$InstallBaseDir\${SYSTEM_IME_X86_PENDING}" recover_pending_system_ime
-    Push 1
-    Return
-
-    recover_pending_system_ime:
-    ClearErrors
-    ReadRegStr $1 HKLM "${UNINSTALL_KEY}" "InstallLocation"
-    IfErrors recover_pending_system_ime_failed
-    StrCmp $1 "" recover_pending_system_ime_failed
-    StrCpy $RegisteredInstallDir $1
-    Push $INSTDIR
-    StrCpy $INSTDIR $RegisteredInstallDir
-    Call PrepareSystemImeUpdate
-    Pop $0
-    StrCmp $0 "1" 0 recover_pending_system_ime_restore_dir
-    Call CopyNewSystemIme
-    Pop $0
-    recover_pending_system_ime_restore_dir:
-    Pop $INSTDIR
-    StrCmp $0 "1" 0 recover_pending_system_ime_failed
-    IfFileExists "$InstallBaseDir\${SYSTEM_IME_X64_PENDING}" \
-        recover_pending_system_ime_restart_required
-    IfFileExists "$InstallBaseDir\${SYSTEM_IME_X86_PENDING}" \
-        recover_pending_system_ime_restart_required
-    Push 1
-    Return
-
-    recover_pending_system_ime_restart_required:
-    StrCpy $FailureMessage \
-        "上一次 CxxIME 系统 IME 更新需要重新启动 Windows 后才能完成。"
-    Push 0
-    Return
-
-    recover_pending_system_ime_failed:
-    StrCpy $FailureMessage "无法恢复上一次 CxxIME 系统 IME 更新。"
-    Push 0
-FunctionEnd
-
-Function CheckPreviousVersionLimit
-    ; Product versions identify directories only. Upgrades and downgrades use the same flow.
-    StrCmp $PreviousVersionDir "" previous_version_limit_done
-    StrCmp $PreviousVersionDir $RegisteredInstallDir previous_version_limit_done
-    IfFileExists "$PreviousVersionDir\cxxime_tsf_x64.dll" previous_version_limit_block
-    IfFileExists "$PreviousVersionDir\cxxime_tsf_x86.dll" previous_version_limit_block
-    IfFileExists "$PreviousVersionDir\cxxime_ime_x64.ime" previous_version_limit_block
-    IfFileExists "$PreviousVersionDir\cxxime_ime_x86.ime" previous_version_limit_block
-    IfFileExists "$PreviousVersionDir\cxxime-resources.dll" previous_version_limit_block
-    IfFileExists "$PreviousVersionDir\cxxime-server.exe" previous_version_limit_block
-    IfFileExists "$PreviousVersionDir\cxxime-settings.exe" previous_version_limit_block
-    IfFileExists "$PreviousVersionDir\uninstall.exe" previous_version_limit_block
-    Goto previous_version_limit_done
-
-    previous_version_limit_block:
-    StrCpy $FailureMessage \
-        "当前已存在待清理的 CxxIME 文件。请重新启动 Windows 完成清理后再继续安装。"
-    Push 0
-    Return
-    previous_version_limit_done:
-    Push 1
 FunctionEnd
 
 Function un.AcquireInstallerMutex
@@ -228,11 +220,9 @@ Function un.onInit
     SetRegView 64
     StrCpy $UninstallServerWasRunning 0
     StrCpy $UninstallServerStopResult 0
-    StrCpy $UninstallDeferred 0
-    StrCpy $UninstallDeferredResume 0
     StrCpy $UninstallRemoveUserData 0
+    StrCpy $UninstallCleanupWarning 0
     StrCpy $UninstallUserDataDir "$PROFILE\cxxime"
-    StrCpy $PreviousVersionDir ""
     StrCpy $InstallBaseDir "$INSTDIR"
     ClearErrors
     ReadRegStr $InstallBaseDir HKLM "${UNINSTALL_KEY}" "InstallBaseLocation"
@@ -240,35 +230,6 @@ Function un.onInit
     ${OrIf} $InstallBaseDir == ""
         StrCpy $InstallBaseDir "$INSTDIR"
     ${EndIf}
-    ClearErrors
-    ReadRegStr $PreviousVersionDir HKLM "${UNINSTALL_KEY}" "PreviousInstallLocation"
-    StrCpy $UninstallRollbackDir "$INSTDIR\${UNINSTALL_ROLLBACK_DIR}"
-    IfFileExists "$INSTDIR\${UNINSTALL_DEFERRED_MARKER}" 0 un_init_ready
-        ClearErrors
-        ReadINIStr $0 "$INSTDIR\${UNINSTALL_DEFERRED_MARKER}" "uninstall" "state"
-        IfErrors un_init_deferred_invalid
-        StrCmp $0 "removing" un_init_deferred_resume
-        StrCmp $0 "pending_restart" 0 un_init_deferred_invalid
-            IfSilent un_init_deferred_silent
-            MessageBox MB_ICONEXCLAMATION \
-                "CxxIME 正在等待 Windows 重新启动以完成卸载。"
-        un_init_deferred_silent:
-            DetailPrint "CxxIME 正在等待 Windows 重新启动以完成卸载。"
-            SetErrorLevel 3
-            Abort
-        un_init_deferred_resume:
-            StrCpy $UninstallDeferred 1
-            StrCpy $UninstallDeferredResume 1
-            Goto un_init_ready
-        un_init_deferred_invalid:
-            IfSilent un_init_deferred_invalid_silent
-            MessageBox MB_ICONSTOP \
-                "CxxIME 延期卸载状态无效。请重新启动 Windows 后再次运行安装程序。"
-        un_init_deferred_invalid_silent:
-            DetailPrint "CxxIME 延期卸载状态无效。请重新启动 Windows 后再次运行安装程序。"
-            SetErrorLevel 3
-            Abort
-    un_init_ready:
 FunctionEnd
 
 Function ToggleInstallLockDetails
@@ -316,39 +277,63 @@ Function FinishPageShow
     finish_page_done:
 FunctionEnd
 
-Function un.UserDataPage
+Function un.ConfirmPage
+    !insertmacro MUI_HEADER_TEXT "卸载 CxxIME" "移除程序，并选择是否同时删除个人数据。"
     nsDialogs::Create 1018
     Pop $0
     ${If} $0 == error
         Abort
     ${EndIf}
 
-    ${NSD_CreateLabel} 20u 16u 100% 24u \
-        "选择是否删除 CxxIME 用户数据。默认保留用户数据。"
+    ${NSD_CreateLabel} 20u 16u 100% 28u \
+        "CxxIME 将从系统中移除。正在使用的程序文件会自动在 Windows 重启后删除。"
     Pop $0
-    ${NSD_CreateLabel} 20u 46u 100% 12u "用户数据目录："
+    ${NSD_CreateLabel} 20u 48u 100% 24u \
+        "用户配置和词库默认保留，之后重新安装仍可继续使用。"
     Pop $0
-    ${NSD_CreateText} 28u 60u 100% 12u "$UninstallUserDataDir"
-    Pop $0
-    SendMessage $0 0x00CF 1 0
-    ${NSD_CreateCheckbox} 20u 88u 100% 20u "删除用户配置和词库数据"
+    ${NSD_CreateCheckbox} 20u 82u 100% 20u "删除用户配置和词库数据"
     Pop $UninstallRemoveUserDataCheckbox
     ${NSD_SetState} $UninstallRemoveUserDataCheckbox $UninstallRemoveUserData
+    ${NSD_CreateLabel} 38u 106u 100% 18u "勾选后个人数据将永久删除，无法撤销。"
+    Pop $UninstallRemoveUserDataWarning
+    ${NSD_OnClick} $UninstallRemoveUserDataCheckbox un.ToggleRemoveUserDataWarning
+    StrCmp $UninstallRemoveUserData "${BST_CHECKED}" un_remove_user_data_warning_ready
+        ShowWindow $UninstallRemoveUserDataWarning ${SW_HIDE}
+    un_remove_user_data_warning_ready:
+    GetDlgItem $0 $HWNDPARENT 1
+    SendMessage $0 ${WM_SETTEXT} 0 "STR:卸载"
     nsDialogs::Show
 FunctionEnd
 
-Function un.UserDataPageLeave
+Function un.ConfirmPageLeave
     ${NSD_GetState} $UninstallRemoveUserDataCheckbox $UninstallRemoveUserData
+FunctionEnd
+
+Function un.ToggleRemoveUserDataWarning
+    Pop $0
+    ${NSD_GetState} $UninstallRemoveUserDataCheckbox $1
+    StrCmp $1 "${BST_CHECKED}" un_show_remove_user_data_warning
+        ShowWindow $UninstallRemoveUserDataWarning ${SW_HIDE}
+        Return
+    un_show_remove_user_data_warning:
+    ShowWindow $UninstallRemoveUserDataWarning ${SW_SHOW}
+FunctionEnd
+
+Function un.FinishPageShow
+    StrCmp $UninstallCleanupWarning "1" un_finish_page_warning
+    IfRebootFlag un_finish_page_deferred un_finish_page_done
+    un_finish_page_deferred:
+        ${NSD_SetText} $mui.FinishPage.Text \
+            "CxxIME 已卸载。少量正在使用的程序文件将在下次重新启动 Windows 后自动删除。"
+        Goto un_finish_page_done
+    un_finish_page_warning:
+        ${NSD_SetText} $mui.FinishPage.Text \
+            "CxxIME 已从系统中移除，但部分程序文件未能自动清理。重新运行安装程序时会再次处理。"
+    un_finish_page_done:
 FunctionEnd
 
 Function CheckInstallDirectory
     StrCpy $ExistingInstall 0
-    IfFileExists "$INSTDIR\${UNINSTALL_DEFERRED_MARKER}" 0 install_directory_check_marker
-        StrCpy $FailureMessage \
-            "CxxIME 正在等待 Windows 重新启动以完成卸载。请重启后再安装。"
-        Push 0
-        Return
-    install_directory_check_marker:
     IfFileExists "$INSTDIR\${INSTALL_MARKER}" install_directory_owned
     StrCmp $RegisteredInstallDir "$INSTDIR" 0 install_directory_scan_start
     IfFileExists "$INSTDIR\cxxime-server.exe" 0 install_directory_scan_start
@@ -391,8 +376,6 @@ Function ValidateInstallDirectory
     ${If} $RegisteredInstallDir != ""
         StrCpy $MultiVersionInstall 1
         StrCpy $PreviousInstallDir $RegisteredInstallDir
-        IfFileExists "$InstallTargetDir\*" install_target_conflict
-        StrCpy $INSTDIR $InstallTargetDir
         StrCpy $InstallTargetPrepared 1
         Push 1
         Return
@@ -408,49 +391,38 @@ Function ValidateInstallDirectory
     StrCpy $INSTDIR $InstallTargetDir
     StrCpy $InstallTargetPrepared 1
     Return
-    install_target_conflict:
-    StrCmp $InstallTargetDir $PreviousVersionDir 0 install_target_conflict_generic
-    ; A committed active install can safely finalize an obsolete directory's uninstall state.
-    IfFileExists "$RegisteredInstallDir\${INSTALL_MARKER}" 0 install_target_pending_cleanup
-    IfFileExists "$InstallTargetDir\${UNINSTALL_TRANSACTION_MARKER}" 0 \
-        install_target_pending_cleanup
-    StrCpy $INSTDIR $InstallTargetDir
-    StrCpy $InstallTargetPrepared 1
-    Push 1
-    Return
-    install_target_conflict_generic:
-    StrCpy $FailureMessage "目标版本目录已存在。请先完成或清理上一次未完成的安装。"
-    Goto install_target_conflict_show
-    install_target_pending_cleanup:
-    StrCpy $FailureMessage \
-        "当前已存在待清理的 CxxIME 文件。请重新启动 Windows 完成清理后再继续安装。"
-    install_target_conflict_show:
-    IfSilent install_target_conflict_silent
-        MessageBox MB_ICONSTOP "$FailureMessage"
-    install_target_conflict_silent:
-    DetailPrint "$FailureMessage"
-    Abort
 FunctionEnd
 
 Function SetTransactionPaths
     StrCpy $StageDir "$InstallBaseDir\update"
-    StrCpy $BackupDir "$InstallBaseDir\.cxxime-backup"
     StrCpy $LockReportPath "$PLUGINSDIR\cxxime-locks.txt"
 FunctionEnd
 
 Function CheckFreshInstallBase
+    StrCmp $LegacyUninstallPerformed "1" fresh_install_base_ready
     ${If} $MultiVersionInstall == 1
         Push 1
         Return
     ${EndIf}
+    IfFileExists "$InstallBaseDir\maintenance\install-state.json" fresh_install_base_ready
     FindFirst $0 $1 "$InstallBaseDir\*"
     IfErrors fresh_install_base_ready
     fresh_install_base_scan:
         StrCmp $1 "." fresh_install_base_next
         StrCmp $1 ".." fresh_install_base_next
+        StrCmp $1 "maintenance" fresh_install_base_next
+        StrCmp $1 "${RUNTIME_MARKER}" fresh_install_base_next
+        StrCmp $1 "${RUNTIME_TEMP}" fresh_install_base_next
+        StrCmp $1 "${SYSTEM_IME_UPDATE_MARKER}" fresh_install_base_next
+        StrCmp $1 "${SYSTEM_IME_REMOVE_MARKER}" fresh_install_base_next
+        StrCmp $1 "${LEGACY_SYSTEM_IME_X64_PENDING}" fresh_install_base_next
+        StrCmp $1 "${LEGACY_SYSTEM_IME_X86_PENDING}" fresh_install_base_next
+        StrCmp $1 "${LEGACY_INSTALL_STATE_MARKER}" fresh_install_base_next
+        StrCmp $1 "${LEGACY_INSTALL_STATE_TEMP}" fresh_install_base_next
+        IfFileExists "$InstallBaseDir\$1\install-manifest.json" fresh_install_base_next
         FindClose $0
         StrCpy $FailureMessage \
-            "所选产品目录不为空。首次安装请选择一个空目录。"
+            "所选产品目录包含不属于 CxxIME 的文件。请选择其他目录。"
         Push 0
         Return
     fresh_install_base_next:
@@ -478,10 +450,6 @@ Function SecureInstallBase
     Pop $0
     StrCmp $0 "0" 0 secure_install_base_failed
     nsExec::Exec \
-        '"$PLUGINSDIR\cxxime-installer-helper.exe" validate-install-directory "$BackupDir"'
-    Pop $0
-    StrCmp $0 "0" 0 secure_install_base_failed
-    nsExec::Exec \
         '"$PLUGINSDIR\cxxime-installer-helper.exe" validate-install-directory "$INSTDIR"'
     Pop $0
     StrCmp $0 "0" secure_install_base_done
@@ -494,14 +462,10 @@ Function SecureInstallBase
 FunctionEnd
 
 Function PrepareInstallTarget
-    StrCpy $PreviousInstallFlat 0
     ${If} $MultiVersionInstall == 1
         StrCpy $ActiveServerDir "$PreviousInstallDir"
         StrCpy $StateInstallDir "$PreviousInstallDir"
         StrCpy $INSTDIR $InstallTargetDir
-        ${If} $PreviousInstallDir == $InstallBaseDir
-            StrCpy $PreviousInstallFlat 1
-        ${EndIf}
     ${Else}
         ${If} $InstallTargetPrepared == 0
             StrCpy $InstallBaseDir "$INSTDIR"
@@ -512,4 +476,143 @@ Function PrepareInstallTarget
         StrCpy $StateInstallDir "$INSTDIR"
         StrCpy $INSTDIR "$InstallTargetDir"
     ${EndIf}
+FunctionEnd
+
+Function PrepareInstallLifecycle
+    StrCpy $LifecycleActiveArg "-"
+    StrCmp $RegisteredInstallDir "" +2
+        StrCpy $LifecycleActiveArg "$RegisteredInstallDir"
+    Delete "$LifecycleResultPath"
+    nsExec::ExecToStack \
+        '"$PLUGINSDIR\cxxime-installer-helper.exe" lifecycle-prepare "$InstallBaseDir" \
+        "$LifecycleActiveArg" "${VERSION}" "$LifecycleResultPath"'
+    Pop $0
+    Pop $1
+    StrCmp $0 "0" lifecycle_prepare_read
+        StrCpy $FailureMessage "无法准备 CxxIME 版本生命周期状态。"
+        Push 0
+        Return
+    lifecycle_prepare_read:
+    ClearErrors
+    ReadINIStr $InstallTargetDir "$LifecycleResultPath" "lifecycle" "target"
+    ReadINIStr $LifecycleScheduled "$LifecycleResultPath" "lifecycle" "scheduled"
+    IfErrors lifecycle_prepare_failed
+    StrCmp $InstallTargetDir "" lifecycle_prepare_failed
+    StrCmp $LifecycleScheduled "0" +2
+        SetRebootFlag true
+    StrCpy $INSTDIR "$InstallTargetDir"
+    StrCpy $InstallTargetPrepared 1
+    Push 1
+    Return
+    lifecycle_prepare_failed:
+    StrCpy $FailureMessage "CxxIME 生命周期状态缺少有效的安装目标。"
+    Push 0
+FunctionEnd
+
+Function LoadPreparedInstallTarget
+    Delete "$LifecycleResultPath"
+    nsExec::ExecToStack \
+        '"$PLUGINSDIR\cxxime-installer-helper.exe" lifecycle-prepared-target \
+        "$InstallBaseDir" "$LifecycleResultPath"'
+    Pop $0
+    Pop $1
+    StrCmp $0 "0" lifecycle_prepared_target_read
+        StrCpy $FailureMessage "无法读取 CxxIME 安装事务目录。"
+        Push 0
+        Return
+    lifecycle_prepared_target_read:
+    ClearErrors
+    ReadINIStr $2 "$LifecycleResultPath" "lifecycle" "target"
+    IfErrors lifecycle_prepared_target_failed
+    StrCmp $2 "" lifecycle_prepared_target_done
+    IfFileExists "$2\${TRANSACTION_MARKER}" 0 lifecycle_prepared_target_done
+        StrCpy $InstallTargetDir "$2"
+        StrCpy $INSTDIR "$2"
+        Call SetTransactionPaths
+    lifecycle_prepared_target_done:
+    Push 1
+    Return
+    lifecycle_prepared_target_failed:
+    StrCpy $FailureMessage "CxxIME 安装事务目录状态无效。"
+    Push 0
+FunctionEnd
+
+Function CommitInstallLifecycle
+    StrCpy $LifecycleActiveArg "-"
+    StrCmp $PreviousInstallDir "" +2
+        StrCpy $LifecycleActiveArg "$PreviousInstallDir"
+    nsExec::Exec \
+        '"$PLUGINSDIR\cxxime-installer-helper.exe" lifecycle-commit "$InstallBaseDir" \
+        "$INSTDIR" "$LifecycleActiveArg"'
+    Pop $0
+    StrCmp $0 "0" lifecycle_commit_done
+        StrCpy $FailureMessage "无法提交 CxxIME 版本生命周期状态。"
+        Push 0
+        Return
+    lifecycle_commit_done:
+    Push 1
+FunctionEnd
+
+Function CollectInstallGarbage
+    Delete "$LifecycleResultPath"
+    nsExec::ExecToStack \
+        '"$PLUGINSDIR\cxxime-installer-helper.exe" lifecycle-gc \
+        "$InstallBaseDir" "$LifecycleResultPath"'
+    Pop $0
+    Pop $1
+    StrCmp $0 "0" lifecycle_gc_read
+        DetailPrint "无法清理退役版本，后续安装将再次处理。"
+        Return
+    lifecycle_gc_read:
+    ClearErrors
+    ReadINIStr $LifecycleScheduled "$LifecycleResultPath" "lifecycle" "scheduled"
+    IfErrors lifecycle_gc_done
+    StrCmp $LifecycleScheduled "0" lifecycle_gc_done
+        SetRebootFlag true
+    lifecycle_gc_done:
+FunctionEnd
+
+Function un.CommitInstallLifecycle
+    StrCpy $LifecycleRemaining -1
+    StrCpy $LifecycleUnknown 0
+    Delete "$LifecycleResultPath"
+    nsExec::ExecToStack \
+        '"$PLUGINSDIR\cxxime-installer-helper.exe" lifecycle-uninstall "$InstallBaseDir" \
+        "$INSTDIR" "$LifecycleResultPath"'
+    Pop $0
+    Pop $1
+    StrCmp $0 "0" un_lifecycle_commit_read
+        DetailPrint "无法完成程序文件清理；后续安装将再次处理残留文件。"
+        Push 0
+        Return
+    un_lifecycle_commit_read:
+    ClearErrors
+    ReadINIStr $LifecycleScheduled "$LifecycleResultPath" "lifecycle" "scheduled"
+    ReadINIStr $LifecycleRemaining "$LifecycleResultPath" "lifecycle" "remaining"
+    ReadINIStr $LifecycleUnknown "$LifecycleResultPath" "lifecycle" "unknown"
+    IfErrors un_lifecycle_commit_failed
+    StrCmp $LifecycleRemaining "0" +2
+        StrCpy $UninstallCleanupWarning 1
+    StrCmp $LifecycleScheduled "0" un_lifecycle_commit_done
+        SetRebootFlag true
+    un_lifecycle_commit_done:
+    Push 1
+    Return
+    un_lifecycle_commit_failed:
+    DetailPrint "无法读取程序文件清理结果；后续安装将再次处理残留文件。"
+    Push 0
+FunctionEnd
+
+Function un.ValidateInstallLifecycle
+    nsExec::Exec \
+        '"$PLUGINSDIR\cxxime-installer-helper.exe" lifecycle-validate-uninstall \
+        "$InstallBaseDir" "$INSTDIR"'
+    Pop $0
+    StrCmp $0 "0" un_lifecycle_validate_done
+        StrCpy $FailureMessage \
+            "无法验证 CxxIME 程序文件清单。卸载未进行，请重新安装后再卸载。"
+        Push 0
+        Return
+    un_lifecycle_validate_done:
+    Push 1
 FunctionEnd

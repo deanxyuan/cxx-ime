@@ -68,6 +68,7 @@ def check_installer_script(
     check_installer_payload(
         errors,
         text,
+        dist_dir,
         require_x86,
         manifest_files,
         host_diagnostics,

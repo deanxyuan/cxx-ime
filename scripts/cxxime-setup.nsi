@@ -2,6 +2,7 @@ Unicode true
 !include "MUI2.nsh"
 !include "FileFunc.nsh"
 !include "LogicLib.nsh"
+!include "WinMessages.nsh"
 !include "Win\WinError.nsh"
 !include "x64.nsh"
 
@@ -13,20 +14,19 @@ Unicode true
 !define TSF_INPROC_KEY "SOFTWARE\Classes\CLSID\${CLSID}\InprocServer32"
 !define TSF_TIP_KEY "SOFTWARE\Microsoft\CTF\TIP\${CLSID}"
 !define INSTALL_MARKER ".cxxime-install-complete"
-!define INSTALL_STATE_MARKER ".cxxime-install-state"
-!define INSTALL_STATE_TEMP ".cxxime-install-state.tmp"
 !define TRANSACTION_MARKER ".cxxime-install-transaction"
 !define TRANSACTION_TEMP ".cxxime-install-transaction.tmp"
 !define RUNTIME_MARKER ".cxxime-install-runtime"
 !define RUNTIME_TEMP ".cxxime-install-runtime.tmp"
-!define SYSTEM_IME_X64_PENDING ".cxxime-ime-x64.pending"
-!define SYSTEM_IME_X86_PENDING ".cxxime-ime-x86.pending"
 !define SYSTEM_IME_UPDATE_MARKER ".cxxime-ime-update"
-!define ROLLBACK_DIR ".cxxime-rollback"
+!define SYSTEM_IME_REMOVE_MARKER ".cxxime-ime-remove-pending"
+!define LEGACY_SYSTEM_IME_X64_PENDING ".cxxime-ime-x64.pending"
+!define LEGACY_SYSTEM_IME_X86_PENDING ".cxxime-ime-x86.pending"
+!define LEGACY_INSTALL_STATE_MARKER ".cxxime-install-state"
+!define LEGACY_INSTALL_STATE_TEMP ".cxxime-install-state.tmp"
+!define LEGACY_UNINSTALL_DEFERRED_MARKER ".cxxime-uninstall-pending"
 !define UNINSTALL_TRANSACTION_MARKER ".cxxime-uninstall-transaction"
 !define UNINSTALL_TRANSACTION_TEMP ".cxxime-uninstall-transaction.tmp"
-!define UNINSTALL_ROLLBACK_DIR ".cxxime-uninstall-rollback"
-!define UNINSTALL_DEFERRED_MARKER ".cxxime-uninstall-pending"
 !define MOVEFILE_REPLACE_WRITE_THROUGH 0x9
 !define MOVEFILE_DELAY_UNTIL_REBOOT 0x4
 !define MOVEFILE_REPLACE_DELAY_UNTIL_REBOOT 0x5
@@ -64,13 +64,9 @@ VIAddVersionKey /LANG=2052 "ProductVersion" "${VERSION}"
 Var ExistingInstall
 Var RegisteredInstallDir
 Var StageDir
-Var BackupDir
 Var TransactionDir
-Var InstallTransactionFormat
 Var LockReportPath
 Var LockReportText
-Var LockResult
-Var LockPromptOptions
 Var InstallLockNotice
 Var InstallLockDetailsButton
 Var InstallLockDetailsText
@@ -83,8 +79,6 @@ Var OldTsfX64Registered
 Var OldTsfX86Registered
 Var OldTipX64Present
 Var OldTipX86Present
-Var SystemImeX64Present
-Var SystemImeX86Present
 Var OldUninstallPresent
 Var OldDisplayVersion
 Var OldRunPresent
@@ -97,31 +91,34 @@ Var ServerStopResult
 Var ServerProcessId
 Var InstallStateVerified
 Var InstallBaseHandle
+Var InstallMutexHandle
 Var InstallBaseDir
 Var PreviousInstallDir
-Var OldPreviousInstallDir
 Var MultiVersionInstall
 Var ActiveServerDir
 Var StateInstallDir
-Var RegistryInstallDir
-Var PreviousVersionDir
 Var InstallTargetDir
 Var InstallTargetPrepared
-Var PreviousInstallFlat
+Var LifecycleResultPath
+Var LifecycleActiveArg
+Var LifecycleScheduled
+Var LifecycleRemaining
+Var LifecycleUnknown
+Var LegacyUninstallPerformed
+Var LegacyUninstallPending
+Var InstalledVersion
+Var AllowDowngrade
 Var UninstallRemoveUserData
 Var UninstallRemoveUserDataCheckbox
+Var UninstallRemoveUserDataWarning
 Var UninstallUserDataDir
 Var UninstallUserDataDirSuffix
 Var UninstallServerWasRunning
 Var UninstallServerStopResult
-Var UninstallDeferred
-Var UninstallDeferredResume
-Var UninstallRollbackDir
 Var UninstallTransactionPhase
-Var UninstallSystemImeX64Present
-Var UninstallSystemImeX86Present
 Var UninstallTsfX64Registered
 Var UninstallTsfX86Registered
+Var UninstallCleanupWarning
 
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_LICENSE "license.txt"
@@ -134,27 +131,33 @@ Var UninstallTsfX86Registered
 !define MUI_FINISHPAGE_RUN_NOTCHECKED
 !define MUI_PAGE_CUSTOMFUNCTION_SHOW FinishPageShow
 !insertmacro MUI_PAGE_FINISH
-!insertmacro MUI_UNPAGE_CONFIRM
-UninstPage custom un.UserDataPage un.UserDataPageLeave
+UninstPage custom un.ConfirmPage un.ConfirmPageLeave
 !insertmacro MUI_UNPAGE_INSTFILES
 !define MUI_UNTEXT_FINISH_INFO_REBOOT \
-    "CxxIME 已停用。请重新启动 Windows，以删除仍在使用的文件并完成卸载。"
+    "CxxIME 已卸载。少量正在使用的程序文件将在下次重新启动 Windows 后自动删除。"
+!define MUI_FINISHPAGE_NOREBOOTSUPPORT
+!define MUI_PAGE_CUSTOMFUNCTION_SHOW un.FinishPageShow
 !insertmacro MUI_UNPAGE_FINISH
 !insertmacro MUI_LANGUAGE "SimpChinese"
 
+!include "nsis\legacy_upgrade.nsh"
 !include "nsis\setup.nsh"
 !include "nsis\install_recovery.nsh"
 !include "nsis\install_locks.nsh"
 !include "nsis\install_state.nsh"
 !include "nsis\install_tsf.nsh"
+!include "install_payload.nsh"
 
 Section "Install"
     SetRegView 64
     SetShellVarContext all
     InitPluginsDir
+    StrCpy $LifecycleResultPath "$PLUGINSDIR\cxxime-lifecycle.ini"
     SetOutPath "$PLUGINSDIR"
     File /oname=cxxime-installer-helper.exe "cxxime-installer-helper.exe"
 
+    Call CheckInstallVersion
+    Call UpgradeLegacyInstall
     Call PrepareInstallTarget
     Call SetTransactionPaths
     Call CheckFreshInstallBase
@@ -167,6 +170,11 @@ Section "Install"
     StrCmp $0 "1" install_base_ready
         Goto install_failed_untrusted_base
     install_base_ready:
+    Call LoadPreparedInstallTarget
+    Pop $0
+    StrCmp $0 "1" install_prepared_target_ready
+        Goto install_failed_untrusted_base
+    install_prepared_target_ready:
     Call CaptureServerState
     Pop $0
     StrCmp $0 "1" runtime_snapshot_ready
@@ -178,7 +186,6 @@ Section "Install"
         StrCpy $FailureMessage "无法确认 CxxIME 后台已终止，未继续覆盖文件。"
         Goto install_failed_before_swap
     install_server_stopped:
-    Call CheckInstallLocks
     Call RecoverInterruptedInstall
     Pop $0
     StrCmp $0 "1" install_recovery_ready
@@ -194,23 +201,17 @@ Section "Install"
     StrCpy $ServerWasRunning $InitialServerWasRunning
     Call RefreshInstallLayoutAfterRecovery
     Call SetTransactionPaths
-    Call RecoverPendingSystemIme
+    Call PrepareInstallLifecycle
     Pop $0
-    StrCmp $0 "1" install_system_ime_recovery_ready
+    StrCmp $0 "1" install_lifecycle_ready
         Goto install_failed_before_swap
-    install_system_ime_recovery_ready:
-    Call CheckPreviousVersionLimit
-    Pop $0
-    StrCmp $0 "1" install_previous_version_ready
-        Goto install_failed_before_swap
-    install_previous_version_ready:
+    install_lifecycle_ready:
     Call CheckInstallDirectory
     Pop $0
     StrCmp $0 "1" install_directory_checked
         Goto install_failed_before_swap
 
     install_directory_checked:
-    Call PrepareInstallTarget
     Call SetTransactionPaths
     Call SnapshotPreviousState
 
@@ -226,50 +227,7 @@ Section "Install"
         Goto install_failed_before_swap
     install_stage_directory_ready:
 
-    SetOutPath "$StageDir"
-    File "cxxime_tsf_x64.dll"
-    File "cxxime_tsf_x86.dll"
-    File "cxxime_ime_x64.ime"
-    File "cxxime_ime_x86.ime"
-    File "cxxime-resources.dll"
-    File "cxxime-server.exe"
-    File "cxxime-settings.exe"
-    File "collect_diagnostics.ps1"
-    File "license.txt"
-    File "THIRD_PARTY_NOTICES.txt"
-
-    SetOutPath "$StageDir\licenses"
-    File "licenses\rime-ice-GPL-3.0.txt"
-    File "licenses\miniz-MIT.txt"
-
-    !ifdef HOST_DIAGNOSTICS
-        SetOutPath "$StageDir"
-        File "cxxime-ime-host-probe-x64.exe"
-        File "cxxime-ime-host-probe-x86.exe"
-        File "export_host_trace.ps1"
-    !endif
-
-    !ifdef FAST
-        SetCompress off
-    !endif
-    SetOutPath "$StageDir\data"
-    File "data\default.json"
-    File "data\settings_presets.json"
-    File "data\themes.json"
-    File "data\punctuation.json"
-    File "data\symbols.json"
-    File "data\dictionary_manifest.json"
-    File "data\pinyin.dict.bin"
-    File "data\pinyin.dict.idx"
-    File "data\pinyin.spellings.bin"
-    File "data\pinyin.topn.bin"
-    File "data\pinyin.reverse.idx"
-    File "data\wubi86.dict.bin"
-    File "data\wubi86.dict.idx"
-    File "data\wubi86.reverse.idx"
-    !ifdef FAST
-        SetCompress auto
-    !endif
+    !insertmacro InstallVersionPayload
 
     WriteUninstaller "$StageDir\uninstall.exe"
     IfErrors 0 install_stage_ready
@@ -277,12 +235,6 @@ Section "Install"
         Goto install_failed_before_swap
 
     install_stage_ready:
-    Call BackupSystemIme
-    Pop $0
-    StrCmp $0 "1" install_write_transaction
-        Goto install_failed_before_swap
-
-    install_write_transaction:
     Call WriteTransactionState
     Pop $0
     StrCmp $0 "1" install_transaction_ready
@@ -290,29 +242,8 @@ Section "Install"
 
     install_transaction_ready:
     SetOutPath "$PLUGINSDIR"
-    ${If} $MultiVersionInstall == 0
-    ${AndIf} $ExistingInstall == 1
-        IfFileExists "$BackupDir\*" 0 install_backup_path_ready
-            StrCpy $FailureMessage "无法准备 CxxIME 备份目录。"
-            Goto install_failed_after_transaction
-        install_backup_path_ready:
-        ClearErrors
-        Rename "$INSTDIR" "$BackupDir"
-        IfErrors 0 install_backup_ready
-            StrCpy $FailureMessage "无法备份已安装的 CxxIME 版本。"
-            Goto install_failed_after_transaction
-        install_backup_ready:
-        ${If} $MultiVersionInstall == 0
-            Call UnregisterPreviousTsf
-            Pop $0
-            StrCmp $0 "1" install_swap_stage
-                Goto install_failed_after_transaction
-        ${EndIf}
-    ${Else}
-        RMDir "$INSTDIR"
-    ${EndIf}
+    RMDir "$INSTDIR"
 
-    install_swap_stage:
     ClearErrors
     Rename "$StageDir" "$INSTDIR"
     IfErrors 0 install_stage_swapped
@@ -350,9 +281,20 @@ Section "Install"
         Goto install_failed_after_transaction
 
     install_commit:
+    Call CollectPreviousVersionLockNotice
+    Call CommitInstallLifecycle
+    Pop $0
+    StrCmp $0 "1" install_lifecycle_committed
+        Goto install_failed_after_transaction
+    install_lifecycle_committed:
     ClearErrors
     Delete "$INSTDIR\${TRANSACTION_MARKER}"
-    IfErrors install_failed_after_transaction
+    IfErrors 0 install_transaction_marker_removed
+        DetailPrint "安装状态已提交，但未能删除安装事务标记。"
+    install_transaction_marker_removed:
+    Call CollectInstallGarbage
+    Delete /REBOOTOK "$InstallBaseDir\${LEGACY_INSTALL_STATE_MARKER}"
+    Delete /REBOOTOK "$InstallBaseDir\${LEGACY_INSTALL_STATE_TEMP}"
     Call CopyNewSystemIme
     Pop $0
     StrCmp $0 "1" install_system_ime_committed
@@ -363,35 +305,6 @@ Section "Install"
         install_system_ime_warning_silent:
         DetailPrint "$FailureMessage"
     install_system_ime_committed:
-    IfFileExists "$INSTDIR\${ROLLBACK_DIR}" 0 install_commit_cleanup_backup
-        ClearErrors
-        RMDir /r "$INSTDIR\${ROLLBACK_DIR}"
-        IfFileExists "$INSTDIR\${ROLLBACK_DIR}" 0 install_commit_cleanup_backup
-            DetailPrint "安装已提交，但未能删除回滚数据，将在后续安装时再次清理。"
-    install_commit_cleanup_backup:
-    IfFileExists "$BackupDir" 0 install_commit_delete_runtime
-        ClearErrors
-        RMDir /r "$BackupDir"
-        IfFileExists "$BackupDir" 0 install_commit_delete_runtime
-            DetailPrint "安装已提交，但未能删除备份目录，将在后续安装时再次清理。"
-    install_commit_delete_runtime:
-    Call CollectPreviousVersionLockNotice
-    Call CleanupPreviousInstall
-    Pop $0
-    StrCmp $0 "1" install_old_version_removed
-        DetailPrint "$FailureMessage"
-    install_old_version_removed:
-    Call WriteInstallLayoutState
-    Pop $0
-    StrCmp $0 "1" install_layout_state_written
-        SetErrorLevel 1
-        IfSilent install_layout_state_failed_silent
-            MessageBox MB_ICONSTOP \
-                "CxxIME ${VERSION} 文件已安装，但无法完成安装状态记录。$\r$\n$\r$\n$FailureMessage$\r$\n$\r$\n请重新运行安装程序完成恢复。"
-        install_layout_state_failed_silent:
-        DetailPrint "$FailureMessage"
-        Abort
-    install_layout_state_written:
     CreateDirectory "$PROFILE\cxxime"
     IfFileExists "$PROFILE\cxxime\default.json" install_user_config_ready
         CopyFiles /SILENT /FILESONLY "$INSTDIR\data\default.json" "$PROFILE\cxxime"
@@ -482,12 +395,12 @@ SectionEnd
 !include "nsis\uninstall_locks.nsh"
 !include "nsis\uninstall_state.nsh"
 !include "nsis\uninstall_files.nsh"
-!include "nsis\uninstall_deferred.nsh"
 
 Section "Uninstall"
     SetRegView 64
     SetShellVarContext all
     InitPluginsDir
+    StrCpy $LifecycleResultPath "$PLUGINSDIR\cxxime-lifecycle.ini"
     SetOutPath "$PLUGINSDIR"
     File /oname=cxxime-installer-helper.exe "cxxime-installer-helper.exe"
     StrCpy $LockReportPath "$PLUGINSDIR\cxxime-locks.txt"
@@ -495,68 +408,29 @@ Section "Uninstall"
     Call un.ReleaseInputProcessor
     Call un.StopServer
     StrCmp $UninstallServerStopResult "0" un_server_stopped
-        StrCpy $FailureMessage "无法确认 CxxIME 后台已终止，卸载已停止。"
-        Call un.FailAndRestart
+        DetailPrint "CxxIME 后台仍在退出；相关程序文件将在 Windows 重启后删除。"
     un_server_stopped:
-    StrCmp $UninstallDeferredResume "1" un_deferred_resume
     Call un.CheckFileLocks
-    StrCmp $UninstallDeferred "1" un_deferred_prepare
+    Call un.ValidateInstallLifecycle
+    Pop $0
+    StrCmp $0 "1" un_lifecycle_valid
+        Call un.FailAndRestart
+    un_lifecycle_valid:
     Call un.PrepareTransaction
     Pop $0
     StrCmp $0 "1" un_transaction_ready
         Call un.FailAndRestart
 
     un_transaction_ready:
-    StrCmp $UninstallTransactionPhase "staged" un_program_files_staged
-    Call un.UnregisterInstalledTsf
+    Call un.PrepareSystemImeRemoval
     Pop $0
-    StrCmp $0 "1" un_tsf_unregistered
-        Goto un_rollback_failure
-
-    un_tsf_unregistered:
-    Call un.RemoveSystemIme
-    Pop $0
-    StrCmp $0 "1" un_system_ime_removed
-        Goto un_rollback_failure
-
-    un_system_ime_removed:
-    Call un.StageInstalledFiles
-    Pop $0
-    StrCmp $0 "1" un_mark_files_staged
-        Goto un_rollback_failure
-
-    un_mark_files_staged:
-    Call un.MarkTransactionStaged
-    Pop $0
-    StrCmp $0 "1" un_program_files_staged
-        Goto un_rollback_failure
-
-    un_program_files_staged:
-    Call un.DeleteStagedFiles
-    Pop $0
-    StrCmp $0 "1" un_remove_registry
-        DetailPrint "$FailureMessage"
-        StrCpy $UninstallDeferred 1
-        Goto un_deferred_schedule
-
-    un_deferred_prepare:
-    Call un.PrepareTransaction
-    Pop $0
-    StrCmp $0 "1" un_deferred_unregister
+    StrCmp $0 "1" un_system_ime_removal_ready
         Call un.FailAndRestart
-
-    un_deferred_unregister:
+    un_system_ime_removal_ready:
     Call un.UnregisterInstalledTsf
     Pop $0
-    StrCmp $0 "1" un_deferred_schedule
-        Goto un_rollback_failure
-
-    un_deferred_resume:
-    un_deferred_schedule:
-    Call un.BeginDeferredUninstall
-    Pop $0
     StrCmp $0 "1" un_remove_registry
-        Call un.FailDeferred
+        Goto un_rollback_failure
 
     un_rollback_failure:
     Call un.RollbackTransaction
@@ -583,51 +457,37 @@ Section "Uninstall"
     IfErrors un_uninstall_registry_removed
         StrCpy $FailureMessage \
             "无法删除 CxxIME 卸载注册表项。请重新运行卸载程序。"
-        StrCmp $UninstallDeferred "1" 0 +2
-            Call un.FailDeferred
-        Call un.FailIncomplete
+        Goto un_rollback_failure
     un_uninstall_registry_removed:
     ClearErrors
     ReadRegStr $0 HKLM "${RUN_KEY}" "CxxIMEServer"
     IfErrors un_run_registry_removed
         StrCpy $FailureMessage \
             "无法删除 CxxIME 启动注册表项。请重新运行卸载程序。"
-        StrCmp $UninstallDeferred "1" 0 +2
-            Call un.FailDeferred
-        Call un.FailIncomplete
+        Goto un_rollback_failure
     un_run_registry_removed:
 
-    RMDir /r "$SMPROGRAMS\CxxIME"
-    StrCmp $UninstallDeferred "1" un_commit_deferred
-    Delete "$INSTDIR\${UNINSTALL_TRANSACTION_MARKER}"
-    Delete "$INSTDIR\${UNINSTALL_TRANSACTION_TEMP}"
-    Delete "$INSTDIR\uninstall.exe"
-    RMDir "$INSTDIR"
-    IfFileExists "$INSTDIR\*" 0 un_program_files_removed
-        DetailPrint "$INSTDIR 中仍有无法识别的文件。"
-    un_program_files_removed:
-    Goto un_remove_user_data
-
-    un_commit_deferred:
-    Call un.CommitDeferredUninstall
+    Call un.RemoveSystemIme
     Pop $0
-    StrCmp $0 "1" un_remove_user_data
-        Call un.FailDeferred
-
-    un_remove_user_data:
-    ${If} $PreviousVersionDir != ""
-        Push "$PreviousVersionDir"
-        Call un.CleanupKnownVersion
-    ${EndIf}
-    Push "$InstallBaseDir\update"
-    Call un.CleanupKnownVersion
-    Delete /REBOOTOK "$InstallBaseDir\${INSTALL_STATE_MARKER}"
-    Delete /REBOOTOK "$InstallBaseDir\${INSTALL_STATE_TEMP}"
+    StrCmp $0 "1" +2
+        StrCpy $UninstallCleanupWarning 1
+    RMDir /r "$SMPROGRAMS\CxxIME"
+    Call un.CommitInstallLifecycle
+    Pop $0
+    StrCmp $0 "1" +2
+        StrCpy $UninstallCleanupWarning 1
     Delete /REBOOTOK "$InstallBaseDir\${RUNTIME_MARKER}"
     Delete /REBOOTOK "$InstallBaseDir\${RUNTIME_TEMP}"
-    Delete /REBOOTOK "$InstallBaseDir\${SYSTEM_IME_X64_PENDING}"
-    Delete /REBOOTOK "$InstallBaseDir\${SYSTEM_IME_X86_PENDING}"
+    Delete /REBOOTOK "$InstallBaseDir\${LEGACY_INSTALL_STATE_MARKER}"
+    Delete /REBOOTOK "$InstallBaseDir\${LEGACY_INSTALL_STATE_TEMP}"
     Delete /REBOOTOK "$InstallBaseDir\${SYSTEM_IME_UPDATE_MARKER}"
+    StrCmp $LifecycleRemaining "-1" un_remove_user_data
+    StrCmp $LifecycleRemaining "0" 0 un_remove_user_data
+    StrCmp $LifecycleUnknown "0" 0 un_remove_user_data
+        Delete /REBOOTOK "$InstallBaseDir\maintenance\install-state.json"
+        RMDir /REBOOTOK "$InstallBaseDir\maintenance"
+        RMDir /REBOOTOK "$InstallBaseDir"
+    un_remove_user_data:
     ${If} $UninstallRemoveUserData == ${BST_CHECKED}
         StrCpy $UninstallUserDataDirSuffix $UninstallUserDataDir 7 -7
         ${If} $UninstallUserDataDir != ""
@@ -635,4 +495,5 @@ Section "Uninstall"
             RMDir /r "$UninstallUserDataDir"
         ${EndIf}
     ${EndIf}
+    RMDir "$InstallBaseDir"
 SectionEnd

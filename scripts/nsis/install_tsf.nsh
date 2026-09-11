@@ -1,39 +1,3 @@
-Function UnregisterPreviousTsf
-    ${If} $OldTsfX86Registered == 1
-        IfFileExists "$BackupDir\cxxime_tsf_x86.dll" 0 unregister_previous_x86_missing
-        nsExec::ExecToStack '"$SYSDIR\regsvr32.exe" /u /s "$BackupDir\cxxime_tsf_x86.dll"'
-        Pop $0
-        Pop $1
-        ${If} $0 != "0"
-            StrCpy $FailureMessage "无法注销已安装的 32 位 TSF 模块。"
-            Push 0
-            Return
-        ${EndIf}
-    ${EndIf}
-    ${If} $OldTsfX64Registered == 1
-        IfFileExists "$BackupDir\cxxime_tsf_x64.dll" 0 unregister_previous_x64_missing
-        nsExec::ExecToStack '"$WINDIR\Sysnative\regsvr32.exe" /u /s "$BackupDir\cxxime_tsf_x64.dll"'
-        Pop $0
-        Pop $1
-        ${If} $0 != "0"
-            StrCpy $FailureMessage "无法注销已安装的 64 位 TSF 模块。"
-            Push 0
-            Return
-        ${EndIf}
-    ${EndIf}
-    Push 1
-    Return
-
-    unregister_previous_x86_missing:
-    StrCpy $FailureMessage "已安装版本中缺少已注册的 32 位 TSF 模块。"
-    Push 0
-    Return
-
-    unregister_previous_x64_missing:
-    StrCpy $FailureMessage "已安装版本中缺少已注册的 64 位 TSF 模块。"
-    Push 0
-FunctionEnd
-
 Function RegisterNewTsf
     nsExec::ExecToStack '"$WINDIR\Sysnative\regsvr32.exe" /s "$INSTDIR\cxxime_tsf_x64.dll"'
     Pop $0
@@ -99,22 +63,6 @@ Function WriteInstallationRegistry
     WriteRegStr HKLM "${UNINSTALL_KEY}" "DisplayIcon" '"$INSTDIR\cxxime-resources.dll",-100'
     WriteRegStr HKLM "${UNINSTALL_KEY}" "InstallLocation" "$INSTDIR"
     WriteRegStr HKLM "${UNINSTALL_KEY}" "InstallBaseLocation" "$InstallBaseDir"
-    IfErrors installation_registry_failed
-    ${If} $MultiVersionInstall == 1
-    ${AndIf} $PreviousInstallDir != ""
-        ClearErrors
-        WriteRegStr HKLM "${UNINSTALL_KEY}" "PreviousInstallLocation" "$PreviousInstallDir"
-        IfErrors installation_registry_failed
-    ${Else}
-        ClearErrors
-        ReadRegStr $0 HKLM "${UNINSTALL_KEY}" "PreviousInstallLocation"
-        ${IfNot} ${Errors}
-            ClearErrors
-            DeleteRegValue HKLM "${UNINSTALL_KEY}" "PreviousInstallLocation"
-            IfErrors installation_registry_failed
-        ${EndIf}
-    ${EndIf}
-    ClearErrors
     WriteRegStr HKLM "${UNINSTALL_KEY}" "UninstallString" '"$INSTDIR\uninstall.exe"'
     WriteRegStr HKLM "${UNINSTALL_KEY}" "QuietUninstallString" '"$INSTDIR\uninstall.exe" /S'
     WriteRegDWORD HKLM "${UNINSTALL_KEY}" "NoModify" 1
@@ -129,48 +77,19 @@ Function WriteInstallationRegistry
 FunctionEnd
 
 Function RestorePreviousRegistry
-    StrCpy $RegistryInstallDir "$INSTDIR"
-    ${If} $MultiVersionInstall == 1
-        StrCpy $RegistryInstallDir "$PreviousInstallDir"
-    ${EndIf}
     ${If} $OldUninstallPresent == 1
         ClearErrors
         WriteRegStr HKLM "${UNINSTALL_KEY}" "DisplayName" "CxxIME"
         WriteRegStr HKLM "${UNINSTALL_KEY}" "DisplayVersion" "$OldDisplayVersion"
         WriteRegStr HKLM "${UNINSTALL_KEY}" "Publisher" "${PUBLISHER}"
-        WriteRegStr HKLM "${UNINSTALL_KEY}" "DisplayIcon" '"$RegistryInstallDir\cxxime-resources.dll",-100'
-        WriteRegStr HKLM "${UNINSTALL_KEY}" "InstallLocation" "$RegistryInstallDir"
-        IfErrors restore_registry_failed
-        ${If} $PreviousInstallFlat == 1
-            ClearErrors
-            ReadRegStr $0 HKLM "${UNINSTALL_KEY}" "InstallBaseLocation"
-            ${IfNot} ${Errors}
-                ClearErrors
-                DeleteRegValue HKLM "${UNINSTALL_KEY}" "InstallBaseLocation"
-                IfErrors restore_registry_failed
-            ${EndIf}
-        ${Else}
-            ClearErrors
-            WriteRegStr HKLM "${UNINSTALL_KEY}" "InstallBaseLocation" "$InstallBaseDir"
-            IfErrors restore_registry_failed
-        ${EndIf}
-        ${If} $OldPreviousInstallDir != ""
-            ClearErrors
-            WriteRegStr HKLM "${UNINSTALL_KEY}" "PreviousInstallLocation" \
-                "$OldPreviousInstallDir"
-            IfErrors restore_registry_failed
-        ${Else}
-            ClearErrors
-            ReadRegStr $0 HKLM "${UNINSTALL_KEY}" "PreviousInstallLocation"
-            ${IfNot} ${Errors}
-                ClearErrors
-                DeleteRegValue HKLM "${UNINSTALL_KEY}" "PreviousInstallLocation"
-                IfErrors restore_registry_failed
-            ${EndIf}
-        ${EndIf}
-        ClearErrors
-        WriteRegStr HKLM "${UNINSTALL_KEY}" "UninstallString" '"$RegistryInstallDir\uninstall.exe"'
-        WriteRegStr HKLM "${UNINSTALL_KEY}" "QuietUninstallString" '"$RegistryInstallDir\uninstall.exe" /S'
+        WriteRegStr HKLM "${UNINSTALL_KEY}" "DisplayIcon" \
+            '"$PreviousInstallDir\cxxime-resources.dll",-100'
+        WriteRegStr HKLM "${UNINSTALL_KEY}" "InstallLocation" "$PreviousInstallDir"
+        WriteRegStr HKLM "${UNINSTALL_KEY}" "InstallBaseLocation" "$InstallBaseDir"
+        WriteRegStr HKLM "${UNINSTALL_KEY}" "UninstallString" \
+            '"$PreviousInstallDir\uninstall.exe"'
+        WriteRegStr HKLM "${UNINSTALL_KEY}" "QuietUninstallString" \
+            '"$PreviousInstallDir\uninstall.exe" /S'
         WriteRegDWORD HKLM "${UNINSTALL_KEY}" "NoModify" 1
         WriteRegDWORD HKLM "${UNINSTALL_KEY}" "NoRepair" 1
         IfErrors restore_registry_failed

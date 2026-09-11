@@ -95,62 +95,18 @@ Function un.ReadLockReport
 FunctionEnd
 
 Function un.CheckFileLocks
-    StrCpy $LockPromptOptions ""
-    IfSilent un_lock_options_ready
-        StrCpy $LockPromptOptions "--prompt=uninstall --parent=$HWNDPARENT"
-    un_lock_options_ready:
-    un_lock_query:
-        Delete "$LockReportPath"
-        nsExec::ExecToStack \
-            '"$PLUGINSDIR\cxxime-installer-helper.exe" query --report "$LockReportPath" \
-            $LockPromptOptions \
-            "$INSTDIR\cxxime_tsf_x64.dll" "$INSTDIR\cxxime_tsf_x86.dll" \
-            "$INSTDIR\cxxime_ime_x64.ime" "$INSTDIR\cxxime_ime_x86.ime" \
-            "$INSTDIR\cxxime-resources.dll" "$INSTDIR\cxxime-server.exe" \
-            "$INSTDIR\cxxime-settings.exe" "$INSTDIR\uninstall.exe" \
-            "$WINDIR\System32\cxxime.ime" "$SYSDIR\cxxime.ime"'
-        Pop $0
-        Pop $1
-        StrCmp $0 "0" un_lock_check_rollback
-            Goto un_lock_report
-    un_lock_check_rollback:
-        nsExec::ExecToStack \
-            '"$PLUGINSDIR\cxxime-installer-helper.exe" query --report "$LockReportPath" \
-            $LockPromptOptions \
-            "$UninstallRollbackDir\cxxime_tsf_x64.dll" \
-            "$UninstallRollbackDir\cxxime_tsf_x86.dll" \
-            "$UninstallRollbackDir\cxxime_ime_x64.ime" \
-            "$UninstallRollbackDir\cxxime_ime_x86.ime" \
-            "$UninstallRollbackDir\cxxime-resources.dll" \
-            "$UninstallRollbackDir\cxxime-server.exe" \
-            "$UninstallRollbackDir\cxxime-settings.exe"'
-        Pop $0
-        Pop $1
-        StrCmp $0 "0" un_lock_done
-    un_lock_report:
-        StrCpy $LockResult $0
+    Delete "$LockReportPath"
+    nsExec::ExecToStack \
+        '"$PLUGINSDIR\cxxime-installer-helper.exe" query --report "$LockReportPath" \
+        "$INSTDIR\cxxime_tsf_x64.dll" "$INSTDIR\cxxime_tsf_x86.dll" \
+        "$INSTDIR\cxxime_ime_x64.ime" "$INSTDIR\cxxime_ime_x86.ime" \
+        "$INSTDIR\cxxime-resources.dll" "$INSTDIR\cxxime-server.exe" \
+        "$INSTDIR\cxxime-settings.exe" "$INSTDIR\uninstall.exe" \
+        "$WINDIR\System32\cxxime.ime" "$SYSDIR\cxxime.ime"'
+    Pop $0
+    Pop $1
+    StrCmp $0 "0" un_lock_done
         Call un.ReadLockReport
-        IfSilent un_lock_silent
-        StrCmp $LockResult "10" un_lock_retry
-        StrCmp $LockResult "11" un_lock_deferred
-        StrCmp $LockResult "12" un_lock_cancel
-        MessageBox MB_RETRYCANCEL|MB_ICONSTOP|MB_DEFBUTTON1 \
-            "$LockReportText$\r$\n$\r$\n无法显示文件占用详情。关闭相关应用程序后单击“重试”。" \
-            IDRETRY un_lock_retry
-    un_lock_cancel:
-        Call un.RestartInstalledServer
-        SetErrorLevel 2
-        Abort
-    un_lock_deferred:
-        StrCpy $UninstallDeferred 1
-        Return
-    un_lock_silent:
         DetailPrint "$LockReportText"
-        Call un.RestartInstalledServer
-        SetErrorLevel 2
-        Abort
-    un_lock_retry:
-        Call un.ReleaseInputProcessor
-        Goto un_lock_query
     un_lock_done:
 FunctionEnd

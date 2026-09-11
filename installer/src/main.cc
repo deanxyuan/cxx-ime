@@ -1,8 +1,6 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
 #include <cstdint>
-#include <cstdlib>
-#include <cwchar>
 #include <string>
 #include <vector>
 
@@ -10,9 +8,11 @@
 
 #include <cxxime/installer_lock.h>
 #include <cxxime/installer_path_security.h>
-#include <cxxime/installer_prompt.h>
 #include <cxxime/installer_server_process.h>
 #include <cxxime/installer_tsf.h>
+#include <cxxime/installer_version.h>
+
+#include "installer_lifecycle_command.h"
 
 namespace {
 
@@ -21,44 +21,7 @@ constexpr int kExitLocked = 2;
 constexpr int kExitRebootRequired = 3;
 constexpr int kExitQueryFailed = 4;
 constexpr int kExitLockedAndRebootRequired = 5;
-// NSIS consumes these stable action codes when the helper displays a prompt.
-constexpr int kExitPromptRetry = 10;
-constexpr int kExitPromptDeferUntilRestart = 11;
-constexpr int kExitPromptCancel = 12;
 constexpr int kExitInvalidArguments = 64;
-
-bool starts_with(const std::wstring& value, const wchar_t* prefix) {
-    const std::wstring expected(prefix);
-    return value.compare(0, expected.size(), expected) == 0;
-}
-
-bool parse_parent_window(const std::wstring& value, std::uintptr_t* parent_window) {
-    if (!parent_window || value.empty()) {
-        return false;
-    }
-
-    wchar_t* end = nullptr;
-    const unsigned long long parsed = std::wcstoull(value.c_str(), &end, 0);
-    if (end == value.c_str() || *end != L'\0') {
-        return false;
-    }
-    *parent_window = static_cast<std::uintptr_t>(parsed);
-    return true;
-}
-
-int prompt_exit_code(cxxime::installer::LockPromptChoice choice) {
-    switch (choice) {
-    case cxxime::installer::LockPromptChoice::kRetry:
-        return kExitPromptRetry;
-    case cxxime::installer::LockPromptChoice::kDeferUntilRestart:
-        return kExitPromptDeferUntilRestart;
-    case cxxime::installer::LockPromptChoice::kCancel:
-        return kExitPromptCancel;
-    case cxxime::installer::LockPromptChoice::kFailed:
-        return kExitQueryFailed;
-    }
-    return kExitQueryFailed;
-}
 
 bool write_utf16_report(const std::wstring& path, const std::wstring& report) {
     HANDLE file = CreateFileW(path.c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_ALWAYS,
@@ -83,6 +46,28 @@ bool write_utf16_report(const std::wstring& path, const std::wstring& report) {
 } // namespace
 
 int wmain(int argc, wchar_t** argv) {
+    if (argc == 4 && std::wstring(argv[1]) == L"compare-version") {
+        return cxxime::installer::compare_version_command(argv[2], argv[3]);
+    }
+    if (argc == 6 && std::wstring(argv[1]) == L"lifecycle-prepare") {
+        return cxxime::installer::prepare_install_lifecycle_command(argv[2], argv[3], argv[4],
+                                                                   argv[5]);
+    }
+    if (argc == 5 && std::wstring(argv[1]) == L"lifecycle-commit") {
+        return cxxime::installer::commit_install_lifecycle_command(argv[2], argv[3], argv[4]);
+    }
+    if (argc == 4 && std::wstring(argv[1]) == L"lifecycle-gc") {
+        return cxxime::installer::collect_install_garbage_command(argv[2], argv[3]);
+    }
+    if (argc == 4 && std::wstring(argv[1]) == L"lifecycle-prepared-target") {
+        return cxxime::installer::prepared_install_target_command(argv[2], argv[3]);
+    }
+    if (argc == 5 && std::wstring(argv[1]) == L"lifecycle-uninstall") {
+        return cxxime::installer::uninstall_lifecycle_command(argv[2], argv[3], argv[4]);
+    }
+    if (argc == 4 && std::wstring(argv[1]) == L"lifecycle-validate-uninstall") {
+        return cxxime::installer::validate_uninstall_lifecycle_command(argv[2], argv[3]);
+    }
     if (argc == 2 && std::wstring(argv[1]) == L"release") {
         return cxxime::installer::release_input_processor_with_timeout();
     }
@@ -113,40 +98,18 @@ int wmain(int argc, wchar_t** argv) {
     if (argc == 3 && std::wstring(argv[1]) == L"start-server") {
         return cxxime::installer::start_server(argv[2]);
     }
-    if (argc < 4 || std::wstring(argv[1]) != L"query" || std::wstring(argv[2]) != L"--report") {
+    if (argc < 5 || std::wstring(argv[1]) != L"query" || std::wstring(argv[2]) != L"--report") {
         return kExitInvalidArguments;
     }
 
     const std::wstring report_path = argv[3];
-    bool show_prompt = false;
-    cxxime::installer::LockPromptMode prompt_mode = cxxime::installer::LockPromptMode::kInstall;
-    std::uintptr_t parent_window = 0;
     std::vector<std::wstring> resources;
     for (int index = 4; index < argc; ++index) {
         const std::wstring argument = argv[index];
-        if (starts_with(argument, L"--prompt=")) {
-            const std::wstring mode = argument.substr(std::wstring(L"--prompt=").size());
-            if (mode == L"install") {
-                prompt_mode = cxxime::installer::LockPromptMode::kInstall;
-            } else if (mode == L"uninstall") {
-                prompt_mode = cxxime::installer::LockPromptMode::kUninstall;
-            } else {
-                return kExitInvalidArguments;
-            }
-            show_prompt = true;
-        } else if (starts_with(argument, L"--parent=")) {
-            const std::wstring value = argument.substr(std::wstring(L"--parent=").size());
-            if (!parse_parent_window(value, &parent_window)) {
-                return kExitInvalidArguments;
-            }
-        } else if (starts_with(argument, L"--")) {
+        if (argument.compare(0, 2, L"--") == 0) {
             return kExitInvalidArguments;
-        } else {
-            resources.push_back(argument);
         }
-    }
-    if (resources.empty()) {
-        return kExitInvalidArguments;
+        resources.push_back(argument);
     }
 
     const auto result = cxxime::installer::query_file_locks(resources);
@@ -154,19 +117,11 @@ int wmain(int argc, wchar_t** argv) {
     if (!write_utf16_report(report_path, report)) {
         return kExitQueryFailed;
     }
-    const bool needs_attention =
-        result.status != cxxime::installer::LockQueryStatus::kSuccess ||
-        !result.applications.empty();
-    if (show_prompt && needs_attention) {
-        return prompt_exit_code(
-            cxxime::installer::show_lock_prompt(prompt_mode, parent_window, result, report));
-    }
     if (result.status == cxxime::installer::LockQueryStatus::kFailed) {
         return kExitQueryFailed;
     }
     if (result.status == cxxime::installer::LockQueryStatus::kRebootRequired) {
-        return result.applications.empty() ? kExitRebootRequired
-                                           : kExitLockedAndRebootRequired;
+        return result.applications.empty() ? kExitRebootRequired : kExitLockedAndRebootRequired;
     }
     return result.applications.empty() ? kExitNoLocks : kExitLocked;
 }

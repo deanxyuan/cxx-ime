@@ -2,22 +2,31 @@ project(cxxime-installer-helper CXX)
 
 add_library(cxxime-installer-lock STATIC
     src/installer_lock.cc
+    src/installer_lifecycle.cc
+    src/installer_lifecycle_cleanup.cc
+    src/installer_lifecycle_state.cc
+    src/installer_lifecycle_internal.h
+    src/installer_version.cc
+    include/cxxime/installer_version.h
 )
 
 target_include_directories(cxxime-installer-lock PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
-target_link_libraries(cxxime-installer-lock PUBLIC Rstrtmgr.lib)
+target_link_libraries(cxxime-installer-lock PUBLIC Rstrtmgr.lib nlohmann_json ole32.lib)
 
 add_executable(cxxime-installer-helper
     installer.manifest
     include/cxxime/installer_path_security.h
+    include/cxxime/installer_lifecycle.h
     include/cxxime/installer_server_process.h
     include/cxxime/installer_tsf.h
+    include/cxxime/installer_version.h
     src/main.cc
+    src/installer_lifecycle_command.cc
+    src/installer_lifecycle_command.h
     src/installer_path_security.cc
-    src/installer_prompt.cc
     src/installer_server_process.cc
     src/installer_tsf.cc
 )
@@ -29,7 +38,6 @@ target_include_directories(cxxime-installer-helper PRIVATE
 target_link_libraries(cxxime-installer-helper PRIVATE
     cxxime-installer-lock
     cxxime-ipc
-    comctl32.lib
     ole32.lib
     uuid.lib
     advapi32.lib

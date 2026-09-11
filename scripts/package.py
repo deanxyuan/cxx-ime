@@ -24,6 +24,8 @@ import subprocess
 import sys
 import time
 
+from install_payload import write_install_payload
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCRIPTS = os.path.join(ROOT, "scripts")
 HOST_TAKEOVER_DIAGNOSTICS = os.path.join(ROOT, "diagnostics", "host_takeover")
@@ -995,6 +997,13 @@ def main():
     step("[7/9] Copying installer scripts...")
     stage_start = time.perf_counter()
     copy_installer_scripts(config, host_diagnostics=args.host_diag)
+    write_install_payload(
+        DIST_DIR,
+        include_x86_modules=not args.skip_x86_tsf,
+        host_diagnostics=args.host_diag,
+    )
+    print("  install-manifest.json")
+    print("  install_payload.nsh")
     timings.append(("copy installer scripts", time.perf_counter() - stage_start))
 
     # 6. Package layout

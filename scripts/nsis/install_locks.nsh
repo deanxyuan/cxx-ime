@@ -193,25 +193,9 @@ Function VerifyRestoredInstall
     StrCmp $OldTsfX86Present "1" restored_install_tsf_x86_present restored_install_tsf_x86_absent
     restored_install_tsf_x86_present:
     IfFileExists "$INSTDIR\cxxime_tsf_x86.dll" 0 restored_install_invalid
-    Goto restored_install_system_x64
-    restored_install_tsf_x86_absent:
-    IfFileExists "$INSTDIR\cxxime_tsf_x86.dll" 0 restored_install_system_x64
-        Goto restored_install_invalid
-    restored_install_system_x64:
-    StrCmp $SystemImeX64Present "1" restored_install_ime_x64_present restored_install_ime_x64_absent
-    restored_install_ime_x64_present:
-    IfFileExists "$WINDIR\Sysnative\cxxime.ime" 0 restored_install_invalid
-    Goto restored_install_system_x86
-    restored_install_ime_x64_absent:
-    IfFileExists "$WINDIR\Sysnative\cxxime.ime" 0 restored_install_system_x86
-        Goto restored_install_invalid
-    restored_install_system_x86:
-    StrCmp $SystemImeX86Present "1" restored_install_ime_x86_present restored_install_ime_x86_absent
-    restored_install_ime_x86_present:
-    IfFileExists "$SYSDIR\cxxime.ime" 0 restored_install_invalid
     Goto restored_install_registry
-    restored_install_ime_x86_absent:
-    IfFileExists "$SYSDIR\cxxime.ime" 0 restored_install_registry
+    restored_install_tsf_x86_absent:
+    IfFileExists "$INSTDIR\cxxime_tsf_x86.dll" 0 restored_install_registry
         Goto restored_install_invalid
     restored_install_registry:
     ${If} $OldTsfX64Registered == 1
@@ -375,73 +359,4 @@ Function CollectPreviousVersionLockNotice
         DetailPrint "$LockReportText"
 
     collect_previous_locks_done:
-FunctionEnd
-
-Function CheckInstallLocks
-    StrCmp $MultiVersionInstall "1" install_lock_done
-    StrCpy $LockPromptOptions ""
-    IfSilent install_lock_options_ready
-        StrCpy $LockPromptOptions "--prompt=install --parent=$HWNDPARENT"
-    install_lock_options_ready:
-    install_lock_query:
-        Delete "$LockReportPath"
-        nsExec::ExecToStack \
-            '"$PLUGINSDIR\cxxime-installer-helper.exe" query --report "$LockReportPath" \
-            $LockPromptOptions \
-            "$ActiveServerDir\cxxime_tsf_x64.dll" "$ActiveServerDir\cxxime_tsf_x86.dll" \
-            "$ActiveServerDir\cxxime_ime_x64.ime" "$ActiveServerDir\cxxime_ime_x86.ime" \
-            "$ActiveServerDir\cxxime-resources.dll" "$ActiveServerDir\cxxime-server.exe" \
-            "$ActiveServerDir\cxxime-settings.exe" "$ActiveServerDir\uninstall.exe" \
-            "$WINDIR\System32\cxxime.ime" "$SYSDIR\cxxime.ime"'
-        Pop $0
-        Pop $1
-        StrCmp $0 "0" install_lock_check_backup
-            Goto install_lock_report
-    install_lock_check_backup:
-        nsExec::ExecToStack \
-            '"$PLUGINSDIR\cxxime-installer-helper.exe" query --report "$LockReportPath" \
-            $LockPromptOptions \
-            "$BackupDir\cxxime_tsf_x64.dll" "$BackupDir\cxxime_tsf_x86.dll" \
-            "$BackupDir\cxxime_ime_x64.ime" "$BackupDir\cxxime_ime_x86.ime" \
-            "$BackupDir\cxxime-resources.dll" "$BackupDir\cxxime-server.exe" \
-            "$BackupDir\cxxime-settings.exe" "$BackupDir\uninstall.exe"'
-        Pop $0
-        Pop $1
-        StrCmp $0 "0" install_lock_check_stage
-            Goto install_lock_report
-    install_lock_check_stage:
-        nsExec::ExecToStack \
-            '"$PLUGINSDIR\cxxime-installer-helper.exe" query --report "$LockReportPath" \
-            $LockPromptOptions \
-            "$StageDir\cxxime_tsf_x64.dll" "$StageDir\cxxime_tsf_x86.dll" \
-            "$StageDir\cxxime_ime_x64.ime" "$StageDir\cxxime_ime_x86.ime" \
-            "$StageDir\cxxime-resources.dll" "$StageDir\cxxime-server.exe" \
-            "$StageDir\cxxime-settings.exe" "$StageDir\uninstall.exe"'
-        Pop $0
-        Pop $1
-        StrCmp $0 "0" install_lock_done
-    install_lock_report:
-        StrCpy $LockResult $0
-        Call ReadLockReport
-        IfSilent install_lock_silent
-        StrCmp $LockResult "10" install_lock_retry
-        StrCmp $LockResult "12" install_lock_cancel_restore
-        MessageBox MB_RETRYCANCEL|MB_ICONSTOP|MB_DEFBUTTON1 \
-            "$LockReportText$\r$\n$\r$\n无法显示文件占用详情。关闭相关应用程序后单击“重试”。" \
-            IDRETRY install_lock_retry
-    install_lock_cancel_restore:
-        Call RestartInstalledServer
-        Call CleanupRuntimeSnapshotAfterServerRestore
-        SetErrorLevel 2
-        Abort
-    install_lock_silent:
-        DetailPrint "$LockReportText"
-        Call RestartInstalledServer
-        Call CleanupRuntimeSnapshotAfterServerRestore
-        SetErrorLevel 2
-        Abort
-    install_lock_retry:
-        Call ReleaseInputProcessor
-        Goto install_lock_query
-    install_lock_done:
 FunctionEnd

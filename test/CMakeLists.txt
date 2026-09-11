@@ -261,6 +261,14 @@ add_cxxime_test(installer_lock_test
     SOURCES installer/installer_lock_test.cc
     DEPS cxxime-installer-lock
 )
+add_cxxime_test(installer_lifecycle_test
+    SOURCES installer/installer_lifecycle_test.cc
+    DEPS cxxime-installer-lock
+)
+add_cxxime_test(installer_version_test
+    SOURCES installer/installer_version_test.cc
+    DEPS cxxime-installer-lock
+)
 
 add_cxxime_test(candidate_preference_save_worker_test
     SOURCES
@@ -314,6 +322,16 @@ target_include_directories(session_manager_integration_test PRIVATE
 
 find_package(Python3 QUIET)
 if(Python3_FOUND)
+    add_test(
+        NAME install_payload_test
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/installer/install_payload_test.py
+    )
+    add_test(
+        NAME installer_flow_test
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/installer/installer_flow_test.py
+    )
     add_test(
         NAME dictionary_format_verifier_test
         COMMAND ${Python3_EXECUTABLE}

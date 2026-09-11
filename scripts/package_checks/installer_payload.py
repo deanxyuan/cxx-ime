@@ -2,113 +2,95 @@
 
 from __future__ import annotations
 
-from package_checks.common import forbid_text, require_text
+import json
+import os
+
+from package_checks.common import add_error, forbid_text, read_text, require_file, require_text
 
 
 def check_installer_payload(
     errors: list[str],
     text: str,
+    dist_dir: str,
     require_x86: bool,
     manifest_files: list[str],
     host_diagnostics: bool,
 ) -> None:
     label = "cxxime-setup.nsi"
-    require_text(errors, text, '!define MUI_ICON "cxxime.ico"', label)
-    require_text(errors, text, '!define MUI_UNICON "cxxime.ico"', label)
-    require_text(errors, text, 'File /oname=cxxime-installer-helper.exe', label)
-    require_text(errors, text, 'File "cxxime_tsf_x64.dll"', label)
-    require_text(errors, text, 'File "cxxime_ime_x64.ime"', label)
-    require_text(errors, text, 'File "cxxime-resources.dll"', label)
-    require_text(errors, text, 'File "license.txt"', label)
-    require_text(errors, text, 'File "THIRD_PARTY_NOTICES.txt"', label)
-    require_text(errors, text, 'File "licenses\\rime-ice-GPL-3.0.txt"', label)
-    require_text(errors, text, "!ifdef HOST_DIAGNOSTICS", label)
-    if host_diagnostics:
-        require_text(errors, text, 'File "cxxime-ime-host-probe-x64.exe"', label)
-        require_text(errors, text, 'File "export_host_trace.ps1"', label)
-    installer_data_files = [
-        "default.json",
-        "settings_presets.json",
-        "themes.json",
-        "punctuation.json",
-        "symbols.json",
-        "dictionary_manifest.json",
-    ] + manifest_files
-    for name in installer_data_files:
-        require_text(errors, text, f'"data\\{name}"', label)
+    for item in (
+        '!define MUI_ICON "cxxime.ico"',
+        '!define MUI_UNICON "cxxime.ico"',
+        'File /oname=cxxime-installer-helper.exe',
+        '!include "install_payload.nsh"',
+        "!insertmacro InstallVersionPayload",
+        '"$WINDIR\\Sysnative\\regsvr32.exe" /s',
+        '"$WINDIR\\Sysnative\\regsvr32.exe" /u /s',
+        '"$SYSDIR\\regsvr32.exe" /s',
+        '"$SYSDIR\\regsvr32.exe" /u /s',
+        "kernel32::CopyFileW",
+        'Delete /REBOOTOK "$WINDIR\\Sysnative\\cxxime.ime"',
+        'Delete /REBOOTOK "$SYSDIR\\cxxime.ime"',
+        "CxxIME 需要 64 位 Windows。",
+        "UninstPage custom un.ConfirmPage un.ConfirmPageLeave",
+        "删除用户配置和词库数据",
+        'StrCpy $UninstallUserDataDir "$PROFILE\\cxxime"',
+    ):
+        require_text(errors, text, item, label)
 
-    uninstall_entries = [
-        "data",
-        "licenses",
+    manifest_path = os.path.join(dist_dir, "install-manifest.json")
+    macro_path = os.path.join(dist_dir, "install_payload.nsh")
+    if not require_file(errors, manifest_path, dist_dir) or not require_file(
+        errors, macro_path, dist_dir
+    ):
+        return
+    try:
+        manifest = json.loads(read_text(manifest_path))
+    except (OSError, json.JSONDecodeError) as exc:
+        add_error(errors, f"install-manifest.json: invalid JSON: {exc}")
+        return
+    if not isinstance(manifest, dict):
+        add_error(errors, "install-manifest.json: root must be an object")
+        return
+    files = manifest.get("files")
+    if (
+        manifest.get("format") != "cxxime-install-manifest"
+        or manifest.get("version") != 1
+        or not isinstance(files, list)
+        or not all(isinstance(item, str) and item for item in files)
+        or len(files) != len(set(files))
+    ):
+        add_error(errors, "install-manifest.json: invalid lifecycle manifest")
+        return
+
+    required = {
         "cxxime_tsf_x64.dll",
-        "cxxime_tsf_x86.dll",
         "cxxime_ime_x64.ime",
-        "cxxime_ime_x86.ime",
         "cxxime-resources.dll",
         "cxxime-server.exe",
         "cxxime-settings.exe",
-        "collect_diagnostics.ps1",
-        "cxxime-ime-host-probe-x64.exe",
-        "cxxime-ime-host-probe-x86.exe",
-        "export_host_trace.ps1",
-        "license.txt",
-        "THIRD_PARTY_NOTICES.txt",
-    ]
-    for name in uninstall_entries:
-        require_text(errors, text, f'!insertmacro StageInstalledEntry "{name}"', label)
-
-    require_text(errors, text, '"$StageDir\\data"', label)
-    require_text(errors, text, '"$WINDIR\\Sysnative\\regsvr32.exe" /s', label)
-    require_text(errors, text, '"$WINDIR\\Sysnative\\regsvr32.exe" /u /s', label)
-    require_text(errors, text, '"$SYSDIR\\regsvr32.exe" /s', label)
-    require_text(errors, text, '"$SYSDIR\\regsvr32.exe" /u /s', label)
-    require_text(errors, text, "kernel32::CopyFileW", label)
-    require_text(errors, text, '"$WINDIR\\Sysnative\\cxxime.ime"', label)
-    require_text(errors, text, '"$SYSDIR\\cxxime.ime"', label)
-    require_text(errors, text, 'Delete "$WINDIR\\Sysnative\\cxxime.ime"', label)
-    require_text(errors, text, "CxxIME 需要 64 位 Windows。", label)
-    require_text(errors, text, 'File "data\\wubi86.dict.bin"', label)
-    require_text(errors, text, 'File "data\\wubi86.dict.idx"', label)
-    forbid_text(errors, text, 'File /nonfatal "data\\wubi86.dict.bin"', label)
-    forbid_text(errors, text, 'File /nonfatal "data\\wubi86.dict.idx"', label)
-    forbid_text(errors, text, "switch to another input method", label)
-    require_text(
-        errors,
-        text,
-        '"DisplayIcon" \'"$INSTDIR\\cxxime-resources.dll",-100\'',
-        label,
-    )
-    require_text(
-        errors,
-        text,
-        '"UninstallString" \'"$INSTDIR\\uninstall.exe"\'',
-        label,
-    )
-    require_text(
-        errors,
-        text,
-        '"QuietUninstallString" \'"$INSTDIR\\uninstall.exe" /S\'',
-        label,
-    )
-    require_text(errors, text, "UninstPage custom un.UserDataPage un.UserDataPageLeave", label)
-    require_text(errors, text, "用户数据目录：", label)
-    require_text(errors, text, '${NSD_CreateText} 28u 60u 100% 12u "$UninstallUserDataDir"', label)
-    require_text(errors, text, "删除用户配置和词库数据", label)
-    require_text(errors, text, 'StrCpy $UninstallUserDataDir "$PROFILE\\cxxime"', label)
-    require_text(
-        errors,
-        text,
-        "StrCpy $UninstallUserDataDirSuffix $UninstallUserDataDir 7 -7",
-        label,
-    )
-    require_text(errors, text, '${AndIf} $UninstallUserDataDirSuffix == "\\cxxime"', label)
-    require_text(errors, text, 'RMDir /r "$UninstallUserDataDir"', label)
-
+        "uninstall.exe",
+        "licenses/miniz-MIT.txt",
+        "licenses/rime-ice-GPL-3.0.txt",
+        *(f"data/{name}" for name in manifest_files),
+    }
     if require_x86:
-        require_text(errors, text, 'File "cxxime_tsf_x86.dll"', label)
-        require_text(errors, text, 'File "cxxime_ime_x86.ime"', label)
-        if host_diagnostics:
-            require_text(errors, text, 'File "cxxime-ime-host-probe-x86.exe"', label)
-        require_text(errors, text, 'Delete "$SYSDIR\\cxxime.ime"', label)
+        required.update({"cxxime_tsf_x86.dll", "cxxime_ime_x86.ime"})
+    if host_diagnostics:
+        required.update({"cxxime-ime-host-probe-x64.exe", "export_host_trace.ps1"})
+        if require_x86:
+            required.add("cxxime-ime-host-probe-x86.exe")
+    for name in sorted(required - set(files)):
+        add_error(errors, f"install-manifest.json: missing `{name}`")
 
+    macro = read_text(macro_path)
+    require_text(errors, macro, "!macro InstallVersionPayload", "install_payload.nsh")
+    require_text(errors, macro, 'File "install-manifest.json"', "install_payload.nsh")
+    for relative in files:
+        if relative == "uninstall.exe":
+            continue
+        source = relative.replace("/", "\\")
+        require_text(errors, macro, f'File "{source}"', "install_payload.nsh")
+        require_file(errors, os.path.join(dist_dir, *relative.split("/")), dist_dir)
+
+    forbid_text(errors, text, "StageInstalledEntry", label)
     forbid_text(errors, text, "cxxime_tsf.dll", label)

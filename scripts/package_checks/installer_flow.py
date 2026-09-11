@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import re
-
 from package_checks.common import forbid_text, require_order, require_text
 
 
@@ -14,79 +12,90 @@ def check_installer_flow(
     uninstall_text: str,
 ) -> None:
     label = "cxxime-setup.nsi"
-    required = [
+    for item in (
         "Function AcquireInstallerMutex",
-        "Function PrepareInstallTarget",
-        "Function CheckFreshInstallBase",
-        "Function SecureInstallBase",
-        "Function CheckInstallLocks",
+        "Function PrepareInstallLifecycle",
+        "Function UpgradeLegacyInstall",
+        "Function CheckInstallVersion",
+        "Function PrepareLegacyDeferredUninstall",
+        "Function RestoreLegacyInstall",
+        "Function CompleteLegacyUninstallHandoff",
+        "Function CleanupLegacyInstallFiles",
+        "Function LoadPreparedInstallTarget",
+        "Function CommitInstallLifecycle",
+        "Function CollectInstallGarbage",
+        "Function un.CommitInstallLifecycle",
+        "Function un.ValidateInstallLifecycle",
         "Function CollectPreviousVersionLockNotice",
-        "Function StartNewServer",
-        "Function ReleaseInputProcessor",
-        "Function CaptureServerState",
-        "Function SnapshotPreviousState",
-        "Function CleanupPreviousInstall",
-        "Function WriteInstallLayoutState",
-        "Function RefreshInstallLayoutAfterRecovery",
-        "Function RecoverPendingSystemIme",
+        "Function RecoverInterruptedInstall",
         "Function PrepareSystemImeUpdate",
-        "Function CancelPendingSystemImeUpdate",
         "Function WriteTransactionState",
         "Function RollbackInstall",
-        "Function un.ReleaseInputProcessor",
+        "Function un.PrepareTransaction",
+        "Function un.RollbackTransaction",
         "Function un.CheckFileLocks",
-        "!define MOVEFILE_DELAY_UNTIL_REBOOT 0x4",
-        "!define MOVEFILE_REPLACE_DELAY_UNTIL_REBOOT 0x5",
         "!insertmacro MUI_PAGE_FINISH",
-        "!define MUI_FINISHPAGE_NOREBOOTSUPPORT",
         "!define MUI_FINISHPAGE_RUN_NOTCHECKED",
+        "!define MUI_FINISHPAGE_NOREBOOTSUPPORT",
         'StrCpy $LockReportPath "$PLUGINSDIR\\cxxime-locks.txt"',
         'StrCpy $InstallBaseDir "$PROGRAMFILES64\\CxxIME"',
-        'StrCpy $PreviousInstallDir $0',
-        'StrCpy $ActiveServerDir "$PreviousInstallDir"',
-        'StrCpy $InstallTargetDir "$InstallBaseDir\\${VERSION}"',
-        'StrCpy $InstallTargetPrepared 0',
-        '${If} $InstallTargetPrepared == 0',
-        'StrCpy $InstallBaseDir "$INSTDIR"',
-        'StrCpy $InstallTargetPrepared 1',
-        'IfFileExists "$RegisteredInstallDir\\${INSTALL_MARKER}"',
-        'IfFileExists "$InstallTargetDir\\${UNINSTALL_TRANSACTION_MARKER}"',
-        'StrCpy $StageDir "$InstallBaseDir\\update"',
-        'StrCpy $InstallTargetDir "$InstallBaseDir\\${VERSION}.next"',
-        'WriteRegStr HKLM "${UNINSTALL_KEY}" "InstallBaseLocation" "$InstallBaseDir"',
-        'WriteRegStr HKLM "${UNINSTALL_KEY}" "PreviousInstallLocation" "$PreviousInstallDir"',
-        'FileWriteUTF16LE $0 "active=$INSTDIR$\\r$\\n"',
-        'CreateDirectory "$InstallBaseDir\\update"',
-        'server-ready "$INSTDIR\\cxxime-server.exe"',
+        "Call ReleaseInstallerMutex",
+        'ExecWait \'"$RegisteredInstallDir\\uninstall.exe" /S\'',
+        'FileWriteUTF16LE $0 "state=removing$\\r$\\n"',
+        'WriteINIStr "$InstallBaseDir\\${SYSTEM_IME_REMOVE_MARKER}"',
+        "Call CompleteLegacyUninstallHandoff",
+        "Call CleanupLegacyInstallFiles",
+        "compare-version",
+        '"$InstalledVersion" "${VERSION}"',
+        "/ALLOWDOWNGRADE",
+        'StrCmp $LegacyUninstallPerformed "1" fresh_install_base_ready',
         'secure-install-root "$InstallBaseDir"',
         'validate-install-directory "$StageDir"',
-        'Delete /REBOOTOK "$PreviousInstallDir\\cxxime_tsf_x64.dll"',
-        'RMDir /r /REBOOTOK "$PreviousInstallDir\\${UNINSTALL_ROLLBACK_DIR}"',
-        'Delete /REBOOTOK "$PreviousInstallDir\\${UNINSTALL_TRANSACTION_MARKER}"',
-        'WriteINIStr "$InstallBaseDir\\${SYSTEM_IME_UPDATE_MARKER}"',
-    ]
-    for item in required:
+        'IfFileExists "$InstallBaseDir\\maintenance\\install-state.json"',
+        'IfFileExists "$RegisteredInstallDir\\${INSTALL_MARKER}" 0 setup_unknown_install',
+        'IfFileExists "$RegisteredInstallDir\\uninstall.exe" 0 setup_unknown_install',
+        'IfFileExists "$InstallBaseDir\\$1\\install-manifest.json"',
+        'lifecycle-prepare "$InstallBaseDir"',
+        "lifecycle-prepared-target",
+        'lifecycle-commit "$InstallBaseDir"',
+        "lifecycle-gc",
+        'lifecycle-uninstall "$InstallBaseDir"',
+        "lifecycle-validate-uninstall",
+        'ReadINIStr $LifecycleRemaining "$LifecycleResultPath" "lifecycle" "remaining"',
+        'ReadINIStr $LifecycleUnknown "$LifecycleResultPath" "lifecycle" "unknown"',
+        'StrCmp $LifecycleRemaining "0" +2',
+        'StrCpy $UninstallCleanupWarning 1',
+        'RMDir /r /REBOOTOK "$RegisteredInstallDir\\.cxxime-rollback"',
+        'RMDir /r /REBOOTOK "$RegisteredInstallDir\\.cxxime-uninstall-rollback"',
+        'RMDir /r /REBOOTOK "$InstallBaseDir\\update"',
+        'RMDir /r /REBOOTOK "$InstallBaseDir\\.cxxime-backup"',
+        'StrCpy $4 "$InstallBaseDir\\maintenance\\ime-$3-x64.pending"',
+        'StrCpy $5 "$InstallBaseDir\\maintenance\\ime-$3-x86.pending"',
+        'IfFileExists "$InstallBaseDir\\maintenance\\ime-*.pending"',
+        "LEGACY_SYSTEM_IME_X64_PENDING",
+        "LEGACY_SYSTEM_IME_X86_PENDING",
+        "un_remove_system_ime_after_pending:",
+    ):
         require_text(errors, text, item, label)
 
     require_order(
         errors,
-        text,
+        install_text,
         [
+            "Call CheckInstallVersion",
+            "Call UpgradeLegacyInstall",
             "Call PrepareInstallTarget",
-            "Call SetTransactionPaths",
             "Call CheckFreshInstallBase",
             "Call SecureInstallBase",
-            "Goto install_failed_untrusted_base",
+            "Call LoadPreparedInstallTarget",
             "Call CaptureServerState",
             "Call ReleaseInputProcessor",
             "Call StopServer",
-            "Call CheckInstallLocks",
             "Call RecoverInterruptedInstall",
-            "Call RefreshInstallLayoutAfterRecovery",
-            "Call RecoverPendingSystemIme",
-            "Call CheckPreviousVersionLimit",
+            "Call PrepareInstallLifecycle",
             "Call CheckInstallDirectory",
             "Call SnapshotPreviousState",
+            "!insertmacro InstallVersionPayload",
             "Call WriteTransactionState",
             'Rename "$StageDir" "$INSTDIR"',
             "Call RegisterNewTsf",
@@ -94,123 +103,14 @@ def check_installer_flow(
             "Call StartNewServer",
             "Call PrepareSystemImeUpdate",
             "Call WriteInstallMarker",
-            'Delete "$INSTDIR\\${TRANSACTION_MARKER}"',
-            "Call CopyNewSystemIme",
             "Call CollectPreviousVersionLockNotice",
-            "Call CleanupPreviousInstall",
-            "Call WriteInstallLayoutState",
+            "Call CommitInstallLifecycle",
+            'Delete "$INSTDIR\\${TRANSACTION_MARKER}"',
+            "Call CollectInstallGarbage",
+            "Call CopyNewSystemIme",
         ],
-        "Versioned install flow",
+        "Install lifecycle",
     )
-    require_order(
-        errors,
-        text,
-        [
-            'StrCmp $MultiVersionInstall "1" install_lock_done',
-            '"$ActiveServerDir\\cxxime_tsf_x64.dll"',
-            '"$ActiveServerDir\\cxxime-server.exe"',
-        ],
-        "Legacy install lock source",
-    )
-    lock_notice_start = text.find("Function CollectPreviousVersionLockNotice")
-    lock_notice_end = text.find("FunctionEnd", lock_notice_start)
-    lock_notice_block = ""
-    if lock_notice_start < 0 or lock_notice_end < 0:
-        errors.append("Previous version lock notice: missing function")
-    else:
-        lock_notice_block = text[lock_notice_start:lock_notice_end]
-        require_order(
-            errors,
-            lock_notice_block,
-            [
-                'StrCmp $MultiVersionInstall "1"',
-                "nsExec::ExecToStack /TIMEOUT=3000",
-                '"$WINDIR\\System32\\cxxime.ime"',
-                'StrCmp $0 "2" collect_previous_locks_found',
-                'StrCmp $0 "3" collect_previous_locks_reboot',
-                'StrCmp $0 "5" collect_previous_locks_found_and_reboot',
-                "collect_previous_locks_found_and_reboot:",
-                "SetRebootFlag true",
-                "collect_previous_locks_found:",
-                "Call ReadLockReport",
-                'DetailPrint "$LockReportText"',
-            ],
-            "Previous version lock notice",
-        )
-        for forbidden_item in [
-            "--prompt=",
-            "MessageBox",
-            "Abort",
-            "ReleaseInputProcessor",
-            "StopServer",
-        ]:
-            if forbidden_item in lock_notice_block:
-                errors.append(
-                    "Previous version lock notice: forbidden "
-                    f"`{forbidden_item}`"
-                )
-    require_order(
-        errors,
-        text,
-        [
-            "Function ToggleInstallLockDetails",
-            "ShowWindow $InstallLockDetailsText ${SW_SHOW}",
-            "Function FinishPageShow",
-            "StrCpy $InstallLockDetailsVisible 0",
-            '${NSD_CreateButton} 120u 108u 76u 16u "查看占用详情"',
-            "${NSD_OnClick} $InstallLockDetailsButton ToggleInstallLockDetails",
-            "ShowWindow $InstallLockDetailsText ${SW_HIDE}",
-        ],
-        "Install lock details disclosure",
-    )
-    require_order(
-        errors,
-        text,
-        [
-            "!define MUI_FINISHPAGE_NOREBOOTSUPPORT",
-            '!define MUI_FINISHPAGE_RUN "$INSTDIR\\cxxime-settings.exe"',
-            "!define MUI_PAGE_CUSTOMFUNCTION_SHOW FinishPageShow",
-            "!insertmacro MUI_PAGE_FINISH",
-        ],
-        "Single install finish page",
-    )
-    install_pages_start = text.find("!insertmacro MUI_PAGE_INSTFILES")
-    install_pages_end = text.find("!insertmacro MUI_PAGE_FINISH", install_pages_start)
-    if install_pages_start < 0 or install_pages_end < 0:
-        errors.append("Single install finish page: missing page declaration range")
-    elif "Page custom" in text[install_pages_start:install_pages_end]:
-        errors.append("Single install finish page: unexpected custom page")
-
-    combined_reboot_start = lock_notice_block.find(
-        "collect_previous_locks_found_and_reboot:"
-    )
-    reboot_only_start = lock_notice_block.find(
-        "collect_previous_locks_reboot:", combined_reboot_start
-    )
-    lock_found_start = lock_notice_block.find(
-        "collect_previous_locks_found:", reboot_only_start
-    )
-    if min(combined_reboot_start, reboot_only_start, lock_found_start) < 0:
-        errors.append("Previous version lock notice: missing result branch")
-    else:
-        require_order(
-            errors,
-            lock_notice_block[combined_reboot_start:reboot_only_start],
-            ["SetRebootFlag true", "Goto collect_previous_locks_found"],
-            "Previous version combined lock result",
-        )
-        require_order(
-            errors,
-            lock_notice_block[reboot_only_start:lock_found_start],
-            ["SetRebootFlag true", "Goto collect_previous_locks_done"],
-            "Previous version reboot-only result",
-        )
-
-    lock_report_paths = re.findall(r'StrCpy \$LockReportPath "([^"]+)"', text)
-    if not lock_report_paths:
-        errors.append("Lock report path: missing assignment")
-    elif any(path != r"$PLUGINSDIR\cxxime-locks.txt" for path in lock_report_paths):
-        errors.append("Lock report path: must remain under $PLUGINSDIR")
     require_order(
         errors,
         uninstall_text,
@@ -218,256 +118,105 @@ def check_installer_flow(
             "Call un.ReleaseInputProcessor",
             "Call un.StopServer",
             "Call un.CheckFileLocks",
+            "Call un.ValidateInstallLifecycle",
             "Call un.PrepareTransaction",
+            "Call un.PrepareSystemImeRemoval",
             "Call un.UnregisterInstalledTsf",
+            'DeleteRegKey HKLM "${UNINSTALL_KEY}"',
+            "Call un.RemoveSystemIme",
+            "Call un.CommitInstallLifecycle",
         ],
-        "Uninstall flow",
-    )
-    staged_delete_start = uninstall_text.find("Call un.DeleteStagedFiles")
-    staged_delete_end = uninstall_text.find("Call un.BeginDeferredUninstall")
-    if staged_delete_start < 0 or staged_delete_end < 0:
-        errors.append("Staged uninstall deletion fallback: missing flow")
-    else:
-        staged_delete_block = uninstall_text[staged_delete_start:staged_delete_end]
-        require_order(
-            errors,
-            staged_delete_block,
-            [
-                "Call un.DeleteStagedFiles",
-                "StrCpy $UninstallDeferred 1",
-                "Goto un_deferred_schedule",
-                "un_deferred_schedule:",
-            ],
-            "Staged uninstall deletion fallback",
-        )
-        for forbidden_item in ["Call un.FailIncomplete", "Abort"]:
-            if forbidden_item in staged_delete_block:
-                errors.append(
-                    "Staged uninstall deletion fallback: forbidden "
-                    f"`{forbidden_item}`"
-                )
-    delete_staged_start = text.find("Function un.DeleteStagedFiles")
-    delete_staged_end = text.find("FunctionEnd", delete_staged_start)
-    if delete_staged_start < 0 or delete_staged_end < 0:
-        errors.append("Staged uninstall deletion retry: missing function")
-    else:
-        require_order(
-            errors,
-            text[delete_staged_start:delete_staged_end],
-            [
-                "un_delete_staged_files_retry:",
-                'RMDir /r "$UninstallRollbackDir"',
-                "IntCmp $2 10",
-                "Sleep 100",
-                "Goto un_delete_staged_files_retry",
-                "un_delete_staged_files_failed:",
-            ],
-            "Staged uninstall deletion retry",
-        )
-    cleanup_previous_start = text.find("Function CleanupPreviousInstall")
-    cleanup_previous_end = text.find("FunctionEnd", cleanup_previous_start)
-    if cleanup_previous_start < 0 or cleanup_previous_end < 0:
-        errors.append("Obsolete uninstall transaction cleanup: missing function")
-    else:
-        require_order(
-            errors,
-            text[cleanup_previous_start:cleanup_previous_end],
-            [
-                'RMDir /r /REBOOTOK "$PreviousInstallDir\\${UNINSTALL_ROLLBACK_DIR}"',
-                "IfErrors cleanup_previous_install_failed",
-                'Delete /REBOOTOK "$PreviousInstallDir\\${UNINSTALL_TRANSACTION_MARKER}"',
-                "cleanup_previous_install_failed:",
-                "Push 0",
-            ],
-            "Obsolete uninstall transaction cleanup",
-        )
-    cleanup_known_start = text.find("Function un.CleanupKnownVersion")
-    cleanup_known_end = text.find("FunctionEnd", cleanup_known_start)
-    if cleanup_known_start < 0 or cleanup_known_end < 0:
-        errors.append("Known obsolete version cleanup: missing function")
-    else:
-        require_order(
-            errors,
-            text[cleanup_known_start:cleanup_known_end],
-            [
-                'RMDir /r /REBOOTOK "$2\\${UNINSTALL_ROLLBACK_DIR}"',
-                "IfErrors un_cleanup_known_version_preserve_uninstall_markers",
-                'Delete /REBOOTOK "$2\\${UNINSTALL_TRANSACTION_MARKER}"',
-                "Goto un_cleanup_known_version_data",
-                "un_cleanup_known_version_preserve_uninstall_markers:",
-                "un_cleanup_known_version_data:",
-            ],
-            "Known obsolete version cleanup",
-        )
-    require_order(
-        errors,
-        text,
-        [
-            "Function FinalizeCommittedInstall",
-            "Call CleanupPreviousInstall",
-            "Call WriteInstallLayoutState",
-            'Delete "$INSTDIR\\${TRANSACTION_MARKER}"',
-        ],
-        "Committed install recovery",
+        "Uninstall lifecycle",
     )
     require_order(
         errors,
-        text,
+        uninstall_text,
         [
-            "Function RecoverInterruptedInstall",
-            'IfFileExists "$INSTDIR\\${TRANSACTION_MARKER}" recover_target_transaction',
-            'IfFileExists "$StageDir\\${TRANSACTION_MARKER}" recover_stage_transaction',
-            'IfFileExists "$PreviousInstallDir\\${UNINSTALL_TRANSACTION_MARKER}"',
-            'IfFileExists "$PreviousInstallDir\\${INSTALL_MARKER}"',
+            'Delete /REBOOTOK "$InstallBaseDir\\maintenance\\install-state.json"',
+            'RMDir /REBOOTOK "$InstallBaseDir\\maintenance"',
+            'RMDir /REBOOTOK "$InstallBaseDir"',
         ],
-        "Interrupted transaction recovery priority",
+        "Uninstall root reboot cleanup",
     )
-    validate_directory_start = text.find("Function ValidateInstallDirectory")
-    validate_directory_end = text.find("FunctionEnd", validate_directory_start)
-    if validate_directory_start < 0 or validate_directory_end < 0:
-        errors.append("Obsolete uninstall recovery target: missing validation function")
+
+    for obsolete in (
+        "CheckPreviousVersionLimit",
+        "RecoverPendingSystemIme",
+        "CleanupPreviousInstall",
+        "WriteInstallLayoutState",
+        "StageInstalledFiles",
+        "DeleteStagedFiles",
+        "BeginDeferredUninstall",
+        "CommitDeferredUninstall",
+        "MUI_UNPAGE_CONFIRM",
+        "--prompt=",
+        "INSTALL_PENDING_",
+        'StrCmp $InstalledVersion "0.4.0" setup_mark_legacy_install',
+    ):
+        forbid_text(errors, text, obsolete, label)
+
+    fresh_start = text.find("Function CheckFreshInstallBase")
+    fresh_end = text.find("FunctionEnd", fresh_start)
+    if fresh_start < 0 or fresh_end < 0:
+        errors.append("Fresh install directory: missing function")
     else:
+        fresh_block = text[fresh_start:fresh_end]
         require_order(
             errors,
-            text[validate_directory_start:validate_directory_end],
+            fresh_block,
             [
-                "install_target_conflict:",
-                "StrCmp $InstallTargetDir $PreviousVersionDir",
-                'IfFileExists "$RegisteredInstallDir\\${INSTALL_MARKER}"',
-                'IfFileExists "$InstallTargetDir\\${UNINSTALL_TRANSACTION_MARKER}"',
-                "StrCpy $INSTDIR $InstallTargetDir",
-                "StrCpy $InstallTargetPrepared 1",
+                'FindFirst $0 $1 "$InstallBaseDir\\*"',
+                'StrCmp $1 "." fresh_install_base_next',
+                'StrCmp $1 "maintenance" fresh_install_base_next',
+                'IfFileExists "$InstallBaseDir\\$1\\install-manifest.json"',
+                'FindClose $0',
+                "所选产品目录包含不属于 CxxIME 的文件",
+                "fresh_install_base_next:",
+                "FindNext $0 $1",
+                "fresh_install_base_empty:",
+                "fresh_install_base_ready:",
                 "Push 1",
-                "Return",
-                "install_target_conflict_generic:",
             ],
-            "Obsolete uninstall recovery target",
+            "Fresh install directory",
         )
-    require_order(
-        errors,
-        text,
-        [
-            "Function WriteInstallLayoutState",
-            'CreateDirectory "$InstallBaseDir\\update"',
-            'FileOpen $0 "$InstallBaseDir\\${INSTALL_STATE_TEMP}" w',
-        ],
-        "Stable install layout",
-    )
-    require_order(
-        errors,
-        install_text,
-        [
-            "Call WriteInstallLayoutState",
-            'StrCmp $0 "1" install_layout_state_written',
-            "SetErrorLevel 1",
-            "Abort",
-            "install_layout_state_written:",
-        ],
-        "Install layout failure handling",
-    )
-    untrusted_start = install_text.find("install_failed_untrusted_base:")
-    untrusted_end = install_text.find("install_failed_before_swap:", untrusted_start)
-    if untrusted_start < 0 or untrusted_end < 0:
-        errors.append("Untrusted install base failure: missing isolated failure block")
-    else:
-        untrusted_block = install_text[untrusted_start:untrusted_end]
-        for required_item in ["CloseHandle", "SetErrorLevel 1", "Abort"]:
-            if required_item not in untrusted_block:
-                errors.append(
-                    f"Untrusted install base failure: missing `{required_item}`"
-                )
-        for forbidden_item in ["RMDir", "Delete", "StopServer", "RestartInstalledServer"]:
-            if forbidden_item in untrusted_block:
-                errors.append(
-                    f"Untrusted install base failure: forbidden `{forbidden_item}`"
-                )
 
-    fresh_base_start = text.find("Function CheckFreshInstallBase")
-    fresh_base_end = text.find("FunctionEnd", fresh_base_start)
-    if fresh_base_start < 0 or fresh_base_end < 0:
-        errors.append("Fresh install base validation: missing function")
-    else:
-        fresh_base_block = text[fresh_base_start:fresh_base_end]
-        for forbidden_item in ["CreateDirectory", "RMDir", "Delete"]:
-            if forbidden_item in fresh_base_block:
-                errors.append(
-                    f"Fresh install base validation: forbidden `{forbidden_item}`"
-                )
+    if text.count("!define MUI_FINISHPAGE_NOREBOOTSUPPORT") != 2:
+        errors.append("Finish pages: install and uninstall must both suppress restart choices")
+    if text.count('StrCpy $LifecycleResultPath "$PLUGINSDIR\\cxxime-lifecycle.ini"') != 2:
+        errors.append("Lifecycle result path: must be initialized after each InitPluginsDir")
 
-    snapshot_start = text.find("Function SnapshotPreviousState")
-    snapshot_end = text.find("FunctionEnd", snapshot_start)
-    if snapshot_start < 0 or snapshot_end < 0:
-        errors.append("Fresh install TIP state: missing snapshot function")
+    lock_start = text.find("Function un.CheckFileLocks")
+    lock_end = text.find("FunctionEnd", lock_start)
+    if lock_start < 0 or lock_end < 0:
+        errors.append("Uninstall lock check: missing function")
     else:
-        require_order(
-            errors,
-            text[snapshot_start:snapshot_end],
-            [
-                "Call QueryTipRegistration",
-                '${If} $OldInstallAvailable == 0',
-                "StrCpy $OldTipX64Present 0",
-                "StrCpy $OldTipX86Present 0",
-            ],
-            "Fresh install TIP state",
-        )
+        lock_block = text[lock_start:lock_end]
+        for obsolete in ("MessageBox", "Abort", "un_lock_retry"):
+            forbid_text(errors, lock_block, obsolete, "Uninstall lock check")
 
     registry_start = text.find("Function WriteInstallationRegistry")
     registry_end = text.find("FunctionEnd", registry_start)
     if registry_start < 0 or registry_end < 0:
-        errors.append("Installation registry writes: missing function")
+        errors.append("Installation registry: missing function")
     else:
-        registry_block = text[registry_start:registry_end]
-        require_order(
+        forbid_text(
             errors,
-            registry_block,
-            [
-                'WriteRegStr HKLM "${UNINSTALL_KEY}" "InstallBaseLocation"',
-                "IfErrors installation_registry_failed",
-                'ReadRegStr $0 HKLM "${UNINSTALL_KEY}" "PreviousInstallLocation"',
-                'DeleteRegValue HKLM "${UNINSTALL_KEY}" "PreviousInstallLocation"',
-                "ClearErrors",
-                'WriteRegStr HKLM "${UNINSTALL_KEY}" "UninstallString"',
-                "IfErrors installation_registry_failed",
-            ],
-            "Installation registry error handling",
+            text[registry_start:registry_end],
+            'WriteRegStr HKLM "${UNINSTALL_KEY}" "PreviousInstallLocation"',
+            "Installation registry",
         )
-        delete_previous_check = (
-            'DeleteRegValue HKLM "${UNINSTALL_KEY}" "PreviousInstallLocation"\n'
-            "            IfErrors installation_registry_failed"
-        )
-        if delete_previous_check not in registry_block:
-            errors.append(
-                "Installation registry error handling: optional value deletion "
-                "is not checked"
-            )
 
-    restore_registry_start = text.find("Function RestorePreviousRegistry")
-    restore_registry_end = text.find("FunctionEnd", restore_registry_start)
-    if restore_registry_start < 0 or restore_registry_end < 0:
-        errors.append("Registry restore error handling: missing function")
-    else:
-        restore_registry_block = text[restore_registry_start:restore_registry_end]
-        for value_name in ("InstallBaseLocation", "PreviousInstallLocation"):
-            delete_value_check = (
-                f'DeleteRegValue HKLM "${{UNINSTALL_KEY}}" "{value_name}"\n'
-                "                IfErrors restore_registry_failed"
-            )
-            if delete_value_check not in restore_registry_block:
-                errors.append(
-                    "Registry restore error handling: optional "
-                    f"`{value_name}` deletion is not checked"
-                )
-
-    forbid_text(errors, text, "InitializeInstallResume", label)
-    forbid_text(errors, text, "ScheduleDeferredInstall", label)
-    forbid_text(errors, text, "INSTALL_PENDING_", label)
-    forbid_text(errors, text, "InstallDeferred", label)
-    forbid_text(errors, text, "InstallResume", label)
-    forbid_text(errors, text, 'StrCpy $StageDir "$INSTDIR.cxxime-stage"', label)
-    forbid_text(errors, text, 'StrCpy $InstallTargetDir "$InstallBaseDir\\versions', label)
-    forbid_text(errors, text, 'RMDir /r "$PreviousInstallDir"', label)
-    forbid_text(errors, text, 'RMDir /r /REBOOTOK "$PreviousInstallDir"', label)
-    forbid_text(errors, text, "RmShutdown", label)
-    forbid_text(errors, text, "FreeLibrary", label)
-    forbid_text(errors, text, "VersionCompare", label)
-    forbid_text(errors, text, "CompareVersion", label)
+    require_order(
+        errors,
+        text,
+        [
+            "Function un.ConfirmPage",
+            "用户配置和词库默认保留",
+            "删除用户配置和词库数据",
+            "个人数据将永久删除，无法撤销",
+            'SendMessage $0 ${WM_SETTEXT} 0 "STR:卸载"',
+            "Function un.ToggleRemoveUserDataWarning",
+            "ShowWindow $UninstallRemoveUserDataWarning ${SW_SHOW}",
+        ],
+        "Uninstall confirmation page",
+    )
