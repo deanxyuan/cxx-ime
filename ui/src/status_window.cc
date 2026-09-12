@@ -241,9 +241,10 @@ bool StatusWindow::is_created() const {
 // ============================================================
 void StatusWindow::show() {
     if (!hwnd_ || !IsWindow(hwnd_)) return;
+    if (IsWindowVisible(hwnd_)) return;
     if (layered_ready_) RedrawLayered();
-    SetWindowPos(hwnd_, HWND_TOPMOST, 0, 0, 0, 0,
-                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    SetWindowPos(hwnd_, nullptr, 0, 0, 0, 0,
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
 }
 
 void StatusWindow::hide() {
@@ -284,6 +285,11 @@ void StatusWindow::set_auto_dock(bool auto_dock) {
 // State
 // ============================================================
 void StatusWindow::update_state(const ButtonState& state) {
+    if (state_.chinese_mode == state.chinese_mode && state_.caps_lock == state.caps_lock &&
+        state_.full_shape == state.full_shape && state_.chinese_punct == state.chinese_punct &&
+        state_.input_mode == state.input_mode) {
+        return;
+    }
     state_ = state;
     if (layered_ready_) RedrawLayered();
 }
