@@ -410,6 +410,7 @@ private:
     ReadingUIElement* _readingUiElement = nullptr;
     cxxime::Config _config;
     std::unique_ptr<cxxime::CandidateWindow> _localCandidateWindow;
+    std::uint64_t _localCandidatePlacementTargetGeneration = 0;
     cxxime::ConfigGeneration _configGeneration;
     HWND _configWindow = nullptr;
     std::uint32_t _configSubscriptionId = 0;

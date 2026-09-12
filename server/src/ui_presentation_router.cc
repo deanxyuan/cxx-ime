@@ -33,15 +33,22 @@ struct SessionKeyHash {
 struct RoutedSnapshot {
     cxxime::UiPresentationSnapshot snapshot;
     std::uint64_t received_revision = 0;
+    std::uint64_t candidate_placement_cycle = 0;
 };
 
 struct ActivePresentation {
     SessionKey key;
     cxxime::UiPresentationSnapshot snapshot;
+    std::uint64_t candidate_placement_cycle = 0;
 };
 
 bool has_flag(const cxxime::UiPresentationSnapshot& snapshot, cxxime::UiSnapshotFlag flag) {
     return (snapshot.flags & cxxime::ui_snapshot_flag(flag)) != 0;
+}
+
+bool has_candidate_content(const cxxime::UiPresentationSnapshot& snapshot) {
+    return has_flag(snapshot, cxxime::UiSnapshotFlag::kHasCandidates) ||
+           has_flag(snapshot, cxxime::UiSnapshotFlag::kHasPreedit);
 }
 
 bool is_newer_or_equal(const cxxime::UiPresentationSnapshot& next,
@@ -199,7 +206,7 @@ public:
             router_revision = ++router_revision_;
         }
         if (handler) {
-            handler(0, nullptr, false, router_revision);
+            handler(0, nullptr, false, 0, router_revision);
         }
     }
 
@@ -252,7 +259,7 @@ public:
             }
         }
         if (handler) {
-            handler(0, nullptr, false, router_revision);
+            handler(0, nullptr, false, 0, router_revision);
         }
         for (const auto& entry : commands) {
             channel_.send_command(entry.first, entry.second);
@@ -271,7 +278,8 @@ private:
         }
     }
 
-    bool select_active_for_foreground_locked(cxxime::UiPresentationSnapshot* presentation) {
+    bool select_active_for_foreground_locked(cxxime::UiPresentationSnapshot* presentation,
+                                             std::uint64_t* candidate_placement_cycle) {
         const RoutedSnapshot* selected = nullptr;
         SessionKey selected_key;
         for (const auto& entry : sessions_) {
@@ -288,7 +296,8 @@ private:
             return false;
         }
         *presentation = selected->snapshot;
-        active_ = ActivePresentation{selected_key, *presentation};
+        *candidate_placement_cycle = selected->candidate_placement_cycle;
+        active_ = ActivePresentation{selected_key, *presentation, *candidate_placement_cycle};
         return true;
     }
 
@@ -299,6 +308,7 @@ private:
         bool publish = false;
         bool clear = false;
         bool preserve_status_during_handoff = false;
+        std::uint64_t candidate_placement_cycle = 0;
         std::uint64_t router_revision = 0;
         {
             std::lock_guard<std::mutex> lock(mutex_);
@@ -307,12 +317,19 @@ private:
             }
 
             const std::optional<ActivePresentation> previous = active_;
-            if (select_active_for_foreground_locked(&presentation)) {
+            if (select_active_for_foreground_locked(&presentation,
+                                                    &candidate_placement_cycle)) {
                 publish = force_publish || !previous || !(active_->key == previous->key);
                 endpoint = active_->key.endpoint;
             } else {
                 active_.reset();
                 clear = previous.has_value();
+                if (previous) {
+                    const auto found = sessions_.find(previous->key);
+                    if (found != sessions_.end()) {
+                        candidate_placement_cycle = found->second.candidate_placement_cycle;
+                    }
+                }
                 preserve_status_during_handoff =
                     clear && should_preserve_status_during_handoff(previous->snapshot);
             }
@@ -325,9 +342,10 @@ private:
             return;
         }
         if (publish) {
-            handler(endpoint, &presentation, false, router_revision);
+            handler(endpoint, &presentation, false, candidate_placement_cycle, router_revision);
         } else if (clear) {
-            handler(0, nullptr, preserve_status_during_handoff, router_revision);
+            handler(0, nullptr, preserve_status_during_handoff, candidate_placement_cycle,
+                    router_revision);
         }
     }
 
@@ -348,11 +366,25 @@ private:
             if (has_flag(snapshot, cxxime::UiSnapshotFlag::kSessionEnded)) {
                 sessions_.erase(key);
             } else {
+                std::uint64_t candidate_placement_cycle = 0;
+                if (has_candidate_content(snapshot)) {
+                    const bool starts_new_cycle =
+                        found == sessions_.end() ||
+                        found->second.candidate_placement_cycle == 0 ||
+                        !has_candidate_content(found->second.snapshot) ||
+                        found->second.snapshot.session_generation != snapshot.session_generation ||
+                        found->second.snapshot.target_generation != snapshot.target_generation;
+                    candidate_placement_cycle = starts_new_cycle
+                        ? next_candidate_placement_cycle()
+                        : found->second.candidate_placement_cycle;
+                }
                 if (found == sessions_.end()) {
-                    sessions_[key] = {snapshot, ++received_revision_};
+                    sessions_[key] = {
+                        snapshot, ++received_revision_, candidate_placement_cycle};
                 } else {
                     found->second.snapshot = snapshot;
                     found->second.received_revision = ++received_revision_;
+                    found->second.candidate_placement_cycle = candidate_placement_cycle;
                 }
             }
         }
@@ -376,6 +408,13 @@ private:
         refresh_active_for_foreground(false);
     }
 
+    std::uint64_t next_candidate_placement_cycle() {
+        if (++candidate_placement_cycle_revision_ == 0) {
+            ++candidate_placement_cycle_revision_;
+        }
+        return candidate_placement_cycle_revision_;
+    }
+
     std::mutex mutex_;
     bool running_ = false;
     cxxime::UiChannelServer channel_;
@@ -385,6 +424,7 @@ private:
     std::optional<ActivePresentation> active_;
     std::uint64_t router_revision_ = 0;
     std::uint64_t received_revision_ = 0;
+    std::uint64_t candidate_placement_cycle_revision_ = 0;
 
     static std::mutex foreground_listener_mutex_;
     static Impl* foreground_listener_;

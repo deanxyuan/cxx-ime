@@ -15,6 +15,7 @@
 #include <cxxime/config.h>
 #include <cxxime/layout.h>
 #include <cxxime/render_context.h>
+#include <cxxime/window_position.h>
 
 namespace cxxime {
 
@@ -37,6 +38,7 @@ public:
     bool is_created() const;
     void show();
     void hide();
+    void reset_placement();
     bool is_visible() const;
     void set_config(const Config& config);
     void update(const CandidatePresentationPage& page);
@@ -94,9 +96,9 @@ private:
     void init_gdi_renderer();
     void init_d2d_renderer();
     void move_window_now(int x, int y);
-    bool calculate_target_position(const RECT& caret_rect, int width, int height, POINT& target) const;
+    bool calculate_target_position(const RECT& caret_rect, int width, int height, POINT& target);
     void update_window_region(int width, int height, int corner);
-    int monitor_work_width() const;
+    int monitor_display_width() const;
 
     HWND hwnd_ = nullptr;
     float dpi_scale_ = 1.0f;
@@ -131,6 +133,8 @@ private:
     int window_width_ = 0, window_height_ = 0, window_corner_ = -1;
     bool has_last_caret_rect_ = false;
     RECT last_caret_rect_{};
+    CandidatePlacementSide placement_side_ = CandidatePlacementSide::Unset;
+    HMONITOR placement_monitor_ = nullptr;
 
     static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
 };

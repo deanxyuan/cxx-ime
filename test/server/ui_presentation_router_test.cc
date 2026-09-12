@@ -82,8 +82,10 @@ TEST(UiPresentationRouter, ignores_stale_snapshots_and_routes_bound_commands) {
     UiPresentationRouter router;
     ASSERT_TRUE(router.start(
         [&](cxxime::UiEndpointId endpoint, const cxxime::UiPresentationSnapshot* snapshot,
-            bool preserve_status_during_handoff, std::uint64_t router_revision) {
+            bool preserve_status_during_handoff, std::uint64_t candidate_placement_cycle,
+            std::uint64_t router_revision) {
             UNREFERENCED_PARAMETER(preserve_status_during_handoff);
+            UNREFERENCED_PARAMETER(candidate_placement_cycle);
             UNREFERENCED_PARAMETER(router_revision);
             if (snapshot) {
                 presented_endpoint.store(endpoint);
@@ -175,8 +177,10 @@ TEST(UiPresentationRouter, disconnect_clears_only_the_active_endpoint) {
     ASSERT_TRUE(router.start(
         [&](cxxime::UiEndpointId published_endpoint,
             const cxxime::UiPresentationSnapshot* published_snapshot,
-            bool preserve_status_during_handoff, std::uint64_t router_revision) {
+            bool preserve_status_during_handoff, std::uint64_t candidate_placement_cycle,
+            std::uint64_t router_revision) {
             UNREFERENCED_PARAMETER(preserve_status_during_handoff);
+            UNREFERENCED_PARAMETER(candidate_placement_cycle);
             UNREFERENCED_PARAMETER(router_revision);
             if (published_snapshot) {
                 endpoint.store(published_endpoint);
@@ -204,7 +208,7 @@ TEST(UiPresentationRouter, refreshes_only_connected_sessions_and_clears_resume_u
     UiPresentationRouter router;
     ASSERT_TRUE(router.start(
         [&](cxxime::UiEndpointId, const cxxime::UiPresentationSnapshot* snapshot, bool,
-            std::uint64_t) {
+            std::uint64_t, std::uint64_t) {
             if (snapshot) {
                 presentation_count.fetch_add(1);
             } else {
@@ -264,6 +268,92 @@ TEST(UiPresentationRouter, refreshes_only_connected_sessions_and_clears_resume_u
 
     second_client.stop();
     first_client.stop();
+    router.stop();
+}
+
+TEST(UiPresentationRouter, candidate_placement_cycle_tracks_content_lifetime) {
+    const std::wstring pipe_name = test_pipe_name();
+    std::atomic<int> callback_count{0};
+    std::atomic<bool> has_snapshot{false};
+    std::atomic<std::uint64_t> placement_cycle{0};
+    UiPresentationRouter router;
+    ASSERT_TRUE(router.start(
+        [&](cxxime::UiEndpointId, const cxxime::UiPresentationSnapshot* snapshot, bool,
+            std::uint64_t candidate_placement_cycle, std::uint64_t) {
+            has_snapshot.store(snapshot != nullptr);
+            placement_cycle.store(candidate_placement_cycle);
+            callback_count.fetch_add(1);
+        },
+        pipe_name));
+
+    cxxime::UiChannelClient client;
+    ASSERT_TRUE(client.start({}, pipe_name));
+
+    cxxime::UiPresentationSnapshot visible = make_snapshot(3);
+    ASSERT_TRUE(client.publish_latest(visible));
+    ASSERT_TRUE(wait_for([&]() { return callback_count.load() == 1; }));
+    const std::uint64_t first_cycle = placement_cycle.load();
+    ASSERT_NE(first_cycle, static_cast<std::uint64_t>(0));
+
+    visible.composition_generation++;
+    visible.presentation_generation++;
+    ASSERT_TRUE(client.publish_latest(visible));
+    ASSERT_TRUE(wait_for([&]() { return callback_count.load() == 2; }));
+    ASSERT_EQ(placement_cycle.load(), first_cycle);
+
+    cxxime::UiPresentationSnapshot waiting = visible;
+    waiting.presentation_generation++;
+    waiting.flags &= ~cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kCandidateVisible);
+    ASSERT_TRUE(client.publish_latest(waiting));
+    ASSERT_TRUE(wait_for([&]() { return callback_count.load() == 3; }));
+    ASSERT_TRUE(!has_snapshot.load());
+    ASSERT_EQ(placement_cycle.load(), first_cycle);
+
+    visible.presentation_generation = waiting.presentation_generation + 1;
+    ASSERT_TRUE(client.publish_latest(visible));
+    ASSERT_TRUE(wait_for([&]() { return callback_count.load() == 4; }));
+    ASSERT_TRUE(has_snapshot.load());
+    ASSERT_EQ(placement_cycle.load(), first_cycle);
+
+    cxxime::UiPresentationSnapshot cleared = visible;
+    cleared.presentation_generation++;
+    cleared.ownership = cxxime::UiOwnership::kNone;
+    cleared.flags &= ~cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kCandidateVisible);
+    cleared.flags &= ~cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kHasCandidates);
+    ASSERT_TRUE(client.publish_latest(cleared));
+    ASSERT_TRUE(wait_for([&]() { return callback_count.load() == 5; }));
+    ASSERT_TRUE(!has_snapshot.load());
+    ASSERT_EQ(placement_cycle.load(), static_cast<std::uint64_t>(0));
+
+    visible.composition_generation = cleared.composition_generation + 1;
+    visible.presentation_generation = cleared.presentation_generation + 1;
+    ASSERT_TRUE(client.publish_latest(visible));
+    ASSERT_TRUE(wait_for([&]() { return callback_count.load() == 6; }));
+    const std::uint64_t second_cycle = placement_cycle.load();
+    ASSERT_NE(second_cycle, first_cycle);
+    ASSERT_NE(second_cycle, static_cast<std::uint64_t>(0));
+
+    cxxime::UiPresentationSnapshot next_target = visible;
+    next_target.target_generation++;
+    next_target.composition_generation++;
+    next_target.presentation_generation++;
+    ASSERT_TRUE(client.publish_latest(next_target));
+    ASSERT_TRUE(wait_for([&]() { return callback_count.load() == 7; }));
+    const std::uint64_t third_cycle = placement_cycle.load();
+    ASSERT_NE(third_cycle, second_cycle);
+    ASSERT_NE(third_cycle, static_cast<std::uint64_t>(0));
+
+    cxxime::UiPresentationSnapshot ended = next_target;
+    ended.composition_generation++;
+    ended.presentation_generation++;
+    ended.flags = cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kSessionEnded);
+    ended.ownership = cxxime::UiOwnership::kNone;
+    ASSERT_TRUE(client.publish_latest(ended));
+    ASSERT_TRUE(wait_for([&]() { return callback_count.load() == 8; }));
+    ASSERT_TRUE(!has_snapshot.load());
+    ASSERT_EQ(placement_cycle.load(), static_cast<std::uint64_t>(0));
+
+    client.stop();
     router.stop();
 }
 

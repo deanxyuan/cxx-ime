@@ -12,6 +12,7 @@
 
 #include <cxxime/config.h>
 #include <cxxime/renderer.h>
+#include <cxxime/window_position.h>
 
 #include "dpi_awareness.h"
 #include "gdi_renderer.h"
@@ -31,6 +32,7 @@ constexpr int kPreeditCursorTextGapDips = 1;
 constexpr int kPreeditCursorIdleAccentPercent = 65;
 constexpr UINT_PTR kPreeditCursorEmphasisTimerId = 1;
 constexpr UINT kPreeditCursorEmphasisDurationMs = 160;
+constexpr int kCandidateCaretGapPx = 4;
 
 bool system_high_contrast_enabled() {
     HIGHCONTRASTW high_contrast = {sizeof(high_contrast)};
@@ -335,10 +337,11 @@ bool CandidateWindow::refresh_preedit_cursor_width() {
         (std::max)(1, MulDiv(kPreeditCursorMinimumWidthDips, static_cast<int>(window_dpi), 96));
     int maximum_width = (std::max)(minimum_width, MulDiv(kPreeditCursorMaximumWidthDips,
                                                          static_cast<int>(window_dpi), 96));
-    const int work_width = monitor_work_width();
-    if (work_width > 0) {
+    const int display_width = monitor_display_width();
+    if (display_width > 0) {
         maximum_width =
-            (std::max)(minimum_width, (std::min)(maximum_width, (std::max)(1, work_width / 4)));
+            (std::max)(minimum_width,
+                       (std::min)(maximum_width, (std::max)(1, display_width / 4)));
     }
     const DWORD requested_width = system_caret_width();
     const int bounded_system_width = requested_width > static_cast<DWORD>(maximum_width)
@@ -385,8 +388,7 @@ void CandidateWindow::destroy() {
     window_height_ = 0;
     window_corner_ = -1;
     visible_candidate_count_ = 0;
-    has_last_caret_rect_ = false;
-    last_caret_rect_ = {};
+    reset_placement();
 }
 
 bool CandidateWindow::is_created() const {
@@ -422,6 +424,13 @@ void CandidateWindow::hide() {
         ShowWindow(hwnd_, SW_HIDE);
     set_owner(nullptr);
     visible_candidate_count_ = 0;
+}
+
+void CandidateWindow::reset_placement() {
+    placement_side_ = CandidatePlacementSide::Unset;
+    placement_monitor_ = nullptr;
+    has_last_caret_rect_ = false;
+    last_caret_rect_ = {};
 }
 
 void CandidateWindow::set_owner(HWND owner) {
@@ -571,34 +580,26 @@ void CandidateWindow::move_window_now(int x, int y) {
 }
 
 bool CandidateWindow::calculate_target_position(const RECT& caret_rect, int width, int height,
-                                                POINT& target) const {
+                                                POINT& target) {
     ScopedDpiAwarenessContext dpi_context(GetWindowDpiAwarenessContext(hwnd_));
     HMONITOR hMon = MonitorFromRect(&caret_rect, MONITOR_DEFAULTTONEAREST);
     MONITORINFO mi = {sizeof(mi)};
     if (!GetMonitorInfo(hMon, &mi))
         return false;
 
-    int x = caret_rect.left;
-    int y = caret_rect.bottom + 4;
-
-    if (x + width > mi.rcWork.right)
-        x = mi.rcWork.right - width;
-    if (x < mi.rcWork.left)
-        x = mi.rcWork.left;
-
-    if (y + height > mi.rcWork.bottom) {
-        y = caret_rect.top - height - 4;
-        if (y < mi.rcWork.top)
-            y = mi.rcWork.top;
+    if (placement_monitor_ != hMon) {
+        placement_side_ = CandidatePlacementSide::Unset;
+        placement_monitor_ = hMon;
     }
-    if (y < mi.rcWork.top)
-        y = mi.rcWork.top;
 
-    target = {x, y};
+    const CandidateWindowPlacement placement = calculate_candidate_window_position(
+        caret_rect, width, height, kCandidateCaretGapPx, mi.rcMonitor, placement_side_);
+    placement_side_ = placement.side;
+    target = placement.position;
     return true;
 }
 
-int CandidateWindow::monitor_work_width() const {
+int CandidateWindow::monitor_display_width() const {
     ScopedDpiAwarenessContext dpi_context(GetWindowDpiAwarenessContext(hwnd_));
     HMONITOR monitor = nullptr;
     if (has_last_caret_rect_) {
@@ -612,7 +613,7 @@ int CandidateWindow::monitor_work_width() const {
     if (!monitor || !GetMonitorInfoW(monitor, &info)) {
         return 0;
     }
-    return info.rcWork.right - info.rcWork.left;
+    return info.rcMonitor.right - info.rcMonitor.left;
 }
 
 void CandidateWindow::update_window_region(int width, int height, int corner) {
@@ -764,11 +765,11 @@ void CandidateWindow::update(const CandidatePage& page) {
     scaled_cfg_.min_width = (int)(scaled_cfg_.min_width * s);
     scaled_cfg_.max_width = (int)(scaled_cfg_.max_width * s);
     scaled_cfg_.max_height = (int)(scaled_cfg_.max_height * s);
-    int work_width = monitor_work_width();
-    if (work_width > 0) {
-        int window_width_limit = work_width;
+    int display_width = monitor_display_width();
+    if (display_width > 0) {
+        int window_width_limit = display_width;
         if (scaled_cfg_.max_width <= 0) {
-            window_width_limit = calculate_auto_candidate_window_max_width(work_width, s);
+            window_width_limit = calculate_auto_candidate_window_max_width(display_width, s);
         }
         int layout_width =
             (std::max)(1, window_width_limit - scaled_cfg_.border_width * 2);
@@ -1207,6 +1208,17 @@ LRESULT CALLBACK CandidateWindow::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM
                              SWP_NOZORDER | SWP_NOACTIVATE);
                 self->recreate_renderers_for_dpi();
                 self->update(self->page_);
+                if (self->has_last_caret_rect_) {
+                    RECT window_rect = {};
+                    if (GetWindowRect(hwnd, &window_rect)) {
+                        POINT target = {};
+                        if (self->calculate_target_position(
+                                self->last_caret_rect_, window_rect.right - window_rect.left,
+                                window_rect.bottom - window_rect.top, target)) {
+                            self->move_window_now(target.x, target.y);
+                        }
+                    }
+                }
                 if (self->layout_changed_cb_) {
                     self->layout_changed_cb_();
                 }

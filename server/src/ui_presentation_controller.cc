@@ -183,6 +183,8 @@ public:
         std::lock_guard<std::mutex> lock(mutex_);
         pending_snapshot_.reset();
         rendered_presentation_.reset();
+        pending_candidate_placement_cycle_ = 0;
+        applied_candidate_placement_cycle_ = 0;
         clear_visible_candidate_count();
         pending_config_.reset();
         command_handler_ = {};
@@ -191,7 +193,9 @@ public:
     }
 
     void present(cxxime::UiEndpointId endpoint, const cxxime::UiPresentationSnapshot* snapshot,
-                 bool preserve_status_during_handoff, std::uint64_t router_revision) {
+                 bool preserve_status_during_handoff,
+                 std::uint64_t candidate_placement_cycle,
+                 std::uint64_t router_revision) {
         std::lock_guard<std::mutex> lock(mutex_);
         if (!running_ || router_revision <= pending_router_revision_) {
             return;
@@ -206,6 +210,7 @@ public:
         } else {
             pending_snapshot_.reset();
         }
+        pending_candidate_placement_cycle_ = candidate_placement_cycle;
         pending_status_handoff_ = !snapshot && preserve_status_during_handoff;
         ++presentation_revision_;
         SetEvent(update_event_);
@@ -388,7 +393,12 @@ private:
     }
 
     void apply_presentation(const std::optional<RoutedPresentation>& presentation,
-                            bool preserve_status_during_handoff) {
+                            bool preserve_status_during_handoff,
+                            std::uint64_t candidate_placement_cycle) {
+        if (candidate_placement_cycle != applied_candidate_placement_cycle_) {
+            candidate_window_.reset_placement();
+            applied_candidate_placement_cycle_ = candidate_placement_cycle;
+        }
         if (!presentation) {
             candidate_window_.hide();
             clear_visible_candidate_count();
@@ -488,8 +498,8 @@ private:
         } else {
             candidate_window_.set_preedit({});
         }
-        candidate_window_.update(candidate_page_from_snapshot(current));
         candidate_window_.move_to_caret(applied.caret);
+        candidate_window_.update(candidate_page_from_snapshot(current));
         candidate_window_.show();
         applied.candidate_visible = candidate_window_.is_visible();
         applying_candidate_presentation_ = false;
@@ -590,6 +600,7 @@ private:
         std::optional<RoutedPresentation> snapshot;
         std::uint64_t config_revision = 0;
         std::uint64_t presentation_revision = 0;
+        std::uint64_t candidate_placement_cycle = 0;
         bool preserve_status_during_handoff = false;
         {
             std::lock_guard<std::mutex> lock(mutex_);
@@ -598,6 +609,7 @@ private:
             snapshot = pending_snapshot_;
             config_revision = config_revision_;
             presentation_revision = presentation_revision_;
+            candidate_placement_cycle = pending_candidate_placement_cycle_;
             preserve_status_during_handoff = pending_status_handoff_;
             pending_status_handoff_ = false;
         }
@@ -607,7 +619,8 @@ private:
             applied_config_revision_ = config_revision;
         }
         if (config_changed || presentation_revision != applied_presentation_revision_) {
-            apply_presentation(snapshot, preserve_status_during_handoff);
+            apply_presentation(snapshot, preserve_status_during_handoff,
+                               candidate_placement_cycle);
             applied_presentation_revision_ = presentation_revision;
         }
     }
@@ -710,6 +723,8 @@ private:
     std::uint64_t applied_config_revision_ = 0;
     std::uint64_t applied_presentation_revision_ = 0;
     std::uint64_t pending_router_revision_ = 0;
+    std::uint64_t pending_candidate_placement_cycle_ = 0;
+    std::uint64_t applied_candidate_placement_cycle_ = 0;
     mutable std::mutex visible_candidate_mutex_;
     std::uint64_t visible_candidate_session_id_ = 0;
     std::uint64_t visible_candidate_session_generation_ = 0;
@@ -738,8 +753,10 @@ void UiPresentationController::stop() { impl_->stop(); }
 void UiPresentationController::present(cxxime::UiEndpointId endpoint,
                                        const cxxime::UiPresentationSnapshot* snapshot,
                                        bool preserve_status_during_handoff,
+                                       std::uint64_t candidate_placement_cycle,
                                        std::uint64_t router_revision) {
-    impl_->present(endpoint, snapshot, preserve_status_during_handoff, router_revision);
+    impl_->present(endpoint, snapshot, preserve_status_during_handoff,
+                   candidate_placement_cycle, router_revision);
 }
 
 void UiPresentationController::update_config(const std::shared_ptr<const cxxime::Config>& config) {

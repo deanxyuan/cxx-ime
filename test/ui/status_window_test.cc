@@ -7,6 +7,7 @@
 #include <cxxime/status_window.h>
 #include <cxxime/window_position.h>
 
+#include "support/dpi_testutil.h"
 #include "support/testutil.h"
 
 static bool create_test_window(cxxime::StatusWindow& window) {
@@ -156,8 +157,7 @@ TEST(StatusWindow, FullscreenRequiresCoveringTheEntireMonitor) {
 }
 
 TEST(StatusWindow, AutoDockClampsCurrentPositionToWorkArea) {
-    const DPI_AWARENESS_CONTEXT previous_context =
-        SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    test::ScopedDpiAwarenessContext dpi_context;
 
     cxxime::StatusWindow window;
     ASSERT_TRUE(create_test_window(window));
@@ -194,7 +194,6 @@ TEST(StatusWindow, AutoDockClampsCurrentPositionToWorkArea) {
     ASSERT_EQ(saved_position.y, window_rect.top);
 
     window.destroy();
-    SetThreadDpiAwarenessContext(previous_context);
 }
 
 // ============================================================

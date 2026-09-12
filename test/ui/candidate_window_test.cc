@@ -10,6 +10,7 @@
 #include <cxxime/candidate_window.h>
 #include <cxxime/config.h>
 
+#include "support/dpi_testutil.h"
 #include "support/testutil.h"
 
 TEST(CandidateWindow, page_buttons_use_page_callback) {
@@ -451,6 +452,52 @@ TEST(CandidateWindow, dpi_relayout_notifies_controller) {
     window.destroy();
 }
 
+TEST(CandidateWindow, dpi_relayout_reapplies_caret_position) {
+    cxxime::Config config;
+    config.render_backend = "gdi";
+
+    cxxime::CandidatePage page;
+    cxxime::Candidate candidate;
+    candidate.text = "candidate";
+    page.candidates.push_back(candidate);
+
+    cxxime::CandidateWindow window;
+    ASSERT_TRUE(window.create(nullptr, config));
+    window.update(page);
+
+    HWND hwnd = window.hwnd_for_test();
+    HMONITOR monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO monitor_info = {sizeof(monitor_info)};
+    ASSERT_TRUE(GetMonitorInfoW(monitor, &monitor_info) != FALSE);
+    RECT caret = {monitor_info.rcMonitor.left + 100, monitor_info.rcMonitor.top + 100,
+                  monitor_info.rcMonitor.left + 101, monitor_info.rcMonitor.top + 120};
+    window.move_to_caret(caret);
+    window.show();
+
+    RECT before = {};
+    ASSERT_TRUE(window.get_window_rect(&before));
+    const int width = before.right - before.left;
+    const int height = before.bottom - before.top;
+    RECT suggested = {monitor_info.rcMonitor.left + 8, monitor_info.rcMonitor.top + 8,
+                      monitor_info.rcMonitor.left + 8 + width,
+                      monitor_info.rcMonitor.top + 8 + height};
+    const UINT old_dpi = window.dpi();
+    const UINT next_dpi = old_dpi == 96 ? 120 : 96;
+    SendMessageW(hwnd, WM_DPICHANGED, MAKELPARAM(next_dpi, next_dpi),
+                 reinterpret_cast<LPARAM>(&suggested));
+
+    RECT after = {};
+    ASSERT_TRUE(window.get_window_rect(&after));
+    const cxxime::CandidateWindowPlacement expected =
+        cxxime::calculate_candidate_window_position(
+            caret, after.right - after.left, after.bottom - after.top, 4,
+            monitor_info.rcMonitor, cxxime::CandidatePlacementSide::Below);
+    ASSERT_EQ(after.left, expected.position.x);
+    ASSERT_EQ(after.top, expected.position.y);
+
+    window.destroy();
+}
+
 TEST(CandidateWindow, owner_can_follow_active_context_window) {
     HWND first_owner = CreateWindowExW(0, L"STATIC", L"", WS_OVERLAPPED, 0, 0, 0, 0, nullptr,
                                        nullptr, GetModuleHandleW(nullptr), nullptr);
@@ -553,7 +600,7 @@ TEST(CandidateWindow, ensure_created_does_not_fall_back_from_unavailable_owner) 
     DestroyWindow(current_owner);
 }
 
-TEST(CandidateWindow, width_is_clamped_to_monitor_work_area) {
+TEST(CandidateWindow, width_is_clamped_to_monitor_bounds) {
     cxxime::Config config;
     config.render_backend = "gdi";
     config.layout = "horizontal";
@@ -575,15 +622,15 @@ TEST(CandidateWindow, width_is_clamped_to_monitor_work_area) {
     MONITORINFO monitor_info = {sizeof(monitor_info)};
     ASSERT_TRUE(GetMonitorInfoW(monitor, &monitor_info) != FALSE);
 
-    RECT caret_rect = {monitor_info.rcWork.left + 16, monitor_info.rcWork.top + 16,
-                       monitor_info.rcWork.left + 16, monitor_info.rcWork.top + 36};
+    RECT caret_rect = {monitor_info.rcMonitor.left + 16, monitor_info.rcMonitor.top + 16,
+                       monitor_info.rcMonitor.left + 16, monitor_info.rcMonitor.top + 36};
     window.move_to_caret(caret_rect);
     window.update(page);
 
     RECT window_rect = {};
     ASSERT_TRUE(GetWindowRect(hwnd, &window_rect) != FALSE);
     ASSERT_LE(window_rect.right - window_rect.left,
-              monitor_info.rcWork.right - monitor_info.rcWork.left);
+              monitor_info.rcMonitor.right - monitor_info.rcMonitor.left);
 
     window.show();
     ASSERT_EQ(window.visible_candidate_count(), 1);
@@ -592,7 +639,7 @@ TEST(CandidateWindow, width_is_clamped_to_monitor_work_area) {
     window.destroy();
 }
 
-TEST(CandidateWindow, automatic_width_uses_comfortable_work_area_limit) {
+TEST(CandidateWindow, automatic_width_uses_comfortable_monitor_limit) {
     cxxime::Config config;
     config.render_backend = "gdi";
     config.layout = "horizontal";
@@ -611,20 +658,92 @@ TEST(CandidateWindow, automatic_width_uses_comfortable_work_area_limit) {
     MONITORINFO monitor_info = {sizeof(monitor_info)};
     ASSERT_TRUE(GetMonitorInfoW(monitor, &monitor_info) != FALSE);
 
-    RECT caret_rect = {monitor_info.rcWork.left + 16, monitor_info.rcWork.top + 16,
-                       monitor_info.rcWork.left + 16, monitor_info.rcWork.top + 36};
+    RECT caret_rect = {monitor_info.rcMonitor.left + 16, monitor_info.rcMonitor.top + 16,
+                       monitor_info.rcMonitor.left + 16, monitor_info.rcMonitor.top + 36};
     window.move_to_caret(caret_rect);
     window.update(page);
 
     HDC dc = GetDC(hwnd);
     const float dpi_scale = GetDeviceCaps(dc, LOGPIXELSX) / 96.0f;
     ReleaseDC(hwnd, dc);
-    const int work_width = monitor_info.rcWork.right - monitor_info.rcWork.left;
+    const int display_width = monitor_info.rcMonitor.right - monitor_info.rcMonitor.left;
     const int expected_max_width =
-        cxxime::calculate_auto_candidate_window_max_width(work_width, dpi_scale);
+        cxxime::calculate_auto_candidate_window_max_width(display_width, dpi_scale);
     RECT window_rect = {};
     ASSERT_TRUE(GetWindowRect(hwnd, &window_rect) != FALSE);
     ASSERT_LE(window_rect.right - window_rect.left, expected_max_width);
+
+    window.destroy();
+}
+
+TEST(CandidateWindow, placement_survives_hide_until_explicit_reset) {
+    test::ScopedDpiAwarenessContext dpi_awareness;
+    cxxime::Config config;
+    config.render_backend = "gdi";
+    config.layout = "horizontal";
+
+    cxxime::CandidatePage page;
+    cxxime::Candidate candidate;
+    candidate.text = "candidate";
+    page.candidates.push_back(candidate);
+
+    cxxime::CandidateWindow window;
+    ASSERT_TRUE(window.create(nullptr, config));
+    window.set_preedit("ni'hao");
+    window.update(page);
+
+    HWND hwnd = window.hwnd_for_test();
+    HMONITOR monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO monitor_info = {sizeof(monitor_info)};
+    ASSERT_TRUE(GetMonitorInfoW(monitor, &monitor_info) != FALSE);
+    const SIZE window_size = window.window_size();
+    ASSERT_GT(window_size.cx, 0);
+    ASSERT_GT(window_size.cy, 0);
+    const int monitor_height = monitor_info.rcMonitor.bottom - monitor_info.rcMonitor.top;
+    ASSERT_GT(monitor_height, window_size.cy * 2 + 8);
+    const int window_width = window_size.cx;
+    const int window_height = window_size.cy;
+    RECT edge_caret = {monitor_info.rcMonitor.left + window_width,
+                       monitor_info.rcMonitor.bottom - window_height / 2,
+                       monitor_info.rcMonitor.left + window_width + 1,
+                       monitor_info.rcMonitor.bottom - window_height / 2 + 1};
+    const auto edge_expected = cxxime::calculate_candidate_window_position(
+        edge_caret, window_width, window_height, 4, monitor_info.rcMonitor,
+        cxxime::CandidatePlacementSide::Unset);
+    ASSERT_EQ(edge_expected.side, cxxime::CandidatePlacementSide::Above);
+    window.move_to_caret(edge_caret);
+    window.show();
+
+    RECT above_rect = {};
+    ASSERT_TRUE(window.get_window_rect(&above_rect));
+    ASSERT_EQ(above_rect.left, edge_expected.position.x);
+    ASSERT_EQ(above_rect.top, edge_expected.position.y);
+
+    window.hide();
+    const int center_top = monitor_info.rcMonitor.top + (monitor_height - window_height) / 2;
+    RECT center_caret = {monitor_info.rcMonitor.left + window_width, center_top,
+                         monitor_info.rcMonitor.left + window_width + 1, center_top + 1};
+    const auto preserved_expected = cxxime::calculate_candidate_window_position(
+        center_caret, window_width, window_height, 4, monitor_info.rcMonitor,
+        cxxime::CandidatePlacementSide::Above);
+    ASSERT_EQ(preserved_expected.side, cxxime::CandidatePlacementSide::Above);
+    window.move_to_caret(center_caret);
+    window.show();
+    RECT preserved_rect = {};
+    ASSERT_TRUE(window.get_window_rect(&preserved_rect));
+    ASSERT_EQ(preserved_rect.left, preserved_expected.position.x);
+    ASSERT_EQ(preserved_rect.top, preserved_expected.position.y);
+
+    window.reset_placement();
+    window.move_to_caret(center_caret);
+    RECT reset_rect = {};
+    ASSERT_TRUE(window.get_window_rect(&reset_rect));
+    const auto reset_expected = cxxime::calculate_candidate_window_position(
+        center_caret, window_width, window_height, 4, monitor_info.rcMonitor,
+        cxxime::CandidatePlacementSide::Unset);
+    ASSERT_EQ(reset_expected.side, cxxime::CandidatePlacementSide::Below);
+    ASSERT_EQ(reset_rect.left, reset_expected.position.x);
+    ASSERT_EQ(reset_rect.top, reset_expected.position.y);
 
     window.destroy();
 }

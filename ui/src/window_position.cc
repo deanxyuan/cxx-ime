@@ -128,6 +128,13 @@ LONG project_coordinate(LONG transformed_anchor, LONG source_coordinate, LONG so
     return static_cast<LONG>(clamped);
 }
 
+LONG clamp_to_long(long long value) {
+    return static_cast<LONG>(
+        (std::max)(static_cast<long long>((std::numeric_limits<LONG>::min)()),
+                   (std::min)(value,
+                              static_cast<long long>((std::numeric_limits<LONG>::max)()))));
+}
+
 bool ensure_rect_end_after_start(LONG start, LONG* end) {
     if (!end) {
         return false;
@@ -159,6 +166,45 @@ POINT clamp_window_position_to_work_area(int x, int y, int width, int height,
     const long long clamped_y = (std::max)(static_cast<long long>(work_area.top),
         (std::min)(static_cast<long long>(y), maximum_y));
     return {static_cast<LONG>(clamped_x), static_cast<LONG>(clamped_y)};
+}
+
+CandidateWindowPlacement calculate_candidate_window_position(
+    const RECT& caret_rect, int width, int height, int caret_gap, const RECT& monitor_rect,
+    CandidatePlacementSide previous_side) {
+    const int window_width = (std::max)(0, width);
+    const int window_height = (std::max)(0, height);
+    const int gap = (std::max)(0, caret_gap);
+    const long long below_y = static_cast<long long>(caret_rect.bottom) + gap;
+    const long long above_y = static_cast<long long>(caret_rect.top) - gap - window_height;
+    const bool below_fits =
+        below_y >= monitor_rect.top && below_y + window_height <= monitor_rect.bottom;
+    const bool above_fits =
+        above_y >= monitor_rect.top && above_y + window_height <= monitor_rect.bottom;
+
+    CandidatePlacementSide side = previous_side;
+    if (side == CandidatePlacementSide::Unset) {
+        if (below_fits) {
+            side = CandidatePlacementSide::Below;
+        } else if (above_fits) {
+            side = CandidatePlacementSide::Above;
+        } else {
+            const long long available_below =
+                (std::max)(0LL, static_cast<long long>(monitor_rect.bottom) - below_y);
+            const long long available_above =
+                (std::max)(0LL, static_cast<long long>(caret_rect.top) - gap - monitor_rect.top);
+            side = available_below >= available_above ? CandidatePlacementSide::Below
+                                                      : CandidatePlacementSide::Above;
+        }
+    } else if (side == CandidatePlacementSide::Below && !below_fits && above_fits) {
+        side = CandidatePlacementSide::Above;
+    } else if (side == CandidatePlacementSide::Above && !above_fits && below_fits) {
+        side = CandidatePlacementSide::Below;
+    }
+
+    const long long requested_y = side == CandidatePlacementSide::Above ? above_y : below_y;
+    const POINT position = clamp_window_position_to_work_area(
+        caret_rect.left, clamp_to_long(requested_y), window_width, window_height, monitor_rect);
+    return {position, side};
 }
 
 bool logical_screen_rect_to_physical(HWND window, const RECT& source, RECT* result) {

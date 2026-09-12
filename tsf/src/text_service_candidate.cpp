@@ -5,6 +5,8 @@
 #include <cstdio>
 #include <string>
 
+#include <cxxime/candidate_window.h>
+
 #include "candidate_ui_element.h"
 #include "host_compatibility/host_classification_compatibility.h"
 #include "reading_ui_element.h"
@@ -32,6 +34,10 @@ void TextService::_hide_external_candidate_window(const char* reason) {
 }
 
 void TextService::_hide_candidate_window(const char* reason) {
+    if (_localCandidateWindow) {
+        _localCandidateWindow->reset_placement();
+    }
+    _localCandidatePlacementTargetGeneration = 0;
     _candidatePresentation.finish();
     _hide_candidate_projection(reason);
 }

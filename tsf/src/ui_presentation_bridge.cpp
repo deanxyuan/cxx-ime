@@ -78,6 +78,11 @@ bool TextService::_present_local_candidate_window(const cxxime::CandidatePresent
                                                   int page_current, int page_total,
                                                   const std::string& preedit,
                                                   std::size_t preedit_cursor) {
+    if (_localCandidateWindow &&
+        _localCandidatePlacementTargetGeneration != _uiTargetGeneration) {
+        _localCandidateWindow->reset_placement();
+    }
+    _localCandidatePlacementTargetGeneration = _uiTargetGeneration;
     HWND owner = reinterpret_cast<HWND>(_effectiveEditTarget.view_window);
     if (!owner || !IsWindow(owner)) {
         owner = GetFocus();
@@ -123,8 +128,8 @@ bool TextService::_present_local_candidate_window(const cxxime::CandidatePresent
         _candidatePresentation.focused_preedit_start(),
         _candidatePresentation.focused_preedit_end(),
         _candidatePresentation.has_syllable_boundaries());
-    _localCandidateWindow->update(page);
     _localCandidateWindow->move_to_caret(_caretRect);
+    _localCandidateWindow->update(page);
     _localCandidateWindow->show();
     if (!_localCandidateWindow->is_visible()) {
         return false;
@@ -298,6 +303,10 @@ void TextService::_publish_ui_presentation() {
 
 void TextService::_publish_ui_session_ended() {
     _hide_local_candidate_window();
+    if (_localCandidateWindow) {
+        _localCandidateWindow->reset_placement();
+    }
+    _localCandidatePlacementTargetGeneration = 0;
     if (!_uiChannel.is_running() || _sessionId == 0 || _uiSessionGeneration == 0) {
         return;
     }
