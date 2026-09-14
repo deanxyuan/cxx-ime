@@ -60,6 +60,10 @@ bool text_rect_is_placeholder(const RECT& view_rect, const RECT& text_rect);
 bool text_rect_requires_composition_refresh(const RECT& view_rect, const RECT& text_rect);
 bool text_rect_is_meaningful(HRESULT text_rect_hr, const RECT& text_rect,
     bool placeholder_text_rect);
+bool map_fallback_caret_rect(HWND caret_window, POINT caret, RECT* rect);
+bool map_current_thread_caret_rect(HWND foreground, RECT* rect);
+bool resolve_native_caret_rect(HWND foreground, RECT* rect);
+bool normalize_text_ext_rect(HWND view_hwnd, HWND foreground, RECT* rect);
 EditTargetState classify_edit_target(const EditTargetEvidence& evidence);
 EditTargetState inspect_edit_target(ITfContext* context, TfClientId client_id,
     EditTargetEvidence* evidence);

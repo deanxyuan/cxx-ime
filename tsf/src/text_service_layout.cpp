@@ -8,6 +8,7 @@
 
 #include "candidate_ui_element.h"
 #include "edit_session.h"
+#include "edit_target.h"
 
 namespace cxxime_tsf {
 
@@ -35,17 +36,6 @@ void normalize_caret_rect_size(RECT* rc) {
         rc->right = rc->left + 1;
     if (rc->bottom - rc->top <= 2)
         rc->bottom = rc->top + 20;
-}
-
-bool same_root_window(HWND a, HWND b) {
-    if (!a || !b)
-        return false;
-    if (a == b || IsChild(a, b) || IsChild(b, a))
-        return true;
-
-    HWND root_a = GetAncestor(a, GA_ROOT);
-    HWND root_b = GetAncestor(b, GA_ROOT);
-    return root_a && root_a == root_b;
 }
 
 bool is_top_level_window(HWND hwnd) {
@@ -259,47 +249,7 @@ STDMETHODIMP TextService::OnLayoutChange(ITfContext* pic,
 }
 
 bool TextService::_resolve_native_caret_rect(RECT* out) const {
-    if (!out)
-        return false;
-    GUITHREADINFO gti = { sizeof(gti) };
-    HWND foreground = GetForegroundWindow();
-    DWORD foreground_thread = foreground ? GetWindowThreadProcessId(foreground, nullptr) : 0;
-    if (foreground_thread &&
-        GetGUIThreadInfo(foreground_thread, &gti) &&
-        gti.hwndCaret &&
-        !is_top_level_window(gti.hwndCaret) &&
-        same_root_window(foreground, gti.hwndCaret)) {
-        RECT rc = gti.rcCaret;
-        POINT points[2] = {
-            { rc.left, rc.top },
-            { rc.right, rc.bottom },
-        };
-        MapWindowPoints(gti.hwndCaret, nullptr, points, 2);
-        SetRect(&rc, points[0].x, points[0].y, points[1].x, points[1].y);
-        normalize_caret_rect_size(&rc);
-        if (cxxime_tsf::is_valid_caret_rect(rc)) {
-            *out = rc;
-            return true;
-        }
-    }
-
-    POINT pt = {};
-    if (GetCaretPos(&pt)) {
-        HWND focus = GetFocus();
-        if (!focus && gti.hwndFocus)
-            focus = gti.hwndFocus;
-        if (focus && same_root_window(foreground, focus)) {
-            ClientToScreen(focus, &pt);
-            RECT rc = {};
-            SetRect(&rc, pt.x, pt.y, pt.x + 1, pt.y + 20);
-            if (cxxime_tsf::is_valid_caret_rect(rc)) {
-                *out = rc;
-                return true;
-            }
-        }
-    }
-
-    return false;
+    return cxxime_tsf::resolve_native_caret_rect(GetForegroundWindow(), out);
 }
 
 bool TextService::_resolve_context_native_caret_rect(ITfContext* context,

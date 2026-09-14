@@ -2,6 +2,7 @@
 
 #include "edit_target.h"
 
+#include <algorithm>
 #include <cwchar>
 #include <new>
 
@@ -10,7 +11,145 @@
 
 #include "globals.h"
 
+namespace {
+
+bool is_valid_rect(const RECT& rc) {
+    return (rc.left != 0 || rc.top != 0) && rc.right >= rc.left && rc.bottom >= rc.top;
+}
+
+void normalize_rect_size(RECT* rc) {
+    if (rc->right < rc->left) {
+        std::swap(rc->left, rc->right);
+    }
+    if (rc->bottom < rc->top) {
+        std::swap(rc->top, rc->bottom);
+    }
+    if (rc->right == rc->left) {
+        rc->right = rc->left + 1;
+    }
+    if (rc->bottom - rc->top <= 2) {
+        rc->bottom = rc->top + 20;
+    }
+}
+
+bool rect_primary_point_in_rect(const RECT& outer, const RECT& inner) {
+    return inner.left >= outer.left && inner.left <= outer.right && inner.top >= outer.top &&
+           inner.top <= outer.bottom;
+}
+
+bool same_root_window(HWND a, HWND b) {
+    if (!a || !b) {
+        return false;
+    }
+    if (a == b || IsChild(a, b) || IsChild(b, a)) {
+        return true;
+    }
+    HWND root_a = GetAncestor(a, GA_ROOT);
+    HWND root_b = GetAncestor(b, GA_ROOT);
+    return root_a && root_a == root_b;
+}
+
+bool map_client_rect_to_screen(HWND hwnd, const RECT& raw, RECT* mapped) {
+    if (!hwnd || !mapped) {
+        return false;
+    }
+    RECT client = {};
+    if (!GetClientRect(hwnd, &client)) {
+        return false;
+    }
+    if (raw.left < client.left || raw.left > client.right || raw.top < client.top ||
+        raw.top > client.bottom) {
+        return false;
+    }
+    POINT points[2] = {
+        {raw.left, raw.top},
+        {raw.right, raw.bottom}
+    };
+    if (!MapWindowPoints(hwnd, nullptr, points, 2)) {
+        return false;
+    }
+    SetRect(mapped, points[0].x, points[0].y, points[1].x, points[1].y);
+    normalize_rect_size(mapped);
+    return is_valid_rect(*mapped);
+}
+
+} // namespace
+
 namespace cxxime_tsf {
+
+bool map_fallback_caret_rect(HWND caret_window, POINT caret, RECT* rect) {
+    if (!caret_window || !rect || !ClientToScreen(caret_window, &caret)) {
+        return false;
+    }
+    OffsetRect(rect, caret.x - rect->left, caret.y - rect->top);
+    return true;
+}
+
+bool map_current_thread_caret_rect(HWND foreground, RECT* rect) {
+    GUITHREADINFO gui = {sizeof(gui)};
+    if (!rect || !foreground || !GetGUIThreadInfo(GetCurrentThreadId(), &gui) || !gui.hwndCaret ||
+        !same_root_window(foreground, gui.hwndCaret)) {
+        return false;
+    }
+    POINT caret = {};
+    return GetCaretPos(&caret) && map_fallback_caret_rect(gui.hwndCaret, caret, rect);
+}
+
+bool resolve_native_caret_rect(HWND foreground, RECT* out) {
+    if (!out) {
+        return false;
+    }
+    GUITHREADINFO gti = {sizeof(gti)};
+    DWORD foreground_thread = foreground ? GetWindowThreadProcessId(foreground, nullptr) : 0;
+    if (foreground_thread && GetGUIThreadInfo(foreground_thread, &gti) && gti.hwndCaret &&
+        GetAncestor(gti.hwndCaret, GA_ROOT) != gti.hwndCaret &&
+        same_root_window(foreground, gti.hwndCaret)) {
+        RECT rc = gti.rcCaret;
+        POINT points[2] = {
+            {rc.left, rc.top},
+            {rc.right, rc.bottom}
+        };
+        MapWindowPoints(gti.hwndCaret, nullptr, points, 2);
+        SetRect(&rc, points[0].x, points[0].y, points[1].x, points[1].y);
+        normalize_rect_size(&rc);
+        if (is_valid_rect(rc)) {
+            *out = rc;
+            return true;
+        }
+    }
+
+    RECT rc = {0, 0, 1, 20};
+    if (map_current_thread_caret_rect(foreground, &rc) && is_valid_rect(rc)) {
+        *out = rc;
+        return true;
+    }
+    return false;
+}
+
+bool normalize_text_ext_rect(HWND view_hwnd, HWND foreground, RECT* rc) {
+    if (!rc || !is_valid_rect(*rc)) {
+        return false;
+    }
+    RECT foreground_rect = {};
+    bool has_foreground_rect = foreground && GetWindowRect(foreground, &foreground_rect);
+    normalize_rect_size(rc);
+
+    if (has_foreground_rect && rect_primary_point_in_rect(foreground_rect, *rc)) {
+        return true;
+    }
+    RECT mapped = {};
+    if (map_client_rect_to_screen(view_hwnd, *rc, &mapped)) {
+        if (!has_foreground_rect || rect_primary_point_in_rect(foreground_rect, mapped)) {
+            *rc = mapped;
+            return true;
+        }
+    }
+    if (has_foreground_rect && map_current_thread_caret_rect(foreground, rc)) {
+        normalize_rect_size(rc);
+        return is_valid_rect(*rc);
+    }
+    return MonitorFromRect(rc, MONITOR_DEFAULTTONULL) != nullptr;
+}
 
 bool text_rect_is_outside_view(HRESULT screen_rect_hr, const RECT& screen_rect,
     HRESULT text_rect_hr, const RECT& text_rect, bool text_clipped) {

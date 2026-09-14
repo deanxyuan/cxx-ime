@@ -10,11 +10,6 @@
 
 namespace {
 
-bool is_valid_rect(const RECT& rc) {
-    return (rc.left != 0 || rc.top != 0) &&
-           rc.right >= rc.left && rc.bottom >= rc.top;
-}
-
 HRESULT set_composition_range_text(ITfRange* range, TfEditCookie edit_cookie,
                                    const std::wstring& text, bool use_empty_placeholder) {
     if (!range) {
@@ -28,102 +23,6 @@ HRESULT set_composition_range_text(ITfRange* range, TfEditCookie edit_cookie,
     const LONG stored_length = store_placeholder ? 1 : static_cast<LONG>(text.length());
     const DWORD flags = store_placeholder ? TF_ST_CORRECTION : 0;
     return range->SetText(edit_cookie, flags, stored_text, stored_length);
-}
-
-void normalize_rect_size(RECT* rc) {
-    if (!rc)
-        return;
-
-    if (rc->right < rc->left)
-        std::swap(rc->left, rc->right);
-    if (rc->bottom < rc->top)
-        std::swap(rc->top, rc->bottom);
-    if (rc->right == rc->left)
-        rc->right = rc->left + 1;
-    if (rc->bottom - rc->top <= 2)
-        rc->bottom = rc->top + 20;
-}
-
-bool rect_primary_point_in_rect(const RECT& outer, const RECT& inner) {
-    return inner.left >= outer.left && inner.left <= outer.right &&
-           inner.top >= outer.top && inner.top <= outer.bottom;
-}
-
-bool same_root_window(HWND a, HWND b) {
-    if (!a || !b)
-        return false;
-    if (a == b || IsChild(a, b) || IsChild(b, a))
-        return true;
-
-    HWND root_a = GetAncestor(a, GA_ROOT);
-    HWND root_b = GetAncestor(b, GA_ROOT);
-    return root_a && root_a == root_b;
-}
-
-bool map_client_rect_to_screen(HWND hwnd, const RECT& raw, RECT* mapped) {
-    if (!hwnd || !mapped)
-        return false;
-
-    RECT client = {};
-    if (!GetClientRect(hwnd, &client))
-        return false;
-    if (raw.left < client.left || raw.left > client.right ||
-        raw.top < client.top || raw.top > client.bottom) {
-        return false;
-    }
-
-    POINT points[2] = {
-        { raw.left, raw.top },
-        { raw.right, raw.bottom },
-    };
-    if (!MapWindowPoints(hwnd, nullptr, points, 2))
-        return false;
-
-    SetRect(mapped, points[0].x, points[0].y, points[1].x, points[1].y);
-    normalize_rect_size(mapped);
-    return is_valid_rect(*mapped);
-}
-
-bool normalize_text_ext_rect(ITfContextView* view, RECT* rc) {
-    if (!rc || !is_valid_rect(*rc))
-        return false;
-
-    HWND foreground = GetForegroundWindow();
-    RECT foreground_rect = {};
-    bool has_foreground_rect = foreground && GetWindowRect(foreground, &foreground_rect);
-
-    normalize_rect_size(rc);
-
-    HWND view_hwnd = nullptr;
-    if (view)
-        view->GetWnd(&view_hwnd);
-
-    if (has_foreground_rect && rect_primary_point_in_rect(foreground_rect, *rc)) {
-        return true;
-    }
-
-    RECT mapped = {};
-    if (map_client_rect_to_screen(view_hwnd, *rc, &mapped)) {
-        if (!has_foreground_rect || rect_primary_point_in_rect(foreground_rect, mapped)) {
-            *rc = mapped;
-            return true;
-        }
-    }
-
-    POINT caret = {};
-    bool has_caret = GetCaretPos(&caret) != FALSE;
-    HWND focus = GetFocus();
-    if (!focus && view_hwnd)
-        focus = view_hwnd;
-    if (has_foreground_rect && has_caret && focus && same_root_window(foreground, focus)) {
-        LONG dx = foreground_rect.left - rc->left + caret.x;
-        LONG dy = foreground_rect.top - rc->top + caret.y;
-        OffsetRect(rc, dx, dy);
-        normalize_rect_size(rc);
-        return is_valid_rect(*rc);
-    }
-
-    return MonitorFromRect(rc, MONITOR_DEFAULTTONULL) != nullptr;
 }
 
 bool is_placeholder_caret_rect(ITfContext* context, const RECT& caret_rect) {
@@ -168,8 +67,12 @@ bool get_range_caret_rect(ITfContext* context,
 
     RECT rc = {};
     BOOL clipped = FALSE;
-    bool resolved = SUCCEEDED(pView->GetTextExt(ec, caret_range, &rc, &clipped)) &&
-                    normalize_text_ext_rect(pView, &rc);
+    bool resolved = SUCCEEDED(pView->GetTextExt(ec, caret_range, &rc, &clipped));
+    if (resolved) {
+        HWND view_hwnd = nullptr;
+        pView->GetWnd(&view_hwnd);
+        resolved = cxxime_tsf::normalize_text_ext_rect(view_hwnd, GetForegroundWindow(), &rc);
+    }
     if (resolved)
         *out = rc;
 

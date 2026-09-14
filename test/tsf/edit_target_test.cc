@@ -18,6 +18,69 @@ cxxime_tsf::EditTargetEvidence captured_selection() {
 
 } // namespace
 
+TEST(EditTarget, text_ext_fallback_uses_caret_owner_instead_of_focus) {
+    HWND parent = CreateWindowExW(0, L"STATIC", L"", WS_POPUP | WS_VISIBLE, 100, 100, 700, 200,
+                                  nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    ASSERT_TRUE(parent != nullptr);
+    HWND focus = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE, 30, 30, 200, 60, parent,
+                                 nullptr, GetModuleHandleW(nullptr), nullptr);
+    ASSERT_TRUE(focus != nullptr);
+    HWND caret_owner = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE, 240, 30, 200, 60,
+                                       parent, nullptr, GetModuleHandleW(nullptr), nullptr);
+    ASSERT_TRUE(caret_owner != nullptr);
+
+    SetFocus(focus);
+    ASSERT_EQ(GetFocus(), focus);
+    ASSERT_TRUE(CreateCaret(caret_owner, nullptr, 1, 20) != FALSE);
+    ASSERT_TRUE(SetCaretPos(40, 12) != FALSE);
+    POINT caret = {};
+    ASSERT_TRUE(GetCaretPos(&caret) != FALSE);
+    GUITHREADINFO gui = {sizeof(gui)};
+    ASSERT_TRUE(GetGUIThreadInfo(GetCurrentThreadId(), &gui) != FALSE);
+    ASSERT_EQ(gui.hwndCaret, caret_owner);
+
+    POINT expected = caret;
+    ASSERT_TRUE(ClientToScreen(caret_owner, &expected) != FALSE);
+    RECT actual = {1000, 1000, 1001, 1020};
+    ASSERT_TRUE(cxxime_tsf::normalize_text_ext_rect(focus, parent, &actual));
+    ASSERT_EQ(actual.left, expected.x);
+    ASSERT_EQ(actual.top, expected.y);
+    ASSERT_EQ(actual.right - actual.left, 1);
+
+    RECT native = {0, 0, 1, 20};
+    ASSERT_TRUE(cxxime_tsf::map_current_thread_caret_rect(parent, &native));
+    ASSERT_EQ(native.left, expected.x);
+    ASSERT_EQ(native.top, expected.y);
+
+    DestroyCaret();
+    RECT unavailable = {0, 0, 1, 20};
+    ASSERT_TRUE(!cxxime_tsf::map_current_thread_caret_rect(parent, &unavailable));
+    DestroyWindow(parent);
+}
+
+TEST(EditTarget, native_fallback_uses_top_level_caret_owner) {
+    HWND window = CreateWindowExW(0, L"STATIC", L"", WS_POPUP | WS_VISIBLE, 100, 100, 300, 100,
+                                  nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    ASSERT_TRUE(window != nullptr);
+    HWND focus = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE, 30, 10, 150, 60, window,
+                                 nullptr, GetModuleHandleW(nullptr), nullptr);
+    ASSERT_TRUE(focus != nullptr);
+    SetFocus(focus);
+    ASSERT_EQ(GetFocus(), focus);
+    ASSERT_TRUE(CreateCaret(window, nullptr, 1, 20) != FALSE);
+    ASSERT_TRUE(SetCaretPos(40, 12) != FALSE);
+    POINT caret = {};
+    ASSERT_TRUE(GetCaretPos(&caret) != FALSE);
+    POINT expected = caret;
+    ASSERT_TRUE(ClientToScreen(window, &expected) != FALSE);
+    RECT actual = {};
+    ASSERT_TRUE(cxxime_tsf::resolve_native_caret_rect(window, &actual));
+    ASSERT_EQ(actual.left, expected.x);
+    ASSERT_EQ(actual.top, expected.y);
+    DestroyCaret();
+    DestroyWindow(window);
+}
+
 TEST(EditTarget, unknown_when_inspection_failed) {
     cxxime_tsf::EditTargetEvidence evidence;
     ASSERT_EQ(cxxime_tsf::classify_edit_target(evidence), cxxime_tsf::EditTargetState::Unknown);
