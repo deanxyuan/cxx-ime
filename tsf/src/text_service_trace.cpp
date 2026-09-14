@@ -6,6 +6,7 @@
 
 #include <cxxime/diagnostics_config.h>
 
+#include "edit_target.h"
 #include "tsf_log_writer.h"
 #include "tsf_trace.h"
 
@@ -227,4 +228,23 @@ void TextService::trace_caret_event(const char* action,
                  _candidatePresentation.waiting_for_caret() ? 1 : 0);
     }
     _enqueue_event_trace("caret_position", detail, important);
+}
+
+void TextService::trace_text_ext_rect(const cxxime_tsf::TextExtRectTrace& trace) {
+    char detail[320] = {};
+    const int length = snprintf(
+        detail, sizeof(detail),
+        "branch=%s hr=0x%08lx raw=%ld,%ld,%ld,%ld rc=%ld,%ld,%ld,%ld "
+        "resolved=%d clipped=%d view=%p fg=%p owner=%p focus=%p "
+        "gui=%d getpos=%d/%d pos=%ld,%ld map=%d",
+        trace.branch, static_cast<unsigned long>(trace.text_ext_hr), trace.raw.left, trace.raw.top,
+        trace.raw.right, trace.raw.bottom, trace.result.left, trace.result.top, trace.result.right,
+        trace.result.bottom, trace.resolved ? 1 : 0, trace.clipped ? 1 : 0,
+        static_cast<const void*>(trace.view_hwnd), static_cast<const void*>(trace.foreground_hwnd),
+        static_cast<const void*>(trace.caret_hwnd), static_cast<const void*>(trace.focus_hwnd),
+        trace.gui_info_ok ? 1 : 0, trace.caret_pos_queried ? 1 : 0, trace.caret_pos_ok ? 1 : 0,
+        trace.caret_pos.x, trace.caret_pos.y, trace.caret_map_ok ? 1 : 0);
+    if (length > 0 && length < static_cast<int>(sizeof(detail))) {
+        _enqueue_event_trace("caret_normalize", detail);
+    }
 }

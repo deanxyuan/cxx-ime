@@ -39,6 +39,7 @@ namespace cxxime_tsf {
 
 bool is_valid_caret_rect(const RECT& rect);
 class UiPresentationBatch;
+struct TextExtRectTrace;
 
 }  // namespace cxxime_tsf
 
@@ -137,6 +138,7 @@ public:
                            const RECT* rect,
                            HRESULT hr = S_OK,
                            bool important = false);
+    void trace_text_ext_rect(const cxxime_tsf::TextExtRectTrace& trace);
     HRESULT update_composition(ITfContext* pic,
                                const std::wstring& preedit,
                                size_t preedit_cursor,
@@ -183,7 +185,10 @@ public:
         set_applied_inline_composition_text(L"");
     }
     bool inline_composition_requires_placeholder(const std::wstring& next_text) const;
-    void set_caret_rect(const RECT& rc) { _caretRect = rc; }
+    void set_caret_rect(const RECT& rc) {
+        _caretRect = rc;
+        ++_caretSampleSerial;
+    }
     void update_candidate_position(const RECT& rc,
                                    ITfContext* context = nullptr,
                                    bool from_layout_change = false,
@@ -347,7 +352,7 @@ private:
                                          int page_current,
                                          int page_total,
                                          const std::string& preedit,
-                                         std::size_t preedit_cursor);
+                                         std::size_t preedit_cursor, const RECT& caret);
     void _hide_local_candidate_window();
     void _publish_ui_session_ended();
     void _queue_ui_command(const cxxime::UiCommand& command);
@@ -419,6 +424,7 @@ private:
     cxxime_tsf::InputIndicatorController _inputIndicator;
 
     RECT _caretRect = {};
+    std::uint64_t _caretSampleSerial = 0;
 
     cxxime::UiChannelClient _uiChannel;
     std::mutex _uiCommandMutex;

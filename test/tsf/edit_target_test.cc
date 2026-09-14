@@ -1,5 +1,7 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
+#include <cstring>
+
 #include "support/testutil.h"
 
 #include "edit_target.h"
@@ -42,10 +44,20 @@ TEST(EditTarget, text_ext_fallback_uses_caret_owner_instead_of_focus) {
     POINT expected = caret;
     ASSERT_TRUE(ClientToScreen(caret_owner, &expected) != FALSE);
     RECT actual = {1000, 1000, 1001, 1020};
-    ASSERT_TRUE(cxxime_tsf::normalize_text_ext_rect(focus, parent, &actual));
+    cxxime_tsf::TextExtRectTrace trace;
+    ASSERT_TRUE(cxxime_tsf::normalize_text_ext_rect(focus, parent, &actual, &trace));
     ASSERT_EQ(actual.left, expected.x);
     ASSERT_EQ(actual.top, expected.y);
     ASSERT_EQ(actual.right - actual.left, 1);
+    ASSERT_EQ(std::strcmp(trace.branch, "native_caret"), 0);
+    ASSERT_EQ(trace.caret_hwnd, caret_owner);
+    ASSERT_TRUE(trace.gui_info_ok && trace.caret_pos_ok && trace.caret_map_ok);
+
+    RECT screen = {130, 140, 131, 160};
+    cxxime_tsf::TextExtRectTrace screen_trace;
+    ASSERT_TRUE(cxxime_tsf::normalize_text_ext_rect(focus, parent, &screen, &screen_trace));
+    ASSERT_EQ(std::strcmp(screen_trace.branch, "foreground_screen"), 0);
+    ASSERT_TRUE(!screen_trace.caret_pos_queried);
 
     RECT native = {0, 0, 1, 20};
     ASSERT_TRUE(cxxime_tsf::map_current_thread_caret_rect(parent, &native));
@@ -55,6 +67,12 @@ TEST(EditTarget, text_ext_fallback_uses_caret_owner_instead_of_focus) {
     DestroyCaret();
     RECT unavailable = {0, 0, 1, 20};
     ASSERT_TRUE(!cxxime_tsf::map_current_thread_caret_rect(parent, &unavailable));
+    RECT without_owner = {1000, 1000, 1001, 1020};
+    cxxime_tsf::TextExtRectTrace without_owner_trace;
+    cxxime_tsf::normalize_text_ext_rect(focus, parent, &without_owner, &without_owner_trace);
+    ASSERT_TRUE(without_owner_trace.caret_hwnd == nullptr);
+    ASSERT_TRUE(without_owner_trace.caret_pos_queried);
+    ASSERT_TRUE(!without_owner_trace.caret_map_ok);
     DestroyWindow(parent);
 }
 

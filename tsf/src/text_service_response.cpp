@@ -229,7 +229,7 @@ bool TextService::_apply_engine_response(ITfContext* context, const cxxime::IPCR
                     _update_state_poll_timer();
                     _request_candidate_position_update(context, "show:preedit_layout_follow");
                 } else {
-                    _caretRect = caret_rect;
+                    set_caret_rect(caret_rect);
                     _candidatePresentation.accept_caret(_candidatePresentation.generation());
                     trace_caret_event("show_move", "initial", true, &caret_rect);
                     _show_candidate_window("show:preedit");

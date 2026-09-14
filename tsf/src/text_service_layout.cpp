@@ -98,7 +98,7 @@ void TextService::update_candidate_position(const RECT& rc,
     }
 
     normalize_caret_rect_size(&final_rect);
-    _caretRect = final_rect;
+    set_caret_rect(final_rect);
     const bool ui_element_only = (_activateFlags & TF_TMF_UIELEMENTENABLEDONLY) != 0;
     const bool original_ui_allowed =
         _candidatePresentation.ownership() != cxxime_tsf::CandidateOwnership::kHost;

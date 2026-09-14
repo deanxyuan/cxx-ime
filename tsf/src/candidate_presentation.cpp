@@ -16,6 +16,13 @@ bool same_caret_position(const RECT& left, const RECT& right) {
            std::abs(left.top - right.top) <= kTolerancePx;
 }
 
+bool distant_caret_position(const RECT& left, const RECT& right) {
+    const auto height = (std::max)(20LL, static_cast<long long>(left.bottom) - left.top);
+    const auto dx = std::llabs(static_cast<long long>(left.left) - right.left);
+    const auto dy = std::llabs(static_cast<long long>(left.top) - right.top);
+    return dx > (std::max)(80LL, height * 4) || dy > (std::max)(60LL, height * 2);
+}
+
 cxxime::CandidatePresentationPage project_candidate_page(const cxxime::CandidatePage& page) {
     cxxime::CandidatePresentationPage presentation;
     presentation.page_index = page.page_index;
@@ -222,8 +229,60 @@ bool CandidatePresentation::accept_caret(std::uint64_t generation) {
     return true;
 }
 
+RECT CandidatePresentation::display_caret(const RECT& sample, std::uint64_t sample_serial,
+                                         std::uint64_t target_generation, TimePoint now,
+                                         int confirm_delay_ms) {
+    caret_jump_filtered_ = false;
+    if (!has_reference_caret_ || displayed_target_generation_ != target_generation) {
+        displayed_caret_ = sample;
+        displayed_target_generation_ = target_generation;
+        has_reference_caret_ = true;
+        has_displayed_caret_ = true;
+        caret_jump_pending_ = false;
+        return sample;
+    }
+    if (!distant_caret_position(displayed_caret_, sample)) {
+        caret_jump_filtered_ = caret_jump_pending_;
+        displayed_caret_ = sample;
+        has_displayed_caret_ = true;
+        caret_jump_pending_ = false;
+        return sample;
+    }
+
+    if (caret_jump_pending_) {
+        if (sample_serial != pending_sample_serial_ &&
+            now - pending_caret_since_ >= std::chrono::milliseconds(confirm_delay_ms)) {
+            displayed_caret_ = sample;
+            has_displayed_caret_ = true;
+            caret_jump_pending_ = false;
+            return sample;
+        }
+    } else {
+        pending_caret_since_ = now;
+        pending_sample_serial_ = sample_serial;
+        caret_jump_pending_ = true;
+    }
+
+    pending_caret_ = sample;
+    return has_displayed_caret_ ? displayed_caret_ : sample;
+}
+
+bool CandidatePresentation::accept_pending_caret_after_timeout(TimePoint now, int timeout_ms) {
+    if (!caret_jump_pending_ ||
+        now - pending_caret_since_ < std::chrono::milliseconds(timeout_ms)) {
+        return false;
+    }
+    displayed_caret_ = pending_caret_;
+    has_displayed_caret_ = true;
+    caret_jump_pending_ = false;
+    caret_jump_filtered_ = false;
+    return true;
+}
+
 void CandidatePresentation::finish() {
     advance_generation();
+    has_reference_caret_ = false;
+    has_displayed_caret_ = false;
     content_state_ = CandidateContentState::kEmpty;
     ownership_ = CandidateOwnership::kNone;
     presenter_ = CandidatePresenter::kNone;
@@ -270,6 +329,8 @@ void CandidatePresentation::reset_position_state() {
     has_stale_rect_ = false;
     stale_rect_ = {};
     waiting_since_ = {};
+    caret_jump_pending_ = false;
+    caret_jump_filtered_ = false;
 }
 
 } // namespace cxxime_tsf

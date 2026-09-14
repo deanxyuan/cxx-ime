@@ -13,6 +13,7 @@
 namespace {
 
 constexpr std::size_t kMaxPendingUiCommands = 64;
+constexpr int kCaretJumpConfirmDelayMs = 30;
 
 bool has_flag(const cxxime::UiPresentationSnapshot& snapshot, cxxime::UiSnapshotFlag flag) {
     return (snapshot.flags & cxxime::ui_snapshot_flag(flag)) != 0;
@@ -77,7 +78,8 @@ bool current_process_is_elevated() {
 bool TextService::_present_local_candidate_window(const cxxime::CandidatePresentationPage& page,
                                                   int page_current, int page_total,
                                                   const std::string& preedit,
-                                                  std::size_t preedit_cursor) {
+                                                  std::size_t preedit_cursor,
+                                                  const RECT& caret) {
     if (_localCandidateWindow &&
         _localCandidatePlacementTargetGeneration != _uiTargetGeneration) {
         _localCandidateWindow->reset_placement();
@@ -128,7 +130,7 @@ bool TextService::_present_local_candidate_window(const cxxime::CandidatePresent
         _candidatePresentation.focused_preedit_start(),
         _candidatePresentation.focused_preedit_end(),
         _candidatePresentation.has_syllable_boundaries());
-    _localCandidateWindow->move_to_caret(_caretRect);
+    _localCandidateWindow->move_to_caret(caret);
     _localCandidateWindow->update(page);
     _localCandidateWindow->show();
     if (!_localCandidateWindow->is_visible()) {
@@ -264,11 +266,37 @@ void TextService::_publish_ui_presentation() {
                 cxxime::PreeditPresentationFlag::SyllableBoundaries)
             : 0;
 
-    const bool candidate_visible = snapshot.ownership == cxxime::UiOwnership::kExternal &&
-                                   _candidatePresentation.should_show_external_window(_composing) &&
-        has_flag(snapshot, cxxime::UiSnapshotFlag::kHasCaret);
+    bool candidate_visible = snapshot.ownership == cxxime::UiOwnership::kExternal &&
+                             _candidatePresentation.should_show_external_window(_composing) &&
+                             has_flag(snapshot, cxxime::UiSnapshotFlag::kHasCaret);
     if (candidate_visible) {
-        snapshot.flags |= cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kCandidateVisible);
+        const bool was_pending = _candidatePresentation.caret_jump_pending();
+        snapshot.caret = _candidatePresentation.display_caret(
+            _caretRect, _caretSampleSerial, _uiTargetGeneration,
+            cxxime_tsf::CandidatePresentation::Clock::now(), kCaretJumpConfirmDelayMs);
+        const bool jump_pending = _candidatePresentation.caret_jump_pending();
+        if (!was_pending && jump_pending) {
+            trace_caret_event("jump_hold", "stabilizer", true, &_caretRect, S_FALSE, true);
+        } else if (was_pending && !jump_pending) {
+            if (_candidatePresentation.caret_jump_filtered()) {
+                trace_caret_event("jump_filtered", "stabilizer", true, &snapshot.caret, S_OK,
+                                true);
+                // Temporary cue: a transient distant sample was actually discarded.
+                if (_config.diagnostics.trace_mode >= cxxime::DiagnosticTraceMode::kNormal) {
+                    MessageBeep(MB_ICONEXCLAMATION);
+                }
+            } else {
+                trace_caret_event("jump_confirm", "stabilizer", true, &snapshot.caret, S_OK,
+                                true);
+            }
+        }
+        if (was_pending != jump_pending) {
+            _update_state_poll_timer();
+        }
+        candidate_visible = _candidatePresentation.caret_ready_to_show();
+        if (candidate_visible) {
+            snapshot.flags |= cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kCandidateVisible);
+        }
     }
     const bool local_candidate_preferred =
         is_immersive_mode() || current_process_is_elevated();
@@ -278,7 +306,7 @@ void TextService::_publish_ui_presentation() {
             page, static_cast<int>(snapshot.candidate_page.page_current),
             static_cast<int>(snapshot.candidate_page.page_total),
             _candidatePresentation.popup_preedit(),
-            _candidatePresentation.popup_preedit_cursor());
+            _candidatePresentation.popup_preedit_cursor(), snapshot.caret);
     if (local_candidate_visible) {
         snapshot.flags |=
             cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kTsfLocalCandidate);

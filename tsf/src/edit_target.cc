@@ -85,14 +85,36 @@ bool map_fallback_caret_rect(HWND caret_window, POINT caret, RECT* rect) {
     return true;
 }
 
-bool map_current_thread_caret_rect(HWND foreground, RECT* rect) {
+bool map_current_thread_caret_rect(HWND foreground, RECT* rect, TextExtRectTrace* trace) {
+    if (!rect || !foreground) {
+        return false;
+    }
     GUITHREADINFO gui = {sizeof(gui)};
-    if (!rect || !foreground || !GetGUIThreadInfo(GetCurrentThreadId(), &gui) || !gui.hwndCaret ||
-        !same_root_window(foreground, gui.hwndCaret)) {
+    const bool gui_ok = GetGUIThreadInfo(GetCurrentThreadId(), &gui) != FALSE;
+    if (trace) {
+        trace->gui_info_ok = gui_ok;
+        trace->caret_hwnd = gui_ok ? gui.hwndCaret : nullptr;
+    }
+    if (!gui_ok || !gui.hwndCaret || !same_root_window(foreground, gui.hwndCaret)) {
+        if (trace) {
+            // The old fallback could use GetCaretPos even without a confirmed owner.
+            trace->caret_pos_queried = true;
+            trace->caret_pos_ok = GetCaretPos(&trace->caret_pos) != FALSE;
+        }
         return false;
     }
     POINT caret = {};
-    return GetCaretPos(&caret) && map_fallback_caret_rect(gui.hwndCaret, caret, rect);
+    const bool caret_ok = GetCaretPos(&caret) != FALSE;
+    if (trace) {
+        trace->caret_pos_queried = true;
+        trace->caret_pos_ok = caret_ok;
+        trace->caret_pos = caret;
+    }
+    const bool mapped = caret_ok && map_fallback_caret_rect(gui.hwndCaret, caret, rect);
+    if (trace) {
+        trace->caret_map_ok = mapped;
+    }
+    return mapped;
 }
 
 bool resolve_native_caret_rect(HWND foreground, RECT* out) {
@@ -126,8 +148,12 @@ bool resolve_native_caret_rect(HWND foreground, RECT* out) {
     return false;
 }
 
-bool normalize_text_ext_rect(HWND view_hwnd, HWND foreground, RECT* rc) {
+bool normalize_text_ext_rect(HWND view_hwnd, HWND foreground, RECT* rc,
+                             TextExtRectTrace* trace) {
     if (!rc || !is_valid_rect(*rc)) {
+        if (trace) {
+            trace->branch = "invalid_rect";
+        }
         return false;
     }
     RECT foreground_rect = {};
@@ -135,20 +161,36 @@ bool normalize_text_ext_rect(HWND view_hwnd, HWND foreground, RECT* rc) {
     normalize_rect_size(rc);
 
     if (has_foreground_rect && rect_primary_point_in_rect(foreground_rect, *rc)) {
+        if (trace) {
+            trace->branch = "foreground_screen";
+        }
         return true;
     }
     RECT mapped = {};
     if (map_client_rect_to_screen(view_hwnd, *rc, &mapped)) {
         if (!has_foreground_rect || rect_primary_point_in_rect(foreground_rect, mapped)) {
             *rc = mapped;
+            if (trace) {
+                trace->branch = "view_client";
+            }
             return true;
         }
     }
-    if (has_foreground_rect && map_current_thread_caret_rect(foreground, rc)) {
+    if (has_foreground_rect && trace) {
+        trace->focus_hwnd = GetFocus();
+    }
+    if (has_foreground_rect && map_current_thread_caret_rect(foreground, rc, trace)) {
         normalize_rect_size(rc);
+        if (trace) {
+            trace->branch = "native_caret";
+        }
         return is_valid_rect(*rc);
     }
-    return MonitorFromRect(rc, MONITOR_DEFAULTTONULL) != nullptr;
+    const bool on_monitor = MonitorFromRect(rc, MONITOR_DEFAULTTONULL) != nullptr;
+    if (trace) {
+        trace->branch = on_monitor ? "monitor" : "unresolved";
+    }
+    return on_monitor;
 }
 
 bool text_rect_is_outside_view(HRESULT screen_rect_hr, const RECT& screen_rect,

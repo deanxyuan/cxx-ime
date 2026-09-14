@@ -201,7 +201,7 @@ bool TextService::set_candidate_ui_element_shown(bool show) {
     }
     _candidatePresentation.set_ownership(cxxime_tsf::CandidateOwnership::kExternal);
     if (caret_resolved) {
-        _caretRect = caret_rect;
+        set_caret_rect(caret_rect);
         _candidatePresentation.accept_caret(_candidatePresentation.generation());
         trace_caret_event("show_move", "ui_element_show", true, &caret_rect);
     } else {

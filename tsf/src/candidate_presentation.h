@@ -76,6 +76,12 @@ public:
                                        int pending_delay_ms, int reposition_delay_ms) const;
     bool complete_composition_restart(std::uint64_t generation);
     bool accept_caret(std::uint64_t generation);
+    RECT display_caret(const RECT& sample, std::uint64_t sample_serial,
+                       std::uint64_t target_generation, TimePoint now, int confirm_delay_ms);
+    bool accept_pending_caret_after_timeout(TimePoint now, int timeout_ms);
+    bool caret_jump_pending() const { return caret_jump_pending_; }
+    bool caret_jump_filtered() const { return caret_jump_filtered_; }
+    bool caret_ready_to_show() const { return has_displayed_caret_; }
     void finish();
 
     CandidateContentState content_state() const { return content_state_; }
@@ -137,6 +143,15 @@ private:
     bool has_stale_rect_ = false;
     RECT stale_rect_ = {};
     TimePoint waiting_since_ = {};
+    RECT displayed_caret_ = {};
+    RECT pending_caret_ = {};
+    TimePoint pending_caret_since_ = {};
+    std::uint64_t displayed_target_generation_ = 0;
+    std::uint64_t pending_sample_serial_ = 0;
+    bool has_reference_caret_ = false;
+    bool has_displayed_caret_ = false;
+    bool caret_jump_pending_ = false;
+    bool caret_jump_filtered_ = false;
 };
 
 } // namespace cxxime_tsf

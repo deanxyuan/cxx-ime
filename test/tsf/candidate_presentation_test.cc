@@ -37,6 +37,81 @@ TEST(CandidatePresentation, external_ready_expects_window) {
     ASSERT_TRUE(presentation.should_show_external_window(true));
 }
 
+TEST(CandidatePresentation, caret_jump_needs_fresh_confirmation) {
+    cxxime_tsf::CandidatePresentation presentation;
+    using TimePoint = cxxime_tsf::CandidatePresentation::TimePoint;
+    const auto start = TimePoint(std::chrono::milliseconds(100));
+    const RECT initial = {772, 903, 783, 928};
+    const RECT wrong = {508, 728, 519, 753};
+    const RECT moved = {508, 803, 519, 828};
+    const RECT moving = {518, 803, 529, 828};
+    const RECT nearby = {530, 803, 541, 828};
+
+    ASSERT_EQ(presentation.display_caret(initial, 1, 1, start, 30).left, initial.left);
+    ASSERT_EQ(presentation.display_caret(wrong, 2, 1, start, 30).left, initial.left);
+    ASSERT_TRUE(presentation.caret_jump_pending());
+    ASSERT_TRUE(!presentation.caret_jump_filtered());
+    ASSERT_TRUE(presentation.caret_ready_to_show());
+    ASSERT_EQ(presentation.display_caret(
+        wrong, 2, 1, start + std::chrono::milliseconds(60), 30).left, initial.left);
+    ASSERT_TRUE(presentation.caret_ready_to_show());
+    ASSERT_EQ(presentation.display_caret(
+        initial, 3, 1, start + std::chrono::milliseconds(61), 30).left, initial.left);
+    ASSERT_TRUE(!presentation.caret_jump_pending());
+    ASSERT_TRUE(presentation.caret_jump_filtered());
+    ASSERT_TRUE(presentation.caret_ready_to_show());
+
+    ASSERT_EQ(presentation.display_caret(
+        moved, 4, 1, start + std::chrono::milliseconds(70), 30).left, initial.left);
+    ASSERT_EQ(presentation.display_caret(
+        moving, 5, 1, start + std::chrono::milliseconds(99), 30).left, initial.left);
+    ASSERT_EQ(presentation.display_caret(
+        moved, 6, 1, start + std::chrono::milliseconds(100), 30).left, moved.left);
+    ASSERT_TRUE(!presentation.caret_jump_pending());
+    ASSERT_TRUE(!presentation.caret_jump_filtered());
+    ASSERT_EQ(presentation.display_caret(
+        nearby, 7, 1, start + std::chrono::milliseconds(101), 30).left, nearby.left);
+    ASSERT_EQ(presentation.display_caret(
+        wrong, 8, 2, start + std::chrono::milliseconds(102), 30).left, wrong.left);
+}
+
+TEST(CandidatePresentation, unconfirmed_caret_jump_has_bounded_wait) {
+    cxxime_tsf::CandidatePresentation presentation;
+    using TimePoint = cxxime_tsf::CandidatePresentation::TimePoint;
+    const auto start = TimePoint(std::chrono::milliseconds(100));
+    const RECT initial = {772, 903, 783, 928};
+    const RECT moved = {508, 728, 519, 753};
+
+    presentation.display_caret(initial, 1, 1, start, 30);
+    ASSERT_EQ(presentation.display_caret(moved, 2, 1, start, 30).left, initial.left);
+    ASSERT_TRUE(presentation.caret_ready_to_show());
+    ASSERT_TRUE(!presentation.accept_pending_caret_after_timeout(
+        start + std::chrono::milliseconds(89), 90));
+    ASSERT_TRUE(presentation.accept_pending_caret_after_timeout(
+        start + std::chrono::milliseconds(90), 90));
+    ASSERT_TRUE(presentation.caret_ready_to_show());
+    ASSERT_TRUE(!presentation.caret_jump_pending());
+    ASSERT_TRUE(!presentation.caret_jump_filtered());
+    ASSERT_EQ(presentation.display_caret(
+        moved, 2, 1, start + std::chrono::milliseconds(90), 30).left, moved.left);
+}
+
+TEST(CandidatePresentation, finished_composition_does_not_constrain_next_caret) {
+    cxxime_tsf::CandidatePresentation presentation;
+    using TimePoint = cxxime_tsf::CandidatePresentation::TimePoint;
+    const auto start = TimePoint(std::chrono::milliseconds(100));
+    const RECT initial = {772, 903, 783, 928};
+    const RECT moved = {1679, 1244, 1694, 1279};
+
+    presentation.display_caret(initial, 1, 1, start, 30);
+    presentation.finish();
+    ASSERT_EQ(presentation.display_caret(
+        moved, 2, 1, start + std::chrono::milliseconds(1), 30).left, moved.left);
+    ASSERT_TRUE(presentation.caret_ready_to_show());
+    ASSERT_TRUE(!presentation.caret_jump_pending());
+    ASSERT_TRUE(!presentation.caret_jump_filtered());
+}
+
 TEST(CandidatePresentation, content_update_without_focus_keeps_preedit_unfocused) {
     cxxime_tsf::CandidatePresentation presentation;
     presentation.update_content(page_with_candidate("candidate"), "ni", 2, 1, 1);

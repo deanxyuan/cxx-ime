@@ -4,6 +4,8 @@
 
 #include <climits>
 
+#include <cxxime/diagnostics_config.h>
+
 #include "edit_target.h"
 #include "globals.h"
 #include "text_service.h"
@@ -45,7 +47,8 @@ bool is_placeholder_caret_rect(ITfContext* context, const RECT& caret_rect) {
                                     foreground_rect, caret_rect));
 }
 
-bool get_range_caret_rect(ITfContext* context,
+bool get_range_caret_rect(TextService* service,
+                          ITfContext* context,
                           TfEditCookie ec,
                           ITfRange* range,
                           TfAnchor anchor,
@@ -67,11 +70,31 @@ bool get_range_caret_rect(ITfContext* context,
 
     RECT rc = {};
     BOOL clipped = FALSE;
-    bool resolved = SUCCEEDED(pView->GetTextExt(ec, caret_range, &rc, &clipped));
+    const HRESULT text_ext_hr = pView->GetTextExt(ec, caret_range, &rc, &clipped);
+    bool resolved = SUCCEEDED(text_ext_hr);
+    cxxime_tsf::TextExtRectTrace trace;
+    const auto trace_mode = cxxime::diagnostics_config().trace_mode;
+    const bool trace_enabled = service && trace_mode >= cxxime::DiagnosticTraceMode::kNormal;
+    if (trace_enabled) {
+        trace.raw = rc;
+        trace.text_ext_hr = text_ext_hr;
+        trace.clipped = clipped != FALSE;
+    }
     if (resolved) {
         HWND view_hwnd = nullptr;
         pView->GetWnd(&view_hwnd);
-        resolved = cxxime_tsf::normalize_text_ext_rect(view_hwnd, GetForegroundWindow(), &rc);
+        HWND foreground = GetForegroundWindow();
+        if (trace_enabled) {
+            trace.view_hwnd = view_hwnd;
+            trace.foreground_hwnd = foreground;
+        }
+        resolved = cxxime_tsf::normalize_text_ext_rect(
+            view_hwnd, foreground, &rc, trace_enabled ? &trace : nullptr);
+    }
+    if (trace_enabled) {
+        trace.result = rc;
+        trace.resolved = resolved;
+        service->trace_text_ext_rect(trace);
     }
     if (resolved)
         *out = rc;
@@ -88,7 +111,7 @@ bool resolve_caret_rect_from_range(TextService* service,
                                    TfAnchor anchor,
                                    RECT* out) {
     RECT rc = {};
-    if (!get_range_caret_rect(context, ec, range, anchor, &rc))
+    if (!get_range_caret_rect(service, context, ec, range, anchor, &rc))
         return false;
     if (is_placeholder_caret_rect(context, rc)) {
         if (service) {

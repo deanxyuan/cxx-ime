@@ -54,6 +54,24 @@ struct EditTargetEvidence {
     bool has_meaningful_text_rect = false;
 };
 
+struct TextExtRectTrace {
+    RECT raw = {};
+    RECT result = {};
+    HWND view_hwnd = nullptr;
+    HWND foreground_hwnd = nullptr;
+    HWND caret_hwnd = nullptr;
+    HWND focus_hwnd = nullptr;
+    POINT caret_pos = {};
+    HRESULT text_ext_hr = E_UNEXPECTED;
+    const char* branch = "text_ext_failed";
+    bool clipped = false;
+    bool resolved = false;
+    bool gui_info_ok = false;
+    bool caret_pos_queried = false;
+    bool caret_pos_ok = false;
+    bool caret_map_ok = false;
+};
+
 bool text_rect_is_outside_view(HRESULT screen_rect_hr, const RECT& screen_rect,
     HRESULT text_rect_hr, const RECT& text_rect, bool text_clipped);
 bool text_rect_is_placeholder(const RECT& view_rect, const RECT& text_rect);
@@ -61,9 +79,11 @@ bool text_rect_requires_composition_refresh(const RECT& view_rect, const RECT& t
 bool text_rect_is_meaningful(HRESULT text_rect_hr, const RECT& text_rect,
     bool placeholder_text_rect);
 bool map_fallback_caret_rect(HWND caret_window, POINT caret, RECT* rect);
-bool map_current_thread_caret_rect(HWND foreground, RECT* rect);
+bool map_current_thread_caret_rect(HWND foreground, RECT* rect,
+                                   TextExtRectTrace* trace = nullptr);
 bool resolve_native_caret_rect(HWND foreground, RECT* rect);
-bool normalize_text_ext_rect(HWND view_hwnd, HWND foreground, RECT* rect);
+bool normalize_text_ext_rect(HWND view_hwnd, HWND foreground, RECT* rect,
+                             TextExtRectTrace* trace = nullptr);
 EditTargetState classify_edit_target(const EditTargetEvidence& evidence);
 EditTargetState inspect_edit_target(ITfContext* context, TfClientId client_id,
     EditTargetEvidence* evidence);

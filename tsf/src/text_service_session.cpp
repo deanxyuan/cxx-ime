@@ -17,6 +17,7 @@ constexpr UINT kIpcHeartbeatIntervalMs = 1500;
 constexpr auto kIpcHeartbeatInterval = std::chrono::milliseconds(kIpcHeartbeatIntervalMs);
 constexpr int kTsfIpcTimeoutMs = 800;
 constexpr UINT kStatePollFastIntervalMs = 30;
+constexpr int kCaretJumpMaxWaitMs = 90;
 constexpr UINT kEditTargetValidationIntervalMs = 250;
 constexpr unsigned int kEditTargetValidationFailureLimit = 2;
 constexpr UINT kInputIndicatorRefreshRetryDelaysMs[] = {100, 500, 2000, 5000};
@@ -310,7 +311,8 @@ void TextService::_update_state_poll_timer() {
     const bool track_candidate =
         _inputFocused &&
         ((_candidatePresentation.external_window_expected() &&
-         _candidatePresentation.waiting_for_caret()));
+          (_candidatePresentation.waiting_for_caret() ||
+           _candidatePresentation.caret_jump_pending())));
     const bool validate_edit_target =
         _inputFocused && _effectiveContext && _effectiveEditTarget.valid() &&
         _config.status_window.enable;
@@ -384,6 +386,23 @@ void TextService::_poll_runtime_state() {
     if (_composing && _candidatePresentation.external_window_expected() &&
          _candidatePresentation.waiting_for_caret()) {
         _follow_native_caret();
+    }
+    if (_candidatePresentation.external_window_expected() &&
+        _candidatePresentation.caret_jump_pending() &&
+        !_candidatePresentation.waiting_for_caret() &&
+        _candidatePresentation.accept_pending_caret_after_timeout(
+            cxxime_tsf::CandidatePresentation::Clock::now(), kCaretJumpMaxWaitMs)) {
+        trace_caret_event("jump_timeout", "stabilizer", true, &_caretRect, S_FALSE, true);
+        _publish_ui_presentation();
+    }
+    if (_candidatePresentation.external_window_expected() &&
+        _candidatePresentation.caret_jump_pending() &&
+        !_candidatePresentation.waiting_for_caret()) {
+        ITfContext* context = _current_edit_context_for_composition();
+        if (context) {
+            _request_candidate_position_update(context, "caret_jump_confirm");
+            context->Release();
+        }
     }
     if (_candidatePresentation.external_window_expected() &&
         _candidatePresentation.waiting_for_caret()) {
