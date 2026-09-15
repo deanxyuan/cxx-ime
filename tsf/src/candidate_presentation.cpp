@@ -230,8 +230,7 @@ bool CandidatePresentation::accept_caret(std::uint64_t generation) {
 }
 
 RECT CandidatePresentation::display_caret(const RECT& sample, std::uint64_t sample_serial,
-                                         std::uint64_t target_generation, TimePoint now,
-                                         int confirm_delay_ms) {
+                                         std::uint64_t target_generation, TimePoint now) {
     caret_jump_filtered_ = false;
     if (!has_reference_caret_ || displayed_target_generation_ != target_generation) {
         displayed_caret_ = sample;
@@ -251,7 +250,7 @@ RECT CandidatePresentation::display_caret(const RECT& sample, std::uint64_t samp
 
     if (caret_jump_pending_) {
         if (sample_serial != pending_sample_serial_ &&
-            now - pending_caret_since_ >= std::chrono::milliseconds(confirm_delay_ms)) {
+            now - pending_caret_since_ >= kCaretJumpConfirmDelay) {
             displayed_caret_ = sample;
             has_displayed_caret_ = true;
             caret_jump_pending_ = false;
@@ -267,9 +266,8 @@ RECT CandidatePresentation::display_caret(const RECT& sample, std::uint64_t samp
     return has_displayed_caret_ ? displayed_caret_ : sample;
 }
 
-bool CandidatePresentation::accept_pending_caret_after_timeout(TimePoint now, int timeout_ms) {
-    if (!caret_jump_pending_ ||
-        now - pending_caret_since_ < std::chrono::milliseconds(timeout_ms)) {
+bool CandidatePresentation::accept_pending_caret_after_timeout(TimePoint now) {
+    if (!caret_jump_pending_ || now - pending_caret_since_ < kCaretJumpMaxWait) {
         return false;
     }
     displayed_caret_ = pending_caret_;

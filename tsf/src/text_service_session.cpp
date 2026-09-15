@@ -17,7 +17,6 @@ constexpr UINT kIpcHeartbeatIntervalMs = 1500;
 constexpr auto kIpcHeartbeatInterval = std::chrono::milliseconds(kIpcHeartbeatIntervalMs);
 constexpr int kTsfIpcTimeoutMs = 800;
 constexpr UINT kStatePollFastIntervalMs = 30;
-constexpr int kCaretJumpMaxWaitMs = 90;
 constexpr UINT kEditTargetValidationIntervalMs = 250;
 constexpr unsigned int kEditTargetValidationFailureLimit = 2;
 constexpr UINT kInputIndicatorRefreshRetryDelaysMs[] = {100, 500, 2000, 5000};
@@ -391,7 +390,7 @@ void TextService::_poll_runtime_state() {
         _candidatePresentation.caret_jump_pending() &&
         !_candidatePresentation.waiting_for_caret() &&
         _candidatePresentation.accept_pending_caret_after_timeout(
-            cxxime_tsf::CandidatePresentation::Clock::now(), kCaretJumpMaxWaitMs)) {
+            cxxime_tsf::CandidatePresentation::Clock::now())) {
         trace_caret_event("jump_timeout", "stabilizer", true, &_caretRect, S_FALSE, true);
         _publish_ui_presentation();
     }

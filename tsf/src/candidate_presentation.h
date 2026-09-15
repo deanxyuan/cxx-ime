@@ -77,8 +77,8 @@ public:
     bool complete_composition_restart(std::uint64_t generation);
     bool accept_caret(std::uint64_t generation);
     RECT display_caret(const RECT& sample, std::uint64_t sample_serial,
-                       std::uint64_t target_generation, TimePoint now, int confirm_delay_ms);
-    bool accept_pending_caret_after_timeout(TimePoint now, int timeout_ms);
+                       std::uint64_t target_generation, TimePoint now);
+    bool accept_pending_caret_after_timeout(TimePoint now);
     bool caret_jump_pending() const { return caret_jump_pending_; }
     bool caret_jump_filtered() const { return caret_jump_filtered_; }
     bool caret_ready_to_show() const { return has_displayed_caret_; }
@@ -117,6 +117,11 @@ public:
     bool should_show_external_window(bool composing) const;
 
 private:
+    // Some hosts briefly report a distant text extent during layout. Require a later sample
+    // before moving the window, but bound the hold so a legitimate caret move cannot stall.
+    static constexpr auto kCaretJumpConfirmDelay = std::chrono::milliseconds(30);
+    static constexpr auto kCaretJumpMaxWait = std::chrono::milliseconds(90);
+
     void advance_generation();
     void reset_position_state();
 

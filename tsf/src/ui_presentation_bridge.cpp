@@ -13,7 +13,6 @@
 namespace {
 
 constexpr std::size_t kMaxPendingUiCommands = 64;
-constexpr int kCaretJumpConfirmDelayMs = 30;
 
 bool has_flag(const cxxime::UiPresentationSnapshot& snapshot, cxxime::UiSnapshotFlag flag) {
     return (snapshot.flags & cxxime::ui_snapshot_flag(flag)) != 0;
@@ -273,7 +272,7 @@ void TextService::_publish_ui_presentation() {
         const bool was_pending = _candidatePresentation.caret_jump_pending();
         snapshot.caret = _candidatePresentation.display_caret(
             _caretRect, _caretSampleSerial, _uiTargetGeneration,
-            cxxime_tsf::CandidatePresentation::Clock::now(), kCaretJumpConfirmDelayMs);
+            cxxime_tsf::CandidatePresentation::Clock::now());
         const bool jump_pending = _candidatePresentation.caret_jump_pending();
         if (!was_pending && jump_pending) {
             trace_caret_event("jump_hold", "stabilizer", true, &_caretRect, S_FALSE, true);
@@ -281,10 +280,6 @@ void TextService::_publish_ui_presentation() {
             if (_candidatePresentation.caret_jump_filtered()) {
                 trace_caret_event("jump_filtered", "stabilizer", true, &snapshot.caret, S_OK,
                                 true);
-                // Temporary cue: a transient distant sample was actually discarded.
-                if (_config.diagnostics.trace_mode >= cxxime::DiagnosticTraceMode::kNormal) {
-                    MessageBeep(MB_ICONEXCLAMATION);
-                }
             } else {
                 trace_caret_event("jump_confirm", "stabilizer", true, &snapshot.caret, S_OK,
                                 true);

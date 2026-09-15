@@ -47,32 +47,32 @@ TEST(CandidatePresentation, caret_jump_needs_fresh_confirmation) {
     const RECT moving = {518, 803, 529, 828};
     const RECT nearby = {530, 803, 541, 828};
 
-    ASSERT_EQ(presentation.display_caret(initial, 1, 1, start, 30).left, initial.left);
-    ASSERT_EQ(presentation.display_caret(wrong, 2, 1, start, 30).left, initial.left);
+    ASSERT_EQ(presentation.display_caret(initial, 1, 1, start).left, initial.left);
+    ASSERT_EQ(presentation.display_caret(wrong, 2, 1, start).left, initial.left);
     ASSERT_TRUE(presentation.caret_jump_pending());
     ASSERT_TRUE(!presentation.caret_jump_filtered());
     ASSERT_TRUE(presentation.caret_ready_to_show());
     ASSERT_EQ(presentation.display_caret(
-        wrong, 2, 1, start + std::chrono::milliseconds(60), 30).left, initial.left);
+        wrong, 2, 1, start + std::chrono::milliseconds(60)).left, initial.left);
     ASSERT_TRUE(presentation.caret_ready_to_show());
     ASSERT_EQ(presentation.display_caret(
-        initial, 3, 1, start + std::chrono::milliseconds(61), 30).left, initial.left);
+        initial, 3, 1, start + std::chrono::milliseconds(61)).left, initial.left);
     ASSERT_TRUE(!presentation.caret_jump_pending());
     ASSERT_TRUE(presentation.caret_jump_filtered());
     ASSERT_TRUE(presentation.caret_ready_to_show());
 
     ASSERT_EQ(presentation.display_caret(
-        moved, 4, 1, start + std::chrono::milliseconds(70), 30).left, initial.left);
+        moved, 4, 1, start + std::chrono::milliseconds(70)).left, initial.left);
     ASSERT_EQ(presentation.display_caret(
-        moving, 5, 1, start + std::chrono::milliseconds(99), 30).left, initial.left);
+        moving, 5, 1, start + std::chrono::milliseconds(99)).left, initial.left);
     ASSERT_EQ(presentation.display_caret(
-        moved, 6, 1, start + std::chrono::milliseconds(100), 30).left, moved.left);
+        moved, 6, 1, start + std::chrono::milliseconds(100)).left, moved.left);
     ASSERT_TRUE(!presentation.caret_jump_pending());
     ASSERT_TRUE(!presentation.caret_jump_filtered());
     ASSERT_EQ(presentation.display_caret(
-        nearby, 7, 1, start + std::chrono::milliseconds(101), 30).left, nearby.left);
+        nearby, 7, 1, start + std::chrono::milliseconds(101)).left, nearby.left);
     ASSERT_EQ(presentation.display_caret(
-        wrong, 8, 2, start + std::chrono::milliseconds(102), 30).left, wrong.left);
+        wrong, 8, 2, start + std::chrono::milliseconds(102)).left, wrong.left);
 }
 
 TEST(CandidatePresentation, unconfirmed_caret_jump_has_bounded_wait) {
@@ -82,18 +82,18 @@ TEST(CandidatePresentation, unconfirmed_caret_jump_has_bounded_wait) {
     const RECT initial = {772, 903, 783, 928};
     const RECT moved = {508, 728, 519, 753};
 
-    presentation.display_caret(initial, 1, 1, start, 30);
-    ASSERT_EQ(presentation.display_caret(moved, 2, 1, start, 30).left, initial.left);
+    presentation.display_caret(initial, 1, 1, start);
+    ASSERT_EQ(presentation.display_caret(moved, 2, 1, start).left, initial.left);
     ASSERT_TRUE(presentation.caret_ready_to_show());
     ASSERT_TRUE(!presentation.accept_pending_caret_after_timeout(
-        start + std::chrono::milliseconds(89), 90));
+        start + std::chrono::milliseconds(89)));
     ASSERT_TRUE(presentation.accept_pending_caret_after_timeout(
-        start + std::chrono::milliseconds(90), 90));
+        start + std::chrono::milliseconds(90)));
     ASSERT_TRUE(presentation.caret_ready_to_show());
     ASSERT_TRUE(!presentation.caret_jump_pending());
     ASSERT_TRUE(!presentation.caret_jump_filtered());
     ASSERT_EQ(presentation.display_caret(
-        moved, 2, 1, start + std::chrono::milliseconds(90), 30).left, moved.left);
+        moved, 2, 1, start + std::chrono::milliseconds(90)).left, moved.left);
 }
 
 TEST(CandidatePresentation, finished_composition_does_not_constrain_next_caret) {
@@ -103,10 +103,10 @@ TEST(CandidatePresentation, finished_composition_does_not_constrain_next_caret) 
     const RECT initial = {772, 903, 783, 928};
     const RECT moved = {1679, 1244, 1694, 1279};
 
-    presentation.display_caret(initial, 1, 1, start, 30);
+    presentation.display_caret(initial, 1, 1, start);
     presentation.finish();
     ASSERT_EQ(presentation.display_caret(
-        moved, 2, 1, start + std::chrono::milliseconds(1), 30).left, moved.left);
+        moved, 2, 1, start + std::chrono::milliseconds(1)).left, moved.left);
     ASSERT_TRUE(presentation.caret_ready_to_show());
     ASSERT_TRUE(!presentation.caret_jump_pending());
     ASSERT_TRUE(!presentation.caret_jump_filtered());
