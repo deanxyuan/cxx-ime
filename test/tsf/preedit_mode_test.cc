@@ -97,10 +97,15 @@ TEST(PreeditMode, segmented_preview_keeps_active_code_without_candidates) {
 }
 
 TEST(PreeditMode, commit_and_continue_waits_for_the_post_commit_caret) {
-    ASSERT_TRUE(cxxime_tsf::should_defer_candidate_show(true, true, true));
-    ASSERT_TRUE(cxxime_tsf::should_defer_candidate_show(false, false, false));
-    ASSERT_TRUE(!cxxime_tsf::should_defer_candidate_show(false, true, false));
-    ASSERT_TRUE(!cxxime_tsf::should_defer_candidate_show(false, false, true));
+    ASSERT_TRUE(cxxime_tsf::should_defer_candidate_show(true, false, true, true));
+    ASSERT_TRUE(cxxime_tsf::should_defer_candidate_show(false, false, false, false));
+    ASSERT_TRUE(!cxxime_tsf::should_defer_candidate_show(false, false, true, false));
+    ASSERT_TRUE(!cxxime_tsf::should_defer_candidate_show(false, false, false, true));
+}
+
+TEST(PreeditMode, new_composition_waits_for_layout_without_a_native_caret) {
+    ASSERT_TRUE(cxxime_tsf::should_defer_candidate_show(false, true, true, false));
+    ASSERT_TRUE(!cxxime_tsf::should_defer_candidate_show(false, true, true, true));
 }
 
 // -- inline_preedit=false: no TSF composition, candidate window shows raw input --

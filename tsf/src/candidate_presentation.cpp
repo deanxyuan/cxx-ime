@@ -56,6 +56,9 @@ void CandidatePresentation::update_content(const cxxime::CandidatePresentationPa
                                            std::size_t focused_preedit_end,
                                            bool has_syllable_boundaries) {
     advance_generation();
+    if (initial_layout_wait_) {
+        caret_jump_pending_ = false;
+    }
     page_ = page;
     page_current_ = page_current;
     page_total_ = page_total;
@@ -148,6 +151,7 @@ void CandidatePresentation::begin_waiting_for_caret(bool reposition, const RECT*
     if (position_state_ != CandidatePositionState::kWaitingCaret) {
         position_state_ = CandidatePositionState::kWaitingCaret;
         reposition_wait_ = false;
+        initial_layout_wait_ = false;
         has_stale_rect_ = false;
         stale_rect_ = {};
         waiting_since_ = now;
@@ -159,6 +163,28 @@ void CandidatePresentation::begin_waiting_for_caret(bool reposition, const RECT*
     }
 }
 
+void CandidatePresentation::begin_waiting_for_initial_layout(const RECT& provisional_rect,
+                                                             TimePoint now) {
+    position_state_ = CandidatePositionState::kWaitingCaret;
+    reposition_wait_ = false;
+    initial_layout_wait_ = true;
+    has_stale_rect_ = true;
+    stale_rect_ = provisional_rect;
+    waiting_since_ = now;
+    has_reference_caret_ = false;
+    has_displayed_caret_ = false;
+    caret_jump_pending_ = false;
+    caret_jump_filtered_ = false;
+}
+
+void CandidatePresentation::update_initial_layout_provisional(const RECT& provisional_rect) {
+    if (!initial_layout_pending()) {
+        return;
+    }
+    stale_rect_ = provisional_rect;
+    has_stale_rect_ = true;
+}
+
 bool CandidatePresentation::pending_caret_fallback_due(TimePoint now, int delay_ms) const {
     return waiting_for_caret() &&
         caret_resolution_allowed_ && !reposition_wait_ && !has_stale_rect_ &&
@@ -166,9 +192,22 @@ bool CandidatePresentation::pending_caret_fallback_due(TimePoint now, int delay_
             now - waiting_since_ >= std::chrono::milliseconds(delay_ms);
 }
 
+bool CandidatePresentation::accept_provisional_caret_after_timeout(TimePoint now,
+                                                                   RECT* caret_rect) {
+    if (!caret_rect || !waiting_for_caret() || !caret_resolution_allowed_ ||
+        !initial_layout_wait_ || !has_stale_rect_ ||
+        now - waiting_since_ < kCaretSampleMaxWait) {
+        return false;
+    }
+    *caret_rect = stale_rect_;
+    reset_position_state();
+    return true;
+}
+
 void CandidatePresentation::begin_composition_restart(TimePoint now) {
     position_state_ = CandidatePositionState::kWaitingCaret;
     reposition_wait_ = true;
+    initial_layout_wait_ = false;
     has_stale_rect_ = false;
     stale_rect_ = {};
     waiting_since_ = now;
@@ -188,17 +227,35 @@ bool CandidatePresentation::should_keep_waiting_for_caret(const RECT& caret_rect
                                                           bool from_layout_change,
                                                           bool used_trusted_native, TimePoint now,
                                                           int pending_delay_ms,
-                                                          int reposition_delay_ms) const {
+                                                          int reposition_delay_ms) {
     if (!waiting_for_caret()) {
         return false;
     }
     if (!caret_resolution_allowed_) {
         return true;
     }
-    if (has_stale_rect_ && !same_caret_position(caret_rect, stale_rect_)) {
+    if (waiting_since_.time_since_epoch().count() == 0) {
         return false;
     }
-    if (waiting_since_.time_since_epoch().count() == 0) {
+    if (initial_layout_wait_) {
+        if (used_trusted_native) {
+            return false;
+        }
+        if (!distant_caret_position(stale_rect_, caret_rect)) {
+            caret_jump_pending_ = false;
+            return now - waiting_since_ < kCaretSampleConfirmDelay;
+        }
+        // A layout notification can still carry a transient extent. Confirm a distant
+        // first position with a later consistent sample before making it visible.
+        if (caret_jump_pending_ && same_caret_position(pending_caret_, caret_rect)) {
+            return now - pending_caret_since_ < kCaretSampleConfirmDelay;
+        }
+        pending_caret_ = caret_rect;
+        pending_caret_since_ = now;
+        caret_jump_pending_ = true;
+        return true;
+    }
+    if (has_stale_rect_ && !same_caret_position(caret_rect, stale_rect_)) {
         return false;
     }
 
@@ -225,7 +282,9 @@ bool CandidatePresentation::accept_caret(std::uint64_t generation) {
     if (!caret_resolution_allowed_ || !generation_matches(generation)) {
         return false;
     }
-    reset_position_state();
+    if (waiting_for_caret()) {
+        reset_position_state();
+    }
     return true;
 }
 
@@ -250,7 +309,7 @@ RECT CandidatePresentation::display_caret(const RECT& sample, std::uint64_t samp
 
     if (caret_jump_pending_) {
         if (sample_serial != pending_sample_serial_ &&
-            now - pending_caret_since_ >= kCaretJumpConfirmDelay) {
+            now - pending_caret_since_ >= kCaretSampleConfirmDelay) {
             displayed_caret_ = sample;
             has_displayed_caret_ = true;
             caret_jump_pending_ = false;
@@ -267,7 +326,7 @@ RECT CandidatePresentation::display_caret(const RECT& sample, std::uint64_t samp
 }
 
 bool CandidatePresentation::accept_pending_caret_after_timeout(TimePoint now) {
-    if (!caret_jump_pending_ || now - pending_caret_since_ < kCaretJumpMaxWait) {
+    if (!caret_jump_pending_ || now - pending_caret_since_ < kCaretSampleMaxWait) {
         return false;
     }
     displayed_caret_ = pending_caret_;
@@ -324,6 +383,7 @@ void CandidatePresentation::reset_position_state() {
     composition_restart_active_ = false;
     caret_resolution_allowed_ = true;
     reposition_wait_ = false;
+    initial_layout_wait_ = false;
     has_stale_rect_ = false;
     stale_rect_ = {};
     waiting_since_ = {};

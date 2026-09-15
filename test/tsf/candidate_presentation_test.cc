@@ -112,6 +112,132 @@ TEST(CandidatePresentation, finished_composition_does_not_constrain_next_caret) 
     ASSERT_TRUE(!presentation.caret_jump_filtered());
 }
 
+TEST(CandidatePresentation, initial_layout_replaces_provisional_caret_without_jump_hold) {
+    cxxime_tsf::CandidatePresentation presentation;
+    using TimePoint = cxxime_tsf::CandidatePresentation::TimePoint;
+    const auto start = TimePoint(std::chrono::milliseconds(100));
+    const RECT provisional = {65, 649, 76, 674};
+    const RECT laid_out = {109, 799, 120, 824};
+
+    presentation.update_content(page_with_candidate("candidate"), "p", 1, 1, 1);
+    presentation.set_ownership(cxxime_tsf::CandidateOwnership::kExternal);
+    presentation.begin_waiting_for_initial_layout(provisional, start);
+
+    ASSERT_TRUE(!presentation.should_show_external_window(true));
+    ASSERT_TRUE(presentation.should_keep_waiting_for_caret(
+        laid_out, false, false, start + std::chrono::milliseconds(34), 30, 150));
+    ASSERT_TRUE(!presentation.should_keep_waiting_for_caret(
+        laid_out, false, false, start + std::chrono::milliseconds(64), 30, 150));
+    ASSERT_TRUE(presentation.accept_caret(presentation.generation()));
+    ASSERT_EQ(presentation.display_caret(laid_out, 1, 1, start + std::chrono::milliseconds(64)).top,
+              laid_out.top);
+    ASSERT_TRUE(!presentation.caret_jump_pending());
+    ASSERT_TRUE(presentation.should_show_external_window(true));
+}
+
+TEST(CandidatePresentation, initial_layout_ignores_the_next_synchronous_extent) {
+    cxxime_tsf::CandidatePresentation presentation;
+    using TimePoint = cxxime_tsf::CandidatePresentation::TimePoint;
+    const auto start = TimePoint(std::chrono::milliseconds(100));
+    const RECT first_sync = {65, 649, 76, 674};
+    const RECT next_sync = {87, 724, 98, 749};
+    const RECT follow = {109, 799, 120, 824};
+
+    presentation.update_content(page_with_candidate("candidate"), "h", 1, 1, 1);
+    presentation.set_ownership(cxxime_tsf::CandidateOwnership::kExternal);
+    presentation.begin_waiting_for_initial_layout(first_sync, start);
+    presentation.update_content(page_with_candidate("updated"), "hu", 2, 1, 1);
+    presentation.update_initial_layout_provisional(next_sync);
+
+    ASSERT_TRUE(presentation.initial_layout_pending());
+    ASSERT_TRUE(presentation.should_keep_waiting_for_caret(
+        follow, false, false, start + std::chrono::milliseconds(29), 30, 150));
+    ASSERT_TRUE(presentation.should_keep_waiting_for_caret(
+        follow, false, false, start + std::chrono::milliseconds(30), 30, 150));
+    presentation.update_content(page_with_candidate("latest"), "hua", 3, 1, 1);
+    ASSERT_TRUE(presentation.should_keep_waiting_for_caret(
+        follow, false, false, start + std::chrono::milliseconds(59), 30, 150));
+    ASSERT_TRUE(!presentation.should_keep_waiting_for_caret(
+        follow, false, false, start + std::chrono::milliseconds(89), 30, 150));
+}
+
+TEST(CandidatePresentation, initial_layout_filters_a_late_transient_extent) {
+    cxxime_tsf::CandidatePresentation presentation;
+    using TimePoint = cxxime_tsf::CandidatePresentation::TimePoint;
+    const auto start = TimePoint(std::chrono::milliseconds(100));
+    const RECT initial = {109, 799, 120, 824};
+    const RECT transient = {65, 699, 76, 724};
+
+    presentation.update_content(page_with_candidate("candidate"), "c", 1, 1, 1);
+    presentation.set_ownership(cxxime_tsf::CandidateOwnership::kExternal);
+    presentation.begin_waiting_for_initial_layout(initial, start);
+    ASSERT_TRUE(presentation.should_keep_waiting_for_caret(
+        initial, false, false, start + std::chrono::milliseconds(1), 30, 150));
+    ASSERT_TRUE(presentation.should_keep_waiting_for_caret(
+        transient, true, false, start + std::chrono::milliseconds(37), 30, 150));
+    ASSERT_TRUE(!presentation.should_show_external_window(true));
+    ASSERT_TRUE(!presentation.should_keep_waiting_for_caret(
+        initial, false, false, start + std::chrono::milliseconds(68), 30, 150));
+    ASSERT_TRUE(presentation.accept_caret(presentation.generation()));
+    ASSERT_EQ(presentation.display_caret(initial, 1, 1, start + std::chrono::milliseconds(68)).top,
+              initial.top);
+}
+
+TEST(CandidatePresentation, ready_caret_acceptance_preserves_jump_confirmation) {
+    cxxime_tsf::CandidatePresentation presentation;
+    using TimePoint = cxxime_tsf::CandidatePresentation::TimePoint;
+    const auto start = TimePoint(std::chrono::milliseconds(100));
+    const RECT initial = {131, 799, 142, 824};
+    const RECT transient = {65, 699, 76, 724};
+
+    presentation.update_content(page_with_candidate("candidate"), "ipy", 3, 1, 1);
+    presentation.display_caret(initial, 1, 1, start);
+    presentation.display_caret(transient, 2, 1, start + std::chrono::milliseconds(50));
+    presentation.update_content(page_with_candidate("updated"), "ipya", 4, 1, 1);
+    ASSERT_TRUE(presentation.accept_caret(presentation.generation()));
+    ASSERT_TRUE(presentation.caret_jump_pending());
+    ASSERT_EQ(presentation.display_caret(initial, 3, 1, start + std::chrono::milliseconds(81)).top,
+              initial.top);
+    ASSERT_TRUE(presentation.caret_jump_filtered());
+}
+
+TEST(CandidatePresentation, provisional_caret_has_bounded_wait) {
+    cxxime_tsf::CandidatePresentation presentation;
+    using TimePoint = cxxime_tsf::CandidatePresentation::TimePoint;
+    const auto start = TimePoint(std::chrono::milliseconds(100));
+    const RECT provisional = {109, 799, 120, 824};
+    RECT fallback = {};
+
+    presentation.update_content(page_with_candidate("candidate"), "p", 1, 1, 1);
+    presentation.set_ownership(cxxime_tsf::CandidateOwnership::kExternal);
+    presentation.begin_waiting_for_initial_layout(provisional, start);
+
+    presentation.update_content(page_with_candidate("updated"), "pi", 2, 1, 1);
+    ASSERT_TRUE(presentation.initial_layout_pending());
+    const RECT transient = {65, 699, 76, 724};
+    ASSERT_TRUE(presentation.should_keep_waiting_for_caret(
+        transient, false, false, start + std::chrono::milliseconds(89), 30, 150));
+    ASSERT_TRUE(!presentation.accept_provisional_caret_after_timeout(
+        start + std::chrono::milliseconds(89), &fallback));
+    ASSERT_TRUE(presentation.accept_provisional_caret_after_timeout(
+        start + std::chrono::milliseconds(90), &fallback));
+    ASSERT_EQ(fallback.top, provisional.top);
+    ASSERT_TRUE(!presentation.waiting_for_caret());
+    ASSERT_TRUE(!presentation.caret_jump_pending());
+}
+
+TEST(CandidatePresentation, initial_layout_accepts_trusted_native_caret_immediately) {
+    cxxime_tsf::CandidatePresentation presentation;
+    using TimePoint = cxxime_tsf::CandidatePresentation::TimePoint;
+    const auto start = TimePoint(std::chrono::milliseconds(100));
+    const RECT provisional = {65, 649, 76, 674};
+    const RECT native = {109, 799, 120, 824};
+
+    presentation.begin_waiting_for_initial_layout(provisional, start);
+    ASSERT_TRUE(!presentation.should_keep_waiting_for_caret(
+        native, false, true, start + std::chrono::milliseconds(1), 30, 150));
+}
+
 TEST(CandidatePresentation, content_update_without_focus_keeps_preedit_unfocused) {
     cxxime_tsf::CandidatePresentation presentation;
     presentation.update_content(page_with_candidate("candidate"), "ni", 2, 1, 1);

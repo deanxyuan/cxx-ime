@@ -386,6 +386,15 @@ void TextService::_poll_runtime_state() {
          _candidatePresentation.waiting_for_caret()) {
         _follow_native_caret();
     }
+    RECT provisional_rect = {};
+    if (_candidatePresentation.external_window_expected() &&
+        _candidatePresentation.accept_provisional_caret_after_timeout(
+            cxxime_tsf::CandidatePresentation::Clock::now(), &provisional_rect)) {
+        set_caret_rect(provisional_rect);
+        trace_caret_event("initial_timeout", "provisional", true, &provisional_rect, S_FALSE,
+                          true);
+        _publish_ui_presentation();
+    }
     if (_candidatePresentation.external_window_expected() &&
         _candidatePresentation.caret_jump_pending() &&
         !_candidatePresentation.waiting_for_caret() &&

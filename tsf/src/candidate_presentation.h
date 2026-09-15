@@ -68,12 +68,15 @@ public:
     void set_local_visible_candidate_count(std::size_t count);
     std::uint32_t local_visible_candidate_count() const;
     void begin_waiting_for_caret(bool reposition, const RECT* stale_rect, TimePoint now);
+    void begin_waiting_for_initial_layout(const RECT& provisional_rect, TimePoint now);
+    void update_initial_layout_provisional(const RECT& provisional_rect);
     bool pending_caret_fallback_due(TimePoint now, int delay_ms) const;
+    bool accept_provisional_caret_after_timeout(TimePoint now, RECT* caret_rect);
     void begin_composition_restart(TimePoint now);
     bool fail_composition_restart(std::uint64_t generation);
     bool should_keep_waiting_for_caret(const RECT& caret_rect, bool from_layout_change,
                                        bool used_trusted_native, TimePoint now,
-                                       int pending_delay_ms, int reposition_delay_ms) const;
+                                       int pending_delay_ms, int reposition_delay_ms);
     bool complete_composition_restart(std::uint64_t generation);
     bool accept_caret(std::uint64_t generation);
     RECT display_caret(const RECT& sample, std::uint64_t sample_serial,
@@ -82,6 +85,9 @@ public:
     bool caret_jump_pending() const { return caret_jump_pending_; }
     bool caret_jump_filtered() const { return caret_jump_filtered_; }
     bool caret_ready_to_show() const { return has_displayed_caret_; }
+    bool initial_layout_pending() const {
+        return waiting_for_caret() && initial_layout_wait_;
+    }
     void finish();
 
     CandidateContentState content_state() const { return content_state_; }
@@ -117,10 +123,10 @@ public:
     bool should_show_external_window(bool composing) const;
 
 private:
-    // Some hosts briefly report a distant text extent during layout. Require a later sample
-    // before moving the window, but bound the hold so a legitimate caret move cannot stall.
-    static constexpr auto kCaretJumpConfirmDelay = std::chrono::milliseconds(30);
-    static constexpr auto kCaretJumpMaxWait = std::chrono::milliseconds(90);
+    // Some hosts briefly report a stale text extent while layout catches up. Require a later
+    // sample before moving the window and bound provisional coordinates to avoid a stalled UI.
+    static constexpr auto kCaretSampleConfirmDelay = std::chrono::milliseconds(30);
+    static constexpr auto kCaretSampleMaxWait = std::chrono::milliseconds(90);
 
     void advance_generation();
     void reset_position_state();
@@ -145,6 +151,7 @@ private:
     bool composition_restart_active_ = false;
     bool caret_resolution_allowed_ = true;
     bool reposition_wait_ = false;
+    bool initial_layout_wait_ = false;
     bool has_stale_rect_ = false;
     RECT stale_rect_ = {};
     TimePoint waiting_since_ = {};

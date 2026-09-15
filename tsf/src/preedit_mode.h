@@ -133,9 +133,11 @@ inline bool should_wait_for_composition_layout(bool empty_placeholder_active,
         !trusted_native_caret_resolved;
 }
 
-inline bool should_defer_candidate_show(bool commit_continues, bool tsf_caret_resolved,
+inline bool should_defer_candidate_show(bool commit_continues, bool starts_composition,
+                                        bool tsf_caret_resolved,
                                         bool trusted_native_caret_resolved) {
-    return commit_continues || (!tsf_caret_resolved && !trusted_native_caret_resolved);
+    return commit_continues || (starts_composition && !trusted_native_caret_resolved) ||
+        (!tsf_caret_resolved && !trusted_native_caret_resolved);
 }
 
 } // namespace cxxime_tsf

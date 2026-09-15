@@ -33,6 +33,7 @@ bool TextService::_apply_engine_response(ITfContext* context, const cxxime::IPCR
         _sync_ime_status(response.ime_status);
     }
 
+    const bool starts_composition = !_composing;
     const bool has_commit = response.commit_text[0] != '\0';
     const bool commit_continues = has_commit && response.composing && response.preedit[0] != '\0';
     std::wstring commit_text;
@@ -217,14 +218,29 @@ bool TextService::_apply_engine_response(ITfContext* context, const cxxime::IPCR
                     caret_rect = trusted_native_rect;
                 }
 
-                const bool defer_show = cxxime_tsf::should_defer_candidate_show(
-                    commit_continues, caret_resolved, has_trusted_native_caret);
-                if (defer_show) {
-                    const RECT* stale_rect =
-                        cxxime_tsf::is_valid_caret_rect(caret_rect) ? &caret_rect : nullptr;
-                    _candidatePresentation.begin_waiting_for_caret(
-                        commit_continues, stale_rect,
-                        cxxime_tsf::CandidatePresentation::Clock::now());
+                if (_candidatePresentation.initial_layout_pending()) {
+                    if (has_trusted_native_caret) {
+                        update_candidate_position(caret_rect, context, false,
+                                                  _candidatePresentation.generation());
+                    } else if (caret_resolved) {
+                        _candidatePresentation.update_initial_layout_provisional(caret_rect);
+                    }
+                    _update_state_poll_timer();
+                    _request_candidate_position_update(context, "show:preedit_layout_follow");
+                } else if (cxxime_tsf::should_defer_candidate_show(
+                    commit_continues, starts_composition, caret_resolved,
+                    has_trusted_native_caret)) {
+                    const auto now = cxxime_tsf::CandidatePresentation::Clock::now();
+                    if (starts_composition && caret_resolved && !has_trusted_native_caret &&
+                        !commit_continues) {
+                        _candidatePresentation.begin_waiting_for_initial_layout(caret_rect, now);
+                        trace_caret_event("show_wait", "initial_layout", true, &caret_rect);
+                    } else {
+                        const RECT* stale_rect =
+                            cxxime_tsf::is_valid_caret_rect(caret_rect) ? &caret_rect : nullptr;
+                        _candidatePresentation.begin_waiting_for_caret(
+                            commit_continues, stale_rect, now);
+                    }
                     _publish_ui_presentation();
                     _update_state_poll_timer();
                     _request_candidate_position_update(context, "show:preedit_layout_follow");
