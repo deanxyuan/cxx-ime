@@ -76,6 +76,7 @@ enum class CaretViewportFallback : uint8_t {
     None = 0,
     Anchor,
     Projected,
+    Boundary,
 };
 
 class CaretViewportTracker {

@@ -120,9 +120,17 @@ bool get_range_caret_rect(TextService* service,
             clipped != FALSE, &rc);
         resolved = viewport_fallback != cxxime_tsf::CaretViewportFallback::None;
         if (trace_enabled && resolved) {
-            trace.branch = viewport_fallback == cxxime_tsf::CaretViewportFallback::Projected
-                               ? "viewport_projection"
-                               : "viewport_anchor";
+            switch (viewport_fallback) {
+            case cxxime_tsf::CaretViewportFallback::Projected:
+                trace.branch = "viewport_projection";
+                break;
+            case cxxime_tsf::CaretViewportFallback::Boundary:
+                trace.branch = "viewport_boundary";
+                break;
+            default:
+                trace.branch = "viewport_anchor";
+                break;
+            }
         }
     }
     if (trace_enabled) {
@@ -152,7 +160,7 @@ bool resolve_caret_rect_from_range(TextService* service,
     RangeCaretResult result;
     if (!get_range_caret_rect(service, context, ec, range, anchor, &result))
         return false;
-    if (is_placeholder_caret_rect(context, result.rect)) {
+    if (!result.viewport_fallback && is_placeholder_caret_rect(context, result.rect)) {
         if (service) {
             service->trace_caret_event("reject", "placeholder", false, &result.rect, S_FALSE,
                                        true);

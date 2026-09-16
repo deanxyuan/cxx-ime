@@ -102,13 +102,18 @@ bool CaretViewportTracker::remember(std::uint64_t target_generation, const RECT&
 CaretViewportFallback CaretViewportTracker::resolve(std::uint64_t target_generation,
                                                     const RECT* view_rect, const RECT* logical_rect,
                                                     bool clipped, RECT* caret_rect) const {
-    if (!caret_rect || !valid_ || target_generation_ != target_generation) {
+    if (!caret_rect) {
         return CaretViewportFallback::None;
     }
 
-    RECT anchor = caret_rect_;
-    if (view_rect && rect_has_area(*view_rect) && rect_has_area(view_rect_)) {
-        OffsetRect(&anchor, view_rect->left - view_rect_.left, view_rect->top - view_rect_.top);
+    const bool has_anchor = valid_ && target_generation_ == target_generation;
+    RECT anchor = {};
+    if (has_anchor) {
+        anchor = caret_rect_;
+        if (view_rect && rect_has_area(*view_rect) && rect_has_area(view_rect_)) {
+            OffsetRect(&anchor, view_rect->left - view_rect_.left,
+                       view_rect->top - view_rect_.top);
+        }
     }
 
     if (view_rect && logical_rect && !clipped && rect_has_area(*view_rect) &&
@@ -118,12 +123,30 @@ CaretViewportFallback CaretViewportTracker::resolve(std::uint64_t target_generat
         const bool horizontal_position_available =
             logical_rect->left >= view_rect->left && logical_rect->left < view_rect->right;
         if (vertically_hidden && horizontal_position_available) {
-            OffsetRect(&anchor, logical_rect->left - anchor.left, 0);
-            *caret_rect = anchor;
-            return CaretViewportFallback::Projected;
+            if (has_anchor) {
+                OffsetRect(&anchor, logical_rect->left - anchor.left, 0);
+                *caret_rect = anchor;
+                return CaretViewportFallback::Projected;
+            }
+
+            RECT boundary = *logical_rect;
+            normalize_rect_size(&boundary);
+            const LONG caret_height = boundary.bottom - boundary.top;
+            const LONG view_height = view_rect->bottom - view_rect->top;
+            if (caret_height <= view_height) {
+                const LONG edge = logical_rect->top >= view_rect->bottom
+                                      ? view_rect->bottom - boundary.bottom
+                                      : view_rect->top - boundary.top;
+                OffsetRect(&boundary, 0, edge);
+                *caret_rect = boundary;
+                return CaretViewportFallback::Boundary;
+            }
         }
     }
 
+    if (!has_anchor) {
+        return CaretViewportFallback::None;
+    }
     *caret_rect = anchor;
     return CaretViewportFallback::Anchor;
 }

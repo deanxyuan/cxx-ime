@@ -125,6 +125,37 @@ TEST(EditTarget, viewport_tracker_keeps_hidden_input_on_the_last_visible_baselin
               cxxime_tsf::CaretViewportFallback::Anchor);
     ASSERT_EQ(resolved.left, visible.left);
     ASSERT_EQ(tracker.resolve(target_generation + 1, &view, &next_hidden, false, &resolved),
+              cxxime_tsf::CaretViewportFallback::Boundary);
+    ASSERT_EQ(resolved.left, next_hidden.left);
+    ASSERT_EQ(resolved.bottom, view.bottom);
+    ASSERT_EQ(tracker.resolve(target_generation + 1, &view, nullptr, false, &resolved),
+    cxxime_tsf::CaretViewportFallback::None);
+}
+
+TEST(EditTarget, viewport_tracker_projects_cold_hidden_input_to_the_nearest_edge) {
+    cxxime_tsf::CaretViewportTracker tracker;
+    const RECT view = {141, 152, 2013, 1298};
+    const RECT hidden_below = {408, 2674, 423, 2709};
+
+    RECT resolved = {};
+    ASSERT_EQ(tracker.resolve(1, &view, &hidden_below, false, &resolved),
+    cxxime_tsf::CaretViewportFallback::Boundary);
+    ASSERT_EQ(resolved.left, hidden_below.left);
+    ASSERT_EQ(resolved.top, view.bottom - (hidden_below.bottom - hidden_below.top));
+    ASSERT_EQ(resolved.right, hidden_below.right);
+    ASSERT_EQ(resolved.bottom, view.bottom);
+
+    const RECT hidden_above = {438, -300, 453, -265};
+    ASSERT_EQ(tracker.resolve(1, &view, &hidden_above, false, &resolved),
+    cxxime_tsf::CaretViewportFallback::Boundary);
+    ASSERT_EQ(resolved.left, hidden_above.left);
+    ASSERT_EQ(resolved.top, view.top);
+    ASSERT_EQ(resolved.bottom, view.top + (hidden_above.bottom - hidden_above.top));
+
+    ASSERT_EQ(tracker.resolve(1, &view, &hidden_below, true, &resolved),
+    cxxime_tsf::CaretViewportFallback::None);
+    const RECT horizontally_unrelated = {2200, 2674, 2215, 2709};
+    ASSERT_EQ(tracker.resolve(1, &view, &horizontally_unrelated, false, &resolved),
               cxxime_tsf::CaretViewportFallback::None);
 }
 
