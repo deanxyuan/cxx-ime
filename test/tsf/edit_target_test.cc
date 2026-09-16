@@ -99,6 +99,55 @@ TEST(EditTarget, native_fallback_uses_top_level_caret_owner) {
     DestroyWindow(window);
 }
 
+TEST(EditTarget, viewport_tracker_keeps_hidden_input_on_the_last_visible_baseline) {
+    cxxime_tsf::CaretViewportTracker tracker;
+    const std::uint64_t target_generation = 7;
+    const RECT view = {201, 111, 1580, 941};
+    const RECT visible = {233, 846, 244, 871};
+    ASSERT_TRUE(tracker.remember(target_generation, view, visible));
+
+    RECT resolved = {};
+    const RECT first_hidden = {255, 1896, 266, 1921};
+    ASSERT_EQ(tracker.resolve(target_generation, &view, &first_hidden, false, &resolved),
+              cxxime_tsf::CaretViewportFallback::Projected);
+    ASSERT_EQ(resolved.left, 255);
+    ASSERT_EQ(resolved.top, visible.top);
+    ASSERT_EQ(resolved.right - resolved.left, visible.right - visible.left);
+    ASSERT_EQ(resolved.bottom - resolved.top, visible.bottom - visible.top);
+
+    const RECT next_hidden = {277, 1896, 288, 1921};
+    ASSERT_EQ(tracker.resolve(target_generation, &view, &next_hidden, false, &resolved),
+              cxxime_tsf::CaretViewportFallback::Projected);
+    ASSERT_EQ(resolved.left, 277);
+    ASSERT_EQ(resolved.top, visible.top);
+
+    ASSERT_EQ(tracker.resolve(target_generation, &view, &next_hidden, true, &resolved),
+              cxxime_tsf::CaretViewportFallback::Anchor);
+    ASSERT_EQ(resolved.left, visible.left);
+    ASSERT_EQ(tracker.resolve(target_generation + 1, &view, &next_hidden, false, &resolved),
+              cxxime_tsf::CaretViewportFallback::None);
+}
+
+TEST(EditTarget, viewport_tracker_ignores_unrelated_horizontal_geometry) {
+    cxxime_tsf::CaretViewportTracker tracker;
+    const RECT view = {100, 100, 900, 700};
+    const RECT visible = {180, 620, 181, 645};
+    ASSERT_TRUE(tracker.remember(3, view, visible));
+
+    RECT resolved = {};
+    const RECT unrelated = {1200, 900, 1210, 925};
+    ASSERT_EQ(tracker.resolve(3, &view, &unrelated, false, &resolved),
+              cxxime_tsf::CaretViewportFallback::Anchor);
+    ASSERT_EQ(resolved.left, visible.left);
+    ASSERT_EQ(resolved.top, visible.top);
+
+    const RECT moved_view = {140, 130, 940, 730};
+    ASSERT_EQ(tracker.resolve(3, &moved_view, nullptr, false, &resolved),
+              cxxime_tsf::CaretViewportFallback::Anchor);
+    ASSERT_EQ(resolved.left, visible.left + 40);
+    ASSERT_EQ(resolved.top, visible.top + 30);
+}
+
 TEST(EditTarget, unknown_when_inspection_failed) {
     cxxime_tsf::EditTargetEvidence evidence;
     ASSERT_EQ(cxxime_tsf::classify_edit_target(evidence), cxxime_tsf::EditTargetState::Unknown);

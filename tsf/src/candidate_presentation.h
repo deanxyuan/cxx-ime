@@ -75,7 +75,7 @@ public:
     void begin_composition_restart(TimePoint now);
     bool fail_composition_restart(std::uint64_t generation);
     bool should_keep_waiting_for_caret(const RECT& caret_rect, bool from_layout_change,
-                                       bool used_trusted_native, TimePoint now,
+                                       bool used_trusted_caret, TimePoint now,
                                        int pending_delay_ms, int reposition_delay_ms);
     bool complete_composition_restart(std::uint64_t generation);
     bool accept_caret(std::uint64_t generation);

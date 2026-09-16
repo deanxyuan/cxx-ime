@@ -28,6 +28,7 @@ class ReadingUIElement;
 #include <cxxime/ui_channel.h>
 
 #include "candidate_presentation.h"
+#include "edit_target.h"
 #include "effective_edit_target.h"
 #include "input_indicator_controller.h"
 
@@ -39,7 +40,6 @@ namespace cxxime_tsf {
 
 bool is_valid_caret_rect(const RECT& rect);
 class UiPresentationBatch;
-struct TextExtRectTrace;
 
 }  // namespace cxxime_tsf
 
@@ -187,12 +187,23 @@ public:
     bool inline_composition_requires_placeholder(const std::wstring& next_text) const;
     void set_caret_rect(const RECT& rc) {
         _caretRect = rc;
+        _caretRectTargetGeneration = _uiTargetGeneration;
         ++_caretSampleSerial;
+    }
+    void remember_viewport_caret(const RECT& view_rect, const RECT& caret_rect) {
+        _caretViewportTracker.remember(_uiTargetGeneration, view_rect, caret_rect);
+    }
+    cxxime_tsf::CaretViewportFallback resolve_viewport_caret(const RECT* view_rect,
+                                                             const RECT* logical_rect, bool clipped,
+                                                             RECT* caret_rect) const {
+        return _caretViewportTracker.resolve(_uiTargetGeneration, view_rect, logical_rect, clipped,
+                                             caret_rect);
     }
     void update_candidate_position(const RECT& rc,
                                    ITfContext* context = nullptr,
                                    bool from_layout_change = false,
-                                   uint64_t expected_generation = 0);
+                                   uint64_t expected_generation = 0,
+                                   bool viewport_fallback = false);
     bool candidate_presentation_request_is_current(
         uint64_t expected_generation, uintptr_t expected_context_identity) const;
     void handle_composition_restart_success(uint64_t expected_generation);
@@ -424,7 +435,9 @@ private:
     cxxime_tsf::InputIndicatorController _inputIndicator;
 
     RECT _caretRect = {};
+    std::uint64_t _caretRectTargetGeneration = 0;
     std::uint64_t _caretSampleSerial = 0;
+    cxxime_tsf::CaretViewportTracker _caretViewportTracker;
 
     cxxime::UiChannelClient _uiChannel;
     std::mutex _uiCommandMutex;

@@ -103,7 +103,7 @@ TEST(PreeditMode, commit_and_continue_waits_for_the_post_commit_caret) {
     ASSERT_TRUE(!cxxime_tsf::should_defer_candidate_show(false, false, false, true));
 }
 
-TEST(PreeditMode, new_composition_waits_for_layout_without_a_native_caret) {
+TEST(PreeditMode, new_composition_waits_for_layout_without_a_trusted_caret) {
     ASSERT_TRUE(cxxime_tsf::should_defer_candidate_show(false, true, true, false));
     ASSERT_TRUE(!cxxime_tsf::should_defer_candidate_show(false, true, true, true));
 }

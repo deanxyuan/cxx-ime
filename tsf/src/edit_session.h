@@ -57,6 +57,7 @@ public:
         }
         return false;
     }
+    bool caret_uses_viewport_fallback() const { return _resultUsesViewportFallback; }
     HRESULT action_result() const { return _actionResult; }
     bool composition_start_attempted() const { return _compositionStartAttempted; }
     HRESULT composition_start_result() const { return _compositionStartResult; }
@@ -78,6 +79,7 @@ private:
     std::optional<std::wstring> _hostTerminationText;
     RECT _resultRect = {};
     bool _resultValid = false;
+    bool _resultUsesViewportFallback = false;
     bool _positionUpdateFromLayoutChange = false;
     uint64_t _candidatePresentationGeneration = 0;
     uintptr_t _candidatePresentationContextIdentity = 0;

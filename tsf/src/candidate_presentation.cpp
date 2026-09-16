@@ -225,7 +225,7 @@ bool CandidatePresentation::fail_composition_restart(std::uint64_t generation) {
 
 bool CandidatePresentation::should_keep_waiting_for_caret(const RECT& caret_rect,
                                                           bool from_layout_change,
-                                                          bool used_trusted_native, TimePoint now,
+                                                          bool used_trusted_caret, TimePoint now,
                                                           int pending_delay_ms,
                                                           int reposition_delay_ms) {
     if (!waiting_for_caret()) {
@@ -238,7 +238,7 @@ bool CandidatePresentation::should_keep_waiting_for_caret(const RECT& caret_rect
         return false;
     }
     if (initial_layout_wait_) {
-        if (used_trusted_native) {
+        if (used_trusted_caret) {
             return false;
         }
         if (!distant_caret_position(stale_rect_, caret_rect)) {
@@ -265,9 +265,9 @@ bool CandidatePresentation::should_keep_waiting_for_caret(const RECT& caret_rect
         return false;
     }
     if (!has_stale_rect_) {
-        return !from_layout_change && !used_trusted_native;
+        return !from_layout_change && !used_trusted_caret;
     }
-    return reposition_wait_ || (!from_layout_change && !used_trusted_native);
+    return reposition_wait_ || (!from_layout_change && !used_trusted_caret);
 }
 
 bool CandidatePresentation::complete_composition_restart(std::uint64_t generation) {

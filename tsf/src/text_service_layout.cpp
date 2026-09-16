@@ -23,6 +23,8 @@ namespace {
 
 constexpr int kCandidatePendingFallbackDelayMs = 30;
 constexpr int kCandidateRepositionFallbackDelayMs = 150;
+constexpr LONG kUnknownCaretInsetPx = 8;
+constexpr LONG kUnknownCaretHeightPx = 20;
 
 void normalize_caret_rect_size(RECT* rc) {
     if (!rc)
@@ -59,12 +61,36 @@ bool same_caret_position(const RECT& a, const RECT& b) {
     return dx <= kTolerancePx && dy <= kTolerancePx;
 }
 
+bool context_view_fallback_rect(ITfContext* context, RECT* out) {
+    if (!context || !out) {
+        return false;
+    }
+
+    ITfContextView* view = nullptr;
+    if (FAILED(context->GetActiveView(&view)) || !view) {
+        return false;
+    }
+    RECT view_rect = {};
+    const HRESULT hr = view->GetScreenExt(&view_rect);
+    view->Release();
+    if (FAILED(hr) || view_rect.right <= view_rect.left || view_rect.bottom <= view_rect.top) {
+        return false;
+    }
+
+    const LONG x = (std::min)(view_rect.left + kUnknownCaretInsetPx, view_rect.right - 1);
+    const LONG y = (std::min)(view_rect.top + kUnknownCaretInsetPx, view_rect.bottom - 1);
+    SetRect(out, x, y, x + 1, (std::min)(y + kUnknownCaretHeightPx, view_rect.bottom));
+    normalize_caret_rect_size(out);
+    return cxxime_tsf::is_valid_caret_rect(*out);
+}
+
 }  // namespace
 
 void TextService::update_candidate_position(const RECT& rc,
                                             ITfContext* context,
                                             bool from_layout_change,
-                                            uint64_t expected_generation) {
+                                            uint64_t expected_generation,
+                                            bool viewport_fallback) {
     if (expected_generation != 0 &&
         (!_candidatePresentation.generation_matches(expected_generation) ||
          !_context_matches_effective_edit_target(context))) {
@@ -79,11 +105,11 @@ void TextService::update_candidate_position(const RECT& rc,
 
     RECT final_rect = rc;
     bool resolved = cxxime_tsf::is_valid_caret_rect(final_rect);
-    bool used_trusted_native = false;
+    bool used_trusted_caret = viewport_fallback;
     if (!resolved) {
         trace_caret_event("move", "invalid", false, &rc, E_INVALIDARG, true);
         if (context && _resolve_context_native_caret_rect(context, &final_rect)) {
-            used_trusted_native = true;
+            used_trusted_caret = true;
         } else if (!_resolve_native_caret_rect(&final_rect)) {
             return;
         }
@@ -93,7 +119,7 @@ void TextService::update_candidate_position(const RECT& rc,
         RECT native_rect = {};
         if (context && _resolve_context_native_caret_rect(context, &native_rect)) {
             final_rect = native_rect;
-            used_trusted_native = true;
+            used_trusted_caret = true;
         }
     }
 
@@ -108,7 +134,7 @@ void TextService::update_candidate_position(const RECT& rc,
     }
     if (_candidatePresentation.waiting_for_caret()) {
         if (_candidatePresentation.should_keep_waiting_for_caret(
-                final_rect, from_layout_change, used_trusted_native,
+                final_rect, from_layout_change, used_trusted_caret,
                 cxxime_tsf::CandidatePresentation::Clock::now(),
                 kCandidatePendingFallbackDelayMs, kCandidateRepositionFallbackDelayMs)) {
             return;
@@ -307,30 +333,30 @@ bool TextService::_resolve_context_native_caret_rect(ITfContext* context,
 }
 
 RECT TextService::_resolve_caret_rect(ITfContext* pic) {
-    (void)pic;
     RECT rc = {};
 
     if (_resolve_native_caret_rect(&rc))
         return rc;
 
-    if (cxxime_tsf::is_valid_caret_rect(_caretRect)) {
+    if (_caretRectTargetGeneration == _uiTargetGeneration &&
+        cxxime_tsf::is_valid_caret_rect(_caretRect)) {
         return _caretRect;
     }
 
-    POINT pt = {};
-    if (GetCursorPos(&pt)) {
-        SetRect(&rc, pt.x, pt.y, pt.x, pt.y + 20);
+    if (resolve_viewport_caret(nullptr, nullptr, false, &rc) !=
+        cxxime_tsf::CaretViewportFallback::None) {
+        return rc;
+    }
+
+    if (context_view_fallback_rect(pic, &rc)) {
         return rc;
     }
 
     HWND foreground = GetForegroundWindow();
     if (foreground && GetWindowRect(foreground, &rc)) {
         LONG x = rc.left + 24;
-        LONG y_offset = (rc.bottom - rc.top) * 2 / 3;
-        if (y_offset < 24)
-            y_offset = 24;
-        LONG y = rc.top + y_offset;
-        SetRect(&rc, x, y, x, y + 20);
+        LONG y = rc.top + 24;
+        SetRect(&rc, x, y, x + 1, y + kUnknownCaretHeightPx);
         return rc;
     }
 

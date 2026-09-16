@@ -37,6 +37,16 @@ bool rect_primary_point_in_rect(const RECT& outer, const RECT& inner) {
            inner.top <= outer.bottom;
 }
 
+bool rect_has_area(const RECT& rect) {
+    return rect.right > rect.left && rect.bottom > rect.top;
+}
+
+bool caret_origin_in_view(const RECT& view_rect, const RECT& caret_rect) {
+    return rect_has_area(view_rect) && is_valid_rect(caret_rect) &&
+           caret_rect.left >= view_rect.left && caret_rect.left < view_rect.right &&
+           caret_rect.top >= view_rect.top && caret_rect.top < view_rect.bottom;
+}
+
 bool same_root_window(HWND a, HWND b) {
     if (!a || !b) {
         return false;
@@ -76,6 +86,47 @@ bool map_client_rect_to_screen(HWND hwnd, const RECT& raw, RECT* mapped) {
 } // namespace
 
 namespace cxxime_tsf {
+
+bool CaretViewportTracker::remember(std::uint64_t target_generation, const RECT& view_rect,
+                                    const RECT& caret_rect) {
+    if (!caret_origin_in_view(view_rect, caret_rect)) {
+        return false;
+    }
+    target_generation_ = target_generation;
+    view_rect_ = view_rect;
+    caret_rect_ = caret_rect;
+    valid_ = true;
+    return true;
+}
+
+CaretViewportFallback CaretViewportTracker::resolve(std::uint64_t target_generation,
+                                                    const RECT* view_rect, const RECT* logical_rect,
+                                                    bool clipped, RECT* caret_rect) const {
+    if (!caret_rect || !valid_ || target_generation_ != target_generation) {
+        return CaretViewportFallback::None;
+    }
+
+    RECT anchor = caret_rect_;
+    if (view_rect && rect_has_area(*view_rect) && rect_has_area(view_rect_)) {
+        OffsetRect(&anchor, view_rect->left - view_rect_.left, view_rect->top - view_rect_.top);
+    }
+
+    if (view_rect && logical_rect && !clipped && rect_has_area(*view_rect) &&
+        is_valid_rect(*logical_rect)) {
+        const bool vertically_hidden =
+            logical_rect->bottom <= view_rect->top || logical_rect->top >= view_rect->bottom;
+        const bool horizontal_position_available =
+            logical_rect->left >= view_rect->left && logical_rect->left < view_rect->right;
+        if (vertically_hidden && horizontal_position_available) {
+            OffsetRect(&anchor, logical_rect->left - anchor.left, 0);
+            *caret_rect = anchor;
+            return CaretViewportFallback::Projected;
+        }
+    }
+
+    *caret_rect = anchor;
+    return CaretViewportFallback::Anchor;
+}
 
 bool map_fallback_caret_rect(HWND caret_window, POINT caret, RECT* rect) {
     if (!caret_window || !rect || !ClientToScreen(caret_window, &caret)) {

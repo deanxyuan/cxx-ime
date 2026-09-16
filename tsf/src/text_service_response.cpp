@@ -181,6 +181,7 @@ bool TextService::_apply_engine_response(ITfContext* context, const cxxime::IPCR
             if (external_candidate_window && context) {
                 RECT caret_rect = {};
                 bool caret_resolved = false;
+                bool caret_uses_viewport_fallback = false;
                 RECT trusted_native_rect = {};
                 const bool has_trusted_native_caret =
                     _resolve_context_native_caret_rect(context, &trusted_native_rect);
@@ -192,6 +193,8 @@ bool TextService::_apply_engine_response(ITfContext* context, const cxxime::IPCR
                         _clientId, caret_session, TF_ES_READ | TF_ES_SYNC, &edit_result);
                     if (SUCCEEDED(request_result) && SUCCEEDED(edit_result)) {
                         caret_resolved = caret_session->get_caret_rect(caret_rect);
+                        caret_uses_viewport_fallback =
+                            caret_session->caret_uses_viewport_fallback();
                     }
                     trace_caret_event("show_query", "sync_edit", caret_resolved,
                                       caret_resolved ? &caret_rect : nullptr,
@@ -199,10 +202,12 @@ bool TextService::_apply_engine_response(ITfContext* context, const cxxime::IPCR
                                       !caret_resolved);
                     caret_session->Release();
                 }
+                const bool has_trusted_caret =
+                    has_trusted_native_caret || caret_uses_viewport_fallback;
                 const bool wait_for_composition_layout =
                     cxxime_tsf::should_wait_for_composition_layout(
                         empty_composition_placeholder_active(), caret_resolved,
-                        has_trusted_native_caret);
+                        has_trusted_caret);
                 if (!caret_resolved) {
                     if (has_trusted_native_caret) {
                         caret_rect = trusted_native_rect;
@@ -219,9 +224,10 @@ bool TextService::_apply_engine_response(ITfContext* context, const cxxime::IPCR
                 }
 
                 if (_candidatePresentation.initial_layout_pending()) {
-                    if (has_trusted_native_caret) {
+                    if (has_trusted_caret) {
                         update_candidate_position(caret_rect, context, false,
-                                                  _candidatePresentation.generation());
+                                                  _candidatePresentation.generation(),
+                                                  caret_uses_viewport_fallback);
                     } else if (caret_resolved) {
                         _candidatePresentation.update_initial_layout_provisional(caret_rect);
                     }
@@ -229,9 +235,9 @@ bool TextService::_apply_engine_response(ITfContext* context, const cxxime::IPCR
                     _request_candidate_position_update(context, "show:preedit_layout_follow");
                 } else if (cxxime_tsf::should_defer_candidate_show(
                     commit_continues, starts_composition, caret_resolved,
-                    has_trusted_native_caret)) {
+                    has_trusted_caret)) {
                     const auto now = cxxime_tsf::CandidatePresentation::Clock::now();
-                    if (starts_composition && caret_resolved && !has_trusted_native_caret &&
+                    if (starts_composition && caret_resolved && !has_trusted_caret &&
                         !commit_continues) {
                         _candidatePresentation.begin_waiting_for_initial_layout(caret_rect, now);
                         trace_caret_event("show_wait", "initial_layout", true, &caret_rect);

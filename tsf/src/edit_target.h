@@ -72,6 +72,30 @@ struct TextExtRectTrace {
     bool caret_map_ok = false;
 };
 
+enum class CaretViewportFallback : uint8_t {
+    None = 0,
+    Anchor,
+    Projected,
+};
+
+class CaretViewportTracker {
+public:
+    bool remember(std::uint64_t target_generation,
+                  const RECT& view_rect,
+                  const RECT& caret_rect);
+    CaretViewportFallback resolve(std::uint64_t target_generation,
+                                  const RECT* view_rect,
+                                  const RECT* logical_rect,
+                                  bool clipped,
+                                  RECT* caret_rect) const;
+
+private:
+    std::uint64_t target_generation_ = 0;
+    RECT view_rect_ = {};
+    RECT caret_rect_ = {};
+    bool valid_ = false;
+};
+
 bool text_rect_is_outside_view(HRESULT screen_rect_hr, const RECT& screen_rect,
     HRESULT text_rect_hr, const RECT& text_rect, bool text_clipped);
 bool text_rect_is_placeholder(const RECT& view_rect, const RECT& text_rect);

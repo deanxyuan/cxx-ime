@@ -47,12 +47,19 @@ bool is_placeholder_caret_rect(ITfContext* context, const RECT& caret_rect) {
                                     foreground_rect, caret_rect));
 }
 
+struct RangeCaretResult {
+    RECT rect = {};
+    RECT view_rect = {};
+    bool viewport_fallback = false;
+    bool remember_visible = false;
+};
+
 bool get_range_caret_rect(TextService* service,
                           ITfContext* context,
                           TfEditCookie ec,
                           ITfRange* range,
                           TfAnchor anchor,
-                          RECT* out) {
+                          RangeCaretResult* out) {
     if (!context || !range || !out)
         return false;
 
@@ -71,7 +78,14 @@ bool get_range_caret_rect(TextService* service,
     RECT rc = {};
     BOOL clipped = FALSE;
     const HRESULT text_ext_hr = pView->GetTextExt(ec, caret_range, &rc, &clipped);
+    const RECT raw_rect = rc;
+    RECT view_rect = {};
+    const HRESULT view_rect_hr = pView->GetScreenExt(&view_rect);
+    const bool has_view_rect = SUCCEEDED(view_rect_hr) && view_rect.right > view_rect.left &&
+                               view_rect.bottom > view_rect.top;
     bool resolved = SUCCEEDED(text_ext_hr);
+    cxxime_tsf::CaretViewportFallback viewport_fallback =
+        cxxime_tsf::CaretViewportFallback::None;
     cxxime_tsf::TextExtRectTrace trace;
     const auto trace_mode = cxxime::diagnostics_config().trace_mode;
     const bool trace_enabled = service && trace_mode >= cxxime::DiagnosticTraceMode::kNormal;
@@ -91,13 +105,37 @@ bool get_range_caret_rect(TextService* service,
         resolved = cxxime_tsf::normalize_text_ext_rect(
             view_hwnd, foreground, &rc, trace_enabled ? &trace : nullptr);
     }
+    // GetTextExt is defined in screen coordinates. Prefer a successfully normalized host
+    // rectangle, but retain the contractual raw geometry when it lies beyond all monitors.
+    const RECT logical_rect = resolved ? rc : raw_rect;
+    const bool has_logical_rect = SUCCEEDED(text_ext_hr);
+    if (resolved && has_view_rect &&
+        cxxime_tsf::text_rect_is_outside_view(S_OK, view_rect, S_OK, rc, false)) {
+        resolved = false;
+    }
+    if (!resolved && service) {
+        viewport_fallback = service->resolve_viewport_caret(
+            has_view_rect ? &view_rect : nullptr,
+            has_logical_rect ? &logical_rect : nullptr,
+            clipped != FALSE, &rc);
+        resolved = viewport_fallback != cxxime_tsf::CaretViewportFallback::None;
+        if (trace_enabled && resolved) {
+            trace.branch = viewport_fallback == cxxime_tsf::CaretViewportFallback::Projected
+                               ? "viewport_projection"
+                               : "viewport_anchor";
+        }
+    }
     if (trace_enabled) {
         trace.result = rc;
         trace.resolved = resolved;
         service->trace_text_ext_rect(trace);
     }
-    if (resolved)
-        *out = rc;
+    if (resolved) {
+        out->rect = rc;
+        out->view_rect = view_rect;
+        out->viewport_fallback = viewport_fallback != cxxime_tsf::CaretViewportFallback::None;
+        out->remember_visible = !out->viewport_fallback && has_view_rect && clipped == FALSE;
+    }
 
     caret_range->Release();
     pView->Release();
@@ -109,26 +147,34 @@ bool resolve_caret_rect_from_range(TextService* service,
                                    TfEditCookie ec,
                                    ITfRange* range,
                                    TfAnchor anchor,
-                                   RECT* out) {
-    RECT rc = {};
-    if (!get_range_caret_rect(service, context, ec, range, anchor, &rc))
+                                   RECT* out,
+                                   bool* viewport_fallback_out = nullptr) {
+    RangeCaretResult result;
+    if (!get_range_caret_rect(service, context, ec, range, anchor, &result))
         return false;
-    if (is_placeholder_caret_rect(context, rc)) {
+    if (is_placeholder_caret_rect(context, result.rect)) {
         if (service) {
-            service->trace_caret_event("reject", "placeholder", false, &rc, S_FALSE, true);
+            service->trace_caret_event("reject", "placeholder", false, &result.rect, S_FALSE,
+                                       true);
         }
         return false;
     }
 
+    if (service && result.remember_visible) {
+        service->remember_viewport_caret(result.view_rect, result.rect);
+    }
     if (out)
-        *out = rc;
+        *out = result.rect;
+    if (viewport_fallback_out)
+        *viewport_fallback_out = result.viewport_fallback;
     return true;
 }
 
 bool resolve_caret_rect_from_selection(TextService* service,
                                        ITfContext* context,
                                        TfEditCookie ec,
-                                       RECT* out) {
+                                       RECT* out,
+                                       bool* viewport_fallback_out = nullptr) {
     if (!context)
         return false;
 
@@ -139,7 +185,8 @@ bool resolve_caret_rect_from_selection(TextService* service,
         return false;
 
     bool resolved = resolve_caret_rect_from_range(service, context, ec, selection.range,
-                                                 TF_ANCHOR_END, out);
+                                                 TF_ANCHOR_END, out,
+                                                 viewport_fallback_out);
     selection.range->Release();
     return resolved;
 }
@@ -148,7 +195,8 @@ bool resolve_caret_rect_from_composition(TextService* service,
                                        ITfContext* context,
                                        TfEditCookie ec,
                                        RECT* out,
-                                       const char** source_out = nullptr) {
+                                       const char** source_out = nullptr,
+                                       bool* viewport_fallback_out = nullptr) {
     ITfComposition* composition =
         service && service->is_composing() ? service->get_composition() : nullptr;
     ITfRange* range = nullptr;
@@ -156,12 +204,13 @@ bool resolve_caret_rect_from_composition(TextService* service,
         return false;
 
     RECT rc = {};
+    bool viewport_fallback = false;
     bool resolved = resolve_caret_rect_from_range(service, context, ec, range,
-                                                 TF_ANCHOR_END, &rc);
+                                                  TF_ANCHOR_END, &rc, &viewport_fallback);
     const char* source = "composition_end";
     if (!resolved) {
         resolved = resolve_caret_rect_from_range(service, context, ec, range,
-                                                TF_ANCHOR_START, &rc);
+                                                 TF_ANCHOR_START, &rc, &viewport_fallback);
         source = "composition_start";
     }
     range->Release();
@@ -172,6 +221,8 @@ bool resolve_caret_rect_from_composition(TextService* service,
         *out = rc;
     if (source_out)
         *source_out = source;
+    if (viewport_fallback_out)
+        *viewport_fallback_out = viewport_fallback;
     return true;
 }
 
@@ -190,19 +241,27 @@ bool resolve_current_caret_rect(TextService* service,
                                 ITfContext* context,
                                 TfEditCookie ec,
                                 RECT* out,
-                                const char** source_out = nullptr) {
+                                const char** source_out = nullptr,
+                                bool* viewport_fallback_out = nullptr) {
     RECT rc = {};
-    if (resolve_caret_rect_from_selection(service, context, ec, &rc)) {
+    bool viewport_fallback = false;
+    if (resolve_caret_rect_from_selection(service, context, ec, &rc,
+                                          &viewport_fallback)) {
         if (out)
             *out = rc;
         if (source_out)
-            *source_out = "selection";
+            *source_out = viewport_fallback ? "selection_viewport" : "selection";
+        if (viewport_fallback_out)
+            *viewport_fallback_out = viewport_fallback;
         return true;
     }
 
-    if (resolve_caret_rect_from_composition(service, context, ec, &rc, source_out)) {
+    if (resolve_caret_rect_from_composition(service, context, ec, &rc, source_out,
+                                            &viewport_fallback)) {
         if (out)
             *out = rc;
+        if (viewport_fallback_out)
+            *viewport_fallback_out = viewport_fallback;
         return true;
     }
 
@@ -676,9 +735,12 @@ STDMETHODIMP EditSession::DoEditSession(TfEditCookie ec) {
     } else if (_action == Action::QUERY_CARET) {
         RECT rc = {};
         const char* source = "none";
-        if (resolve_current_caret_rect(_service, _context, ec, &rc, &source)) {
+        bool viewport_fallback = false;
+        if (resolve_current_caret_rect(_service, _context, ec, &rc, &source,
+                                       &viewport_fallback)) {
             _resultRect = rc;
             _resultValid = true;
+            _resultUsesViewportFallback = viewport_fallback;
             if (_service) {
                 _service->trace_caret_event("query", source, true, &rc);
             }
@@ -688,14 +750,18 @@ STDMETHODIMP EditSession::DoEditSession(TfEditCookie ec) {
     } else if (_action == Action::UPDATE_CANDIDATE_POSITION) {
         RECT rc = {};
         const char* source = "none";
-        if (resolve_current_caret_rect(_service, _context, ec, &rc, &source)) {
+        bool viewport_fallback = false;
+        if (resolve_current_caret_rect(_service, _context, ec, &rc, &source,
+                                       &viewport_fallback)) {
             _resultRect = rc;
             _resultValid = true;
+            _resultUsesViewportFallback = viewport_fallback;
             if (_service) {
                 _service->trace_caret_event("layout_update", source, true, &rc);
                 _service->update_candidate_position(rc, _context,
                                                     _positionUpdateFromLayoutChange,
-                                                    _candidatePresentationGeneration);
+                                                    _candidatePresentationGeneration,
+                                                    viewport_fallback);
             }
         } else if (_service) {
             _service->trace_caret_event("layout_update", source, false, nullptr, E_FAIL, true);
