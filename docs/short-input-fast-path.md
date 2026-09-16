@@ -2,9 +2,9 @@
 
 ## 概述
 
-短输入（拼音 1–6 小写字母，五笔 1–4 码）是生产输入法中最常见的场景。标准拼音管道需要 Syllabifier 路径枚举 + 多次 dict scan，延迟在毫秒级；两个模式各有专属的快速路径，把常用查询降到微秒级：
+短输入（拼音为全小写字母，五笔为 1–4 码）是生产输入法中最常见的场景。标准拼音管道需要 Syllabifier 路径枚举 + 多次 dict scan，延迟在毫秒级；两个模式各有专属的快速路径，把常用查询降到微秒级：
 
-- **拼音**：在 Syllabifier 之前插入三层内存查询，命中时完全跳过路径枚举和词典扫描。
+- **拼音**：在 Syllabifier 之前插入两层内存查询（用户词多路索引 + Top-N 索引），命中时跳过路径枚举和词典扫描。
 - **五笔**：无独立 Top-N 文件，快速路径由构建期预排序的完整前缀索引（`wubi86.dict.idx`）承担——运行时二分定位后直接读取排序好的 postings，不实时评分、不扫描全表；查询结果在 `WubiTranslator` 内以快照缓存复用。
 
 快速路径只改变**获取与合并**方式，不改变 [候选排序设计](candidate-ordering.md) 的四层优先级：默认排序 → 学习偏好 → 手动固定 → 分页。
@@ -25,13 +25,10 @@ PinyinTranslator::translate()
   │       ▼
   │  lookup_indexed_fast(key, limit)
   │       │
-  │       ├─ 1. Session Recent Cache (内存, 每 session)
-  │       │     最近用户选词/提交的候选, LRU 淘汰
-  │       │
-  │       ├─ 2. User Dict Short Index (内存多路索引)
+  │       ├─ 1. User Dict Short Index (内存多路索引)
   │       │     用户词 exact/prefix/abbr/mixed 索引查询
   │       │
-  │       └─ 3. ShortCodeCache (pinyin.topn.bin, CXTOPN v3 DAT-16)
+  │       └─ 2. ShortCodeCache (pinyin.topn.bin, CXTOPN v3 DAT-16)
   │             Darts-clone 双数组 Trie 查找, O(k)
   │       │
   │       ▼
@@ -119,7 +116,7 @@ WubiTranslator::translate(code)
 | mixed_code | `generate_mixed_keys()` 统一生成（每条最多 8 个，最长 16 字符） | `shrf`, `shurf`, `zhrmghg` |
 | prefix_code | 对以上 key 取长度 1..6 的前缀 | `s`, `sr`, `sh`, `shu`, ... |
 
-mixed code 码型：声母增强简拼（`shrf`）、首音节展开（`shurf`）、前两音节展开（`beijidx`）、长词首字母码（`zhrmghg`）等。exact/abbr/prefix 受 `max_short_key_len = 6` 限制，mixed code 受 `max_code_len = 16` 限制。每个 key 最多保留 64 个候选。
+mixed code 码型：声母增强简拼（`shrf`）、首音节展开（`shurf`）、前两音节展开（`beijidx`）、长词首字母码（`zhrmghg`）等。exact_code 与 abbr_code 按完整编码写入索引，不受长度限制；prefix_code 只物化长度 1..6 的前缀（`MAX_MATERIALIZED_PREFIX_LENGTH = 6`）；mixed code 受 `MAX_MIXED_KEY_LENGTH = 16` 限制。每个 key 最多保留 `MAX_CANDIDATES_PER_KEY = 64` 个候选（见 `scripts/build_pinyin_topn.py`）。
 
 ### 排序规则
 
@@ -196,44 +193,9 @@ postings 排名：**精确匹配 → 码长升序 → 词频降序 → 码序 �
 
 `WubiTranslator::translate()` 对同一输入码维护候选快照：首次查询按 `max(required, doubled_limit)` 扩大查询量，后续翻页直接复用快照，不再触发词典查询。快照在 `code` / `user_dict_version` / `candidate_preference_version` / `manual_candidate_order_version` / `disabled_system_entry_version` 任一变化时重建。该机制承担五笔模式的"会话级快速路径"，避免逐页重复二分。
 
-## Session Recent Cache（拼音）
-
-Engine 持有每 session 的最近候选缓存，记录用户选词和提交行为：
-
-```cpp
-// engine/include/cxxime/translator.h
-struct RecentCandidate {
-    std::string key;
-    Candidate candidate;
-    uint64_t sequence = 0;    // 递增序号, 用于 LRU 淘汰
-};
-```
-
-### 策略
-
-| 参数 | 值 | 说明 |
-|------|-----|------|
-| key 长度范围 | 1..6 | 只记录短输入的候选 |
-| 每 key 最多保留 | 8 | `kMaxRecentPerKey` |
-| 每 session 最多 | 128 key | `kMaxRecentKeys`, 超出时淘汰 sequence 最小的 |
-| 存储 | 仅内存 | 不写盘, session 结束即丢弃 |
-
-### 更新时机
-
-- `Engine::select_candidate()` — 用户选词时
-- `Engine::process_key()` COMMITTED 分支 — 用户提交时（空格、数字选词后直接上屏）
-
-### 查询顺序
-
-`lookup_indexed_fast()` 内部：
-1. Session Recent Cache（最高优先级, 用户个性化）
-2. User Dict Short Index（用户词多路索引: exact → prefix → abbr → mixed）
-3. ShortCodeCache（DAT-16 Top-N，Darts trie 查找）
-4. 按 text 去重, 合并为候选列表
-
 ## User Dict Short Index（拼音）
 
-用户词按 `code` 建立 exact / prefix / abbr / mixed 四路索引，其中 abbr / mixed 与 1..6 前缀专供短输入快速路径查询；`lookup_user_short()` 按 exact → prefix → abbr → mixed 顺序收集，按 `score_user_match()` 评分排序。详细结构见 [用户词库与候选偏好](user-dictionary.md)。
+用户词按 `code` 建立 exact / prefix / abbr / mixed 四路索引，其中 abbr / mixed 与 1..6 前缀专供短输入快速路径查询；`UserLexicon::lookup_indexed()` 按 exact → prefix → abbr → mixed 顺序收集，按 `score_match()` 评分排序。详细结构见 [用户词库与候选偏好](user-dictionary.md)。
 
 ## Translator 集成
 
@@ -257,7 +219,7 @@ if (is_indexable_key(pinyin)) {
 
 ```cpp
 bool is_indexable_key(const std::string& pinyin) {
-    // 全部小写字母, 长度 1..6, 非空
+    // 非空且全部为 a-z 小写字母，不限长度
 }
 ```
 
@@ -268,12 +230,11 @@ bool is_indexable_key(const std::string& pinyin) {
 
 ### 拼音合并规则
 
-1. Session recent 候选优先
-2. User dict short index 候选（按 `score_user_match()` 分层评分）
-3. ShortCodeCache 候选按构建时 score 排序
-4. 标准管道 (bounded dict lookup) 只用于补足缺失候选
-5. 按 `Candidate.text` 去重
-6. 缓存候选超过当前页时设置 `truncated=true`
+1. User dict short index 候选（按 `score_match()` 分层评分）
+2. ShortCodeCache 候选按构建时 score 排序
+3. 标准管道 (bounded dict lookup) 只用于补足缺失候选
+4. 按 `Candidate.text` 去重
+5. 缓存候选超过当前页时设置 `truncated=true`
 
 快速路径命中后，拼音仍按统一顺序应用学习偏好与手动固定（见 [候选排序设计](candidate-ordering.md)）。
 
@@ -287,7 +248,6 @@ bool is_indexable_key(const std::string& pinyin) {
 
 | 场景 | cache_hit |
 |------|-----------|
-| session recent 返回 ≥1 候选 | true |
 | ShortCodeCache 返回 ≥1 候选 | true |
 | indexable key gate 未通过 | 不设置 |
 | cache miss, 仅 bounded lookup 返回 | 不设置 |
@@ -333,21 +293,21 @@ live_path_count = 0
 | `engine/src/wubi_prefix_index.cc` | WubiPrefixIndex 加载与二分查询 |
 | `engine/include/cxxime/dict.h` | ShortCodeCache 成员 + getter, 用户词索引结构 |
 | `engine/src/dict.cc` | open_dict() / open_bundle() 加载 topn.bin 与 wubi idx, 用户词索引构建与查询 |
-| `engine/include/cxxime/translator.h` | RecentCandidate 结构体, update_recent(), is_short_key() |
-| `engine/src/pinyin_translator.cc` | 拼音快速路径入口, 合并逻辑, session recent 管理, 用户词版本过滤 |
+| `engine/include/cxxime/translator.h` | is_indexable_key(), lookup_indexed_fast(), 查询页缓存 |
+| `engine/src/pinyin_translator.cc` | 拼音快速路径入口, 合并逻辑, 用户词版本过滤 |
 | `engine/src/wubi_translator.cc` | 五笔查询（前缀索引 + 偏好/手动排序 + 快照缓存） |
-| `engine/src/engine.cc` | select/commit 时更新 recent cache |
-| `test/short_cache_test.cc` | ShortCodeCache 单元测试（Top-N v3 加载/查找/损坏拒绝） |
-| `test/wubi_prefix_query_test.cc` | 五笔前缀索引查询/排序验证 |
-| `test/util/topn_test_data.h` / `.cc` | Top-N 测试数据辅助函数 |
+| `engine/src/engine.cc` | 会话与提交链路, 查询缓存清理 |
+| `test/engine/short_cache_test.cc` | ShortCodeCache 单元测试（Top-N v3 加载/查找/损坏拒绝） |
+| `test/engine/wubi_prefix_query_test.cc` | 五笔前缀索引查询/排序验证 |
+| `test/support/topn_test_data.h` / `.cc` | Top-N 测试数据辅助函数 |
 
-## 长输入的查询页缓存
+## 查询页缓存
 
-作为短输入快速路径的姊妹机制，`PinyinTranslator` 为 >6 字符的长拼音查询提供独立的查询页缓存：
+`PinyinTranslator` 还持有一份按「输入 + 页码 + 页大小」索引的查询页缓存，位于快速路径之前（`translate_page()` 开头即查询）：
 
-- **触发条件**：`input.size() > 6`，短输入走 `lookup_indexed_fast` 不触发此缓存
+- **触发条件**：任意输入长度，只要页参数与输入命中缓存条目
 - **容量**：LRU 64 条（`kMaxQueryCacheEntries = 64`），`sequence` 递增序号实现淘汰
-- **失效**：`user_dict_version` / 偏好 / 手动排序 / 禁用词版本变化后全部缓存自动失效
+- **失效**：`user_dict_version` / `candidate_preference_version` / `manual_candidate_order_version` / `disabled_system_entry_version` / `composition_learning_version` 任一变化后条目不再命中
 - **非缓存场景**：deadline 命中或 deadline_exceeded 时不写入
 
-详细机制见 [候选词选词算法 — 长输入查询页缓存](candidate-selection.md#长输入查询页缓存)。
+详细机制见 [候选词选词算法 — 查询页缓存](candidate-selection.md#查询页缓存)。

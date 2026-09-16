@@ -80,8 +80,8 @@ ServerApp::initialize()
       → Config::load()                → 加载 default.json + user default.json + themes.json
       → load_punctuation_mapping()    → 加载 punctuation.json
     → reset_global_state()            → 初始化 GlobalVisibleState
-  → config_monitor_.start()           → 启动配置热重载监听
   → dictionary_monitor_.start()       → 启动字典热重载监听
+  → config_write_coordinator_.start() → 启动控制通道与配置/词库写入协调
 ```
 
 ---
@@ -205,22 +205,31 @@ struct ProcessKeyResult {
 
 ## 4. 配置热重载
 
-### ConfigMonitor
+### 设置进程与控制通道
 
-定义在 `shared/include/cxxime/config_monitor.h`。基于**共享内存 + Event 对象**的实现，由 TSF DLL 和 Server 协同：
+设置程序（`cxxime-settings.exe`）通过 `ipc/` 下的**控制通道**与 Server 通信，协议定义在 `ipc/include/cxxime/control_protocol.h`，消息类型包括 `kSubscribe`、`kConfigSnapshot`、`kReplaceUserConfig`、`kPatchUserConfig`、`kMutationResult`、`kPing` / `kPong`、`kLexiconRequest` / `kLexiconResult`、`kUserBackupRequest` / `kUserBackupResult`。协议头携带 `server_epoch` 与 `revision`（`ConfigGeneration`），设置进程据此判断快照是否过期。
 
-- `initialize()` — 创建共享内存映射 + Event
-- `start(callback)` — 启动监听线程
-- `stop()` — 停止监听线程
-- `add_ref()` / `dec_ref()` — 引用计数
-
-Server 启动时在 `server_app.cc:77-79` 初始化：
+Server 侧的写入由 `server/src/config_write_coordinator.cc` 协调：
 
 ```cpp
-config_monitor_.initialize();
-config_monitor_.start([this]() {
-    session_mgr_.reload_config();
-});
+// server_app.cc — 控制通道提交配置
+session_mgr_.apply_config(config);
+```
+
+- `submit(kind, payload, config_json, error_code)` — 按 `UserConfigMutationKind::kReplace`（整体替换）或 `kMergePatch`（JSON 合并补丁）写入用户配置；
+- `enqueue_patch(merge_patch_json)` — 把多次小改动合并进同一批次；
+- `snapshot_user_config()` — 取当前用户配置快照。
+
+写入过程带 prepare / apply / cancel 三段回调（`ConfigWriteCoordinator::start()` 的 `PrepareHandler` / `ApplyHandler` / `CancelHandler`），校验失败时不改变内存与磁盘状态。
+
+`SessionManager::apply_config()` 发布新的 `Config` 快照；各 session 在下次按键处理时检测快照指针变化并热重载：
+
+```cpp
+// session_manager.cc — process_key 内
+if (resources.config && resources.config.get() != s.resources.config.get()) {
+    engine.reload_config(*resources.config);
+    s.resources.config = resources.config;
+}
 ```
 
 **字典热重载使用 `DictionaryMonitor`**（`shared/include/cxxime/dictionary_monitor.h`），基于文件变更轮询 + debounce：
@@ -325,4 +334,4 @@ Engine 持有指针引用外部资源（`pinyin_dict_`, `spellings_`, `syllabifi
 | `session_manager_integration_test.cc` | 集成测试（含 process_key/select、候选顺序控制、热重载等） |
 | `candidate_quality_test.cc` | 候选质量 |
 
-此外 `test/util/testutil.h` 提供轻量测试框架（`TEST()` / `ASSERT_*` 宏，无 EXPECT 风格断言）。
+此外 `test/support/testutil.h` 提供测试框架（`TEST()` / `ASSERT_*` 宏，无 EXPECT 风格断言）。

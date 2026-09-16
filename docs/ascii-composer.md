@@ -199,9 +199,9 @@ CapsLock 支持 `code`、`candidate`、`clear`、`append`、`noop`。`append` �
 
 主要回归测试位于：
 
-- `test/engine_test.cc`：修饰键动作和 CapsLock；
-- `test/temporary_ascii_test.cc`：内联 ASCII 进入、提交、取消和全角边界；
-- `test/preedit_edit_test.cc`：光标编辑与来源恢复；
-- `test/symbol_input_test.cc`：符号入口以及 `/`、`\` 行为矩阵；
-- `test/wubi_engine_test.cc`：五笔第五码与内联 ASCII 交互；
-- `test/session_manager_integration_test.cc`：Server 会话状态和临时模式恢复。
+- `test/engine/engine_test.cc`：修饰键动作和 CapsLock；
+- `test/engine/temporary_ascii_test.cc`：内联 ASCII 进入、提交、取消和全角边界；
+- `test/engine/preedit_edit_test.cc`：光标编辑与来源恢复；
+- `test/engine/symbol_input_test.cc`：符号入口以及 `/`、`\` 行为矩阵；
+- `test/engine/wubi_engine_test.cc`：五笔第五码与内联 ASCII 交互；
+- `test/server/session_manager_integration_test.cc`：Server 会话状态和临时模式恢复。

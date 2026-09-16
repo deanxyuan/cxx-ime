@@ -109,7 +109,7 @@ std::vector<Candidate> lookup_indexed(const std::string& key, int limit,
 
 ### 评分公式
 
-用户词得分由 `score_user_match()`（`engine/src/user_lexicon_query.cc`）计算：
+用户词得分由 `UserLexicon` 内部的 `score_match()`（`engine/src/user_lexicon_query.cc`）计算，评分档位由 `UserLexicon::set_scoring_profile()` 在 `Dict` 初始化时设置：
 
 ```
 score = base + bounded_frequency + recent_bonus
@@ -134,7 +134,7 @@ recent_bonus      = (delta <= 1000) ? 1000 - delta : 0，delta = sequence_ - ent
 
 `load_user_dict`：在 `transaction_mutex_` 保护下读取 TSV（3/4 列），`parse_entries()` 解析并校验（合法 UTF-8、编码为 a-z、音节格式），构建 `Snapshot` 后重建全部索引并一次性发布，`version_++`。
 
-`add_user_entry` / `delete_user_entry` / `replace_user_entry`：在 `transaction_mutex_` 保护下基于当前快照做变更（查重 / 软删除 / 替换），重建索引后发布并递增 version。另有 `add_entry_and_save` / `delete_entry_and_save` / `replace_entry_and_save` 变体，变更与落盘在同一事务内完成，写盘失败时内存状态保持不变。
+`add_user_entry` / `delete_user_entries` / `replace_user_entry`：在 `transaction_mutex_` 保护下基于当前快照做变更（查重 / 软删除 / 替换），重建索引后发布并递增 version。另有 `add_user_entry_and_save` / `delete_user_entries_and_save` / `replace_user_entry_and_save` 变体，变更与落盘在同一事务内完成，写盘失败时内存状态保持不变。`UserLexicon` 侧的对应实现为 `add_entry` / `delete_entries` / `replace_entry` 及其 `_and_save` 变体。
 
 `import_file`：从源文件导入用户词库（严格模式，任一行非法即整体失败），文件大小上限 64 MiB（`kMaxUserDictImportBytes`），成功后整体替换当前用户词库并落盘。
 

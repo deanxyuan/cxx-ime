@@ -10,16 +10,17 @@
 
 > A lightweight Windows TSF (Text Services Framework) input method (Pinyin + Wubi + Mixed).
 
-CxxIME is a lightweight Windows TSF-based input method with three modes: Pinyin, Wubi 86, and mixed Pinyin + Wubi. It uses a client/server architecture: the TSF DLL captures keystrokes and talks to a background server over IPC, and the server handles Pinyin parsing, dictionary lookup, and candidate generation.
+CxxIME is a lightweight Windows TSF-based input method with three modes: Pinyin, Wubi 86, and mixed Pinyin + Wubi. The client (TSF DLL) only captures keystrokes and presents candidates; Pinyin parsing, dictionary lookup, and candidate generation all happen in a separate server process, so every input session shares one copy of the dictionary and a crashing engine cannot take down the host application you are typing in.
 
 ## Features
 
-- Pinyin, Wubi 86, and mixed input modes, with shorthand Pinyin, fuzzy matching, and Wubi shortcut codes
-- Top-N candidates ranked in tiers by match quality, so frequent long words do not overshadow exact syllable matches
-- A unique four-code Wubi candidate is committed automatically (configurable)
-- App hosts can take over inline preedit and candidate-window rendering via TSF UIElement (verified in DOTA2)
-- 12 built-in color themes (6 palettes × light/dark), with horizontal and vertical layouts
-- Candidate learning is off by default; preferences persist independently and can be cleared in Settings
+- Pinyin, Wubi 86, and mixed modes, with full Pinyin, shorthand, fuzzy syllables, dynamic sentence building, and segment-by-segment selection
+- Candidates ranked in tiers by match quality, so exact syllables and near-complete words are never buried by frequent long words; long Pinyin can be selected by segment
+- A dedicated Wubi prefix index covering shortcut codes, completion hints, automatic commit on a unique four-code match, and fifth-code handling
+- Candidate window supports horizontal and vertical layouts, D2D and GDI rendering, and 12 built-in themes (6 palettes × light/dark)
+- App hosts can take over inline preedit and candidate rendering via TSF UIElement (verified in DOTA2)
+- Candidate learning is off by default; when enabled, preferences persist independently, and the user dictionary, candidate order, and learning data are managed separately in Settings
+- User data lives in `%USERPROFILE%\cxxime\`, is kept on uninstall by default, and supports backup and merge import
 
 ## Screenshots
 
@@ -36,11 +37,21 @@ Candidate window theme previews (6 palettes × light/dark):
 
 ## Installation
 
-1. Run `cxxime-v<version>-setup.exe` and follow the wizard
-2. **Log off and log back on** after installation
+1. Download `cxxime-v<version>-setup.exe` from [Releases](https://github.com/deanxyuan/cxx-ime/releases) and follow the wizard
+2. **Log off and log back on** after installation (the TSF text service is only loaded at logon)
 3. Switch to CxxIME with `Ctrl+Space` or `Win+Space`
 
+Each version gets its own version directory, so upgrades and downgrades never overwrite older files; files still in use by a host process are cleaned up by a later install or a full restart, and installation never forces an immediate reboot. Uninstalling keeps your configuration, user dictionary, and learning data under `%USERPROFILE%\cxxime\`.
+
 See [docs/installation.md](docs/installation.md) for detailed installation, uninstall, and upgrade instructions.
+
+## Performance
+
+The dictionary and indexes are loaded into server memory in one pass. Frequent inputs are served from pre-built indexes, while other inputs use a scan budget, bounded candidate collection, and a query deadline to keep latency predictable.
+
+In the release benchmark history, the Preedit IPC round trip averages about `50 µs`, and the query P50 for `nihao` and `nihaoshijie` is no higher than `60 µs` and about `170 µs` respectively.
+
+Results vary with hardware and dictionary data. See [docs/benchmark-data.md](docs/benchmark-data.md) and [docs/ipc-architecture.md](docs/ipc-architecture.md) for the full data and reproduction steps.
 
 ## Configuration
 
@@ -53,14 +64,20 @@ All options (input modes, candidate window, themes, dictionary management, short
 
 CxxIME ships with Pinyin and Wubi 86 dictionaries. The Pinyin data comes from [rime-ice](https://github.com/iDvel/rime-ice) (~1.9M entries, GPL-3.0-only), and the Wubi data from [KyleBing/rime-wubi86-jidian](https://github.com/KyleBing/rime-wubi86-jidian) (Apache-2.0). Dictionary sources and licenses are documented in [data/README.md](data/README.md), and the data formats and build/maintenance pipeline in [docs/dictionary.md](docs/dictionary.md).
 
-## Building from Source (Developers)
+## Compatibility
+
+- **Windows 10 / 11**: verified through daily use and regression testing
+- **Windows 7 and earlier**: not verified and not supported
+
+## Building from Source
 
 ```cmd
-build.bat              # Release build
-build.bat debug        # Debug build (tests and tools enabled)
+build.bat                                             # development build (output in build\, tools and tests enabled)
+ctest --test-dir build -C Release --output-on-failure # run unit tests
+python scripts\package.py                             # build a releasable installer
 ```
 
-Requirements: Windows 10/11, Visual Studio 2022 (C++ workload), CMake 3.15+, Python 3.10+ (needed for dictionary generation and packaging). See [docs/installation.md](docs/installation.md) for full build and packaging instructions, [docs/architecture.md](docs/architecture.md) for the architecture overview, and [tools/README.md](tools/README.md) for the development tools.
+Requirements: Windows 10/11, Visual Studio 2017 or newer (C++ workload), CMake 3.15+; packaging additionally needs Python 3.10+ and [NSIS 3.x](https://nsis.sourceforge.io/). The installer is written to `..\output\cxxime-v<version>-setup.exe`.
 
 ## License
 

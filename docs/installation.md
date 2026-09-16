@@ -5,7 +5,7 @@
 ### 环境要求
 
 - Windows 10/11
-- Visual Studio 2022（或 Build Tools），需要 C++ 桌面开发工作负载
+- Visual Studio 2017 或更新版本（或 Build Tools），需要 C++ 桌面开发工作负载
 - CMake 3.15+
 - Python 3.10+（词典生成、测试和打包时需要；运行安装包不需要）
 
@@ -57,21 +57,24 @@ python scripts\package.py --output-dir output    # 自定义安装包输出目�
 运行 `cxxime-v<version>-setup.exe`，按向导操作：
 
 1. 许可协议
-2. 选择安装基目录，默认 `C:\Program Files\CxxIME`；新版本会安装到 `<基目录>\<版本号>\`
+2. 选择安装基目录，默认 `C:\Program Files\CxxIME`；新版本会安装到 `<基目录>\<版本号>.<8位十六进制>\`
 3. 检查占用旧版 CxxIME 文件的应用（Restart Manager + 安装锁报告）
 4. 将新程序和出厂数据解压到同卷暂存目录（`<基目录>\update\`）
-5. 注册 TSF、复制 IMM 兼容模块、写入安装信息并启动服务端
-6. 将新版本注册为活动版本（`InstallLocation`），旧版本保留为待清理（`PreviousInstallLocation`）
-7. 初始化用户配置目录 `%USERPROFILE%\cxxime\`，创建快捷方式
+5. 用 `Rename` 把暂存目录原子切换为新的版本目录 `<基目录>\<版本号>.<8位十六进制>\`
+6. 注册 TSF、启动服务端、准备系统 IMM 模块更新、写入安装标记
+7. 提交生命周期状态（`InstallLocation` 指向新版本，旧版本进入待清理列表），清理事务与待清理版本
+8. 把 `cxxime_ime_x64.ime` / `cxxime_ime_x86.ime` 复制为系统模块 `%WINDIR%\Sysnative\cxxime.ime` 与 `%WINDIR%\SysWOW64\cxxime.ime`（被占用时改为重启后替换）
+9. 初始化用户配置目录 `%USERPROFILE%\cxxime\`（已有 `default.json` 时不覆盖），创建快捷方式
 
 ### 多版本安装
 
 当前安装器采用**多版本布局**：每个版本独占一个版本目录，升级/降级不覆盖旧版本文件，避免新旧模块混装和文件占用导致的安装失败：
 
-- 首次安装：目标为 `<基目录>\<版本号>\`；
-- 已存在其他版本：新版本安装到 `<基目录>\<版本号>\` 并成为活动版本，旧版本保留；注册表 `InstallLocation` 指向活动版本，`PreviousInstallLocation` 记录待清理版本；
-- 同版本重装/升级：使用 `<基目录>\<版本号>.next\` 暂存并原子替换，避免与已注册目录冲突；
-- 旧版本保留到系统重启清理：若上一版本仍有进程占用，安装完成页提示"部分应用仍使用上一版本，重新打开后即可切换"，必要时重启后由系统清理；存在待清理版本时新的安装会被阻塞。
+- 版本目录名由生命周期模块生成，格式为 `<版本号>.<8位十六进制>`（`installer/src/installer_lifecycle_state.cc` 的 `allocate_target()`，八位十六进制取自 `CoCreateGuid()`），同一版本重复安装会得到不同的目录，不会与已注册目录冲突；
+- 首次安装：在基目录下分配新的版本目录，并写入 `%InstallBaseDir%\maintenance\install-state.json`；
+- 已存在其他版本：新版本成为活动版本并写入注册表 `InstallLocation`，旧版本进入 `retired` 列表（状态文件中的 `retired`，NSIS 侧记为 `PreviousInstallLocation`）；
+- 暂存与新版本目录切换：程序先解压到 `<基目录>\update\`，再用 `Rename` 原子切换到目标版本目录；
+- 旧版本清理：无进程占用时在安装提交阶段删除；仍被占用时在安装完成页提示"部分应用仍使用上一版本，重新打开后即可切换"，并在后续安装或系统重启后清理。
 
 安装器使用 `Global\CxxIME.Installation` 命名互斥锁保证同一时间只有一个安装/卸载进程。切换程序目录前，安装器将旧程序状态、64 位和 32 位 TSF 模块的实际注册状态、系统 IMM 模块和安装注册表状态写入持久事务文件，不会根据 DLL 是否存在推断 TSF 是否已注册。TSF 注册、系统 IMM 模块复制或安装信息写入失败时，会按事务文件恢复原状态；安装提交成功后才删除事务数据和待清理版本。
 
@@ -91,13 +94,15 @@ python scripts\package.py --output-dir output    # 自定义安装包输出目�
 - **推荐：** 开始菜单 → CxxIME → 卸载 CxxIME
 - 或控制面板 → 添加/删除程序 → CxxIME
 
-卸载程序自动：停止服务端 → 检查文件占用 → 创建卸载事务 → 反注册 TSF DLL →
-删除系统 IMM 模块 → 暂存并删除程序文件 → 清理待清理版本目录 → 移除自启动和注册表。
+卸载流程（NSIS `Section Uninstall`）：释放输入处理器 → 停止服务端 → 检查文件占用 →
+校验生命周期状态 → 创建卸载事务 → 准备系统 IMM 模块移除 → 反注册 TSF DLL →
+删除注册表项 → 移除系统 IMM 模块 → 提交生命周期状态 → 删除暂存与 `maintenance` 残留 →
+（勾选时）删除用户数据目录 → 删除快捷方式与基目录。
 
 默认卸载只删除程序文件、开始菜单快捷方式、TSF 注册项、自启动项和卸载项。用户目录
 `%USERPROFILE%\cxxime\` 下的配置、用户词库、选词偏好与手动候选顺序会保留，便于重新安装或升级后继续使用；卸载向导提供"删除用户配置和词库数据"复选框，勾选后才会删除用户目录。
 
-多版本布局下，卸载活动版本的同时会清理注册表记录的 `PreviousInstallLocation` 与 `<基目录>\update\` 残留。若 TSF DLL 或系统 IME 模块仍被占用，卸载进入**延期卸载**流程：记录 `.cxxime-uninstall-pending` 标记，重启后由系统完成删除；卸载中断后可再次运行卸载器继续处理。
+多版本布局下，卸载活动版本的同时会清理生命周期状态、待清理版本与 `<基目录>\update\` 残留。若 TSF DLL 或系统 IME 模块仍被占用，卸载进入**延期卸载**流程：相关文件与注册表项带 `/REBOOTOK` 标记，重启后由系统完成删除；卸载中断后可再次运行卸载器继续处理。
 
 卸载器只删除安装器拥有的文件；安装目录中无法识别的文件会保留。删除程序文件成功前
 控制面板卸载项和 `uninstall.exe` 保持可用。卸载中断后可再次运行卸载器继续处理；删除程序文件
@@ -112,23 +117,23 @@ python scripts\package.py --output-dir output    # 自定义安装包输出目�
 
 ## 诊断包
 
-设置窗口"关于"页提供"导出诊断包"按钮，开始菜单也提供 "CCxxIME → Collect Diagnostics" 入口。诊断导出不会修改系统状态，默认收集：
+设置窗口"关于"页提供"导出诊断包"按钮，开始菜单也提供 "CxxIME → Collect Diagnostics" 入口。诊断导出不会修改系统状态，默认收集：
 
 - 版本、系统、PowerShell、当前用户等环境信息
 - 安装目录、出厂数据目录、用户目录、日志目录
 - 关键程序文件和数据文件的大小、时间戳、SHA256
-- 日志文件清单和 trace-summary.txt 近期错误/慢路径摘要 
-- CxxIME注册表卸载项、TIP注册项、键盘预加载状态
-- `cxxime-server.exe`、`cxxime-settings.exe` 和加载 `cxxime tsf.dll` 的进程信息
+- 日志文件清单和 trace-summary.txt 近期错误/慢路径摘要
+- CxxIME 注册表卸载项、TIP 注册项、键盘预加载状态
+- `cxxime-server.exe`、`cxxime-settings.exe` 的运行状态，以及 `cxxime_tsf_x64.dll` / `cxxime_tsf_x86.dll` 与系统 `cxxime.ime` 模块的文件信息
 
-默认不会复制日志、用户配置或用户数据（词库与偏好）。需要进一步排查时,可在安装目录运行:
+默认不会复制日志、用户配置或用户数据（词库与偏好）。需要进一步排查时，可在安装目录运行：
 
 ```cmd
 powershell -NoProfile -ExecutionPolicy Bypass -File collect_diagnostics.ps1 -IncludeLogs
-powershell -NoProfile -ExecutionPolicy Bypass -File collect_diagnostics.ps1 -IncludeUserConfig -IncludeUserDict -IncludeCandidatePreferences
+powershell -NoProfile -ExecutionPolicy Bypass -File collect_diagnostics.ps1 -IncludeUserConfig -IncludeUserDict -IncludeCandidatePreferences -IncludeDisabledSystemLexicon
 ```
 
-注意:日志可能包含输入编码,用户数据包含个人词条与选词记录。对外反馈问题前应确认是否可以附带这些内容。
+注意：日志可能包含输入编码，用户数据包含个人词条与选词记录。对外反馈问题前应确认是否可以附带这些内容。
 
 ## 安装模式
 
@@ -136,9 +141,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File collect_diagnostics.ps1 -Inc
 
 | 类型 | 位置 | 说明 |
 |---|---|---|
-| 程序文件 | `C:\Program Files\CxxIME\<版本号>\`（基目录可在安装向导中修改） | 每个版本自包含 `cxxime-server.exe`、`cxxime-settings.exe`、`cxxime_tsf_x64.dll`、`cxxime_tsf_x86.dll`、`cxxime-resources.dll`、`uninstall.exe` |
+| 程序文件 | `C:\Program Files\CxxIME\<版本号>.<8位十六进制>\`（基目录可在安装向导中修改） | 每个版本自包含 `cxxime-server.exe`、`cxxime-settings.exe`、`cxxime_tsf_x64.dll`、`cxxime_tsf_x86.dll`、`cxxime_ime_x64.ime`、`cxxime_ime_x86.ime`、`cxxime-resources.dll`、`collect_diagnostics.ps1`、`uninstall.exe` |
 | 出厂数据 | `<版本目录>\data\` | 出厂配置、主题、标点、符号、二进制词典、Top-N 索引及清单 |
-| 用户数据 | `%USERPROFILE%\cxxime\` | 用户配置、主题覆盖、标点覆盖、用户词库、选词偏好与手动候选顺序（跨版本共享） |
+| 用户数据 | `%USERPROFILE%\cxxime\` | 用户配置、主题覆盖、标点覆盖、用户词库、选词偏好、整句学习与手动候选顺序（跨版本共享） |
 
 用户数据目录由安装器初始化，后续覆盖安装不会覆盖已有用户配置。
 
@@ -148,7 +153,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File collect_diagnostics.ps1 -Inc
 
 ```
 <安装基目录>\
-├── <版本号>\                      活动版本（每个版本自包含以下结构）
+├── <版本号>.<8位十六进制>\          活动版本（每个版本自包含以下结构）
 │   ├── cxxime_tsf_x64.dll
 │   ├── cxxime_tsf_x86.dll
 │   ├── cxxime_ime_x64.ime / cxxime_ime_x86.ime
@@ -156,8 +161,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File collect_diagnostics.ps1 -Inc
 │   ├── cxxime-server.exe
 │   ├── cxxime-settings.exe
 │   ├── collect_diagnostics.ps1
+│   ├── install-manifest.json
+│   ├── license.txt
 │   ├── THIRD_PARTY_NOTICES.txt
 │   ├── licenses\
+│   │   ├── miniz-MIT.txt
 │   │   └── rime-ice-GPL-3.0.txt
 │   ├── uninstall.exe
 │   └── data\
@@ -176,7 +184,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File collect_diagnostics.ps1 -Inc
 │       ├── wubi86.dict.idx
 │       └── wubi86.reverse.idx
 ├── update\                       安装暂存目录
-└── .cxxime-*                     安装事务/系统 IME 更新标记
+├── maintenance\
+│   └── install-state.json        生命周期状态（active / prepared / retired）
+└── .cxxime-*                     安装与卸载事务标记
 ```
 
 ### 用户数据目录
@@ -190,6 +200,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File collect_diagnostics.ps1 -Inc
 ├── user_wubi.tsv             (自动生成)
 ├── learning_pinyin.tsv       (自动生成)
 ├── learning_wubi.tsv         (自动生成)
+├── learning_composition.tsv  (自动生成，整句学习)
 ├── candidate_order_pinyin.tsv (自动生成)
 ├── candidate_order_wubi.tsv   (自动生成)
 ├── disabled_pinyin.tsv       (自动生成)
@@ -216,7 +227,7 @@ cxxime-server.exe --config "D:\config.json"          # 指定配置文件
 
 运行开始菜单中的 "CxxIME 设置" 或直接启动 `cxxime-settings.exe`。
 
-编辑器按面板组织（输入 / 候选窗口 / 高级布局 / 快捷键 / 词库管理 / 诊断 / 关于），各面板与配置项详见 [设置指南](settings-guide.md)。修改配置后点击"确定 / 应用"，配置立即写入用户目录并经服务端热重载生效。
+编辑器按面板组织（输入 / 界面 / 高级布局 / 快捷键 / 词库管理 / 备份与导入 / 故障排查 / 关于），各面板与配置项详见 [设置指南](settings-guide.md)。修改配置后点击"确定 / 应用"，配置立即写入用户目录并经服务端热重载生效。
 
 ## 常见问题
 
@@ -225,14 +236,14 @@ cxxime-server.exe --config "D:\config.json"          # 指定配置文件
 1. 确认已注销并重新登录
 2. 检查 `regsvr32` 是否成功：手动运行以下命令注册 x64 和 x86 两个架构的 DLL（路径为活动版本目录）：
    ```cmd
-   regsvr32 "C:\Program Files\CxxIME\<版本号>\cxxime_tsf_x64.dll"
-   regsvr32 "C:\Program Files\CxxIME\<版本号>\cxxime_tsf_x86.dll"
+   regsvr32 "C:\Program Files\CxxIME\<版本号>.<8位十六进制>\cxxime_tsf_x64.dll"
+   regsvr32 "C:\Program Files\CxxIME\<版本号>.<8位十六进制>\cxxime_tsf_x86.dll"
    ```
 3. 在"设置 → 时间和语言 → 语言和区域 → 中文(简体)"中添加输入法
 
 ### 服务端启动后立即退出
 
-通常是词典文件缺失。检查 `C:\Program Files\CxxIME\<版本号>\data\pinyin.dict.bin` 是否存在。若缺失，重新运行 `scripts\package.py` 生成二进制词典后重新安装。
+通常是词典文件缺失。检查 `C:\Program Files\CxxIME\<版本号>.<8位十六进制>\data\pinyin.dict.bin` 是否存在。若缺失，重新运行 `scripts\package.py` 生成二进制词典后重新安装。
 
 ### 切换输入法后打字无反应
 

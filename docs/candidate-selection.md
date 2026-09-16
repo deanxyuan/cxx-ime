@@ -62,7 +62,7 @@
 **关键优化：**
 
 - **信度排序**：DFS 前将每条边的候选音节按信度降序排列。正常拼写（信度 0）优先，缩写中信度越高（越常见）越优先。这确保好路径在截断前被枚举到。
-- **枚举上限**：最多枚举 256 条路径（`kMaxPaths = 256`）。超过则 DFS 提前退出。translator 只取前 64 条路径（`PinyinTranslator::kMaxPaths = 64`），256 条已留出 4 倍余量。密集缩写图（如 11 字符全拼产生 154 条边）在无上限时可生成 10,000+ 条路径，降至 256 后同一输入 <1ms 完成。
+- **枚举上限**：`Syllabifier` 最多枚举 256 条路径（`engine/src/syllabifier.cc` 的 `kMaxPaths = 256`）。超过则 DFS 提前退出。`PinyinTranslator` 只消费前 64 条（`pinyin_translator.cc` 的 `kMaxPaths = 64`）。密集缩写图（如 11 字符全拼产生 154 条边）在无上限时可生成 10,000+ 条路径，降至 256 后同一输入 <1ms 完成。
 - **提前退出**：DFS 每层检查 `results.size() >= kMaxPaths`，达成即返回。避免穷举 5^N 条路径后才发现超限。
 
 ### 3. 路径过滤（has_prefix）
@@ -73,7 +73,7 @@
 ["shui","dian","fei"] → [id(shui), id(dian), id(fei)]
 ```
 
-二分查找 + 前缀匹配。只有词典中存在对应 N 元音节的路径保留（`live_ids`）。不存在的路径被丢弃（如 `["sa","da","fa"]` ——不存在这个三字词）。
+二分查找 + 前缀匹配。只有词典中存在对应 N 元音节记录的路径保留（`QueryScratch::live_path_indices`）。不存在的路径被丢弃（如 `["sa","da","fa"]` ——不存在这个三字词）。
 
 ### 4. 候选查找与排序（lookup_by_ids + sort）
 
@@ -86,7 +86,7 @@ id_index_ 前缀匹配: "shui:dian" → entries[...]
   扫出: 水电(freq=150000), 水点(freq=90000), ...
 ```
 
-同时查询用户词库索引（`lookup_user_exact` / `lookup_user_prefix`），补充个性化候选。用户词候选按 `score_user_match()` 分层评分（精确/缩写高基数，前缀按接近程度分档，详见 [用户词库与候选偏好](user-dictionary.md)），插入到结果中。
+同时查询用户词库索引（`lookup_user_exact` / `lookup_user_prefix`），补充个性化候选。用户词候选按 `score_match()` 分层评分（精确/缩写高基数，前缀按接近程度分档，详见 [用户词库与候选偏好](user-dictionary.md)），插入到结果中。
 
 所有路径的结果合并去重，按频率降序排列（`sort_candidates_by_score`：frequency desc → 文本长度 asc → 文本字典序），再进入偏好/手动固定层，最后分页返回。
 
@@ -136,33 +136,33 @@ Dict::lookup("qdr") → WubiPrefixIndex::find(packed_code(qdr))
 
 用户词典在查询管道中通过多路索引（exact / prefix / abbr / mixed）查询，与系统词典结果合并（拼音与五笔共用同一套用户词机制）：
 
-| 查询方法 | 触发条件 | 索引 |
+| 查询方法 | 触发条件 | 使用的索引 |
 |----------|---------|------|
-| `lookup_user_exact` | `lookup_by_syllables()` 精确匹配 | `user_exact_index_` |
-| `lookup_user_prefix` | `lookup()` 前缀匹配 | `user_prefix_index_`（code ≤ 6）或 `user_code_sorted_` 二分（code > 6） |
-| `lookup_user_short` | 短输入快速路径 | exact → prefix → abbr → mixed |
+| `UserLexicon::lookup_exact()` | `lookup_by_syllables()` 精确匹配 | `exact_index_` |
+| `UserLexicon::lookup_prefix()` | `lookup()` 前缀匹配 | `prefix_index_`（前缀长度 ≤ 6）或 `code_sorted` 二分（前缀更长） |
+| `UserLexicon::lookup_indexed()` | 短输入快速路径 | exact → prefix → abbr → mixed 四路桶 |
 
-### lookup_user_prefix 两路查询
+### lookup_prefix 两路查询
 
-`Dict::lookup_user_prefix()` 根据 key 长度走不同的索引路径，两路都在收集后按 `score_user_match()` 评分降序排列，再根据 `max_user_scan` 截断：
+`UserLexicon::lookup_prefix()` 根据 key 长度走不同的索引路径，两路都在收集后按 `score_match()` 评分降序排列，再根据 `max_user_scan` 截断：
 
-- **code ≤ 6**：通过 `user_prefix_index_` 哈希桶定位，桶内遍历全部命中条目，评分排序后截断
-- **code > 6**：对 `user_code_sorted_`（按 code 字典序排序的 vector）做 `lower_bound` 二分定位起始位置，线性扫描前缀匹配条目，评分排序后截断
+- **key 长度 ≤ 6**：通过 `prefix_index_` 哈希桶定位，桶内遍历全部命中条目，评分排序后截断
+- **key 长度 > 6**：对 `code_sorted`（按 code 字典序排序的 `EntryId` 数组）做 `lower_bound` 二分定位起始位置，线性扫描前缀匹配条目，评分排序后截断
 
 ### 用户词评分
 
-用户词评分通过 `score_user_match()` 函数（`dict.cc`）计算，按匹配类型和打分档位分档：
+用户词评分通过 `UserLexicon` 内部的 `score_match()` 函数（`engine/src/user_lexicon_query.cc`）计算，按匹配类型和打分档位分档：
 
 ```cpp
 // 基础分（按匹配类型）
-kExactBase     = 200000000    // 完全匹配（key == code）
-kPatternBase   = 120000000    // 缩写/混合匹配
+kExactBase     = 200000000   // 完全匹配（key == code）
+kPatternBase   = 120000000   // 缩写/混合匹配
 kNearPrefixBase = 800000     // 前缀：key_len + 1 >= code_len
 kMidPrefixBase  = 160000     // 前缀：key_len * 2 >= code_len
 kWeakPrefixBase = 4000       // 前缀：其余情况，含 key_len <= 2
 
 // 频率加成（bounded）
-frequency = clamp(1, frequency, 50000)
+bounded_frequency = clamp(frequency, 1, 50000)
 
 // 近期使用加成
 recent_bonus = (current_sequence - entry_sequence <= 1000)
@@ -178,7 +178,9 @@ score = base + bounded_frequency + recent_bonus
 | 档位 | 条件 | 行为 |
 |------|------|------|
 | `kPinyin` | 拼音模式（默认） | 完整分档：exact → pattern → nearPrefix → midPrefix → weakPrefix |
-| `kWubi` | 五笔模式 | 所有前缀命中一律 `kWeakPrefixBase`（4000），避免用户词干扰五笔码长精确匹配 |
+| `kWubi` | 五笔模式 | 前缀匹配一律 `kWeakPrefixBase`（4000），避免用户词干扰五笔码长精确匹配 |
+
+档位由 `Dict` 在初始化时通过 `UserLexicon::set_scoring_profile()` 设置：拼音词典用 `kPinyin`，五笔词典用 `kWubi`（`engine/src/dict.cc`）。
 
 用户词候选通过 `candidate.origin = kUser` 标识，评分远高于系统词典前缀匹配（系统前缀无加分），保证用户选过的词优先于系统未选过的同码词。
 
@@ -194,7 +196,7 @@ score = base + bounded_frequency + recent_bonus
 |------|---------|
 | 普通管道 | 合并去重后按 frequency 降序（同频按文本长度/字典序） |
 | Top-N 快速路径 | 构建期 score（精确 > 缩写 > 混合，完整 > 前缀，见 [短输入快速路径](short-input-fast-path.md)） |
-| 用户词 | `score_user_match()` 分档（见上），远高于系统前缀匹配 |
+| 用户词 | `score_match()` 分档（见上），远高于系统前缀匹配 |
 
 ### 五笔
 
@@ -238,23 +240,23 @@ struct Candidate {
 
 `text + code + syllables` 构成**完整候选身份**，手动固定与学习偏好均按身份匹配（见 [候选排序设计](candidate-ordering.md)）。`origin` 和 `source` 还用于日志追踪、设置界面的排序原因展示。
 
-## 长输入查询页缓存
+## 查询页缓存
 
-作为短输入快速路径的姊妹机制，用于 >6 字符的长拼音查询。
+与短输入快速路径并行的缓存层，按「输入 + 页码 + 页大小」保存已计算出的候选页，`translate_page()` 开头先查此缓存，未命中才进入快速路径或标准管道。
 
-标准管道在 `PinyinTranslator::translate()` 返回页面前，将结果存入 LRU 缓存：
+标准管道返回页面前将结果存入 LRU 缓存，`candidate_offset` 也参与缓存键与命中判断：
 
 ```cpp
-// pinyin_translator.cc — translate() 返回前
+// pinyin_translator.cc — 返回前
 if (!deadline_hit && !(trace && trace->deadline_exceeded))
-    store_query_cache(pinyin, page_index, page_size, page);
+    store_query_cache(pinyin, page_index, candidate_offset, page_size, versions, page);
 ```
 
 | 属性 | 值 |
 |------|-----|
-| 触发条件 | `input.size() > 6`（短输入走 `lookup_indexed_fast`，不触发此缓存） |
+| 触发条件 | 任意输入长度，只要输入与页参数命中已缓存条目 |
 | 容量 | LRU 64 条（`kMaxQueryCacheEntries = 64`），`sequence` 递增序号实现淘汰 |
-| 命中条件 | input + page_index + page_size + 用户词/偏好/手动排序/禁用词版本全匹配 |
+| 命中条件 | input + page_index + candidate_offset + page_size + 用户词/偏好/手动排序/禁用词/整句学习版本全匹配 |
 | 失效 | 任一相关版本变化后全部缓存自动失效 |
 | 非缓存场景 | deadline 命中或 deadline_exceeded 时不写入缓存，避免缓存过期/不完整结果 |
 

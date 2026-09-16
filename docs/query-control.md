@@ -179,7 +179,7 @@ Dict::lookup_by_ids(budget, trace)
 1. **路径数上限**：`kMaxPaths = 256`。DFS 生成 256 条完整路径后立即停止。
 2. **Deadline**：首次调用检查 + 其后每 32 次递归调用检查一次 `deadline->expired()`，过期时中断。
 
-路径上限的依据：`PinyinTranslator::translate()` 只取前 `kMaxPaths = 64` 条路径（见 `pinyin_translator.cc`），256 条已留出 4 倍余量。密集缩写图（如 11 字符全拼产生 154 条边）在无上限时可生成 10,000+ 条路径，DFS 递归调用达 7,000+ 次，耗时 50ms+。降至 256 后同一输入 <1ms 完成。
+路径上限的依据：`PinyinTranslator` 只消费前 `kMaxPaths = 64` 条路径（见 `pinyin_translator.cc`）。密集缩写图（如 11 字符全拼产生 154 条边）在无上限时可生成 10,000+ 条路径，DFS 递归调用达 7,000+ 次，耗时 50ms+。降至 256 后同一输入 <1ms 完成。
 
 ## 扫描流程
 
@@ -209,30 +209,30 @@ return collector.finish()  // 已排序，大小 ≤ limit
 候选首屏规模很小（≤128），采用小数组线性去重替代 `unordered_set`：
 
 ```cpp
-// pinyin_translator.cc / dict.cc
+// pinyin_translator.cc
 static bool contains_text(const std::vector<Candidate>& items, const std::string& text);
-static bool contains_ids(const std::vector<std::vector<uint32_t>>& items,
-                         const std::vector<uint32_t>& ids);
+static void merge_candidate_by_score(std::vector<Candidate>& items, Candidate candidate);
+static void sort_candidates_by_score(std::vector<Candidate>& items);
 ```
 
 流程：遍历已收集候选，逐个比较 text/ids。候选数通常 < 100，线性扫描比 hash set 更快（无哈希计算、无堆分配、cache 友好）。
 
 ### QueryScratch（查询复用缓冲区）
 
-每 Engine 持有一份 `QueryScratch`，随 session 复用，避免 `translate()` 每次查询堆分配临时容器：
+每次查询复用一份 `QueryScratch`，避免 `translate()` 堆分配临时容器：
 
 ```cpp
 // engine/include/cxxime/query_scratch.h
 struct QueryScratch {
     std::vector<std::vector<uint32_t>> id_sequences;
-    std::vector<std::vector<uint32_t>> live_ids;
+    std::vector<size_t> live_path_indices;
     std::vector<Candidate> merged_candidates;
     std::vector<Candidate> temp_candidates;
     std::vector<uint32_t> seen_hashes;
     std::vector<uint32_t> path_ids;
 
-    void reset_for_query();   // clear() 所有 vector
-    void trim_if_large();     // capacity > 256 时 shrink_to_fit()
+    void reset_for_query();   // clear() 所有容器
+    void trim_if_large();     // 超出阈值时 shrink_to_fit()
 };
 ```
 

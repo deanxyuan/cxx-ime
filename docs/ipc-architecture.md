@@ -4,7 +4,7 @@
 
 ## 概述
 
-TSF DLL（客户端）与后台服务进程之间通过 **message-mode named pipe** 通信，每次按键一次请求/响应往返。延迟目标 < 1ms/次，实测 Preedit RTT ~110us（avg）。
+TSF DLL（客户端）与后台服务进程之间通过 **message-mode named pipe** 通信，每次按键一次请求/响应往返。延迟目标 < 1ms/次，实测 Preedit RTT ~50us（avg，见下方性能基准）。
 
 | 组件 | 设计 |
 |------|------|
@@ -71,7 +71,7 @@ stop():
 
 ### 单元测试
 
-`test/ipc_test.cc` 共 33 个用例：
+`test/ipc/ipc_test.cc` 共 33 个用例：
 
 - **Protocol**（7）：`pipe_name`、`user_pipe_name_preserves_endpoint_and_is_idempotent`、`request_struct_size`、`response_struct_size`、`response_zero_init`、`candidate_text_over_old_capacity_round_trips`、`ime_status_flags_are_independent`
 - **Server**（2）：`start_stop`、`double_stop`

@@ -6,23 +6,23 @@
 
 | 指标 | 数值 | 说明 |
 |------|------|------|
-| 安装包 | ~72 MB | 单文件 NSIS 安装器，含全部词典数据 |
-| Server 常驻内存 | ~420 MB 量级 | 词典数据全量堆载为主：dict.bin 69.5 + dict.idx 46.2 + topn.bin ~290.2 + wubi ~4.8 + spellings ~0.03 + reverse idx ~7.6 + darts trie + 用户词索引 |
-| IPC 往返延迟 | < 1 ms | 实测 preedit avg ~50us（见 [IPC 架构设计](ipc-architecture.md)） |
-| 启动 | 词典一次性读入 | 无 mmap 换页延迟，代价是启动时的顺序读盘 |
+| 安装包 | ~73 MB | 压缩后的单文件安装器，含全部词典数据 |
+| Server 内存 | 工作集 ~58 MB、私有提交 ~503 MB | 私有提交以词典文件全量堆载为主，工作集随访问的词典页变化 |
+| IPC 往返延迟 | < 1 ms | 实测 preedit 平均 ~50 µs（见 [IPC 架构设计](ipc-architecture.md)） |
+| 启动 | 词典一次性读入 | 按顺序读盘，运行期不再有 mmap 换页 |
 
 ---
 
 ## 1. 项目定位
 
-轻量级 Windows TSF 输入法：拼音 / 五笔 86 / 混输三种模式，客户端（TSF DLL）/ 服务端（后台进程）分离，仅支持 Windows 10+。以 TSF 输入处理器为主，同时提供 IMM 兼容模块（`cxxime_ime_<arch>.ime`）供传统应用使用。
+Windows TSF 输入法：拼音 / 五笔 86 / 混输三种模式，客户端（TSF DLL）/ 服务端（后台进程）分离，支持 Windows 10/11。以 TSF 输入处理器为主，同时提供 IMM 兼容模块（`cxxime_ime_<arch>.ime`）供传统应用使用。
 
 **设计原则：**
 
 1. **轻量依赖** — 第三方库仅 nlohmann/json（header-only）；SQLite 仅构建时使用；无 Boost
 2. **客户端/服务端分离** — TSF DLL 只做按键捕获与展示，引擎与词典集中在服务端
 3. **模块化** — 引擎层与 UI 层完全解耦
-4. **TSF 为主、IMM 兼容** — Windows 10+ 行为稳定；附带轻量 IMM 兼容模块，覆盖仅支持 IMM 的传统应用
+4. **TSF 为主、IMM 兼容** — 在 Windows 10/11 上验证；附带 IMM 兼容模块，覆盖仅支持 IMM 的传统应用
 
 ---
 
@@ -40,13 +40,13 @@
 │  │ CandidateWindow│  │                         │  ├─────────────────────┤  │
 │  │ StatusController│ │                         │  │ Engine (per session)│  │
 │  │ LanguageBar    │  │                         │  ├─────────────────────┤  │
-│  └────────────────┘  │                         │  │ Config/Dict Monitor │  │
+│  └────────────────┘  │                         │  │ DictionaryMonitor   │  │
 └──────────────────────┘                         │  └─────────────────────┘  │
           ▲                                      └───────────────────────────┘
-          │ 共享内存 + Event（配置变更通知）                    ▲
+          │ IPC（按键 / 编辑会话 / 状态）                      ▲
 ┌──────────────────────┐                                     │
 │ cxxime-settings.exe  │─────────────────────────────────────┘
-│ 配置编辑 / 用户数据管理 │              IPC（用户词库与偏好 CRUD、重载）
+│ 配置编辑 / 用户数据管理 │   控制通道（配置快照、用户配置与词库写入、备份）
 └──────────────────────┘
 ```
 
@@ -112,7 +112,7 @@ ITfThreadFocusSink          — 线程焦点通知
 | 会话管理 | 创建/销毁输入会话，per-session Engine 引用共享资源 |
 | 全局可见状态 | GlobalVisibleState 保证跨窗口中英文/模式等状态一致 |
 | IPC 服务 | 命名管道监听（IOCP），处理请求/响应 |
-| 热重载 | ConfigMonitor（共享内存 + Event）、DictionaryMonitor（manifest 轮询） |
+| 热重载 | 控制通道 `ConfigWriteCoordinator`（配置/词库写入）、DictionaryMonitor（manifest 轮询） |
 
 ### 3.4 UI（候选窗口 + 状态窗口）
 
@@ -129,7 +129,7 @@ Named Pipe（每用户 `\\.\pipe\<username>\CxxIME`），Server 端 IOCP 线程�
 
 ### 3.6 配置系统
 
-JSON 配置（`default.json` + `themes.json`），Settings 编辑器（Win32 原生 GUI）修改后经共享内存 + Event 通知热重载。配置项与界面说明详见 [设置指南](settings-guide.md)，中英文切换配置详见 [中英文切换机制](ascii-composer.md)。
+JSON 配置（`default.json` + `themes.json`），设置编辑器（Win32 原生 GUI）修改后经控制通道（`ConfigWriteCoordinator`）写入，服务端发布新快照并在各 session 下次按键时热重载。配置项与界面说明详见 [设置指南](settings-guide.md)，中英文切换配置详见 [中英文切换机制](ascii-composer.md)。
 
 ---
 
@@ -202,12 +202,12 @@ cxx-ime/
 |------|------|------|
 | `pinyin.dict.bin` | ~69.5 MB | 拼音主词典（按 syllable_ids 排序） |
 | `pinyin.dict.idx` | ~46.2 MB | 拼音整数 ID 索引（音节→词条映射） |
-| `pinyin.topn.bin` | ~290.2 MB | 拼音 Top-N 候选索引（CXTOPN v3 DAT-16，Darts trie 查找） |
+| `pinyin.topn.bin` | ~291 MB | 拼音 Top-N 候选索引（CXTOPN v3 DAT-16，Darts trie 查找） |
 | `pinyin.spellings.bin` | ~0.03 MB (30 KB) | Patricia trie 拼写索引 |
-| `pinyin.reverse.idx` | — | 拼音词语反查索引（Settings 反查） |
+| `pinyin.reverse.idx` | ~7.3 MB | 拼音词语反查索引（Settings 反查） |
 | `wubi86.dict.bin` | ~2.5 MB | 五笔主词典 |
 | `wubi86.dict.idx` | ~2.3 MB | 五笔完整前缀索引 |
-| `wubi86.reverse.idx` | — | 五笔词语反查索引（Settings 反查） |
+| `wubi86.reverse.idx` | ~0.3 MB | 五笔词语反查索引（Settings 反查） |
 
 ---
 

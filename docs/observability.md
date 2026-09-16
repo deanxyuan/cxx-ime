@@ -90,7 +90,7 @@ release 构建下 `CXXIME_LOG` 宏展开为空操作（`do {} while (0)`），�
 
 ### TSF
 
-文件：`cxx-ime/tsf/src/text_service.cpp`
+文件：`tsf/src/text_service.cpp`
 
 记录：
 
@@ -103,8 +103,8 @@ release 构建下 `CXXIME_LOG` 宏展开为空操作（`do {} while (0)`），�
 
 文件：
 
-- `cxx-ime/ipc/src/ipc_client.cc`
-- `cxx-ime/server/src/server_app.cc`
+- `ipc/src/ipc_client.cc`
+- `server/src/server_app.cc`
 
 记录：
 
@@ -117,9 +117,9 @@ release 构建下 `CXXIME_LOG` 宏展开为空操作（`do {} while (0)`），�
 
 文件：
 
-- `cxx-ime/engine/src/engine.cc`
-- `cxx-ime/engine/src/pinyin_translator.cc`
-- `cxx-ime/engine/src/dict.cc`
+- `engine/src/engine.cc`
+- `engine/src/pinyin_translator.cc`
+- `engine/src/dict.cc`
 
 记录：
 

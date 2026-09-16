@@ -328,7 +328,7 @@ CapsLock 键在输入法中的行为模式。下拉框提供 5 个选项：
 | `wubi86.dict.bin` | 五笔 86 版二进制词典 |
 | `wubi86.dict.idx` | 五笔完整前缀索引（构建期预排序，承载五笔默认候选顺序） |
 | `pinyin.topn.bin` | 拼音 Top-N 短码索引（CXTOPN v3 DAT-16，承载拼音默认候选顺序） |
-| `pinyin.reverse.idx` / `wubi.reverse.idx` | 词语反查索引（Settings 拼音/五笔反查） |
+| `pinyin.reverse.idx` / `wubi86.reverse.idx` | 词语反查索引（Settings 拼音/五笔反查） |
 | `user_pinyin.tsv` / `user_wubi.tsv` | 用户词库：手工添加的词条（TSV 格式，拼音和五笔各独立文件） |
 | `learning_pinyin.tsv` / `learning_wubi.tsv` | 选词偏好：候选学习记录（TSV 格式，拼音和五笔各独立文件） |
 | `candidate_order_pinyin.tsv` / `candidate_order_wubi.tsv` | 候选排序：手动固定的候选顺序（TSV 格式，拼音和五笔各独立文件） |
