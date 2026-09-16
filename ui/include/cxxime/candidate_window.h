@@ -65,6 +65,7 @@ public:
     SIZE layout_size() const;
     UINT dpi() const;
     bool get_window_rect(RECT* rect) const;
+    HWND native_handle() const { return hwnd_; }
     HWND hwnd_for_test() const { return hwnd_; }
     RECT page_button_rect_for_test(CandidatePageDirection direction) const {
         return direction == CandidatePageDirection::Previous ? render_ctx_.prev_button_rect

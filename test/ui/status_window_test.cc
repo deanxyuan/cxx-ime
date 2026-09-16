@@ -43,6 +43,18 @@ static POINT input_mode_center(HWND hwnd) {
     };
 }
 
+static bool window_is_above(HWND upper, HWND lower) {
+    for (HWND window = GetTopWindow(nullptr); window; window = GetWindow(window, GW_HWNDNEXT)) {
+        if (window == upper) {
+            return true;
+        }
+        if (window == lower) {
+            return false;
+        }
+    }
+    return false;
+}
+
 // ============================================================
 // Create / Destroy
 // ============================================================
@@ -103,6 +115,49 @@ TEST(StatusWindow, ShowWithoutCreate) {
     window.show();
     window.hide();
     ASSERT_TRUE(!window.is_created());
+}
+
+TEST(StatusWindow, ShowRestoresTopmostZOrder) {
+    cxxime::StatusWindow window;
+    ASSERT_TRUE(create_test_window(window));
+    window.show();
+
+    HWND application_window =
+        CreateWindowExW(0, L"STATIC", L"Application", WS_POPUP | WS_VISIBLE, 100, 100, 400, 300,
+                        nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    ASSERT_TRUE(application_window != nullptr);
+
+    ASSERT_TRUE(SetWindowPos(window.hwnd_for_test(), HWND_NOTOPMOST, 0, 0, 0, 0,
+                             SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE) != FALSE);
+    ASSERT_TRUE(SetWindowPos(application_window, HWND_TOP, 0, 0, 0, 0,
+                             SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE) != FALSE);
+    ASSERT_TRUE(window_is_above(application_window, window.hwnd_for_test()));
+
+    window.show();
+
+    ASSERT_TRUE(window_is_above(window.hwnd_for_test(), application_window));
+    ASSERT_TRUE((GetWindowLongPtrW(window.hwnd_for_test(), GWL_EXSTYLE) & WS_EX_TOPMOST) != 0);
+
+    DestroyWindow(application_window);
+    window.destroy();
+}
+
+TEST(StatusWindow, DpiChangeNotifiesGeometryCallback) {
+    test::ScopedDpiAwarenessContext dpi_context;
+    cxxime::StatusWindow window;
+    ASSERT_TRUE(create_test_window(window));
+
+    int callback_count = 0;
+    window.set_geometry_changed_callback([&]() { ++callback_count; });
+
+    RECT suggested = {};
+    ASSERT_TRUE(window.get_window_rect(&suggested));
+    const UINT next_dpi = window.dpi() == 96 ? 120 : 96;
+    SendMessageW(window.hwnd_for_test(), WM_DPICHANGED, MAKELPARAM(next_dpi, next_dpi),
+                 reinterpret_cast<LPARAM>(&suggested));
+
+    ASSERT_EQ(callback_count, 1);
+    window.destroy();
 }
 
 // ============================================================

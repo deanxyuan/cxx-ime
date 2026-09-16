@@ -240,11 +240,43 @@ bool StatusWindow::is_created() const {
 // Show / Hide
 // ============================================================
 void StatusWindow::show() {
-    if (!hwnd_ || !IsWindow(hwnd_)) return;
-    if (IsWindowVisible(hwnd_)) return;
-    if (layered_ready_) RedrawLayered();
-    SetWindowPos(hwnd_, nullptr, 0, 0, 0, 0,
-                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    if (!hwnd_ || !IsWindow(hwnd_)) {
+        return;
+    }
+    if (IsWindowVisible(hwnd_) == FALSE && layered_ready_) {
+        RedrawLayered();
+    }
+    SetWindowPos(hwnd_, HWND_TOPMOST, 0, 0, 0, 0,
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+}
+
+void StatusWindow::show_below(HWND upper_window) {
+    if (!upper_window || !IsWindow(upper_window)) {
+        show();
+        return;
+    }
+    if (!hwnd_ || !IsWindow(hwnd_)) {
+        return;
+    }
+    if (IsWindowVisible(hwnd_) == FALSE && layered_ready_) {
+        RedrawLayered();
+    }
+
+    constexpr UINT flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE;
+    HDWP positions = BeginDeferWindowPos(2);
+    if (positions) {
+        positions =
+            DeferWindowPos(positions, hwnd_, HWND_TOPMOST, 0, 0, 0, 0, flags | SWP_SHOWWINDOW);
+    }
+    if (positions) {
+        positions = DeferWindowPos(positions, upper_window, HWND_TOPMOST, 0, 0, 0, 0, flags);
+    }
+    if (positions && EndDeferWindowPos(positions)) {
+        return;
+    }
+
+    show();
+    SetWindowPos(upper_window, HWND_TOPMOST, 0, 0, 0, 0, flags);
 }
 
 void StatusWindow::hide() {
@@ -339,6 +371,10 @@ void StatusWindow::set_click_callback(StatusButtonClickCallback callback) {
     click_callback_ = std::move(callback);
 }
 
+void StatusWindow::set_geometry_changed_callback(StatusGeometryChangeCallback callback) {
+    geometry_changed_callback_ = std::move(callback);
+}
+
 void StatusWindow::set_position_callback(StatusPositionChangeCallback callback) {
     position_callback_ = std::move(callback);
 }
@@ -419,6 +455,9 @@ LRESULT StatusWindow::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         InitLayeredSurface();
         if (use_d2d_) { CleanupD2D(); InitD2D(); }
         RedrawLayered();
+        if (moved && geometry_changed_callback_) {
+            geometry_changed_callback_();
+        }
         return 0;
     }
 

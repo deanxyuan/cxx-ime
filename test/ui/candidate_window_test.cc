@@ -794,11 +794,17 @@ TEST(CandidateWindow, remains_above_visible_status_window_during_updates) {
                                 status_window.hwnd_for_test()));
 
     status_window.show();
+    ASSERT_TRUE(window_is_above(status_window.hwnd_for_test(),
+                                candidate_window.hwnd_for_test()));
+
+    status_window.show_below(candidate_window.native_handle());
     ASSERT_TRUE(window_is_above(candidate_window.hwnd_for_test(),
                                 status_window.hwnd_for_test()));
+    ASSERT_TRUE((GetWindowLongPtrW(status_window.hwnd_for_test(), GWL_EXSTYLE) &
+                 WS_EX_TOPMOST) != 0);
 
     status_window.hide();
-    status_window.show();
+    status_window.show_below(candidate_window.native_handle());
     ASSERT_TRUE(window_is_above(candidate_window.hwnd_for_test(),
                                 status_window.hwnd_for_test()));
 

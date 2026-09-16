@@ -297,6 +297,7 @@ private:
                 return;
             }
             store_visible_candidate_count(rendered_presentation_->snapshot);
+            reconcile_status_window_z_order(status_window_.is_visible(), true);
         });
         status_window_.set_click_callback([this](cxxime::StatusButton button) {
             switch (button) {
@@ -318,7 +319,13 @@ private:
             dispatch_command(cxxime::UiCommandType::kMenuCommand, 0,
                              static_cast<std::uint32_t>(command));
         });
+        status_window_.set_geometry_changed_callback([this]() {
+            reconcile_status_window_z_order(status_window_.is_visible(),
+                                            candidate_window_.is_visible());
+        });
         status_window_.set_position_callback([this](int x, int y) {
+            reconcile_status_window_z_order(status_window_.is_visible(),
+                                            candidate_window_.is_visible());
             PositionHandler handler;
             {
                 std::lock_guard<std::mutex> lock(mutex_);
@@ -328,6 +335,31 @@ private:
                 handler(x, y);
             }
         });
+    }
+
+    void reconcile_status_window_z_order(bool status_visible, bool candidate_visible) {
+        if (!status_visible) {
+            status_window_.hide();
+            return;
+        }
+        if (!candidate_visible) {
+            status_window_.show();
+            return;
+        }
+
+        RECT candidate_rect = {};
+        RECT status_rect = {};
+        RECT intersection = {};
+        const bool have_window_rects = candidate_window_.get_window_rect(&candidate_rect) &&
+                                        status_window_.get_window_rect(&status_rect);
+        const bool windows_overlap =
+            !have_window_rects ||
+            IntersectRect(&intersection, &candidate_rect, &status_rect) != FALSE;
+        if (windows_overlap) {
+            status_window_.show_below(candidate_window_.native_handle());
+        } else {
+            status_window_.show();
+        }
     }
 
     void apply_config(const std::shared_ptr<const cxxime::Config>& config) {
@@ -424,9 +456,7 @@ private:
             applied.status_requested && !applied.status_suppressed_fullscreen;
         applied.source_caret = current.caret;
         applied.caret = current.caret;
-        if (applied.status_visible) {
-            status_window_.show();
-        } else {
+        if (!applied.status_visible) {
             status_window_.hide();
         }
 
@@ -444,6 +474,7 @@ private:
         if (!applied.candidate_visible) {
             candidate_window_.hide();
             clear_visible_candidate_count();
+            reconcile_status_window_z_order(applied.status_visible, false);
             if (applied.status_visible) {
                 rendered_presentation_ = presentation;
             } else {
@@ -464,6 +495,7 @@ private:
             applied.candidate_visible = false;
             candidate_window_.hide();
             clear_visible_candidate_count();
+            reconcile_status_window_z_order(applied.status_visible, false);
             if (applied.status_visible) {
                 rendered_presentation_ = presentation;
             } else {
@@ -506,6 +538,7 @@ private:
         if (!applied.candidate_visible) {
             candidate_window_.hide();
             clear_visible_candidate_count();
+            reconcile_status_window_z_order(applied.status_visible, false);
             if (applied.status_visible) {
                 rendered_presentation_ = presentation;
             } else {
@@ -514,6 +547,7 @@ private:
             trace_presentation(*presentation, applied);
             return;
         }
+        reconcile_status_window_z_order(applied.status_visible, true);
         rendered_presentation_ = presentation;
         store_visible_candidate_count(current);
         trace_presentation(*presentation, applied);

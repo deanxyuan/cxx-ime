@@ -36,6 +36,7 @@ struct ButtonState {
 };
 
 using StatusButtonClickCallback = std::function<void(StatusButton)>;
+using StatusGeometryChangeCallback = std::function<void()>;
 using StatusPositionChangeCallback = std::function<void(int x, int y)>;
 using StatusMenuCommandCallback = std::function<void(ImeMenuCommand)>;
 
@@ -57,6 +58,7 @@ public:
     bool is_created() const;
 
     void show();
+    void show_below(HWND upper_window);
     void hide();
     bool is_visible() const;
     bool get_window_rect(RECT* rect) const;
@@ -70,6 +72,7 @@ public:
     void set_position(int x, int y);
     void get_position(int& x, int& y) const;
     void set_click_callback(StatusButtonClickCallback callback);
+    void set_geometry_changed_callback(StatusGeometryChangeCallback callback);
     void set_position_callback(StatusPositionChangeCallback callback);
     void set_menu_command_callback(StatusMenuCommandCallback callback);
 
@@ -175,6 +178,7 @@ private:
     POINT window_start_ = {};
 
     StatusButtonClickCallback click_callback_;
+    StatusGeometryChangeCallback geometry_changed_callback_;
     StatusPositionChangeCallback position_callback_;
     StatusMenuCommandCallback menu_command_callback_;
 };
