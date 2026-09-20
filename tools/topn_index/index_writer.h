@@ -6,7 +6,8 @@
 #include <cstdint>
 #include <string>
 
-#include "topn_index_format.h"
+#include <cxxime/candidate_store.h>
+
 #include "topn_source.h"
 
 namespace cxxime::topn {
@@ -15,17 +16,12 @@ struct BuildStats {
     uint32_t key_count = 0;
     uint32_t code_index_count = 0;
     uint32_t posting_count = 0;
-    uint32_t candidate_count = 0;
-    uint32_t key_string_size = 0;
-    uint32_t candidate_string_size = 0;
+    uint32_t dictionary_entry_count = 0;
     uint32_t file_size = 0;
 };
 
-bool write_index(const Source& source, TopnIndexLayout layout, const std::string& path,
-                 BuildStats* stats, std::string* error);
-
-const char* layout_name(TopnIndexLayout layout);
-bool parse_layout(const std::string& name, TopnIndexLayout* layout);
+bool write_index(const Source& source, CandidateStoreView store,
+                 const std::string& path, BuildStats* stats, std::string* error);
 
 } // namespace cxxime::topn
 

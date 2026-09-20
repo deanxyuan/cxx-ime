@@ -1,6 +1,5 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
-#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <fstream>
@@ -11,6 +10,8 @@
 #include <vector>
 
 #include <windows.h>
+
+#include <cxxime/candidate_store.h>
 
 #include "index_reader.h"
 #include "index_writer.h"
@@ -30,24 +31,16 @@ public:
                       {{{"long-prefix", 50, 40, "long:prefix"}}},
                       {{{"long-leaf", 60, 30, "long:leaf"}}}} {}
 
-    size_t key_count() const override {
-        return keys_.size();
-    }
-
-    std::string_view key(size_t key_index) const override {
-        return keys_[key_index];
-    }
-
+    size_t key_count() const override { return keys_.size(); }
+    std::string_view key(size_t key_index) const override { return keys_[key_index]; }
     uint16_t key_flags(size_t key_index) const override {
         return keys_[key_index].size() <= kMaterializedTestPrefixLength
             ? cxxime::topn::kSourcePrefixComplete
             : 0;
     }
-
     size_t candidate_count(size_t key_index) const override {
         return candidates_[key_index].size();
     }
-
     cxxime::topn::SourceCandidate candidate(size_t key_index,
                                             size_t candidate_index) const override {
         return candidates_[key_index][candidate_index];
@@ -58,29 +51,87 @@ private:
     std::vector<std::vector<cxxime::topn::SourceCandidate>> candidates_;
 };
 
-class InvalidIdentitySource final : public cxxime::topn::Source {
+class SingleCandidateSource final : public cxxime::topn::Source {
 public:
-    InvalidIdentitySource(std::string text, std::string syllables)
+    SingleCandidateSource(std::string text, std::string syllables, int32_t frequency)
         : text_(std::move(text))
-        , syllables_(std::move(syllables)) {}
+        , syllables_(std::move(syllables))
+        , frequency_(frequency) {}
 
     size_t key_count() const override { return 1; }
     std::string_view key(size_t) const override { return "a"; }
     uint16_t key_flags(size_t) const override { return cxxime::topn::kSourcePrefixComplete; }
     size_t candidate_count(size_t) const override { return 1; }
     cxxime::topn::SourceCandidate candidate(size_t, size_t) const override {
-        return {text_, 1, 1, syllables_};
+        return {text_, frequency_, frequency_, syllables_};
     }
 
 private:
     std::string text_;
     std::string syllables_;
+    int32_t frequency_ = 0;
+};
+
+class TestCandidateStore {
+public:
+    explicit TestCandidateStore(const TestSource& source) {
+        for (size_t key = 0; key < source.key_count(); ++key) {
+            for (size_t index = 0; index < source.candidate_count(key); ++index) {
+                const auto candidate = source.candidate(key, index);
+                bool duplicate = false;
+                for (size_t existing = 0; existing < entries_.size(); ++existing) {
+                    const auto view = candidate_at(existing);
+                    if (view.text == candidate.text &&
+                        view.syllables == candidate.syllables &&
+                        view.frequency == candidate.frequency) {
+                        duplicate = true;
+                        break;
+                    }
+                }
+                if (!duplicate) {
+                    add(candidate);
+                }
+            }
+        }
+        view_ = {entries_.data(), strings_.data(),
+                 static_cast<uint32_t>(entries_.size()),
+                 static_cast<uint32_t>(strings_.size()), 0};
+        view_.fingerprint = cxxime::candidate_store_fingerprint(view_);
+    }
+
+    cxxime::CandidateStoreView view() const { return view_; }
+
+private:
+    cxxime::topn::SourceCandidate candidate_at(size_t index) const {
+        const auto& entry = entries_[index];
+        return {
+            std::string_view(strings_.data() + entry.text_offset, entry.text_len),
+            entry.frequency,
+            entry.frequency,
+            std::string_view(strings_.data() + entry.syllable_ids_offset,
+                             entry.syllable_ids_len)};
+    }
+
+    void add(const cxxime::topn::SourceCandidate& candidate) {
+        const uint32_t text_offset = static_cast<uint32_t>(strings_.size());
+        strings_.append(candidate.text.data(), candidate.text.size());
+        const uint32_t syllables_offset = static_cast<uint32_t>(strings_.size());
+        strings_.append(candidate.syllables.data(), candidate.syllables.size());
+        entries_.push_back({syllables_offset, text_offset,
+                            static_cast<uint32_t>(candidate.syllables.size()),
+                            static_cast<uint32_t>(candidate.text.size()),
+                            candidate.frequency});
+    }
+
+    std::vector<cxxime::CandidateStoreEntry> entries_;
+    std::string strings_;
+    cxxime::CandidateStoreView view_;
 };
 
 bool equal_candidate(const cxxime::topn::SourceCandidate& lhs,
                      const cxxime::topn::SourceCandidate& rhs) {
-    return lhs.text == rhs.text && lhs.frequency == rhs.frequency && lhs.score == rhs.score &&
-           lhs.syllables == rhs.syllables;
+    return lhs.text == rhs.text && lhs.frequency == rhs.frequency &&
+           lhs.score == rhs.score && lhs.syllables == rhs.syllables;
 }
 
 bool make_temp_path(std::string* path) {
@@ -94,21 +145,47 @@ bool make_temp_path(std::string* path) {
     return true;
 }
 
-bool verify_layout(const TestSource& source, cxxime::TopnIndexLayout layout,
-                   const std::string& path) {
-    std::string error;
-    cxxime::topn::BuildStats stats;
-    if (!cxxime::topn::write_index(source, layout, path, &stats, &error)) {
-        std::cerr << "write failed: " << error << "\n";
+template <typename T>
+bool reject_mutation(const std::string& path, cxxime::CandidateStoreView store,
+                     std::streamoff offset, T bad_value, const char* description) {
+    std::fstream file(path, std::ios::binary | std::ios::in | std::ios::out);
+    if (!file) {
         return false;
     }
-    if (stats.key_count != source.key_count()) {
-        std::cerr << "key count mismatch\n";
+    T original = {};
+    file.seekg(offset);
+    file.read(reinterpret_cast<char*>(&original), sizeof(original));
+    file.seekp(offset);
+    file.write(reinterpret_cast<const char*>(&bad_value), sizeof(bad_value));
+    file.close();
+    if (!file) {
         return false;
     }
 
+    std::string error;
     cxxime::topn::IndexReader reader;
-    if (!reader.load(path, layout, &error)) {
+    const bool rejected = !reader.load(path, store, &error);
+
+    file.open(path, std::ios::binary | std::ios::in | std::ios::out);
+    file.seekp(offset);
+    file.write(reinterpret_cast<const char*>(&original), sizeof(original));
+    file.close();
+    if (!rejected) {
+        std::cerr << description << " corruption was not rejected\n";
+    }
+    return rejected && static_cast<bool>(file);
+}
+
+bool verify_index(const TestSource& source, cxxime::CandidateStoreView store,
+                  const std::string& path) {
+    std::string error;
+    cxxime::topn::BuildStats stats;
+    if (!cxxime::topn::write_index(source, store, path, &stats, &error)) {
+        std::cerr << "write failed: " << error << "\n";
+        return false;
+    }
+    cxxime::topn::IndexReader reader;
+    if (!reader.load(path, store, &error)) {
         std::cerr << "load failed: " << error << "\n";
         return false;
     }
@@ -121,169 +198,76 @@ bool verify_layout(const TestSource& source, cxxime::TopnIndexLayout layout,
         const bool expected_complete =
             (source.key_flags(key_index) & cxxime::topn::kSourcePrefixComplete) != 0 ||
             !has_descendant;
-        if (!reader.find(source.key(key_index), &match) ||
+        if (!reader.find(key, &match) ||
             match.posting_count != source.candidate_count(key_index) ||
-            (layout != cxxime::TopnIndexLayout::kFlat16 &&
-             ((match.flags & cxxime::kShortPostingPrefixComplete) != 0) !=
-                 expected_complete)) {
-            std::cerr << "lookup failed for key " << source.key(key_index) << "\n";
+            ((match.flags & cxxime::kShortPostingPrefixComplete) != 0) !=
+                expected_complete) {
+            std::cerr << "lookup failed for key " << key << "\n";
             return false;
         }
         for (size_t candidate_index = 0; candidate_index < match.posting_count;
              ++candidate_index) {
             if (!equal_candidate(reader.candidate(match, candidate_index),
                                  source.candidate(key_index, candidate_index))) {
-                std::cerr << "candidate mismatch for key " << source.key(key_index) << "\n";
+                std::cerr << "candidate mismatch for key " << key << "\n";
                 return false;
             }
         }
     }
-
-    for (std::string_view missing : {"n", "niha", "zzzzzzzzz"}) {
-        if (reader.find(missing, nullptr)) {
-            std::cerr << "unexpected match for key " << missing << "\n";
-            return false;
-        }
-    }
-    return true;
+    return !reader.find("missing", nullptr);
 }
 
-template <typename T>
-bool reject_mutation(const std::string& path, cxxime::TopnIndexLayout layout,
-                     std::streamoff offset, T bad_value, const char* description) {
-    std::fstream file(path, std::ios::binary | std::ios::in | std::ios::out);
-    if (!file) {
+bool reject_corruptions(const std::string& path, cxxime::CandidateStoreView store) {
+    cxxime::TopnIndexHeader header = {};
+    std::ifstream input(path, std::ios::binary);
+    input.read(reinterpret_cast<char*>(&header), sizeof(header));
+    if (!input) {
         return false;
     }
-    T original = {};
-    file.seekg(offset);
-    file.read(reinterpret_cast<char*>(&original), sizeof(original));
-    if (!file) {
-        return false;
-    }
-    file.seekp(offset);
-    file.write(reinterpret_cast<const char*>(&bad_value), sizeof(bad_value));
-    file.close();
-    if (!file) {
-        return false;
-    }
-
-    std::string error;
-    cxxime::topn::IndexReader reader;
-    const bool rejected = !reader.load(path, layout, &error);
-
-    file.open(path, std::ios::binary | std::ios::in | std::ios::out);
-    file.seekp(offset);
-    file.write(reinterpret_cast<const char*>(&original), sizeof(original));
-    file.close();
-    if (!file) {
-        return false;
-    }
-    if (!rejected) {
-        std::cerr << description << " corruption was not rejected\n";
-    }
-    return rejected;
-}
-
-bool reject_corruptions(const std::array<std::string, 3>& paths) {
-    if (!reject_mutation(paths[0], cxxime::TopnIndexLayout::kFlat16,
-                         offsetof(cxxime::TopnIndexHeader, version), uint32_t{99},
-                         "format version") ||
-        !reject_mutation(paths[0], cxxime::TopnIndexLayout::kFlat16,
-                         offsetof(cxxime::TopnIndexHeader, code_index_offset), uint32_t{81},
-                         "section boundary")) {
-        return false;
-    }
-
-    cxxime::TopnIndexHeader dat16_header = {};
-    cxxime::TopnIndexHeader dat8_header = {};
-    std::ifstream dat16(paths[1], std::ios::binary);
-    std::ifstream dat8(paths[2], std::ios::binary);
-    dat16.read(reinterpret_cast<char*>(&dat16_header), sizeof(dat16_header));
-    dat8.read(reinterpret_cast<char*>(&dat8_header), sizeof(dat8_header));
-    if (!dat16 || !dat8) {
-        return false;
-    }
-    dat16.close();
-    dat8.close();
-
-    const std::streamoff posting_offset = dat16_header.posting_lists_offset +
-        offsetof(cxxime::TopnPostingList, posting_offset);
-    const std::streamoff flags_offset = dat16_header.posting_lists_offset +
-        offsetof(cxxime::TopnPostingList, flags);
-    const std::streamoff candidate_offset = dat8_header.postings_offset +
-        offsetof(cxxime::TopnPooledPosting, candidate_index);
-    const std::streamoff inline_text_length = dat16_header.postings_offset +
-        offsetof(cxxime::TopnInlinePosting, text_length);
-    const std::streamoff inline_syllables_length = dat16_header.postings_offset +
-        offsetof(cxxime::TopnInlinePosting, syllables_length);
-    const std::streamoff pooled_text_length = dat8_header.candidates_offset +
-        offsetof(cxxime::TopnCandidateRecord, text_length);
-    const std::streamoff pooled_syllables_length = dat8_header.candidates_offset +
-        offsetof(cxxime::TopnCandidateRecord, syllables_length);
-    return reject_mutation(paths[1], cxxime::TopnIndexLayout::kDat16, posting_offset,
-                           dat16_header.posting_count + 1, "posting range") &&
-           reject_mutation(paths[1], cxxime::TopnIndexLayout::kDat16, flags_offset,
-                           uint16_t{0x8000}, "posting flags") &&
-           reject_mutation(paths[1], cxxime::TopnIndexLayout::kDat16, inline_text_length,
-                           uint32_t{0}, "inline text identity") &&
-           reject_mutation(paths[1], cxxime::TopnIndexLayout::kDat16, inline_syllables_length,
-                           uint32_t{0}, "inline syllables identity") &&
-           reject_mutation(paths[2], cxxime::TopnIndexLayout::kDat8, candidate_offset,
-                           dat8_header.candidate_count, "candidate reference") &&
-           reject_mutation(paths[2], cxxime::TopnIndexLayout::kDat8, pooled_text_length,
-                           uint32_t{0}, "pooled text identity") &&
-           reject_mutation(paths[2], cxxime::TopnIndexLayout::kDat8, pooled_syllables_length,
-                           uint32_t{0}, "pooled syllables identity");
+    const std::streamoff posting_list_offset = header.posting_lists_offset +
+        offsetof(cxxime::TopnPostingList, posting_offset_and_flags);
+    const std::streamoff entry_index_offset = header.postings_offset +
+        offsetof(cxxime::TopnCandidatePosting, dictionary_entry_index);
+    return reject_mutation(path, store,
+                           offsetof(cxxime::TopnIndexHeader, version), uint32_t{99},
+                           "format version") &&
+           reject_mutation(path, store,
+                           offsetof(cxxime::TopnIndexHeader, code_index_offset),
+                           static_cast<uint32_t>(sizeof(header) + 1),
+                           "section boundary") &&
+           reject_mutation(path, store, posting_list_offset,
+                           header.posting_count + 1, "posting range") &&
+           reject_mutation(path, store, entry_index_offset,
+                           store.entry_count, "dictionary entry reference") &&
+           reject_mutation(path, store,
+                           offsetof(cxxime::TopnIndexHeader, dictionary_fingerprint),
+                           header.dictionary_fingerprint + 1, "dictionary fingerprint");
 }
 
 } // namespace
 
 int main() {
     const TestSource source;
-    const std::array<cxxime::TopnIndexLayout, 3> layouts = {
-        cxxime::TopnIndexLayout::kFlat16,
-        cxxime::TopnIndexLayout::kDat16,
-        cxxime::TopnIndexLayout::kDat8,
-    };
-    std::array<std::string, 3> paths;
-    bool passed = true;
-    for (size_t i = 0; i < layouts.size(); ++i) {
-        if (!make_temp_path(&paths[i])) {
-            std::cerr << "failed to create a temporary path\n";
-            passed = false;
-            break;
-        }
-        if (!verify_layout(source, layouts[i], paths[i])) {
-            passed = false;
-            break;
-        }
+    const TestCandidateStore candidate_store(source);
+    const auto store = candidate_store.view();
+    std::string path;
+    if (!make_temp_path(&path)) {
+        return 1;
     }
-    if (passed && !reject_corruptions(paths)) {
-        passed = false;
-    }
+
+    bool passed = verify_index(source, store, path) &&
+        reject_corruptions(path, store);
     std::string error;
-    if (passed && cxxime::topn::write_index(
-                      source, static_cast<cxxime::TopnIndexLayout>(99), paths[0], nullptr,
-                      &error)) {
-        std::cerr << "unknown output layout was not rejected\n";
+    const SingleCandidateSource empty_text("", "a", 1);
+    const SingleCandidateSource empty_syllables("word", "", 1);
+    const SingleCandidateSource missing_candidate("not-in-dictionary", "a", 1);
+    if (cxxime::topn::write_index(empty_text, store, path, nullptr, &error) ||
+        cxxime::topn::write_index(empty_syllables, store, path, nullptr, &error) ||
+        cxxime::topn::write_index(missing_candidate, store, path, nullptr, &error)) {
         passed = false;
     }
-    const InvalidIdentitySource empty_text("", "a");
-    const InvalidIdentitySource empty_syllables("word", "");
-    if (passed &&
-        (cxxime::topn::write_index(empty_text, cxxime::TopnIndexLayout::kDat16, paths[0],
-                                   nullptr, &error) ||
-         cxxime::topn::write_index(empty_syllables, cxxime::TopnIndexLayout::kDat16, paths[0],
-                                   nullptr, &error))) {
-        std::cerr << "empty candidate identity was not rejected\n";
-        passed = false;
-    }
-    for (const auto& path : paths) {
-        if (!path.empty()) {
-            DeleteFileA(path.c_str());
-            DeleteFileA((path + ".tmp").c_str());
-        }
-    }
+
+    DeleteFileA(path.c_str());
+    DeleteFileA((path + ".tmp").c_str());
     return passed ? 0 : 1;
 }

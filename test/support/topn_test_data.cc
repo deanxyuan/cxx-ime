@@ -7,6 +7,7 @@
 #include <utility>
 #include <vector>
 
+#include "candidate_store_file.h"
 #include "index_writer.h"
 
 namespace cxxime::test {
@@ -59,7 +60,10 @@ public:
                                      size_t candidate_index) const override {
         const auto& candidate = entries_[key_index].second[candidate_index];
         const auto& key = entries_[key_index].first;
-        return {candidate.text, candidate.frequency, candidate.frequency,
+        const int source_frequency = candidate.source_frequency != 0
+            ? candidate.source_frequency
+            : candidate.frequency;
+        return {candidate.text, source_frequency, candidate.frequency,
                 candidate.syllables.empty() ? key : candidate.syllables};
     }
 
@@ -72,6 +76,7 @@ private:
 
 bool create_test_topn(
     const std::string& path,
+    const std::string& dictionary_path,
     const std::vector<std::pair<std::string, std::vector<Candidate>>>& entries,
     bool prefix_complete) {
     const TestTopnSource source(entries, prefix_complete);
@@ -79,7 +84,9 @@ bool create_test_topn(
         return false;
     }
     std::string error;
-    return topn::write_index(source, TopnIndexLayout::kDat16, path, nullptr, &error);
+    topn::CandidateStoreFile dictionary;
+    return dictionary.load(dictionary_path, &error) &&
+        topn::write_index(source, dictionary.view(), path, nullptr, &error);
 }
 
 } // namespace cxxime::test

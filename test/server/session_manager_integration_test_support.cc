@@ -185,7 +185,7 @@ candidate.syllables = std::get<0>(entry);
         topn.push_back({key, {candidate}});
     }
     ASSERT_TRUE(cxxime::SpellingsIndex::create_test_trie(spellings_path, spellings));
-    ASSERT_TRUE(cxxime::test::create_test_topn(topn_path, topn));
+    ASSERT_TRUE(cxxime::test::create_test_topn(topn_path, dict_path, topn));
     const std::vector<TestDictEntry> wubi_entries = {{"a", "wubi-test", 100}};
     ASSERT_TRUE(cxxime::Dict::create_test_dict(wubi_path, wubi_entries));
     ASSERT_TRUE(

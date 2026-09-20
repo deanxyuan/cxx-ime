@@ -5,6 +5,7 @@
 > 本文以下表格是 DAT-16 完整键 Top-N 索引之前的历史数据，其中“长度大于6不走快速路径”
 > 只描述当时版本。
 > 当前规则见 `short-input-fast-path.md`：完整键不受长度 6 限制，只有前缀候选仍物化 1..6。
+> v4（共享候选）改变的是索引文件布局与内存占用（posting 24B→8B、文本/音节/词频复用 dict.bin），Trie 查找与候选合并路径未变。
 
 ## 测试条件
 
@@ -176,12 +177,60 @@ build\tools\query_bench\Release\query_bench.exe --data data --input s,sd,sdf,sdd
 | 候选条目 | 24 bytes/条 | 16 bytes/条 | **-33%** |
 | 键存储 | 显式字符串表 | Trie 隐式编码 | 消除字符串冗余 |
 
+## 共享候选格式升级（CXTOPN v4）
+
+> 这次升级的目标是**降低运行时内存占用**。v3 的索引自带候选文本与规范音节（v2 的 posting 为 16 字节，v3 加入规范音节身份后变为 24 字节，另有独立字符串池）；v4 把 posting 压缩为 8 字节的「词典词条索引 + 构建期 score」，文本 / 音节 / 词频改为查询时从 `pinyin.dict.bin` 词条读取，并与词典通过 `dictionary_entry_count` + FNV-1a `dictionary_fingerprint` 绑定（不匹配即拒绝加载，Server 路径视为致命错误）。
+
+对比条件：同一份中间文件（key 3,618,702 / posting 8,846,785）与同一份词典（1,909,924 词条，69.5 MB）；两版索引都通过全量语义校验（3,618,702 个 key 逐一比对候选）。`topn.bin` 运行时整文件读入堆内存，因此**索引堆占用 = 文件大小**。
+
+| 指标 | v3 (CXTOPN\x03 DAT-16) | v4 (CXTOPN\x04 共享候选) | 变化 |
+|------|------------------------|--------------------------|------|
+| **索引文件 / 运行时堆占用** | **305,143,247 B (291.0 MiB)** | **126,987,392 B (121.1 MiB)** | **-178,155,855 B (-58.4%)** |
+| posting 数组 | 8,846,785 × 24 B = 212,322,840 B | 8,846,785 × 8 B = 70,774,280 B | -66.7% |
+| posting list 数组 | 3,618,702 × 8 B = 28,949,616 B | 3,618,702 × 4 B = 14,474,808 B | -50.0% |
+| 候选字符串池 | 22,132,471 B（自带 text + 规范音节） | 0（复用 `pinyin.dict.bin` 词条） | -100% |
+| Darts 键索引 | 41,738,240 B | 41,738,240 B | 0% |
+| 索引加载耗时 | 180 ms | 75 ms | -58.3% |
+| 顺序查找 p50 / p95 / p99 | 0 / 100 / 200 ns | 0 / 100 / 200 ns | 持平 |
+| 随机查找 p50 / p95 / p99 | 600 / 900 / 1100 ns | 700 / 1100 / 1300 ns | +100~200 ns |
+| 未命中查找 p50 / p95 / p99 | 0 / 100 / 100 ns | 0 / 100 / 100 ns | 持平 |
+| 4 线程并发吞吐 | 71,168,026 qps | 55,527,795 qps | -22.0% |
+
+> 三次测量合集 ——
+> v3：加载 180/180/177 ms；顺序查找 0/100/200 ns（三次相同）；随机查找 600/900/1100 ns（三次相同）；未命中查找 0/100/100 ns（三次相同）；4 线程吞吐 69,833,093 / 71,647,534 / 71,168,026 qps。
+> v4：加载 77/73/75 ms；顺序查找 0/100/200 ns（三次相同）；随机查找 700/1100/1300 ns（三次相同）；未命中查找 0/100/100 ns（三次相同）；4 线程吞吐 53,692,250 / 58,549,743 / 55,527,795 qps。
+> v4 复测（重建 `data\pinyin.topn.bin` 后）：加载 73/73/74 ms；顺序查找 0/100/200 ns；随机查找 700/1100/1300 ns；未命中查找 0/100/100 ns；4 线程吞吐 57,009,788 / 52,153,351 / 56,178,201 qps。
+
+> 测试命令（`--queries 3618702` 即 key_count，两版顺序/随机键序一致）——
+
+```cmd
+# v4（当前版本）
+build\tools\topn_index\Release\topn_benchmark.exe ^
+    --baseline data\pinyin.topn.intermediate.bin --dictionary data\pinyin.dict.bin ^
+    --index data\pinyin.topn.bin --queries 3618702 --threads 4
+
+# v3（上一版本：topn_builder 生成三种布局，topn_benchmark 测 dat16）
+topn_builder.exe --input data\pinyin.topn.intermediate.bin --output v3\pinyin.flat16.bin --format flat16
+topn_builder.exe --input data\pinyin.topn.intermediate.bin --output v3\pinyin.dat16.bin --format dat16
+topn_builder.exe --input data\pinyin.topn.intermediate.bin --output v3\pinyin.dat8.bin --format dat8
+topn_benchmark.exe ^
+    --baseline data\pinyin.topn.intermediate.bin --flat16 v3\pinyin.flat16.bin ^
+    --dat16 v3\pinyin.dat16.bin --dat8 v3\pinyin.dat8.bin --queries 3618702 --threads 4
+```
+
+> 查找指标为索引层口径（Darts trie 查找 + 按词典词条展开候选），不含引擎的 Syllabifier、分页与候选窗口，与上文 `query_bench` 的端到端微秒级数据不是同一口径；计时器粒度 100 ns，p50 为 0 表示低于一个计时单位。
+
+> 结论：v4 以随机查找 p95/p99 增加约 100~200 ns、4 线程并发吞吐下降 22.0% 为代价，换取索引堆占用减少 58.4%、加载耗时减少 58.3%；开销来自每条 posting 多一次「词典词条」间接寻址（20 字节 entry + dict 字符串池）。
+
 ## 重跑基准
 
 ```cmd
-# 重建 topn.bin（build_pinyin_topn.py 生成中间文件，topn_builder 转 DAT-16）
+# 重建 topn.bin（build_pinyin_topn.py 生成中间文件，topn_builder 绑定 pinyin.dict.bin 转共享候选索引）
 python scripts\build_pinyin_topn.py --input data\pinyin.dict.db --output data\pinyin.topn.intermediate.bin
-build\tools\topn_index\Release\topn_builder.exe --input data\pinyin.topn.intermediate.bin --output data\pinyin.topn.bin --format dat16
+build\tools\topn_index\Release\topn_builder.exe --input data\pinyin.topn.intermediate.bin --dictionary data\pinyin.dict.bin --output data\pinyin.topn.bin
+
+# Top-N 索引对比（中间格式基线 vs 共享候选索引）
+powershell -ExecutionPolicy Bypass -File scripts\benchmark_topn.ps1 -Source data\pinyin.topn.intermediate.bin -Dictionary data\pinyin.dict.bin -Builder build\tools\topn_index\Release\topn_builder.exe -Benchmark build\tools\topn_index\Release\topn_benchmark.exe
 
 # 离线查询 benchmark（无需 server）
 build\tools\query_bench\Release\query_bench.exe --data data --input s,sd,sdf,sddf,bj,srf,shrf,zguo,nihao,nihaoshijie --repeat 500 --warmup 100 --page-size 7 --deadline-ms 30
@@ -192,3 +241,5 @@ scripts\benchmark.bat
 # 单元 benchmark
 build\test\Release\benchmark_test.exe
 ```
+
+> 重建 `pinyin.topn.bin` 后需要同步刷新 `dictionary_manifest.json`（`python scripts\prepare_dictionary_bundle.py`）：服务器启动时会校验 manifest 中每个角色的 size 与 sha256，索引文件已变而 manifest 未更新会导致词典加载失败。

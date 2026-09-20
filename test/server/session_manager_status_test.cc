@@ -206,7 +206,8 @@ static void create_pinyin_bundle_files(const std::string& dict_path,
     }
     ASSERT_TRUE(cxxime::SpellingsIndex::create_test_trie(dict_path + ".spellings.bin",
                                                           spellings));
-    ASSERT_TRUE(cxxime::test::create_test_topn(dict_path + ".topn.bin", topn));
+    ASSERT_TRUE(cxxime::test::create_test_topn(
+        dict_path + ".topn.bin", dict_path, topn));
 }
 
 static std::string setup_test_dict() {

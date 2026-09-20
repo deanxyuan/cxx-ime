@@ -19,7 +19,6 @@
 
 namespace cxxime {
 
-struct DictEntry;
 struct QueryTrace;
 struct QueryBudget;
 struct QueryDeadline;
@@ -186,6 +185,7 @@ public:
     // Short-code cache fast path
     const ShortCodeCache& short_cache() const { return short_cache_; }
     bool has_short_cache() const { return short_cache_.is_loaded(); }
+    CandidateStoreView candidate_store() const;
     bool has_wubi_prefix_index() const;
 
     // User dictionary version for cache invalidation
@@ -229,9 +229,11 @@ private:
 
     char* dict_data_ = nullptr;         // heap-allocated buffer
     size_t dict_data_size_ = 0;
-    const DictEntry* dict_entries_ = nullptr;
+    const CandidateStoreEntry* dict_entries_ = nullptr;
     const char* dict_strings_ = nullptr;
     uint32_t dict_entry_count_ = 0;
+    uint32_t dict_string_size_ = 0;
+    uint64_t dict_fingerprint_ = 0;
 
     // Short-code cache
     ShortCodeCache short_cache_;

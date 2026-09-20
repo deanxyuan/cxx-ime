@@ -10,11 +10,12 @@
 #include <vector>
 
 #include <cxxime/candidate.h>
+#include <cxxime/candidate_store.h>
 
 namespace cxxime {
 
 struct QueryTrace;
-struct ShortCandidateEntry;
+struct ShortCandidatePosting;
 struct ShortPostingList;
 
 class ShortCodeCache {
@@ -24,7 +25,7 @@ public:
     ShortCodeCache(const ShortCodeCache&) = delete;
     ShortCodeCache& operator=(const ShortCodeCache&) = delete;
 
-    bool load(const std::string& path);
+    bool load(const std::string& path, CandidateStoreView candidate_store);
     void unload();
     bool is_loaded() const { return data_ != nullptr; }
 
@@ -39,10 +40,11 @@ private:
     size_t data_size_ = 0;
     const uint32_t* code_index_ = nullptr;
     const ShortPostingList* posting_lists_ = nullptr;
-    const ShortCandidateEntry* candidates_ = nullptr;
-    const char* strings_ = nullptr;
+    const ShortCandidatePosting* postings_ = nullptr;
+    CandidateStoreView candidate_store_;
     uint32_t code_index_count_ = 0;
     uint32_t posting_list_count_ = 0;
+    uint32_t posting_count_ = 0;
 };
 
 } // namespace cxxime

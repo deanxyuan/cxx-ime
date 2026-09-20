@@ -57,6 +57,10 @@ REQUIRED_MANIFEST_ROLES = {
 # Magic values (first 8 bytes of each binary file)
 DICT_MAGIC_V2 = b"CXDIC\x02\x00\x00"
 DICT_VERSION = 2
+DICT_HEADER_FORMAT = "<8sIIIII"
+DICT_HEADER_SIZE = struct.calcsize(DICT_HEADER_FORMAT)
+DICT_ENTRY_FORMAT = "<IIIIi"
+DICT_ENTRY_SIZE = struct.calcsize(DICT_ENTRY_FORMAT)
 IDX_MAGIC = b"CXIDX\x00\x00\x00"
 IDX_VERSION = 3
 WUBI_INDEX_MAGIC = b"CXWIDX\x01\x00"
@@ -67,14 +71,14 @@ WUBI_INDEX_KEY_SIZE = struct.calcsize(WUBI_INDEX_KEY_FORMAT)
 WUBI_INDEX_MAX_CODE_LENGTH = 4
 SPELLINGS_MAGIC_V2 = b"CXSPL\x02\x00\x00"
 SPELLINGS_VERSION = 2
-TOPN_MAGIC = b"CXTOPN\x03\x00"
-TOPN_VERSION = 3
-TOPN_HEADER_FORMAT = "<8s18I"
+TOPN_MAGIC = b"CXTOPN\x04\x00"
+TOPN_VERSION = 4
+TOPN_HEADER_FORMAT = "<8s11IQI"
 TOPN_HEADER_SIZE = struct.calcsize(TOPN_HEADER_FORMAT)
-TOPN_LAYOUT_DAT16 = 2
-TOPN_INLINE_POSTING_SIZE = 24
-TOPN_POSTING_PREFIX_COMPLETE = 0x0001
-TOPN_POSTING_KNOWN_FLAGS = TOPN_POSTING_PREFIX_COMPLETE
+TOPN_POSTING_LIST_SIZE = 4
+TOPN_CANDIDATE_POSTING_SIZE = 8
+TOPN_POSTING_OFFSET_MASK = 0x7FFFFFFF
+TOPN_POSTING_PREFIX_COMPLETE = 0x80000000
 
 
 def sha256_file(path):
@@ -270,30 +274,21 @@ def find_topn_key(units, unit_count, key):
 
 
 def check_topn_candidate_postings(source, postings_offset, posting_count,
-                                  candidate_string_size, errors):
-    """Validate text and syllable ranges in DAT-16 inline postings."""
+                                  dictionary_entry_count, errors):
+    """Validate dictionary references in candidate postings."""
     source.seek(postings_offset)
     posting_index = 0
     while posting_index < posting_count:
         chunk_count = min(65536, posting_count - posting_index)
-        postings = source.read(chunk_count * TOPN_INLINE_POSTING_SIZE)
-        if len(postings) != chunk_count * TOPN_INLINE_POSTING_SIZE:
+        postings = source.read(chunk_count * TOPN_CANDIDATE_POSTING_SIZE)
+        if len(postings) != chunk_count * TOPN_CANDIDATE_POSTING_SIZE:
             errors.append("pinyin.topn.bin: truncated postings")
             return False
         for chunk_index in range(chunk_count):
-            text_offset, text_length, syllables_offset, syllables_length, _, _ = (
-                struct.unpack_from(
-                    "<IIIIii", postings, chunk_index * TOPN_INLINE_POSTING_SIZE
-                )
-            )
-            if (
-                text_length == 0
-                or syllables_length == 0
-                or text_offset > candidate_string_size
-                or text_length > candidate_string_size - text_offset
-                or syllables_offset > candidate_string_size
-                or syllables_length > candidate_string_size - syllables_offset
-            ):
+            dictionary_entry_index = struct.unpack_from(
+                "<I", postings, chunk_index * TOPN_CANDIDATE_POSTING_SIZE
+            )[0]
+            if dictionary_entry_index >= dictionary_entry_count:
                 errors.append(
                     "pinyin.topn.bin: invalid candidate posting at index "
                     f"{posting_index + chunk_index}"
@@ -303,8 +298,57 @@ def check_topn_candidate_postings(source, postings_offset, posting_count,
     return True
 
 
+def dictionary_candidate_store(data_dir, errors):
+    """Validate the runtime dictionary and return its canonical candidate store."""
+    path = os.path.join(data_dir, "pinyin.dict.bin")
+    with open(path, "rb") as source:
+        data = source.read()
+    if len(data) < DICT_HEADER_SIZE:
+        errors.append("pinyin.dict.bin: file too small for candidate store")
+        return None
+    magic, version, entry_count, string_size, entries_offset, strings_offset = (
+        struct.unpack_from(DICT_HEADER_FORMAT, data, 0)
+    )
+    entries_size = entry_count * DICT_ENTRY_SIZE
+    if (
+        magic != DICT_MAGIC_V2
+        or version != DICT_VERSION
+        or entry_count == 0
+        or entries_offset != DICT_HEADER_SIZE
+        or strings_offset != entries_offset + entries_size
+        or strings_offset + string_size != len(data)
+    ):
+        errors.append("pinyin.dict.bin: invalid candidate store layout")
+        return None
+
+    for entry_index in range(entry_count):
+        entry_offset = entries_offset + entry_index * DICT_ENTRY_SIZE
+        syllables_offset, text_offset, syllables_length, text_length, _ = (
+            struct.unpack_from(DICT_ENTRY_FORMAT, data, entry_offset)
+        )
+        if (
+            text_length == 0
+            or syllables_length == 0
+            or text_offset > string_size
+            or text_length > string_size - text_offset
+            or syllables_offset > string_size
+            or syllables_length > string_size - syllables_offset
+        ):
+            errors.append(
+                f"pinyin.dict.bin: invalid candidate entry at index {entry_index}"
+            )
+            return None
+
+    fingerprint = 14695981039346656037
+    for byte in struct.pack("<II", entry_count, string_size):
+        fingerprint = ((fingerprint ^ byte) * 1099511628211) & 0xFFFFFFFFFFFFFFFF
+    for byte in data[entries_offset:]:
+        fingerprint = ((fingerprint ^ byte) * 1099511628211) & 0xFFFFFFFFFFFFFFFF
+    return entry_count, fingerprint
+
+
 def check_topn_bin(data_dir, errors):
-    """Validate the runtime DAT-16 index and required keys."""
+    """Validate the runtime shared-candidate Top-N index and required keys."""
     path = os.path.join(data_dir, "pinyin.topn.bin")
     with open(path, "rb") as f:
         header_data = f.read(TOPN_HEADER_SIZE)
@@ -313,10 +357,9 @@ def check_topn_bin(data_dir, errors):
         return False
 
     header = struct.unpack(TOPN_HEADER_FORMAT, header_data)
-    (magic, version, header_size, layout, file_size, key_count, code_index_count,
-     posting_list_count, posting_count, candidate_count, key_string_size,
-     candidate_string_size, code_index_offset, posting_lists_offset, postings_offset,
-     candidates_offset, key_strings_offset, candidate_strings_offset, reserved) = header
+    (magic, version, header_size, file_size, key_count, code_index_count,
+     posting_list_count, posting_count, dictionary_entry_count, code_index_offset,
+     posting_lists_offset, postings_offset, dictionary_fingerprint, reserved) = header
     actual_size = os.path.getsize(path)
     if magic != TOPN_MAGIC:
         errors.append(f"pinyin.topn.bin: bad magic {magic!r}")
@@ -327,25 +370,25 @@ def check_topn_bin(data_dir, errors):
             f"(version={version}, size={header_size})"
         )
         return False
-    if layout != TOPN_LAYOUT_DAT16:
-        errors.append(f"pinyin.topn.bin: unsupported layout {layout}")
-        return False
     if file_size != actual_size or reserved != 0:
         errors.append("pinyin.topn.bin: file size or reserved field is invalid")
         return False
-    if (key_count == 0 or code_index_count == 0 or posting_list_count != key_count or
-            candidate_count != 0 or key_string_size != 0):
-        errors.append("pinyin.topn.bin: invalid DAT-16 section counts")
+    candidate_store = dictionary_candidate_store(data_dir, errors)
+    if candidate_store is None:
+        return False
+    expected_entry_count, expected_fingerprint = candidate_store
+    if (key_count == 0 or code_index_count == 0 or
+            posting_list_count != key_count or
+            dictionary_entry_count != expected_entry_count or
+            dictionary_fingerprint != expected_fingerprint):
+        errors.append("pinyin.topn.bin: invalid section counts or dictionary binding")
         return False
 
     cursor = TOPN_HEADER_SIZE
     sections = [
         (code_index_offset, code_index_count * 4),
-        (posting_lists_offset, posting_list_count * 8),
-        (postings_offset, posting_count * TOPN_INLINE_POSTING_SIZE),
-        (candidates_offset, 0),
-        (key_strings_offset, 0),
-        (candidate_strings_offset, candidate_string_size),
+        (posting_lists_offset, posting_list_count * TOPN_POSTING_LIST_SIZE),
+        (postings_offset, posting_count * TOPN_CANDIDATE_POSTING_SIZE),
     ]
     for offset, size in sections:
         if cursor > actual_size or offset != cursor or size > actual_size - cursor:
@@ -364,22 +407,29 @@ def check_topn_bin(data_dir, errors):
             return False
 
         f.seek(posting_lists_offset)
-        posting_lists = f.read(posting_list_count * 8)
-        if len(posting_lists) != posting_list_count * 8:
+        posting_lists = f.read(posting_list_count * TOPN_POSTING_LIST_SIZE)
+        if len(posting_lists) != posting_list_count * TOPN_POSTING_LIST_SIZE:
             errors.append("pinyin.topn.bin: truncated posting lists")
             return False
         for index in range(posting_list_count):
-            posting_offset, candidate_count_for_key, list_flags = struct.unpack_from(
-                "<IHH", posting_lists, index * 8
-            )
-            if (list_flags & ~TOPN_POSTING_KNOWN_FLAGS or
-                    posting_offset > posting_count or
-                    candidate_count_for_key > posting_count - posting_offset):
+            packed_list = struct.unpack_from(
+                "<I", posting_lists, index * TOPN_POSTING_LIST_SIZE
+            )[0]
+            posting_offset = packed_list & TOPN_POSTING_OFFSET_MASK
+            if index + 1 < posting_list_count:
+                next_list = struct.unpack_from(
+                    "<I", posting_lists, (index + 1) * TOPN_POSTING_LIST_SIZE
+                )[0]
+                posting_end = next_list & TOPN_POSTING_OFFSET_MASK
+            else:
+                posting_end = posting_count
+            if ((index == 0 and posting_offset != 0) or
+                    posting_offset > posting_end or posting_end > posting_count):
                 errors.append(f"pinyin.topn.bin: invalid posting list at index {index}")
                 return False
 
         if not check_topn_candidate_postings(
-            f, postings_offset, posting_count, candidate_string_size, errors
+            f, postings_offset, posting_count, dictionary_entry_count, errors
         ):
             return False
 
@@ -389,10 +439,11 @@ def check_topn_bin(data_dir, errors):
             if posting_list_index is None or posting_list_index >= posting_list_count:
                 missing.append(key)
                 continue
-            posting_offset, candidate_count_for_key, list_flags = struct.unpack_from(
-                "<IHH", posting_lists, posting_list_index * 8
-            )
-            if (list_flags & TOPN_POSTING_PREFIX_COMPLETE) == 0:
+            packed_list = struct.unpack_from(
+                "<I", posting_lists,
+                posting_list_index * TOPN_POSTING_LIST_SIZE
+            )[0]
+            if (packed_list & TOPN_POSTING_PREFIX_COMPLETE) == 0:
                 errors.append(f"pinyin.topn.bin: required key is not prefix-complete: {key}")
                 return False
 

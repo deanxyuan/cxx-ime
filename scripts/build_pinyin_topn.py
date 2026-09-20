@@ -3,7 +3,7 @@
 # Build the Pinyin CXTOPN v2 intermediate consumed by topn_builder.
 #
 # This script owns key generation and ranking. Runtime packages must convert its
-# output to DAT-16 with topn_builder before writing dictionary_manifest.json.
+# output to the shared-candidate runtime format before writing dictionary_manifest.json.
 
 import argparse
 import os

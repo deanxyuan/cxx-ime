@@ -53,9 +53,9 @@ bool replace_magic_and_version(const std::string& path,
     return file.good();
 }
 
-bool create_test_topn(const std::string& path) {
+bool create_test_topn(const std::string& path, const std::string& dictionary_path) {
     const std::vector<cxxime::Candidate> candidates = {{"a", "", 100}};
-    return cxxime::test::create_test_topn(path, {{"a", candidates}});
+    return cxxime::test::create_test_topn(path, dictionary_path, {{"a", candidates}});
 }
 
 } // namespace
@@ -68,7 +68,7 @@ TEST(DictionaryFormat, accepts_current_versions) {
 
     ASSERT_TRUE(cxxime::Dict::create_test_dict(dict_path, {{"a", "a", 100}}));
     ASSERT_TRUE(write_empty_id_index(index_path, 3));
-    ASSERT_TRUE(create_test_topn(topn_path));
+    ASSERT_TRUE(create_test_topn(topn_path, dict_path));
     ASSERT_TRUE(cxxime::SpellingsIndex::create_test_trie(
         spellings_path, {{"a", "a", cxxime::kNormalSpelling, 0.0f}}));
 
@@ -114,7 +114,7 @@ TEST(DictionaryFormat, rejects_id_index_v2) {
     const std::string topn_path = make_temp_path("format_idx_v2.topn.bin");
     ASSERT_TRUE(cxxime::Dict::create_test_dict(dict_path, {{"a", "a", 100}}));
     ASSERT_TRUE(write_empty_id_index(index_path, 2));
-    ASSERT_TRUE(create_test_topn(topn_path));
+    ASSERT_TRUE(create_test_topn(topn_path, dict_path));
 
     cxxime::Dict dictionary;
     ASSERT_TRUE(!dictionary.open_bundle(dict_path, "", index_path, topn_path));

@@ -1,11 +1,13 @@
 project(topn_index_tools CXX)
 
 add_library(cxxime-topn-index-builder STATIC
+    candidate_store_file.cc
     index_writer.cc
     intermediate_reader.cc
 )
 target_include_directories(cxxime-topn-index-builder PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/engine/include
     ${CMAKE_SOURCE_DIR}/engine/src
 )
 target_link_libraries(cxxime-topn-index-builder PUBLIC darts_clone)
@@ -17,6 +19,7 @@ if(CXXIME_BUILD_TOOLS OR CXXIME_BUILD_TESTS)
     add_library(cxxime-topn-index-reader STATIC index_reader.cc)
     target_include_directories(cxxime-topn-index-reader PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/engine/include
         ${CMAKE_SOURCE_DIR}/engine/src
     )
 endif()

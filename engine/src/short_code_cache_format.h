@@ -10,48 +10,43 @@
 
 namespace cxxime {
 
-constexpr char kShortCacheMagic[8] = {'C', 'X', 'T', 'O', 'P', 'N', '\x03', '\0'};
-constexpr uint32_t kShortCacheVersion = 3;
-constexpr uint32_t kShortCacheLayoutDat16 = 2;
-// The posting contains a complete candidate and may satisfy the query without fallback.
-constexpr uint16_t kShortPostingPrefixComplete = 0x0001;
-constexpr uint16_t kShortPostingKnownFlags = kShortPostingPrefixComplete;
+constexpr char kShortCacheMagic[8] = {'C', 'X', 'T', 'O', 'P', 'N', '\x04', '\0'};
+constexpr uint32_t kShortCacheVersion = 4;
+constexpr uint32_t kShortPostingOffsetMask = 0x7fffffffU;
+// The list contains a complete candidate and may satisfy the query without fallback.
+constexpr uint32_t kShortPostingPrefixComplete = 0x80000000U;
 
 struct ShortCacheHeader {
     char magic[8];
     uint32_t version;
     uint32_t header_size;
-    uint32_t layout;
     uint32_t file_size;
     uint32_t key_count;
     uint32_t code_index_count;
     uint32_t posting_list_count;
     uint32_t posting_count;
-    uint32_t candidate_count;
-    uint32_t key_string_size;
-    uint32_t candidate_string_size;
+    uint32_t dictionary_entry_count;
     uint32_t code_index_offset;
     uint32_t posting_lists_offset;
     uint32_t postings_offset;
-    uint32_t candidates_offset;
-    uint32_t key_strings_offset;
-    uint32_t candidate_strings_offset;
+    uint64_t dictionary_fingerprint;
     uint32_t reserved;
 };
 
 struct ShortPostingList {
-    uint32_t posting_offset;
-    uint16_t posting_count;
-    uint16_t flags;
+    uint32_t posting_offset_and_flags;
 };
 
-// CXTOPN v3 is the 0.4 disk baseline. Do not reorder fields; append future fields.
-struct ShortCandidateEntry {
-    uint32_t text_offset;
-    uint32_t text_length;
-    uint32_t syllables_offset;
-    uint32_t syllables_length;
-    int32_t frequency;
+inline uint32_t short_posting_offset(const ShortPostingList& list) {
+    return list.posting_offset_and_flags & kShortPostingOffsetMask;
+}
+
+inline bool short_posting_prefix_complete(const ShortPostingList& list) {
+    return (list.posting_offset_and_flags & kShortPostingPrefixComplete) != 0;
+}
+
+struct ShortCandidatePosting {
+    uint32_t dictionary_entry_index;
     int32_t score;
 };
 
@@ -59,9 +54,9 @@ struct ShortCandidateEntry {
 
 #pragma pack(pop)
 
-static_assert(sizeof(cxxime::ShortCacheHeader) == 80, "ShortCacheHeader must be 80 bytes");
-static_assert(sizeof(cxxime::ShortPostingList) == 8, "ShortPostingList must be 8 bytes");
-static_assert(sizeof(cxxime::ShortCandidateEntry) == 24,
-              "ShortCandidateEntry must be 24 bytes");
+static_assert(sizeof(cxxime::ShortCacheHeader) == 64, "ShortCacheHeader must be 64 bytes");
+static_assert(sizeof(cxxime::ShortPostingList) == 4, "ShortPostingList must be 4 bytes");
+static_assert(sizeof(cxxime::ShortCandidatePosting) == 8,
+              "ShortCandidatePosting must be 8 bytes");
 
 #endif // CXXIME_SHORT_CODE_CACHE_FORMAT_H_

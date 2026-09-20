@@ -7,6 +7,8 @@
 
 #include <cstdint>
 
+#include <cxxime/candidate_store.h>
+
 #pragma pack(push, 1)
 
 namespace cxxime {
@@ -22,13 +24,7 @@ struct DictHeader {
     uint32_t strings_offset;
 };
 
-struct DictEntry {
-    uint32_t syllable_ids_offset;
-    uint32_t text_offset;
-    uint32_t syllable_ids_len;
-    uint32_t text_len;
-    int32_t frequency;
-};
+using DictEntry = CandidateStoreEntry;
 
 } // namespace cxxime
 

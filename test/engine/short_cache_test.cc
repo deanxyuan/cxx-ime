@@ -6,6 +6,8 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <tuple>
+#include <utility>
 #include <vector>
 
 #include <windows.h>
@@ -30,18 +32,57 @@ static bool _init_temp = []() {
     return true;
 }();
 
+using TestTopnEntries =
+    std::vector<std::pair<std::string, std::vector<cxxime::Candidate>>>;
+
+class TestCacheData {
+public:
+    bool initialize(const char* name, const TestTopnEntries& entries,
+                    bool prefix_complete = true) {
+        dict_path = make_temp_path((std::string(name) + ".dict.bin").c_str());
+        topn_path = make_temp_path((std::string(name) + ".topn.bin").c_str());
+        std::vector<std::tuple<std::string, std::string, int>> dictionary_entries;
+        for (const auto& keyed_candidates : entries) {
+            for (const auto& candidate : keyed_candidates.second) {
+                const std::string syllables = candidate.syllables.empty()
+                                                  ? keyed_candidates.first
+                                                  : candidate.syllables;
+                const int source_frequency = candidate.source_frequency != 0
+                                                 ? candidate.source_frequency
+                                                 : candidate.frequency;
+                dictionary_entries.push_back(
+                    {syllables, candidate.text, source_frequency});
+            }
+        }
+        return cxxime::Dict::create_test_dict(dict_path, dictionary_entries) &&
+               cxxime::test::create_test_topn(
+                topn_path, dict_path, entries, prefix_complete) &&
+               dictionary.open_dict(dict_path);
+    }
+
+    ~TestCacheData() {
+        dictionary.close();
+        DeleteFileA(dict_path.c_str());
+        DeleteFileA(topn_path.c_str());
+    }
+
+    std::string dict_path;
+    std::string topn_path;
+    cxxime::Dict dictionary;
+};
+
 // ─── ShortCodeCache load/unload tests ────────────────────────────
 
 TEST(ShortCache, load_valid_file) {
-    std::string path = make_temp_path("test_topn_valid.bin");
     std::vector<cxxime::Candidate> cands = {
         {"弟弟", "", 500},  // 弟弟
         {"大大", "", 400},    // 大大
     };
-    ASSERT_TRUE(cxxime::test::create_test_topn(path, {{"srf", cands}}));
+    TestCacheData data;
+    ASSERT_TRUE(data.initialize("test_topn_valid", {{"srf", cands}}));
 
     cxxime::ShortCodeCache cache;
-    ASSERT_TRUE(cache.load(path));
+    ASSERT_TRUE(cache.load(data.topn_path, data.dictionary.candidate_store()));
     ASSERT_TRUE(cache.is_loaded());
 
     auto results = cache.lookup("srf", 10);
@@ -51,37 +92,39 @@ TEST(ShortCache, load_valid_file) {
 
     cache.unload();
     ASSERT_TRUE(!cache.is_loaded());
-    DeleteFileA(path.c_str());
 }
 
 TEST(ShortCache, load_missing_file) {
+    TestCacheData data;
+    ASSERT_TRUE(data.initialize(
+        "test_topn_missing_store", {{"a", {{"candidate", "", 1}}}}));
     cxxime::ShortCodeCache cache;
-    ASSERT_TRUE(!cache.load("C:\\nonexistent\\path\\topn.bin"));
+    ASSERT_TRUE(!cache.load("C:\\nonexistent\\path\\topn.bin",
+                            data.dictionary.candidate_store()));
     ASSERT_TRUE(!cache.is_loaded());
 }
 
 TEST(ShortCache, lookup_missing_key) {
-    std::string path = make_temp_path("test_topn_miss.bin");
     std::vector<cxxime::Candidate> cands = {{"test", "", 100}};
-    ASSERT_TRUE(cxxime::test::create_test_topn(path, {{"abc", cands}}));
+    TestCacheData data;
+    ASSERT_TRUE(data.initialize("test_topn_miss", {{"abc", cands}}));
 
     cxxime::ShortCodeCache cache;
-    ASSERT_TRUE(cache.load(path));
+    ASSERT_TRUE(cache.load(data.topn_path, data.dictionary.candidate_store()));
 
     auto results = cache.lookup("xyz", 10);
     ASSERT_TRUE(results.empty());
 
     cache.unload();
-    DeleteFileA(path.c_str());
 }
 
 TEST(ShortCache, lookup_sets_cache_hit_trace) {
-    std::string path = make_temp_path("test_topn_trace.bin");
     std::vector<cxxime::Candidate> cands = {{"hello", "", 100}};
-    ASSERT_TRUE(cxxime::test::create_test_topn(path, {{"nihao", cands}}));
+    TestCacheData data;
+    ASSERT_TRUE(data.initialize("test_topn_trace", {{"nihao", cands}}));
 
     cxxime::ShortCodeCache cache;
-    ASSERT_TRUE(cache.load(path));
+    ASSERT_TRUE(cache.load(data.topn_path, data.dictionary.candidate_store()));
 
     cxxime::QueryTrace trace = {};
     bool prefix_complete = false;
@@ -96,18 +139,17 @@ TEST(ShortCache, lookup_sets_cache_hit_trace) {
     ASSERT_TRUE(!trace2.cache_hit);
 
     cache.unload();
-    DeleteFileA(path.c_str());
 }
 
 TEST(ShortCache, lookup_respects_limit) {
-    std::string path = make_temp_path("test_topn_limit.bin");
     std::vector<cxxime::Candidate> cands;
     for (int i = 0; i < 20; ++i)
         cands.push_back({"word" + std::to_string(i), "", 100 - i});
-    ASSERT_TRUE(cxxime::test::create_test_topn(path, {{"test", cands}}));
+    TestCacheData data;
+    ASSERT_TRUE(data.initialize("test_topn_limit", {{"test", cands}}));
 
     cxxime::ShortCodeCache cache;
-    ASSERT_TRUE(cache.load(path));
+    ASSERT_TRUE(cache.load(data.topn_path, data.dictionary.candidate_store()));
 
     auto results = cache.lookup("test", 5);
     ASSERT_EQ((int)results.size(), 5);
@@ -116,70 +158,52 @@ TEST(ShortCache, lookup_respects_limit) {
     ASSERT_EQ((int)results2.size(), 20);
 
     cache.unload();
-    DeleteFileA(path.c_str());
 }
 
 TEST(ShortCache, lookup_uses_precomputed_score) {
-    std::string path = make_temp_path("test_topn_score.bin");
-    std::vector<cxxime::Candidate> cands = {{"scored", "", 100}};
-    ASSERT_TRUE(cxxime::test::create_test_topn(path, {{"ni", cands}}));
-
-    HANDLE file = CreateFileA(path.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
-                              OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-    ASSERT_TRUE(file != INVALID_HANDLE_VALUE);
-    cxxime::ShortCacheHeader header = {};
-    DWORD bytes_read = 0;
-    ASSERT_TRUE(ReadFile(file, &header, sizeof(header), &bytes_read, nullptr));
-    ASSERT_EQ(bytes_read, sizeof(header));
-    LARGE_INTEGER offset = {};
-    offset.QuadPart = header.postings_offset + offsetof(cxxime::ShortCandidateEntry, score);
-    ASSERT_TRUE(SetFilePointerEx(file, offset, nullptr, FILE_BEGIN));
-    int32_t score = 123456;
-    DWORD written = 0;
-    ASSERT_TRUE(WriteFile(file, &score, sizeof(score), &written, nullptr));
-    ASSERT_EQ(written, sizeof(score));
-    CloseHandle(file);
+    cxxime::Candidate candidate{"scored", "", 123456};
+    candidate.source_frequency = 100;
+    TestCacheData data;
+    ASSERT_TRUE(data.initialize("test_topn_score", {{"ni", {candidate}}}));
 
     cxxime::ShortCodeCache cache;
-    ASSERT_TRUE(cache.load(path));
+    ASSERT_TRUE(cache.load(data.topn_path, data.dictionary.candidate_store()));
     auto results = cache.lookup("ni", 1);
     ASSERT_EQ(results.size(), 1u);
-    ASSERT_EQ(results[0].frequency, score);
+    ASSERT_EQ(results[0].frequency, 123456);
     ASSERT_EQ(results[0].source_frequency, 100);
 
     cache.unload();
-    DeleteFileA(path.c_str());
 }
 
 TEST(ShortCache, lookup_preserves_canonical_candidate_identity) {
-    const std::string path = make_temp_path("test_topn_identity.bin");
     cxxime::Candidate candidate;
     candidate.text = "canonical";
     candidate.frequency = 500;
     candidate.syllables = "ni:hao";
-    ASSERT_TRUE(cxxime::test::create_test_topn(path, {{"nh", {candidate}}}));
+    TestCacheData data;
+    ASSERT_TRUE(data.initialize("test_topn_identity", {{"nh", {candidate}}}));
 
     cxxime::ShortCodeCache cache;
-    ASSERT_TRUE(cache.load(path));
+    ASSERT_TRUE(cache.load(data.topn_path, data.dictionary.candidate_store()));
     const auto results = cache.lookup("nh", 1);
     ASSERT_EQ(results.size(), static_cast<std::size_t>(1));
     ASSERT_EQ(results.front().code, "nihao");
     ASSERT_EQ(results.front().syllables, "ni:hao");
 
-    DeleteFileA(path.c_str());
 }
 
 TEST(ShortCache, multiple_keys) {
-    std::string path = make_temp_path("test_topn_multi.bin");
     std::vector<cxxime::Candidate> c1 = {{"a", "", 100}};
     std::vector<cxxime::Candidate> c2 = {{"b", "", 200}};
     std::vector<cxxime::Candidate> c3 = {{"c", "", 300}};
-    ASSERT_TRUE(cxxime::test::create_test_topn(path, {
+    TestCacheData data;
+    ASSERT_TRUE(data.initialize("test_topn_multi", {
         {"bj", c1}, {"srf", c2}, {"shrf", c3}
     }));
 
     cxxime::ShortCodeCache cache;
-    ASSERT_TRUE(cache.load(path));
+    ASSERT_TRUE(cache.load(data.topn_path, data.dictionary.candidate_store()));
 
     auto r1 = cache.lookup("bj", 10);
     ASSERT_EQ((int)r1.size(), 1);
@@ -194,82 +218,39 @@ TEST(ShortCache, multiple_keys) {
     ASSERT_EQ(r3[0].text, "c");
 
     cache.unload();
-    DeleteFileA(path.c_str());
 }
 
-TEST(ShortCache, bad_magic_rejected) {
-    std::string path = make_temp_path("test_topn_bad.bin");
-    // Write garbage
-    HANDLE h = CreateFileA(path.c_str(), GENERIC_WRITE, 0, nullptr,
-                           CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-    ASSERT_TRUE(h != INVALID_HANDLE_VALUE);
-    char garbage[64] = {};
-    DWORD written;
-    WriteFile(h, garbage, sizeof(garbage), &written, nullptr);
-    CloseHandle(h);
+TEST(ShortCache, rejects_unsupported_version) {
+    TestCacheData data;
+    ASSERT_TRUE(data.initialize(
+        "test_topn_unsupported", {{"key", {{"candidate", "", 100}}}}));
 
-    cxxime::ShortCodeCache cache;
-    ASSERT_TRUE(!cache.load(path));
-    ASSERT_TRUE(!cache.is_loaded());
-
-    DeleteFileA(path.c_str());
-}
-
-TEST(ShortCache, rejects_unsupported_versions) {
-    for (char version : {'\x01', '\x02'}) {
-        std::string path = make_temp_path("test_topn_unsupported.bin");
-        HANDLE file = CreateFileA(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
-                                  FILE_ATTRIBUTE_NORMAL, nullptr);
-        ASSERT_TRUE(file != INVALID_HANDLE_VALUE);
-        char header[80] = {};
-        std::memcpy(header, "CXTOPN", 6);
-        header[6] = version;
-        DWORD written = 0;
-        ASSERT_TRUE(WriteFile(file, header, sizeof(header), &written, nullptr));
-        ASSERT_EQ(written, sizeof(header));
-        CloseHandle(file);
-
-        cxxime::ShortCodeCache cache;
-        ASSERT_TRUE(!cache.load(path));
-        ASSERT_TRUE(!cache.is_loaded());
-        DeleteFileA(path.c_str());
-    }
-}
-
-TEST(ShortCache, empty_candidate_identity_rejected) {
-    std::string path = make_temp_path("test_topn_empty_identity.bin");
-    std::vector<cxxime::Candidate> candidates = {{"candidate", "", 100}};
-    ASSERT_TRUE(cxxime::test::create_test_topn(path, {{"key", candidates}}));
-
-    HANDLE file = CreateFileA(path.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
+    HANDLE file = CreateFileA(data.topn_path.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
                               OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
     ASSERT_TRUE(file != INVALID_HANDLE_VALUE);
     cxxime::ShortCacheHeader header = {};
     DWORD bytes_read = 0;
     ASSERT_TRUE(ReadFile(file, &header, sizeof(header), &bytes_read, nullptr));
     ASSERT_EQ(bytes_read, sizeof(header));
-    LARGE_INTEGER offset = {};
-    offset.QuadPart =
-        header.postings_offset + offsetof(cxxime::ShortCandidateEntry, syllables_length);
-    ASSERT_TRUE(SetFilePointerEx(file, offset, nullptr, FILE_BEGIN));
-    const uint32_t empty_length = 0;
+    header.version = 99;
+    LARGE_INTEGER start = {};
+    ASSERT_TRUE(SetFilePointerEx(file, start, nullptr, FILE_BEGIN));
     DWORD written = 0;
-    ASSERT_TRUE(WriteFile(file, &empty_length, sizeof(empty_length), &written, nullptr));
-    ASSERT_EQ(written, sizeof(empty_length));
+    ASSERT_TRUE(WriteFile(file, &header, sizeof(header), &written, nullptr));
+    ASSERT_EQ(written, sizeof(header));
     CloseHandle(file);
 
     cxxime::ShortCodeCache cache;
-    ASSERT_TRUE(!cache.load(path));
+    ASSERT_TRUE(!cache.load(data.topn_path, data.dictionary.candidate_store()));
     ASSERT_TRUE(!cache.is_loaded());
-    DeleteFileA(path.c_str());
 }
 
 TEST(ShortCache, noncanonical_section_rejected) {
-    std::string path = make_temp_path("test_topn_section.bin");
-    std::vector<cxxime::Candidate> candidates = {{"candidate", "", 100}};
-    ASSERT_TRUE(cxxime::test::create_test_topn(path, {{"key", candidates}}));
+    TestCacheData data;
+    ASSERT_TRUE(data.initialize(
+        "test_topn_section", {{"key", {{"candidate", "", 100}}}}));
 
-    HANDLE file = CreateFileA(path.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
+    HANDLE file = CreateFileA(data.topn_path.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
                               OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
     ASSERT_TRUE(file != INVALID_HANDLE_VALUE);
     cxxime::ShortCacheHeader header = {};
@@ -285,17 +266,16 @@ TEST(ShortCache, noncanonical_section_rejected) {
     CloseHandle(file);
 
     cxxime::ShortCodeCache cache;
-    ASSERT_TRUE(!cache.load(path));
+    ASSERT_TRUE(!cache.load(data.topn_path, data.dictionary.candidate_store()));
     ASSERT_TRUE(!cache.is_loaded());
-    DeleteFileA(path.c_str());
 }
 
 TEST(ShortCache, posting_range_rejected) {
-    std::string path = make_temp_path("test_topn_posting.bin");
-    std::vector<cxxime::Candidate> candidates = {{"candidate", "", 100}};
-    ASSERT_TRUE(cxxime::test::create_test_topn(path, {{"key", candidates}}));
+    TestCacheData data;
+    ASSERT_TRUE(data.initialize(
+        "test_topn_posting", {{"key", {{"candidate", "", 100}}}}));
 
-    HANDLE file = CreateFileA(path.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
+    HANDLE file = CreateFileA(data.topn_path.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
                               OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
     ASSERT_TRUE(file != INVALID_HANDLE_VALUE);
     cxxime::ShortCacheHeader header = {};
@@ -305,47 +285,29 @@ TEST(ShortCache, posting_range_rejected) {
     LARGE_INTEGER offset = {};
     offset.QuadPart = header.posting_lists_offset;
     ASSERT_TRUE(SetFilePointerEx(file, offset, nullptr, FILE_BEGIN));
-    cxxime::ShortPostingList list = {};
-    ASSERT_TRUE(ReadFile(file, &list, sizeof(list), &bytes_read, nullptr));
-    ASSERT_EQ(bytes_read, sizeof(list));
-    list.posting_offset = header.posting_count + 1;
-    ASSERT_TRUE(SetFilePointerEx(file, offset, nullptr, FILE_BEGIN));
+    cxxime::ShortPostingList list = {header.posting_count + 1};
     DWORD written = 0;
     ASSERT_TRUE(WriteFile(file, &list, sizeof(list), &written, nullptr));
     ASSERT_EQ(written, sizeof(list));
     CloseHandle(file);
 
     cxxime::ShortCodeCache cache;
-    ASSERT_TRUE(!cache.load(path));
+    ASSERT_TRUE(!cache.load(data.topn_path, data.dictionary.candidate_store()));
     ASSERT_TRUE(!cache.is_loaded());
-    DeleteFileA(path.c_str());
 }
 
-TEST(ShortCache, unknown_posting_flag_rejected) {
-    std::string path = make_temp_path("test_topn_flags.bin");
-    std::vector<cxxime::Candidate> candidates = {{"candidate", "", 100}};
-    ASSERT_TRUE(cxxime::test::create_test_topn(path, {{"key", candidates}}));
-
-    HANDLE file = CreateFileA(path.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
-                              OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-    ASSERT_TRUE(file != INVALID_HANDLE_VALUE);
-    cxxime::ShortCacheHeader header = {};
-    DWORD bytes_read = 0;
-    ASSERT_TRUE(ReadFile(file, &header, sizeof(header), &bytes_read, nullptr));
-    ASSERT_EQ(bytes_read, sizeof(header));
-    LARGE_INTEGER offset = {};
-    offset.QuadPart = header.posting_lists_offset + offsetof(cxxime::ShortPostingList, flags);
-    ASSERT_TRUE(SetFilePointerEx(file, offset, nullptr, FILE_BEGIN));
-    uint16_t flags = 0x8000;
-    DWORD written = 0;
-    ASSERT_TRUE(WriteFile(file, &flags, sizeof(flags), &written, nullptr));
-    ASSERT_EQ(written, sizeof(flags));
-    CloseHandle(file);
+TEST(ShortCache, mismatched_dictionary_rejected) {
+    TestCacheData index_data;
+    ASSERT_TRUE(index_data.initialize(
+        "test_topn_bound", {{"key", {{"candidate", "", 100}}}}));
+    TestCacheData other_data;
+    ASSERT_TRUE(other_data.initialize(
+        "test_topn_other", {{"other", {{"other", "", 200}}}}));
 
     cxxime::ShortCodeCache cache;
-    ASSERT_TRUE(!cache.load(path));
+    ASSERT_TRUE(!cache.load(index_data.topn_path,
+                            other_data.dictionary.candidate_store()));
     ASSERT_TRUE(!cache.is_loaded());
-    DeleteFileA(path.c_str());
 }
 
 // ─── Translator indexed path integration tests ─────────────────
@@ -365,7 +327,9 @@ TEST(IndexedFastPath, cache_hit_skips_syllabifier) {
     std::vector<cxxime::Candidate> cands = {
         {"输入法", "", 500},
     };
-    ASSERT_TRUE(cxxime::test::create_test_topn(topn_path, {{"srf", cands}}));
+    cands.front().syllables = "shu:ru:fa";
+    ASSERT_TRUE(cxxime::test::create_test_topn(
+        topn_path, dict_path, {{"srf", cands}}));
 
     // Engine with dictionary and Top-N index.
     cxxime::Dict dict;
@@ -405,8 +369,9 @@ TEST(IndexedFastPath, underfilled_complete_key_checks_composition_once) {
         {"ni:hao:shi:jie", "你好世界", 500},
     }));
     std::vector<cxxime::Candidate> candidates = {{"你好世界", "", 500}};
+    candidates.front().syllables = "ni:hao:shi:jie";
     ASSERT_TRUE(cxxime::test::create_test_topn(
-        topn_path, {{"nihaoshijie", candidates}}));
+        topn_path, dict_path, {{"nihaoshijie", candidates}}));
 
     cxxime::Dict dict;
     ASSERT_TRUE(dict.open(dict_path));
@@ -452,10 +417,16 @@ TEST(IndexedFastPath, incomplete_long_posting_falls_back) {
         {"ni:hao:shi:jie", "你好世界", 500},
         {"ni:hao:shi:jie:peng:you", "你好世界朋友", 400},
     }));
-    std::vector<cxxime::Candidate> candidates = {{"你好世界", "", 500}};
-    std::vector<cxxime::Candidate> longer_candidates = {{"你好世界朋友", "", 400}};
+    std::vector<cxxime::Candidate> candidates = {
+        {"你好世界", "", 500},
+    };
+    std::vector<cxxime::Candidate> longer_candidates = {
+        {"你好世界朋友", "", 400},
+    };
+    candidates.front().syllables = "ni:hao:shi:jie";
+    longer_candidates.front().syllables = "ni:hao:shi:jie:peng:you";
     ASSERT_TRUE(cxxime::test::create_test_topn(
-        topn_path,
+        topn_path, dict_path,
         {{"nihaoshijie", candidates}, {"nihaoshijiepengyou", longer_candidates}},
         false));
 

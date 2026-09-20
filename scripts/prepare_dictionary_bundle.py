@@ -46,6 +46,8 @@ MANIFEST_FILES = [
     ("wubi_prefix_index", "wubi86.dict.idx"),
     ("wubi_reverse_index", "wubi86.reverse.idx"),
 ]
+TOPN_RUNTIME_HEADER_FORMAT = "<8s11IQI"
+TOPN_RUNTIME_HEADER_SIZE = struct.calcsize(TOPN_RUNTIME_HEADER_FORMAT)
 
 REQUIRED_MANIFEST_ROLES = {
     "pinyin_dict",
@@ -173,10 +175,13 @@ def run_build_pinyin_topn(db_path: str, output_path: str) -> None:
 
 
 def finalize_topn_index(output_dir: str, topn_builder: str) -> str:
-    """Convert the Top-N intermediate to the runtime DAT-16 format in place."""
+    """Convert the Top-N intermediate to the shared-candidate runtime format."""
     topn_path = os.path.join(output_dir, "pinyin.topn.bin")
+    dictionary_path = os.path.join(output_dir, "pinyin.dict.bin")
     if not os.path.isfile(topn_path):
         raise RuntimeError(f"Top-N intermediate not found: {topn_path}")
+    if not os.path.isfile(dictionary_path):
+        raise RuntimeError(f"Runtime dictionary not found: {dictionary_path}")
     if not os.path.isfile(topn_builder):
         raise RuntimeError(f"topn_builder not found: {topn_builder}")
 
@@ -187,7 +192,7 @@ def finalize_topn_index(output_dir: str, topn_builder: str) -> str:
 
     magic = header[:8]
     if magic == b"CXTOPN\x02\x00":
-        print("  Converting Top-N index to DAT-16...")
+        print("  Converting Top-N index to the shared-candidate format...")
         subprocess.run(
             [
                 topn_builder,
@@ -195,8 +200,8 @@ def finalize_topn_index(output_dir: str, topn_builder: str) -> str:
                 topn_path,
                 "--output",
                 topn_path,
-                "--format",
-                "dat16",
+                "--dictionary",
+                dictionary_path,
             ],
             check=True,
             capture_output=False,
@@ -205,13 +210,13 @@ def finalize_topn_index(output_dir: str, topn_builder: str) -> str:
             header = f.read(20)
         magic = header[:8]
 
-    if magic != b"CXTOPN\x03\x00" or len(header) < 20:
-        raise RuntimeError("pinyin.topn.bin is not a CXTOPN v3 file")
-    version, header_size, layout = struct.unpack_from("<III", header, 8)
-    if version != 3 or header_size != 80 or layout != 2:
+    if magic != b"CXTOPN\x04\x00" or len(header) < 16:
+        raise RuntimeError("pinyin.topn.bin is not a CXTOPN v4 file")
+    version, header_size = struct.unpack_from("<II", header, 8)
+    if version != 4 or header_size != TOPN_RUNTIME_HEADER_SIZE:
         raise RuntimeError(
-            "pinyin.topn.bin is not the required DAT-16 layout "
-            f"(version={version}, header={header_size}, layout={layout})"
+            "pinyin.topn.bin has an unsupported runtime layout "
+            f"(version={version}, header={header_size})"
         )
     return topn_path
 
@@ -368,7 +373,7 @@ def prepare_dictionary_bundle(
         return generated
 
     if not topn_builder:
-        raise RuntimeError("topn_builder is required to produce the DAT-16 runtime index")
+        raise RuntimeError("topn_builder is required to produce the runtime Top-N index")
     finalize_topn_index(output_dir, os.path.abspath(topn_builder))
 
     manifest_path = write_dictionary_manifest(output_dir)

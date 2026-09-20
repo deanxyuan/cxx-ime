@@ -13,6 +13,7 @@ namespace cxxime::test {
 
 bool create_test_topn(
     const std::string& path,
+    const std::string& dictionary_path,
     const std::vector<std::pair<std::string, std::vector<Candidate>>>& entries,
     bool prefix_complete = true);
 

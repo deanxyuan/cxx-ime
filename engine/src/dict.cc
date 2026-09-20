@@ -197,8 +197,19 @@ bool Dict::open_dict_with_aux(const std::string& bin_path,
     }
 
     dict_entry_count_ = hdr->entry_count;
+    dict_string_size_ = hdr->string_data_size;
     dict_entries_ = (const DictEntry*)(dict_data_ + hdr->entries_offset);
     dict_strings_ = dict_data_ + hdr->strings_offset;
+
+    CandidateStoreView store = candidate_store();
+    for (uint32_t i = 0; i < store.entry_count; ++i) {
+        if (!candidate_store_entry_valid(store, i)) {
+            CXXIME_LOG(L"Dict::open_dict invalid candidate entry=%u", i);
+            unload_dict();
+            return false;
+        }
+    }
+    dict_fingerprint_ = candidate_store_fingerprint(store);
 
     CXXIME_LOG(L"Dict::open_dict OK entries=%u", dict_entry_count_);
 
@@ -236,13 +247,13 @@ bool Dict::open_dict_with_aux(const std::string& bin_path,
                 derived_topn_path.replace(pos, std::string::npos, ".topn.bin");
             else
                 derived_topn_path += ".topn.bin";
-            if (!short_cache_.load(derived_topn_path)) {
+            if (!short_cache_.load(derived_topn_path, candidate_store())) {
                 CXXIME_LOG(L"Dict::open_dict Top-N index not loaded (standalone mode)");
                 // Not fatal for standalone tools/tests. Server runtime uses open_bundle()
                 // with manifest-declared topn_path and treats load failure as fatal.
             }
         } else if (!topn_path.empty()) {
-            if (!short_cache_.load(topn_path)) {
+            if (!short_cache_.load(topn_path, candidate_store())) {
                 CXXIME_LOG(L"Dict::open_dict manifest topn not loaded");
                 unload_dict();
                 return false;
@@ -262,7 +273,14 @@ void Dict::unload_dict() {
     dict_entries_ = nullptr;
     dict_strings_ = nullptr;
     dict_entry_count_ = 0;
+    dict_string_size_ = 0;
+    dict_fingerprint_ = 0;
     dict_data_size_ = 0;
+}
+
+CandidateStoreView Dict::candidate_store() const {
+    return {dict_entries_, dict_strings_, dict_entry_count_, dict_string_size_,
+            dict_fingerprint_};
 }
 
 void Dict::close() {

@@ -859,6 +859,7 @@ TEST(SegmentedSelection, complete_topn_hit_still_merges_fuzzy_full_candidates) {
     cached_exact.text = "exact";
     cached_exact.syllables = "zong";
     cached_exact.frequency = 100000000;
+    cached_exact.source_frequency = 1;
     cached_candidates.push_back(cached_exact);
     const int cached_prefix_count = static_cast<int>(
         cxxime::kLeadingFullSpanCandidateCount + cxxime::kMaxSegmentedPartialCandidateCount + 1);
@@ -869,6 +870,7 @@ TEST(SegmentedSelection, complete_topn_hit_still_merges_fuzzy_full_candidates) {
         cached_prefix.text = text;
         cached_prefix.syllables = "zong:tong";
         cached_prefix.frequency = 80000000 - index;
+        cached_prefix.source_frequency = 3000000 - index;
         cached_candidates.push_back(std::move(cached_prefix));
     }
 
@@ -876,14 +878,15 @@ TEST(SegmentedSelection, complete_topn_hit_still_merges_fuzzy_full_candidates) {
     ASSERT_TRUE(cxxime::SpellingsIndex::create_test_trie(
         spellings_path, {{"zong", "zong", cxxime::kNormalSpelling, 0.0f},
                          {"zong", "zhong", cxxime::kFuzzySpelling, -0.5f}}));
-    ASSERT_TRUE(cxxime::test::create_test_topn(topn_path, {{"zong", cached_candidates}}, true));
+    ASSERT_TRUE(cxxime::test::create_test_topn(
+        topn_path, dict_path, {{"zong", cached_candidates}}, true));
 
     cxxime::Dict dict;
     cxxime::SpellingsIndex spellings;
     cxxime::ShortCodeCache cache;
     ASSERT_TRUE(dict.open_dict(dict_path));
     ASSERT_TRUE(spellings.load(spellings_path));
-    ASSERT_TRUE(cache.load(topn_path));
+    ASSERT_TRUE(cache.load(topn_path, dict.candidate_store()));
     cxxime::Syllabifier syllabifier(spellings);
     cxxime::PinyinTranslator translator;
     translator.set_dict(&dict);

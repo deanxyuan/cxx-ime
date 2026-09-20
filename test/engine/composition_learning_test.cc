@@ -357,7 +357,8 @@ TEST(CompositionLearningTranslator, successful_save_invalidates_topn_query_cache
     baseline.code = "huaruijishu";
     baseline.syllables = "hua:rui:ji:shu";
     baseline.frequency = 1000;
-    ASSERT_TRUE(cxxime::test::create_test_topn(topn_path, {{"huaruijishu", {baseline}}}));
+    ASSERT_TRUE(cxxime::test::create_test_topn(
+        topn_path, dict_path, {{"huaruijishu", {baseline}}}));
 
     cxxime::Dict dict;
     ASSERT_TRUE(dict.open(dict_path));

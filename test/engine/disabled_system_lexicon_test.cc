@@ -195,9 +195,11 @@ TEST(DisabledSystemLexicon, pinyin_cache_and_learned_fallback_cannot_restore_dis
     const std::string dictionary_path = make_temp_path("dsd");
     const std::string disabled_path = make_temp_path("dsl");
     const std::string topn_path = make_temp_path("dst");
-    ASSERT_TRUE(cxxime::Dict::create_test_dict(dictionary_path, {{"ni", "字典候选", 100}}));
+    ASSERT_TRUE(cxxime::Dict::create_test_dict(
+        dictionary_path,
+        {{"ni", "字典候选", 100}, {"ni", "缓存停用", 100}, {"ni", "缓存可见", 100}}));
     ASSERT_TRUE(cxxime::test::create_test_topn(
-        topn_path, {{"ni",
+        topn_path, dictionary_path, {{"ni",
             {make_candidate("缓存停用", cxxime::CandidateOrigin::kSystem),
              make_candidate("缓存可见", cxxime::CandidateOrigin::kSystem)}}}));
 
@@ -210,7 +212,7 @@ TEST(DisabledSystemLexicon, pinyin_cache_and_learned_fallback_cannot_restore_dis
         make_candidate("学习停用", cxxime::CandidateOrigin::kSystem), "ni"));
 
     cxxime::ShortCodeCache cache;
-    ASSERT_TRUE(cache.load(topn_path));
+    ASSERT_TRUE(cache.load(topn_path, dictionary.candidate_store()));
     cxxime::PinyinTranslator translator;
     translator.set_dict(&dictionary);
     translator.set_short_cache(&cache);
@@ -233,10 +235,12 @@ TEST(DisabledSystemLexicon, input_method_scopes_are_independent_in_mixed_mode) {
     const std::string pinyin_disabled_path = make_temp_path("dsp");
     const std::string wubi_disabled_path = make_temp_path("dsw");
     const std::string topn_path = make_temp_path("dst");
-    ASSERT_TRUE(cxxime::Dict::create_test_dict(pinyin_dict_path, {{"aa", "拼音字典", 100}}));
+    ASSERT_TRUE(cxxime::Dict::create_test_dict(
+        pinyin_dict_path, {{"aa", "拼音字典", 100}, {"aa", "同文词", 100}}));
     ASSERT_TRUE(cxxime::Dict::create_test_dict(wubi_dict_path, {{"aa", "同文词", 1000}}));
     ASSERT_TRUE(cxxime::test::create_test_topn(
-        topn_path, {{"aa", {make_candidate("同文词", cxxime::CandidateOrigin::kSystem)}}}));
+        topn_path, pinyin_dict_path,
+        {{"aa", {make_candidate("同文词", cxxime::CandidateOrigin::kSystem)}}}));
 
     cxxime::Dict pinyin_dictionary;
     cxxime::Dict wubi_dictionary;
@@ -247,7 +251,7 @@ TEST(DisabledSystemLexicon, input_method_scopes_are_independent_in_mixed_mode) {
     ASSERT_TRUE(pinyin_dictionary.disable_system_entry("同文词"));
 
     cxxime::ShortCodeCache cache;
-    ASSERT_TRUE(cache.load(topn_path));
+    ASSERT_TRUE(cache.load(topn_path, pinyin_dictionary.candidate_store()));
     cxxime::MixedTranslator translator;
     translator.set_pinyin_dict(&pinyin_dictionary);
     translator.set_wubi_dict(&wubi_dictionary);
