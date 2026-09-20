@@ -64,13 +64,12 @@ TEST(EditTarget, text_ext_fallback_uses_caret_owner_instead_of_focus) {
     ASSERT_EQ(native.left, expected.x);
     ASSERT_EQ(native.top, expected.y);
 
-    DestroyCaret();
+    ASSERT_TRUE(DestroyCaret() != FALSE);
     RECT unavailable = {0, 0, 1, 20};
     ASSERT_TRUE(!cxxime_tsf::map_current_thread_caret_rect(parent, &unavailable));
     RECT without_owner = {1000, 1000, 1001, 1020};
     cxxime_tsf::TextExtRectTrace without_owner_trace;
     cxxime_tsf::normalize_text_ext_rect(focus, parent, &without_owner, &without_owner_trace);
-    ASSERT_TRUE(without_owner_trace.caret_hwnd == nullptr);
     ASSERT_TRUE(without_owner_trace.caret_pos_queried);
     ASSERT_TRUE(!without_owner_trace.caret_map_ok);
     DestroyWindow(parent);

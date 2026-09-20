@@ -29,9 +29,11 @@ std::string temp_path(const char* suffix) {
     char directory[MAX_PATH] = {};
     GetTempPathA(MAX_PATH, directory);
     static std::atomic<unsigned long> sequence{0};
-    return std::string(directory) + "cxxime-composition-learning-" +
-           std::to_string(GetCurrentProcessId()) + "-" + std::to_string(sequence.fetch_add(1)) +
-           suffix;
+    const std::string path = std::string(directory) + "cxxime-composition-learning-" +
+                             std::to_string(GetCurrentProcessId()) + "-" +
+                             std::to_string(sequence.fetch_add(1)) + suffix;
+    DeleteFileA(path.c_str());
+    return path;
 }
 
 bool write_file(const std::string& path, const std::string& contents) {
@@ -160,6 +162,7 @@ TEST(CompositionLearningService, skips_malformed_records_without_losing_valid_da
     const std::string contents((std::istreambuf_iterator<char>(input)),
                                std::istreambuf_iterator<char>());
     ASSERT_TRUE(contents.find("\textra\n") != std::string::npos);
+    input.close();
     DeleteFileA(path.c_str());
 }
 
@@ -195,6 +198,7 @@ TEST(CompositionLearningService, evicts_low_value_record_when_future_tail_exceed
     std::ifstream input(path, std::ios::binary | std::ios::ate);
     ASSERT_LE(static_cast<std::uint64_t>(input.tellg()),
               cxxime::CompositionLearningService::kMaxFileSize);
+    input.close();
     DeleteFileA(path.c_str());
 }
 
@@ -287,6 +291,7 @@ TEST(CompositionLearningService, concurrent_events_merge_into_one_persisted_reco
     const std::string contents((std::istreambuf_iterator<char>(input)),
                                std::istreambuf_iterator<char>());
     ASSERT_TRUE(contents.find("\t400\t") != std::string::npos);
+    input.close();
     DeleteFileA(path.c_str());
 }
 

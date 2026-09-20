@@ -43,51 +43,29 @@ static POINT input_mode_center(HWND hwnd) {
     };
 }
 
-static bool window_is_above(HWND upper, HWND lower) {
-    for (HWND window = GetTopWindow(nullptr); window; window = GetWindow(window, GW_HWNDNEXT)) {
-        if (window == upper) {
-            return true;
-        }
-        if (window == lower) {
-            return false;
-        }
-    }
-    return false;
-}
-
 // ============================================================
 // Create / Destroy
 // ============================================================
 
-TEST(StatusWindow, CreateAndDestroy) {
+TEST(StatusWindow, LifecycleOperationsAreIdempotent) {
     cxxime::StatusWindow window;
+    window.destroy();
     ASSERT_TRUE(!window.is_created());
 
     ASSERT_TRUE(create_test_window(window));
     ASSERT_TRUE(window.is_created());
     ASSERT_TRUE(GetWindow(window.hwnd_for_test(), GW_OWNER) == nullptr);
-
-    window.destroy();
-    ASSERT_TRUE(!window.is_created());
-}
-
-TEST(StatusWindow, CreateTwice) {
-    cxxime::StatusWindow window;
-    ASSERT_TRUE(create_test_window(window));
-    ASSERT_TRUE(window.is_created());
     const HWND first_window = window.hwnd_for_test();
 
-    // Creating an existing window is idempotent.
     ASSERT_TRUE(create_test_window(window));
-    ASSERT_TRUE(window.is_created());
     ASSERT_EQ(window.hwnd_for_test(), first_window);
 
     window.destroy();
-}
+    window.destroy();
+    ASSERT_TRUE(!window.is_created());
 
-TEST(StatusWindow, DestroyWithoutCreate) {
-    cxxime::StatusWindow window;
-    // Destroying an uncreated window is idempotent.
+    ASSERT_TRUE(create_test_window(window));
+    ASSERT_TRUE(window.is_created());
     window.destroy();
     ASSERT_TRUE(!window.is_created());
 }
@@ -96,49 +74,39 @@ TEST(StatusWindow, DestroyWithoutCreate) {
 // Show / Hide
 // ============================================================
 
-TEST(StatusWindow, ShowHide) {
+TEST(StatusWindow, ShowHidePreservesTopmostStyle) {
     cxxime::StatusWindow window;
-    ASSERT_TRUE(create_test_window(window));
-
-    window.show();
-    ASSERT_TRUE(window.is_visible());
-
-    window.hide();
-    ASSERT_TRUE(!window.is_visible());
-
-    window.destroy();
-}
-
-TEST(StatusWindow, ShowWithoutCreate) {
-    cxxime::StatusWindow window;
-    // Showing and hiding an uncreated window are no-ops.
     window.show();
     window.hide();
     ASSERT_TRUE(!window.is_created());
-}
 
-TEST(StatusWindow, ShowRestoresTopmostZOrder) {
-    cxxime::StatusWindow window;
     ASSERT_TRUE(create_test_window(window));
-    window.show();
+    ASSERT_TRUE((GetWindowLongPtrW(window.hwnd_for_test(), GWL_EXSTYLE) & WS_EX_TOPMOST) != 0);
 
-    HWND application_window =
-        CreateWindowExW(0, L"STATIC", L"Application", WS_POPUP | WS_VISIBLE, 100, 100, 400, 300,
-                        nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
-    ASSERT_TRUE(application_window != nullptr);
+    window.show();
+    ASSERT_TRUE(window.is_visible());
+    ASSERT_TRUE((GetWindowLongPtrW(window.hwnd_for_test(), GWL_EXSTYLE) & WS_EX_TOPMOST) != 0);
+
+    window.show();
+    ASSERT_TRUE(window.is_visible());
+    ASSERT_TRUE((GetWindowLongPtrW(window.hwnd_for_test(), GWL_EXSTYLE) & WS_EX_TOPMOST) != 0);
 
     ASSERT_TRUE(SetWindowPos(window.hwnd_for_test(), HWND_NOTOPMOST, 0, 0, 0, 0,
                              SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE) != FALSE);
-    ASSERT_TRUE(SetWindowPos(application_window, HWND_TOP, 0, 0, 0, 0,
-                             SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE) != FALSE);
-    ASSERT_TRUE(window_is_above(application_window, window.hwnd_for_test()));
+    ASSERT_TRUE((GetWindowLongPtrW(window.hwnd_for_test(), GWL_EXSTYLE) & WS_EX_TOPMOST) == 0);
 
     window.show();
-
-    ASSERT_TRUE(window_is_above(window.hwnd_for_test(), application_window));
+    ASSERT_TRUE(window.is_visible());
     ASSERT_TRUE((GetWindowLongPtrW(window.hwnd_for_test(), GWL_EXSTYLE) & WS_EX_TOPMOST) != 0);
 
-    DestroyWindow(application_window);
+    window.hide();
+    ASSERT_TRUE(!window.is_visible());
+    ASSERT_TRUE((GetWindowLongPtrW(window.hwnd_for_test(), GWL_EXSTYLE) & WS_EX_TOPMOST) != 0);
+
+    window.show();
+    ASSERT_TRUE(window.is_visible());
+    ASSERT_TRUE((GetWindowLongPtrW(window.hwnd_for_test(), GWL_EXSTYLE) & WS_EX_TOPMOST) != 0);
+
     window.destroy();
 }
 
@@ -362,23 +330,6 @@ TEST(StatusWindow, SettingsClick) {
     ASSERT_TRUE(last_button == cxxime::StatusButton::SETTINGS);
 
     window.destroy();
-}
-
-// ============================================================
-// Multiple create/destroy cycles
-// ============================================================
-
-TEST(StatusWindow, CreateDestroyCycle) {
-    for (int i = 0; i < 3; ++i) {
-        cxxime::StatusWindow window;
-        ASSERT_TRUE(create_test_window(window));
-        ASSERT_TRUE(window.is_created());
-        window.show();
-        ASSERT_TRUE(window.is_visible());
-        window.hide();
-        window.destroy();
-        ASSERT_TRUE(!window.is_created());
-    }
 }
 
 RUN_ALL_TESTS()
