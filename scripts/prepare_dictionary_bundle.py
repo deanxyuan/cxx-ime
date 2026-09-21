@@ -34,33 +34,15 @@ SCHEMAS = os.path.join(ROOT, "data", "schemas")
 SCRIPTS = os.path.join(ROOT, "scripts")
 sys.path.insert(0, DATA_TOOLS)
 
+from dictionary_bundle_layout import (
+    MANIFEST_FILES,
+    REQUIRED_MANIFEST_ROLES,
+    SHUANGPIN_SCHEME_NAMES,
+)
 from dict_builder import build_reverse_index, copy_source_database
 
-MANIFEST_FILES = [
-    ("pinyin_dict", "pinyin.dict.bin"),
-    ("pinyin_idx", "pinyin.dict.idx"),
-    ("pinyin_spellings", "pinyin.spellings.bin"),
-    ("pinyin_spellings_microsoft_shuangpin", "pinyin.microsoft-shuangpin.spellings.bin"),
-    ("pinyin_topn", "pinyin.topn.bin"),
-    ("pinyin_reverse_index", "pinyin.reverse.idx"),
-    ("wubi_dict", "wubi86.dict.bin"),
-    ("wubi_prefix_index", "wubi86.dict.idx"),
-    ("wubi_reverse_index", "wubi86.reverse.idx"),
-]
 TOPN_RUNTIME_HEADER_FORMAT = "<8s11IQI"
 TOPN_RUNTIME_HEADER_SIZE = struct.calcsize(TOPN_RUNTIME_HEADER_FORMAT)
-
-REQUIRED_MANIFEST_ROLES = {
-    "pinyin_dict",
-    "pinyin_idx",
-    "pinyin_spellings",
-    "pinyin_spellings_microsoft_shuangpin",
-    "pinyin_topn",
-    "pinyin_reverse_index",
-    "wubi_dict",
-    "wubi_prefix_index",
-    "wubi_reverse_index",
-}
 
 
 def find_source(data_dir: str, name: str) -> str | None:
@@ -295,10 +277,12 @@ def prepare_pinyin_dictionary(data_dir: str, output_dir: str) -> list[str]:
             reverse_index_path,
         ])
 
-        run_pinyin_spelling_generation(db_path, "pinyin.microsoft-shuangpin.schema.json")
-        microsoft_prefix = os.path.join(output_dir, "pinyin.microsoft-shuangpin")
-        run_build_runtime_dictionary(db_path, microsoft_prefix, spellings_only=True)
-        generated.append(microsoft_prefix + ".spellings.bin")
+        for scheme_name in SHUANGPIN_SCHEME_NAMES:
+            schema_stem = f"{scheme_name}-shuangpin"
+            run_pinyin_spelling_generation(db_path, f"pinyin.{schema_stem}.schema.json")
+            scheme_prefix = os.path.join(output_dir, f"pinyin.{schema_stem}")
+            run_build_runtime_dictionary(db_path, scheme_prefix, spellings_only=True)
+            generated.append(scheme_prefix + ".spellings.bin")
 
         topn_path = os.path.join(output_dir, "pinyin.topn.bin")
         run_build_pinyin_topn(db_path, topn_path)

@@ -29,6 +29,7 @@ python scripts\package.py --output-dir <path>
 | 脚本 | 职责 |
 |------|------|
 | `package.py` | 完整构建和发布打包入口 |
+| `dictionary_bundle_layout.py` | 运行时词典文件、manifest 角色及双拼变体的共享清单 |
 | `prepare_dictionary_bundle.py` | 并行准备拼音、五笔运行时词典并生成 manifest |
 | `build_pinyin_topn.py` | 生成供 `topn_builder` 使用的拼音 Top-N 中间索引 |
 | `verify_dictionary_bundle.py` | 校验运行时词典、索引及 manifest 的一致性 |

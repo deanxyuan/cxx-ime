@@ -244,20 +244,36 @@ TEST(SessionIntegration, pinyin_scheme_switch_rebinds_active_session) {
     ASSERT_TRUE(candidate_contains(fourth.presentation, "你好"));
 }
 
-TEST(SessionIntegration, microsoft_shuangpin_can_be_selected_at_cold_start) {
-    auto config = std::make_shared<cxxime::Config>();
-    config->pinyin_scheme = "microsoft_shuangpin";
-    SessionManager manager;
-    ASSERT_TRUE(manager.initialize(setup_test_dict(), config));
-    const uint32_t id =
-        manager.create_session(cxxime::kClientCapabilitySegmentedPreeditPresentation);
+TEST(SessionIntegration, built_in_shuangpin_schemes_can_be_selected_at_cold_start) {
+    struct SchemeCase {
+        const char* id;
+        const char* input;
+        const char* preedit;
+    };
+    const SchemeCase cases[] = {
+        {"microsoft_shuangpin", "nihk", "ni'hk"},
+        {"xiaohe_shuangpin", "nihc", "ni'hc"},
+        {"ziranma_shuangpin", "nihk", "ni'hk"},
+        {"sogou_shuangpin", "nihk", "ni'hk"},
+    };
+    const std::string dict_path = setup_test_dict();
 
-    ASSERT_EQ(manager.process_key(id, make_key('N')).preedit, "n");
-    ASSERT_TRUE(candidate_contains(manager.process_key(id, make_key('I')).presentation, "你"));
-    ASSERT_EQ(manager.process_key(id, make_key('H')).preedit, "ni'h");
-    const ProcessKeyResult result = manager.process_key(id, make_key('K'));
-    ASSERT_EQ(result.preedit, "ni'hk");
-    ASSERT_TRUE(candidate_contains(result.presentation, "你好"));
+    for (const auto& item : cases) {
+        auto config = std::make_shared<cxxime::Config>();
+        config->pinyin_scheme = item.id;
+        SessionManager manager;
+        ASSERT_TRUE(manager.initialize(dict_path, config));
+        const uint32_t id =
+            manager.create_session(cxxime::kClientCapabilitySegmentedPreeditPresentation);
+
+        ProcessKeyResult result;
+        for (const char* key = item.input; *key; ++key) {
+            result = manager.process_key(id, make_key(static_cast<uint32_t>(*key - 'a' + 'A')));
+        }
+        ASSERT_EQ(result.preedit, item.preedit);
+        ASSERT_TRUE(candidate_contains(result.presentation, "你好"));
+    }
+    delete_test_dictionary_bundle(dict_path);
 }
 
 TEST(SessionIntegration, pinyin_scheme_switch_reuses_large_shared_resources) {

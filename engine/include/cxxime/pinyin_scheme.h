@@ -20,9 +20,7 @@ struct PinyinSchemeDescriptor {
     PinyinSchemeKind kind;
     const char* manifest_role;
     const char* spelling_filename;
-    const wchar_t* nihao_preedit_example;
-    const char* wuzong_preedit_example;
-    const char* jishu_preedit_example;
+    const char* input_example;
 };
 
 const std::vector<PinyinSchemeDescriptor>& built_in_pinyin_schemes();

@@ -80,8 +80,8 @@ python data\tools\build_runtime_dictionary.py ^
 ```text
 pinyin.dict.db.zip
   -> 临时 SQLite
-  -> 拼写规则与微软双拼映射分别展开
-  -> 共享 dict.bin + 两份 spellings.bin + syllable idx + reverse idx
+  -> 拼写规则与四种内置双拼映射分别展开
+  -> 共享 dict.bin + 五份 spellings.bin + syllable idx + reverse idx
 ```
 
 五笔：

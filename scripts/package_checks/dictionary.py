@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 
+from dictionary_bundle_layout import REQUIRED_MANIFEST_ROLES
 from package_checks.common import add_error, require_file
 
 
@@ -61,18 +62,7 @@ def check_dictionary_manifest(errors: list[str], dist_dir: str) -> list[str]:
         manifest_files.append(normalized_path.replace(os.sep, "\\"))
         require_file(errors, os.path.join(dist_dir, "data", normalized_path), dist_dir)
 
-    required_roles = {
-        "pinyin_dict",
-        "pinyin_idx",
-        "pinyin_spellings",
-        "pinyin_spellings_microsoft_shuangpin",
-        "pinyin_topn",
-        "pinyin_reverse_index",
-        "wubi_dict",
-        "wubi_prefix_index",
-        "wubi_reverse_index",
-    }
-    missing = sorted(required_roles - roles)
+    missing = sorted(REQUIRED_MANIFEST_ROLES - roles)
     if missing:
         add_error(errors, "dictionary manifest missing role(s): " + ", ".join(missing))
 

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <numeric>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <cxxime/spellings_index.h>
@@ -32,25 +33,40 @@ TEST(ShuangpinSchemaRuntime, generated_schema_loads_and_segments_through_runtime
     ASSERT_EQ(std::accumulate(path->input_lengths.begin(), path->input_lengths.end(), 0u), 4u);
 }
 
-TEST(ShuangpinSchemaRuntime, microsoft_zero_initials_consume_their_two_raw_keys) {
-    cxxime::SpellingsIndex spellings;
-    ASSERT_TRUE(spellings.load(CXXIME_MICROSOFT_SHUANGPIN_PATH));
-    cxxime::Syllabifier syllabifier(spellings);
-
-    const auto assert_path = [&](const std::string& input,
-                                 const std::vector<std::string>& syllables) {
-        const cxxime::SegmentResult result = syllabifier.segment(input, nullptr, false, true);
-        const auto path =
-            std::find_if(result.paths.begin(), result.paths.end(),
-                         [&](const auto& item) { return item.syllables == syllables; });
-        ASSERT_TRUE(path != result.paths.end());
-        ASSERT_EQ(std::accumulate(path->input_lengths.begin(), path->input_lengths.end(), 0u),
-                  input.size());
+TEST(ShuangpinSchemaRuntime, built_in_schemes_segment_full_and_zero_initial_syllables) {
+    struct SchemeCase {
+        const char* path;
+        const char* nihao;
+        const char* zero_initial_hao;
     };
-    assert_path("aa", {"a"});
-    assert_path("ee", {"e"});
-    assert_path("oo", {"o"});
-    assert_path("aahk", {"a", "hao"});
+    const SchemeCase cases[] = {
+        {CXXIME_MICROSOFT_SHUANGPIN_PATH, "nihk", "ajhk"},
+        {CXXIME_XIAOHE_SHUANGPIN_PATH, "nihc", "anhc"},
+        {CXXIME_ZIRANMA_SHUANGPIN_PATH, "nihk", "anhk"},
+        {CXXIME_SOGOU_SHUANGPIN_PATH, "nihk", "ojhk"},
+    };
+
+    for (const auto& item : cases) {
+        cxxime::SpellingsIndex spellings;
+        ASSERT_TRUE(spellings.load(item.path));
+        cxxime::Syllabifier syllabifier(spellings);
+
+        for (const auto& path_case : {
+                 std::make_pair(std::string(item.nihao), std::vector<std::string>{"ni", "hao"}),
+                 std::make_pair(std::string(item.zero_initial_hao),
+                                std::vector<std::string>{"an", "hao"}),
+             }) {
+            const cxxime::SegmentResult result =
+                syllabifier.segment(path_case.first, nullptr, false, true);
+            const auto path = std::find_if(result.paths.begin(), result.paths.end(),
+                                           [&](const auto& candidate) {
+                                               return candidate.syllables == path_case.second;
+                                           });
+            ASSERT_TRUE(path != result.paths.end());
+            ASSERT_EQ(std::accumulate(path->input_lengths.begin(), path->input_lengths.end(), 0u),
+                      path_case.first.size());
+        }
+    }
 }
 
 int main() { return test::RunAllTests(); }

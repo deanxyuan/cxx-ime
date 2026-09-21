@@ -97,9 +97,17 @@ bool EditorApp::handle_input_command(int control_id, int notification) {
 void EditorApp::update_pinyin_scheme_example() {
     const auto& scheme = resolve_pinyin_scheme(selected_pinyin_scheme_id());
     std::wstring label = L"编码 (";
-    label += scheme.nihao_preedit_example;
+    label += utf8_to_wstr(scheme.input_example);
     label += L")";
     SetWindowTextW(hPreeditTypeComposition_, label.c_str());
+}
+
+std::string EditorApp::selected_pinyin_scheme_id() const {
+    const int index = combo_index(hPinyinScheme_);
+    if (index >= 0 && index < static_cast<int>(pinyinSchemeIds_.size())) {
+        return pinyinSchemeIds_[index];
+    }
+    return default_pinyin_scheme().id;
 }
 
 void EditorApp::update_preedit_type_enabled() {

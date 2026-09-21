@@ -80,6 +80,19 @@ class DictionaryFormatVerifierTest(unittest.TestCase):
             )
             self.assertTrue(errors)
 
+    def test_missing_topn_is_reported_without_runtime_data_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for filename in verifier.REQUIRED_FILES:
+                if filename == "pinyin.topn.bin":
+                    continue
+                with open(os.path.join(directory, filename), "wb") as output:
+                    output.write(b"fixture")
+
+            self.assertEqual(
+                verifier.verify(directory),
+                ["pinyin.topn.bin: file not found"],
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

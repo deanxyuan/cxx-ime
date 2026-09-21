@@ -15,8 +15,9 @@ sys.path.insert(0, os.path.join(ROOT, "scripts"))
 
 from dict_builder import reverse_index
 from dict_builder import runtime_dictionary
+from dictionary_bundle_layout import MANIFEST_FILES
 from package_checks.dictionary import check_dictionary_manifest
-from prepare_dictionary_bundle import MANIFEST_FILES, write_dictionary_manifest
+from prepare_dictionary_bundle import write_dictionary_manifest
 import verify_dictionary_bundle as verifier
 
 

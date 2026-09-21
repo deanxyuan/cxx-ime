@@ -163,14 +163,26 @@ TEST(Config, invalid_mixed_candidate_preference_falls_back_to_auto) {
 }
 
 TEST(Config, pinyin_scheme_round_trip_and_unknown_value_falls_back_to_full_pinyin) {
-    cxxime::Config config;
-    ASSERT_TRUE(config.load_json(R"({"engine":{"pinyin_scheme":"microsoft_shuangpin"}})"));
-    ASSERT_EQ(config.pinyin_scheme, "microsoft_shuangpin");
+    const char* scheme_ids[] = {
+        "full_pinyin",
+        "microsoft_shuangpin",
+        "xiaohe_shuangpin",
+        "ziranma_shuangpin",
+        "sogou_shuangpin",
+    };
+    for (const char* scheme_id : scheme_ids) {
+        cxxime::Config config;
+        const std::string json =
+            std::string(R"({"engine":{"pinyin_scheme":")") + scheme_id + R"("}})";
+        ASSERT_TRUE(config.load_json(json));
+        ASSERT_EQ(config.pinyin_scheme, scheme_id);
+
+        cxxime::Config loaded;
+        ASSERT_TRUE(loaded.load_json(config.to_user_json()));
+        ASSERT_EQ(loaded.pinyin_scheme, scheme_id);
+    }
 
     cxxime::Config loaded;
-    ASSERT_TRUE(loaded.load_json(config.to_user_json()));
-    ASSERT_EQ(loaded.pinyin_scheme, "microsoft_shuangpin");
-
     ASSERT_TRUE(loaded.load_json(R"({"engine":{"pinyin_scheme":"unsupported"}})"));
     ASSERT_EQ(loaded.pinyin_scheme, "full_pinyin");
 }

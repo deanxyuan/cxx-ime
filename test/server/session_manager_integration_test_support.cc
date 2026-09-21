@@ -165,6 +165,9 @@ void create_test_dictionary_bundle(const std::string& dict_path,
     std::string idx_path = dict_path + ".idx";
     std::string spellings_path = dict_path + ".spellings.bin";
     std::string microsoft_spellings_path = dict_path + ".microsoft-shuangpin.spellings.bin";
+    std::string xiaohe_spellings_path = dict_path + ".xiaohe-shuangpin.spellings.bin";
+    std::string ziranma_spellings_path = dict_path + ".ziranma-shuangpin.spellings.bin";
+    std::string sogou_spellings_path = dict_path + ".sogou-shuangpin.spellings.bin";
     std::string topn_path = dict_path + ".topn.bin";
     std::string wubi_path = dict_path + ".wubi.bin";
     std::string wubi_prefix_index_path = wubi_path + ".idx";
@@ -186,16 +189,23 @@ void create_test_dictionary_bundle(const std::string& dict_path,
         topn.push_back({key, {candidate}});
     }
     ASSERT_TRUE(cxxime::SpellingsIndex::create_test_trie(spellings_path, spellings));
-    const std::vector<std::tuple<std::string, std::string, int, float>>
-        microsoft_spellings = {
+    const auto make_shuangpin_spellings = [](const char* hao_code, const char* ying_code) {
+        return std::vector<std::tuple<std::string, std::string, int, float>>{
             {"de", "de", cxxime::kNormalSpelling, 0.0f},
             {"di", "di", cxxime::kNormalSpelling, 0.0f},
-            {"hk", "hao", cxxime::kNormalSpelling, 0.0f},
+            {hao_code, "hao", cxxime::kNormalSpelling, 0.0f},
             {"ni", "ni", cxxime::kNormalSpelling, 0.0f},
-            {"y;", "ying", cxxime::kNormalSpelling, 0.0f},
+            {ying_code, "ying", cxxime::kNormalSpelling, 0.0f},
         };
-    ASSERT_TRUE(cxxime::SpellingsIndex::create_test_trie(microsoft_spellings_path,
-                                                         microsoft_spellings));
+    };
+    ASSERT_TRUE(cxxime::SpellingsIndex::create_test_trie(
+        microsoft_spellings_path, make_shuangpin_spellings("hk", "y;")));
+    ASSERT_TRUE(cxxime::SpellingsIndex::create_test_trie(
+        xiaohe_spellings_path, make_shuangpin_spellings("hc", "yk")));
+    ASSERT_TRUE(cxxime::SpellingsIndex::create_test_trie(
+        ziranma_spellings_path, make_shuangpin_spellings("hk", "yy")));
+    ASSERT_TRUE(cxxime::SpellingsIndex::create_test_trie(
+        sogou_spellings_path, make_shuangpin_spellings("hk", "y;")));
     ASSERT_TRUE(cxxime::test::create_test_topn(topn_path, dict_path, topn));
     const std::vector<TestDictEntry> wubi_entries = {{"a", "wubi-test", 100}};
     ASSERT_TRUE(cxxime::Dict::create_test_dict(wubi_path, wubi_entries));
@@ -207,6 +217,9 @@ void create_test_dictionary_bundle(const std::string& dict_path,
         {"pinyin_idx", idx_path},
         {"pinyin_spellings", spellings_path},
         {"pinyin_spellings_microsoft_shuangpin", microsoft_spellings_path},
+        {"pinyin_spellings_xiaohe_shuangpin", xiaohe_spellings_path},
+        {"pinyin_spellings_ziranma_shuangpin", ziranma_spellings_path},
+        {"pinyin_spellings_sogou_shuangpin", sogou_spellings_path},
         {"pinyin_topn", topn_path},
         {"wubi_dict", wubi_path},
         {"wubi_prefix_index", wubi_prefix_index_path},
@@ -230,6 +243,12 @@ void create_test_dictionary_bundle_with_wubi(const std::string& dict_path,
         {"pinyin_spellings", dict_path + ".spellings.bin"},
         {"pinyin_spellings_microsoft_shuangpin",
          dict_path + ".microsoft-shuangpin.spellings.bin"},
+        {"pinyin_spellings_xiaohe_shuangpin",
+         dict_path + ".xiaohe-shuangpin.spellings.bin"},
+        {"pinyin_spellings_ziranma_shuangpin",
+         dict_path + ".ziranma-shuangpin.spellings.bin"},
+        {"pinyin_spellings_sogou_shuangpin",
+         dict_path + ".sogou-shuangpin.spellings.bin"},
         {"pinyin_topn", dict_path + ".topn.bin"},
         {"wubi_dict", wubi_path},
         {"wubi_prefix_index", wubi_prefix_index_path},
@@ -241,6 +260,9 @@ void delete_test_dictionary_bundle(const std::string& dict_path) {
     DeleteFileA((dict_path + ".idx").c_str());
     DeleteFileA((dict_path + ".spellings.bin").c_str());
     DeleteFileA((dict_path + ".microsoft-shuangpin.spellings.bin").c_str());
+    DeleteFileA((dict_path + ".xiaohe-shuangpin.spellings.bin").c_str());
+    DeleteFileA((dict_path + ".ziranma-shuangpin.spellings.bin").c_str());
+    DeleteFileA((dict_path + ".sogou-shuangpin.spellings.bin").c_str());
     DeleteFileA((dict_path + ".topn.bin").c_str());
     DeleteFileA((dict_path + ".wubi.bin").c_str());
     DeleteFileA((dict_path + ".wubi.bin.idx").c_str());

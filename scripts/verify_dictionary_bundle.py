@@ -23,38 +23,16 @@ import os
 import struct
 import sys
 
+from dictionary_bundle_layout import (
+    PINYIN_SPELLING_FILES,
+    REQUIRED_BUNDLE_FILES,
+    REQUIRED_MANIFEST_ROLES,
+)
 from package_checks.reverse_index import check_reverse_index
 
-REQUIRED_FILES = [
-    "dictionary_manifest.json",
-    "pinyin.dict.bin",
-    "pinyin.dict.idx",
-    "pinyin.spellings.bin",
-    "pinyin.microsoft-shuangpin.spellings.bin",
-    "pinyin.topn.bin",
-    "pinyin.reverse.idx",
-    "wubi86.dict.bin",
-    "wubi86.dict.idx",
-    "wubi86.reverse.idx",
-    "default.json",
-    "settings_presets.json",
-    "punctuation.json",
-    "symbols.json",
-]
+REQUIRED_FILES = REQUIRED_BUNDLE_FILES
 
 REQUIRED_TOPN_KEYS = ["s", "sd", "sdf", "sddf", "bj", "srf", "shrf"]
-
-REQUIRED_MANIFEST_ROLES = {
-    "pinyin_dict",
-    "pinyin_idx",
-    "pinyin_spellings",
-    "pinyin_spellings_microsoft_shuangpin",
-    "pinyin_topn",
-    "pinyin_reverse_index",
-    "wubi_dict",
-    "wubi_prefix_index",
-    "wubi_reverse_index",
-}
 
 # Magic values (first 8 bytes of each binary file)
 DICT_MAGIC_V2 = b"CXDIC\x02\x00\x00"
@@ -615,8 +593,8 @@ def verify(data_dir):
     check_reverse_index(
         data_dir, "wubi86.reverse.idx", "wubi86.dict.bin", errors
     )
-    check_spellings_bin(data_dir, "pinyin.spellings.bin", errors)
-    check_spellings_bin(data_dir, "pinyin.microsoft-shuangpin.spellings.bin", errors)
+    for filename in PINYIN_SPELLING_FILES:
+        check_spellings_bin(data_dir, filename, errors)
     check_topn_bin(data_dir, errors)
     check_symbols_json(data_dir, errors)
 
