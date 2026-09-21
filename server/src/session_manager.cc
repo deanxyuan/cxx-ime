@@ -20,6 +20,7 @@
 #include <cxxime/input_limits.h>
 #include <cxxime/logging.h>
 #include <cxxime/manual_candidate_order.h>
+#include <cxxime/pinyin_scheme.h>
 #include <cxxime/query_trace.h>
 #include <cxxime/translator.h>
 #include <cxxime/user_data_merge.h>
@@ -277,7 +278,10 @@ void fill_session_presentation(const SessionEntry& entry, ProcessKeyResult& resu
     }
     const cxxime::CompositionPresentation composition = cxxime::derive_composition_presentation(
         context.composition(), entry.resources.syllabifier.get(), focused_input_bytes,
-        decorate_pinyin_preedit, preferred_syllables);
+        decorate_pinyin_preedit, preferred_syllables,
+        entry.resources.config &&
+            cxxime::resolve_pinyin_scheme(entry.resources.config->pinyin_scheme).kind ==
+                cxxime::PinyinSchemeKind::kShuangpin);
     result.preedit = composition.display_preedit;
     result.preedit_cursor = composition.display_cursor_bytes;
     result.converted_prefix_bytes = composition.display_converted_prefix_bytes;
@@ -311,11 +315,29 @@ cxxime::InputMode next_input_mode(cxxime::InputMode mode) {
     }
 }
 
-bool load_dictionary_resources(const std::string& manifest_path, DictionaryResources& out) {
-    static const std::vector<std::string> kRuntimeDictionaryRoles = {
+bool load_spelling_resources(const cxxime::DictionaryManifest& manifest,
+                             const cxxime::PinyinSchemeDescriptor& scheme,
+                             std::shared_ptr<cxxime::SpellingsIndex>& spellings,
+                             std::shared_ptr<cxxime::Syllabifier>& syllabifier) {
+    const std::string spellings_path = manifest_role_path(manifest, scheme.manifest_role);
+    auto loaded_spellings = std::make_shared<cxxime::SpellingsIndex>();
+    if (spellings_path.empty() || !loaded_spellings->load(spellings_path) ||
+        !loaded_spellings->has_spellings()) {
+        CXXIME_LOG(L"SharedResources: %S spellings load FAILED", scheme.id);
+        return false;
+    }
+    spellings = std::move(loaded_spellings);
+    syllabifier = std::make_shared<cxxime::Syllabifier>(*spellings);
+    return true;
+}
+
+bool load_dictionary_resources(const std::string& manifest_path, const std::string& pinyin_scheme,
+                               DictionaryResources& out) {
+    const auto& scheme = cxxime::resolve_pinyin_scheme(pinyin_scheme);
+    const std::vector<std::string> runtime_dictionary_roles = {
         "pinyin_dict",
         "pinyin_idx",
-        "pinyin_spellings",
+        scheme.manifest_role,
         "pinyin_topn",
         "wubi_dict",
         "wubi_prefix_index",
@@ -327,7 +349,7 @@ bool load_dictionary_resources(const std::string& manifest_path, DictionaryResou
         return false;
     }
     if (!cxxime::validate_dictionary_manifest_files(
-            manifest, kRuntimeDictionaryRoles, &manifest_error)) {
+            manifest, runtime_dictionary_roles, &manifest_error)) {
         CXXIME_LOG(L"SharedResources: manifest validate FAILED: %S", manifest_error.c_str());
         return false;
     }
@@ -335,7 +357,6 @@ bool load_dictionary_resources(const std::string& manifest_path, DictionaryResou
     std::string dict_path = manifest_role_path(manifest, "pinyin_dict");
     std::string dict_idx_path = manifest_role_path(manifest, "pinyin_idx");
     std::string topn_path = manifest_role_path(manifest, "pinyin_topn");
-    std::string spellings_path = manifest_role_path(manifest, "pinyin_spellings");
     std::string wubi_dict_path = manifest_role_path(manifest, "wubi_dict");
     std::string wubi_prefix_index_path =
         manifest_role_path(manifest, "wubi_prefix_index");
@@ -363,14 +384,10 @@ bool load_dictionary_resources(const std::string& manifest_path, DictionaryResou
         return false;
     }
 
-    auto loaded_spellings = std::make_shared<cxxime::SpellingsIndex>();
+    std::shared_ptr<cxxime::SpellingsIndex> loaded_spellings;
     std::shared_ptr<cxxime::Syllabifier> loaded_syllabifier;
-    if (!spellings_path.empty()) {
-        if (!loaded_spellings->load(spellings_path) || !loaded_spellings->has_spellings()) {
-            CXXIME_LOG(L"SharedResources: spellings load FAILED");
-            return false;
-        }
-        loaded_syllabifier = std::make_shared<cxxime::Syllabifier>(*loaded_spellings);
+    if (!load_spelling_resources(manifest, scheme, loaded_spellings, loaded_syllabifier)) {
+        return false;
     }
 
     auto loaded_wubi_dict = std::make_shared<cxxime::Dict>();
@@ -446,13 +463,14 @@ std::shared_ptr<const cxxime::SymbolTable> load_symbol_table(const std::string& 
 
 bool SharedResources::load(const std::string& dict_path,
                            const std::shared_ptr<const cxxime::Config>& loaded_config) {
-    std::string manifest_path = cxxime::dictionary_manifest_path_for_dict(dict_path);
-    DictionaryResources dictionaries;
-    if (!load_dictionary_resources(manifest_path, dictionaries))
-        return false;
     if (!loaded_config) {
         return false;
     }
+    std::string manifest_path = cxxime::dictionary_manifest_path_for_dict(dict_path);
+    DictionaryResources dictionaries;
+    if (!load_dictionary_resources(manifest_path, loaded_config->pinyin_scheme, dictionaries))
+        return false;
+    dictionaries.spellings->set_fuzzy_enabled(loaded_config->fuzzy_pinyin);
 
     // Load punctuation mapping (non-fatal)
     std::string loaded_punct_path = cxxime::data_path("punctuation.json");
@@ -483,6 +501,9 @@ bool SharedResources::load(const std::string& dict_path,
         punct_mapping = std::move(loaded_punct_mapping);
         composition_learning = std::move(loaded_composition_learning);
         punct_path = punct_mapping ? std::move(loaded_punct_path) : std::string{};
+        prepared_config.reset();
+        prepared_spellings.reset();
+        prepared_syllabifier.reset();
     }
 
     return true;
@@ -524,11 +545,16 @@ bool SharedResources::load_punctuation(const std::string& path) {
 
 bool SharedResources::reload_dictionaries() {
     std::string current_manifest_path;
+    std::string current_pinyin_scheme;
+    bool current_fuzzy_pinyin = true;
     std::shared_ptr<cxxime::Dict> old_dict;
     std::shared_ptr<cxxime::Dict> old_wubi_dict;
     {
         std::lock_guard<std::mutex> lock(mutex);
         current_manifest_path = manifest_path;
+        current_pinyin_scheme = config ? config->pinyin_scheme
+                                       : cxxime::default_pinyin_scheme().id;
+        current_fuzzy_pinyin = config ? config->fuzzy_pinyin : true;
         old_dict = dict;
         old_wubi_dict = wubi_dict;
     }
@@ -546,8 +572,9 @@ bool SharedResources::reload_dictionaries() {
     }
 
     DictionaryResources dictionaries;
-    if (!load_dictionary_resources(current_manifest_path, dictionaries))
+    if (!load_dictionary_resources(current_manifest_path, current_pinyin_scheme, dictionaries))
         return false;
+    dictionaries.spellings->set_fuzzy_enabled(current_fuzzy_pinyin);
 
     {
         std::lock_guard<std::mutex> lock(mutex);
@@ -717,12 +744,85 @@ size_t SessionManager::cleanup_idle_sessions(uint32_t timeout_ms) {
     return count;
 }
 
-void SharedResources::replace_config(const std::shared_ptr<const cxxime::Config>& next_config) {
+bool SharedResources::prepare_config(const std::shared_ptr<const cxxime::Config>& next_config) {
+    if (!next_config) {
+        return false;
+    }
+
+    std::string current_manifest_path;
+    std::string current_scheme;
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        prepared_config.reset();
+        prepared_spellings.reset();
+        prepared_syllabifier.reset();
+        current_scheme = config ? cxxime::normalize_pinyin_scheme_id(config->pinyin_scheme)
+                                : cxxime::default_pinyin_scheme().id;
+        if (current_scheme == cxxime::normalize_pinyin_scheme_id(next_config->pinyin_scheme)) {
+            prepared_config = next_config;
+            prepared_spellings.reset();
+            prepared_syllabifier.reset();
+            return true;
+        }
+        current_manifest_path = manifest_path;
+    }
+
+    cxxime::DictionaryManifest manifest;
+    std::string error;
+    const auto& scheme = cxxime::resolve_pinyin_scheme(next_config->pinyin_scheme);
+    if (!cxxime::load_dictionary_manifest(current_manifest_path, manifest, &error) ||
+        !cxxime::validate_dictionary_manifest_files(manifest, {scheme.manifest_role}, &error)) {
+        CXXIME_LOG(L"SharedResources: scheme switch manifest validation FAILED: %S",
+                   error.c_str());
+        return false;
+    }
+
+    std::shared_ptr<cxxime::SpellingsIndex> loaded_spellings;
+    std::shared_ptr<cxxime::Syllabifier> loaded_syllabifier;
+    if (!load_spelling_resources(manifest, scheme, loaded_spellings, loaded_syllabifier)) {
+        return false;
+    }
+    loaded_spellings->set_fuzzy_enabled(next_config->fuzzy_pinyin);
+
     std::lock_guard<std::mutex> lock(mutex);
-    config = next_config;
+    prepared_config = next_config;
+    prepared_spellings = std::move(loaded_spellings);
+    prepared_syllabifier = std::move(loaded_syllabifier);
+    return true;
 }
 
-static void apply_resource_snapshot(SessionEntry& entry, const SharedResourceSnapshot& resources) {
+bool SharedResources::commit_prepared_config(
+    const std::shared_ptr<const cxxime::Config>& next_config) {
+    std::lock_guard<std::mutex> lock(mutex);
+    if (!next_config || prepared_config.get() != next_config.get()) {
+        return false;
+    }
+    if (prepared_spellings) {
+        spellings = std::move(prepared_spellings);
+        syllabifier = std::move(prepared_syllabifier);
+    } else if (spellings) {
+        spellings->set_fuzzy_enabled(next_config->fuzzy_pinyin);
+    }
+    config = next_config;
+    prepared_config.reset();
+    prepared_spellings.reset();
+    prepared_syllabifier.reset();
+    return true;
+}
+
+void SharedResources::cancel_prepared_config() {
+    std::lock_guard<std::mutex> lock(mutex);
+    prepared_config.reset();
+    prepared_spellings.reset();
+    prepared_syllabifier.reset();
+}
+
+void apply_resource_snapshot(SessionEntry& entry, const SharedResourceSnapshot& resources) {
+    if (resources.config && resources.config.get() != entry.resources.config.get()) {
+        entry.engine->reload_config(*resources.config);
+        entry.engine->set_fuzzy_enabled(resources.config->fuzzy_pinyin);
+        entry.resources.config = resources.config;
+    }
     if (resources.dict && resources.spellings &&
         (resources.dict.get() != entry.resources.dict.get() ||
          resources.spellings.get() != entry.resources.spellings.get() ||
@@ -731,15 +831,13 @@ static void apply_resource_snapshot(SessionEntry& entry, const SharedResourceSna
         auto old_mode = entry.ime_status.input_mode;
         entry.engine->rebind_shared_resources(*resources.dict, *resources.spellings,
                                               resources.syllabifier.get(),
-                                              resources.wubi_dict ? resources.wubi_dict.get() : nullptr);
+                                              resources.wubi_dict ? resources.wubi_dict.get()
+                                                                  : nullptr);
         entry.resources.dict = resources.dict;
         entry.resources.spellings = resources.spellings;
         entry.resources.syllabifier = resources.syllabifier;
         entry.resources.wubi_dict = resources.wubi_dict;
         entry.ime_status.input_mode = entry.engine->mode();
-        if (entry.resources.config) {
-            entry.engine->set_fuzzy_enabled(entry.resources.config->fuzzy_pinyin);
-        }
         if (old_mode != entry.ime_status.input_mode)
             entry.ime_status.revision++;
     }
@@ -919,7 +1017,6 @@ cxxime::CandidateOrderQueryResult SharedResources::query_candidate_order(
         request.scheme = cxxime::CompositionScheme::kPinyin;
         cxxime::PinyinTranslator translator;
         translator.set_dict(dictionary.get());
-        translator.set_syllabifier(resources.syllabifier.get());
         translator.set_short_cache(&dictionary->short_cache());
         translator.set_candidate_learning_enabled(learning_enabled);
         translation = translator.translate(request);
@@ -1086,15 +1183,39 @@ bool SharedResources::freeze_and_stop_composition_learning() {
     return !service || service->freeze_and_stop();
 }
 
-void SessionManager::apply_config(const std::shared_ptr<const cxxime::Config>& config) {
+bool SessionManager::prepare_config(const std::shared_ptr<const cxxime::Config>& config,
+                                    unsigned long* error_code) {
+    std::lock_guard<std::mutex> reload_lock(reload_mutex_);
+    if (shared_.prepare_config(config)) {
+        if (error_code) {
+            *error_code = ERROR_SUCCESS;
+        }
+        return true;
+    }
+    if (error_code) {
+        *error_code = ERROR_INVALID_DATA;
+    }
+    return false;
+}
+
+void SessionManager::cancel_prepared_config() {
+    std::lock_guard<std::mutex> reload_lock(reload_mutex_);
+    shared_.cancel_prepared_config();
+}
+
+bool SessionManager::apply_config(const std::shared_ptr<const cxxime::Config>& config) {
     if (!config) {
-        return;
+        return false;
     }
     std::lock_guard<std::mutex> reload_lock(reload_mutex_);
     auto previous_resources = shared_.snapshot();
     bool input_mode_changed = !previous_resources.config ||
                               previous_resources.config->input_mode != config->input_mode;
-    shared_.replace_config(config);
+    if (!shared_.commit_prepared_config(config) &&
+        (!shared_.prepare_config(config) || !shared_.commit_prepared_config(config))) {
+        CXXIME_LOG(L"%s", L"SessionManager: config apply rejected because scheme load failed");
+        return false;
+    }
     cxxime::set_diagnostics_config(config->diagnostics);
     cxxime::QueryTrace::set_enabled(config->diagnostics.trace_mode !=
                                     cxxime::DiagnosticTraceMode::kOff);
@@ -1111,7 +1232,6 @@ void SessionManager::apply_config(const std::shared_ptr<const cxxime::Config>& c
 
     // Sync input_mode from config to all active sessions
     if (resources.config) {
-        bool fuzzy = resources.config->fuzzy_pinyin;
         if (input_mode_changed) {
             GlobalVisibleState state = snapshot_global_state();
             state.input_mode = static_cast<cxxime::InputMode>(resources.config->input_mode);
@@ -1122,16 +1242,12 @@ void SessionManager::apply_config(const std::shared_ptr<const cxxime::Config>& c
             const CandidateStateToken candidate_state_before =
                 candidate_state_token(*entry->engine);
             apply_resource_snapshot(*entry, resources);
-            if (resources.config.get() != entry->resources.config.get()) {
-                entry->engine->reload_config(*resources.config);
-                entry->resources.config = resources.config;
-            }
-            entry->engine->set_fuzzy_enabled(fuzzy);
             align_session_to_global(*entry);
             advance_candidate_revision(*entry, candidate_state_before, true);
         }
     }
     CXXIME_LOG(L"SessionManager: config applied, %zu active sessions", entries.size());
+    return true;
 }
 
 void SessionManager::set_config_patch_handler(ConfigPatchHandler handler) {
@@ -1320,12 +1436,6 @@ ProcessKeyResult SessionManager::process_key(uint32_t id, const cxxime::KeyEvent
     }
     engine.set_trace_enabled(trace_enabled);
 
-    // 0. Check config snapshot to detect hot reload.
-    if (resources.config && resources.config.get() != s.resources.config.get()) {
-        engine.reload_config(*resources.config);
-        engine.set_fuzzy_enabled(resources.config->fuzzy_pinyin);
-        s.resources.config = resources.config;
-    }
     align_session_to_global(s);
 
     // 1. Sync CapsLock before OutputOptions derivation. On first activation,

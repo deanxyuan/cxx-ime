@@ -767,6 +767,7 @@ def print_summary(config: str, include_x86_modules: bool, host_diagnostics: bool
     print("    pinyin.dict.bin        Pinyin binary dictionary (runtime)")
     print("    pinyin.dict.idx        Pinyin syllable index (runtime)")
     print("    pinyin.spellings.bin   Pinyin spelling trie (runtime)")
+    print("    pinyin.microsoft-shuangpin.spellings.bin Microsoft Shuangpin spelling trie")
     print("    pinyin.topn.bin        Short code cache (runtime)")
     print("    pinyin.reverse.idx     Pinyin Settings reverse index")
     print("    wubi86.dict.bin        Wubi binary dictionary")

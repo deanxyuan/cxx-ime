@@ -31,7 +31,8 @@ CompositionPresentation derive_composition_presentation(const CompositionState& 
                                                         const Syllabifier* syllabifier,
                                                         std::size_t focused_input_bytes,
                                                         bool show_syllable_boundaries,
-                                                        const std::string& preferred_syllables) {
+                                                        const std::string& preferred_syllables,
+                                                        bool terminal_completion) {
     CompositionPresentation presentation;
     for (const auto& segment : state.converted_segments()) {
         presentation.logical_preedit += segment.text;
@@ -44,7 +45,8 @@ CompositionPresentation derive_composition_presentation(const CompositionState& 
     std::vector<std::size_t> boundaries;
     if (syllabifier && show_syllable_boundaries && !state.active().input.empty()) {
         const SegmentResult segmented =
-            syllabifier->segment(state.active().input, nullptr, false, true);
+            syllabifier->segment(state.active().input, nullptr,
+                                 terminal_completion, true);
         std::vector<std::string> preferred_path;
         std::size_t begin = 0;
         while (begin < preferred_syllables.size()) {

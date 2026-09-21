@@ -2,6 +2,8 @@
 
 #include "editor_app.h"
 
+#include <cxxime/pinyin_scheme.h>
+
 #include "editor_app_internal.h"
 
 namespace cxxime {
@@ -17,11 +19,13 @@ void EditorApp::create_input_panel(HWND panel) {
     hInputModeWubi_ = make_radio(1004, L"五笔", input_x + S(80), top, S(70), panel, false);
     hInputModeMixed_ = make_radio(1005, L"混输", input_x + S(160), top, S(70), panel, false);
 
-    make_aligned_label(L"混输排序:", top + kRowH, panel);
-    hMixedCandidatePreference_ = make_combo(1007, input_x, top + kRowH, S(140), panel);
-    combo_add(hMixedCandidatePreference_, L"智能排序");
-    combo_add(hMixedCandidatePreference_, L"五笔首选");
-    set_combo_drop_count(hMixedCandidatePreference_, 2);
+    make_aligned_label(L"拼音方案:", top + kRowH, panel);
+    hPinyinScheme_ = make_combo(1006, input_x, top + kRowH, S(160), panel);
+    for (const auto& scheme : built_in_pinyin_schemes()) {
+        combo_add(hPinyinScheme_, scheme.display_name);
+        pinyinSchemeIds_.push_back(scheme.id);
+    }
+    set_combo_drop_count(hPinyinScheme_, static_cast<int>(pinyinSchemeIds_.size()));
 
     make_aligned_label(L"内联显示:", top + kRowH * 2, panel);
     hInlinePreedit_ =
@@ -56,6 +60,12 @@ void EditorApp::create_input_panel(HWND panel) {
     hInitialEnglishPunct_ = make_check(1027, L"英文标点", input_x, top + kRowH * 8, S(100), panel);
     hInitialFullShape_ =
         make_check(1025, L"全角字符", input_x + S(115), top + kRowH * 8, S(100), panel);
+
+    make_aligned_label(L"混输排序:", top + kRowH * 9, panel);
+    hMixedCandidatePreference_ = make_combo(1007, input_x, top + kRowH * 9, S(140), panel);
+    combo_add(hMixedCandidatePreference_, L"智能排序");
+    combo_add(hMixedCandidatePreference_, L"五笔首选");
+    set_combo_drop_count(hMixedCandidatePreference_, 2);
 }
 
 bool EditorApp::handle_input_command(int control_id, int notification) {
@@ -74,9 +84,22 @@ bool EditorApp::handle_input_command(int control_id, int notification) {
             update_input_mode_enabled();
         }
         return true;
+    case 1006:
+        if (notification == CBN_SELCHANGE) {
+            update_pinyin_scheme_example();
+        }
+        return true;
     default:
         return false;
     }
+}
+
+void EditorApp::update_pinyin_scheme_example() {
+    const auto& scheme = resolve_pinyin_scheme(selected_pinyin_scheme_id());
+    std::wstring label = L"编码 (";
+    label += scheme.nihao_preedit_example;
+    label += L")";
+    SetWindowTextW(hPreeditTypeComposition_, label.c_str());
 }
 
 void EditorApp::update_preedit_type_enabled() {
@@ -88,6 +111,7 @@ void EditorApp::update_preedit_type_enabled() {
 void EditorApp::update_input_mode_enabled() {
     const bool wubi = get_check(hInputModeWubi_);
     const bool mixed = get_check(hInputModeMixed_);
+    EnableWindow(hPinyinScheme_, !wubi);
     EnableWindow(hFuzzyPinyin_, !wubi);
     EnableWindow(hMixedCandidatePreference_, mixed);
     EnableWindow(hWubiAutoCommit_, wubi || mixed);

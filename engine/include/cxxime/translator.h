@@ -8,6 +8,7 @@
 
 #include <cxxime/candidate.h>
 #include <cxxime/dict.h>
+#include <cxxime/pinyin_scheme.h>
 #include <cxxime/segmentor.h>
 #include <cxxime/translation_result.h>
 
@@ -36,6 +37,7 @@ class PinyinTranslator : public ITranslator {
 public:
     void set_dict(Dict* dict);
     void set_syllabifier(Syllabifier* syllabifier);
+    void set_pinyin_scheme(PinyinSchemeKind scheme);
     void set_short_cache(const ShortCodeCache* cache) { short_cache_ = cache; }
 
     void clear_query_cache() override { query_cache_.clear(); }
@@ -91,6 +93,7 @@ private:
     Syllabifier* syllabifier_ = nullptr;
     const ShortCodeCache* short_cache_ = nullptr;
     PinyinSegmentor segmentor_;
+    PinyinSchemeKind pinyin_scheme_ = PinyinSchemeKind::kFullPinyin;
 
     std::vector<QueryCacheEntry> query_cache_;
     uint64_t query_cache_sequence_ = 0;

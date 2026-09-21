@@ -24,13 +24,19 @@ enum class ProcessResult {
 class IProcessor {
 public:
     virtual ~IProcessor() = default;
+    virtual bool accepts_code_key(const KeyEvent&, const Context&) const { return false; }
     virtual ProcessResult process_key(const KeyEvent& event, Context& context) = 0;
 };
 
 // Pinyin processor implementation
 class PinyinProcessor : public IProcessor {
 public:
+    void set_shuangpin_enabled(bool enabled) { shuangpin_enabled_ = enabled; }
+    bool accepts_code_key(const KeyEvent& event, const Context& context) const override;
     ProcessResult process_key(const KeyEvent& event, Context& context) override;
+
+private:
+    bool shuangpin_enabled_ = false;
 };
 
 } // namespace cxxime

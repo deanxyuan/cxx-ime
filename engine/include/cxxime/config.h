@@ -53,6 +53,7 @@ struct Config {
     // engine
     int page_size = 9;
     int input_mode = 0;  // 0=pinyin, 1=wubi, 2=mixed
+    std::string pinyin_scheme = "full_pinyin";
     bool fuzzy_pinyin = true;  // 模糊拼音开关
     bool wubi_auto_commit = true;  // Auto-commit the only candidate at four codes.
     bool wubi_commit_first_on_fifth_key = true;  // Commit the first choice before code 5.

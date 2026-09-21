@@ -23,6 +23,7 @@ enum class CompositionPathKind : uint8_t {
 struct CompositionPath {
     const std::vector<uint32_t>* ids = nullptr;
     const std::vector<std::string>* syllables = nullptr;
+    const std::string* input_code = nullptr;
     CompositionPathKind kind = CompositionPathKind::kNormal;
     uint16_t rank = 0;
 };

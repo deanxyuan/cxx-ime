@@ -6,6 +6,11 @@
 
 namespace cxxime {
 
+bool PinyinProcessor::accepts_code_key(const KeyEvent& event, const Context& context) const {
+    return shuangpin_enabled_ && event.keycode == VK_OEM_1 && !event.is_shift() &&
+           !event.is_ctrl() && !event.is_alt() && context.is_composing();
+}
+
 ProcessResult PinyinProcessor::process_key(const KeyEvent& event, Context& context) {
     if (event.is_key_up)
         return ProcessResult::REJECTED;
@@ -109,6 +114,11 @@ ProcessResult PinyinProcessor::process_key(const KeyEvent& event, Context& conte
             ch = static_cast<char>(vk - 'A' + 'a');  // force lowercase
         }
         context.insert_preedit(ch);
+        return ProcessResult::ACCEPTED;
+    }
+
+    if (accepts_code_key(event, context)) {
+        context.insert_preedit(';');
         return ProcessResult::ACCEPTED;
     }
 

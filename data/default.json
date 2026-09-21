@@ -7,6 +7,7 @@
     "engine": {
         "page_size": 7,
         "max_pinyin_length": 64,
+        "pinyin_scheme": "full_pinyin",
         "fuzzy_pinyin": true,
         "wubi_auto_commit": true,
         "wubi_commit_first_on_fifth_key": true,

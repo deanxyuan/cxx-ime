@@ -27,6 +27,7 @@ TEST(Config, defaults) {
     ASSERT_TRUE(!cfg.wubi_code_hint);
     ASSERT_TRUE(!cfg.candidate_learning);
     ASSERT_EQ(cfg.mixed_candidate_preference, cxxime::MixedCandidatePreference::kAuto);
+    ASSERT_EQ(cfg.pinyin_scheme, "full_pinyin");
     ASSERT_TRUE(!cfg.input_mode_switch_shortcut.enabled());
     ASSERT_TRUE(!cfg.activate_ime_shortcut.enabled());
     ASSERT_TRUE(!cfg.initial_full_shape);
@@ -159,6 +160,19 @@ TEST(Config, invalid_mixed_candidate_preference_falls_back_to_auto) {
     cxxime::Config config;
     ASSERT_TRUE(config.load_json(R"({"engine":{"mixed_candidate_preference":"unknown"}})"));
     ASSERT_EQ(config.mixed_candidate_preference, cxxime::MixedCandidatePreference::kAuto);
+}
+
+TEST(Config, pinyin_scheme_round_trip_and_unknown_value_falls_back_to_full_pinyin) {
+    cxxime::Config config;
+    ASSERT_TRUE(config.load_json(R"({"engine":{"pinyin_scheme":"microsoft_shuangpin"}})"));
+    ASSERT_EQ(config.pinyin_scheme, "microsoft_shuangpin");
+
+    cxxime::Config loaded;
+    ASSERT_TRUE(loaded.load_json(config.to_user_json()));
+    ASSERT_EQ(loaded.pinyin_scheme, "microsoft_shuangpin");
+
+    ASSERT_TRUE(loaded.load_json(R"({"engine":{"pinyin_scheme":"unsupported"}})"));
+    ASSERT_EQ(loaded.pinyin_scheme, "full_pinyin");
 }
 
 TEST(Config, shortcut_validation_accepts_current_bindings_and_disables_invalid_ones) {

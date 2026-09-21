@@ -308,6 +308,7 @@ $dataFiles = @(
     "pinyin.dict.bin",
     "pinyin.dict.idx",
     "pinyin.spellings.bin",
+    "pinyin.microsoft-shuangpin.spellings.bin",
     "pinyin.topn.bin",
     "pinyin.reverse.idx",
     "wubi86.dict.bin",

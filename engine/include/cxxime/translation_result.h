@@ -98,9 +98,11 @@ struct TranslationResult {
     }
 };
 
-inline CandidateCanonicalVariant canonical_variant(const Candidate& candidate) {
+inline CandidateCanonicalVariant canonical_variant(const Candidate& candidate,
+                                                   const std::string& input_code = {}) {
     CandidateCanonicalVariant variant;
     variant.provenance = {candidate.source, candidate.origin};
+    variant.input_code = input_code.empty() ? candidate.input_code : input_code;
     variant.code = candidate.code;
     variant.syllables = candidate.syllables;
     variant.frequency = candidate.frequency;
@@ -114,13 +116,14 @@ inline CandidateCanonicalVariant canonical_variant(const Candidate& candidate) {
 }
 
 inline CandidateEntry make_text_candidate_entry(Candidate candidate,
-                                                std::size_t consumed_input_bytes) {
+                                                std::size_t consumed_input_bytes,
+                                                const std::string& input_code = {}) {
     CandidateEntry entry;
     entry.hint = candidate.comment;
     TextSelectionAction action;
     action.text = candidate.text;
     action.consumed_input_bytes = consumed_input_bytes;
-    action.variants.push_back(canonical_variant(candidate));
+    action.variants.push_back(canonical_variant(candidate, input_code));
     entry.candidate = std::move(candidate);
     entry.selection = std::move(action);
     return entry;

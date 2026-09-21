@@ -14,43 +14,37 @@
 #include <cxxime/query_trace.h>
 #include <cxxime/syllabifier.h>
 
+#include "pinyin_path_filter.h"
+#include "pinyin_query_key.h"
+
 namespace cxxime {
 
 namespace {
 
 struct PartialCandidate {
     std::size_t consumed = 0;
+    std::string lookup_key;
     CandidateEntry entry;
 };
 
 struct PartialBoundary {
     std::size_t consumed = 0;
+    std::string canonical_key;
     std::vector<uint32_t> ids;
     int worst_spelling_type = kNormalSpelling;
     float credibility = 0.0f;
 };
 
 constexpr std::size_t kMaxAbbreviationPaths = 16;
-bool has_consistent_path_metadata(const SegmentedPath& path, std::size_t input_size) {
-    if (path.syllables.size() != path.spelling_types.size() ||
-        path.syllables.size() != path.input_lengths.size()) {
-        return false;
-    }
-    std::size_t consumed = 0;
-    for (uint16_t length : path.input_lengths) {
-        consumed += length;
-    }
-    return consumed == input_size;
-}
-
-bool is_natural_path(const SegmentedPath& path, std::size_t input_size) {
-    return has_consistent_path_metadata(path, input_size) &&
+bool is_natural_path(const std::string& input, const SegmentedPath& path) {
+    return path_consumes_entire_input(input, path) &&
            std::all_of(path.spelling_types.begin(), path.spelling_types.end(),
                        [](uint8_t type) { return type <= kFuzzySpelling; });
 }
 
 bool same_boundary(const PartialBoundary& left, const PartialBoundary& right) {
-    return left.consumed == right.consumed && left.ids == right.ids;
+    return left.consumed == right.consumed && left.canonical_key == right.canonical_key &&
+           left.ids == right.ids;
 }
 
 void append_path_boundaries(Dict& dict, const SegmentedPath& path,
@@ -73,6 +67,7 @@ void append_path_boundaries(Dict& dict, const SegmentedPath& path,
             (std::max)(worst_spelling_type, static_cast<int>(path.spelling_types[end]));
         PartialBoundary boundary;
         boundary.consumed = consumed;
+        boundary.canonical_key = canonical_pinyin_key(path.syllables, end + 1);
         boundary.ids.assign(ids.begin(), ids.begin() + end + 1);
         boundary.worst_spelling_type = worst_spelling_type;
         boundary.credibility = path.credibility;
@@ -92,18 +87,18 @@ void append_path_boundaries(Dict& dict, const SegmentedPath& path,
 }
 
 std::vector<PartialBoundary> collect_partial_boundaries(Dict& dict, const SegmentResult& segmented,
-                                                        std::size_t input_size) {
+                                                        const std::string& input) {
     const bool has_natural_path =
         std::any_of(segmented.paths.begin(), segmented.paths.end(),
-                    [&](const SegmentedPath& path) { return is_natural_path(path, input_size); });
+                    [&](const SegmentedPath& path) { return is_natural_path(input, path); });
 
     std::vector<PartialBoundary> boundaries;
     std::size_t abbreviation_path_count = 0;
     for (const SegmentedPath& path : segmented.paths) {
-        if (!has_consistent_path_metadata(path, input_size) || path.syllables.size() < 2) {
+        if (!path_consumes_entire_input(input, path) || path.syllables.size() < 2) {
             continue;
         }
-        if (has_natural_path && !is_natural_path(path, input_size)) {
+        if (has_natural_path && !is_natural_path(input, path)) {
             continue;
         }
         if (!has_natural_path && abbreviation_path_count++ >= kMaxAbbreviationPaths) {
@@ -135,18 +130,22 @@ bool same_candidate_identity(const Candidate& left, const Candidate& right) {
 void merge_or_append_partial(std::vector<PartialCandidate>& partials,
                              Candidate candidate,
                              std::size_t consumed,
+                             const std::string& lookup_key,
+                             bool include_input_code,
                              std::size_t input_size) {
     if (consumed == 0 || consumed >= input_size || !candidate_text_fits(candidate.text)) {
         return;
     }
     candidate.source = CandidateSource::kPinyin;
-    CandidateEntry entry = make_text_candidate_entry(std::move(candidate), consumed);
+    CandidateEntry entry = make_text_candidate_entry(
+        std::move(candidate), consumed, include_input_code ? lookup_key : std::string{});
     const auto existing =
         std::find_if(partials.begin(), partials.end(), [&](const PartialCandidate& item) {
-            return item.consumed == consumed && item.entry.candidate.text == entry.candidate.text;
+            return item.consumed == consumed && item.lookup_key == lookup_key &&
+                   item.entry.candidate.text == entry.candidate.text;
         });
     if (existing == partials.end()) {
-        partials.push_back({consumed, std::move(entry)});
+        partials.push_back({consumed, lookup_key, std::move(entry)});
         return;
     }
     if (entry.candidate.frequency > existing->entry.candidate.frequency) {
@@ -162,45 +161,55 @@ void merge_or_append_partial(std::vector<PartialCandidate>& partials,
 }
 
 void rank_partial_candidates(Dict& dict,
-                             const TranslationRequest& request,
                              bool candidate_learning_enabled,
+                             bool include_input_code,
                              std::vector<PartialCandidate>& partials,
                              int limit) {
-    std::vector<std::size_t> consumed_lengths;
-    consumed_lengths.reserve(partials.size());
+    std::vector<std::pair<std::size_t, std::string>> group_keys;
+    group_keys.reserve(partials.size());
     for (const auto& partial : partials) {
-        if (std::find(consumed_lengths.begin(), consumed_lengths.end(), partial.consumed) ==
-            consumed_lengths.end()) {
-            consumed_lengths.push_back(partial.consumed);
+        const auto key = std::make_pair(partial.consumed, partial.lookup_key);
+        if (std::find(group_keys.begin(), group_keys.end(), key) == group_keys.end()) {
+            group_keys.push_back(key);
         }
     }
-    std::sort(consumed_lengths.begin(), consumed_lengths.end(), std::greater<std::size_t>());
+    std::sort(group_keys.begin(), group_keys.end(), [](const auto& left, const auto& right) {
+        if (left.first != right.first) {
+            return left.first > right.first;
+        }
+        return left.second < right.second;
+    });
 
     std::vector<std::vector<PartialCandidate>> groups;
-    groups.reserve(consumed_lengths.size());
-    for (std::size_t consumed : consumed_lengths) {
+    groups.reserve(group_keys.size());
+    for (const auto& group_key : group_keys) {
+        const std::size_t consumed = group_key.first;
+        const std::string& lookup_key = group_key.second;
         std::vector<Candidate> candidates;
         for (const auto& partial : partials) {
-            if (partial.consumed == consumed) {
+            if (partial.consumed == consumed && partial.lookup_key == lookup_key) {
                 candidates.push_back(partial.entry.candidate);
             }
         }
 
-        const std::string prefix = request.input.substr(0, consumed);
         dict.filter_disabled_system_candidates(candidates);
         if (candidate_learning_enabled) {
-            dict.apply_candidate_preferences(prefix, CandidateSource::kPinyin, candidates, limit);
+            dict.apply_candidate_preferences(lookup_key, CandidateSource::kPinyin,
+                                             candidates, limit);
         }
-        dict.apply_manual_candidate_order(prefix, CandidateSource::kPinyin, candidates, limit);
+        dict.apply_manual_candidate_order(lookup_key, CandidateSource::kPinyin,
+                                          candidates, limit);
 
         std::vector<PartialCandidate> group;
         group.reserve(candidates.size());
         for (auto& candidate : candidates) {
-            CandidateEntry entry = make_text_candidate_entry(candidate, consumed);
+            CandidateEntry entry = make_text_candidate_entry(
+                candidate, consumed, include_input_code ? lookup_key : std::string{});
             const auto original =
                 std::find_if(partials.begin(), partials.end(),
                              [&](const PartialCandidate& item) {
                                  return item.consumed == consumed &&
+                                        item.lookup_key == lookup_key &&
                                         same_candidate_identity(item.entry.candidate, candidate);
                              });
             if (original != partials.end()) {
@@ -209,7 +218,7 @@ void rank_partial_candidates(Dict& dict,
                     std::get<TextSelectionAction>(original->entry.selection);
                 merge_candidate_variants(action, original_action);
             }
-            group.push_back({consumed, std::move(entry)});
+            group.push_back({consumed, lookup_key, std::move(entry)});
         }
         groups.push_back(std::move(group));
     }
@@ -270,6 +279,7 @@ void merge_or_append_visible_candidate(std::vector<CandidateEntry>& entries,
 void append_pinyin_partial_candidates(Dict& dict,
                                       const Syllabifier& syllabifier,
                                       const TranslationRequest& request,
+                                      bool shuangpin,
                                       bool candidate_learning_enabled,
                                       std::vector<CandidateEntry>& entries,
                                       TranslationStatus& status) {
@@ -278,7 +288,8 @@ void append_pinyin_partial_candidates(Dict& dict,
     }
 
     const QueryDeadline* deadline = request.budget ? &request.budget->deadline : nullptr;
-    const SegmentResult segmented = syllabifier.segment(request.input, deadline, false, true);
+    const SegmentResult segmented = syllabifier.segment(
+        request.input, deadline, shuangpin, true);
     if (segmented.deadline_exceeded) {
         status = status == TranslationStatus::kFailed ? TranslationStatus::kFailed
                                                       : TranslationStatus::kStableDegraded;
@@ -290,7 +301,7 @@ void append_pinyin_partial_candidates(Dict& dict,
     }
 
     const std::vector<PartialBoundary> boundaries =
-        collect_partial_boundaries(dict, segmented, request.input.size());
+        collect_partial_boundaries(dict, segmented, request.input);
     std::vector<PartialCandidate> partials;
     SpanLookupStats span_stats;
     const QueryDeadline no_deadline;
@@ -304,8 +315,12 @@ void append_pinyin_partial_candidates(Dict& dict,
     UserLookupStats user_stats;
     bool span_scan_budget_truncated = false;
 
-    std::vector<std::size_t> queried_user_prefixes;
+    std::vector<std::pair<std::size_t, std::string>> queried_user_prefixes;
     for (const PartialBoundary& boundary : boundaries) {
+        const std::string lookup_key = shuangpin
+                                           ? boundary.canonical_key
+                                           : request.input.substr(0, boundary.consumed);
+        const auto user_prefix = std::make_pair(boundary.consumed, lookup_key);
         if (span_stats.entry_scans >= effective_budget.max_exact_scan) {
             span_stats.truncated = true;
             span_scan_budget_truncated = true;
@@ -330,19 +345,20 @@ void append_pinyin_partial_candidates(Dict& dict,
         for (auto& candidate : candidates) {
             if (!dict.is_system_entry_disabled(candidate.text)) {
                 merge_or_append_partial(partials, std::move(candidate), boundary.consumed,
+                                        lookup_key, shuangpin,
                                         request.input.size());
             }
         }
 
-        if (std::find(queried_user_prefixes.begin(), queried_user_prefixes.end(),
-                      boundary.consumed) == queried_user_prefixes.end()) {
-            queried_user_prefixes.push_back(boundary.consumed);
-            const std::string prefix = request.input.substr(0, boundary.consumed);
+        if (std::find(queried_user_prefixes.begin(), queried_user_prefixes.end(), user_prefix) ==
+            queried_user_prefixes.end()) {
+            queried_user_prefixes.push_back(user_prefix);
             std::vector<Candidate> user_candidates = dict.lookup_user_exact(
-                prefix, static_cast<int>(limits.max_candidates_per_range), effective_budget,
-                nullptr, &user_stats);
+                lookup_key, static_cast<int>(limits.max_candidates_per_range),
+                effective_budget, nullptr, &user_stats);
             for (auto& candidate : user_candidates) {
                 merge_or_append_partial(partials, std::move(candidate), boundary.consumed,
+                                        lookup_key, shuangpin,
                                         request.input.size());
             }
         }
@@ -360,7 +376,7 @@ void append_pinyin_partial_candidates(Dict& dict,
                                                         : TranslationStatus::kStableDegraded;
     }
 
-    rank_partial_candidates(dict, request, candidate_learning_enabled, partials,
+    rank_partial_candidates(dict, candidate_learning_enabled, shuangpin, partials,
                             static_cast<int>(limits.max_candidates_per_range));
     if (partials.size() > kMaxSegmentedPartialCandidateCount) {
         partials.resize(kMaxSegmentedPartialCandidateCount);

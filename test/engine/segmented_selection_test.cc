@@ -703,7 +703,9 @@ TEST(SegmentedSelection, fuzzy_and_abbreviation_paths_use_input_boundaries) {
     const std::string dict_path = make_temp_file("sgf");
     const std::string spellings_path = make_temp_file("sga");
     ASSERT_TRUE(cxxime::Dict::create_test_dict(
-        dict_path, {{"zhong:guo:ren", "中国人", 10000}, {"zhong:guo", "中国", 9000}}));
+        dict_path, {{"zhong:guo:ren", "中国人", 10000},
+                    {"zhong:guo", "中国", 9000},
+                    {"zhong:guo", "偏好中国", 8000}}));
     ASSERT_TRUE(cxxime::SpellingsIndex::create_test_trie(
         spellings_path,
         {{"zong", "zhong", cxxime::kFuzzySpelling, -0.5f},
@@ -720,6 +722,13 @@ TEST(SegmentedSelection, fuzzy_and_abbreviation_paths_use_input_boundaries) {
     cxxime::PinyinTranslator translator;
     translator.set_dict(&dict);
     translator.set_syllabifier(&syllabifier);
+    cxxime::Candidate preferred;
+    preferred.text = "偏好中国";
+    preferred.code = "zhongguo";
+    preferred.syllables = "zhong:guo";
+    preferred.source = cxxime::CandidateSource::kPinyin;
+    ASSERT_TRUE(dict.record_candidate_preference(preferred, "zongguo"));
+    translator.set_candidate_learning_enabled(true);
 
     auto prefix_consumed = [&](const std::string& input) {
         cxxime::TranslationRequest request;
@@ -741,6 +750,19 @@ TEST(SegmentedSelection, fuzzy_and_abbreviation_paths_use_input_boundaries) {
 
     ASSERT_EQ(prefix_consumed("zongguoren"), 7u);
     ASSERT_EQ(prefix_consumed("zgr"), 2u);
+
+    cxxime::TranslationRequest fuzzy_request;
+    fuzzy_request.input = "zongguoren";
+    fuzzy_request.page_size = 20;
+    fuzzy_request.policy.allow_partial_selection = true;
+    const cxxime::TranslationResult fuzzy_result = translator.translate(fuzzy_request);
+    const auto first_partial = std::find_if(
+        fuzzy_result.entries.begin(), fuzzy_result.entries.end(), [](const auto& entry) {
+            const auto* action = std::get_if<cxxime::TextSelectionAction>(&entry.selection);
+            return action && action->consumed_input_bytes == 7;
+        });
+    ASSERT_TRUE(first_partial != fuzzy_result.entries.end());
+    ASSERT_EQ(first_partial->candidate.text, "偏好中国");
 
     spellings.unload();
     dict.close();

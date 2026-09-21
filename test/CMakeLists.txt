@@ -44,10 +44,11 @@ add_cxxime_test(engine_test
         engine/engine_pinyin_test.cc
         engine/engine_ascii_mode_test.cc
         engine/engine_ascii_composition_test.cc
+        engine/shuangpin_test.cc
         engine/engine_deadline_test.cc
         engine/composition_state_test.cc
         engine/user_data_merge_test.cc
-    DEPS cxxime-engine
+    DEPS cxxime-engine cxxime-test-topn-data
 )
 add_cxxime_test(segmented_selection_test
     SOURCES engine/segmented_selection_test.cc
@@ -357,6 +358,67 @@ if(Python3_FOUND)
                 ${CMAKE_CURRENT_SOURCE_DIR}/data/pinyin_topn_pipeline_test.py
                 --topn-builder $<TARGET_FILE:topn_builder>
     )
+    add_test(
+        NAME pinyin_spelling_schema_test
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/data/pinyin_spelling_schema_test.py
+    )
+
+    set(SHUANGPIN_SCHEMA_FIXTURE
+        ${CMAKE_CURRENT_BINARY_DIR}/generated/pinyin.synthetic.spellings.bin
+    )
+    add_custom_command(
+        OUTPUT ${SHUANGPIN_SCHEMA_FIXTURE}
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/data/generate_shuangpin_schema_fixture.py
+                --schema
+                ${CMAKE_CURRENT_SOURCE_DIR}/data/pinyin.synthetic-shuangpin.schema.json
+                --syllable ni
+                --syllable hao
+                --output ${SHUANGPIN_SCHEMA_FIXTURE}
+        DEPENDS
+            ${CMAKE_CURRENT_SOURCE_DIR}/data/generate_shuangpin_schema_fixture.py
+            ${CMAKE_CURRENT_SOURCE_DIR}/data/pinyin.synthetic-shuangpin.schema.json
+            ${CMAKE_SOURCE_DIR}/data/tools/generate_pinyin_spellings.py
+            ${CMAKE_SOURCE_DIR}/data/tools/dict_builder/pinyin_spellings.py
+        VERBATIM
+    )
+
+    set(MICROSOFT_SHUANGPIN_SCHEMA_FIXTURE
+        ${CMAKE_CURRENT_BINARY_DIR}/generated/pinyin.microsoft-shuangpin.spellings.bin
+    )
+    add_custom_command(
+        OUTPUT ${MICROSOFT_SHUANGPIN_SCHEMA_FIXTURE}
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/data/generate_shuangpin_schema_fixture.py
+                --schema
+                ${CMAKE_SOURCE_DIR}/data/schemas/pinyin.microsoft-shuangpin.schema.json
+                --dictionary-archive ${CMAKE_SOURCE_DIR}/data/pinyin.dict.db.zip
+                --output ${MICROSOFT_SHUANGPIN_SCHEMA_FIXTURE}
+        DEPENDS
+            ${CMAKE_CURRENT_SOURCE_DIR}/data/generate_shuangpin_schema_fixture.py
+            ${CMAKE_SOURCE_DIR}/data/schemas/pinyin.microsoft-shuangpin.schema.json
+            ${CMAKE_SOURCE_DIR}/data/pinyin.dict.db.zip
+            ${CMAKE_SOURCE_DIR}/data/tools/generate_pinyin_spellings.py
+            ${CMAKE_SOURCE_DIR}/data/tools/dict_builder/pinyin_spellings.py
+        VERBATIM
+    )
+
+    add_custom_target(shuangpin_schema_fixture DEPENDS
+        ${SHUANGPIN_SCHEMA_FIXTURE}
+        ${MICROSOFT_SHUANGPIN_SCHEMA_FIXTURE}
+    )
+
+    add_cxxime_test(shuangpin_schema_runtime_test
+        SOURCES engine/shuangpin_schema_runtime_test.cc
+        DEPS cxxime-engine
+    )
+    add_dependencies(shuangpin_schema_runtime_test shuangpin_schema_fixture)
+    target_compile_definitions(shuangpin_schema_runtime_test PRIVATE
+        CXXIME_SYNTHETIC_SHUANGPIN_PATH="${SHUANGPIN_SCHEMA_FIXTURE}"
+        CXXIME_MICROSOFT_SHUANGPIN_PATH="${MICROSOFT_SHUANGPIN_SCHEMA_FIXTURE}"
+    )
+
     find_program(POWERSHELL_EXECUTABLE powershell)
     if(POWERSHELL_EXECUTABLE)
         add_test(

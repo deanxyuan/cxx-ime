@@ -10,6 +10,8 @@
 #include <json.hpp>
 
 #include <cxxime/input_limits.h>
+#include <cxxime/logging.h>
+#include <cxxime/pinyin_scheme.h>
 
 namespace cxxime {
 
@@ -180,6 +182,12 @@ static void apply_config_json(Config& config, nlohmann::json& j) {
         load_int(e, "input_mode", config.input_mode);
         if (config.input_mode < 0) config.input_mode = 0;
         if (config.input_mode > 2) config.input_mode = 2;
+        load_string(e, "pinyin_scheme", config.pinyin_scheme);
+        if (!find_pinyin_scheme(config.pinyin_scheme)) {
+            CXXIME_LOG(L"Config: unknown pinyin scheme '%S', falling back to full Pinyin",
+                       config.pinyin_scheme.c_str());
+        }
+        config.pinyin_scheme = normalize_pinyin_scheme_id(config.pinyin_scheme);
         load_bool(e, "fuzzy_pinyin", config.fuzzy_pinyin);
         load_bool(e, "wubi_auto_commit", config.wubi_auto_commit);
         load_bool(e, "wubi_commit_first_on_fifth_key",
@@ -444,6 +452,7 @@ static nlohmann::json build_config_json(const Config& config, bool include_diagn
 
     j["engine"]["page_size"] = config.page_size;
     j["engine"]["input_mode"] = config.input_mode;
+    j["engine"]["pinyin_scheme"] = normalize_pinyin_scheme_id(config.pinyin_scheme);
     j["engine"]["fuzzy_pinyin"] = config.fuzzy_pinyin;
     j["engine"]["wubi_auto_commit"] = config.wubi_auto_commit;
     j["engine"]["wubi_commit_first_on_fifth_key"] =

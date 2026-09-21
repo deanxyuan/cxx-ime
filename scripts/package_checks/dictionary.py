@@ -65,6 +65,7 @@ def check_dictionary_manifest(errors: list[str], dist_dir: str) -> list[str]:
         "pinyin_dict",
         "pinyin_idx",
         "pinyin_spellings",
+        "pinyin_spellings_microsoft_shuangpin",
         "pinyin_topn",
         "pinyin_reverse_index",
         "wubi_dict",

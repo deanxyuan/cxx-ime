@@ -62,7 +62,9 @@ class DictionaryFormatVerifierTest(unittest.TestCase):
                 2,
                 12,
             )
-            self.assertTrue(verifier.check_spellings_bin(directory, errors))
+            self.assertTrue(
+                verifier.check_spellings_bin(directory, "pinyin.spellings.bin", errors)
+            )
             self.assertEqual(errors, [])
 
             errors = []
@@ -73,7 +75,9 @@ class DictionaryFormatVerifierTest(unittest.TestCase):
                 1,
                 12,
             )
-            self.assertFalse(verifier.check_spellings_bin(directory, errors))
+            self.assertFalse(
+                verifier.check_spellings_bin(directory, "pinyin.spellings.bin", errors)
+            )
             self.assertTrue(errors)
 
 

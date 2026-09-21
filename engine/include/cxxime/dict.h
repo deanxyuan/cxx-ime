@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <unordered_map>
 #include <vector>
@@ -150,7 +151,8 @@ public:
     bool merge_manual_candidate_order_contents(const std::string& imported,
                                                UserDataMergeResult* result);
     void apply_manual_candidate_order(const std::string& code, CandidateSource source,
-                                      std::vector<Candidate>& candidates, int limit) const;
+                                      std::vector<Candidate>& candidates, int limit,
+                                      std::string_view candidate_input_code = {}) const;
     std::vector<ManualCandidateOrderEntry> manual_candidate_order(
         const std::string& code) const;
     bool replace_manual_candidate_order_and_save(

@@ -16,6 +16,7 @@
 #include <cxxime/logging.h>
 #include <cxxime/mixed_translator.h>
 #include <cxxime/output_composer.h>
+#include <cxxime/pinyin_scheme.h>
 #include <cxxime/symbol_table.h>
 #include <cxxime/wubi_input_policy.h>
 #include <cxxime/wubi_processor.h>
@@ -107,8 +108,19 @@ bool Engine::initialize(const std::string& dict_path, const std::string& config_
     }
 
     std::string sp_path = derive_spellings_path(dict_path);
-    if (!sp_path.empty() && owned_spellings_.load(sp_path) && owned_spellings_.has_spellings()) {
+    const auto& scheme = resolve_pinyin_scheme(owned_config_.pinyin_scheme);
+    if (scheme.kind == PinyinSchemeKind::kShuangpin) {
+        const std::size_t separator = sp_path.find_last_of("\\/");
+        sp_path = separator == std::string::npos
+                      ? scheme.spelling_filename
+                      : sp_path.substr(0, separator + 1) + scheme.spelling_filename;
+    }
+    const bool spellings_loaded = !sp_path.empty() && owned_spellings_.load(sp_path) &&
+                                  owned_spellings_.has_spellings();
+    if (spellings_loaded) {
         owned_syllabifier_ = std::make_unique<Syllabifier>(owned_spellings_);
+    } else if (scheme.kind == PinyinSchemeKind::kShuangpin) {
+        return false;
     }
 
     return initialize(owned_dict_, owned_spellings_,
@@ -173,7 +185,11 @@ bool Engine::record_search_result(const std::string& input, const std::string& r
         return false;
     }
     Dict* dict = candidate->source == CandidateSource::kWubi ? wubi_dict_ : pinyin_dict_;
-    return record_candidate_preference(dict, &*candidate, input);
+    const std::string& learning_code =
+        candidate->source == CandidateSource::kPinyin && !candidate->input_code.empty()
+            ? candidate->input_code
+            : input;
+    return record_candidate_preference(dict, &*candidate, learning_code);
 }
 
 void Engine::reload_config(const Config& config) {
@@ -432,11 +448,14 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
     const bool symbol_trigger = symbol_trigger_enabled && !context_.is_composing() &&
                                 SymbolProcessor::is_trigger(event);
     const bool plain_main_zero = event.keycode == '0' && !event.is_shift();
+    const bool processor_code_key = normalized && is_ascii_digit_or_symbol(*normalized) &&
+                                    processor_ && processor_->accepts_code_key(event, context_);
     std::optional<ProcessResult> routed_result;
 
     if (context_.composition_scheme() != CompositionScheme::kSymbol &&
         context_.composition_scheme() != CompositionScheme::kInlineAscii &&
         context_.is_composing() &&
+        !processor_code_key &&
         normalized && is_ascii_digit_or_symbol(*normalized) &&
         !is_main_candidate_command(event, context_)) {
         const bool has_candidates = context_.candidate_count() > 0;
@@ -1161,13 +1180,17 @@ void Engine::rebuild_pipeline(InputMode mode, bool force) {
 
     mode_ = mode;
     context_.set_ime_scheme(scheme_for_mode(mode_));
+    const PinyinSchemeKind pinyin_scheme =
+        resolve_pinyin_scheme(config_->pinyin_scheme).kind;
     if (mode == InputMode::WUBI) {
         processor_ = std::make_unique<WubiProcessor>();
         auto wubi_trans = std::make_unique<WubiTranslator>();
         wubi_trans->set_dict(wubi_dict_);
         translator_ = std::move(wubi_trans);
     } else if (mode == InputMode::MIXED) {
-        processor_ = std::make_unique<PinyinProcessor>();
+        auto pinyin_processor = std::make_unique<PinyinProcessor>();
+        pinyin_processor->set_shuangpin_enabled(pinyin_scheme == PinyinSchemeKind::kShuangpin);
+        processor_ = std::move(pinyin_processor);
         auto mixed_trans = std::make_unique<MixedTranslator>();
         mixed_trans->set_pinyin_dict(pinyin_dict_);
         mixed_trans->set_wubi_dict(wubi_dict_);
@@ -1177,10 +1200,13 @@ void Engine::rebuild_pipeline(InputMode mode, bool force) {
         if (pinyin_dict_->has_short_cache()) {
             mixed_trans->set_short_cache(&pinyin_dict_->short_cache());
         }
+        mixed_trans->set_pinyin_scheme(pinyin_scheme);
         mixed_trans->set_candidate_preference(config_->mixed_candidate_preference);
         translator_ = std::move(mixed_trans);
     } else {
-        processor_ = std::make_unique<PinyinProcessor>();
+        auto pinyin_processor = std::make_unique<PinyinProcessor>();
+        pinyin_processor->set_shuangpin_enabled(pinyin_scheme == PinyinSchemeKind::kShuangpin);
+        processor_ = std::move(pinyin_processor);
         auto pinyin_trans = std::make_unique<PinyinTranslator>();
         pinyin_trans->set_dict(pinyin_dict_);
         if (syllabifier_) {
@@ -1189,6 +1215,7 @@ void Engine::rebuild_pipeline(InputMode mode, bool force) {
         if (pinyin_dict_->has_short_cache()) {
             pinyin_trans->set_short_cache(&pinyin_dict_->short_cache());
         }
+        pinyin_trans->set_pinyin_scheme(pinyin_scheme);
         translator_ = std::move(pinyin_trans);
     }
     translator_->set_sentence_composition_enabled(sentence_composition_enabled_);

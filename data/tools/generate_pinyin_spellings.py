@@ -27,6 +27,23 @@ K_ABBREV = 2
 K_ABBREV_PENALTY = -0.6931471805599453   # log(0.5)
 K_FUZZY_PENALTY = -0.6931471805599453    # log(0.5)
 
+_SCHEME_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
+_SUPPORTED_SHUANGPIN_ALPHABET = frozenset("abcdefghijklmnopqrstuvwxyz;")
+_ROOT_FIELDS = {"scheme_id", "speller"}
+_FULL_PINYIN_FIELDS = {"type", "algebra"}
+_SHUANGPIN_FIELDS = {
+    "type",
+    "alphabet",
+    "initials",
+    "finals",
+    "zero_initials",
+    "final_aliases_by_initial",
+    "passthrough_syllables",
+    "ignored_syllables",
+    "expected_collisions",
+    "fuzzy_algebra",
+}
+
 
 @dataclass
 class Spelling:
@@ -312,16 +329,50 @@ def _parse_rule(definition):
     return None
 
 
+def _require_exact_fields(mapping, expected, field_name):
+    actual = set(mapping)
+    missing = sorted(expected - actual)
+    unknown = sorted(actual - expected)
+    if missing or unknown:
+        raise ValueError(
+            f"{field_name} fields differ from the schema contract: "
+            f"missing={missing}, unknown={unknown}"
+        )
+
+
+def validate_schema(schema):
+    if not isinstance(schema, dict):
+        raise ValueError("schema root must be an object")
+    _require_exact_fields(schema, _ROOT_FIELDS, "schema")
+
+    scheme_id = schema["scheme_id"]
+    if not isinstance(scheme_id, str) or not _SCHEME_ID_PATTERN.fullmatch(scheme_id):
+        raise ValueError("scheme_id must be a stable snake_case identifier")
+
+    speller = schema["speller"]
+    if not isinstance(speller, dict):
+        raise ValueError("schema must contain a speller object")
+    speller_type = speller.get("type")
+    if speller_type == "full_pinyin":
+        _require_exact_fields(speller, _FULL_PINYIN_FIELDS, "speller")
+        definitions = speller["algebra"]
+        if not isinstance(definitions, list) or not all(
+            isinstance(definition, str) for definition in definitions
+        ):
+            raise ValueError("speller.algebra must be a string array")
+    elif speller_type == "shuangpin":
+        _require_exact_fields(speller, _SHUANGPIN_FIELDS, "speller")
+    else:
+        raise ValueError(f"unsupported speller.type: {speller_type}")
+    return schema
+
+
 def parse_rules_from_json(json_path):
     """Parse spelling algebra rules from a CxxIME JSON schema file."""
-    with open(json_path, "r", encoding="utf-8") as f:
-        schema = json.load(f)
-
-    if not isinstance(schema, dict) or not isinstance(schema.get("speller"), dict):
-        raise ValueError("schema must contain a speller object")
-    definitions = schema["speller"].get("algebra")
-    if not isinstance(definitions, list):
-        raise ValueError("schema must contain a speller.algebra array")
+    schema = load_schema(json_path)
+    if schema["speller"]["type"] != "full_pinyin":
+        raise ValueError("speller.type must be full_pinyin for spelling algebra")
+    definitions = schema["speller"]["algebra"]
 
     rules = []
     for definition in definitions:
@@ -344,6 +395,194 @@ def parse_rules_simple(rules_list):
     return rules
 
 
+def _mapping_values(mapping, key, field_name):
+    value = mapping.get(key)
+    if isinstance(value, str):
+        values = [value]
+    elif isinstance(value, list) and all(isinstance(item, str) for item in value):
+        values = value
+    else:
+        raise ValueError(f"{field_name}.{key} must be a string or string array")
+    if not values or any(not item for item in values):
+        raise ValueError(f"{field_name}.{key} must not be empty")
+    if len(values) != len(set(values)):
+        raise ValueError(f"{field_name}.{key} contains duplicate codes")
+    return values
+
+
+def _shuangpin_encoder(schema, usage=None):
+    validate_schema(schema)
+    speller = schema.get("speller")
+    if speller["type"] != "shuangpin":
+        raise ValueError("schema must contain a shuangpin speller")
+
+    alphabet = speller.get("alphabet")
+    initials = speller.get("initials")
+    finals = speller.get("finals")
+    zero_initials = speller.get("zero_initials")
+    aliases = speller.get("final_aliases_by_initial", {})
+    passthrough_syllables = speller["passthrough_syllables"]
+    ignored_syllables = speller["ignored_syllables"]
+    if not isinstance(alphabet, str) or not alphabet:
+        raise ValueError("speller.alphabet must be a non-empty string")
+    if len(alphabet) != len(set(alphabet)):
+        raise ValueError("speller.alphabet must not contain duplicate characters")
+    unsupported_characters = sorted(set(alphabet) - _SUPPORTED_SHUANGPIN_ALPHABET)
+    if unsupported_characters:
+        raise ValueError(
+            "speller.alphabet contains characters unsupported by the input processor: "
+            f"{unsupported_characters}"
+        )
+    if not all(isinstance(value, dict) for value in (initials, finals, zero_initials, aliases)):
+        raise ValueError("shuangpin mapping fields must be objects")
+    if not isinstance(passthrough_syllables, list) or not all(
+        isinstance(item, str) and item for item in passthrough_syllables
+    ):
+        raise ValueError("speller.passthrough_syllables must be a string array")
+    if not isinstance(ignored_syllables, list) or not all(
+        isinstance(item, str) and item for item in ignored_syllables
+    ):
+        raise ValueError("speller.ignored_syllables must be a string array")
+
+    initial_names = sorted(initials, key=len, reverse=True)
+    passthrough_set = set(passthrough_syllables)
+    ignored_set = set(ignored_syllables)
+
+    def record(field, key):
+        if usage is not None:
+            usage.setdefault(field, set()).add(key)
+
+    def validate_codes(codes, syllable):
+        for code in codes:
+            if any(character not in alphabet for character in code):
+                raise ValueError(f"{syllable}: code contains a character outside alphabet: {code}")
+            if code.startswith(";"):
+                raise ValueError(f"{syllable}: code cannot start with semicolon")
+            if len(code) > 2:
+                raise ValueError(f"{syllable}: shuangpin code is longer than two keys: {code}")
+        return codes
+
+
+    def encode(syllable):
+        if syllable in ignored_set:
+            record("ignored_syllables", syllable)
+            return []
+        if syllable in passthrough_set:
+            record("passthrough_syllables", syllable)
+            return validate_codes([syllable], syllable)
+        if syllable in zero_initials:
+            record("zero_initials", syllable)
+            return validate_codes(
+                _mapping_values(zero_initials, syllable, "speller.zero_initials"),
+                syllable,
+            )
+
+        initial = next((name for name in initial_names if syllable.startswith(name)), None)
+        if initial is None:
+            raise ValueError(f"{syllable}: no shuangpin initial mapping")
+        source_final = syllable[len(initial):]
+        initial_aliases = aliases.get(initial, {})
+        if not isinstance(initial_aliases, dict):
+            raise ValueError(f"speller.final_aliases_by_initial.{initial} must be an object")
+        final = initial_aliases.get(source_final, source_final)
+        if not isinstance(final, str) or not final:
+            raise ValueError(f"{syllable}: invalid final alias")
+        initial_key = initials[initial]
+        if not isinstance(initial_key, str) or len(initial_key) != 1:
+            raise ValueError(f"speller.initials.{initial} must be one key")
+        record("initials", initial)
+        record("finals", final)
+        if final != source_final:
+            record("final_aliases_by_initial", f"{initial}:{source_final}")
+        final_keys = _mapping_values(finals, final, "speller.finals")
+        return validate_codes([initial_key + key for key in final_keys], syllable)
+
+    return encode
+
+
+def build_shuangpin_script(syllabary, schema):
+    """Build a spelling script from an explicit, build-time Shuangpin table."""
+    usage = {}
+    encode = _shuangpin_encoder(schema, usage)
+    speller = schema["speller"]
+    script = Script()
+    normal_by_code = {}
+    for syllable in sorted(syllabary):
+        codes = encode(syllable)
+        for code in codes:
+            script.merge(code, K_NORMAL, 0.0, [Spelling(syllable)])
+            normal_by_code.setdefault(code, set()).add(syllable)
+
+    declared_keys = {
+        "initials": set(speller["initials"]),
+        "finals": set(speller["finals"]),
+        "zero_initials": set(speller["zero_initials"]),
+        "passthrough_syllables": set(speller["passthrough_syllables"]),
+        "ignored_syllables": set(speller["ignored_syllables"]),
+        "final_aliases_by_initial": {
+            f"{initial}:{source_final}"
+            for initial, final_aliases in speller.get("final_aliases_by_initial", {}).items()
+            for source_final in final_aliases
+        },
+    }
+    unreachable = {
+        field: sorted(keys - usage.get(field, set()))
+        for field, keys in declared_keys.items()
+        if keys - usage.get(field, set())
+    }
+    if unreachable:
+        raise ValueError(f"unreachable shuangpin mappings: {unreachable}")
+
+    declared_collisions = speller["expected_collisions"]
+    if not isinstance(declared_collisions, dict):
+        raise ValueError("speller.expected_collisions must be an object")
+    actual_collisions = {
+        code: sorted(syllables)
+        for code, syllables in normal_by_code.items()
+        if len(syllables) > 1
+    }
+    expected_collisions = {}
+    for code, syllables in declared_collisions.items():
+        if not isinstance(syllables, list) or not all(
+            isinstance(syllable, str) and syllable for syllable in syllables
+        ):
+            raise ValueError(f"speller.expected_collisions.{code} must be a string array")
+        expected_collisions[code] = sorted(set(syllables))
+    if actual_collisions != expected_collisions:
+        raise ValueError(
+            "shuangpin collisions differ from declaration: "
+            f"actual={actual_collisions}, expected={expected_collisions}"
+        )
+
+    fuzzy_definitions = speller.get("fuzzy_algebra", [])
+    if not isinstance(fuzzy_definitions, list):
+        raise ValueError("speller.fuzzy_algebra must be an array")
+    fuzzy_rules = parse_rules_simple(fuzzy_definitions)
+    if len(fuzzy_rules) != len(fuzzy_definitions) or any(
+        rule.rule_type() != K_FUZZY for rule in fuzzy_rules
+    ):
+        raise ValueError("speller.fuzzy_algebra may contain only fuzzy rules")
+    for syllable in sorted(syllabary):
+        for rule in fuzzy_rules:
+            alias, applied = rule.apply(syllable)
+            if not applied or not alias:
+                continue
+            for code in encode(alias):
+                script.merge(
+                    code,
+                    K_FUZZY,
+                    rule.credibility_delta(),
+                    [Spelling(syllable)],
+                )
+    return script
+
+
+def load_schema(json_path):
+    with open(json_path, "r", encoding="utf-8") as source:
+        schema = json.load(source)
+    return validate_schema(schema)
+
+
 # Self-test
 if __name__ == "__main__":
     import os
@@ -352,7 +591,7 @@ if __name__ == "__main__":
     if len(sys.argv) >= 2:
         db_path = sys.argv[1]
         schema_path = sys.argv[2] if len(sys.argv) > 2 else os.path.join(
-            os.path.dirname(__file__), "..", "schemas", "pinyin.schema.json")
+            os.path.dirname(__file__), "..", "schemas", "pinyin.full-pinyin.schema.json")
 
         if not os.path.exists(schema_path):
             print(f"Schema not found: {schema_path}", file=sys.stderr)
@@ -372,13 +611,26 @@ if __name__ == "__main__":
         conn.close()
         print(f"Loaded {len(syllabary)} unique syllables")
 
-        # Apply spelling algebra
-        script = Script()
-        for s in sorted(syllabary):
-            script.add_syllable(s)
-        rules = parse_rules_from_json(schema_path)
-        print(f"Loaded {len(rules)} rules from {schema_path}")
-        SpellingAlgebra(rules).apply(script)
+        schema = load_schema(schema_path)
+        if schema["speller"]["type"] == "shuangpin":
+            script = build_shuangpin_script(syllabary, schema)
+            normal_codes = {
+                input_code
+                for input_code, spellings in script.items()
+                if any(spelling.type == K_NORMAL for spelling in spellings)
+            }
+            collision_count = len(schema["speller"]["expected_collisions"])
+            print(
+                f"Loaded Shuangpin scheme {schema['scheme_id']}: "
+                f"{len(normal_codes)} normal codes, {collision_count} declared collisions"
+            )
+        else:
+            script = Script()
+            for s in sorted(syllabary):
+                script.add_syllable(s)
+            rules = parse_rules_from_json(schema_path)
+            print(f"Loaded {len(rules)} rules from {schema_path}")
+            SpellingAlgebra(rules).apply(script)
 
         # Write spellings table to SQLite
         conn = sqlite3.connect(db_path)
@@ -464,7 +716,9 @@ if __name__ == "__main__":
 
     # Test 5: Schema JSON parsing
     import os
-    schema_path = os.path.join(os.path.dirname(__file__), "..", "schemas", "pinyin.schema.json")
+    schema_path = os.path.join(
+        os.path.dirname(__file__), "..", "schemas", "pinyin.full-pinyin.schema.json"
+    )
     if os.path.exists(schema_path):
         rules = parse_rules_from_json(schema_path)
         print(f"  [OK] schema JSON: loaded {len(rules)} rules")

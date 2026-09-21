@@ -31,7 +31,8 @@ CompositionPresentation derive_composition_presentation(const CompositionState& 
                                                         const Syllabifier* syllabifier,
                                                         std::size_t focused_input_bytes,
                                                         bool show_syllable_boundaries,
-                                                        const std::string& preferred_syllables = {});
+                                                        const std::string& preferred_syllables = {},
+                                                        bool terminal_completion = false);
 
 } // namespace cxxime
 

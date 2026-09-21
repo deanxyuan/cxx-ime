@@ -13,19 +13,24 @@ bool has_consistent_metadata(const SegmentedPath& path) {
            path.syllables.size() == path.input_lengths.size();
 }
 
-size_t consumed_input_size(const SegmentedPath& path) {
-    size_t size = 0;
-    for (uint16_t length : path.input_lengths) {
-        size += length;
-    }
-    return size;
-}
-
 } // namespace
 
+bool path_consumes_entire_input(const std::string& input, const SegmentedPath& path) {
+    if (!has_consistent_metadata(path)) {
+        return false;
+    }
+    size_t consumed = 0;
+    for (uint16_t length : path.input_lengths) {
+        if (length == 0 || length > input.size() - consumed) {
+            return false;
+        }
+        consumed += length;
+    }
+    return consumed == input.size();
+}
+
 bool is_normal_composition_path(const std::string& input, const SegmentedPath& path) {
-    if (!has_consistent_metadata(path) || path.syllables.size() < 2 ||
-        consumed_input_size(path) != input.size()) {
+    if (!path_consumes_entire_input(input, path) || path.syllables.size() < 2) {
         return false;
     }
 
@@ -41,9 +46,14 @@ bool is_normal_composition_path(const std::string& input, const SegmentedPath& p
     return true;
 }
 
+bool is_complete_normal_path(const std::string& input, const SegmentedPath& path) {
+    return path_consumes_entire_input(input, path) && path.syllables.size() >= 2 &&
+           std::all_of(path.spelling_types.begin(), path.spelling_types.end(),
+                       [](uint8_t type) { return type == kNormalSpelling; });
+}
+
 bool is_repeated_short_code_path(const std::string& input, const SegmentedPath& path) {
-    if (!has_consistent_metadata(path) || path.syllables.size() < 2 ||
-        consumed_input_size(path) != input.size()) {
+    if (!path_consumes_entire_input(input, path) || path.syllables.size() < 2) {
         return false;
     }
 

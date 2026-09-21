@@ -73,6 +73,7 @@ private:
     bool save_config();
     void readback(HWND hwnd);
     std::string selected_theme_id() const;
+    std::string selected_pinyin_scheme_id() const;
     void refresh_lexicon_entries();
     void query_lexicon_entries(bool preserve_editor);
     void clear_lexicon_entry_form();
@@ -138,6 +139,8 @@ private:
     HWND hInputModePinyin_ = nullptr;
     HWND hInputModeWubi_ = nullptr;
     HWND hInputModeMixed_ = nullptr;
+    HWND hPinyinScheme_ = nullptr;
+    std::vector<std::string> pinyinSchemeIds_;
     HWND hMixedCandidatePreference_ = nullptr;
     HWND hInlinePreedit_ = nullptr;
     HWND hPreeditTypeComposition_ = nullptr;
@@ -153,6 +156,7 @@ private:
     HWND hPageSize_ = nullptr;
     void update_input_mode_enabled();
     void update_preedit_type_enabled();
+    void update_pinyin_scheme_example();
 
     // Appearance panel
     HWND hThemeCombo_ = nullptr;

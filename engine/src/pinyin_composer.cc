@@ -156,7 +156,10 @@ Candidate rebuild_candidate(const std::string& input, const CompositionPath& pat
     for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
         candidate.text.append(edges[*it].candidate.text);
     }
-    candidate.code = input;
+    candidate.code = path.input_code ? *path.input_code : input;
+    if (path.input_code) {
+        candidate.input_code = *path.input_code;
+    }
     candidate.syllables = join_syllables(*path.syllables);
     candidate.origin = CandidateOrigin::kComposed;
     candidate.source = CandidateSource::kPinyin;

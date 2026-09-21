@@ -17,6 +17,7 @@ public:
     void set_pinyin_dict(Dict* dict);
     void set_wubi_dict(Dict* dict);
     void set_syllabifier(Syllabifier* syllabifier);
+    void set_pinyin_scheme(PinyinSchemeKind scheme);
     void set_short_cache(const ShortCodeCache* cache);
     void set_candidate_preference(MixedCandidatePreference preference);
 

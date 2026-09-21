@@ -40,6 +40,7 @@ MANIFEST_FILES = [
     ("pinyin_dict", "pinyin.dict.bin"),
     ("pinyin_idx", "pinyin.dict.idx"),
     ("pinyin_spellings", "pinyin.spellings.bin"),
+    ("pinyin_spellings_microsoft_shuangpin", "pinyin.microsoft-shuangpin.spellings.bin"),
     ("pinyin_topn", "pinyin.topn.bin"),
     ("pinyin_reverse_index", "pinyin.reverse.idx"),
     ("wubi_dict", "wubi86.dict.bin"),
@@ -53,6 +54,7 @@ REQUIRED_MANIFEST_ROLES = {
     "pinyin_dict",
     "pinyin_idx",
     "pinyin_spellings",
+    "pinyin_spellings_microsoft_shuangpin",
     "pinyin_topn",
     "pinyin_reverse_index",
     "wubi_dict",
@@ -83,11 +85,11 @@ def prepare_source_copy(src: str, work_dir: str) -> str:
     return db_copy
 
 
-def run_pinyin_spelling_generation(db_path: str) -> None:
+def run_pinyin_spelling_generation(db_path: str, schema_name: str) -> None:
     """Regenerate spellings table from schema rules."""
     script = os.path.join(DATA_TOOLS, "generate_pinyin_spellings.py")
-    schema = os.path.join(SCHEMAS, "pinyin.schema.json")
-    print("  Running spelling algebra...")
+    schema = os.path.join(SCHEMAS, schema_name)
+    print(f"  Generating spellings from {schema_name}...")
     subprocess.run(
         [sys.executable, script, db_path, schema],
         check=True,
@@ -99,6 +101,7 @@ def run_build_runtime_dictionary(
     db_path: str,
     output_prefix: str,
     skip_idx: bool = False,
+    spellings_only: bool = False,
     dict_only: bool = False,
     wubi_prefix_index: bool = False,
     wubi_ranking_source: str | None = None,
@@ -108,6 +111,8 @@ def run_build_runtime_dictionary(
     """Convert a SQLite dictionary to runtime files."""
     script = os.path.join(DATA_TOOLS, "build_runtime_dictionary.py")
     cmd = [sys.executable, script, "--input", db_path, "--output", output_prefix]
+    if spellings_only:
+        cmd.append("--spellings-only")
     if dict_only:
         cmd.append("--dict-only")
     if skip_idx:
@@ -277,7 +282,7 @@ def prepare_pinyin_dictionary(data_dir: str, output_dir: str) -> list[str]:
     generated = []
     with tempfile.TemporaryDirectory(prefix="cxxime_prep_pinyin_") as tmpdir:
         db_path = prepare_source_copy(src, tmpdir)
-        run_pinyin_spelling_generation(db_path)
+        run_pinyin_spelling_generation(db_path, "pinyin.full-pinyin.schema.json")
 
         output_prefix = os.path.join(output_dir, "pinyin")
         run_build_runtime_dictionary(db_path, output_prefix)
@@ -289,6 +294,11 @@ def prepare_pinyin_dictionary(data_dir: str, output_dir: str) -> list[str]:
             output_prefix + ".spellings.bin",
             reverse_index_path,
         ])
+
+        run_pinyin_spelling_generation(db_path, "pinyin.microsoft-shuangpin.schema.json")
+        microsoft_prefix = os.path.join(output_dir, "pinyin.microsoft-shuangpin")
+        run_build_runtime_dictionary(db_path, microsoft_prefix, spellings_only=True)
+        generated.append(microsoft_prefix + ".spellings.bin")
 
         topn_path = os.path.join(output_dir, "pinyin.topn.bin")
         run_build_pinyin_topn(db_path, topn_path)

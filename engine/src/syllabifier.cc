@@ -1,10 +1,12 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
 #include <cxxime/syllabifier.h>
-#include <cxxime/query_budget.h>
+
 #include <algorithm>
 #include <queue>
 #include <string_view>
+
+#include <cxxime/query_budget.h>
 
 namespace cxxime {
 
@@ -37,30 +39,12 @@ SyllableGraph Syllabifier::build_graph(const std::string& input,
         auto matches = spellings_.prefix_search(remaining);
 
         for (auto& m : matches) {
-            // Determine how many input characters this match consumes.
-            // In a Patricia trie the spelling's syllable (e.g. "zhong") may
-            // differ from the trie key (e.g. "zong") for fuzzy spellings.
-            // We use input_key_len (the trie key length) for edge creation,
-            // since that reflects how many input chars the key consumes.
-            size_t input_len;
-            if (m.syllable == remaining) {
-                // Exact match: consumes all remaining input
-                input_len = remaining.size();
-            } else if (m.syllable.size() <= remaining.size() &&
-                       m.syllable == remaining.substr(0, m.syllable.size())) {
-                // Syllable is a prefix of remaining input (normal match)
-                input_len = m.syllable.size();
-            } else if (m.input_key_len > 0 && m.input_key_len <= remaining.size()) {
-                // Trie key length available (abbreviation, fuzzy, or normal
-                // spelling whose key differs from syllable). Use it directly.
-                input_len = m.input_key_len;
-            } else if (m.type == kAbbreviation) {
-                input_len = 1;
-            } else {
+            // The trie key is the raw input span. The canonical syllable may have a
+            // different length for fuzzy spellings and Shuangpin zero initials.
+            if (m.input_key_len == 0 || m.input_key_len > remaining.size()) {
                 continue;
             }
-
-            size_t end_pos = pos + input_len;
+            const size_t end_pos = pos + m.input_key_len;
             if (end_pos > input.size())
                 continue;
 

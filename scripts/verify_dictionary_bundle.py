@@ -30,6 +30,7 @@ REQUIRED_FILES = [
     "pinyin.dict.bin",
     "pinyin.dict.idx",
     "pinyin.spellings.bin",
+    "pinyin.microsoft-shuangpin.spellings.bin",
     "pinyin.topn.bin",
     "pinyin.reverse.idx",
     "wubi86.dict.bin",
@@ -47,6 +48,7 @@ REQUIRED_MANIFEST_ROLES = {
     "pinyin_dict",
     "pinyin_idx",
     "pinyin_spellings",
+    "pinyin_spellings_microsoft_shuangpin",
     "pinyin_topn",
     "pinyin_reverse_index",
     "wubi_dict",
@@ -227,21 +229,21 @@ def check_wubi_prefix_index(data_dir, errors):
     return True
 
 
-def check_spellings_bin(data_dir, errors):
-    """Validate pinyin.spellings.bin magic and version."""
-    path = os.path.join(data_dir, "pinyin.spellings.bin")
+def check_spellings_bin(data_dir, filename, errors):
+    """Validate a Pinyin spelling trie magic and version."""
+    path = os.path.join(data_dir, filename)
     with open(path, "rb") as source:
         data = source.read(12)
     if len(data) < 12:
-        errors.append("pinyin.spellings.bin: file too small for header")
+        errors.append(f"{filename}: file too small for header")
         return False
     magic = data[:8]
     if magic != SPELLINGS_MAGIC_V2:
-        errors.append(f"pinyin.spellings.bin: bad magic {magic!r}")
+        errors.append(f"{filename}: bad magic {magic!r}")
         return False
     version = struct.unpack_from("<I", data, 8)[0]
     if version != SPELLINGS_VERSION:
-        errors.append(f"pinyin.spellings.bin: bad version {version}")
+        errors.append(f"{filename}: bad version {version}")
         return False
     return True
 
@@ -613,7 +615,8 @@ def verify(data_dir):
     check_reverse_index(
         data_dir, "wubi86.reverse.idx", "wubi86.dict.bin", errors
     )
-    check_spellings_bin(data_dir, errors)
+    check_spellings_bin(data_dir, "pinyin.spellings.bin", errors)
+    check_spellings_bin(data_dir, "pinyin.microsoft-shuangpin.spellings.bin", errors)
     check_topn_bin(data_dir, errors)
     check_symbols_json(data_dir, errors)
 

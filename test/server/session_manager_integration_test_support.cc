@@ -164,6 +164,7 @@ void create_test_dictionary_bundle(const std::string& dict_path,
                                           const std::vector<TestDictEntry>& entries) {
     std::string idx_path = dict_path + ".idx";
     std::string spellings_path = dict_path + ".spellings.bin";
+    std::string microsoft_spellings_path = dict_path + ".microsoft-shuangpin.spellings.bin";
     std::string topn_path = dict_path + ".topn.bin";
     std::string wubi_path = dict_path + ".wubi.bin";
     std::string wubi_prefix_index_path = wubi_path + ".idx";
@@ -180,11 +181,21 @@ void create_test_dictionary_bundle(const std::string& dict_path,
         cxxime::Candidate candidate;
         candidate.text = std::get<1>(entry);
         candidate.frequency = std::get<2>(entry);
-candidate.code = std::get<0>(entry);
-candidate.syllables = std::get<0>(entry);
+        candidate.code = std::get<0>(entry);
+        candidate.syllables = std::get<0>(entry);
         topn.push_back({key, {candidate}});
     }
     ASSERT_TRUE(cxxime::SpellingsIndex::create_test_trie(spellings_path, spellings));
+    const std::vector<std::tuple<std::string, std::string, int, float>>
+        microsoft_spellings = {
+            {"de", "de", cxxime::kNormalSpelling, 0.0f},
+            {"di", "di", cxxime::kNormalSpelling, 0.0f},
+            {"hk", "hao", cxxime::kNormalSpelling, 0.0f},
+            {"ni", "ni", cxxime::kNormalSpelling, 0.0f},
+            {"y;", "ying", cxxime::kNormalSpelling, 0.0f},
+        };
+    ASSERT_TRUE(cxxime::SpellingsIndex::create_test_trie(microsoft_spellings_path,
+                                                         microsoft_spellings));
     ASSERT_TRUE(cxxime::test::create_test_topn(topn_path, dict_path, topn));
     const std::vector<TestDictEntry> wubi_entries = {{"a", "wubi-test", 100}};
     ASSERT_TRUE(cxxime::Dict::create_test_dict(wubi_path, wubi_entries));
@@ -195,6 +206,7 @@ candidate.syllables = std::get<0>(entry);
         {"pinyin_dict", dict_path},
         {"pinyin_idx", idx_path},
         {"pinyin_spellings", spellings_path},
+        {"pinyin_spellings_microsoft_shuangpin", microsoft_spellings_path},
         {"pinyin_topn", topn_path},
         {"wubi_dict", wubi_path},
         {"wubi_prefix_index", wubi_prefix_index_path},
@@ -216,6 +228,8 @@ void create_test_dictionary_bundle_with_wubi(const std::string& dict_path,
         {"pinyin_dict", dict_path},
         {"pinyin_idx", dict_path + ".idx"},
         {"pinyin_spellings", dict_path + ".spellings.bin"},
+        {"pinyin_spellings_microsoft_shuangpin",
+         dict_path + ".microsoft-shuangpin.spellings.bin"},
         {"pinyin_topn", dict_path + ".topn.bin"},
         {"wubi_dict", wubi_path},
         {"wubi_prefix_index", wubi_prefix_index_path},
@@ -226,6 +240,7 @@ void delete_test_dictionary_bundle(const std::string& dict_path) {
     DeleteFileA(dict_path.c_str());
     DeleteFileA((dict_path + ".idx").c_str());
     DeleteFileA((dict_path + ".spellings.bin").c_str());
+    DeleteFileA((dict_path + ".microsoft-shuangpin.spellings.bin").c_str());
     DeleteFileA((dict_path + ".topn.bin").c_str());
     DeleteFileA((dict_path + ".wubi.bin").c_str());
     DeleteFileA((dict_path + ".wubi.bin.idx").c_str());

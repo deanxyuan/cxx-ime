@@ -10,6 +10,7 @@
 
 #include <cxxime/control_client.h>
 #include <cxxime/data_path.h>
+#include <cxxime/pinyin_scheme.h>
 
 #include "cxxime_resource_ids.h"
 #include "editor_app_internal.h"
@@ -331,6 +332,12 @@ bool EditorApp::load_config() {
     set_check(hInputModePinyin_, config_.input_mode == 0);
     set_check(hInputModeWubi_, config_.input_mode == 1);
     set_check(hInputModeMixed_, config_.input_mode == 2);
+    const std::string pinyin_scheme = cxxime::normalize_pinyin_scheme_id(config_.pinyin_scheme);
+    const auto scheme = std::find(pinyinSchemeIds_.begin(), pinyinSchemeIds_.end(), pinyin_scheme);
+    combo_set_index(hPinyinScheme_, scheme == pinyinSchemeIds_.end()
+                                         ? 0
+                                         : static_cast<int>(scheme - pinyinSchemeIds_.begin()));
+    update_pinyin_scheme_example();
     const int mixed_candidate_preference =
         config_.mixed_candidate_preference == cxxime::MixedCandidatePreference::kWubi ? 1 : 0;
     combo_set_index(hMixedCandidatePreference_, mixed_candidate_preference);
@@ -353,6 +360,7 @@ void EditorApp::readback(HWND) {
     c.initial_full_shape = get_check(hInitialFullShape_);
     c.page_size = std::clamp(get_edit_int(hPageSize_), 1, 100);
     c.input_mode = get_check(hInputModeMixed_) ? 2 : get_check(hInputModeWubi_) ? 1 : 0;
+    c.pinyin_scheme = selected_pinyin_scheme_id();
     c.mixed_candidate_preference = combo_index(hMixedCandidatePreference_) == 1
             ? cxxime::MixedCandidatePreference::kWubi
             : cxxime::MixedCandidatePreference::kAuto;

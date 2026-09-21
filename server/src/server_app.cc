@@ -158,18 +158,32 @@ bool ServerApp::initialize(const std::string& dict_path, const std::string& conf
     if (!config_writer_.start(
             &config_store_,
             [this, config_window](const std::shared_ptr<const cxxime::Config>& config) {
+                if (!session_mgr_.apply_config(config)) {
+                    SendMessageW(config_window, kCancelConfigMessage, 0, 0);
+                    CXXIME_LOG(L"%s", L"ServerApp: prepared config commit failed");
+                    return;
+                }
                 SendMessageW(config_window, kCommitConfigMessage, 0, 0);
-                session_mgr_.apply_config(config);
                 ui_presentation_controller_.update_config(config);
                 control_server_.publish_snapshot(config->to_runtime_json());
             },
-            [config_window](const std::shared_ptr<const cxxime::Config>& config,
-                            unsigned long* error_code) {
-                return SendMessageW(config_window, kPrepareConfigMessage,
-                                    reinterpret_cast<WPARAM>(error_code),
-                                    reinterpret_cast<LPARAM>(config.get())) != 0;
+            [this, config_window](const std::shared_ptr<const cxxime::Config>& config,
+                                  unsigned long* error_code) {
+                if (!session_mgr_.prepare_config(config, error_code)) {
+                    return false;
+                }
+                if (SendMessageW(config_window, kPrepareConfigMessage,
+                                 reinterpret_cast<WPARAM>(error_code),
+                                 reinterpret_cast<LPARAM>(config.get())) != 0) {
+                    return true;
+                }
+                session_mgr_.cancel_prepared_config();
+                return false;
             },
-            [config_window]() { SendMessageW(config_window, kCancelConfigMessage, 0, 0); })) {
+            [this, config_window]() {
+                session_mgr_.cancel_prepared_config();
+                SendMessageW(config_window, kCancelConfigMessage, 0, 0);
+            })) {
         MessageBoxW(nullptr, L"Failed to start config writer.", L"CxxIME Server",
                     MB_OK | MB_ICONERROR);
         return false;

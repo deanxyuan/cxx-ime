@@ -39,6 +39,7 @@ struct CandidateProvenance {
 
 struct CandidateCanonicalVariant {
     CandidateProvenance provenance;
+    std::string input_code;
     std::string code;
     std::string syllables;
     int frequency = 0;
@@ -64,7 +65,8 @@ using CandidateSelection = std::variant<TextSelectionAction, ReplaceActiveInputA
 inline bool same_candidate_variant(const CandidateCanonicalVariant& left,
                                    const CandidateCanonicalVariant& right) {
     return left.provenance.source == right.provenance.source &&
-           left.provenance.origin == right.provenance.origin && left.code == right.code &&
+           left.provenance.origin == right.provenance.origin &&
+           left.input_code == right.input_code && left.code == right.code &&
            left.syllables == right.syllables;
 }
 

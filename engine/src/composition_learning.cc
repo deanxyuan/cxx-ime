@@ -229,7 +229,7 @@ void append_preference(CommitLearningPlan& plan, const std::string& text,
     }
     CandidatePreferenceLearningEvent event;
     event.target = variant->learning_target;
-    event.typed_code = typed_code;
+    event.typed_code = variant->input_code.empty() ? typed_code : variant->input_code;
     event.candidate.text = text;
     event.candidate.code = variant->code;
     event.candidate.syllables = variant->syllables;
@@ -248,7 +248,7 @@ bool append_composition_part(CompositionLearningEvent& event, const std::string&
         return false;
     }
     event.text += text;
-    event.code += raw_input;
+    event.code += variant->input_code.empty() ? raw_input : variant->input_code;
     if (!event.syllables.empty()) {
         event.syllables.push_back(':');
     }

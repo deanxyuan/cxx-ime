@@ -381,7 +381,7 @@ TEST(SessionIntegration, candidate_order_marks_hidden_pinned_entry_unavailable) 
     DeleteFileA(disabled_path.c_str());
 }
 
-TEST(SessionIntegration, composed_candidate_order_entry_is_not_available) {
+TEST(SessionIntegration, candidate_order_query_excludes_composed_candidates) {
     const std::string dict_path = make_temp_path("test_composed_candidate_order.bin");
     create_test_dictionary_bundle(dict_path, {{"a", "piece", 900}});
     const std::string learning_path = test_user_data_dir + "\\learning_pinyin.tsv";
@@ -397,16 +397,7 @@ TEST(SessionIntegration, composed_candidate_order_entry_is_not_available) {
         std::find_if(queried.entries.begin(), queried.entries.end(), [](const auto& entry) {
             return entry.text == "piecepiecepiecepiecepiecepiecepiece";
         });
-    ASSERT_TRUE(composed != queried.entries.end());
-    ASSERT_TRUE(!composed->available);
-
-    bool version_conflict = false;
-    const std::vector<cxxime::ManualCandidateOrderEntry> order = {
-        {composed->text, composed->code, composed->syllables}};
-    ASSERT_TRUE(manager.replace_candidate_order(cxxime::UserDictKind::PINYIN, "aaaaaaa", order,
-                                                queried.version,
-                                                &version_conflict) != cxxime::IPCStatus::OK);
-    ASSERT_TRUE(!version_conflict);
+    ASSERT_TRUE(composed == queried.entries.end());
 
     DeleteFileA(learning_path.c_str());
     DeleteFileA(order_path.c_str());

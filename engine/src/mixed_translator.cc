@@ -197,6 +197,10 @@ void MixedTranslator::set_syllabifier(Syllabifier* syllabifier) {
     pinyin_translator_.set_syllabifier(syllabifier);
 }
 
+void MixedTranslator::set_pinyin_scheme(PinyinSchemeKind scheme) {
+    pinyin_translator_.set_pinyin_scheme(scheme);
+}
+
 void MixedTranslator::set_short_cache(const ShortCodeCache* cache) {
     pinyin_translator_.set_short_cache(cache);
 }
@@ -212,9 +216,9 @@ TranslationResult MixedTranslator::translate(const TranslationRequest& request) 
     }
 
     if (!request.policy.allow_partial_selection) {
-        CandidatePage page =
-            translate_page(request.input, request.page_index, request.page_size, request.trace,
-                           request.budget, request.scratch, request.page_offset);
+        CandidatePage page = translate_page(
+            request.input, request.page_index, request.page_size, request.trace,
+            request.budget, request.scratch, request.page_offset);
         result = make_translation_result(std::move(page), request.input.size());
         const bool incomplete = (request.trace &&
                                 (request.trace->deadline_exceeded ||
@@ -312,8 +316,8 @@ CandidatePage MixedTranslator::translate_page(const std::string& input, int page
 
     const int offset = candidate_offset >= 0 ? candidate_offset : page_index * page_size;
     const int need = offset + page_size * 2;
-    CandidatePage pinyin_page =
-        pinyin_translator_.translate_page(input, 0, need, trace, budget, scratch);
+    CandidatePage pinyin_page = pinyin_translator_.translate_page(
+        input, 0, need, trace, budget, scratch, -1, false);
     CandidatePage wubi_page =
         wubi_translator_.translate_page(input, 0, need, nullptr, nullptr, nullptr);
     const std::vector<Candidate>& pinyin = pinyin_page.candidates;
@@ -380,7 +384,11 @@ CandidatePage MixedTranslator::translate_page(const std::string& input, int page
     std::unordered_set<std::string> manual_texts;
     auto append_manual = [&](const Candidate& candidate, bool update_duplicate,
                              CandidateSource preferred_source) {
-        if (!manually_ordered(input, candidate)) {
+        const std::string& ordered_input =
+            candidate.source == CandidateSource::kPinyin && !candidate.input_code.empty()
+                ? candidate.input_code
+                : input;
+        if (!manually_ordered(ordered_input, candidate)) {
             return;
         }
         if (manual_texts.insert(candidate.text).second) {
@@ -472,13 +480,17 @@ bool MixedTranslator::manually_ordered(const std::string& input,
     if (!action || action->consumed_input_bytes > input.size()) {
         return false;
     }
-    const std::string ordered_input = input.substr(0, action->consumed_input_bytes);
+    const std::string raw_input = input.substr(0, action->consumed_input_bytes);
     for (const auto& variant : action->variants) {
         Candidate candidate = entry.candidate;
         candidate.source = variant.provenance.source;
         candidate.origin = variant.provenance.origin;
         candidate.code = variant.code;
         candidate.syllables = variant.syllables;
+        const std::string& ordered_input =
+            candidate.source == CandidateSource::kPinyin && !variant.input_code.empty()
+                ? variant.input_code
+                : raw_input;
         if (manually_ordered(ordered_input, candidate)) {
             return true;
         }

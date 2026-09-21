@@ -10,6 +10,7 @@
 #include <commdlg.h>
 
 #include <cxxime/candidate.h>
+#include <cxxime/pinyin_scheme.h>
 
 #include "editor_app_internal.h"
 
@@ -276,9 +277,18 @@ std::string EditorApp::selected_theme_id() const {
     return config_.theme;
 }
 
+std::string EditorApp::selected_pinyin_scheme_id() const {
+    const int index = combo_index(hPinyinScheme_);
+    if (index >= 0 && index < static_cast<int>(pinyinSchemeIds_.size())) {
+        return pinyinSchemeIds_[index];
+    }
+    return default_pinyin_scheme().id;
+}
+
 Config EditorApp::build_appearance_preview_config() {
     Config config = config_;
     config.theme = selected_theme_id();
+    config.pinyin_scheme = selected_pinyin_scheme_id();
     config.font_name = config_.font_name;
     config.font_size = std::clamp(get_edit_int(hFontSize_), 8, 72);
     config.layout =
@@ -326,15 +336,16 @@ void EditorApp::update_cand_preview() {
     std::size_t focused_end = 0;
     bool syllable_boundaries = false;
     std::vector<const char*> words;
+    const auto& pinyin_scheme = resolve_pinyin_scheme(candPreviewConfig_.pinyin_scheme);
     switch (combo_index(hCandPreviewScenarios_[0])) {
     case 0:
-        preedit = "wu'zong";
+        preedit = pinyin_scheme.wuzong_preedit_example;
         focused_end = preedit.size();
         syllable_boundaries = true;
         words = {"无踪", "五宗", "武总", "吴总", "物种", "五总", "务总"};
         break;
     case 2:
-        preedit = u8"华锐ji'shu";
+        preedit = std::string(u8"华锐") + pinyin_scheme.jishu_preedit_example;
         converted = std::string(u8"华锐").size();
         focused_start = converted;
         focused_end = converted + 2;
@@ -355,7 +366,7 @@ void EditorApp::update_cand_preview() {
         break;
     case 1:
     default:
-        preedit = "wu'zong";
+        preedit = pinyin_scheme.wuzong_preedit_example;
         focused_end = 2;
         syllable_boundaries = true;
         words = {"乌", "吴", "屋", "物", "五", "无", "武"};

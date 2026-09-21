@@ -327,7 +327,8 @@ bool Dict::resolve_manual_candidate(const ManualCandidateOrderEntry& entry, Cand
 }
 
 void Dict::apply_manual_candidate_order(const std::string& code, CandidateSource source,
-                                        std::vector<Candidate>& candidates, int limit) const {
+                                        std::vector<Candidate>& candidates, int limit,
+                                        std::string_view candidate_input_code) const {
     if (limit <= 0) {
         return;
     }
@@ -349,6 +350,9 @@ void Dict::apply_manual_candidate_order(const std::string& code, CandidateSource
             candidates.erase(existing);
         } else if (!resolve_manual_candidate(entry, source, &resolved)) {
             continue;
+        }
+        if (!candidate_input_code.empty()) {
+            resolved.input_code.assign(candidate_input_code.data(), candidate_input_code.size());
         }
         if (is_system_entry_disabled(resolved.text) && resolved.origin != CandidateOrigin::kUser) {
             continue;

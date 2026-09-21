@@ -391,7 +391,8 @@ TEST(Benchmark, MissingTopnCausesCheckFail) {
 
     // Copy required files except topn.bin
     const char* files[] = {
-        "pinyin.dict.bin", "pinyin.dict.idx", "pinyin.spellings.bin", "default.json"
+        "pinyin.dict.bin", "pinyin.dict.idx", "pinyin.spellings.bin",
+        "pinyin.microsoft-shuangpin.spellings.bin", "default.json"
     };
     bool all_copied = true;
     for (const char* f : files) {

@@ -35,6 +35,8 @@ struct Candidate {
     std::string syllables;
     CandidateOrigin origin = CandidateOrigin::kSystem;
     int source_frequency = 0;  // Raw dictionary frequency when ranking uses a derived score.
+    // Canonical input used to query this candidate when it differs from the user's raw keys.
+    std::string input_code;
 };
 
 enum class CandidateExtentState : std::uint32_t {

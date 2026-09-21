@@ -52,6 +52,9 @@ struct SharedResources {
     std::string dict_path;    // Stored for dictionary reload
     std::string wubi_dict_path;
     std::string manifest_path;
+    std::shared_ptr<const cxxime::Config> prepared_config;
+    std::shared_ptr<cxxime::SpellingsIndex> prepared_spellings;
+    std::shared_ptr<cxxime::Syllabifier> prepared_syllabifier;
     mutable std::mutex mutex;
 
     bool load(const std::string& dict_path,
@@ -59,7 +62,9 @@ struct SharedResources {
     SharedResourceSnapshot snapshot() const;
     std::shared_ptr<cxxime::Dict> dict_for_kind(cxxime::UserDictKind kind) const;
     bool load_punctuation(const std::string& path);
-    void replace_config(const std::shared_ptr<const cxxime::Config>& next_config);
+    bool prepare_config(const std::shared_ptr<const cxxime::Config>& next_config);
+    bool commit_prepared_config(const std::shared_ptr<const cxxime::Config>& next_config);
+    void cancel_prepared_config();
     bool reload_dictionaries();
     cxxime::IPCStatus add_user_entry(cxxime::UserDictKind kind,
         const std::string& text, const std::string& code);
@@ -118,6 +123,8 @@ struct SessionEntry {
     std::mutex mutex;  // per-session concurrency protection
 };
 
+void apply_resource_snapshot(SessionEntry& entry, const SharedResourceSnapshot& resources);
+
 struct ProcessKeyResult {
     cxxime::IPCStatus status = cxxime::IPCStatus::ERR_INVALID_SESSION;
     cxxime::ProcessResult result = cxxime::ProcessResult::REJECTED;
@@ -145,7 +152,10 @@ public:
     void destroy_session(uint32_t id);
 
     size_t cleanup_idle_sessions(uint32_t timeout_ms);
-    void apply_config(const std::shared_ptr<const cxxime::Config>& config);
+    bool prepare_config(const std::shared_ptr<const cxxime::Config>& config,
+                        unsigned long* error_code = nullptr);
+    void cancel_prepared_config();
+    bool apply_config(const std::shared_ptr<const cxxime::Config>& config);
     void set_config_patch_handler(ConfigPatchHandler handler);
     cxxime::IPCStatus reload_dictionaries();
     bool reload_punctuation(const std::string& path);

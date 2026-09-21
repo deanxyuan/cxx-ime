@@ -15,6 +15,7 @@ class Syllabifier;
 void append_pinyin_partial_candidates(Dict& dict,
                                       const Syllabifier& syllabifier,
                                       const TranslationRequest& request,
+                                      bool shuangpin,
                                       bool candidate_learning_enabled,
                                       std::vector<CandidateEntry>& entries,
                                       TranslationStatus& status);

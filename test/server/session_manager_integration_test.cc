@@ -1,7 +1,10 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
+#include <atomic>
 #include <map>
 
+#include "config_store.h"
+#include "config_write_coordinator.h"
 #include "session_manager_integration_test_support.h"
 
 TEST(SessionIntegration, shape_and_punctuation_toggles_preserve_composition) {
@@ -216,6 +219,190 @@ TEST(SessionIntegration, initialize_rejects_unknown_wubi_index_role) {
 // ============================================================
 // process_key tests
 // ============================================================
+
+TEST(SessionIntegration, pinyin_scheme_switch_rebinds_active_session) {
+    auto full_pinyin = std::make_shared<cxxime::Config>();
+    SessionManager manager;
+    ASSERT_TRUE(manager.initialize(setup_test_dict(), full_pinyin));
+    const uint32_t id =
+        manager.create_session(cxxime::kClientCapabilitySegmentedPreeditPresentation);
+
+    ASSERT_EQ(manager.process_key(id, make_key('N')).preedit, "n");
+
+    auto shuangpin = std::make_shared<cxxime::Config>(*full_pinyin);
+    shuangpin->pinyin_scheme = "microsoft_shuangpin";
+    manager.apply_config(shuangpin);
+
+    const ProcessKeyResult first = manager.process_key(id, make_key('N'));
+    ASSERT_EQ(first.preedit, "n");
+    const ProcessKeyResult second = manager.process_key(id, make_key('I'));
+    ASSERT_TRUE(candidate_contains(second.presentation, "你"));
+    const ProcessKeyResult third = manager.process_key(id, make_key('H'));
+    ASSERT_EQ(third.preedit, "ni'h");
+    const ProcessKeyResult fourth = manager.process_key(id, make_key('K'));
+    ASSERT_EQ(fourth.preedit, "ni'hk");
+    ASSERT_TRUE(candidate_contains(fourth.presentation, "你好"));
+}
+
+TEST(SessionIntegration, microsoft_shuangpin_can_be_selected_at_cold_start) {
+    auto config = std::make_shared<cxxime::Config>();
+    config->pinyin_scheme = "microsoft_shuangpin";
+    SessionManager manager;
+    ASSERT_TRUE(manager.initialize(setup_test_dict(), config));
+    const uint32_t id =
+        manager.create_session(cxxime::kClientCapabilitySegmentedPreeditPresentation);
+
+    ASSERT_EQ(manager.process_key(id, make_key('N')).preedit, "n");
+    ASSERT_TRUE(candidate_contains(manager.process_key(id, make_key('I')).presentation, "你"));
+    ASSERT_EQ(manager.process_key(id, make_key('H')).preedit, "ni'h");
+    const ProcessKeyResult result = manager.process_key(id, make_key('K'));
+    ASSERT_EQ(result.preedit, "ni'hk");
+    ASSERT_TRUE(candidate_contains(result.presentation, "你好"));
+}
+
+TEST(SessionIntegration, pinyin_scheme_switch_reuses_large_shared_resources) {
+    const std::string dict_path = make_temp_path("test_scheme_shared_dict.bin");
+    create_test_dictionary_bundle(dict_path, {
+        {"ni", "你", 1000},
+        {"hao", "好", 800},
+        {"nihao", "你好", 900},
+    });
+    {
+        auto full_pinyin = std::make_shared<cxxime::Config>();
+        SharedResources resources;
+        ASSERT_TRUE(resources.load(dict_path, full_pinyin));
+        const SharedResourceSnapshot before = resources.snapshot();
+
+        auto shuangpin = std::make_shared<cxxime::Config>(*full_pinyin);
+        shuangpin->pinyin_scheme = "microsoft_shuangpin";
+        shuangpin->fuzzy_pinyin = false;
+        ASSERT_TRUE(resources.prepare_config(shuangpin));
+        const SharedResourceSnapshot prepared = resources.snapshot();
+        ASSERT_EQ(prepared.config.get(), before.config.get());
+        ASSERT_EQ(prepared.spellings.get(), before.spellings.get());
+        ASSERT_TRUE(resources.commit_prepared_config(shuangpin));
+        const SharedResourceSnapshot after = resources.snapshot();
+
+        ASSERT_EQ(after.dict.get(), before.dict.get());
+        ASSERT_EQ(after.wubi_dict.get(), before.wubi_dict.get());
+        ASSERT_TRUE(after.spellings.get() != before.spellings.get());
+        ASSERT_TRUE(after.syllabifier.get() != before.syllabifier.get());
+        ASSERT_TRUE(!after.spellings->fuzzy_enabled());
+        ASSERT_EQ(after.config->pinyin_scheme, "microsoft_shuangpin");
+        const cxxime::CandidateOrderQueryResult order =
+            resources.query_candidate_order(cxxime::UserDictKind::PINYIN, "nihao", 10);
+        ASSERT_TRUE(std::any_of(order.entries.begin(), order.entries.end(),
+                                [](const auto& entry) { return entry.text == "你好"; }));
+        ASSERT_TRUE(resources.freeze_and_stop_composition_learning());
+    }
+    delete_test_dictionary_bundle(dict_path);
+}
+
+TEST(SessionIntegration, snapshot_sync_binds_config_before_scheme_resources) {
+    const std::string dict_path = make_temp_path("test_scheme_snapshot_order_dict.bin");
+    create_test_dictionary_bundle(dict_path, {{"ying", "应", 700}});
+    {
+        auto full_pinyin = std::make_shared<cxxime::Config>();
+        SharedResources resources;
+        ASSERT_TRUE(resources.load(dict_path, full_pinyin));
+        const SharedResourceSnapshot before = resources.snapshot();
+
+        SessionEntry entry;
+        entry.engine = std::make_unique<cxxime::Engine>();
+        ASSERT_TRUE(entry.engine->initialize(*before.dict, *before.spellings,
+                                            before.syllabifier.get(), *before.config));
+        entry.resources = before;
+
+        auto shuangpin = std::make_shared<cxxime::Config>(*full_pinyin);
+        shuangpin->pinyin_scheme = "microsoft_shuangpin";
+        ASSERT_TRUE(resources.prepare_config(shuangpin));
+        ASSERT_TRUE(resources.commit_prepared_config(shuangpin));
+        const SharedResourceSnapshot after = resources.snapshot();
+
+        apply_resource_snapshot(entry, after);
+        ASSERT_EQ(entry.resources.config.get(), after.config.get());
+        ASSERT_EQ(entry.resources.spellings.get(), after.spellings.get());
+        ASSERT_EQ(entry.engine->process_key(make_key('Y')), cxxime::ProcessResult::ACCEPTED);
+        ASSERT_EQ(entry.engine->process_key(make_key(VK_OEM_1)),
+            cxxime::ProcessResult::ACCEPTED);
+        ASSERT_EQ(entry.engine->context().active_input(), "y;");
+        const auto& candidates = entry.engine->context().candidate_page().candidates;
+        ASSERT_TRUE(std::any_of(candidates.begin(), candidates.end(),
+                                [](const auto& candidate) { return candidate.text == "应"; }));
+
+        entry.engine->finalize();
+        ASSERT_TRUE(resources.freeze_and_stop_composition_learning());
+    }
+    delete_test_dictionary_bundle(dict_path);
+}
+
+TEST(SessionIntegration, failed_pinyin_scheme_switch_keeps_previous_snapshot) {
+    const std::string dict_path = make_temp_path("test_scheme_failure_dict.bin");
+    create_test_dictionary_bundle(dict_path, {
+        {"ni", "你", 1000},
+        {"hao", "好", 800},
+    });
+    {
+        auto full_pinyin = std::make_shared<cxxime::Config>();
+        SharedResources resources;
+        ASSERT_TRUE(resources.load(dict_path, full_pinyin));
+        const SharedResourceSnapshot before = resources.snapshot();
+        ASSERT_TRUE(DeleteFileA((dict_path + ".microsoft-shuangpin.spellings.bin").c_str()));
+
+        auto shuangpin = std::make_shared<cxxime::Config>(*full_pinyin);
+        shuangpin->pinyin_scheme = "microsoft_shuangpin";
+        ASSERT_TRUE(!resources.prepare_config(shuangpin));
+        ASSERT_TRUE(!resources.commit_prepared_config(shuangpin));
+        const SharedResourceSnapshot after = resources.snapshot();
+
+        ASSERT_EQ(after.dict.get(), before.dict.get());
+        ASSERT_EQ(after.spellings.get(), before.spellings.get());
+        ASSERT_EQ(after.syllabifier.get(), before.syllabifier.get());
+        ASSERT_EQ(after.config.get(), before.config.get());
+        ASSERT_TRUE(resources.freeze_and_stop_composition_learning());
+    }
+    delete_test_dictionary_bundle(dict_path);
+}
+
+TEST(SessionIntegration, failed_scheme_prepare_is_not_persisted_or_published) {
+    const std::string dict_path = make_temp_path("test_scheme_transaction_dict.bin");
+    const std::string user_config_path = make_temp_path("test_scheme_transaction_config.json");
+    create_test_dictionary_bundle(dict_path, {{"ni", "你", 1000}});
+    ASSERT_TRUE(DeleteFileA((dict_path + ".microsoft-shuangpin.spellings.bin").c_str()));
+    DeleteFileA(user_config_path.c_str());
+
+    ConfigStore store;
+    std::shared_ptr<const cxxime::Config> initial_config;
+    ASSERT_TRUE(store.initialize(std::string(CXXIME_DATA_DIR) + "default.json", user_config_path,
+                                 std::string(CXXIME_DATA_DIR) + "themes.json", &initial_config));
+    SessionManager manager;
+    ASSERT_TRUE(manager.initialize(dict_path, initial_config));
+
+    std::atomic<int> apply_count{0};
+    ConfigWriteCoordinator coordinator;
+    ASSERT_TRUE(coordinator.start(
+        &store,
+        [&](const std::shared_ptr<const cxxime::Config>& config) {
+            if (manager.apply_config(config)) {
+                apply_count.fetch_add(1);
+            }
+        },
+        [&](const std::shared_ptr<const cxxime::Config>& config, unsigned long* error_code) {
+            return manager.prepare_config(config, error_code);
+        },
+        [&]() { manager.cancel_prepared_config(); }));
+
+    unsigned long error_code = ERROR_SUCCESS;
+    ASSERT_TRUE(!coordinator.submit(cxxime::UserConfigMutationKind::kMergePatch,
+                                    R"({"engine":{"pinyin_scheme":"microsoft_shuangpin"}})",
+                                    nullptr, &error_code));
+    ASSERT_EQ(error_code, static_cast<unsigned long>(ERROR_INVALID_DATA));
+    ASSERT_EQ(apply_count.load(), 0);
+    ASSERT_EQ(GetFileAttributesA(user_config_path.c_str()), INVALID_FILE_ATTRIBUTES);
+
+    coordinator.stop();
+    delete_test_dictionary_bundle(dict_path);
+}
 
 TEST(SessionIntegration, process_key_ok) {
     SessionManager mgr;
