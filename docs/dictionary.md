@@ -72,7 +72,7 @@ Engine
   │     ├── Syllabifier*     主分词路径（BFS+DFS 音节图）
   │     └── PinyinSegmentor  简版分词器（Syllabifier 不可用时回退）
   ├── Dict                   主词典（二进制加载）+ 用户词库/候选偏好（内存+TSV）
-  ├── SpellingsIndex         拼写索引（二进制加载），供 Syllabifier 使用；按拼音方案载入全拼或微软双拼表
+  ├── SpellingsIndex         拼写索引（二进制加载），供 Syllabifier 使用；按拼音方案载入全拼或对应双拼表
   ├── Context                输入状态（拼音缓冲、候选列表、已提交文本）
   └── Config                 配置（字体、布局、主题）
 ```
@@ -137,9 +137,10 @@ Engine
 
 将输入字符串映射到音节解释。例如 `"d"` → `["da"(缩写), "di"(缩写), "de"(缩写)]`。
 
-运行时按拼音方案载入对应的拼写表：全拼用 `pinyin.spellings.bin`（`pinyin.full-pinyin.schema.json`），微软双拼用
-`pinyin.microsoft-shuangpin.spellings.bin`（`pinyin.microsoft-shuangpin.schema.json`）；两份拼写表共用同一份
-`pinyin.dict.bin`，清单角色分别是 `pinyin_spellings` 与 `pinyin_spellings_microsoft_shuangpin`，文件格式同为下面的 Patricia trie。
+运行时按拼音方案载入对应的拼写表：全拼用 `pinyin.spellings.bin`（`pinyin.full-pinyin.schema.json`）；微软双拼、小鹤双拼、
+自然码双拼、搜狗双拼分别用 `pinyin.<方案名>-shuangpin.spellings.bin`（同名 `pinyin.<方案名>-shuangpin.schema.json`，
+方案名见 `scripts/dictionary_bundle_layout.py` 的 `SHUANGPIN_SCHEME_NAMES`）。五份拼写表共用同一份 `pinyin.dict.bin`，
+清单角色分别是 `pinyin_spellings` 与 `pinyin_spellings_<方案名>_shuangpin`，文件格式同为下面的 Patricia trie。
 
 采用 **Patricia trie**（压缩前缀树）实现 O(k) 前缀搜索，k 为前缀长度。
 
@@ -421,7 +422,7 @@ python data/tools/build_runtime_dictionary.py -i data/pinyin.dict.db -o data/pin
 
 输出文件：
 - `data/pinyin.spellings.bin` — Patricia trie 拼写索引（全拼）
-- `data/pinyin.microsoft-shuangpin.spellings.bin` — Patricia trie 拼写索引（微软双拼，由 `prepare_dictionary_bundle.py` 用双拼 schema 单独导出）
+- `data/pinyin.<方案名>-shuangpin.spellings.bin` — Patricia trie 拼写索引（微软、小鹤、自然码、搜狗四种双拼各一份，由 `prepare_dictionary_bundle.py` 用对应双拼 schema 单独导出）
 - `data/pinyin.dict.bin` — 排序数组主词典
 - `data/pinyin.reverse.idx` — 词语反查索引（由 `prepare_dictionary_bundle.py` 生成，供 Settings 反查）
 
@@ -450,6 +451,7 @@ fetch_pinyin_dictionary.py / fetch_wubi_dictionary.py    从网络获取词典�
         │
         ▼
    pinyin.spellings.bin           运行时内存加载
+   pinyin.*-shuangpin.spellings.bin  四种双拼拼写表（prepare_dictionary_bundle.py 生成）
    pinyin.dict.bin                 运行时内存加载
    pinyin.dict.idx                 整数 ID 索引
 

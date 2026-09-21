@@ -51,7 +51,7 @@ python scripts\package.py --output-dir <path>
 
 ```text
 源词典
-  -> prepare_dictionary_bundle.py
+  -> prepare_dictionary_bundle.py（全拼与四种双拼 spellings 表，方案清单见 dictionary_bundle_layout.py）
   -> 拼音 Top-N 构建中间文件
   -> topn_builder 绑定 pinyin.dict.bin 并生成共享候选索引
   -> 为拼音和五笔 dict.bin 生成 Settings 反向索引

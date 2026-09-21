@@ -23,7 +23,7 @@ C:\Program Files\CxxIME\             安装基目录（首次安装时选择，�
 │       ├── settings_presets.json / punctuation.json / symbols.json
 │       ├── dictionary_manifest.json 词典清单
 │       ├── pinyin.dict.bin / pinyin.dict.idx / pinyin.spellings.bin
-│       ├── pinyin.microsoft-shuangpin.spellings.bin  微软双拼拼写表（与全拼共用 pinyin.dict.bin）
+│       ├── pinyin.<方案名>-shuangpin.spellings.bin  四种双拼拼写表（与全拼共用 pinyin.dict.bin）
 │       ├── pinyin.topn.bin         拼音 Top-N 短码索引（CXTOPN v4）
 │       ├── wubi86.dict.bin / wubi86.dict.idx
 │       └── pinyin.reverse.idx / wubi86.reverse.idx
@@ -105,10 +105,10 @@ cxxime::set_data_dir("");             // 清除覆盖，恢复默认回退链
 
 ### 拼音方案的拼写表路径
 
-引擎按主词典路径推导拼写表：默认取同目录下的 `pinyin.spellings.bin`（全拼）；当配置的拼音方案是
-`microsoft_shuangpin` 时，改取同目录下的 `pinyin.microsoft-shuangpin.spellings.bin`
-（即 `PinyinSchemeDescriptor.spelling_filename`）。两份拼写表共用同一个 `pinyin.dict.bin`，
-切换方案只更换拼写表与该方案的音节切分，不重新加载主词典。
+引擎按主词典路径推导拼写表：默认取同目录下的 `pinyin.spellings.bin`（全拼）；当配置的拼音方案是内置双拼方案
+（`microsoft_shuangpin`、`xiaohe_shuangpin`、`ziranma_shuangpin`、`sogou_shuangpin`）时，改取同目录下的
+`pinyin.<方案名>-shuangpin.spellings.bin`（即 `PinyinSchemeDescriptor.spelling_filename`）。五份拼写表共用同一个
+`pinyin.dict.bin`，切换方案只更换拼写表与该方案的音节切分，不重新加载主词典。
 
 ## 配置加载顺序
 
@@ -170,7 +170,7 @@ Python 脚本分布在两个目录，职责不同：
 
 | 目录 | 定位 | 脚本 |
 |------|------|------|
-| `scripts/` | **主入口脚本**：打包、词典准备、校验、基准回归、诊断 | `package.py`、`prepare_dictionary_bundle.py`、`build_pinyin_topn.py`、`verify_dictionary_bundle.py`、`verify_package.py`、`check_query_bench.py`、`collect_diagnostics.ps1`、`benchmark.bat`、`benchmark_topn.ps1`、`run_sync_regression.bat/ps1`、`gen_theme_previews.py` |
+| `scripts/` | **主入口脚本**：打包、词典准备、校验、基准回归、诊断 | `package.py`、`dictionary_bundle_layout.py`、`prepare_dictionary_bundle.py`、`build_pinyin_topn.py`、`verify_dictionary_bundle.py`、`verify_package.py`、`check_query_bench.py`、`collect_diagnostics.ps1`、`benchmark.bat`、`benchmark_topn.ps1`、`run_sync_regression.bat/ps1`、`gen_theme_previews.py` |
 | `data/tools/` | **词典数据处理工具**：由 `scripts/` 入口调用，也可独立运行 | `fetch_pinyin_dictionary.py`、`fetch_wubi_dictionary.py`、`convert_rime_dictionary.py`、`build_runtime_dictionary.py`、`generate_pinyin_spellings.py`、`generate_pinyin_syllable_ids.py`、`split_wubi_symbols.py`，以及 `dict_builder/` 实现包 |
 
 脚本通过 `--input`/`--output` 参数接收路径，不依赖环境变量。`scripts/package.py` 经 `scripts/prepare_dictionary_bundle.py` 调用 `data/tools/` 下的词典工具时传入绝对路径：
