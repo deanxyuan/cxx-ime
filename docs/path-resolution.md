@@ -23,7 +23,8 @@ C:\Program Files\CxxIME\             安装基目录（首次安装时选择，�
 │       ├── settings_presets.json / punctuation.json / symbols.json
 │       ├── dictionary_manifest.json 词典清单
 │       ├── pinyin.dict.bin / pinyin.dict.idx / pinyin.spellings.bin
-│       ├── pinyin.topn.bin         拼音 Top-N 短码索引（CXTOPN v3）
+│       ├── pinyin.microsoft-shuangpin.spellings.bin  微软双拼拼写表（与全拼共用 pinyin.dict.bin）
+│       ├── pinyin.topn.bin         拼音 Top-N 短码索引（CXTOPN v4）
 │       ├── wubi86.dict.bin / wubi86.dict.idx
 │       └── pinyin.reverse.idx / wubi86.reverse.idx
 ├── update\                         安装暂存目录（stage）
@@ -101,6 +102,13 @@ cxxime::user_data_path("user_pinyin.tsv")  // → user_data_dir() + "user_pinyin
 cxxime::set_data_dir("D:\\mydata");   // data_dir() → "D:\\mydata\\"
 cxxime::set_data_dir("");             // 清除覆盖，恢复默认回退链
 ```
+
+### 拼音方案的拼写表路径
+
+引擎按主词典路径推导拼写表：默认取同目录下的 `pinyin.spellings.bin`（全拼）；当配置的拼音方案是
+`microsoft_shuangpin` 时，改取同目录下的 `pinyin.microsoft-shuangpin.spellings.bin`
+（即 `PinyinSchemeDescriptor.spelling_filename`）。两份拼写表共用同一个 `pinyin.dict.bin`，
+切换方案只更换拼写表与该方案的音节切分，不重新加载主词典。
 
 ## 配置加载顺序
 

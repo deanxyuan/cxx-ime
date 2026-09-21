@@ -14,7 +14,7 @@ CxxIME is a lightweight Windows TSF-based input method with three modes: Pinyin,
 
 ## Features
 
-- Pinyin, Wubi 86, and mixed modes, with full Pinyin, shorthand, fuzzy syllables, dynamic sentence building, and segment-by-segment selection
+- Pinyin, Wubi 86, and mixed modes, with full Pinyin, Microsoft Shuangpin, shorthand, fuzzy syllables, dynamic sentence building, and segment-by-segment selection
 - Candidates ranked in tiers by match quality, so exact syllables and near-complete words are never buried by frequent long words; long Pinyin can be selected by segment
 - A dedicated Wubi prefix index covering shortcut codes, completion hints, automatic commit on a unique four-code match, and fifth-code handling
 - Candidate window supports horizontal and vertical layouts, D2D and GDI rendering, and 12 built-in themes (6 palettes × light/dark)
@@ -58,7 +58,7 @@ Results vary with hardware and dictionary data. See [docs/benchmark-data.md](doc
 - Use **CxxIME Settings** from the Start Menu
 - Or edit the user configuration file `%USERPROFILE%\cxxime\default.json` directly
 
-All options (input modes, candidate window, themes, dictionary management, shortcuts, etc.) are documented in [docs/settings-guide.md](docs/settings-guide.md).
+All options (input modes, Pinyin scheme, candidate window, themes, dictionary management, shortcuts, etc.) are documented in [docs/settings-guide.md](docs/settings-guide.md).
 
 ## Dictionaries
 

@@ -40,7 +40,7 @@ scripts\package.py --host-diag        # 宿主诊断包
 1. 检查并触发构建（如未构建）
 2. 复制 `cxxime_tsf_x64.dll`、`cxxime_tsf_x86.dll`、`cxxime-resources.dll`、`cxxime-server.exe`、`cxxime-settings.exe`、`collect_diagnostics.ps1`
 3. 复制 `default.json`、`themes.json`、`settings_presets.json`、`punctuation.json`
-4. 调用 `prepare_dictionary_bundle.py` 准备运行时词典（`.bin` / `.idx` / `.spellings.bin` / `.topn.bin`）
+4. 调用 `prepare_dictionary_bundle.py` 准备运行时词典（`.bin` / `.idx` / `.spellings.bin`（全拼与微软双拼各一份）/ `.topn.bin`）
 5. 校验发布数据文件、CRT 依赖和热路径日志
 6. 调用 `makensis.exe` 编译 NSIS 安装脚本
 7. 输出 `..\output\cxxime-v<version>-setup.exe`
@@ -178,6 +178,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File collect_diagnostics.ps1 -Inc
 │       ├── pinyin.dict.bin
 │       ├── pinyin.dict.idx
 │       ├── pinyin.spellings.bin
+│       ├── pinyin.microsoft-shuangpin.spellings.bin
 │       ├── pinyin.topn.bin
 │       ├── pinyin.reverse.idx
 │       ├── wubi86.dict.bin
@@ -243,7 +244,7 @@ cxxime-server.exe --config "D:\config.json"          # 指定配置文件
 
 ### 服务端启动后立即退出
 
-通常是词典文件缺失。检查 `C:\Program Files\CxxIME\<版本号>.<8位十六进制>\data\pinyin.dict.bin` 是否存在。若缺失，重新运行 `scripts\package.py` 生成二进制词典后重新安装。
+通常是词典文件缺失。检查 `C:\Program Files\CxxIME\<版本号>.<8位十六进制>\data\pinyin.dict.bin` 是否存在。若缺失，重新运行 `scripts\package.py` 生成二进制词典后重新安装。配置里把拼音方案选为 `microsoft_shuangpin` 时，还需要同目录下的 `pinyin.microsoft-shuangpin.spellings.bin`，缺失会导致服务端启动失败。
 
 ### 切换输入法后打字无反应
 
