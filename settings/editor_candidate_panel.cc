@@ -26,11 +26,6 @@ void EditorApp::create_candidate_panel(HWND panel) {
     int control_x = make_aligned_label(L"主题:", column_one, label_width, top, panel);
     hThemeCombo_ = make_combo(1100, control_x, top, S(160), panel);
     set_combo_drop_count(hThemeCombo_, 14);
-    hCandPreviewBtns_[0] = CreateWindowExW(
-        0, L"BUTTON", L"预览窗口", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
-        control_x + S(170), top, S(110), kCtrlH, panel,
-        reinterpret_cast<HMENU>(static_cast<INT_PTR>(1222)), GetModuleHandle(nullptr), nullptr);
-    SendMessageW(hCandPreviewBtns_[0], WM_SETFONT, reinterpret_cast<WPARAM>(get_font()), TRUE);
 
     control_x = make_aligned_label(L"字体:", column_one, label_width, top + kRowH, panel);
     hFontBtn_ = CreateWindowExW(
@@ -82,14 +77,6 @@ void EditorApp::create_candidate_panel(HWND panel) {
     combo_add(hCandWidth_, L"自动");
     combo_add(hCandWidth_, L"限制");
 
-    control_x = make_aligned_label(L"预览场景:", column_two, label_width, top + kRowH * 5, panel);
-    hCandPreviewScenarios_[0] = make_combo(1110, control_x, top + kRowH * 5, S(125), panel);
-    for (const wchar_t* scenario : {L"拼音整词", L"拼音分段", L"确认前缀", L"五笔编码",
-                                    L"混输五笔"}) {
-        combo_add(hCandPreviewScenarios_[0], scenario);
-    }
-    combo_set_index(hCandPreviewScenarios_[0], 1);
-
     const int render_y = top + kRowH * 6;
     control_x = make_aligned_label(L"渲染方式:", column_one, label_width, render_y, panel);
     hRenderD2D_ = make_radio(1105, L"默认渲染 (D2D)", control_x, render_y, S(125), panel, true);
@@ -102,8 +89,22 @@ void EditorApp::create_candidate_panel(HWND panel) {
     hStatusAutoDock_ =
         make_check(1109, L"自动停靠", control_x + S(68), status_y, S(85), panel);
 
-    const int default_y = top + kRowH * 7;
-    control_x = make_aligned_label(L"默认设置:", column_two, label_width, default_y, panel);
+    const int preview_y = top + kRowH * 8;
+    control_x = make_aligned_label(L"候选预览:", column_one, label_width, preview_y, panel);
+    hCandPreviewScenarios_[0] = make_combo(1110, control_x, preview_y, S(125), panel);
+    for (const wchar_t* scenario : {L"拼音整词", L"拼音分段", L"确认前缀", L"五笔编码",
+                                    L"混输五笔"}) {
+        combo_add(hCandPreviewScenarios_[0], scenario);
+    }
+    combo_set_index(hCandPreviewScenarios_[0], 1);
+    hCandPreviewBtns_[0] = CreateWindowExW(
+        0, L"BUTTON", L"打开预览", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+        control_x + S(133), preview_y, S(110), kCtrlH, panel,
+        reinterpret_cast<HMENU>(static_cast<INT_PTR>(1222)), GetModuleHandle(nullptr), nullptr);
+    SendMessageW(hCandPreviewBtns_[0], WM_SETFONT, reinterpret_cast<WPARAM>(get_font()), TRUE);
+
+    const int default_y = top + kRowH * 9;
+    control_x = make_aligned_label(L"默认设置:", column_one, label_width, default_y, panel);
     hCandDefaultBtn_ = CreateWindowExW(
         0, L"BUTTON", L"恢复默认", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
         control_x, default_y, S(80), kCtrlH, panel,
@@ -262,7 +263,7 @@ void EditorApp::position_candidate_preview_window() {
 void EditorApp::update_candidate_preview_buttons() {
     for (HWND button : hCandPreviewBtns_) {
         if (button) {
-            SetWindowTextW(button, candPreviewVisible_ ? L"关闭预览" : L"预览窗口");
+            SetWindowTextW(button, candPreviewVisible_ ? L"关闭预览" : L"打开预览");
         }
     }
 }
@@ -341,16 +342,18 @@ void EditorApp::update_cand_preview() {
         words = {"好", "号", "毫", "豪", "浩", "耗", "昊"};
         break;
     case 3:
-        preedit = "wxyz";
+        preedit = "wq";
         focused_end = preedit.size();
-        words = {"测试", "程序", "输入", "编码", "窗口", "布局", "主题"};
+        words = {"你", "爷", "釜", "低", "尣", "爸", "儋"};
         break;
     case 4:
-        preedit = u8"华锐wxyz";
-        converted = std::string(u8"华锐").size();
+        // jisuansm -> select "计算", then highlight a Wubi result from the mixed "sm" query.
+        preedit = u8"计算sm";
+        converted = std::string(u8"计算").size();
         focused_start = converted;
         focused_end = preedit.size();
-        words = {"测试", "程序", "输入", "编码", "窗口", "布局", "主题"};
+        page.highlighted = 1;
+        words = {"三名", "机", "三面", "贾", "三门", "柚", "赛马"};
         break;
     case 1:
     default:

@@ -173,22 +173,19 @@ void EditorApp::create_advanced_layout_panel(HWND panel) {
         control_x, preset_y, S(110), kCtrlH, panel,
         reinterpret_cast<HMENU>(static_cast<INT_PTR>(1220)), GetModuleHandle(nullptr), nullptr);
     SendMessageW(hCandRecommendBtn_, WM_SETFONT, reinterpret_cast<WPARAM>(get_font()), TRUE);
-    const int scenario_label_width = S(64);
-    const int scenario_x = make_aligned_label(
-        L"预览场景:", kPanelPadLeft + column_width * 2, scenario_label_width, preset_y, panel);
-    const int scenario_width = column_width - scenario_label_width - S(8) - column_right_padding;
-    hCandPreviewScenarios_[1] = make_combo(1236, scenario_x, preset_y, scenario_width, panel);
+
+    const int preview_y = preset_y + kRowH;
+    const int preview_x =
+        make_aligned_label(L"候选预览:", kPanelPadLeft, S(90), preview_y, panel);
+    hCandPreviewScenarios_[1] = make_combo(1236, preview_x, preview_y, S(125), panel);
     for (const wchar_t* scenario : {L"拼音整词", L"拼音分段", L"确认前缀", L"五笔编码",
                                     L"混输五笔"}) {
         combo_add(hCandPreviewScenarios_[1], scenario);
     }
     combo_set_index(hCandPreviewScenarios_[1], 1);
-    const int preview_y = preset_y + kRowH;
-    const int preview_x =
-        make_aligned_label(L"候选预览:", kPanelPadLeft, S(90), preview_y, panel);
     hCandPreviewBtns_[1] = CreateWindowExW(
-        0, L"BUTTON", L"预览窗口", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
-        preview_x, preview_y, S(110), kCtrlH, panel,
+        0, L"BUTTON", L"打开预览", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+        preview_x + S(133), preview_y, S(110), kCtrlH, panel,
         reinterpret_cast<HMENU>(static_cast<INT_PTR>(1222)), GetModuleHandle(nullptr), nullptr);
     SendMessageW(hCandPreviewBtns_[1], WM_SETFONT, reinterpret_cast<WPARAM>(get_font()), TRUE);
 }
