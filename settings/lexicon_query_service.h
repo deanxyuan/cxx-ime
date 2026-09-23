@@ -29,6 +29,8 @@ public:
                                               std::size_t limit);
     std::vector<std::string> suggest_codes(SystemLexiconType type, std::string_view text,
                                            std::size_t limit, std::string* error);
+    bool normalize_pinyin_code(std::string_view input, std::string_view scheme_id,
+                               std::string* code, std::string* syllables, std::string* error);
 
 private:
     bool ensure_open(SystemLexiconType type);

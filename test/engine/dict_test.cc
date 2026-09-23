@@ -538,34 +538,34 @@ TEST(Dict, user_dict_same_text_keeps_distinct_codes) {
     cxxime::Dict dict;
     ASSERT_TRUE(dict.open_dict(path));
 
-    ASSERT_TRUE(dict.add_user_entry("测试", "abc"));
-    auto r1 = dict.lookup("abc", 10);
-    bool found_abc = false;
+    ASSERT_TRUE(dict.add_user_entry("测试", "ceshi"));
+    auto r1 = dict.lookup("ceshi", 10);
+    bool found_ceshi = false;
     for (auto& c : r1) {
-        if (c.text == "测试") found_abc = true;
+        if (c.text == "测试") found_ceshi = true;
     }
-    ASSERT_TRUE(found_abc);
+    ASSERT_TRUE(found_ceshi);
 
-    ASSERT_TRUE(dict.add_user_entry("测试", "xyz"));
-    auto r2 = dict.lookup("xyz", 10);
-    bool found_xyz = false;
+    ASSERT_TRUE(dict.add_user_entry("测试", "cesi"));
+    auto r2 = dict.lookup("cesi", 10);
+    bool found_cesi = false;
     for (auto& c : r2) {
-        if (c.text == "测试") found_xyz = true;
+        if (c.text == "测试") found_cesi = true;
     }
-    ASSERT_TRUE(found_xyz);
+    ASSERT_TRUE(found_cesi);
 
     // Adding another code for the same text must not overwrite the first pair.
-    auto r3 = dict.lookup("abc", 10);
-    bool still_abc = false;
+    auto r3 = dict.lookup("ceshi", 10);
+    bool still_ceshi = false;
     for (auto& c : r3) {
-        if (c.text == "测试") still_abc = true;
+        if (c.text == "测试") still_ceshi = true;
     }
-    ASSERT_TRUE(still_abc);
+    ASSERT_TRUE(still_ceshi);
     ASSERT_EQ(dict.user_entry_count(), static_cast<size_t>(2));
 
-    ASSERT_TRUE(dict.delete_user_entries({{"测试", "abc"}}));
-    ASSERT_TRUE(dict.lookup("abc", 10).empty());
-    ASSERT_TRUE(!dict.lookup("xyz", 10).empty());
+    ASSERT_TRUE(dict.delete_user_entries({{"测试", "ceshi"}}));
+    ASSERT_TRUE(dict.lookup("ceshi", 10).empty());
+    ASSERT_TRUE(!dict.lookup("cesi", 10).empty());
 
     dict.close();
     DeleteFileA(path.c_str());
@@ -623,18 +623,17 @@ TEST(Dict, user_dict_scan_count_bounded) {
     cxxime::Dict dict;
     ASSERT_TRUE(dict.open_dict(path));
 
-    // Insert 100 user words with different codes
+    const char* suffixes[] = {"ba",  "bai", "ban",  "bang", "bao",
+                              "bei", "ben", "beng", "bi",   "bian"};
+    // Insert 100 user words with different canonical Pinyin codes.
     for (int i = 0; i < 100; ++i) {
-        char code[16];
-        snprintf(code, sizeof(code), "abc%c%c",
-                 static_cast<char>('a' + i / 26),
-                 static_cast<char>('a' + i % 26));
+        const std::string code = std::string("shi") + suffixes[i / 10] + suffixes[i % 10];
         ASSERT_TRUE(dict.add_user_entry("test", code));
     }
 
-    // Query for "abcby" — should scan 1 entry, not 100
+    // Query for one exact code — should scan 1 entry, not 100.
     cxxime::QueryTrace trace = {};
-    std::vector<std::string> syllables = {"abcby"};
+    std::vector<std::string> syllables = {"shi", "bei", "bei"};
     dict.lookup_by_syllables(syllables, 10, &trace);
     ASSERT_LE(trace.user_scan_count, 2u);
 
@@ -650,16 +649,16 @@ TEST(Dict, user_dict_max_user_scan_truncated) {
     ASSERT_TRUE(dict.open_dict(path));
 
     // Insert several user words with same prefix
-    ASSERT_TRUE(dict.add_user_entry("a", "abc"));
-    ASSERT_TRUE(dict.add_user_entry("b", "abd"));
-    ASSERT_TRUE(dict.add_user_entry("c", "abe"));
+    ASSERT_TRUE(dict.add_user_entry("a", "baba"));
+    ASSERT_TRUE(dict.add_user_entry("b", "babai"));
+    ASSERT_TRUE(dict.add_user_entry("c", "baban"));
 
     // Query with tight budget
     cxxime::QueryBudget budget;
     budget.max_user_scan = 1;
     cxxime::QueryTrace trace = {};
     cxxime::UserLookupStats stats;
-    auto results = dict.lookup_user_prefix("ab", 10, budget, &trace, &stats);
+    auto results = dict.lookup_user_prefix("ba", 10, budget, &trace, &stats);
 
     ASSERT_TRUE(stats.truncated);
     ASSERT_LE(stats.scan_count, 1u);
@@ -761,9 +760,9 @@ TEST(Dict, user_dict_high_freq_in_scan_budget) {
     for (int i = 0; i < 20; ++i) {
         char text[16];
         snprintf(text, sizeof(text), "word%02d", i);
-        fprintf(file, "%s\tabc\t1\n", text);
+        fprintf(file, "%s\tceshi\t1\n", text);
     }
-    fprintf(file, "popular\tabc\t101\n");
+    fprintf(file, "popular\tceshi\t101\n");
     fclose(file);
     ASSERT_TRUE(dict.load_user_dict(user_path));
 
@@ -772,7 +771,7 @@ TEST(Dict, user_dict_high_freq_in_scan_budget) {
     budget.max_user_scan = 10;
     cxxime::QueryTrace trace = {};
     cxxime::UserLookupStats stats;
-    auto results = dict.lookup_user_indexed("abc", 10, budget, &trace, &stats);
+    auto results = dict.lookup_user_indexed("ceshi", 10, budget, &trace, &stats);
 
     bool found_popular = false;
     for (auto& c : results) {
@@ -795,36 +794,35 @@ TEST(Dict, user_dict_stress_10k) {
 
     FILE* f = fopen(user_path.c_str(), "w");
     ASSERT_TRUE(f != nullptr);
+    const char* syllables[] = {"a",  "ba", "ca", "da",  "e",  "fa", "ga", "ha", "ji",
+                               "ka", "la", "ma", "na",  "o",  "pa", "qi", "ran", "sa",
+                               "ta", "wa", "xi", "ya",  "za", "ai", "bei", "chi"};
     for (int i = 0; i < 10000; ++i) {
-        char code[16];
-        snprintf(code, sizeof(code), "p%c%c%c",
-                 static_cast<char>('a' + i / (26 * 26)),
-                 static_cast<char>('a' + (i / 26) % 26),
-                 static_cast<char>('a' + i % 26));
+        const std::string code = std::string("shi") + syllables[i / (26 * 26)] +
+                                 syllables[(i / 26) % 26] + syllables[i % 26];
         char text[16];
         snprintf(text, sizeof(text), "t%04d", i);
-        fprintf(f, "%s\t%s\t1\n", text, code);
+        fprintf(f, "%s\t%s\t1\n", text, code.c_str());
     }
     fclose(f);
     ASSERT_TRUE(dict.load_user_dict(user_path));
 
     // Query for a specific code — scan count should be O(1), not O(10000)
     cxxime::QueryTrace trace = {};
-    std::vector<std::string> syllables = {"phki"};
-    dict.lookup_by_syllables(syllables, 10, &trace);
+    std::vector<std::string> exact_syllables = {"shi", "ha", "la", "ji"};
+    dict.lookup_by_syllables(exact_syllables, 10, &trace);
     ASSERT_LE(trace.user_scan_count, 2u);
 
-    // Query prefix "ph" — should use prefix index, scan only matching bucket
+    // Query one first-syllable bucket — should scan only matching entries.
     cxxime::QueryTrace trace2 = {};
-    dict.lookup("ph", 10, &trace2);
-    // "ph" matches one 676-entry base-26 bucket.
+    dict.lookup("shiha", 10, &trace2);
     ASSERT_LE(trace2.user_scan_count, 686u);  // bucket + margin
     // Should NOT be 10000 (full scan)
     ASSERT_TRUE(trace2.user_scan_count < 10000);
 
     // Count should also be indexed
     cxxime::QueryTrace trace3 = {};
-    int cnt = dict.count("ph", &trace3);
+    int cnt = dict.count("shiha", &trace3);
     ASSERT_EQ(cnt, 676);
     ASSERT_LE(trace3.user_scan_count, 686u);
 

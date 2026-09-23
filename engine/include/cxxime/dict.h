@@ -115,13 +115,14 @@ public:
                                                       bool exact_text = false) const;
     bool delete_user_entries(const std::vector<LexiconEntryKey>& entries);
     bool replace_user_entry(const std::string& old_text, const std::string& old_code,
-                            const std::string& new_text, const std::string& new_code);
+                            const std::string& new_text, const std::string& new_code,
+                            const std::string& syllables = {});
     bool add_user_entry_and_save(const std::string& text, const std::string& code,
                                  const std::string& syllables = {});
     bool delete_user_entries_and_save(const std::vector<LexiconEntryKey>& entries);
     bool replace_user_entry_and_save(const std::string& old_text, const std::string& old_code,
-                                     const std::string& new_text,
-                                     const std::string& new_code);
+                                     const std::string& new_text, const std::string& new_code,
+                                     const std::string& syllables = {});
     bool import_user_dict(const std::string& source_path);
     bool merge_user_dict_contents(const std::string& imported, UserDataMergeResult* result);
 

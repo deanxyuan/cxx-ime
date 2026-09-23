@@ -77,6 +77,8 @@ private:
     void refresh_lexicon_entries();
     void query_lexicon_entries(bool preserve_editor);
     void clear_lexicon_entry_form();
+    bool normalize_lexicon_entry_code(cxxime::UserDictKind kind, const std::string& input,
+                                      std::string* code, std::string* syllables);
     void add_lexicon_entry();
     void add_lexicon_entry_to_both();
     void handle_lexicon_batch_add_complete(LPARAM completion);

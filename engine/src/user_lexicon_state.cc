@@ -8,6 +8,8 @@
 #include <utility>
 #include <vector>
 
+#include <cxxime/pinyin_user_code.h>
+
 namespace cxxime {
 namespace {
 
@@ -122,6 +124,11 @@ void UserLexicon::sort_bucket(Snapshot* snapshot, Bucket* bucket) {
 
 void UserLexicon::insert_into_indexes(Snapshot* snapshot, EntryId id) {
     Entry& entry = snapshot->entries[id];
+    if (snapshot->scoring_profile == UserScoringProfile::kPinyin && entry.syllables.empty()) {
+        std::string normalized_code;
+        canonicalize_pinyin_user_code(entry.code, PinyinSchemeKind::kFullPinyin, nullptr,
+                                      &normalized_code, &entry.syllables);
+    }
     snapshot->exact_index[entry.code].ids.push_back(id);
     const std::size_t max_prefix = (std::min)(entry.code.size(), kMaxMaterializedPrefixLength);
     for (std::size_t length = 1; length <= max_prefix; ++length) {

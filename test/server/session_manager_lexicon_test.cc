@@ -1,30 +1,42 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
 #include "session_manager_integration_test_support.h"
-TEST(SessionIntegration, lexicon_control_mutations_and_pagination) {
-    const std::string preference_path = test_user_data_dir + "\\learning_pinyin.tsv";
-    {
-        std::ofstream output(preference_path, std::ios::binary | std::ios::trunc);
-        output << "偏好一\tpreferenceone\tpreferenceone\t2\t1\t\n"
-            << "偏好二\tpreferencetwo\tpreferencetwo\t3\t2\t\n";
-    }
-    SessionManager mgr;
-    ASSERT_TRUE(mgr.initialize(setup_test_dict()));
 
-    auto execute = [&](const cxxime::LexiconControlRequest& request,
-                       cxxime::LexiconControlResult* result) {
+namespace {
+
+class LexiconControlExecutor {
+public:
+    explicit LexiconControlExecutor(SessionManager& manager)
+        : manager_(manager) {}
+
+    bool operator()(const cxxime::LexiconControlRequest& request,
+                    cxxime::LexiconControlResult* result) const {
         std::string request_payload;
         std::string response_payload;
         return cxxime::encode_lexicon_request(request, &request_payload) &&
-               handle_lexicon_control_request(mgr, request_payload, &response_payload) &&
+               handle_lexicon_control_request(manager_, request_payload, &response_payload) &&
                cxxime::decode_lexicon_result(response_payload, result);
-    };
+    }
+
+private:
+    SessionManager& manager_;
+};
+
+} // namespace
+
+TEST(SessionIntegration, lexicon_control_validates_add_and_paginates_queries) {
+    const std::string user_path = test_user_data_dir + "\\user_pinyin.tsv";
+    DeleteFileA(user_path.c_str());
+    SessionManager mgr;
+    ASSERT_TRUE(mgr.initialize(setup_test_dict()));
+    const LexiconControlExecutor execute(mgr);
 
     cxxime::LexiconControlRequest request;
     request.operation = cxxime::LexiconOperation::kAdd;
     request.kind = cxxime::UserDictKind::PINYIN;
     request.text = "control-entry";
-    request.code = "controlcode";
+    request.code = "nihao";
+    request.syllables = "ni:hao";
     cxxime::LexiconControlResult result;
     ASSERT_TRUE(execute(request, &result));
     ASSERT_TRUE(result.succeeded);
@@ -41,6 +53,14 @@ TEST(SessionIntegration, lexicon_control_mutations_and_pagination) {
     ASSERT_EQ(result.error_code, static_cast<uint32_t>(ERROR_INVALID_DATA));
 
     request = {};
+    request.operation = cxxime::LexiconOperation::kAdd;
+    request.kind = cxxime::UserDictKind::PINYIN;
+    request.text = "control-second";
+    request.code = "shijie";
+    ASSERT_TRUE(execute(request, &result));
+    ASSERT_TRUE(result.succeeded);
+
+    request = {};
     request.operation = cxxime::LexiconOperation::kQuery;
     request.kind = cxxime::UserDictKind::PINYIN;
     request.query = "control";
@@ -48,17 +68,80 @@ TEST(SessionIntegration, lexicon_control_mutations_and_pagination) {
     request.limit = 1;
     ASSERT_TRUE(execute(request, &result));
     ASSERT_TRUE(result.succeeded);
-    ASSERT_EQ(result.query.match_total, static_cast<size_t>(1));
+    ASSERT_EQ(result.query.match_total, static_cast<size_t>(2));
     ASSERT_EQ(result.query.entries.size(), static_cast<size_t>(1));
-    ASSERT_TRUE(result.query.entries[0].text == "control-entry");
+    ASSERT_TRUE(result.query.has_more);
+    std::vector<std::pair<std::string, std::string>> page_entries = {
+        {result.query.entries[0].text, result.query.entries[0].code}};
+
+    request.offset = 1;
+    ASSERT_TRUE(execute(request, &result));
+    ASSERT_TRUE(result.succeeded);
+    ASSERT_EQ(result.query.match_total, static_cast<size_t>(2));
+    ASSERT_EQ(result.query.entries.size(), static_cast<size_t>(1));
+    ASSERT_TRUE(!result.query.has_more);
+    page_entries.push_back({result.query.entries[0].text, result.query.entries[0].code});
+    std::sort(page_entries.begin(), page_entries.end());
+    const std::vector<std::pair<std::string, std::string>> expected_entries = {
+        {"control-entry", "nihao"}, {"control-second", "shijie"}};
+    ASSERT_TRUE(page_entries == expected_entries);
+
+    DeleteFileA(user_path.c_str());
+}
+
+TEST(SessionIntegration, lexicon_control_replace_preserves_syllables) {
+    const std::string user_path = test_user_data_dir + "\\user_pinyin.tsv";
+    DeleteFileA(user_path.c_str());
+    SessionManager mgr;
+    ASSERT_TRUE(mgr.initialize(setup_test_dict()));
+    const LexiconControlExecutor execute(mgr);
+
+    cxxime::LexiconControlRequest request;
+    request.operation = cxxime::LexiconOperation::kAdd;
+    request.kind = cxxime::UserDictKind::PINYIN;
+    request.text = "control-entry";
+    request.code = "nihao";
+    request.syllables = "ni:hao";
+    cxxime::LexiconControlResult result;
+    ASSERT_TRUE(execute(request, &result));
+    ASSERT_TRUE(result.succeeded);
 
     request = {};
     request.operation = cxxime::LexiconOperation::kReplace;
     request.kind = cxxime::UserDictKind::PINYIN;
     request.old_text = "control-entry";
-    request.old_code = "controlcode";
+    request.old_code = "nihao";
     request.text = "control-replaced";
-    request.code = "controlcode";
+    request.code = "nihao";
+    ASSERT_TRUE(execute(request, &result));
+    ASSERT_TRUE(result.succeeded);
+
+    request = {};
+    request.operation = cxxime::LexiconOperation::kQuery;
+    request.kind = cxxime::UserDictKind::PINYIN;
+    request.query = "control-replaced";
+    request.limit = 10;
+    ASSERT_TRUE(execute(request, &result));
+    ASSERT_TRUE(result.succeeded);
+    ASSERT_EQ(result.query.entries.size(), static_cast<std::size_t>(1));
+    ASSERT_EQ(result.query.entries[0].syllables, "ni:hao");
+
+    DeleteFileA(user_path.c_str());
+}
+
+TEST(SessionIntegration, lexicon_control_batch_delete_is_atomic) {
+    const std::string user_path = test_user_data_dir + "\\user_pinyin.tsv";
+    DeleteFileA(user_path.c_str());
+    SessionManager mgr;
+    ASSERT_TRUE(mgr.initialize(setup_test_dict()));
+    const LexiconControlExecutor execute(mgr);
+
+    cxxime::LexiconControlRequest request;
+    request.operation = cxxime::LexiconOperation::kAdd;
+    request.kind = cxxime::UserDictKind::PINYIN;
+    request.text = "control-replaced";
+    request.code = "nihao";
+    cxxime::LexiconControlResult result;
     ASSERT_TRUE(execute(request, &result));
     ASSERT_TRUE(result.succeeded);
 
@@ -66,15 +149,14 @@ TEST(SessionIntegration, lexicon_control_mutations_and_pagination) {
     request.operation = cxxime::LexiconOperation::kAdd;
     request.kind = cxxime::UserDictKind::PINYIN;
     request.text = "control-second";
-    request.code = "controlsecond";
+    request.code = "shijie";
     ASSERT_TRUE(execute(request, &result));
     ASSERT_TRUE(result.succeeded);
 
     request = {};
     request.operation = cxxime::LexiconOperation::kDelete;
     request.kind = cxxime::UserDictKind::PINYIN;
-    request.entries = {
-        {"control-replaced", "controlcode"}, {"control-second", "INVALID"}};
+    request.entries = {{"control-replaced", "nihao"}, {"control-second", "INVALID"}};
     ASSERT_TRUE(execute(request, &result));
     ASSERT_TRUE(!result.succeeded);
     ASSERT_EQ(mgr.query_user_entries("control", cxxime::UserDictKind::PINYIN, 0, 10).match_total,
@@ -83,16 +165,32 @@ TEST(SessionIntegration, lexicon_control_mutations_and_pagination) {
     request = {};
     request.operation = cxxime::LexiconOperation::kDelete;
     request.kind = cxxime::UserDictKind::PINYIN;
-    request.entries = {
-        {"control-replaced", "controlcode"}, {"control-second", "controlsecond"}};
+    request.entries = {{"control-replaced", "nihao"}, {"control-second", "shijie"}};
     ASSERT_TRUE(execute(request, &result));
     ASSERT_TRUE(result.succeeded);
     ASSERT_EQ(mgr.query_user_entries("control", cxxime::UserDictKind::PINYIN, 0, 10).match_total,
               static_cast<std::size_t>(0));
 
-    request = {};
+    DeleteFileA(user_path.c_str());
+}
+
+TEST(SessionIntegration, lexicon_control_saves_and_deletes_candidate_preferences) {
+    const std::string user_path = test_user_data_dir + "\\user_pinyin.tsv";
+    const std::string preference_path = test_user_data_dir + "\\learning_pinyin.tsv";
+    DeleteFileA(user_path.c_str());
+    {
+        std::ofstream output(preference_path, std::ios::binary | std::ios::trunc);
+        output << "preference-one\tpreferenceone\tpreferenceone\t2\t1\t\n"
+               << "preference-two\tpreferencetwo\tpreferencetwo\t3\t2\t\n";
+    }
+    SessionManager mgr;
+    ASSERT_TRUE(mgr.initialize(setup_test_dict()));
+    const LexiconControlExecutor execute(mgr);
+
+    cxxime::LexiconControlRequest request;
     request.operation = cxxime::LexiconOperation::kSave;
     request.kind = cxxime::UserDictKind::PINYIN;
+    cxxime::LexiconControlResult result;
     ASSERT_TRUE(execute(request, &result));
     ASSERT_TRUE(result.succeeded);
 
@@ -104,7 +202,7 @@ TEST(SessionIntegration, lexicon_control_mutations_and_pagination) {
     request.operation = cxxime::LexiconOperation::kDelete;
     request.resource = cxxime::LexiconResource::kCandidatePreference;
     request.kind = cxxime::UserDictKind::PINYIN;
-    request.entries = {{"偏好一", "preferenceone"}, {"偏好二", "preferencetwo"}};
+    request.entries = {{"preference-one", "preferenceone"}, {"preference-two", "preferencetwo"}};
     ASSERT_TRUE(execute(request, &result));
     ASSERT_TRUE(result.succeeded);
 
@@ -118,46 +216,77 @@ TEST(SessionIntegration, lexicon_control_mutations_and_pagination) {
     ASSERT_TRUE(result.succeeded);
     ASSERT_EQ(result.query.match_total, static_cast<std::size_t>(0));
 
+    DeleteFileA(user_path.c_str());
+    DeleteFileA(preference_path.c_str());
+}
+
+TEST(SessionIntegration, lexicon_control_imports_user_lexicon) {
+    const std::string user_path = test_user_data_dir + "\\user_pinyin.tsv";
+    DeleteFileA(user_path.c_str());
+    SessionManager mgr;
+    ASSERT_TRUE(mgr.initialize(setup_test_dict()));
+    const LexiconControlExecutor execute(mgr);
+
     const std::string import_path = make_temp_path("control_import.tsv");
     {
         std::ofstream output(import_path, std::ios::binary | std::ios::trunc);
-        output << "control-imported\tcontrolimported\t9\n";
+        output << "control-imported\tzhongguo\t9\n";
     }
+    cxxime::LexiconControlRequest request;
     request.operation = cxxime::LexiconOperation::kImport;
     request.resource = cxxime::LexiconResource::kUserLexicon;
+    request.kind = cxxime::UserDictKind::PINYIN;
     request.source_path = import_path;
+    cxxime::LexiconControlResult result;
     ASSERT_TRUE(execute(request, &result));
     ASSERT_TRUE(result.succeeded);
-    ASSERT_EQ(mgr.query_user_entries("control-imported", cxxime::UserDictKind::PINYIN, 0, 10)
-                  .match_total,
-              static_cast<std::size_t>(1));
+    ASSERT_EQ(
+        mgr.query_user_entries("control-imported", cxxime::UserDictKind::PINYIN, 0, 10).match_total,
+        static_cast<std::size_t>(1));
     DeleteFileA(import_path.c_str());
 
     request = {};
     request.operation = cxxime::LexiconOperation::kDelete;
     request.kind = cxxime::UserDictKind::PINYIN;
-    request.entries = {{"control-imported", "controlimported"}};
+    request.entries = {{"control-imported", "zhongguo"}};
     ASSERT_TRUE(execute(request, &result));
     ASSERT_TRUE(result.succeeded);
 
-    request = {};
+    DeleteFileA(user_path.c_str());
+}
+
+TEST(SessionIntegration, lexicon_control_rejects_unsupported_resource_operation) {
+    SessionManager mgr;
+    ASSERT_TRUE(mgr.initialize(setup_test_dict()));
+    const LexiconControlExecutor execute(mgr);
+
+    cxxime::LexiconControlRequest request;
     request.operation = cxxime::LexiconOperation::kAdd;
     request.resource = cxxime::LexiconResource::kCandidatePreference;
     request.text = "unsupported";
     request.code = "unsupported";
+    cxxime::LexiconControlResult result;
     ASSERT_TRUE(execute(request, &result));
     ASSERT_TRUE(!result.succeeded);
     ASSERT_EQ(result.error_code, static_cast<uint32_t>(ERROR_NOT_SUPPORTED));
+}
 
-    request = {};
+TEST(SessionIntegration, lexicon_control_manages_disabled_system_entries) {
+    const std::string disabled_path = test_user_data_dir + "\\disabled_pinyin.tsv";
+    DeleteFileA(disabled_path.c_str());
+    SessionManager mgr;
+    ASSERT_TRUE(mgr.initialize(setup_test_dict()));
+    const LexiconControlExecutor execute(mgr);
+
+    cxxime::LexiconControlRequest request;
     request.operation = cxxime::LexiconOperation::kDisableSystemEntry;
     request.resource = cxxime::LexiconResource::kDisabledSystemLexicon;
     request.kind = cxxime::UserDictKind::PINYIN;
     request.text = "你好";
+    cxxime::LexiconControlResult result;
     ASSERT_TRUE(execute(request, &result));
     ASSERT_TRUE(result.succeeded);
 
-    const std::string disabled_path = test_user_data_dir + "\\disabled_pinyin.tsv";
     ASSERT_TRUE(SetFileAttributesA(disabled_path.c_str(), FILE_ATTRIBUTE_READONLY) != FALSE);
     request.text = "失败词";
     ASSERT_TRUE(execute(request, &result));
@@ -199,7 +328,7 @@ TEST(SessionIntegration, lexicon_control_mutations_and_pagination) {
     request.text = "你好";
     ASSERT_TRUE(execute(request, &result));
     ASSERT_TRUE(result.succeeded);
-    DeleteFileA(preference_path.c_str());
+    DeleteFileA(disabled_path.c_str());
 }
 
 TEST(SessionIntegration, candidate_order_control_updates_effective_server_order) {
@@ -214,15 +343,7 @@ TEST(SessionIntegration, candidate_order_control_updates_effective_server_order)
     ASSERT_TRUE(manager.initialize(setup_test_dict()));
     ASSERT_EQ(manager.add_user_entry(cxxime::UserDictKind::PINYIN, "manual-choice", "nihao"),
               cxxime::IPCStatus::OK);
-
-    auto execute = [&](const cxxime::LexiconControlRequest& request,
-                       cxxime::LexiconControlResult* result) {
-        std::string request_payload;
-        std::string response_payload;
-        return cxxime::encode_lexicon_request(request, &request_payload) &&
-               handle_lexicon_control_request(manager, request_payload, &response_payload) &&
-               cxxime::decode_lexicon_result(response_payload, result);
-    };
+    const LexiconControlExecutor execute(manager);
 
     cxxime::LexiconControlRequest request;
     request.operation = cxxime::LexiconOperation::kQuery;
@@ -476,26 +597,26 @@ TEST(SessionIntegration, user_lexicon_save_failure_keeps_memory_unchanged) {
     };
     const std::string user_path = test_user_data_dir + "\\user_pinyin.tsv";
     ASSERT_EQ(
-        manager.add_user_entry(cxxime::UserDictKind::PINYIN, "rollback-baseline", "rollbackcode"),
+        manager.add_user_entry(cxxime::UserDictKind::PINYIN, "rollback-baseline", "nihao"),
         cxxime::IPCStatus::OK);
     ASSERT_EQ(manager.add_user_entry(cxxime::UserDictKind::PINYIN, "rollback-second",
-                                     "rollbacksecond"),
+                                     "shijie"),
               cxxime::IPCStatus::OK);
     ASSERT_TRUE(DeleteFileA(user_path.c_str()) != FALSE);
     ASSERT_TRUE(CreateDirectoryA(user_path.c_str(), nullptr) != FALSE);
 
     ASSERT_TRUE(manager.add_user_entry(cxxime::UserDictKind::PINYIN, "rollback-added",
-                                       "rollbackadded") != cxxime::IPCStatus::OK);
+                                       "zhongguo") != cxxime::IPCStatus::OK);
     ASSERT_EQ(query("rollback-added").match_total, static_cast<std::size_t>(0));
 
     ASSERT_TRUE(manager.replace_user_entry(cxxime::UserDictKind::PINYIN, "rollback-baseline",
-                                           "rollbackcode", "rollback-replaced",
-                                           "rollbackreplaced") != cxxime::IPCStatus::OK);
+                                           "nihao", "rollback-replaced",
+                                           "shurufa") != cxxime::IPCStatus::OK);
     ASSERT_EQ(query("rollback-baseline").match_total, static_cast<std::size_t>(1));
     ASSERT_EQ(query("rollback-replaced").match_total, static_cast<std::size_t>(0));
 
     const std::vector<cxxime::LexiconEntryKey> entries = {
-        {"rollback-baseline", "rollbackcode"}, {"rollback-second", "rollbacksecond"}};
+        {"rollback-baseline", "nihao"}, {"rollback-second", "shijie"}};
     ASSERT_TRUE(manager.delete_user_entries(cxxime::UserDictKind::PINYIN, entries) !=
                 cxxime::IPCStatus::OK);
     ASSERT_EQ(query("rollback-baseline").match_total, static_cast<std::size_t>(1));
@@ -535,13 +656,21 @@ TEST(SessionIntegration, user_lexicon_import_is_atomic_and_server_owned) {
     }
 
     ASSERT_EQ(
-        manager.add_user_entry(cxxime::UserDictKind::PINYIN, "import-baseline", "importbaseline"),
+        manager.add_user_entry(cxxime::UserDictKind::PINYIN, "import-baseline", "nihao"),
         cxxime::IPCStatus::OK);
     const std::string baseline_contents = read_text_file(user_path);
     {
         std::ofstream output(invalid_source, std::ios::binary | std::ios::trunc);
         output.write("\xc3\x28", 2);
-        output << "\tvalid\t1\n";
+        output << "\tnihao\t1\n";
+    }
+    ASSERT_TRUE(manager.import_user_dict(cxxime::UserDictKind::PINYIN, invalid_source) !=
+                cxxime::IPCStatus::OK);
+    ASSERT_EQ(query("import-baseline").match_total, static_cast<std::size_t>(1));
+    ASSERT_EQ(read_text_file(user_path), baseline_contents);
+    {
+        std::ofstream output(invalid_source, std::ios::binary | std::ios::trunc);
+        output << "raw-shuangpin\tnihk\t1\n";
     }
     ASSERT_TRUE(manager.import_user_dict(cxxime::UserDictKind::PINYIN, invalid_source) !=
                 cxxime::IPCStatus::OK);
@@ -556,7 +685,7 @@ TEST(SessionIntegration, user_lexicon_import_is_atomic_and_server_owned) {
 
     {
         std::ofstream output(valid_source, std::ios::binary | std::ios::trunc);
-        output << "imported-entry\timportedcode\t7\n";
+        output << "imported-entry\tshijie\t7\n";
     }
     ASSERT_EQ(manager.import_user_dict(cxxime::UserDictKind::PINYIN, valid_source),
               cxxime::IPCStatus::OK);
@@ -566,7 +695,7 @@ TEST(SessionIntegration, user_lexicon_import_is_atomic_and_server_owned) {
 
     {
         std::ofstream output(replacement_source, std::ios::binary | std::ios::trunc);
-        output << "replacement-entry\treplacementcode\t8\n";
+        output << "replacement-entry\tzhongguo\t8\n";
     }
     HANDLE user_lock = CreateFileA(user_path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
                                    OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);

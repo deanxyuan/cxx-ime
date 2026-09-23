@@ -174,11 +174,11 @@
       ]
     },
     {
-      "id": "pinyin-user-exact-short-code-promotes",
+      "id": "pinyin-user-exact-code-promotes",
       "mode": "pinyin",
-      "input": "ddd",
+      "input": "dede",
       "setup_user_entries": [
-        { "text": "淡淡的", "code": "ddd" }
+        { "text": "淡淡的", "code": "dede" }
       ],
       "contains": [
         { "text": "淡淡的", "max_rank": 1 }
@@ -193,7 +193,7 @@
       "mode": "pinyin",
       "input": "d",
       "setup_user_entries": [
-        { "text": "淡淡的", "code": "ddd" }
+        { "text": "淡淡的", "code": "dede" }
       ],
       "min_candidates": 1,
       "forbid_top1": [
@@ -204,9 +204,9 @@
     {
       "id": "pinyin-two-letter-prefix-suppresses-long-user-word",
       "mode": "pinyin",
-      "input": "dd",
+      "input": "de",
       "setup_user_entries": [
-        { "text": "淡淡的", "code": "ddd" }
+        { "text": "淡淡的", "code": "dede" }
       ],
       "min_candidates": 1,
       "forbid_top1": [

@@ -43,7 +43,8 @@ SystemLexiconType system_lexicon_type(UserDictKind kind) {
 
 BatchAddOutcome add_batch_target(LexiconControlClient* client, LexiconQueryService* query_service,
                                  UserDictKind kind, const std::string& text,
-                                 const std::string& preferred_code) {
+                                 const std::string& preferred_code,
+                                 const std::string& preferred_syllables) {
     LexiconControlResult result;
     if (!client->query_exact_user_entries(kind, text, LEXICON_CONTROL_MAX_LIMIT, &result)) {
         return BatchAddOutcome::kFailed;
@@ -54,8 +55,10 @@ BatchAddOutcome add_batch_target(LexiconControlClient* client, LexiconQueryServi
         }
     }
     std::string code;
-    if (is_valid_user_dict_entry(text, preferred_code)) {
+    std::string syllables;
+    if (is_valid_user_dict_entry(text, preferred_code, preferred_syllables)) {
         code = preferred_code;
+        syllables = preferred_syllables;
     } else {
         std::string error;
         const auto suggestions =
@@ -70,8 +73,8 @@ BatchAddOutcome add_batch_target(LexiconControlClient* client, LexiconQueryServi
     if (code.empty()) {
         return BatchAddOutcome::kNoCode;
     }
-    return client->add_entry(kind, text, code, &result) ? BatchAddOutcome::kAdded
-                                                        : BatchAddOutcome::kFailed;
+    return client->add_entry(kind, text, code, &result, syllables) ? BatchAddOutcome::kAdded
+                                                                   : BatchAddOutcome::kFailed;
 }
 
 const wchar_t* kind_label(UserDictKind kind) {
@@ -99,11 +102,33 @@ bool target_satisfied(const BatchAddCompletion::Target& target) {
 
 } // namespace
 
+bool EditorApp::normalize_lexicon_entry_code(UserDictKind kind, const std::string& input,
+                                             std::string* code, std::string* syllables) {
+    if (kind == UserDictKind::WUBI) {
+        if (!code || !syllables || !is_valid_user_dict_code(input)) {
+            return false;
+        }
+        *code = input;
+        syllables->clear();
+        return true;
+    }
+    std::string error;
+    return lexiconQueryService_ && lexiconQueryService_->normalize_pinyin_code(
+                                       input, selected_pinyin_scheme_id(), code, syllables, &error);
+}
+
 void EditorApp::add_lexicon_entry() {
     const std::string text = edit_text_utf8(hLexiconText_);
-    const std::string code = edit_text_utf8(hLexiconCode_);
-    if (text.empty() || code.empty()) {
+    const std::string form_code = edit_text_utf8(hLexiconCode_);
+    if (text.empty() || form_code.empty()) {
         MessageBoxW(hwnd_, L"请输入词语和编码。", L"CxxIME", MB_OK | MB_ICONWARNING);
+        return;
+    }
+    std::string code;
+    std::string syllables;
+    if (!normalize_lexicon_entry_code(current_user_dict_kind(), form_code, &code, &syllables)) {
+        MessageBoxW(hwnd_, L"请输入有效的全拼、当前方案双拼或五笔编码。", L"CxxIME",
+                    MB_OK | MB_ICONWARNING);
         return;
     }
     if (selectedLexiconHasUser_ && text == wstr_to_utf8(selectedLexiconText_) &&
@@ -113,7 +138,7 @@ void EditorApp::add_lexicon_entry() {
     }
     LexiconControlClient client;
     LexiconControlResult result;
-    if (!client.add_entry(current_user_dict_kind(), text, code, &result)) {
+    if (!client.add_entry(current_user_dict_kind(), text, code, &result, syllables)) {
         MessageBoxW(hwnd_, L"新增词条失败。", L"CxxIME", MB_OK | MB_ICONERROR);
         return;
     }
@@ -127,8 +152,12 @@ void EditorApp::add_lexicon_entry_to_both() {
         MessageBoxW(hwnd_, L"请输入有效的词语。", L"CxxIME", MB_OK | MB_ICONWARNING);
         return;
     }
-    const std::string current_code = edit_text_utf8(hLexiconCode_);
-    if (!current_code.empty() && !is_valid_user_dict_entry(text, current_code)) {
+    const std::string form_code = edit_text_utf8(hLexiconCode_);
+    std::string current_code;
+    std::string current_syllables;
+    if (!form_code.empty() &&
+        !normalize_lexicon_entry_code(current_user_dict_kind(), form_code, &current_code,
+                                      &current_syllables)) {
         MessageBoxW(hwnd_, L"请输入有效的编码。", L"CxxIME", MB_OK | MB_ICONWARNING);
         return;
     }
@@ -146,22 +175,26 @@ void EditorApp::add_lexicon_entry_to_both() {
     const HWND window = hwnd_;
     const auto query_service = lexiconQueryService_;
     const auto token = lexiconBatchAddToken_;
-    std::thread([window, text, current_code, current_kind, query_service, token]() {
+    std::thread([window, text, form_code, current_code, current_syllables, current_kind,
+                 query_service, token]() {
         BatchAddCompletion completion;
         completion.token = token;
         completion.text = text;
-        completion.form_code = current_code;
+        completion.form_code = form_code;
         completion.form_kind = current_kind;
         LexiconControlClient client;
         completion.targets = {
             {UserDictKind::PINYIN,
              add_batch_target(&client, query_service.get(), UserDictKind::PINYIN, text,
                               current_kind == UserDictKind::PINYIN ? current_code
+                                                                   : std::string(),
+                              current_kind == UserDictKind::PINYIN ? current_syllables
                                                                    : std::string())},
             {UserDictKind::WUBI,
              add_batch_target(&client, query_service.get(), UserDictKind::WUBI, text,
                               current_kind == UserDictKind::WUBI ? current_code
-                                                                 : std::string())},
+                                                                 : std::string(),
+                              std::string())},
         };
         SendMessageW(window, kLexiconBatchAddCompleteMessage, 0,
                      reinterpret_cast<LPARAM>(&completion));
@@ -214,15 +247,22 @@ void EditorApp::save_lexicon_entry() {
         return;
     }
     const std::string text = edit_text_utf8(hLexiconText_);
-    const std::string code = edit_text_utf8(hLexiconCode_);
-    if (text.empty() || code.empty()) {
+    const std::string form_code = edit_text_utf8(hLexiconCode_);
+    if (text.empty() || form_code.empty()) {
         MessageBoxW(hwnd_, L"请输入词语和编码。", L"CxxIME", MB_OK | MB_ICONWARNING);
+        return;
+    }
+    std::string code;
+    std::string syllables;
+    if (!normalize_lexicon_entry_code(current_user_dict_kind(), form_code, &code, &syllables)) {
+        MessageBoxW(hwnd_, L"请输入有效的全拼、当前方案双拼或五笔编码。", L"CxxIME",
+                    MB_OK | MB_ICONWARNING);
         return;
     }
     LexiconControlClient client;
     LexiconControlResult result;
     if (!client.replace_entry(current_user_dict_kind(), wstr_to_utf8(selectedLexiconText_),
-                              wstr_to_utf8(selectedLexiconCode_), text, code, &result)) {
+                              wstr_to_utf8(selectedLexiconCode_), text, code, &result, syllables)) {
         MessageBoxW(hwnd_, L"保存修改失败，可能存在相同的用户词条。", L"CxxIME",
                     MB_OK | MB_ICONERROR);
         return;

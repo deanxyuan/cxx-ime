@@ -9,6 +9,7 @@
 #include <unordered_set>
 #include <utility>
 
+#include <cxxime/pinyin_user_code.h>
 #include <cxxime/user_dict_validation.h>
 
 #include "user_data_file.h"
@@ -61,6 +62,7 @@ std::string UserLexicon::entry_key(const std::string& text, const std::string& c
 }
 
 bool UserLexicon::parse_entries(const std::string& contents, bool reject_invalid_lines,
+                                UserScoringProfile profile, bool require_canonical_pinyin,
                                 std::vector<Entry>* entries, std::uint64_t* sequence) {
     if (!entries || !sequence) {
         return false;
@@ -86,6 +88,9 @@ bool UserLexicon::parse_entries(const std::string& contents, bool reject_invalid
             trim_trailing_space(syllables);
             valid = parse_frequency(fields[2], &frequency) &&
                     is_valid_user_dict_entry(fields[0], fields[1], syllables);
+            if (valid && require_canonical_pinyin && profile == UserScoringProfile::kPinyin) {
+                valid = is_canonical_pinyin_user_code(fields[1], syllables);
+            }
         }
         if (!valid) {
             if (reject_invalid_lines) {
@@ -115,10 +120,10 @@ bool UserLexicon::parse_entries(const std::string& contents, bool reject_invalid
     return true;
 }
 
-bool UserLexicon::validate_contents(const std::string& contents) {
+bool UserLexicon::validate_contents(const std::string& contents, UserScoringProfile profile) {
     std::vector<Entry> entries;
     std::uint64_t sequence = 0;
-    return parse_entries(contents, true, &entries, &sequence);
+    return parse_entries(contents, true, profile, true, &entries, &sequence);
 }
 
 std::string UserLexicon::serialize_entries(const std::vector<Entry>& entries) {
@@ -138,7 +143,9 @@ std::string UserLexicon::serialize_entries(const std::vector<Entry>& entries) {
 
 bool UserLexicon::add_to_snapshot(Snapshot* snapshot, const std::string& text,
                                   const std::string& code, const std::string& syllables) {
-    if (!snapshot || !is_valid_user_dict_entry(text, code, syllables)) {
+    if (!snapshot || !is_valid_user_dict_entry(text, code, syllables) ||
+        (snapshot->scoring_profile == UserScoringProfile::kPinyin &&
+         !is_canonical_pinyin_user_code(code, syllables))) {
         return false;
     }
     const std::string key = entry_key(text, code);
@@ -183,8 +190,11 @@ bool UserLexicon::delete_from_snapshot(Snapshot* snapshot,
 
 bool UserLexicon::replace_in_snapshot(Snapshot* snapshot, const std::string& old_text,
                                       const std::string& old_code, const std::string& new_text,
-                                      const std::string& new_code) {
-    if (!snapshot || !is_valid_user_dict_entry(new_text, new_code)) {
+                                      const std::string& new_code,
+                                      const std::string& syllables) {
+    if (!snapshot || !is_valid_user_dict_entry(new_text, new_code, syllables) ||
+        (snapshot->scoring_profile == UserScoringProfile::kPinyin &&
+         !is_canonical_pinyin_user_code(new_code, syllables))) {
         return false;
     }
     Entry* target = nullptr;
@@ -202,10 +212,11 @@ bool UserLexicon::replace_in_snapshot(Snapshot* snapshot, const std::string& old
         return false;
     }
     target->text = new_text;
-    if (target->code != new_code) {
-        target->syllables.clear();
-    }
+    const bool preserve_syllables = target->code == new_code && syllables.empty();
     target->code = new_code;
+    if (!preserve_syllables) {
+        target->syllables = syllables;
+    }
     target->sequence = ++snapshot->sequence;
     target->abbr_code.clear();
     target->mixed_keys.clear();
@@ -221,8 +232,45 @@ bool UserLexicon::load(const std::string& path) {
 
     std::vector<Entry> entries;
     std::uint64_t sequence = 0;
-    if (!parse_entries(contents, false, &entries, &sequence)) {
+    UserScoringProfile profile;
+    {
+        std::shared_lock<std::shared_mutex> lock(mutex_);
+        profile = scoring_profile_;
+    }
+    if (!parse_entries(contents, false, profile, false, &entries, &sequence)) {
         return false;
+    }
+    if (profile == UserScoringProfile::kPinyin) {
+        const bool requires_migration = !validate_contents(contents, profile);
+        std::vector<Entry> canonical_entries;
+        canonical_entries.reserve(entries.size());
+        for (auto& entry : entries) {
+            if (is_canonical_pinyin_user_code(entry.code, entry.syllables)) {
+                canonical_entries.push_back(std::move(entry));
+            }
+        }
+        if (requires_migration) {
+            const std::string quarantine_path = path + ".noncanonical";
+            std::string quarantine_contents;
+            if (!read_user_data_file(quarantine_path, &quarantine_contents)) {
+                return false;
+            }
+            const bool already_archived =
+                quarantine_contents.size() >= contents.size() &&
+                quarantine_contents.compare(quarantine_contents.size() - contents.size(),
+                                            contents.size(), contents) == 0;
+            if (!already_archived) {
+                if (!quarantine_contents.empty() && quarantine_contents.back() != '\n') {
+                    quarantine_contents.push_back('\n');
+                }
+                quarantine_contents.append(contents);
+            }
+            if (!write_user_data_file_atomically(quarantine_path, quarantine_contents) ||
+                !write_user_data_file_atomically(path, serialize_entries(canonical_entries))) {
+                return false;
+            }
+        }
+        entries = std::move(canonical_entries);
     }
 
     Snapshot next;
@@ -289,10 +337,11 @@ bool UserLexicon::delete_entries(const std::vector<LexiconEntryKey>& entries) {
 }
 
 bool UserLexicon::replace_entry(const std::string& old_text, const std::string& old_code,
-                                const std::string& new_text, const std::string& new_code) {
+                                const std::string& new_text, const std::string& new_code,
+                                const std::string& syllables) {
     std::lock_guard<std::mutex> transaction_lock(transaction_mutex_);
     Snapshot next = snapshot();
-    if (!replace_in_snapshot(&next, old_text, old_code, new_text, new_code)) {
+    if (!replace_in_snapshot(&next, old_text, old_code, new_text, new_code, syllables)) {
         return false;
     }
     publish_snapshot(prepare_snapshot(std::move(next)), true);
@@ -342,7 +391,9 @@ bool UserLexicon::add_entry_and_save(const std::string& text, const std::string&
                                      const std::string& syllables) {
     std::lock_guard<std::mutex> transaction_lock(transaction_mutex_);
     Snapshot next = snapshot();
-    if (!is_valid_user_dict_entry(text, code, syllables)) {
+    if (!is_valid_user_dict_entry(text, code, syllables) ||
+        (next.scoring_profile == UserScoringProfile::kPinyin &&
+         !is_canonical_pinyin_user_code(code, syllables))) {
         return false;
     }
     const std::string key = entry_key(text, code);
@@ -363,10 +414,11 @@ bool UserLexicon::delete_entries_and_save(const std::vector<LexiconEntryKey>& en
 }
 
 bool UserLexicon::replace_entry_and_save(const std::string& old_text, const std::string& old_code,
-                                         const std::string& new_text, const std::string& new_code) {
+                                         const std::string& new_text, const std::string& new_code,
+                                         const std::string& syllables) {
     std::lock_guard<std::mutex> transaction_lock(transaction_mutex_);
     Snapshot next = snapshot();
-    return replace_in_snapshot(&next, old_text, old_code, new_text, new_code) &&
+    return replace_in_snapshot(&next, old_text, old_code, new_text, new_code, syllables) &&
            persist_snapshot(std::move(next));
 }
 
@@ -379,7 +431,12 @@ bool UserLexicon::import_file(const std::string& source_path) {
 
     std::vector<Entry> imported_entries;
     std::uint64_t imported_sequence = 0;
-    if (!parse_entries(contents, true, &imported_entries, &imported_sequence)) {
+    UserScoringProfile profile;
+    {
+        std::shared_lock<std::shared_mutex> lock(mutex_);
+        profile = scoring_profile_;
+    }
+    if (!parse_entries(contents, true, profile, true, &imported_entries, &imported_sequence)) {
         return false;
     }
     Snapshot next;
@@ -416,7 +473,7 @@ bool UserLexicon::merge_contents_and_save(const std::string& imported,
     }
     std::vector<Entry> entries;
     std::uint64_t sequence = 0;
-    if (!parse_entries(merged.contents, true, &entries, &sequence)) {
+    if (!parse_entries(merged.contents, true, current.scoring_profile, true, &entries, &sequence)) {
         return false;
     }
     current.entries = std::move(entries);

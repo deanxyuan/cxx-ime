@@ -1,7 +1,7 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
-#include <cstdio>
 #include <algorithm>
+#include <cstdio>
 #include <fstream>
 #include <string>
 #include <tuple>
@@ -17,6 +17,7 @@
 #include <cxxime/spellings_index.h>
 #include <cxxime/syllabifier.h>
 #include <cxxime/translator.h>
+#include <cxxime/user_lexicon.h>
 #include <cxxime/wubi_translator.h>
 
 #include "support/testutil.h"
@@ -157,16 +158,16 @@ TEST(UserDataSeparation, exact_text_query_does_not_return_prefix_or_code_matches
     const std::string user_path = make_temp_path("ude");
     cxxime::Dict dictionary;
     ASSERT_TRUE(dictionary.load_user_dict(user_path));
-    ASSERT_TRUE(dictionary.add_user_entry("target", "codea"));
-    ASSERT_TRUE(dictionary.add_user_entry("target-long", "target"));
-    ASSERT_TRUE(dictionary.add_user_entry("other", "target"));
+    ASSERT_TRUE(dictionary.add_user_entry("nihao", "ceshi"));
+    ASSERT_TRUE(dictionary.add_user_entry("nihao-long", "shuru"));
+    ASSERT_TRUE(dictionary.add_user_entry("other", "nihao"));
 
     std::size_t total = 0;
-    const auto entries = dictionary.query_user_entries("target", 0, 16, &total, true);
+    const auto entries = dictionary.query_user_entries("nihao", 0, 16, &total, true);
     ASSERT_EQ(total, static_cast<std::size_t>(1));
     ASSERT_EQ(entries.size(), static_cast<std::size_t>(1));
-    ASSERT_EQ(entries.front().text, "target");
-    ASSERT_EQ(entries.front().code, "codea");
+    ASSERT_EQ(entries.front().text, "nihao");
+    ASSERT_EQ(entries.front().code, "ceshi");
 
     dictionary.close();
     DeleteFileA(user_path.c_str());
@@ -177,8 +178,8 @@ TEST(UserDataSeparation, persisted_add_is_idempotent) {
     cxxime::Dict dictionary;
     ASSERT_TRUE(dictionary.load_user_dict(user_path));
 
-    ASSERT_TRUE(dictionary.add_user_entry_and_save("target", "targetcode"));
-    ASSERT_TRUE(dictionary.add_user_entry_and_save("target", "targetcode"));
+    ASSERT_TRUE(dictionary.add_user_entry_and_save("target", "nihao"));
+    ASSERT_TRUE(dictionary.add_user_entry_and_save("target", "nihao"));
 
     std::size_t total = 0;
     const auto entries = dictionary.query_user_entries("target", 0, 16, &total, true);
@@ -333,7 +334,7 @@ TEST(UserDataSeparation, user_lexicon_rejects_non_current_column_counts) {
         std::ofstream output(user_path, std::ios::binary | std::ios::trunc);
         output << "too-few\tfew\n";
         output << "future\tftr\t8\tfu:ture\textra\n";
-        output << "current\tcur\t7\n";
+        output << "current\tnihao\t7\n";
     }
 
     cxxime::Dict dictionary;
@@ -344,6 +345,31 @@ TEST(UserDataSeparation, user_lexicon_rejects_non_current_column_counts) {
     ASSERT_EQ(entries[0].text, "current");
     dictionary.close();
     DeleteFileA(user_path.c_str());
+}
+
+TEST(UserDataSeparation, load_quarantines_noncanonical_pinyin_entries) {
+    const std::string user_path = make_temp_path("udm");
+    const std::string quarantine_path = user_path + ".noncanonical";
+    {
+        std::ofstream output(user_path, std::ios::binary | std::ios::trunc);
+        output << "canonical\tnihao\t2\tni:hao\n";
+        output << "unparsed-old-row\ttoo-few\n";
+        output << "legacy-double\tnihk\t3\n";
+    }
+
+    cxxime::Dict dictionary;
+    ASSERT_TRUE(dictionary.load_user_dict(user_path));
+    ASSERT_EQ(dictionary.user_entry_count(), static_cast<std::size_t>(1));
+    ASSERT_EQ(dictionary.query_user_entries("", 0, 10).front().text, "canonical");
+    ASSERT_TRUE(read_file(user_path).find("legacy-double") == std::string::npos);
+    ASSERT_TRUE(read_file(quarantine_path).find("legacy-double\tnihk\t3") != std::string::npos);
+    ASSERT_TRUE(read_file(quarantine_path).find("unparsed-old-row\ttoo-few") != std::string::npos);
+    ASSERT_TRUE(cxxime::UserLexicon::validate_contents(read_file(user_path),
+                                                       cxxime::UserScoringProfile::kPinyin));
+
+    dictionary.close();
+    DeleteFileA(user_path.c_str());
+    DeleteFileA(quarantine_path.c_str());
 }
 
 TEST(UserDataSeparation, replacing_code_removes_stale_syllable_indexes) {
@@ -376,12 +402,12 @@ TEST(UserDataSeparation, user_lexicon_rejects_invalid_text_codes_and_syllables) 
     cxxime::Dict dictionary;
     ASSERT_TRUE(dictionary.load_user_dict(user_path));
 
-    ASSERT_TRUE(!dictionary.add_user_entry(std::string("\xc3\x28", 2), "valid"));
+    ASSERT_TRUE(!dictionary.add_user_entry(std::string("\xc3\x28", 2), "nihao"));
     ASSERT_TRUE(!dictionary.add_user_entry("uppercase", "ABC"));
     ASSERT_TRUE(!dictionary.add_user_entry("numeric", "abc1"));
     ASSERT_TRUE(!dictionary.add_user_entry("space", "ab c"));
-    ASSERT_TRUE(!dictionary.add_user_entry("bad-syllables", "abc", "a::bc"));
-    ASSERT_TRUE(dictionary.add_user_entry("valid-entry", "abc", "a:bc"));
+    ASSERT_TRUE(!dictionary.add_user_entry("bad-syllables", "xian", "xi::an"));
+    ASSERT_TRUE(dictionary.add_user_entry("valid-entry", "xian", "xi:an"));
     ASSERT_EQ(dictionary.user_entry_count(), static_cast<std::size_t>(1));
 
     dictionary.close();
@@ -542,20 +568,23 @@ TEST(UserDataSeparation, deep_manual_prefix_preference_uses_candidate_full_code)
 
     cxxime::Dict dictionary;
     ASSERT_TRUE(dictionary.open(dictionary_path, user_path));
-    for (int index = 0; index < 20; ++index) {
-        const std::string code = "aa" + std::string(1, static_cast<char>('a' + index));
-        ASSERT_TRUE(dictionary.add_user_entry("manual-" + std::to_string(index), code));
+    const std::vector<std::string> codes = {"niba",   "nibai",  "niban",  "nibang", "nibao",
+                                            "nibei",  "niben",  "nibeng", "nibi",   "nibian",
+                                            "nibiao", "nibie",  "nibin",  "nibing", "nibo",
+                                            "nibu",   "nida",   "nidai",  "nidan",  "nidang"};
+    for (std::size_t index = 0; index < codes.size(); ++index) {
+        ASSERT_TRUE(dictionary.add_user_entry("manual-" + std::to_string(index), codes[index]));
     }
-    auto unranked = dictionary.lookup("aa", 20);
+    auto unranked = dictionary.lookup("ni", 20);
     ASSERT_EQ(unranked.size(), static_cast<std::size_t>(20));
     cxxime::Candidate preferred = unranked[14];
     preferred.source = cxxime::CandidateSource::kWubi;
-    ASSERT_TRUE(dictionary.record_candidate_preference(preferred, "aa"));
+    ASSERT_TRUE(dictionary.record_candidate_preference(preferred, "ni"));
 
     cxxime::WubiTranslator translator;
     translator.set_dict(&dictionary);
     translator.set_candidate_learning_enabled(true);
-    const auto first_page = translator.translate_page("aa", 0, 5);
+    const auto first_page = translator.translate_page("ni", 0, 5);
     ASSERT_EQ(first_page.candidates[0].text, preferred.text);
 
     dictionary.close();

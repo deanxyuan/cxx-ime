@@ -13,10 +13,10 @@ public:
     PinyinSegmentor();
     std::vector<std::vector<std::string>> segment(const std::string& pinyin);
     std::vector<std::string> segment_best(const std::string& pinyin);
+    bool is_syllable(const std::string& syllable) const;
 
 private:
     std::vector<std::string> syllables_;
-    bool is_syllable(const std::string& s) const;
 };
 
 } // namespace cxxime

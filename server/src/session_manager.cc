@@ -81,7 +81,9 @@ bool known_user_data_file(const std::string& name) {
 
 bool valid_user_data_file_contents(const std::string& name, const std::string& contents) {
     if (name == "user_pinyin.tsv" || name == "user_wubi.tsv") {
-        return cxxime::UserLexicon::validate_contents(contents);
+        return cxxime::UserLexicon::validate_contents(
+            contents, name == "user_wubi.tsv" ? cxxime::UserScoringProfile::kWubi
+                                              : cxxime::UserScoringProfile::kPinyin);
     }
     if (name == "learning_pinyin.tsv" || name == "learning_wubi.tsv") {
         return cxxime::CandidatePreference::validate_contents(contents);
@@ -850,13 +852,14 @@ void apply_resource_snapshot(SessionEntry& entry, const SharedResourceSnapshot& 
 
 cxxime::IPCStatus SharedResources::add_user_entry(cxxime::UserDictKind kind,
                                                   const std::string& text,
-                                                  const std::string& code) {
+                                                  const std::string& code,
+                                                  const std::string& syllables) {
     if (text.empty() || code.empty())
         return cxxime::IPCStatus::ERR_UNKNOWN_COMMAND;
     auto dict = dict_for_kind(kind);
     if (!dict || !dict->is_open())
         return cxxime::IPCStatus::ERR_ENGINE_NOT_INITIALIZED;
-    if (!dict->add_user_entry_and_save(text, code))
+    if (!dict->add_user_entry_and_save(text, code, syllables))
         return cxxime::IPCStatus::ERR_UNKNOWN_COMMAND;
     return cxxime::IPCStatus::OK;
 }
@@ -1136,13 +1139,14 @@ cxxime::IPCStatus SharedResources::replace_user_entry(cxxime::UserDictKind kind,
                                                       const std::string& old_text,
                                                       const std::string& old_code,
                                                       const std::string& new_text,
-                                                      const std::string& new_code) {
+                                                      const std::string& new_code,
+                                                      const std::string& syllables) {
     if (old_text.empty() || new_text.empty() || new_code.empty())
         return cxxime::IPCStatus::ERR_UNKNOWN_COMMAND;
     auto dict = dict_for_kind(kind);
     if (!dict || !dict->is_open())
         return cxxime::IPCStatus::ERR_ENGINE_NOT_INITIALIZED;
-    if (!dict->replace_user_entry_and_save(old_text, old_code, new_text, new_code))
+    if (!dict->replace_user_entry_and_save(old_text, old_code, new_text, new_code, syllables))
         return cxxime::IPCStatus::ERR_UNKNOWN_COMMAND;
     return cxxime::IPCStatus::OK;
 }
@@ -1752,9 +1756,10 @@ ProcessKeyResult SessionManager::focus_out(uint32_t id) {
 
 cxxime::IPCStatus SessionManager::add_user_entry(cxxime::UserDictKind kind,
                                                  const std::string& text,
-                                                 const std::string& code) {
+                                                 const std::string& code,
+                                                 const std::string& syllables) {
     std::lock_guard<std::mutex> reload_lock(reload_mutex_);
-    return shared_.add_user_entry(kind, text, code);
+    return shared_.add_user_entry(kind, text, code, syllables);
 }
 
 cxxime::UserDictQueryResult SessionManager::query_user_entries(
@@ -1786,9 +1791,10 @@ cxxime::IPCStatus SessionManager::replace_user_entry(cxxime::UserDictKind kind,
                                                      const std::string& old_text,
                                                      const std::string& old_code,
                                                      const std::string& new_text,
-                                                     const std::string& new_code) {
+                                                     const std::string& new_code,
+                                                     const std::string& syllables) {
     std::lock_guard<std::mutex> reload_lock(reload_mutex_);
-    return shared_.replace_user_entry(kind, old_text, old_code, new_text, new_code);
+    return shared_.replace_user_entry(kind, old_text, old_code, new_text, new_code, syllables);
 }
 
 cxxime::IPCStatus SessionManager::import_user_dict(cxxime::UserDictKind kind,

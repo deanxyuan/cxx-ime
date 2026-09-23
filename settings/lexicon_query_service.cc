@@ -3,6 +3,10 @@
 #include "lexicon_query_service.h"
 
 #include <cxxime/data_path.h>
+#include <cxxime/pinyin_scheme.h>
+#include <cxxime/pinyin_user_code.h>
+#include <cxxime/spellings_index.h>
+#include <cxxime/syllabifier.h>
 
 namespace cxxime {
 namespace settings {
@@ -86,6 +90,36 @@ std::vector<std::string> LexiconQueryService::suggest_codes(SystemLexiconType ty
         return {};
     }
     return suggestions;
+}
+
+bool LexiconQueryService::normalize_pinyin_code(std::string_view input, std::string_view scheme_id,
+                                                std::string* code, std::string* syllables,
+                                                std::string* error) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto& scheme = resolve_pinyin_scheme(scheme_id);
+    if (scheme.kind == PinyinSchemeKind::kFullPinyin) {
+        const bool normalized =
+            canonicalize_pinyin_user_code(input, scheme.kind, nullptr, code, syllables);
+        if (error) {
+            *error = normalized ? std::string{} : "Invalid canonical Pinyin code";
+        }
+        return normalized;
+    }
+
+    SpellingsIndex spellings;
+    if (!spellings.load(data_path(scheme.spelling_filename))) {
+        if (error) {
+            *error = "Unable to load the selected Shuangpin scheme";
+        }
+        return false;
+    }
+    const Syllabifier syllabifier(spellings);
+    const bool normalized =
+        canonicalize_pinyin_user_code(input, scheme.kind, &syllabifier, code, syllables);
+    if (error) {
+        *error = normalized ? std::string{} : "Invalid or ambiguous Shuangpin code";
+    }
+    return normalized;
 }
 
 bool LexiconQueryService::ensure_open(SystemLexiconType type) {

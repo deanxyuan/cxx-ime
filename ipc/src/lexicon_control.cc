@@ -248,6 +248,9 @@ bool encode_lexicon_request(const LexiconControlRequest& request, std::string* p
         case LexiconOperation::kAdd:
             object["text"] = request.text;
             object["code"] = request.code;
+            if (!request.syllables.empty()) {
+                object["syllables"] = request.syllables;
+            }
             break;
         case LexiconOperation::kDelete:
             if (request.entries.empty() || request.entries.size() > LEXICON_CONTROL_MAX_LIMIT) {
@@ -270,6 +273,9 @@ bool encode_lexicon_request(const LexiconControlRequest& request, std::string* p
             object["old_code"] = request.old_code;
             object["text"] = request.text;
             object["code"] = request.code;
+            if (!request.syllables.empty()) {
+                object["syllables"] = request.syllables;
+            }
             break;
         case LexiconOperation::kImport:
             object["source_path"] = request.source_path;
@@ -333,11 +339,15 @@ bool decode_lexicon_request(const std::string& payload, LexiconControlRequest* r
                 break;
             case LexiconOperation::kAdd:
                 if (!object.contains("text") || !object["text"].is_string() ||
-                    !object.contains("code") || !object["code"].is_string()) {
+                    !object.contains("code") || !object["code"].is_string() ||
+                    (object.contains("syllables") && !object["syllables"].is_string())) {
                     return false;
                 }
                 parsed.text = object["text"].get<std::string>();
                 parsed.code = object["code"].get<std::string>();
+                if (object.contains("syllables")) {
+                    parsed.syllables = object["syllables"].get<std::string>();
+                }
                 break;
             case LexiconOperation::kDelete:
                 if (!object.contains("entries") || !object["entries"].is_array() ||
@@ -378,13 +388,17 @@ bool decode_lexicon_request(const std::string& payload, LexiconControlRequest* r
                 if (!object.contains("old_text") || !object["old_text"].is_string() ||
                     !object.contains("old_code") || !object["old_code"].is_string() ||
                     !object.contains("text") || !object["text"].is_string() ||
-                    !object.contains("code") || !object["code"].is_string()) {
+                    !object.contains("code") || !object["code"].is_string() ||
+                    (object.contains("syllables") && !object["syllables"].is_string())) {
                     return false;
                 }
                 parsed.old_text = object["old_text"].get<std::string>();
                 parsed.old_code = object["old_code"].get<std::string>();
                 parsed.text = object["text"].get<std::string>();
                 parsed.code = object["code"].get<std::string>();
+                if (object.contains("syllables")) {
+                    parsed.syllables = object["syllables"].get<std::string>();
+                }
                 break;
             case LexiconOperation::kImport:
                 if (!object.contains("source_path") || !object["source_path"].is_string() ||
@@ -621,26 +635,14 @@ bool LexiconControlClient::query(LexiconResource resource, UserDictKind kind,
 bool LexiconControlClient::add_entry(UserDictKind kind, const std::string& text,
                                       const std::string& code,
                                       LexiconControlResult* result) const {
-    LexiconControlRequest request;
-    request.operation = LexiconOperation::kAdd;
-    request.kind = kind;
-    request.text = text;
-    request.code = code;
-    return execute(request, result);
+    return add_entry(kind, text, code, result, {});
 }
 
 bool LexiconControlClient::replace_entry(UserDictKind kind, const std::string& old_text,
                                           const std::string& old_code, const std::string& new_text,
                                           const std::string& new_code,
                                           LexiconControlResult* result) const {
-    LexiconControlRequest request;
-    request.operation = LexiconOperation::kReplace;
-    request.kind = kind;
-    request.old_text = old_text;
-    request.old_code = old_code;
-    request.text = new_text;
-    request.code = new_code;
-    return execute(request, result);
+    return replace_entry(kind, old_text, old_code, new_text, new_code, result, {});
 }
 
 bool LexiconControlClient::delete_entries(UserDictKind kind,
@@ -778,6 +780,33 @@ bool LexiconControlClient::clear_candidate_order(UserDictKind kind, const std::s
     request.resource = LexiconResource::kManualCandidateOrder;
     request.code = code;
     request.expected_version = expected_version;
+    return execute(request, result);
+}
+
+bool LexiconControlClient::add_entry(UserDictKind kind, const std::string& text,
+                                     const std::string& code, LexiconControlResult* result,
+                                     const std::string& syllables) const {
+    LexiconControlRequest request;
+    request.operation = LexiconOperation::kAdd;
+    request.kind = kind;
+    request.text = text;
+    request.code = code;
+    request.syllables = syllables;
+    return execute(request, result);
+}
+
+bool LexiconControlClient::replace_entry(UserDictKind kind, const std::string& old_text,
+                                         const std::string& old_code, const std::string& new_text,
+                                         const std::string& new_code, LexiconControlResult* result,
+                                         const std::string& syllables) const {
+    LexiconControlRequest request;
+    request.operation = LexiconOperation::kReplace;
+    request.kind = kind;
+    request.old_text = old_text;
+    request.old_code = old_code;
+    request.text = new_text;
+    request.code = new_code;
+    request.syllables = syllables;
     return execute(request, result);
 }
 

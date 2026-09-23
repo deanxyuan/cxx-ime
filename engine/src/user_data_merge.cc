@@ -98,7 +98,9 @@ serialize_candidate_orders(const std::map<std::string, std::vector<std::string>>
 bool valid_line(const std::string& file_name, const std::string& line) {
     const std::string contents = line + '\n';
     if (file_name == "user_pinyin.tsv" || file_name == "user_wubi.tsv") {
-        return UserLexicon::validate_contents(contents);
+        return UserLexicon::validate_contents(
+            contents, file_name == "user_wubi.tsv" ? UserScoringProfile::kWubi
+                                                  : UserScoringProfile::kPinyin);
     }
     if (file_name == "learning_pinyin.tsv" || file_name == "learning_wubi.tsv") {
         return CandidatePreference::validate_contents(contents);
@@ -114,7 +116,9 @@ bool valid_line(const std::string& file_name, const std::string& line) {
 
 bool valid_contents(const std::string& file_name, const std::string& contents) {
     if (file_name == "user_pinyin.tsv" || file_name == "user_wubi.tsv") {
-        return UserLexicon::validate_contents(contents);
+        return UserLexicon::validate_contents(
+            contents, file_name == "user_wubi.tsv" ? UserScoringProfile::kWubi
+                                                  : UserScoringProfile::kPinyin);
     }
     if (file_name == "learning_pinyin.tsv" || file_name == "learning_wubi.tsv") {
         return CandidatePreference::validate_contents(contents);

@@ -16,6 +16,7 @@
 #include <cxxime/input_limits.h>
 #include <cxxime/key_event.h>
 #include <cxxime/pinyin_scheme.h>
+#include <cxxime/pinyin_user_code.h>
 #include <cxxime/query_trace.h>
 #include <cxxime/spellings_index.h>
 #include <cxxime/syllabifier.h>
@@ -267,9 +268,38 @@ TEST(Shuangpin, user_lexicon_uses_the_shared_full_pinyin_key) {
     ShuangpinFixture fixture;
     ASSERT_TRUE(fixture.initialize());
     ASSERT_TRUE(fixture.dict.add_user_entry("拟好", "nihao", "ni:hao"));
+    ASSERT_TRUE(!fixture.dict.add_user_entry("不可达", "nihk"));
 
     fixture.type("nihk");
     ASSERT_TRUE(fixture.find("拟好", 4) != nullptr);
+}
+
+TEST(Shuangpin, user_code_normalization_accepts_canonical_pinyin_and_complete_shuangpin) {
+    ShuangpinFixture fixture;
+    ASSERT_TRUE(fixture.initialize());
+    ASSERT_TRUE(cxxime::is_canonical_pinyin_user_code("nihao", "ni:hao"));
+    ASSERT_TRUE(!cxxime::is_canonical_pinyin_user_code("nihk"));
+
+    std::string code;
+    std::string syllables;
+    ASSERT_TRUE(cxxime::canonicalize_pinyin_user_code("nihao", cxxime::PinyinSchemeKind::kShuangpin,
+                                                      fixture.syllabifier.get(), &code,
+                                                      &syllables));
+    ASSERT_EQ(code, "nihao");
+    ASSERT_TRUE(syllables.empty());
+
+    ASSERT_TRUE(cxxime::canonicalize_pinyin_user_code("nihk", cxxime::PinyinSchemeKind::kShuangpin,
+                                                      fixture.syllabifier.get(), &code,
+                                                      &syllables));
+    ASSERT_EQ(code, "nihao");
+    ASSERT_EQ(syllables, "ni:hao");
+
+    ASSERT_TRUE(cxxime::canonicalize_pinyin_user_code(
+        "y;", cxxime::PinyinSchemeKind::kShuangpin, fixture.syllabifier.get(), &code, &syllables));
+    ASSERT_EQ(code, "ying");
+    ASSERT_EQ(syllables, "ying");
+    ASSERT_TRUE(!cxxime::canonicalize_pinyin_user_code(
+        "nih", cxxime::PinyinSchemeKind::kShuangpin, fixture.syllabifier.get(), &code, &syllables));
 }
 
 TEST(Shuangpin, mixed_mode_reuses_the_pinyin_decoder) {

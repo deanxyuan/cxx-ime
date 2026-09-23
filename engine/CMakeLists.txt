@@ -8,6 +8,7 @@ add_library(cxxime-engine STATIC
     src/pinyin_segment_paths.cc
     src/pinyin_segmentor.cc
     src/pinyin_scheme.cc
+    src/pinyin_user_code.cc
     src/dict.cc
     src/dict_user_data.cc
     src/dict_span_query.cc

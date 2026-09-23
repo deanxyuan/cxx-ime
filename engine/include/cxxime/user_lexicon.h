@@ -31,19 +31,21 @@ class UserLexicon {
 public:
     bool load(const std::string& path);
     bool save();
-    static bool validate_contents(const std::string& contents);
+    static bool validate_contents(const std::string& contents, UserScoringProfile profile);
 
     void set_scoring_profile(UserScoringProfile profile);
     bool add_entry(const std::string& text, const std::string& code,
                    const std::string& syllables = {});
     bool delete_entries(const std::vector<LexiconEntryKey>& entries);
     bool replace_entry(const std::string& old_text, const std::string& old_code,
-                       const std::string& new_text, const std::string& new_code);
+                       const std::string& new_text, const std::string& new_code,
+                       const std::string& syllables = {});
     bool add_entry_and_save(const std::string& text, const std::string& code,
                             const std::string& syllables = {});
     bool delete_entries_and_save(const std::vector<LexiconEntryKey>& entries);
     bool replace_entry_and_save(const std::string& old_text, const std::string& old_code,
-                                const std::string& new_text, const std::string& new_code);
+                                const std::string& new_text, const std::string& new_code,
+                                const std::string& syllables = {});
     bool import_file(const std::string& source_path);
     bool merge_contents_and_save(const std::string& imported, UserDataMergeResult* result);
 
@@ -105,6 +107,7 @@ private:
 
     static std::string entry_key(const std::string& text, const std::string& code);
     static bool parse_entries(const std::string& contents, bool reject_invalid_lines,
+                              UserScoringProfile profile, bool require_canonical_pinyin,
                               std::vector<Entry>* entries, std::uint64_t* sequence);
     static std::string serialize_entries(const std::vector<Entry>& entries);
     static bool add_to_snapshot(Snapshot* snapshot, const std::string& text,
@@ -113,7 +116,7 @@ private:
                                      const std::vector<LexiconEntryKey>& entries);
     static bool replace_in_snapshot(Snapshot* snapshot, const std::string& old_text,
                                     const std::string& old_code, const std::string& new_text,
-                                    const std::string& new_code);
+                                    const std::string& new_code, const std::string& syllables);
     static Snapshot prepare_snapshot(Snapshot snapshot);
     static void sort_bucket(Snapshot* snapshot, Bucket* bucket);
     static void insert_into_indexes(Snapshot* snapshot, EntryId id);

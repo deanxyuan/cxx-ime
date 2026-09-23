@@ -35,12 +35,13 @@ void apply_status(cxxime::IPCStatus status, cxxime::LexiconControlResult* result
     result->error_code = lexicon_error(status);
 }
 
-std::uint32_t validate_user_entry(const std::string& text, const std::string& code) {
+std::uint32_t validate_user_entry(const std::string& text, const std::string& code,
+                                  const std::string& syllables = {}) {
     if (text.size() >= cxxime::kCandidateTextCapacity ||
         code.size() > cxxime::kMaxInputCodeLength) {
         return ERROR_BUFFER_OVERFLOW;
     }
-    if (!cxxime::is_valid_user_dict_entry(text, code)) {
+    if (!cxxime::is_valid_user_dict_entry(text, code, syllables)) {
         return ERROR_INVALID_DATA;
     }
     return ERROR_SUCCESS;
@@ -77,9 +78,10 @@ bool handle_lexicon_control_request(SessionManager& session_manager,
                 result.error_code = ERROR_NOT_SUPPORTED;
                 break;
             }
-            result.error_code = validate_user_entry(request.text, request.code);
+            result.error_code = validate_user_entry(request.text, request.code, request.syllables);
             if (result.error_code == ERROR_SUCCESS) {
-                apply_status(session_manager.add_user_entry(request.kind, request.text, request.code),
+                apply_status(session_manager.add_user_entry(request.kind, request.text,
+                                                            request.code, request.syllables),
                              &result);
             }
             break;
@@ -90,13 +92,14 @@ bool handle_lexicon_control_request(SessionManager& session_manager,
             }
             result.error_code = validate_user_entry(request.old_text, request.old_code);
             if (result.error_code == ERROR_SUCCESS) {
-                result.error_code = validate_user_entry(request.text, request.code);
+                result.error_code =
+                    validate_user_entry(request.text, request.code, request.syllables);
             }
             if (result.error_code == ERROR_SUCCESS) {
                 apply_status(session_manager.replace_user_entry(request.kind, request.old_text,
                                                                 request.old_code, request.text,
-                                                                request.code),
-                                &result);
+                                                                request.code, request.syllables),
+                             &result);
             }
             break;
         case cxxime::LexiconOperation::kDelete:

@@ -62,8 +62,9 @@ bool Dict::delete_user_entries(const std::vector<LexiconEntryKey>& entries) {
 }
 
 bool Dict::replace_user_entry(const std::string& old_text, const std::string& old_code,
-                              const std::string& new_text, const std::string& new_code) {
-    return user_lexicon_->replace_entry(old_text, old_code, new_text, new_code);
+                              const std::string& new_text, const std::string& new_code,
+                              const std::string& syllables) {
+    return user_lexicon_->replace_entry(old_text, old_code, new_text, new_code, syllables);
 }
 
 bool Dict::add_user_entry_and_save(const std::string& text, const std::string& code,
@@ -76,8 +77,10 @@ bool Dict::delete_user_entries_and_save(const std::vector<LexiconEntryKey>& entr
 }
 
 bool Dict::replace_user_entry_and_save(const std::string& old_text, const std::string& old_code,
-                                       const std::string& new_text, const std::string& new_code) {
-    return user_lexicon_->replace_entry_and_save(old_text, old_code, new_text, new_code);
+                                       const std::string& new_text, const std::string& new_code,
+                                       const std::string& syllables) {
+    return user_lexicon_->replace_entry_and_save(old_text, old_code, new_text, new_code,
+                                                 syllables);
 }
 
 bool Dict::import_user_dict(const std::string& source_path) {

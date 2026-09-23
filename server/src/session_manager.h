@@ -67,7 +67,8 @@ struct SharedResources {
     void cancel_prepared_config();
     bool reload_dictionaries();
     cxxime::IPCStatus add_user_entry(cxxime::UserDictKind kind,
-        const std::string& text, const std::string& code);
+        const std::string& text, const std::string& code,
+        const std::string& syllables = {});
     cxxime::UserDictQueryResult query_user_entries(const std::string& query,
                                                    cxxime::UserDictKind kind,
                                                    size_t offset, size_t limit);
@@ -82,7 +83,8 @@ struct SharedResources {
                                          const std::string& old_text,
                                          const std::string& old_code,
                                          const std::string& new_text,
-                                         const std::string& new_code);
+                                         const std::string& new_code,
+                                         const std::string& syllables = {});
     cxxime::IPCStatus import_user_dict(cxxime::UserDictKind kind,
                                        const std::string& source_path);
     cxxime::IPCStatus save_user_dict(cxxime::UserDictKind kind);
@@ -181,7 +183,8 @@ public:
     ProcessKeyResult focus_out(uint32_t id);
 
     cxxime::IPCStatus add_user_entry(cxxime::UserDictKind kind, const std::string& text,
-                                     const std::string& code);
+                                     const std::string& code,
+                                     const std::string& syllables = {});
     cxxime::UserDictQueryResult query_user_entries(const std::string& query,
                                                    cxxime::UserDictKind kind,
                                                    size_t offset, size_t limit);
@@ -194,7 +197,8 @@ public:
         cxxime::UserDictKind kind, const std::vector<cxxime::LexiconEntryKey>& entries);
     cxxime::IPCStatus replace_user_entry(cxxime::UserDictKind kind,
                                          const std::string& old_text, const std::string& old_code,
-                                         const std::string& new_text, const std::string& new_code);
+                                         const std::string& new_text, const std::string& new_code,
+                                         const std::string& syllables = {});
     cxxime::IPCStatus import_user_dict(cxxime::UserDictKind kind,
                                        const std::string& source_path);
     cxxime::IPCStatus save_user_dict(cxxime::UserDictKind kind);

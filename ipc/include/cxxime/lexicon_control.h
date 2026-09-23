@@ -51,6 +51,8 @@ struct LexiconControlRequest {
     std::uint64_t expected_version = 0;
     // Optional JSON modifier for kQuery; absent values retain the default behavior.
     bool exact_text = false;
+    // Optional JSON metadata for kAdd and kReplace.
+    std::string syllables;
 };
 
 struct LexiconControlResult {
@@ -106,6 +108,11 @@ public:
     bool clear_candidate_order(UserDictKind kind, const std::string& code,
                                std::uint64_t expected_version,
                                LexiconControlResult* result) const;
+    bool add_entry(UserDictKind kind, const std::string& text, const std::string& code,
+                   LexiconControlResult* result, const std::string& syllables) const;
+    bool replace_entry(UserDictKind kind, const std::string& old_text, const std::string& old_code,
+                       const std::string& new_text, const std::string& new_code,
+                       LexiconControlResult* result, const std::string& syllables) const;
 
 private:
     bool execute(const LexiconControlRequest& request, LexiconControlResult* result,
