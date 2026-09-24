@@ -21,6 +21,8 @@ namespace cxxime {
 
 class CandidatePreference {
 public:
+    explicit CandidatePreference(UserDictKind kind) : kind_(kind) {}
+
     bool load(const std::string& path);
     bool save();
     static bool validate_contents(const std::string& contents);
@@ -62,6 +64,7 @@ private:
     static std::string serialize_entries(const std::vector<Entry>& entries);
     void rebuild_indexes_locked();
 
+    const UserDictKind kind_;
     std::vector<Entry> entries_;
     std::unordered_map<std::string, EntryId> entry_index_;
     std::unordered_map<std::string, std::vector<EntryId>> code_index_;

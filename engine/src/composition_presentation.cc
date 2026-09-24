@@ -6,8 +6,7 @@
 #include <vector>
 
 #include <cxxime/input_limits.h>
-#include <cxxime/spellings_index.h>
-#include <cxxime/syllabifier.h>
+#include <cxxime/pinyin_resource.h>
 
 namespace cxxime {
 
@@ -28,11 +27,12 @@ CompositionPresentation derive_composition_presentation(const CompositionState& 
 }
 
 CompositionPresentation derive_composition_presentation(const CompositionState& state,
-                                                        const Syllabifier* syllabifier,
+                                                        const PinyinResourceSet* pinyin_resources,
                                                         std::size_t focused_input_bytes,
                                                         bool show_syllable_boundaries,
                                                         const std::string& preferred_syllables,
-                                                        bool terminal_completion) {
+                                                        bool terminal_completion,
+                                                        bool enable_fuzzy) {
     CompositionPresentation presentation;
     for (const auto& segment : state.converted_segments()) {
         presentation.logical_preedit += segment.text;
@@ -43,10 +43,13 @@ CompositionPresentation derive_composition_presentation(const CompositionState& 
     presentation.cursor_bytes = presentation.converted_prefix_bytes + state.active().cursor;
 
     std::vector<std::size_t> boundaries;
-    if (syllabifier && show_syllable_boundaries && !state.active().input.empty()) {
+    if (pinyin_resources && show_syllable_boundaries && !state.active().input.empty()) {
+        SyllabifierOptions options;
+        options.enable_fuzzy = enable_fuzzy;
+        options.enable_terminal_completion = terminal_completion;
+        options.collect_path_metadata = true;
         const SegmentResult segmented =
-            syllabifier->segment(state.active().input, nullptr,
-                                 terminal_completion, true);
+            pinyin_resources->segment(state.active().input, nullptr, options);
         std::vector<std::string> preferred_path;
         std::size_t begin = 0;
         while (begin < preferred_syllables.size()) {

@@ -10,7 +10,7 @@
 
 namespace cxxime {
 
-class Syllabifier;
+class PinyinResourceSet;
 
 struct CompositionPresentation {
     std::string logical_preedit;
@@ -28,11 +28,12 @@ struct CompositionPresentation {
 
 CompositionPresentation derive_composition_presentation(const CompositionState& state);
 CompositionPresentation derive_composition_presentation(const CompositionState& state,
-                                                        const Syllabifier* syllabifier,
+                                                        const PinyinResourceSet* pinyin_resources,
                                                         std::size_t focused_input_bytes,
                                                         bool show_syllable_boundaries,
                                                         const std::string& preferred_syllables = {},
-                                                        bool terminal_completion = false);
+                                                        bool terminal_completion = false,
+                                                        bool enable_fuzzy = true);
 
 } // namespace cxxime
 

@@ -22,6 +22,7 @@
 #include <cxxime/wubi_translator.h>
 
 #include "support/topn_test_data.h"
+#include "support/test_runtime.h"
 #include "support/testutil.h"
 
 namespace {
@@ -48,9 +49,9 @@ cxxime::KeyEvent make_key(uint32_t keycode, bool shift = false) {
 struct SegmentedFixture {
     std::string dict_path = make_temp_file("sgd");
     std::string spellings_path = make_temp_file("sgs");
-    cxxime::Dict dict;
-    cxxime::SpellingsIndex spellings;
-    std::unique_ptr<cxxime::Syllabifier> syllabifier;
+    std::shared_ptr<cxxime::Dict> dict =
+        std::make_shared<cxxime::Dict>(cxxime::UserDictKind::PINYIN);
+    std::shared_ptr<const cxxime::PinyinResourceSet> pinyin_resources;
     cxxime::Config config;
     cxxime::Engine engine;
 
@@ -75,24 +76,31 @@ struct SegmentedFixture {
                 {"hua:rui:ji:shu", "full-" + std::to_string(index), 7000 - index});
         }
         if (dict_path.empty() || spellings_path.empty() ||
-            !cxxime::Dict::create_test_dict(dict_path, entries) || !dict.open_dict(dict_path) ||
+            !cxxime::Dict::create_test_dict(dict_path, entries) || !dict->open_dict(dict_path) ||
             !cxxime::SpellingsIndex::create_test_trie(
                 spellings_path,
                 {{"hua", "hua", cxxime::kNormalSpelling, 0.0f},
                  {"rui", "rui", cxxime::kNormalSpelling, 0.0f},
                  {"ji", "ji", cxxime::kNormalSpelling, 0.0f},
-                 {"shu", "shu", cxxime::kNormalSpelling, 0.0f}}) ||
-            !spellings.load(spellings_path)) {
+                 {"shu", "shu", cxxime::kNormalSpelling, 0.0f}})) {
             return false;
         }
-        syllabifier = std::make_unique<cxxime::Syllabifier>(spellings);
+        pinyin_resources = cxxime::PinyinResourceSet::create(
+            "full_pinyin", cxxime::PinyinSchemeKind::kFullPinyin, spellings_path);
         config.page_size = 5;
-        if (!engine.initialize(dict, spellings, syllabifier.get(), config)) {
+        if (!engine.initialize(cxxime::EngineRuntimeState::create(
+                config, dict, nullptr, pinyin_resources))) {
             return false;
         }
         engine.set_query_deadline_ms(0);
         engine.set_partial_selection_enabled(true);
         return true;
+    }
+
+    bool apply_config(std::shared_ptr<cxxime::CompositionLearningService> learning = nullptr,
+                      std::shared_ptr<cxxime::Dict> wubi_dict = nullptr) {
+        return engine.apply_runtime_state(cxxime::EngineRuntimeState::create(
+            config, dict, wubi_dict, pinyin_resources, nullptr, learning));
     }
 
     void type(const std::string& code) {
@@ -117,8 +125,7 @@ struct SegmentedFixture {
 
     ~SegmentedFixture() {
         engine.finalize();
-        dict.close();
-        spellings.unload();
+        dict->close();
         if (!dict_path.empty()) {
             DeleteFileA(dict_path.c_str());
         }
@@ -164,7 +171,7 @@ TEST(SegmentedSelection, presentation_keeps_boundary_after_focused_syllable) {
     fixture.type("huaruijishu");
 
     const cxxime::CompositionPresentation initial = cxxime::derive_composition_presentation(
-        fixture.engine.context().composition(), fixture.syllabifier.get(), 6, true);
+        fixture.engine.context().composition(), fixture.pinyin_resources.get(), 6, true);
     ASSERT_EQ(initial.display_preedit, "hua'rui'ji'shu");
     ASSERT_EQ(initial.focused_preedit_start_bytes, static_cast<std::size_t>(0));
     ASSERT_EQ(initial.focused_preedit_end_bytes, std::string("hua'rui").size());
@@ -175,7 +182,7 @@ TEST(SegmentedSelection, presentation_keeps_boundary_after_focused_syllable) {
     ASSERT_TRUE(fixture.engine.select_candidate(prefix));
     const std::size_t converted_bytes = std::string("华锐").size();
     const cxxime::CompositionPresentation continued = cxxime::derive_composition_presentation(
-        fixture.engine.context().composition(), fixture.syllabifier.get(), 2, true);
+        fixture.engine.context().composition(), fixture.pinyin_resources.get(), 2, true);
     ASSERT_EQ(continued.display_preedit, "华锐ji'shu");
     ASSERT_EQ(continued.display_converted_prefix_bytes, converted_bytes);
     ASSERT_EQ(continued.focused_preedit_start_bytes, converted_bytes);
@@ -192,8 +199,8 @@ TEST(SegmentedSelection, paging_freezes_published_prefix_across_manual_reorder) 
     ASSERT_EQ(published.size(), 5u);
 
     const std::string order_path = make_temp_file("sgm");
-    ASSERT_TRUE(fixture.dict.load_manual_candidate_order(order_path, cxxime::kMaxInputCodeLength));
-    ASSERT_TRUE(fixture.dict.replace_manual_candidate_order_and_save(
+    ASSERT_TRUE(fixture.dict->load_manual_candidate_order(order_path));
+    ASSERT_TRUE(fixture.dict->replace_manual_candidate_order_and_save(
         "huaruijishu", {{"full-10", "huaruijishu", "hua:rui:ji:shu"}}));
 
     ASSERT_EQ(fixture.engine.process_key(make_key(VK_NEXT)), cxxime::ProcessResult::ACCEPTED);
@@ -215,7 +222,7 @@ TEST(SegmentedSelection, missing_page_anchor_rebuilds_the_first_page) {
     ASSERT_GE(anchor_index, 0);
     const std::string anchor_text =
         fixture.engine.context().translation().entries[anchor_index].candidate.text;
-    ASSERT_TRUE(fixture.dict.disable_system_entry(anchor_text));
+    ASSERT_TRUE(fixture.dict->disable_system_entry(anchor_text));
 
     ASSERT_EQ(fixture.engine.process_key(make_key(VK_NEXT)), cxxime::ProcessResult::ACCEPTED);
     ASSERT_EQ(fixture.engine.context().page_offset(), 0);
@@ -239,7 +246,7 @@ TEST(SegmentedSelection, incomplete_page_continuation_is_transactional) {
     first_page.extent.complete = false;
     const std::vector<cxxime::CandidateEntry> published = first_page.entries;
 
-    fixture.dict.unload_dict();
+    fixture.dict->unload_dict();
     for (uint32_t effort = 1; effort <= 2; ++effort) {
         ASSERT_EQ(fixture.engine.process_key(make_key(VK_NEXT)), cxxime::ProcessResult::ACCEPTED);
         const cxxime::TranslationResult& retained = fixture.engine.context().translation();
@@ -255,7 +262,7 @@ TEST(SegmentedSelection, incomplete_page_continuation_is_transactional) {
         ASSERT_EQ(fixture.engine.last_trace().continuation_effort, effort);
     }
 
-    ASSERT_TRUE(fixture.dict.open_dict(fixture.dict_path));
+    ASSERT_TRUE(fixture.dict->open_dict(fixture.dict_path));
     ASSERT_EQ(fixture.engine.process_key(make_key(VK_NEXT)), cxxime::ProcessResult::ACCEPTED);
     ASSERT_EQ(fixture.engine.context().page_offset(), 4);
     ASSERT_EQ(fixture.engine.context().highlighted(), 0);
@@ -303,26 +310,25 @@ TEST(SegmentedSelection, presentation_follows_highlighted_ambiguous_syllable_pat
         {{"xian", "xian", cxxime::kNormalSpelling, 0.0f},
          {"xi", "xi", cxxime::kNormalSpelling, 0.0f},
          {"an", "an", cxxime::kNormalSpelling, 0.0f}}));
-    cxxime::SpellingsIndex spellings;
-    ASSERT_TRUE(spellings.load(spellings_path));
-    cxxime::Syllabifier syllabifier(spellings);
+    auto pinyin_resources = cxxime::PinyinResourceSet::create(
+        "full_pinyin", cxxime::PinyinSchemeKind::kFullPinyin, spellings_path);
+    ASSERT_TRUE(pinyin_resources != nullptr);
     cxxime::CompositionState state;
     ASSERT_TRUE(state.set_active_input("xian", 4));
 
     const cxxime::CompositionPresentation single = cxxime::derive_composition_presentation(
-        state, &syllabifier, 4, true, "xian");
+        state, pinyin_resources.get(), 4, true, "xian");
     ASSERT_EQ(single.display_preedit, "xian");
 
     const cxxime::CompositionPresentation split = cxxime::derive_composition_presentation(
-        state, &syllabifier, 4, true, "xi:an");
+        state, pinyin_resources.get(), 4, true, "xi:an");
     ASSERT_EQ(split.display_preedit, "xi'an");
 
     const cxxime::CompositionPresentation partial = cxxime::derive_composition_presentation(
-        state, &syllabifier, 2, true, "xi");
+        state, pinyin_resources.get(), 2, true, "xi");
     ASSERT_EQ(partial.display_preedit, "xi'an");
     ASSERT_EQ(partial.focused_preedit_end_bytes, static_cast<std::size_t>(2));
 
-    spellings.unload();
     DeleteFileA(spellings_path.c_str());
 }
 
@@ -369,15 +375,14 @@ TEST(SegmentedSelection, enter_commits_converted_prefix_and_raw_suffix) {
 
 TEST(SegmentedSelectionLearning, final_candidate_learns_segments_and_whole_composition) {
     const std::string learning_path = make_temp_file("sgl");
-    cxxime::CompositionLearningService learning;
-    ASSERT_TRUE(learning.load(learning_path));
-    ASSERT_TRUE(learning.start());
+    auto learning = std::make_shared<cxxime::CompositionLearningService>();
+    ASSERT_TRUE(learning->load(learning_path));
+    ASSERT_TRUE(learning->start());
     {
         SegmentedFixture fixture;
         ASSERT_TRUE(fixture.initialize());
         fixture.config.candidate_learning = true;
-        fixture.engine.reload_config(fixture.config);
-        fixture.engine.set_composition_learning_service(&learning);
+        ASSERT_TRUE(fixture.apply_config(learning));
         fixture.type("huaruijishu");
 
         auto find_consumed = [&](std::size_t consumed) {
@@ -404,26 +409,25 @@ TEST(SegmentedSelectionLearning, final_candidate_learns_segments_and_whole_compo
         ASSERT_TRUE(fixture.engine.select_candidate(suffix_index));
         const std::string committed = fixture.engine.get_commit_text();
         ASSERT_EQ(committed, prefix_text + suffix_text);
-        ASSERT_TRUE(fixture.dict.has_candidate_preference(prefix_text, "huarui"));
-        ASSERT_TRUE(fixture.dict.has_candidate_preference(suffix_text, "jishu"));
+        ASSERT_TRUE(fixture.dict->has_candidate_preference(prefix_text, "huarui"));
+        ASSERT_TRUE(fixture.dict->has_candidate_preference(suffix_text, "jishu"));
     }
-    ASSERT_TRUE(learning.freeze_and_stop());
-    const auto candidates = learning.lookup_candidates("huaruijishu", 10);
+    ASSERT_TRUE(learning->freeze_and_stop());
+    const auto candidates = learning->lookup_candidates("huaruijishu", 10);
     ASSERT_EQ(candidates.size(), static_cast<std::size_t>(1));
     DeleteFileA(learning_path.c_str());
 }
 
 TEST(SegmentedSelectionLearning, raw_commit_learns_only_confirmed_segments) {
     const std::string learning_path = make_temp_file("sgr");
-    cxxime::CompositionLearningService learning;
-    ASSERT_TRUE(learning.load(learning_path));
-    ASSERT_TRUE(learning.start());
+    auto learning = std::make_shared<cxxime::CompositionLearningService>();
+    ASSERT_TRUE(learning->load(learning_path));
+    ASSERT_TRUE(learning->start());
     {
         SegmentedFixture fixture;
         ASSERT_TRUE(fixture.initialize());
         fixture.config.candidate_learning = true;
-        fixture.engine.reload_config(fixture.config);
-        fixture.engine.set_composition_learning_service(&learning);
+        ASSERT_TRUE(fixture.apply_config(learning));
         fixture.type("huaruijishu");
 
         int prefix_index = -1;
@@ -444,24 +448,23 @@ TEST(SegmentedSelectionLearning, raw_commit_learns_only_confirmed_segments) {
         ASSERT_EQ(fixture.engine.process_key(make_key(VK_RETURN)),
                   cxxime::ProcessResult::COMMITTED);
         fixture.engine.get_commit_text();
-        ASSERT_TRUE(fixture.dict.has_candidate_preference(prefix_text, "huarui"));
+        ASSERT_TRUE(fixture.dict->has_candidate_preference(prefix_text, "huarui"));
     }
-    ASSERT_TRUE(learning.freeze_and_stop());
-    ASSERT_EQ(learning.entry_count(), static_cast<std::size_t>(0));
+    ASSERT_TRUE(learning->freeze_and_stop());
+    ASSERT_EQ(learning->entry_count(), static_cast<std::size_t>(0));
     DeleteFileA(learning_path.c_str());
 }
 
 TEST(SegmentedSelectionLearning, cancelled_composition_does_not_learn_partial_selection) {
     const std::string learning_path = make_temp_file("sgc");
-    cxxime::CompositionLearningService learning;
-    ASSERT_TRUE(learning.load(learning_path));
-    ASSERT_TRUE(learning.start());
+    auto learning = std::make_shared<cxxime::CompositionLearningService>();
+    ASSERT_TRUE(learning->load(learning_path));
+    ASSERT_TRUE(learning->start());
     {
         SegmentedFixture fixture;
         ASSERT_TRUE(fixture.initialize());
         fixture.config.candidate_learning = true;
-        fixture.engine.reload_config(fixture.config);
-        fixture.engine.set_composition_learning_service(&learning);
+        ASSERT_TRUE(fixture.apply_config(learning));
         fixture.type("huaruijishu");
         int prefix = -1;
         for (std::size_t index = 0;
@@ -480,10 +483,10 @@ TEST(SegmentedSelectionLearning, cancelled_composition_does_not_learn_partial_se
         ASSERT_TRUE(fixture.engine.select_candidate(prefix));
         ASSERT_EQ(fixture.engine.process_key(make_key(VK_ESCAPE)),
                   cxxime::ProcessResult::ACCEPTED);
-        ASSERT_TRUE(!fixture.dict.has_candidate_preference(prefix_text, "huarui"));
+        ASSERT_TRUE(!fixture.dict->has_candidate_preference(prefix_text, "huarui"));
     }
-    ASSERT_TRUE(learning.freeze_and_stop());
-    ASSERT_EQ(learning.entry_count(), static_cast<std::size_t>(0));
+    ASSERT_TRUE(learning->freeze_and_stop());
+    ASSERT_EQ(learning->entry_count(), static_cast<std::size_t>(0));
     DeleteFileA(learning_path.c_str());
 }
 
@@ -507,7 +510,7 @@ TEST(SegmentedSelection, candidate_shift_finalizes_a_highlighted_prefix_and_raw_
     SegmentedFixture fixture;
     ASSERT_TRUE(fixture.initialize());
     fixture.config.ascii_switch_key["Shift_L"] = "candidate";
-    fixture.engine.reload_config(fixture.config);
+    ASSERT_TRUE(fixture.apply_config());
     fixture.type("huaruijishu");
     const int prefix = fixture.find("华锐", 6);
     ASSERT_GE(prefix, 0);
@@ -559,7 +562,7 @@ TEST(SegmentedSelection, failed_remainder_query_keeps_the_previous_state) {
     const uint64_t revision = fixture.engine.context().preedit_revision();
     const int candidate_count = fixture.engine.context().candidate_count();
 
-    fixture.dict.unload_dict();
+    fixture.dict->unload_dict();
     ASSERT_TRUE(!fixture.engine.select_candidate(prefix));
     ASSERT_EQ(fixture.engine.context().preedit_revision(), revision);
     ASSERT_EQ(fixture.engine.context().active_input(), "huaruijishu");
@@ -573,7 +576,7 @@ TEST(SegmentedSelection, failed_regular_query_drops_actions_from_the_previous_in
     fixture.type("huarui");
     ASSERT_TRUE(fixture.engine.context().candidate_count() > 0);
 
-    fixture.dict.unload_dict();
+    fixture.dict->unload_dict();
     ASSERT_EQ(fixture.engine.process_key(make_key('J')), cxxime::ProcessResult::ACCEPTED);
     ASSERT_EQ(fixture.engine.context().active_input(), "huaruij");
     ASSERT_EQ(fixture.engine.context().candidate_count(), 0);
@@ -637,8 +640,8 @@ TEST(SegmentedSelection, full_span_policy_preserves_standard_page) {
     ASSERT_TRUE(fixture.initialize());
 
     cxxime::PinyinTranslator translator;
-    translator.set_dict(&fixture.dict);
-    translator.set_syllabifier(fixture.syllabifier.get());
+    translator.set_dict(fixture.dict.get());
+    translator.bind_pinyin(fixture.pinyin_resources, {});
     const cxxime::CandidatePage standard = translator.translate_page("huaruijishu", 0, 5);
 
     cxxime::TranslationRequest request;
@@ -659,7 +662,7 @@ TEST(SegmentedSelection, full_span_policy_preserves_standard_page) {
 TEST(SegmentedSelection, partial_candidates_share_disabled_and_learning_policy) {
     SegmentedFixture fixture;
     ASSERT_TRUE(fixture.initialize());
-    ASSERT_TRUE(fixture.dict.disable_system_entry("华锐"));
+    ASSERT_TRUE(fixture.dict->disable_system_entry("华锐"));
 
     cxxime::Candidate preferred;
     preferred.text = "花蕊";
@@ -667,11 +670,11 @@ TEST(SegmentedSelection, partial_candidates_share_disabled_and_learning_policy) 
     preferred.syllables = "hua:rui";
     preferred.source = cxxime::CandidateSource::kPinyin;
     preferred.origin = cxxime::CandidateOrigin::kSystem;
-    ASSERT_TRUE(fixture.dict.record_candidate_preference(preferred, "huarui"));
+    ASSERT_TRUE(fixture.dict->record_candidate_preference(preferred, "huarui"));
 
     cxxime::PinyinTranslator translator;
-    translator.set_dict(&fixture.dict);
-    translator.set_syllabifier(fixture.syllabifier.get());
+    translator.set_dict(fixture.dict.get());
+    translator.bind_pinyin(fixture.pinyin_resources, {});
     translator.set_candidate_learning_enabled(true);
     cxxime::TranslationRequest request;
     request.input = "huaruijishu";
@@ -714,14 +717,16 @@ TEST(SegmentedSelection, fuzzy_and_abbreviation_paths_use_input_boundaries) {
          {"z", "zhong", cxxime::kAbbreviation, -1.0f},
          {"g", "guo", cxxime::kAbbreviation, -1.0f},
          {"r", "ren", cxxime::kAbbreviation, -1.0f}}));
-    cxxime::Dict dict;
+    cxxime::Dict dict{cxxime::UserDictKind::PINYIN};
     cxxime::SpellingsIndex spellings;
     ASSERT_TRUE(dict.open_dict(dict_path));
     ASSERT_TRUE(spellings.load(spellings_path));
-    cxxime::Syllabifier syllabifier(spellings);
+    auto pinyin_resources = cxxime::PinyinResourceSet::create(
+        "full_pinyin", cxxime::PinyinSchemeKind::kFullPinyin, spellings_path);
+    ASSERT_TRUE(pinyin_resources != nullptr);
     cxxime::PinyinTranslator translator;
     translator.set_dict(&dict);
-    translator.set_syllabifier(&syllabifier);
+    translator.bind_pinyin(pinyin_resources, {});
     cxxime::Candidate preferred;
     preferred.text = "偏好中国";
     preferred.code = "zhongguo";
@@ -793,14 +798,16 @@ TEST(SegmentedSelection, natural_path_suppresses_abbreviation_noise_and_keeps_de
                          {"n", "na", cxxime::kAbbreviation, -1.0f},
                          {"g", "ga", cxxime::kAbbreviation, -1.0f}}));
 
-    cxxime::Dict dict;
+    cxxime::Dict dict{cxxime::UserDictKind::PINYIN};
     cxxime::SpellingsIndex spellings;
     ASSERT_TRUE(dict.open_dict(dict_path));
     ASSERT_TRUE(spellings.load(spellings_path));
-    cxxime::Syllabifier syllabifier(spellings);
+    auto pinyin_resources = cxxime::PinyinResourceSet::create(
+        "full_pinyin", cxxime::PinyinSchemeKind::kFullPinyin, spellings_path);
+    ASSERT_TRUE(pinyin_resources != nullptr);
     cxxime::PinyinTranslator translator;
     translator.set_dict(&dict);
-    translator.set_syllabifier(&syllabifier);
+    translator.bind_pinyin(pinyin_resources, {});
 
     cxxime::TranslationRequest request;
     request.input = "wuzong";
@@ -842,14 +849,16 @@ TEST(SegmentedSelection, exact_full_path_outranks_fuzzy_and_prefix_frequency) {
         spellings_path, {{"zong", "zong", cxxime::kNormalSpelling, 0.0f},
                          {"zong", "zhong", cxxime::kFuzzySpelling, -0.5f}}));
 
-    cxxime::Dict dict;
+        cxxime::Dict dict{cxxime::UserDictKind::PINYIN};
     cxxime::SpellingsIndex spellings;
     ASSERT_TRUE(dict.open_dict(dict_path));
     ASSERT_TRUE(spellings.load(spellings_path));
-    cxxime::Syllabifier syllabifier(spellings);
+    auto pinyin_resources = cxxime::PinyinResourceSet::create(
+        "full_pinyin", cxxime::PinyinSchemeKind::kFullPinyin, spellings_path);
+    ASSERT_TRUE(pinyin_resources != nullptr);
     cxxime::PinyinTranslator translator;
     translator.set_dict(&dict);
-    translator.set_syllabifier(&syllabifier);
+    translator.bind_pinyin(pinyin_resources, {});
 
     const cxxime::CandidatePage small_page = translator.translate_page("zong", 0, 2);
     ASSERT_EQ(small_page.candidates.size(), 2u);
@@ -903,16 +912,18 @@ TEST(SegmentedSelection, complete_topn_hit_still_merges_fuzzy_full_candidates) {
     ASSERT_TRUE(cxxime::test::create_test_topn(
         topn_path, dict_path, {{"zong", cached_candidates}}, true));
 
-    cxxime::Dict dict;
+    cxxime::Dict dict{cxxime::UserDictKind::PINYIN};
     cxxime::SpellingsIndex spellings;
     cxxime::ShortCodeCache cache;
     ASSERT_TRUE(dict.open_dict(dict_path));
     ASSERT_TRUE(spellings.load(spellings_path));
     ASSERT_TRUE(cache.load(topn_path, dict.candidate_store()));
-    cxxime::Syllabifier syllabifier(spellings);
+    auto pinyin_resources = cxxime::PinyinResourceSet::create(
+        "full_pinyin", cxxime::PinyinSchemeKind::kFullPinyin, spellings_path);
+    ASSERT_TRUE(pinyin_resources != nullptr);
     cxxime::PinyinTranslator translator;
     translator.set_dict(&dict);
-    translator.set_syllabifier(&syllabifier);
+    translator.bind_pinyin(pinyin_resources, {});
     translator.set_short_cache(&cache);
 
     cxxime::TranslationRequest request;
@@ -933,16 +944,14 @@ TEST(SegmentedSelection, complete_topn_hit_still_merges_fuzzy_full_candidates) {
 }
 
 TEST(SegmentedSelection, real_dictionary_can_select_wu_then_zong) {
-    cxxime::Dict dict;
-    cxxime::SpellingsIndex spellings;
-    ASSERT_TRUE(dict.open_dict(CXXIME_DATA_DIR "pinyin.dict.bin"));
-    ASSERT_TRUE(spellings.load(CXXIME_DATA_DIR "pinyin.spellings.bin"));
-    cxxime::Syllabifier syllabifier(spellings);
+    auto dict = std::make_shared<cxxime::Dict>(cxxime::UserDictKind::PINYIN);
+    ASSERT_TRUE(dict->open_dict(CXXIME_DATA_DIR "pinyin.dict.bin"));
     cxxime::Config config;
     config.page_size = 7;
 
     cxxime::Engine engine;
-    ASSERT_TRUE(engine.initialize(dict, spellings, &syllabifier, config));
+    ASSERT_TRUE(test::initialize_engine(
+        engine, dict, config, CXXIME_DATA_DIR "pinyin.spellings.bin"));
     engine.set_query_deadline_ms(0);
     engine.set_partial_selection_enabled(true);
     for (char ch : std::string("wuzong")) {
@@ -999,21 +1008,18 @@ TEST(SegmentedSelection, real_dictionary_can_select_wu_then_zong) {
     ASSERT_EQ(engine.get_commit_text(), "乌总");
 
     engine.finalize();
-    spellings.unload();
-    dict.close();
+    dict->close();
 }
 
 TEST(SegmentedSelection, real_dictionary_middle_deletion_reparses_nhao) {
-    cxxime::Dict dict;
-    cxxime::SpellingsIndex spellings;
-    ASSERT_TRUE(dict.open_dict(CXXIME_DATA_DIR "pinyin.dict.bin"));
-    ASSERT_TRUE(spellings.load(CXXIME_DATA_DIR "pinyin.spellings.bin"));
-    cxxime::Syllabifier syllabifier(spellings);
+    auto dict = std::make_shared<cxxime::Dict>(cxxime::UserDictKind::PINYIN);
+    ASSERT_TRUE(dict->open_dict(CXXIME_DATA_DIR "pinyin.dict.bin"));
     cxxime::Config config;
     config.page_size = 7;
 
     cxxime::Engine engine;
-    ASSERT_TRUE(engine.initialize(dict, spellings, &syllabifier, config));
+    ASSERT_TRUE(test::initialize_engine(
+        engine, dict, config, CXXIME_DATA_DIR "pinyin.spellings.bin"));
     engine.set_query_deadline_ms(0);
     engine.set_partial_selection_enabled(true);
     for (char ch : std::string("nihao")) {
@@ -1034,8 +1040,7 @@ TEST(SegmentedSelection, real_dictionary_middle_deletion_reparses_nhao) {
     ASSERT_EQ(engine.context().candidate_page().candidates[0].text, "你好");
 
     engine.finalize();
-    spellings.unload();
-    dict.close();
+    dict->close();
 }
 
 TEST(SegmentedSelection, partial_group_follows_all_available_leading_full_candidates) {
@@ -1055,14 +1060,16 @@ TEST(SegmentedSelection, partial_group_follows_all_available_leading_full_candid
          {"rui", "rui", cxxime::kNormalSpelling, 0.0f},
          {"ji", "ji", cxxime::kNormalSpelling, 0.0f},
          {"shu", "shu", cxxime::kNormalSpelling, 0.0f}}));
-    cxxime::Dict dict;
+    cxxime::Dict dict{cxxime::UserDictKind::PINYIN};
     cxxime::SpellingsIndex spellings;
     ASSERT_TRUE(dict.open_dict(dict_path));
     ASSERT_TRUE(spellings.load(spellings_path));
-    cxxime::Syllabifier syllabifier(spellings);
+    auto pinyin_resources = cxxime::PinyinResourceSet::create(
+        "full_pinyin", cxxime::PinyinSchemeKind::kFullPinyin, spellings_path);
+    ASSERT_TRUE(pinyin_resources != nullptr);
     cxxime::PinyinTranslator translator;
     translator.set_dict(&dict);
-    translator.set_syllabifier(&syllabifier);
+    translator.bind_pinyin(pinyin_resources, {});
 
     const cxxime::CandidatePage full_span = translator.translate_page("huaruijishu", 0, 6);
     ASSERT_GE(full_span.candidates.size(), 4u);
@@ -1136,8 +1143,8 @@ TEST(SegmentedSelection, single_candidate_pages_use_the_fixed_global_boundary) {
     ASSERT_TRUE(fixture.initialize(true, 12));
 
     cxxime::PinyinTranslator translator;
-    translator.set_dict(&fixture.dict);
-    translator.set_syllabifier(fixture.syllabifier.get());
+    translator.set_dict(fixture.dict.get());
+    translator.bind_pinyin(fixture.pinyin_resources, {});
 
     using VisibleAction = std::pair<std::string, std::size_t>;
     auto collect = [&](int page_size) {
@@ -1203,14 +1210,16 @@ TEST(SegmentedSelection, duplicate_full_text_moves_into_the_partial_group) {
                          {"ji", "ji", cxxime::kNormalSpelling, 0.0f},
                          {"shu", "shu", cxxime::kNormalSpelling, 0.0f}}));
 
-    cxxime::Dict dict;
+    cxxime::Dict dict{cxxime::UserDictKind::PINYIN};
     cxxime::SpellingsIndex spellings;
     ASSERT_TRUE(dict.open_dict(dict_path));
     ASSERT_TRUE(spellings.load(spellings_path));
-    cxxime::Syllabifier syllabifier(spellings);
+    auto pinyin_resources = cxxime::PinyinResourceSet::create(
+        "full_pinyin", cxxime::PinyinSchemeKind::kFullPinyin, spellings_path);
+    ASSERT_TRUE(pinyin_resources != nullptr);
     cxxime::PinyinTranslator translator;
     translator.set_dict(&dict);
-    translator.set_syllabifier(&syllabifier);
+    translator.bind_pinyin(pinyin_resources, {});
 
     cxxime::TranslationRequest request;
     request.input = "huaruijishu";
@@ -1257,13 +1266,13 @@ TEST(SegmentedSelection, mixed_keeps_one_action_for_the_same_visible_text) {
     ASSERT_TRUE(fixture.initialize());
     const std::string wubi_path = make_temp_file("sgw");
     ASSERT_TRUE(cxxime::Dict::create_test_dict(wubi_path, {{"huaruijishu", "华锐", 20000}}));
-    cxxime::Dict wubi;
+    cxxime::Dict wubi{cxxime::UserDictKind::WUBI};
     ASSERT_TRUE(wubi.open_dict(wubi_path));
 
     cxxime::MixedTranslator translator;
-    translator.set_pinyin_dict(&fixture.dict);
+    translator.set_pinyin_dict(fixture.dict.get());
     translator.set_wubi_dict(&wubi);
-    translator.set_syllabifier(fixture.syllabifier.get());
+    translator.bind_pinyin(fixture.pinyin_resources, {});
     cxxime::TranslationRequest request;
     request.scheme = cxxime::CompositionScheme::kMixed;
     request.input = "huaruijishu";
@@ -1292,8 +1301,8 @@ TEST(SegmentedSelection, pinyin_keeps_the_longest_partial_for_duplicate_text) {
     ASSERT_TRUE(fixture.initialize(true, 0, true));
 
     cxxime::PinyinTranslator translator;
-    translator.set_dict(&fixture.dict);
-    translator.set_syllabifier(fixture.syllabifier.get());
+    translator.set_dict(fixture.dict.get());
+    translator.bind_pinyin(fixture.pinyin_resources, {});
     cxxime::TranslationRequest request;
     request.scheme = cxxime::CompositionScheme::kPinyin;
     request.input = "huaruijishu";
@@ -1318,8 +1327,8 @@ TEST(SegmentedSelection, mixed_preserves_usable_provider_when_other_provider_fai
     ASSERT_TRUE(fixture.initialize());
 
     cxxime::MixedTranslator translator;
-    translator.set_pinyin_dict(&fixture.dict);
-    translator.set_syllabifier(fixture.syllabifier.get());
+    translator.set_pinyin_dict(fixture.dict.get());
+    translator.bind_pinyin(fixture.pinyin_resources, {});
     cxxime::TranslationRequest request;
     request.scheme = cxxime::CompositionScheme::kMixed;
     request.input = "huaruijishu";
@@ -1335,13 +1344,13 @@ TEST(SegmentedSelection, mixed_prefix_order_does_not_replace_the_full_span_first
     SegmentedFixture fixture;
     ASSERT_TRUE(fixture.initialize());
     const std::string order_path = make_temp_file("sgo");
-    ASSERT_TRUE(fixture.dict.load_manual_candidate_order(order_path, cxxime::kMaxInputCodeLength));
-    ASSERT_TRUE(fixture.dict.replace_manual_candidate_order_and_save(
+    ASSERT_TRUE(fixture.dict->load_manual_candidate_order(order_path));
+    ASSERT_TRUE(fixture.dict->replace_manual_candidate_order_and_save(
         "huarui", {{"花蕊", "huarui", "hua:rui"}}));
 
     cxxime::MixedTranslator translator;
-    translator.set_pinyin_dict(&fixture.dict);
-    translator.set_syllabifier(fixture.syllabifier.get());
+    translator.set_pinyin_dict(fixture.dict.get());
+    translator.bind_pinyin(fixture.pinyin_resources, {});
     cxxime::TranslationRequest request;
     request.scheme = cxxime::CompositionScheme::kMixed;
     request.input = "huaruijishu";
@@ -1364,8 +1373,8 @@ TEST(SegmentedSelection, mixed_places_partial_after_the_fixed_leading_full_bound
     ASSERT_TRUE(fixture.initialize(true, 12));
 
     cxxime::MixedTranslator translator;
-    translator.set_pinyin_dict(&fixture.dict);
-    translator.set_syllabifier(fixture.syllabifier.get());
+    translator.set_pinyin_dict(fixture.dict.get());
+    translator.bind_pinyin(fixture.pinyin_resources, {});
     cxxime::TranslationRequest request;
     request.scheme = cxxime::CompositionScheme::kMixed;
     request.input = "huaruijishu";
@@ -1396,8 +1405,8 @@ TEST(SegmentedSelection, mixed_groups_all_partials_after_available_full_candidat
     ASSERT_TRUE(fixture.initialize(true, 6));
 
     cxxime::MixedTranslator translator;
-    translator.set_pinyin_dict(&fixture.dict);
-    translator.set_syllabifier(fixture.syllabifier.get());
+    translator.set_pinyin_dict(fixture.dict.get());
+    translator.bind_pinyin(fixture.pinyin_resources, {});
     cxxime::TranslationRequest request;
     request.scheme = cxxime::CompositionScheme::kMixed;
     request.input = "huaruijishu";
@@ -1452,17 +1461,19 @@ TEST(SegmentedSelection, mixed_wubi_first_does_not_hide_later_pinyin_partial) {
     }
     ASSERT_TRUE(cxxime::Dict::create_test_dict(wubi_path, wubi_entries));
 
-    cxxime::Dict pinyin;
-    cxxime::Dict wubi;
+    cxxime::Dict pinyin{cxxime::UserDictKind::PINYIN};
+    cxxime::Dict wubi{cxxime::UserDictKind::WUBI};
     cxxime::SpellingsIndex spellings;
     ASSERT_TRUE(pinyin.open_dict(pinyin_path));
     ASSERT_TRUE(wubi.open_dict(wubi_path));
     ASSERT_TRUE(spellings.load(spellings_path));
-    cxxime::Syllabifier syllabifier(spellings);
+    auto pinyin_resources = cxxime::PinyinResourceSet::create(
+        "full_pinyin", cxxime::PinyinSchemeKind::kFullPinyin, spellings_path);
+    ASSERT_TRUE(pinyin_resources != nullptr);
     cxxime::MixedTranslator translator;
     translator.set_pinyin_dict(&pinyin);
     translator.set_wubi_dict(&wubi);
-    translator.set_syllabifier(&syllabifier);
+    translator.bind_pinyin(pinyin_resources, {});
 
     cxxime::TranslationRequest request;
     request.scheme = cxxime::CompositionScheme::kMixed;
@@ -1528,13 +1539,13 @@ TEST(SegmentedSelection, mixed_merges_sources_for_the_same_text_and_action) {
     ASSERT_TRUE(fixture.initialize());
     const std::string wubi_path = make_temp_file("sgv");
     ASSERT_TRUE(cxxime::Dict::create_test_dict(wubi_path, {{"huaruijishu", "华锐技术", 20000}}));
-    cxxime::Dict wubi;
+    cxxime::Dict wubi{cxxime::UserDictKind::WUBI};
     ASSERT_TRUE(wubi.open_dict(wubi_path));
 
     cxxime::MixedTranslator translator;
-    translator.set_pinyin_dict(&fixture.dict);
+    translator.set_pinyin_dict(fixture.dict.get());
     translator.set_wubi_dict(&wubi);
-    translator.set_syllabifier(fixture.syllabifier.get());
+    translator.bind_pinyin(fixture.pinyin_resources, {});
     cxxime::TranslationRequest request;
     request.scheme = cxxime::CompositionScheme::kMixed;
     request.input = "huaruijishu";
@@ -1564,9 +1575,9 @@ TEST(SegmentedSelection, mixed_requeries_the_remainder_with_mixed_policy) {
     ASSERT_TRUE(fixture.initialize());
     const std::string wubi_path = make_temp_file("sgm");
     ASSERT_TRUE(cxxime::Dict::create_test_dict(wubi_path, {{"zzzz", "五笔", 100}}));
-    cxxime::Dict wubi;
-    ASSERT_TRUE(wubi.open_dict(wubi_path));
-    fixture.engine.set_wubi_dict(&wubi);
+    auto wubi = std::make_shared<cxxime::Dict>(cxxime::UserDictKind::WUBI);
+    ASSERT_TRUE(wubi->open_dict(wubi_path));
+    ASSERT_TRUE(fixture.apply_config(nullptr, wubi));
     fixture.engine.switch_mode(cxxime::InputMode::MIXED);
     fixture.type("huaruijishu");
 
@@ -1576,7 +1587,7 @@ TEST(SegmentedSelection, mixed_requeries_the_remainder_with_mixed_policy) {
     ASSERT_EQ(fixture.engine.context().composition_scheme(), cxxime::CompositionScheme::kMixed);
     ASSERT_GE(fixture.find("技术", 5), 0);
 
-    wubi.close();
+    wubi->close();
     DeleteFileA(wubi_path.c_str());
 }
 
@@ -1617,7 +1628,7 @@ TEST(SegmentedSelection, symbol_categories_use_typed_replacement_actions) {
 TEST(SegmentedSelection, wubi_candidates_only_use_full_span_text_actions) {
     const std::string dict_path = make_temp_file("sgx");
     ASSERT_TRUE(cxxime::Dict::create_test_dict(dict_path, {{"abcd", "五笔", 100}}));
-    cxxime::Dict dict;
+    cxxime::Dict dict{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dict.open_dict(dict_path));
     cxxime::WubiTranslator translator;
     translator.set_dict(&dict);

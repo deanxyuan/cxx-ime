@@ -72,7 +72,7 @@ TEST(DictionaryFormat, accepts_current_versions) {
     ASSERT_TRUE(cxxime::SpellingsIndex::create_test_trie(
         spellings_path, {{"a", "a", cxxime::kNormalSpelling, 0.0f}}));
 
-    cxxime::Dict dictionary;
+    cxxime::Dict dictionary{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dictionary.open_bundle(dict_path, "", index_path, topn_path));
     cxxime::SpellingsIndex spellings;
     ASSERT_TRUE(spellings.load(spellings_path));
@@ -91,7 +91,7 @@ TEST(DictionaryFormat, rejects_dict_v1) {
     const char magic[8] = {'C', 'X', 'D', 'I', 'C', '\x01', '\0', '\0'};
     ASSERT_TRUE(replace_magic_and_version(path, magic, 1));
 
-    cxxime::Dict dictionary;
+    cxxime::Dict dictionary{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(!dictionary.open_dict(path));
     DeleteFileA(path.c_str());
 }
@@ -116,7 +116,7 @@ TEST(DictionaryFormat, rejects_id_index_v2) {
     ASSERT_TRUE(write_empty_id_index(index_path, 2));
     ASSERT_TRUE(create_test_topn(topn_path, dict_path));
 
-    cxxime::Dict dictionary;
+    cxxime::Dict dictionary{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(!dictionary.open_bundle(dict_path, "", index_path, topn_path));
     DeleteFileA(dict_path.c_str());
     DeleteFileA(index_path.c_str());

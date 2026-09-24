@@ -134,7 +134,7 @@ TEST(Engine, translator_excludes_candidate_text_over_shared_capacity) {
     ASSERT_TRUE(cxxime::Dict::create_test_dict(
         dict_path, {{"abc", rejected, 2000}, {"abc", accepted, 1000}}));
 
-    cxxime::Dict dict;
+    cxxime::Dict dict{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dict.open_dict(dict_path));
     cxxime::WubiTranslator translator;
     translator.set_dict(&dict);
@@ -194,16 +194,16 @@ TEST(Engine, translate_dd_has_candidates) {
         {"de", "de", 0, 0.0f},
     }));
 
-    cxxime::Dict dict;
+    cxxime::Dict dict{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dict.open_dict(dict_path));
 
-    cxxime::SpellingsIndex spellings;
-    ASSERT_TRUE(spellings.load(spellings_path));
-    cxxime::Syllabifier syllabifier(spellings);
+    auto pinyin_resources = cxxime::PinyinResourceSet::create(
+        "full_pinyin", cxxime::PinyinSchemeKind::kFullPinyin, spellings_path);
+    ASSERT_TRUE(pinyin_resources != nullptr);
 
     cxxime::PinyinTranslator translator;
     translator.set_dict(&dict);
-    translator.set_syllabifier(&syllabifier);
+    translator.bind_pinyin(pinyin_resources, {});
 
     auto page = translator.translate_page("dd", 0, 10);
     ASSERT_GE(page.candidates.size(), 1u);
@@ -229,14 +229,13 @@ TEST(Engine, selected_pinyin_candidate_records_typed_code_as_preference) {
         {"shu:ru:fa", "测试系统词", 300},
     });
 
-    cxxime::Dict dict;
-    ASSERT_TRUE(dict.open(dict_path, user_path));
+    auto dict = std::make_shared<cxxime::Dict>(cxxime::UserDictKind::PINYIN);
+    ASSERT_TRUE(dict->open(dict_path, user_path));
 
-    cxxime::SpellingsIndex spellings;
     cxxime::Config config;
     config.candidate_learning = true;
     cxxime::Engine engine;
-    ASSERT_TRUE(engine.initialize(dict, spellings, nullptr, config));
+    ASSERT_TRUE(test::initialize_engine(engine, dict, config));
 
     for (char ch : std::string("SHURUFA")) {
         cxxime::KeyEvent event;
@@ -250,13 +249,13 @@ TEST(Engine, selected_pinyin_candidate_records_typed_code_as_preference) {
     ASSERT_EQ(candidates[0].text, "测试系统词");
     ASSERT_TRUE(engine.select_candidate(0));
 
-    auto learned = dict.query_candidate_preferences("测试系统词", 0, 10);
+    auto learned = dict->query_candidate_preferences("测试系统词", 0, 10);
     ASSERT_EQ(learned.size(), static_cast<size_t>(1));
     ASSERT_EQ(learned[0].code, "shurufa");
-    ASSERT_EQ(dict.user_entry_count(), static_cast<size_t>(0));
+    ASSERT_EQ(dict->user_entry_count(), static_cast<size_t>(0));
 
     engine.finalize();
-    dict.close();
+    dict->close();
     DeleteFileA(dict_path.c_str());
     DeleteFileA(user_path.c_str());
 }
@@ -271,12 +270,11 @@ TEST(Engine, candidate_order_stays_stable_when_candidate_learning_is_disabled) {
         {"ni:hao", "第二候选", 200},
     });
 
-    cxxime::Dict dict;
-    ASSERT_TRUE(dict.open(dict_path, user_path));
-    cxxime::SpellingsIndex spellings;
+    auto dict = std::make_shared<cxxime::Dict>(cxxime::UserDictKind::PINYIN);
+    ASSERT_TRUE(dict->open(dict_path, user_path));
     cxxime::Config config;
     cxxime::Engine engine;
-    ASSERT_TRUE(engine.initialize(dict, spellings, nullptr, config));
+    ASSERT_TRUE(test::initialize_engine(engine, dict, config));
 
     type_code(engine, "nihao");
     ASSERT_GE(engine.context().candidate_page().candidates.size(), 2u);
@@ -284,8 +282,8 @@ TEST(Engine, candidate_order_stays_stable_when_candidate_learning_is_disabled) {
     ASSERT_EQ(engine.context().candidate_page().candidates[1].text, "第二候选");
     ASSERT_TRUE(engine.select_candidate(1));
     ASSERT_EQ(engine.get_commit_text(), "第二候选");
-    ASSERT_TRUE(!dict.has_user_entry("第二候选"));
-    ASSERT_EQ(dict.candidate_preference_count(), static_cast<size_t>(0));
+    ASSERT_TRUE(!dict->has_user_entry("第二候选"));
+    ASSERT_EQ(dict->candidate_preference_count(), static_cast<size_t>(0));
 
     type_code(engine, "nihao");
     ASSERT_GE(engine.context().candidate_page().candidates.size(), 2u);
@@ -296,11 +294,11 @@ TEST(Engine, candidate_order_stays_stable_when_candidate_learning_is_disabled) {
     space.is_key_up = false;
     ASSERT_EQ(engine.process_key(space), cxxime::ProcessResult::COMMITTED);
     ASSERT_EQ(engine.get_commit_text(), "默认候选");
-    ASSERT_TRUE(!dict.has_user_entry("默认候选"));
-    ASSERT_EQ(dict.candidate_preference_count(), static_cast<size_t>(0));
+    ASSERT_TRUE(!dict->has_user_entry("默认候选"));
+    ASSERT_EQ(dict->candidate_preference_count(), static_cast<size_t>(0));
 
     engine.finalize();
-    dict.close();
+    dict->close();
     DeleteFileA(dict_path.c_str());
     DeleteFileA(user_path.c_str());
 }
@@ -315,13 +313,12 @@ TEST(Engine, candidate_learning_promotes_selected_candidate_when_enabled) {
         {"ni:hao", "第二候选", 200},
     });
 
-    cxxime::Dict dict;
-    ASSERT_TRUE(dict.open(dict_path, user_path));
-    cxxime::SpellingsIndex spellings;
+    auto dict = std::make_shared<cxxime::Dict>(cxxime::UserDictKind::PINYIN);
+    ASSERT_TRUE(dict->open(dict_path, user_path));
     cxxime::Config config;
     config.candidate_learning = true;
     cxxime::Engine engine;
-    ASSERT_TRUE(engine.initialize(dict, spellings, nullptr, config));
+    ASSERT_TRUE(test::initialize_engine(engine, dict, config));
 
     type_code(engine, "nihao");
     ASSERT_GE(engine.context().candidate_page().candidates.size(), 2u);
@@ -329,15 +326,15 @@ TEST(Engine, candidate_learning_promotes_selected_candidate_when_enabled) {
     ASSERT_EQ(engine.context().candidate_page().candidates[1].text, "第二候选");
     ASSERT_TRUE(engine.select_candidate(1));
     ASSERT_EQ(engine.get_commit_text(), "第二候选");
-    ASSERT_EQ(dict.user_entry_count(), static_cast<size_t>(0));
-    ASSERT_EQ(dict.candidate_preference_count(), static_cast<size_t>(1));
+    ASSERT_EQ(dict->user_entry_count(), static_cast<size_t>(0));
+    ASSERT_EQ(dict->candidate_preference_count(), static_cast<size_t>(1));
 
     type_code(engine, "nihao");
     ASSERT_GE(engine.context().candidate_page().candidates.size(), 1u);
     ASSERT_EQ(engine.context().candidate_page().candidates[0].text, "第二候选");
 
     engine.finalize();
-    dict.close();
+    dict->close();
     DeleteFileA(dict_path.c_str());
     DeleteFileA(user_path.c_str());
 }
@@ -351,13 +348,12 @@ TEST(Engine, candidate_learning_uses_candidate_text_for_punctuation_commit) {
         {"ni:hao", "你好", 300},
     });
 
-    cxxime::Dict dict;
-    ASSERT_TRUE(dict.open(dict_path, user_path));
-    cxxime::SpellingsIndex spellings;
+    auto dict = std::make_shared<cxxime::Dict>(cxxime::UserDictKind::PINYIN);
+    ASSERT_TRUE(dict->open(dict_path, user_path));
     cxxime::Config config;
     config.candidate_learning = true;
     cxxime::Engine engine;
-    ASSERT_TRUE(engine.initialize(dict, spellings, nullptr, config));
+    ASSERT_TRUE(test::initialize_engine(engine, dict, config));
 
     type_code(engine, "nihao");
     ASSERT_GE(engine.context().candidate_page().candidates.size(), 1u);
@@ -371,13 +367,13 @@ TEST(Engine, candidate_learning_uses_candidate_text_for_punctuation_commit) {
     period.keycode = VK_OEM_PERIOD;
     ASSERT_EQ(engine.process_key(period, options), cxxime::ProcessResult::COMMITTED);
     ASSERT_EQ(engine.get_commit_text(), "你好。");
-    ASSERT_TRUE(!dict.has_user_entry("你好"));
-    auto preferences = dict.query_candidate_preferences("你好", 0, 10);
+    ASSERT_TRUE(!dict->has_user_entry("你好"));
+    auto preferences = dict->query_candidate_preferences("你好", 0, 10);
     ASSERT_EQ(preferences.size(), static_cast<size_t>(1));
     ASSERT_EQ(preferences[0].text, "你好");
 
     engine.finalize();
-    dict.close();
+    dict->close();
     DeleteFileA(dict_path.c_str());
     DeleteFileA(user_path.c_str());
 }
@@ -389,7 +385,7 @@ TEST(Engine, translate_valid_pinyin) {
         {"de:dao", "得到", 300},
     });
 
-    cxxime::Dict dict;
+    cxxime::Dict dict{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dict.open_dict(dict_path));
 
     cxxime::PinyinTranslator translator;

@@ -59,7 +59,7 @@ struct UserLookupStats {
 
 class Dict {
 public:
-    Dict();
+    explicit Dict(UserDictKind kind);
     ~Dict();
     Dict(const Dict&) = delete;
     Dict& operator=(const Dict&) = delete;
@@ -77,6 +77,7 @@ public:
                           const std::string& prefix_index_path);
     void close();   // saves user dict before closing
     bool is_open() const;
+    UserDictKind kind() const { return kind_; }
 
     // Low-level
     bool open_dict(const std::string& bin_path);
@@ -148,7 +149,7 @@ public:
     bool clear_candidate_preferences_for_code_and_save(const std::string& code);
     size_t candidate_preference_count() const;
     uint64_t candidate_preference_version() const;
-    bool load_manual_candidate_order(const std::string& path, std::size_t max_code_length);
+    bool load_manual_candidate_order(const std::string& path);
     bool merge_manual_candidate_order_contents(const std::string& imported,
                                                UserDataMergeResult* result);
     void apply_manual_candidate_order(const std::string& code, CandidateSource source,
@@ -230,6 +231,7 @@ private:
     bool resolve_manual_candidate(const ManualCandidateOrderEntry& entry,
                                   CandidateSource source, Candidate* candidate) const;
 
+    const UserDictKind kind_;
     char* dict_data_ = nullptr;         // heap-allocated buffer
     size_t dict_data_size_ = 0;
     const CandidateStoreEntry* dict_entries_ = nullptr;

@@ -7,6 +7,7 @@
 #include <cctype>
 #include <cstdio>
 #include <cstring>
+#include <memory>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -24,6 +25,7 @@
 #include <cxxime/wubi_translator.h>
 
 #include "support/testutil.h"
+#include "support/test_runtime.h"
 
 inline char engine_test_temp_path[MAX_PATH] = {};
 

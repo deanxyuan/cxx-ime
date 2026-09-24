@@ -1,6 +1,7 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
 #include <cctype>
+#include <memory>
 #include <string>
 
 #include <windows.h>
@@ -15,6 +16,7 @@
 #include <cxxime/wubi_processor.h>
 
 #include "support/testutil.h"
+#include "support/test_runtime.h"
 
 namespace {
 
@@ -94,16 +96,16 @@ TEST(PreeditEdit, mixed_mode_uses_the_edited_buffer) {
     ASSERT_TRUE(cxxime::Dict::create_test_dict(pinyin_path, {{"a", "pinyin", 100}}));
     ASSERT_TRUE(cxxime::Dict::create_test_dict(wubi_path, {{"a", "wubi", 100}}));
 
-    cxxime::Engine engine;
-    ASSERT_TRUE(engine.initialize(pinyin_path));
-    cxxime::Dict wubi_dict;
-    ASSERT_TRUE(wubi_dict.open(wubi_path));
-    engine.set_wubi_dict(&wubi_dict);
-    engine.switch_mode(cxxime::InputMode::MIXED);
+    auto pinyin_dict = std::make_shared<cxxime::Dict>(cxxime::UserDictKind::PINYIN);
+    auto wubi_dict = std::make_shared<cxxime::Dict>(cxxime::UserDictKind::WUBI);
+    ASSERT_TRUE(pinyin_dict->open(pinyin_path));
+    ASSERT_TRUE(wubi_dict->open(wubi_path));
     cxxime::Config config;
     config.page_size = 1;
     config.wubi_auto_commit = false;
-    engine.reload_config(config);
+    cxxime::Engine engine;
+    ASSERT_TRUE(test::initialize_engine(engine, pinyin_dict, config, {}, wubi_dict));
+    engine.switch_mode(cxxime::InputMode::MIXED);
 
     ASSERT_EQ(engine.process_key(make_key('A')), cxxime::ProcessResult::ACCEPTED);
     const size_t candidate_count_before = engine.context().candidate_page().candidates.size();
@@ -129,7 +131,8 @@ TEST(PreeditEdit, mixed_mode_uses_the_edited_buffer) {
     ASSERT_EQ(engine.context().preedit_cursor(), static_cast<size_t>(3));
 
     engine.finalize();
-    wubi_dict.close();
+    pinyin_dict->close();
+    wubi_dict->close();
     DeleteFileA(pinyin_path.c_str());
     DeleteFileA(wubi_path.c_str());
 }

@@ -13,8 +13,7 @@ TEST(Engine, shift_toggle_then_capslock_uppercase) {
     config.ascii_switch_key["Caps_Lock"] = "clear";
 
     cxxime::Engine engine;
-    engine.initialize(dict_path, spellings_path);
-    engine.reload_config(config);
+    ASSERT_TRUE(test::initialize_engine(engine, dict_path, config, spellings_path));
 
     // Step 1: Press and release Shift_L → toggles to English mode
     cxxime::KeyEvent shift_down;
@@ -76,7 +75,7 @@ TEST(Engine, ascii_mode_shift_capslock_lowercase) {
     ASSERT_TRUE(cxxime::SpellingsIndex::create_test_trie(spellings_path, {{"a", "a", 0, 0.0f}}));
 
     cxxime::Engine engine;
-    engine.initialize(dict_path, spellings_path);
+    ASSERT_TRUE(test::initialize_engine(engine, dict_path, cxxime::Config{}, spellings_path));
     engine.ascii_composer().set_ascii_mode(true);
 
     cxxime::KeyEvent event;
@@ -100,7 +99,7 @@ TEST(Engine, ascii_mode_enter_passes_to_application) {
     ASSERT_TRUE(cxxime::SpellingsIndex::create_test_trie(spellings_path, {{"a", "a", 0, 0.0f}}));
 
     cxxime::Engine engine;
-    engine.initialize(dict_path, spellings_path);
+    ASSERT_TRUE(test::initialize_engine(engine, dict_path, cxxime::Config{}, spellings_path));
     engine.ascii_composer().set_ascii_mode(true);
 
     cxxime::KeyEvent enter;
@@ -127,8 +126,7 @@ TEST(Engine, capslock_overlay_shift_keeps_ascii_mode) {
     config.ascii_switch_key["Caps_Lock"] = "clear";
 
     cxxime::Engine engine;
-    engine.initialize(dict_path, spellings_path);
-    engine.reload_config(config);
+    ASSERT_TRUE(test::initialize_engine(engine, dict_path, config, spellings_path));
 
     cxxime::KeyEvent caps_down;
     caps_down.keycode = 0x14;  // VK_CAPITAL
@@ -273,8 +271,7 @@ TEST(Engine, capslock_append_letter_accepted) {
     config.ascii_switch_key["Caps_Lock"] = "append";
 
     cxxime::Engine engine;
-    engine.initialize(dict_path, spellings_path);
-    engine.reload_config(config);
+    ASSERT_TRUE(test::initialize_engine(engine, dict_path, config, spellings_path));
 
     cxxime::KeyEvent first;
     first.keycode = 'N';
@@ -322,8 +319,7 @@ TEST(Engine, capslock_append_clears_candidates_and_commits_raw_code) {
     config.ascii_switch_key["Caps_Lock"] = "append";
 
     cxxime::Engine engine;
-    engine.initialize(dict_path, spellings_path);
-    engine.reload_config(config);
+    ASSERT_TRUE(test::initialize_engine(engine, dict_path, config, spellings_path));
 
     for (char ch : std::string("NI")) {
         cxxime::KeyEvent event;
@@ -378,8 +374,7 @@ TEST(Engine, capslock_append_enter_preserves_case) {
     config.ascii_switch_key["Caps_Lock"] = "append";
 
     cxxime::Engine engine;
-    engine.initialize(dict_path, spellings_path);
-    engine.reload_config(config);
+    ASSERT_TRUE(test::initialize_engine(engine, dict_path, config, spellings_path));
 
     for (char ch : std::string("NI")) {
         cxxime::KeyEvent event;

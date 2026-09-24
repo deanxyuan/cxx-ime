@@ -14,7 +14,7 @@ Syllabifier::Syllabifier(const SpellingsIndex& spellings)
     : spellings_(spellings) {}
 
 SyllableGraph Syllabifier::build_graph(const std::string& input,
-                                       bool enable_terminal_completion) const {
+                                       const SyllabifierOptions& options) const {
     SyllableGraph graph;
     if (input.empty() || !spellings_.has_spellings())
         return graph;
@@ -36,7 +36,7 @@ SyllableGraph Syllabifier::build_graph(const std::string& input,
         visited[pos] = 1;
 
         std::string_view remaining(input.data() + pos, input.size() - pos);
-        auto matches = spellings_.prefix_search(remaining);
+        auto matches = spellings_.prefix_search(remaining, options.enable_fuzzy);
 
         for (auto& m : matches) {
             // The trie key is the raw input span. The canonical syllable may have a
@@ -59,7 +59,7 @@ SyllableGraph Syllabifier::build_graph(const std::string& input,
         }
     }
 
-    if (enable_terminal_completion) {
+    if (options.enable_terminal_completion) {
         static constexpr float kCompletionPenalty = -0.69314718f;
         const size_t end_position = input.size();
         for (size_t position = 0; position < end_position; ++position) {
@@ -68,7 +68,7 @@ SyllableGraph Syllabifier::build_graph(const std::string& input,
             }
             const std::string_view remaining(input.data() + position,
                                              end_position - position);
-            auto completions = spellings_.completion_search(remaining);
+            auto completions = spellings_.completion_search(remaining, options.enable_fuzzy);
             auto& edges = graph[position][end_position];
             for (const auto& completion : completions) {
                 if (completion.type >= kAbbreviation) {
@@ -182,13 +182,12 @@ bool Syllabifier::enumerate_paths(
 }
 
 SegmentResult Syllabifier::segment(const std::string& input, const QueryDeadline* deadline,
-                                   bool enable_terminal_completion,
-                                   bool collect_path_metadata) const {
+                                   const SyllabifierOptions& options) const {
     SegmentResult result;
     if (input.empty())
         return result;
 
-    auto graph = build_graph(input, enable_terminal_completion);
+    auto graph = build_graph(input, options);
     if (graph.empty())
         return result;
 
@@ -214,7 +213,8 @@ SegmentResult Syllabifier::segment(const std::string& input, const QueryDeadline
     uint32_t path_count = 0;
     uint32_t call_count = 0;
     bool deadline_expired =
-        enumerate_paths(graph, 0, farthest, current, scored, deadline, collect_path_metadata,
+        enumerate_paths(graph, 0, farthest, current, scored, deadline,
+                        options.collect_path_metadata,
                         path_count, sorted_scratch, call_count);
 
     if (deadline_expired) {
@@ -246,8 +246,9 @@ SegmentResult Syllabifier::segment(const std::string& input, const QueryDeadline
     return result;
 }
 
-bool Syllabifier::has_fuzzy_path(const std::string& input) const {
-    const SyllableGraph graph = build_graph(input, false);
+bool Syllabifier::has_fuzzy_path(const std::string& input,
+                                 const SyllabifierOptions& options) const {
+    const SyllableGraph graph = build_graph(input, options);
     std::vector<uint8_t> reachable_without_fuzzy(input.size() + 1, 0);
     std::vector<uint8_t> reachable_with_fuzzy(input.size() + 1, 0);
     reachable_without_fuzzy[0] = 1;

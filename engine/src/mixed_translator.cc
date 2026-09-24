@@ -11,7 +11,6 @@
 #include <cxxime/query_scratch.h>
 #include <cxxime/query_trace.h>
 #include <cxxime/short_code_cache.h>
-#include <cxxime/syllabifier.h>
 
 namespace cxxime {
 
@@ -193,12 +192,9 @@ void MixedTranslator::set_wubi_dict(Dict* dict) {
     wubi_translator_.set_dict(dict);
 }
 
-void MixedTranslator::set_syllabifier(Syllabifier* syllabifier) {
-    pinyin_translator_.set_syllabifier(syllabifier);
-}
-
-void MixedTranslator::set_pinyin_scheme(PinyinSchemeKind scheme) {
-    pinyin_translator_.set_pinyin_scheme(scheme);
+void MixedTranslator::bind_pinyin(std::shared_ptr<const PinyinResourceSet> resources,
+                                  PinyinQueryPolicy policy) {
+    pinyin_translator_.bind_pinyin(std::move(resources), policy);
 }
 
 void MixedTranslator::set_short_cache(const ShortCodeCache* cache) {

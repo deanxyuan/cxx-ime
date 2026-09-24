@@ -2,8 +2,8 @@
 
 #include <cxxime/spellings_index.h>
 
-#include <cstring>
 #include <algorithm>
+#include <cstring>
 
 #include <windows.h>
 
@@ -72,6 +72,7 @@ bool SpellingsIndex::load(const std::string& bin_path) {
         node_offsets_[i] = (uint32_t)(p - nodes_);
         uint8_t ns = *(const uint8_t*)(p + 8);
         uint8_t nc = *(const uint8_t*)(p + 9);
+        has_spelling_entries_ = has_spelling_entries_ || ns != 0;
         p += NODE_HEADER_SIZE + ns * SPELLING_SIZE + nc * CHILD_SIZE;
     }
 
@@ -85,6 +86,7 @@ void SpellingsIndex::unload() {
     nodes_ = nullptr;
     strings_ = nullptr;
     node_count_ = 0;
+    has_spelling_entries_ = false;
     data_size_ = 0;
     node_offsets_.reset();
 }
@@ -92,7 +94,7 @@ void SpellingsIndex::unload() {
 // v2 trie prefix search: O(k) walk
 static std::vector<SpellingMatch> trie_prefix_search(
     const char* nodes, const char* strings, const uint32_t* node_offsets,
-    uint32_t node_count, std::string_view prefix) {
+    uint32_t node_count, std::string_view prefix, bool enable_fuzzy) {
 
     std::vector<SpellingMatch> results;
     const uint32_t prefix_len = (uint32_t)prefix.size();
@@ -118,10 +120,15 @@ static std::vector<SpellingMatch> trie_prefix_search(
         // Collect spellings
         const char* sp = node + NODE_HEADER_SIZE;
         for (uint8_t i = 0; i < ns; ++i) {
+            const int type = *(const uint8_t*)(sp + 8);
+            if (!enable_fuzzy && type == kFuzzySpelling) {
+                sp += SPELLING_SIZE;
+                continue;
+            }
             SpellingMatch m;
             m.syllable.assign(strings + *(const uint32_t*)(sp),
                               *(const uint32_t*)(sp + 4));
-            m.type = *(const uint8_t*)(sp + 8);
+            m.type = type;
             m.credibility = *(const float*)(sp + 10);
             m.input_key_len = prefix_pos;
             results.push_back(std::move(m));
@@ -153,7 +160,7 @@ static std::vector<SpellingMatch> trie_prefix_search(
 static void append_trie_completions(
     const char* nodes, const char* strings, const uint32_t* node_offsets,
     uint32_t node_count, uint32_t start_node, uint32_t start_key_length,
-    uint32_t prefix_length, std::vector<SpellingMatch>* results) {
+    uint32_t prefix_length, bool enable_fuzzy, std::vector<SpellingMatch>* results) {
     struct PendingNode {
         uint32_t index;
         uint32_t key_length;
@@ -173,10 +180,15 @@ static void append_trie_completions(
         const char* spelling = node + NODE_HEADER_SIZE;
         if (current.key_length > prefix_length) {
             for (uint8_t i = 0; i < spelling_count; ++i) {
+                const int type = *(const uint8_t*)(spelling + 8);
+                if (!enable_fuzzy && type == kFuzzySpelling) {
+                    spelling += SPELLING_SIZE;
+                    continue;
+                }
                 SpellingMatch match;
                 match.syllable.assign(strings + *(const uint32_t*)(spelling),
                                       *(const uint32_t*)(spelling + 4));
-                match.type = *(const uint8_t*)(spelling + 8);
+                match.type = type;
                 match.credibility = *(const float*)(spelling + 10);
                 match.input_key_len = current.key_length;
                 results->push_back(std::move(match));
@@ -201,7 +213,7 @@ static void append_trie_completions(
 
 static std::vector<SpellingMatch> trie_completion_search(
     const char* nodes, const char* strings, const uint32_t* node_offsets,
-    uint32_t node_count, std::string_view prefix) {
+    uint32_t node_count, std::string_view prefix, bool enable_fuzzy) {
     std::vector<SpellingMatch> results;
     const uint32_t prefix_length = (uint32_t)prefix.size();
     uint32_t prefix_position = 0;
@@ -223,7 +235,8 @@ static std::vector<SpellingMatch> trie_completion_search(
         const uint32_t full_key_length = prefix_position + key_length;
         if (remaining <= key_length) {
             append_trie_completions(nodes, strings, node_offsets, node_count,
-                current_node, full_key_length, prefix_length, &results);
+                current_node, full_key_length, prefix_length, enable_fuzzy,
+                &results);
             return results;
         }
         prefix_position = full_key_length;
@@ -246,36 +259,26 @@ static std::vector<SpellingMatch> trie_completion_search(
     return results;
 }
 
-std::vector<SpellingMatch> SpellingsIndex::prefix_search(std::string_view prefix) const {
+std::vector<SpellingMatch> SpellingsIndex::prefix_search(std::string_view prefix,
+                                                         bool enable_fuzzy) const {
     if (!data_ || prefix.empty())
         return {};
 
     std::vector<SpellingMatch> results =
-        trie_prefix_search(nodes_, strings_, node_offsets_.get(), node_count_, prefix);
-
-    if (!fuzzy_enabled_) {
-        results.erase(
-            std::remove_if(results.begin(), results.end(),
-                [](const SpellingMatch& m) { return m.type == kFuzzySpelling; }),
-            results.end());
-    }
+        trie_prefix_search(nodes_, strings_, node_offsets_.get(), node_count_, prefix,
+                           enable_fuzzy);
 
     return results;
 }
 
-std::vector<SpellingMatch> SpellingsIndex::completion_search(std::string_view prefix) const {
+std::vector<SpellingMatch> SpellingsIndex::completion_search(std::string_view prefix,
+                                                             bool enable_fuzzy) const {
     if (!data_ || prefix.empty())
         return {};
 
     std::vector<SpellingMatch> results =
-        trie_completion_search(nodes_, strings_, node_offsets_.get(), node_count_, prefix);
-
-    if (!fuzzy_enabled_) {
-        results.erase(
-            std::remove_if(results.begin(), results.end(),
-                [](const SpellingMatch& m) { return m.type == kFuzzySpelling; }),
-            results.end());
-    }
+        trie_completion_search(nodes_, strings_, node_offsets_.get(), node_count_, prefix,
+                               enable_fuzzy);
     return results;
 }
 

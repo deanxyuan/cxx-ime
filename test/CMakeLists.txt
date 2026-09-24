@@ -44,6 +44,9 @@ add_cxxime_test(engine_test
         engine/engine_pinyin_test.cc
         engine/engine_ascii_mode_test.cc
         engine/engine_ascii_composition_test.cc
+        engine/pinyin_runtime_test.cc
+        engine/pinyin_scheme_test.cc
+        engine/pinyin_user_code_test.cc
         engine/shuangpin_test.cc
         engine/engine_deadline_test.cc
         engine/composition_state_test.cc
@@ -302,6 +305,7 @@ add_cxxime_test(session_manager_integration_test
         server/session_manager_candidate_test.cc
         server/ipc_response_builder_test.cc
         server/session_manager_segmented_test.cc
+        server/session_manager_pinyin_scheme_test.cc
         server/session_manager_lexicon_test.cc
         server/session_manager_lifecycle_test.cc
         server/user_backup_service_test.cc

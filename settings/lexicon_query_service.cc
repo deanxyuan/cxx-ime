@@ -3,10 +3,9 @@
 #include "lexicon_query_service.h"
 
 #include <cxxime/data_path.h>
+#include <cxxime/pinyin_resource.h>
 #include <cxxime/pinyin_scheme.h>
 #include <cxxime/pinyin_user_code.h>
-#include <cxxime/spellings_index.h>
-#include <cxxime/syllabifier.h>
 
 namespace cxxime {
 namespace settings {
@@ -106,16 +105,17 @@ bool LexiconQueryService::normalize_pinyin_code(std::string_view input, std::str
         return normalized;
     }
 
-    SpellingsIndex spellings;
-    if (!spellings.load(data_path(scheme.spelling_filename))) {
+    auto pinyin_resources = PinyinResourceSet::create(
+        scheme.id, scheme.kind, data_path(scheme.spelling_filename),
+        PinyinSpellingRequirement::kRequired);
+    if (!pinyin_resources) {
         if (error) {
             *error = "Unable to load the selected Shuangpin scheme";
         }
         return false;
     }
-    const Syllabifier syllabifier(spellings);
     const bool normalized =
-        canonicalize_pinyin_user_code(input, scheme.kind, &syllabifier, code, syllables);
+        canonicalize_pinyin_user_code(input, scheme.kind, pinyin_resources.get(), code, syllables);
     if (error) {
         *error = normalized ? std::string{} : "Invalid or ambiguous Shuangpin code";
     }

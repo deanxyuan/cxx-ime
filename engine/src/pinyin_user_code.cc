@@ -7,8 +7,8 @@
 #include <string>
 #include <vector>
 
+#include <cxxime/pinyin_resource.h>
 #include <cxxime/segmentor.h>
-#include <cxxime/syllabifier.h>
 #include <cxxime/user_dict_validation.h>
 
 namespace cxxime {
@@ -118,7 +118,7 @@ bool is_canonical_pinyin_user_code(std::string_view code, std::string_view sylla
 }
 
 bool canonicalize_pinyin_user_code(std::string_view input, PinyinSchemeKind input_scheme,
-                                   const Syllabifier* syllabifier, std::string* code,
+                                   const PinyinResourceSet* pinyin_resources, std::string* code,
                                    std::string* syllables) {
     if (!code || !syllables || input.empty()) {
         return false;
@@ -131,13 +131,16 @@ bool canonicalize_pinyin_user_code(std::string_view input, PinyinSchemeKind inpu
         *code = input_string;
         return true;
     }
-    if (input_scheme != PinyinSchemeKind::kShuangpin || !syllabifier ||
+    if (input_scheme != PinyinSchemeKind::kShuangpin || !pinyin_resources ||
         std::any_of(input.begin(), input.end(),
                     [](char value) { return (value < 'a' || value > 'z') && value != ';'; })) {
         return false;
     }
 
-    const SegmentResult segmented = syllabifier->segment(std::string(input), nullptr, false, true);
+    SyllabifierOptions options;
+    options.collect_path_metadata = true;
+    const SegmentResult segmented =
+        pinyin_resources->segment(std::string(input), nullptr, options);
     std::string normalized_code;
     std::string normalized_syllables;
     bool ambiguous_syllables = false;

@@ -40,7 +40,7 @@ TEST(WubiPrefixQuery, ranking_is_independent_of_query_limit) {
     ASSERT_TRUE(cxxime::test::create_test_wubi_index(index_path, entries));
     DeleteFileA(user_path.c_str());
 
-    cxxime::Dict dict;
+    cxxime::Dict dict{cxxime::UserDictKind::WUBI};
     ASSERT_TRUE(dict.open_wubi_bundle(dict_path, user_path, index_path));
     ASSERT_TRUE(dict.has_wubi_prefix_index());
 
@@ -77,7 +77,7 @@ TEST(WubiPrefixQuery, disabled_filter_has_a_fixed_posting_scan_bound) {
     DeleteFileA(user_path.c_str());
     DeleteFileA(disabled_path.c_str());
 
-    cxxime::Dict dict;
+    cxxime::Dict dict{cxxime::UserDictKind::WUBI};
     ASSERT_TRUE(dict.open_wubi_bundle(dict_path, user_path, index_path));
     ASSERT_TRUE(dict.load_disabled_system_entries(disabled_path));
     for (int index = 0; index < 20; ++index) {

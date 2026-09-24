@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <fstream>
+#include <memory>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -21,6 +22,7 @@
 #include <cxxime/wubi_translator.h>
 
 #include "support/testutil.h"
+#include "support/test_runtime.h"
 
 namespace {
 
@@ -70,7 +72,7 @@ TEST(UserDataSeparation, manual_entries_and_preferences_use_independent_files) {
     ASSERT_TRUE(!preference_path.empty());
     ASSERT_TRUE(cxxime::Dict::create_test_dict(dictionary_path, {{"ni:hao", "你好", 1000}}));
 
-    cxxime::Dict dictionary;
+    cxxime::Dict dictionary{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dictionary.open(dictionary_path, user_path));
     ASSERT_TRUE(dictionary.load_candidate_preferences(preference_path));
     ASSERT_TRUE(dictionary.add_user_entry("您好", "ninhao", "nin:hao"));
@@ -86,7 +88,7 @@ TEST(UserDataSeparation, manual_entries_and_preferences_use_independent_files) {
     ASSERT_TRUE(preference_contents.find("您好\tninhao") == std::string::npos);
     dictionary.close();
 
-    cxxime::Dict reloaded;
+    cxxime::Dict reloaded{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(reloaded.open(dictionary_path, user_path));
     ASSERT_TRUE(reloaded.load_candidate_preferences(preference_path));
     ASSERT_EQ(reloaded.user_entry_count(), static_cast<std::size_t>(1));
@@ -104,7 +106,7 @@ TEST(UserDataSeparation, transient_read_failure_preserves_loaded_data) {
     const std::string preference_path = make_temp_path("udp");
     ASSERT_TRUE(cxxime::Dict::create_test_dict(dictionary_path, {{"ni", "你", 1000}}));
 
-    cxxime::Dict dictionary;
+    cxxime::Dict dictionary{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dictionary.open(dictionary_path, user_path));
     ASSERT_TRUE(dictionary.load_candidate_preferences(preference_path));
     ASSERT_TRUE(dictionary.add_user_entry("您好", "nin", "nin"));
@@ -139,7 +141,7 @@ TEST(UserDataSeparation, transient_read_failure_preserves_loaded_data) {
 
 TEST(UserDataSeparation, preference_key_keeps_same_text_under_distinct_codes) {
     const std::string preference_path = make_temp_path("udk");
-    cxxime::Dict dictionary;
+    cxxime::Dict dictionary{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dictionary.load_candidate_preferences(preference_path));
 
     const cxxime::Candidate candidate = make_candidate("你好", "nihao");
@@ -156,7 +158,7 @@ TEST(UserDataSeparation, preference_key_keeps_same_text_under_distinct_codes) {
 
 TEST(UserDataSeparation, exact_text_query_does_not_return_prefix_or_code_matches) {
     const std::string user_path = make_temp_path("ude");
-    cxxime::Dict dictionary;
+    cxxime::Dict dictionary{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dictionary.load_user_dict(user_path));
     ASSERT_TRUE(dictionary.add_user_entry("nihao", "ceshi"));
     ASSERT_TRUE(dictionary.add_user_entry("nihao-long", "shuru"));
@@ -175,7 +177,7 @@ TEST(UserDataSeparation, exact_text_query_does_not_return_prefix_or_code_matches
 
 TEST(UserDataSeparation, persisted_add_is_idempotent) {
     const std::string user_path = make_temp_path("udi");
-    cxxime::Dict dictionary;
+    cxxime::Dict dictionary{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dictionary.load_user_dict(user_path));
 
     ASSERT_TRUE(dictionary.add_user_entry_and_save("target", "nihao"));
@@ -190,11 +192,10 @@ TEST(UserDataSeparation, persisted_add_is_idempotent) {
     DeleteFileA(user_path.c_str());
 }
 
-TEST(UserDataSeparation, manual_candidate_order_enforces_profile_code_length) {
+TEST(UserDataSeparation, manual_candidate_order_enforces_kind_code_length) {
     const std::string order_path = make_temp_path("udw");
-    cxxime::Dict dictionary;
-    ASSERT_TRUE(
-        dictionary.load_manual_candidate_order(order_path, cxxime::kMaxWubiCodeLength));
+    cxxime::Dict dictionary{cxxime::UserDictKind::WUBI};
+    ASSERT_TRUE(dictionary.load_manual_candidate_order(order_path));
     ASSERT_TRUE(!dictionary.replace_manual_candidate_order_and_save(
         "abcde", {{"word", "abcd", ""}}));
     ASSERT_TRUE(!dictionary.replace_manual_candidate_order_and_save(
@@ -204,6 +205,21 @@ TEST(UserDataSeparation, manual_candidate_order_enforces_profile_code_length) {
 
     dictionary.close();
     DeleteFileA(order_path.c_str());
+}
+
+TEST(UserDataSeparation, wubi_preference_keeps_valid_query_keys_longer_than_four_codes) {
+    const std::string preference_path = make_temp_path("udp");
+    cxxime::Dict dictionary{cxxime::UserDictKind::WUBI};
+    ASSERT_TRUE(dictionary.load_candidate_preferences(preference_path));
+
+    const cxxime::Candidate candidate = make_candidate("word", "abcd");
+    ASSERT_TRUE(dictionary.record_candidate_preference(candidate, "abcde"));
+    const auto entries = dictionary.query_candidate_preferences("word", 0, 10);
+    ASSERT_EQ(entries.size(), static_cast<std::size_t>(1));
+    ASSERT_EQ(entries[0].code, "abcde");
+
+    dictionary.close();
+    DeleteFileA(preference_path.c_str());
 }
 
 TEST(UserDataSeparation, manual_candidate_order_rejects_oversized_file_before_reading) {
@@ -217,8 +233,8 @@ TEST(UserDataSeparation, manual_candidate_order_rejects_oversized_file_before_re
     ASSERT_TRUE(SetEndOfFile(file));
     CloseHandle(file);
 
-    cxxime::Dict dictionary;
-    ASSERT_TRUE(!dictionary.load_manual_candidate_order(order_path, cxxime::kMaxInputCodeLength));
+    cxxime::Dict dictionary{cxxime::UserDictKind::PINYIN};
+    ASSERT_TRUE(!dictionary.load_manual_candidate_order(order_path));
     DeleteFileA(order_path.c_str());
 }
 
@@ -229,11 +245,10 @@ TEST(UserDataSeparation, manual_candidate_order_is_atomic_and_overrides_learning
     ASSERT_TRUE(cxxime::Dict::create_test_dict(
         dictionary_path, {{"yi:y", "默认词", 1000}, {"yi:y", "固定词", 100}}));
 
-    cxxime::Dict dictionary;
+    cxxime::Dict dictionary{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dictionary.open_dict(dictionary_path));
     ASSERT_TRUE(dictionary.load_candidate_preferences(preference_path));
-    ASSERT_TRUE(
-        dictionary.load_manual_candidate_order(order_path, cxxime::kMaxInputCodeLength));
+    ASSERT_TRUE(dictionary.load_manual_candidate_order(order_path));
     ASSERT_TRUE(dictionary.record_candidate_preference(make_candidate("默认词", "yiy"), "yiy"));
 
     const std::uint64_t version = dictionary.manual_candidate_order_version();
@@ -266,10 +281,10 @@ TEST(UserDataSeparation, manual_candidate_order_uses_complete_pinyin_identity) {
     const std::string order_path = make_temp_path("udi");
     const std::string user_path = make_temp_path("udu");
     ASSERT_TRUE(cxxime::Dict::create_test_dict(dictionary_path, {{"xi:an", "系统词", 1000}}));
-    cxxime::Dict dictionary;
+    cxxime::Dict dictionary{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dictionary.open_dict(dictionary_path));
     ASSERT_TRUE(dictionary.load_user_dict(user_path));
-    ASSERT_TRUE(dictionary.load_manual_candidate_order(order_path, cxxime::kMaxInputCodeLength));
+    ASSERT_TRUE(dictionary.load_manual_candidate_order(order_path));
     ASSERT_TRUE(dictionary.replace_manual_candidate_order_and_save(
         "xian", {{"相同词", "xian", "xi:an"}, {"相同词", "xian", "xian"}}));
 
@@ -309,16 +324,16 @@ TEST(UserDataSeparation, manual_candidate_order_rejects_stale_version_after_relo
     const std::vector<cxxime::ManualCandidateOrderEntry> first = {{"first", "code", "code"}};
     const std::vector<cxxime::ManualCandidateOrderEntry> second = {{"second", "code", "code"}};
 
-    cxxime::Dict writer;
-    ASSERT_TRUE(writer.load_manual_candidate_order(order_path, cxxime::kMaxInputCodeLength));
+    cxxime::Dict writer{cxxime::UserDictKind::PINYIN};
+    ASSERT_TRUE(writer.load_manual_candidate_order(order_path));
     ASSERT_TRUE(writer.replace_manual_candidate_order_and_save("code", first));
     const std::uint64_t stale_version = writer.manual_candidate_order_version();
     ASSERT_TRUE(writer.replace_manual_candidate_order_and_save("code", second));
     const std::uint64_t current_version = writer.manual_candidate_order_version();
     ASSERT_NE(stale_version, current_version);
 
-    cxxime::Dict reloaded;
-    ASSERT_TRUE(reloaded.load_manual_candidate_order(order_path, cxxime::kMaxInputCodeLength));
+    cxxime::Dict reloaded{cxxime::UserDictKind::PINYIN};
+    ASSERT_TRUE(reloaded.load_manual_candidate_order(order_path));
     ASSERT_EQ(reloaded.manual_candidate_order_version(), current_version);
     bool version_conflict = false;
     ASSERT_TRUE(!reloaded.replace_manual_candidate_order_if_version("code", first, stale_version,
@@ -337,7 +352,7 @@ TEST(UserDataSeparation, user_lexicon_rejects_non_current_column_counts) {
         output << "current\tnihao\t7\n";
     }
 
-    cxxime::Dict dictionary;
+    cxxime::Dict dictionary{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dictionary.load_user_dict(user_path));
     ASSERT_EQ(dictionary.user_entry_count(), static_cast<std::size_t>(1));
     const auto entries = dictionary.query_user_entries("", 0, 10);
@@ -357,7 +372,7 @@ TEST(UserDataSeparation, load_quarantines_noncanonical_pinyin_entries) {
         output << "legacy-double\tnihk\t3\n";
     }
 
-    cxxime::Dict dictionary;
+    cxxime::Dict dictionary{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dictionary.load_user_dict(user_path));
     ASSERT_EQ(dictionary.user_entry_count(), static_cast<std::size_t>(1));
     ASSERT_EQ(dictionary.query_user_entries("", 0, 10).front().text, "canonical");
@@ -365,7 +380,7 @@ TEST(UserDataSeparation, load_quarantines_noncanonical_pinyin_entries) {
     ASSERT_TRUE(read_file(quarantine_path).find("legacy-double\tnihk\t3") != std::string::npos);
     ASSERT_TRUE(read_file(quarantine_path).find("unparsed-old-row\ttoo-few") != std::string::npos);
     ASSERT_TRUE(cxxime::UserLexicon::validate_contents(read_file(user_path),
-                                                       cxxime::UserScoringProfile::kPinyin));
+                                                       cxxime::UserDictKind::PINYIN));
 
     dictionary.close();
     DeleteFileA(user_path.c_str());
@@ -374,7 +389,7 @@ TEST(UserDataSeparation, load_quarantines_noncanonical_pinyin_entries) {
 
 TEST(UserDataSeparation, replacing_code_removes_stale_syllable_indexes) {
     const std::string user_path = make_temp_path("udr");
-    cxxime::Dict dictionary;
+    cxxime::Dict dictionary{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dictionary.load_user_dict(user_path));
     ASSERT_TRUE(dictionary.add_user_entry("manual-entry", "shurufa", "shu:ru:fa"));
 
@@ -399,7 +414,7 @@ TEST(UserDataSeparation, replacing_code_removes_stale_syllable_indexes) {
 
 TEST(UserDataSeparation, user_lexicon_rejects_invalid_text_codes_and_syllables) {
     const std::string user_path = make_temp_path("udv");
-    cxxime::Dict dictionary;
+    cxxime::Dict dictionary{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dictionary.load_user_dict(user_path));
 
     ASSERT_TRUE(!dictionary.add_user_entry(std::string("\xc3\x28", 2), "nihao"));
@@ -423,7 +438,7 @@ TEST(UserDataSeparation, candidate_preference_rejects_non_current_column_counts)
         output << "current\tcur\tcur\t2\t1\t\n";
     }
 
-    cxxime::Dict dictionary;
+    cxxime::Dict dictionary{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dictionary.load_candidate_preferences(preference_path));
     ASSERT_EQ(dictionary.candidate_preference_count(), static_cast<std::size_t>(1));
     const auto entries = dictionary.query_candidate_preferences("", 0, 10);
@@ -435,7 +450,7 @@ TEST(UserDataSeparation, candidate_preference_rejects_non_current_column_counts)
 
 TEST(UserDataSeparation, frozen_preferences_reject_all_mutations_after_final_save) {
     const std::string preference_path = make_temp_path("udf");
-    cxxime::Dict dictionary;
+    cxxime::Dict dictionary{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dictionary.load_candidate_preferences(preference_path));
     ASSERT_TRUE(dictionary.record_candidate_preference(make_candidate("first", "first"), "first"));
     ASSERT_TRUE(dictionary.save_candidate_preferences());
@@ -448,7 +463,7 @@ TEST(UserDataSeparation, frozen_preferences_reject_all_mutations_after_final_sav
     ASSERT_TRUE(dictionary.save_candidate_preferences());
     dictionary.close();
 
-    cxxime::Dict reloaded;
+    cxxime::Dict reloaded{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(reloaded.load_candidate_preferences(preference_path));
     ASSERT_EQ(reloaded.candidate_preference_count(), static_cast<std::size_t>(1));
     const auto entries = reloaded.query_candidate_preferences("", 0, 10);
@@ -459,7 +474,7 @@ TEST(UserDataSeparation, frozen_preferences_reject_all_mutations_after_final_sav
 }
 
 TEST(UserDataSeparation, preference_reorders_without_duplicating_and_clear_restores_order) {
-    cxxime::Dict dictionary;
+    cxxime::Dict dictionary{cxxime::UserDictKind::PINYIN};
     std::vector<cxxime::Candidate> candidates = {
         make_candidate("默认", "ni", 300),
         make_candidate("偏好", "ni", 200),
@@ -481,7 +496,7 @@ TEST(UserDataSeparation, preference_reorders_without_duplicating_and_clear_resto
 
 TEST(UserDataSeparation, failed_preference_transaction_preserves_live_state) {
     const std::string preference_path = make_temp_path("udt");
-    cxxime::Dict dictionary;
+    cxxime::Dict dictionary{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dictionary.load_candidate_preferences(preference_path));
     ASSERT_TRUE(dictionary.record_candidate_preference(make_candidate("保留", "baoliu"), "baoliu"));
     ASSERT_TRUE(dictionary.record_candidate_preference(make_candidate("保留二", "baoliuer"),
@@ -511,7 +526,7 @@ TEST(UserDataSeparation, failed_preference_transaction_preserves_live_state) {
 }
 
 TEST(UserDataSeparation, missing_preference_is_only_a_low_priority_fallback) {
-    cxxime::Dict dictionary;
+    cxxime::Dict dictionary{cxxime::UserDictKind::PINYIN};
     const cxxime::Candidate learned = make_candidate("曾用候选", "ni", 200);
     ASSERT_TRUE(dictionary.record_candidate_preference(learned, "ni"));
 
@@ -539,7 +554,7 @@ TEST(UserDataSeparation, deep_candidate_preference_is_applied_before_pagination)
     }
     ASSERT_TRUE(cxxime::Dict::create_test_dict(dictionary_path, entries));
 
-    cxxime::Dict dictionary;
+    cxxime::Dict dictionary{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dictionary.open_dict(dictionary_path));
     auto unranked = dictionary.lookup("abcd", 20);
     ASSERT_EQ(unranked.size(), static_cast<std::size_t>(20));
@@ -566,7 +581,7 @@ TEST(UserDataSeparation, deep_manual_prefix_preference_uses_candidate_full_code)
     const std::string user_path = make_temp_path("udl");
     ASSERT_TRUE(cxxime::Dict::create_test_dict(dictionary_path, {{"zz", "system", 1}}));
 
-    cxxime::Dict dictionary;
+    cxxime::Dict dictionary{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dictionary.open(dictionary_path, user_path));
     const std::vector<std::string> codes = {"niba",   "nibai",  "niban",  "nibang", "nibao",
                                             "nibei",  "niben",  "nibeng", "nibi",   "nibian",
@@ -602,19 +617,19 @@ TEST(UserDataSeparation, deep_pinyin_preference_is_applied_before_pagination) {
     ASSERT_TRUE(cxxime::Dict::create_test_dict(dictionary_path, entries));
     ASSERT_TRUE(cxxime::SpellingsIndex::create_test_trie(spellings_path, {{"ni", "ni", 0, 0.0f}}));
 
-    cxxime::Dict dictionary;
+    cxxime::Dict dictionary{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dictionary.open_dict(dictionary_path));
     auto unranked = dictionary.lookup_by_syllables({"ni"}, 20);
     ASSERT_EQ(unranked.size(), static_cast<std::size_t>(20));
     const cxxime::Candidate preferred = unranked[14];
     ASSERT_TRUE(dictionary.record_candidate_preference(preferred, "ni"));
 
-    cxxime::SpellingsIndex spellings;
-    ASSERT_TRUE(spellings.load(spellings_path));
-    cxxime::Syllabifier syllabifier(spellings);
+    auto pinyin_resources = cxxime::PinyinResourceSet::create(
+        "full_pinyin", cxxime::PinyinSchemeKind::kFullPinyin, spellings_path);
+    ASSERT_TRUE(pinyin_resources != nullptr);
     cxxime::PinyinTranslator translator;
     translator.set_dict(&dictionary);
-    translator.set_syllabifier(&syllabifier);
+    translator.bind_pinyin(pinyin_resources, {});
     translator.set_candidate_learning_enabled(true);
     const auto first_page = translator.translate_page("ni", 0, 5);
     const auto second_page = translator.translate_page("ni", 1, 5);
@@ -629,7 +644,7 @@ TEST(UserDataSeparation, deep_pinyin_preference_is_applied_before_pagination) {
 }
 
 TEST(UserDataSeparation, symbols_and_composed_candidates_are_not_learned) {
-    cxxime::Dict dictionary;
+    cxxime::Dict dictionary{cxxime::UserDictKind::PINYIN};
     cxxime::Candidate symbol = make_candidate("。", "bd");
     symbol.source = cxxime::CandidateSource::kSymbol;
     ASSERT_TRUE(!dictionary.record_candidate_preference(symbol, "bd"));
@@ -646,18 +661,17 @@ TEST(UserDataSeparation, mixed_input_records_the_selected_candidate_source) {
     ASSERT_TRUE(cxxime::Dict::create_test_dict(pinyin_path, {{"a", "拼音候选", 300}}));
     ASSERT_TRUE(cxxime::Dict::create_test_dict(wubi_path, {{"a", "五笔候选", 300}}));
 
-    cxxime::Dict pinyin_dictionary;
-    cxxime::Dict wubi_dictionary;
-    ASSERT_TRUE(pinyin_dictionary.open_dict(pinyin_path));
-    ASSERT_TRUE(wubi_dictionary.open_dict(wubi_path));
+    auto pinyin_dictionary = std::make_shared<cxxime::Dict>(cxxime::UserDictKind::PINYIN);
+    auto wubi_dictionary = std::make_shared<cxxime::Dict>(cxxime::UserDictKind::WUBI);
+    ASSERT_TRUE(pinyin_dictionary->open_dict(pinyin_path));
+    ASSERT_TRUE(wubi_dictionary->open_dict(wubi_path));
 
     cxxime::Config config;
     config.candidate_learning = true;
     config.page_size = 10;
-    cxxime::SpellingsIndex spellings;
     cxxime::Engine engine;
-    ASSERT_TRUE(engine.initialize(pinyin_dictionary, spellings, nullptr, config));
-    engine.set_wubi_dict(&wubi_dictionary);
+    ASSERT_TRUE(test::initialize_engine(engine, pinyin_dictionary, config, {},
+                                        wubi_dictionary));
     engine.switch_mode(cxxime::InputMode::MIXED);
 
     cxxime::KeyEvent key;
@@ -666,20 +680,20 @@ TEST(UserDataSeparation, mixed_input_records_the_selected_candidate_source) {
     const int wubi_index = candidate_index(engine, cxxime::CandidateSource::kWubi);
     ASSERT_GE(wubi_index, 0);
     ASSERT_TRUE(engine.select_candidate(wubi_index));
-    ASSERT_EQ(wubi_dictionary.candidate_preference_count(), static_cast<std::size_t>(1));
-    ASSERT_EQ(pinyin_dictionary.candidate_preference_count(), static_cast<std::size_t>(0));
+    ASSERT_EQ(wubi_dictionary->candidate_preference_count(), static_cast<std::size_t>(1));
+    ASSERT_EQ(pinyin_dictionary->candidate_preference_count(), static_cast<std::size_t>(0));
     engine.get_commit_text();
 
     ASSERT_EQ(engine.process_key(key), cxxime::ProcessResult::ACCEPTED);
     const int pinyin_index = candidate_index(engine, cxxime::CandidateSource::kPinyin);
     ASSERT_GE(pinyin_index, 0);
     ASSERT_TRUE(engine.select_candidate(pinyin_index));
-    ASSERT_EQ(wubi_dictionary.candidate_preference_count(), static_cast<std::size_t>(1));
-    ASSERT_EQ(pinyin_dictionary.candidate_preference_count(), static_cast<std::size_t>(1));
+    ASSERT_EQ(wubi_dictionary->candidate_preference_count(), static_cast<std::size_t>(1));
+    ASSERT_EQ(pinyin_dictionary->candidate_preference_count(), static_cast<std::size_t>(1));
 
     engine.finalize();
-    pinyin_dictionary.close();
-    wubi_dictionary.close();
+    pinyin_dictionary->close();
+    wubi_dictionary->close();
     DeleteFileA(pinyin_path.c_str());
     DeleteFileA(wubi_path.c_str());
 }

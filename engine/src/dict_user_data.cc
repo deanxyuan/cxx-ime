@@ -22,14 +22,15 @@ namespace {
 
 constexpr int kFallbackCandidateScore = 1;
 
-std::string default_user_dict_path() {
+std::string default_user_dict_path(UserDictKind kind) {
     wchar_t profile[MAX_PATH] = {};
     if (SHGetFolderPathW(nullptr, CSIDL_PROFILE, nullptr, 0, profile) != S_OK) {
         return {};
     }
     const std::wstring user_dir = std::wstring(profile) + L"\\cxxime";
     CreateDirectoryW(user_dir.c_str(), nullptr);
-    const std::wstring path = user_dir + L"\\user_pinyin.tsv";
+    const std::wstring path =
+        user_dir + (kind == UserDictKind::WUBI ? L"\\user_wubi.tsv" : L"\\user_pinyin.tsv");
     char path_utf8[MAX_PATH * 3] = {};
     if (!WideCharToMultiByte(CP_UTF8, 0, path.c_str(), -1, path_utf8,
                              static_cast<int>(sizeof(path_utf8)), nullptr, nullptr)) {
@@ -41,7 +42,7 @@ std::string default_user_dict_path() {
 } // namespace
 
 bool Dict::load_user_dict(const std::string& path) {
-    return user_lexicon_->load(path.empty() ? default_user_dict_path() : path);
+    return user_lexicon_->load(path.empty() ? default_user_dict_path(kind_) : path);
 }
 
 bool Dict::save_user_dict() { return user_lexicon_->save(); }
@@ -267,8 +268,8 @@ size_t Dict::candidate_preference_count() const { return candidate_preference_->
 
 uint64_t Dict::candidate_preference_version() const { return candidate_preference_->version(); }
 
-bool Dict::load_manual_candidate_order(const std::string& path, std::size_t max_code_length) {
-    return manual_candidate_order_->load(path, max_code_length);
+bool Dict::load_manual_candidate_order(const std::string& path) {
+    return manual_candidate_order_->load(path);
 }
 
 bool Dict::merge_manual_candidate_order_contents(const std::string& imported,

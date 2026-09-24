@@ -28,7 +28,7 @@ int recent_bonus(std::uint64_t current_sequence, std::uint64_t entry_sequence) {
     return delta <= 1000 ? static_cast<int>(1000 - delta) : 0;
 }
 
-int score_match(UserScoringProfile profile, MatchKind kind, std::size_t key_length,
+int score_match(UserDictKind dict_kind, MatchKind kind, std::size_t key_length,
                 std::size_t code_length, int frequency, std::uint64_t current_sequence,
                 std::uint64_t entry_sequence) {
     constexpr int kExactBase = 200000000;
@@ -42,7 +42,7 @@ int score_match(UserScoringProfile profile, MatchKind kind, std::size_t key_leng
         base = kExactBase;
     } else if (kind == MatchKind::kAbbreviation || kind == MatchKind::kMixed) {
         base = kPatternBase;
-    } else if (profile == UserScoringProfile::kPinyin) {
+    } else if (dict_kind == UserDictKind::PINYIN) {
         if (key_length <= 2) {
             base = kWeakPrefixBase;
         } else if (key_length + 1 >= code_length) {
@@ -139,7 +139,7 @@ std::vector<Candidate> UserLexicon::lookup_exact(const std::string& code, int li
         candidate.code = entry.code;
         candidate.syllables = entry.syllables;
         candidate.frequency =
-            score_match(scoring_profile_, MatchKind::kExact, code.size(), entry.code.size(),
+            score_match(kind_, MatchKind::kExact, code.size(), entry.code.size(),
                         entry.frequency, sequence_, entry.sequence);
         candidate.origin = CandidateOrigin::kUser;
         results.push_back(std::move(candidate));
@@ -202,7 +202,7 @@ std::vector<Candidate> UserLexicon::lookup_prefix(const std::string& prefix, int
         }
         ++stats->scan_count;
         scored.push_back(
-            {id, score_match(scoring_profile_, MatchKind::kPrefix, prefix.size(), entry.code.size(),
+            {id, score_match(kind_, MatchKind::kPrefix, prefix.size(), entry.code.size(),
                                           entry.frequency, sequence_, entry.sequence)});
     }
     std::sort(scored.begin(), scored.end(), [](const ScoredEntry& left, const ScoredEntry& right) {
@@ -256,7 +256,7 @@ std::vector<Candidate> UserLexicon::lookup_indexed(const std::string& key, int l
         candidate.code = entry.code;
         candidate.syllables = entry.syllables;
         candidate.frequency =
-            score_match(scoring_profile_, kind, match_key.size(), entry.code.size(),
+            score_match(kind_, kind, match_key.size(), entry.code.size(),
                         entry.frequency, sequence_, entry.sequence);
         candidate.origin = CandidateOrigin::kUser;
         merge_candidate(results, std::move(candidate));

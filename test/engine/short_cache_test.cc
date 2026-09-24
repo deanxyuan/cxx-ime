@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <memory>
 #include <string>
 #include <tuple>
 #include <utility>
@@ -17,6 +18,7 @@
 #include <cxxime/short_code_cache.h>
 
 #include "short_code_cache_format.h"
+#include "support/test_runtime.h"
 #include "support/testutil.h"
 #include "support/topn_test_data.h"
 
@@ -68,7 +70,7 @@ public:
 
     std::string dict_path;
     std::string topn_path;
-    cxxime::Dict dictionary;
+    cxxime::Dict dictionary{cxxime::UserDictKind::PINYIN};
 };
 
 // ─── ShortCodeCache load/unload tests ────────────────────────────
@@ -332,14 +334,13 @@ TEST(IndexedFastPath, cache_hit_skips_syllabifier) {
         topn_path, dict_path, {{"srf", cands}}));
 
     // Engine with dictionary and Top-N index.
-    cxxime::Dict dict;
-    ASSERT_TRUE(dict.open(dict_path));
-    ASSERT_TRUE(dict.has_short_cache());
+    auto dict = std::make_shared<cxxime::Dict>(cxxime::UserDictKind::PINYIN);
+    ASSERT_TRUE(dict->open(dict_path));
+    ASSERT_TRUE(dict->has_short_cache());
 
-    cxxime::SpellingsIndex spellings;
     cxxime::Config config;
     cxxime::Engine engine;
-    ASSERT_TRUE(engine.initialize(dict, spellings, nullptr, config));
+    ASSERT_TRUE(test::initialize_engine(engine, dict, config));
 
     // Type "srf" character by character
     for (char c : {'s', 'r', 'f'}) {
@@ -356,7 +357,7 @@ TEST(IndexedFastPath, cache_hit_skips_syllabifier) {
     ASSERT_EQ(trace.exact_scan_count, 0);
     ASSERT_EQ(trace.prefix_scan_count, 0);
 
-    dict.close();
+    dict->close();
     DeleteFileA(dict_path.c_str());
     DeleteFileA(topn_path.c_str());
 }
@@ -373,13 +374,12 @@ TEST(IndexedFastPath, underfilled_complete_key_checks_composition_once) {
     ASSERT_TRUE(cxxime::test::create_test_topn(
         topn_path, dict_path, {{"nihaoshijie", candidates}}));
 
-    cxxime::Dict dict;
-    ASSERT_TRUE(dict.open(dict_path));
-    ASSERT_TRUE(dict.has_short_cache());
-    cxxime::SpellingsIndex spellings;
+    auto dict = std::make_shared<cxxime::Dict>(cxxime::UserDictKind::PINYIN);
+    ASSERT_TRUE(dict->open(dict_path));
+    ASSERT_TRUE(dict->has_short_cache());
     cxxime::Config config;
     cxxime::Engine engine;
-    ASSERT_TRUE(engine.initialize(dict, spellings, nullptr, config));
+    ASSERT_TRUE(test::initialize_engine(engine, dict, config));
 
     for (char c : std::string("nihaoshijie")) {
         cxxime::KeyEvent ev;
@@ -404,7 +404,7 @@ TEST(IndexedFastPath, underfilled_complete_key_checks_composition_once) {
     ASSERT_TRUE(engine.last_trace().cache_hit);
     ASSERT_EQ(engine.last_trace().syllable_path_count, 0);
 
-    dict.close();
+    dict->close();
     DeleteFileA(dict_path.c_str());
     DeleteFileA(topn_path.c_str());
 }
@@ -430,12 +430,11 @@ TEST(IndexedFastPath, incomplete_long_posting_falls_back) {
         {{"nihaoshijie", candidates}, {"nihaoshijiepengyou", longer_candidates}},
         false));
 
-    cxxime::Dict dict;
-    ASSERT_TRUE(dict.open(dict_path));
-    cxxime::SpellingsIndex spellings;
+    auto dict = std::make_shared<cxxime::Dict>(cxxime::UserDictKind::PINYIN);
+    ASSERT_TRUE(dict->open(dict_path));
     cxxime::Config config;
     cxxime::Engine engine;
-    ASSERT_TRUE(engine.initialize(dict, spellings, nullptr, config));
+    ASSERT_TRUE(test::initialize_engine(engine, dict, config));
 
     for (char c : std::string("nihaoshijie")) {
         cxxime::KeyEvent ev;
@@ -455,7 +454,7 @@ TEST(IndexedFastPath, incomplete_long_posting_falls_back) {
     }
     ASSERT_TRUE(found_longer);
 
-    dict.close();
+    dict->close();
     DeleteFileA(dict_path.c_str());
     DeleteFileA(topn_path.c_str());
 }
@@ -469,12 +468,11 @@ TEST(IndexedFastPath, unmaterialized_long_prefix_falls_back) {
         {"ni:hao:shi:jie:ni:hao", "你好世界你好", 500},
     }));
 
-    cxxime::Dict dict;
-    ASSERT_TRUE(dict.open(dict_path));
-    cxxime::SpellingsIndex spellings;
+    auto dict = std::make_shared<cxxime::Dict>(cxxime::UserDictKind::PINYIN);
+    ASSERT_TRUE(dict->open(dict_path));
     cxxime::Config config;
     cxxime::Engine engine;
-    ASSERT_TRUE(engine.initialize(dict, spellings, nullptr, config));
+    ASSERT_TRUE(test::initialize_engine(engine, dict, config));
 
     for (char c : std::string("nihaoshi")) {
         cxxime::KeyEvent ev;
@@ -488,7 +486,7 @@ TEST(IndexedFastPath, unmaterialized_long_prefix_falls_back) {
     ASSERT_TRUE(!engine.context().candidate_page().candidates.empty());
     ASSERT_EQ(engine.context().candidate_page().candidates[0].text, "你好世界你好");
 
-    dict.close();
+    dict->close();
     DeleteFileA(dict_path.c_str());
 }
 

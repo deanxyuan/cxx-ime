@@ -598,8 +598,8 @@ bool CompositionLearningService::merge_contents_and_save(const std::string& impo
         path = impl_->path;
     }
     UserDataMergeResult merged;
-    const bool merged_ok = !path.empty() && merge_user_data_contents("learning_composition.tsv",
-                                                                     current, imported, &merged);
+    const bool merged_ok =
+        !path.empty() && merge_composition_learning_contents(current, imported, &merged);
     bool saved = false;
     if (merged_ok) {
         try {

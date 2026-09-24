@@ -6,26 +6,28 @@
 #include <utility>
 #include <vector>
 
-#include <cxxime/spellings_index.h>
-#include <cxxime/syllabifier.h>
+#include <cxxime/pinyin_resource.h>
 
 #include "support/testutil.h"
 
 TEST(ShuangpinSchemaRuntime, generated_schema_loads_and_segments_through_runtime_index) {
-    cxxime::SpellingsIndex spellings;
-    ASSERT_TRUE(spellings.load(CXXIME_SYNTHETIC_SHUANGPIN_PATH));
+    auto pinyin_resources = cxxime::PinyinResourceSet::create(
+        "synthetic", cxxime::PinyinSchemeKind::kShuangpin, CXXIME_SYNTHETIC_SHUANGPIN_PATH,
+        cxxime::PinyinSpellingRequirement::kRequired);
+    ASSERT_TRUE(pinyin_resources != nullptr);
 
-    const auto initial = spellings.prefix_search("xa");
+    const auto initial = pinyin_resources->prefix_search("xa");
     ASSERT_TRUE(std::any_of(initial.begin(), initial.end(), [](const auto& match) {
         return match.syllable == "ni" && match.type == cxxime::kNormalSpelling;
     }));
-    const auto final = spellings.prefix_search("zb");
+    const auto final = pinyin_resources->prefix_search("zb");
     ASSERT_TRUE(std::any_of(final.begin(), final.end(), [](const auto& match) {
         return match.syllable == "hao" && match.type == cxxime::kNormalSpelling;
     }));
 
-    cxxime::Syllabifier syllabifier(spellings);
-    const cxxime::SegmentResult result = syllabifier.segment("xazb", nullptr, false, true);
+    cxxime::SyllabifierOptions options;
+    options.collect_path_metadata = true;
+    const cxxime::SegmentResult result = pinyin_resources->segment("xazb", nullptr, options);
     const auto path = std::find_if(result.paths.begin(), result.paths.end(), [](const auto& item) {
         return item.syllables == std::vector<std::string>{"ni", "hao"};
     });
@@ -35,29 +37,33 @@ TEST(ShuangpinSchemaRuntime, generated_schema_loads_and_segments_through_runtime
 
 TEST(ShuangpinSchemaRuntime, built_in_schemes_segment_full_and_zero_initial_syllables) {
     struct SchemeCase {
+        const char* id;
         const char* path;
         const char* nihao;
         const char* zero_initial_hao;
     };
     const SchemeCase cases[] = {
-        {CXXIME_MICROSOFT_SHUANGPIN_PATH, "nihk", "ajhk"},
-        {CXXIME_XIAOHE_SHUANGPIN_PATH, "nihc", "anhc"},
-        {CXXIME_ZIRANMA_SHUANGPIN_PATH, "nihk", "anhk"},
-        {CXXIME_SOGOU_SHUANGPIN_PATH, "nihk", "ojhk"},
+        {"microsoft", CXXIME_MICROSOFT_SHUANGPIN_PATH, "nihk", "ajhk"},
+        {"xiaohe", CXXIME_XIAOHE_SHUANGPIN_PATH, "nihc", "anhc"},
+        {"ziranma", CXXIME_ZIRANMA_SHUANGPIN_PATH, "nihk", "anhk"},
+        {"sogou", CXXIME_SOGOU_SHUANGPIN_PATH, "nihk", "ojhk"},
     };
 
     for (const auto& item : cases) {
-        cxxime::SpellingsIndex spellings;
-        ASSERT_TRUE(spellings.load(item.path));
-        cxxime::Syllabifier syllabifier(spellings);
+        auto pinyin_resources = cxxime::PinyinResourceSet::create(
+            item.id, cxxime::PinyinSchemeKind::kShuangpin, item.path,
+            cxxime::PinyinSpellingRequirement::kRequired);
+        ASSERT_TRUE(pinyin_resources != nullptr);
 
         for (const auto& path_case : {
                  std::make_pair(std::string(item.nihao), std::vector<std::string>{"ni", "hao"}),
                  std::make_pair(std::string(item.zero_initial_hao),
                                 std::vector<std::string>{"an", "hao"}),
              }) {
+            cxxime::SyllabifierOptions options;
+            options.collect_path_metadata = true;
             const cxxime::SegmentResult result =
-                syllabifier.segment(path_case.first, nullptr, false, true);
+                pinyin_resources->segment(path_case.first, nullptr, options);
             const auto path = std::find_if(result.paths.begin(), result.paths.end(),
                                            [&](const auto& candidate) {
                                                return candidate.syllables == path_case.second;

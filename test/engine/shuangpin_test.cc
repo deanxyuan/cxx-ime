@@ -16,13 +16,13 @@
 #include <cxxime/input_limits.h>
 #include <cxxime/key_event.h>
 #include <cxxime/pinyin_scheme.h>
-#include <cxxime/pinyin_user_code.h>
 #include <cxxime/query_trace.h>
 #include <cxxime/spellings_index.h>
 #include <cxxime/syllabifier.h>
 #include <cxxime/translator.h>
 
 #include "support/testutil.h"
+#include "support/test_runtime.h"
 #include "support/topn_test_data.h"
 
 namespace {
@@ -49,9 +49,11 @@ struct ShuangpinFixture {
     std::string topn_path = shuangpin_temp_path("spt");
     std::string user_path = shuangpin_temp_path("spu");
     std::string manual_order_path = shuangpin_temp_path("spo");
-    cxxime::Dict dict;
-    cxxime::SpellingsIndex spellings;
-    std::unique_ptr<cxxime::Syllabifier> syllabifier;
+    std::shared_ptr<cxxime::Dict> dict =
+        std::make_shared<cxxime::Dict>(cxxime::UserDictKind::PINYIN);
+    std::shared_ptr<cxxime::Dict> wubi_dict =
+        std::make_shared<cxxime::Dict>(cxxime::UserDictKind::WUBI);
+    std::shared_ptr<const cxxime::PinyinResourceSet> pinyin_resources;
     cxxime::Config config;
     cxxime::Engine engine;
 
@@ -87,22 +89,30 @@ struct ShuangpinFixture {
             }
         }
         const bool opened = with_topn
-                                ? dict.open_bundle(dict_path, user_path, std::string{}, topn_path)
-                                : dict.open(dict_path, user_path);
-        if (!opened ||
-            !dict.load_manual_candidate_order(manual_order_path, cxxime::kMaxInputCodeLength) ||
-            !spellings.load(spellings_path)) {
+                                ? dict->open_bundle(dict_path, user_path, std::string{}, topn_path)
+                                : dict->open(dict_path, user_path);
+        if (!opened || !dict->load_manual_candidate_order(manual_order_path) ||
+            !wubi_dict->open_dict(dict_path)) {
             return false;
         }
-        syllabifier = std::make_unique<cxxime::Syllabifier>(spellings);
         config.page_size = 10;
         config.pinyin_scheme = "microsoft_shuangpin";
-        if (!engine.initialize(dict, spellings, syllabifier.get(), config)) {
+        pinyin_resources = cxxime::PinyinResourceSet::create(
+        config.pinyin_scheme, cxxime::PinyinSchemeKind::kShuangpin, spellings_path);
+        auto runtime = cxxime::EngineRuntimeState::create(
+            config, dict, wubi_dict,
+            pinyin_resources);
+        if (!engine.initialize(std::move(runtime))) {
             return false;
         }
         engine.set_query_deadline_ms(0);
         engine.set_partial_selection_enabled(true);
         return true;
+    }
+
+    bool apply_config() {
+        return engine.apply_runtime_state(
+            cxxime::EngineRuntimeState::create(config, dict, wubi_dict, pinyin_resources));
     }
 
     void type(const std::string& code) {
@@ -125,8 +135,8 @@ struct ShuangpinFixture {
 
     ~ShuangpinFixture() {
         engine.finalize();
-        dict.close();
-        spellings.unload();
+        dict->close();
+        wubi_dict->close();
         DeleteFileA(dict_path.c_str());
         DeleteFileA(spellings_path.c_str());
         DeleteFileA(topn_path.c_str());
@@ -136,61 +146,6 @@ struct ShuangpinFixture {
 };
 
 } // namespace
-
-TEST(Shuangpin, built_in_scheme_descriptors_are_stable) {
-    struct ExpectedScheme {
-        const char* id;
-        cxxime::PinyinSchemeKind kind;
-        const char* role;
-        const char* filename;
-        const char* input_example;
-    };
-    const ExpectedScheme expected[] = {
-        {"full_pinyin", cxxime::PinyinSchemeKind::kFullPinyin, "pinyin_spellings",
-         "pinyin.spellings.bin", "ni'hao"},
-        {"microsoft_shuangpin", cxxime::PinyinSchemeKind::kShuangpin,
-         "pinyin_spellings_microsoft_shuangpin", "pinyin.microsoft-shuangpin.spellings.bin",
-         "ni'hk"},
-        {"xiaohe_shuangpin", cxxime::PinyinSchemeKind::kShuangpin,
-         "pinyin_spellings_xiaohe_shuangpin", "pinyin.xiaohe-shuangpin.spellings.bin", "ni'hc"},
-        {"ziranma_shuangpin", cxxime::PinyinSchemeKind::kShuangpin,
-         "pinyin_spellings_ziranma_shuangpin", "pinyin.ziranma-shuangpin.spellings.bin", "ni'hk"},
-        {"sogou_shuangpin", cxxime::PinyinSchemeKind::kShuangpin,
-         "pinyin_spellings_sogou_shuangpin", "pinyin.sogou-shuangpin.spellings.bin", "ni'hk"},
-    };
-
-    const auto& schemes = cxxime::built_in_pinyin_schemes();
-    ASSERT_EQ(schemes.size(), sizeof(expected) / sizeof(expected[0]));
-    for (std::size_t i = 0; i < schemes.size(); ++i) {
-        ASSERT_EQ(std::string(schemes[i].id), expected[i].id);
-        ASSERT_EQ(schemes[i].kind, expected[i].kind);
-        ASSERT_EQ(std::string(schemes[i].manifest_role), expected[i].role);
-        ASSERT_EQ(std::string(schemes[i].spelling_filename), expected[i].filename);
-        ASSERT_EQ(std::string(schemes[i].input_example), expected[i].input_example);
-        ASSERT_TRUE(std::string(schemes[i].input_example).find('\'') != std::string::npos);
-    }
-    ASSERT_EQ(cxxime::normalize_pinyin_scheme_id("unknown"), "full_pinyin");
-}
-
-TEST(Shuangpin, built_in_scheme_descriptors_are_complete_and_unique) {
-    std::vector<std::string> ids;
-    std::vector<std::string> roles;
-    std::vector<std::string> filenames;
-    for (const auto& scheme : cxxime::built_in_pinyin_schemes()) {
-        ASSERT_TRUE(scheme.id && *scheme.id);
-        ASSERT_TRUE(scheme.display_name && *scheme.display_name);
-        ASSERT_TRUE(scheme.manifest_role && *scheme.manifest_role);
-        ASSERT_TRUE(scheme.spelling_filename && *scheme.spelling_filename);
-        ASSERT_TRUE(scheme.input_example && *scheme.input_example);
-        ASSERT_TRUE(std::find(ids.begin(), ids.end(), scheme.id) == ids.end());
-        ASSERT_TRUE(std::find(roles.begin(), roles.end(), scheme.manifest_role) == roles.end());
-        ASSERT_TRUE(std::find(filenames.begin(), filenames.end(), scheme.spelling_filename) ==
-                    filenames.end());
-        ids.emplace_back(scheme.id);
-        roles.emplace_back(scheme.manifest_role);
-        filenames.emplace_back(scheme.spelling_filename);
-    }
-}
 
 TEST(Shuangpin, full_and_partial_candidates_keep_canonical_keys_and_raw_spans) {
     ShuangpinFixture fixture;
@@ -207,7 +162,7 @@ TEST(Shuangpin, full_and_partial_candidates_keep_canonical_keys_and_raw_spans) {
     ASSERT_EQ(partial_action.variants[0].input_code, "ni");
 
     const cxxime::CompositionPresentation presentation = cxxime::derive_composition_presentation(
-        fixture.engine.context().composition(), fixture.syllabifier.get(), 4, true, {}, true);
+        fixture.engine.context().composition(), fixture.pinyin_resources.get(), 4, true, {}, true);
     ASSERT_EQ(presentation.logical_preedit, "nihk");
     ASSERT_EQ(presentation.display_preedit, "ni'hk");
 }
@@ -216,7 +171,7 @@ TEST(Shuangpin, partial_selection_consumes_two_raw_keys_and_learning_uses_full_p
     ShuangpinFixture fixture;
     ASSERT_TRUE(fixture.initialize());
     fixture.config.candidate_learning = true;
-    fixture.engine.reload_config(fixture.config);
+    ASSERT_TRUE(fixture.apply_config());
     fixture.type("nihk");
 
     const cxxime::CandidateEntry* partial = fixture.find("你", 2);
@@ -232,8 +187,8 @@ TEST(Shuangpin, partial_selection_consumes_two_raw_keys_and_learning_uses_full_p
     const int suffix_index = static_cast<int>(suffix - suffix_entries.data());
     ASSERT_TRUE(fixture.engine.select_candidate(suffix_index));
     ASSERT_EQ(fixture.engine.get_commit_text(), "你好");
-    ASSERT_TRUE(fixture.dict.has_candidate_preference("你", "ni"));
-    ASSERT_TRUE(fixture.dict.has_candidate_preference("好", "hao"));
+    ASSERT_TRUE(fixture.dict->has_candidate_preference("你", "ni"));
+    ASSERT_TRUE(fixture.dict->has_candidate_preference("好", "hao"));
 }
 
 TEST(Shuangpin, odd_terminal_key_completes_without_changing_raw_preedit) {
@@ -243,7 +198,7 @@ TEST(Shuangpin, odd_terminal_key_completes_without_changing_raw_preedit) {
 
     ASSERT_TRUE(fixture.find("你好", 3) != nullptr);
     const cxxime::CompositionPresentation presentation = cxxime::derive_composition_presentation(
-        fixture.engine.context().composition(), fixture.syllabifier.get(), 3, true, {}, true);
+        fixture.engine.context().composition(), fixture.pinyin_resources.get(), 3, true, {}, true);
     ASSERT_EQ(presentation.logical_preedit, "nih");
     ASSERT_EQ(presentation.display_preedit, "ni'h");
 }
@@ -267,45 +222,16 @@ TEST(Shuangpin, middle_edit_redecodes_from_raw_key_positions) {
 TEST(Shuangpin, user_lexicon_uses_the_shared_full_pinyin_key) {
     ShuangpinFixture fixture;
     ASSERT_TRUE(fixture.initialize());
-    ASSERT_TRUE(fixture.dict.add_user_entry("拟好", "nihao", "ni:hao"));
-    ASSERT_TRUE(!fixture.dict.add_user_entry("不可达", "nihk"));
+    ASSERT_TRUE(fixture.dict->add_user_entry("拟好", "nihao", "ni:hao"));
+    ASSERT_TRUE(!fixture.dict->add_user_entry("不可达", "nihk"));
 
     fixture.type("nihk");
     ASSERT_TRUE(fixture.find("拟好", 4) != nullptr);
 }
 
-TEST(Shuangpin, user_code_normalization_accepts_canonical_pinyin_and_complete_shuangpin) {
-    ShuangpinFixture fixture;
-    ASSERT_TRUE(fixture.initialize());
-    ASSERT_TRUE(cxxime::is_canonical_pinyin_user_code("nihao", "ni:hao"));
-    ASSERT_TRUE(!cxxime::is_canonical_pinyin_user_code("nihk"));
-
-    std::string code;
-    std::string syllables;
-    ASSERT_TRUE(cxxime::canonicalize_pinyin_user_code("nihao", cxxime::PinyinSchemeKind::kShuangpin,
-                                                      fixture.syllabifier.get(), &code,
-                                                      &syllables));
-    ASSERT_EQ(code, "nihao");
-    ASSERT_TRUE(syllables.empty());
-
-    ASSERT_TRUE(cxxime::canonicalize_pinyin_user_code("nihk", cxxime::PinyinSchemeKind::kShuangpin,
-                                                      fixture.syllabifier.get(), &code,
-                                                      &syllables));
-    ASSERT_EQ(code, "nihao");
-    ASSERT_EQ(syllables, "ni:hao");
-
-    ASSERT_TRUE(cxxime::canonicalize_pinyin_user_code(
-        "y;", cxxime::PinyinSchemeKind::kShuangpin, fixture.syllabifier.get(), &code, &syllables));
-    ASSERT_EQ(code, "ying");
-    ASSERT_EQ(syllables, "ying");
-    ASSERT_TRUE(!cxxime::canonicalize_pinyin_user_code(
-        "nih", cxxime::PinyinSchemeKind::kShuangpin, fixture.syllabifier.get(), &code, &syllables));
-}
-
 TEST(Shuangpin, mixed_mode_reuses_the_pinyin_decoder) {
     ShuangpinFixture fixture;
     ASSERT_TRUE(fixture.initialize());
-    fixture.engine.set_wubi_dict(&fixture.dict);
     fixture.engine.set_partial_selection_enabled(false);
     fixture.engine.switch_mode(cxxime::InputMode::MIXED);
 
@@ -360,17 +286,17 @@ TEST(Shuangpin, search_learning_uses_each_candidates_canonical_key) {
     ASSERT_EQ(lve->input_code, "lve");
 
     ASSERT_TRUE(fixture.engine.record_search_result("lt", "掠"));
-    ASSERT_TRUE(fixture.dict.has_candidate_preference("掠", "lve"));
-    ASSERT_TRUE(!fixture.dict.has_candidate_preference("掠", "lue"));
+    ASSERT_TRUE(fixture.dict->has_candidate_preference("掠", "lve"));
+    ASSERT_TRUE(!fixture.dict->has_candidate_preference("掠", "lue"));
     ASSERT_TRUE(fixture.engine.record_search_result("y;", "应"));
-    ASSERT_TRUE(fixture.dict.has_candidate_preference("应", "ying"));
+    ASSERT_TRUE(fixture.dict->has_candidate_preference("应", "ying"));
 }
 
 TEST(Shuangpin, manual_collision_order_preserves_canonical_key_across_query_paths) {
     ShuangpinFixture fixture;
     ASSERT_TRUE(fixture.initialize());
     ASSERT_TRUE(
-        fixture.dict.replace_manual_candidate_order_and_save("lve", {{"掠", "lve", "lve"}}));
+        fixture.dict->replace_manual_candidate_order_and_save("lve", {{"掠", "lve", "lve"}}));
 
     const auto assert_lve_candidate = [](const cxxime::CandidatePage& page) {
         ASSERT_EQ(page.candidates.size(), static_cast<std::size_t>(1));
@@ -380,28 +306,26 @@ TEST(Shuangpin, manual_collision_order_preserves_canonical_key_across_query_path
     assert_lve_candidate(fixture.engine.translate_for_search("lt", 1));
     assert_lve_candidate(fixture.engine.translate_for_search("lt", 1));
 
-    fixture.engine.set_wubi_dict(&fixture.dict);
     fixture.engine.switch_mode(cxxime::InputMode::MIXED);
     assert_lve_candidate(fixture.engine.translate_for_search("lt", 1));
 
     fixture.config.candidate_learning = true;
-    fixture.engine.reload_config(fixture.config);
+    ASSERT_TRUE(fixture.apply_config());
     ASSERT_TRUE(fixture.engine.record_search_result("lt", "掠"));
-    ASSERT_TRUE(fixture.dict.has_candidate_preference("掠", "lve"));
-    ASSERT_TRUE(!fixture.dict.has_candidate_preference("掠", "lt"));
+    ASSERT_TRUE(fixture.dict->has_candidate_preference("掠", "lve"));
+    ASSERT_TRUE(!fixture.dict->has_candidate_preference("掠", "lt"));
 }
 
 TEST(Shuangpin, complete_topn_fast_path_preserves_manual_order) {
     ShuangpinFixture fixture;
     ASSERT_TRUE(fixture.initialize(true));
     ASSERT_TRUE(
-        fixture.dict.replace_manual_candidate_order_and_save("hao", {{"号", "hao", "hao"}}));
+        fixture.dict->replace_manual_candidate_order_and_save("hao", {{"号", "hao", "hao"}}));
 
     cxxime::PinyinTranslator translator;
-    translator.set_dict(&fixture.dict);
-    translator.set_syllabifier(fixture.syllabifier.get());
-    translator.set_short_cache(&fixture.dict.short_cache());
-    translator.set_pinyin_scheme(cxxime::PinyinSchemeKind::kShuangpin);
+    translator.set_dict(fixture.dict.get());
+    translator.bind_pinyin(fixture.pinyin_resources, {});
+    translator.set_short_cache(&fixture.dict->short_cache());
     translator.set_sentence_composition_enabled(false);
     cxxime::QueryTrace trace;
     cxxime::TranslationRequest request;

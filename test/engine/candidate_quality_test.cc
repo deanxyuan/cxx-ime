@@ -246,20 +246,20 @@ public:
             project_path("data/wubi86.dict.bin"),
             wubi_user_path_,
             project_path("data/wubi86.dict.idx")));
-        ASSERT_TRUE(spellings_.load(project_path("data/pinyin.spellings.bin")));
-        ASSERT_TRUE(spellings_.has_spellings());
-
-        syllabifier_ = std::make_unique<cxxime::Syllabifier>(spellings_);
+        pinyin_resources_ = cxxime::PinyinResourceSet::create(
+            "full_pinyin", cxxime::PinyinSchemeKind::kFullPinyin,
+            project_path("data/pinyin.spellings.bin"));
+        ASSERT_TRUE(pinyin_resources_ != nullptr);
 
         pinyin_.set_dict(&pinyin_dict_);
-        pinyin_.set_syllabifier(syllabifier_.get());
+        pinyin_.bind_pinyin(pinyin_resources_, {});
         pinyin_.set_short_cache(&pinyin_dict_.short_cache());
 
         wubi_.set_dict(&wubi_dict_);
 
         mixed_.set_pinyin_dict(&pinyin_dict_);
         mixed_.set_wubi_dict(&wubi_dict_);
-        mixed_.set_syllabifier(syllabifier_.get());
+        mixed_.bind_pinyin(pinyin_resources_, {});
         mixed_.set_short_cache(&pinyin_dict_.short_cache());
     }
 
@@ -319,10 +319,9 @@ private:
 
     std::string pinyin_user_path_ = temp_path("cxxime_quality_pinyin_user.tsv");
     std::string wubi_user_path_ = temp_path("cxxime_quality_wubi_user.tsv");
-    cxxime::Dict pinyin_dict_;
-    cxxime::Dict wubi_dict_;
-    cxxime::SpellingsIndex spellings_;
-    std::unique_ptr<cxxime::Syllabifier> syllabifier_;
+    cxxime::Dict pinyin_dict_{cxxime::UserDictKind::PINYIN};
+    cxxime::Dict wubi_dict_{cxxime::UserDictKind::WUBI};
+    std::shared_ptr<const cxxime::PinyinResourceSet> pinyin_resources_;
     cxxime::PinyinTranslator pinyin_;
     cxxime::WubiTranslator wubi_;
     cxxime::MixedTranslator mixed_;

@@ -3,15 +3,13 @@
 
 #include <cstdio>
 #include <cstring>
-#include <memory>
 #include <string>
 
 #include <windows.h>
 
 #include <cxxime/data_path.h>
 #include <cxxime/dict.h>
-#include <cxxime/spellings_index.h>
-#include <cxxime/syllabifier.h>
+#include <cxxime/pinyin_resource.h>
 #include <cxxime/translator.h>
 
 static void print_usage() {
@@ -36,7 +34,7 @@ static std::string to_utf8(const std::string& s) { return s; }
 // ─── Wubi mode (binary dict) ──────────────────────────────────────────
 
 static void run_wubi_binary(const std::string& dict_path, const std::string& index_path) {
-    cxxime::Dict dict;
+    cxxime::Dict dict{cxxime::UserDictKind::WUBI};
     if (!dict.open_wubi_dict(dict_path, index_path)) {
         std::fprintf(stderr, "ERROR: Cannot open Wubi runtime data: %s, %s\n",
                      dict_path.c_str(), index_path.c_str());
@@ -75,29 +73,28 @@ static void run_wubi_binary(const std::string& dict_path, const std::string& ind
 // ─── Pinyin mode ──────────────────────────────────────────────────────
 
 static void run_pinyin(const std::string& dict_path, const std::string& spellings_path) {
-    cxxime::Dict dict;
+    cxxime::Dict dict{cxxime::UserDictKind::PINYIN};
     if (!dict.open_dict(dict_path)) {
         std::fprintf(stderr, "ERROR: Cannot open dict: %s\n", dict_path.c_str());
         return;
     }
-    cxxime::SpellingsIndex spellings;
-    cxxime::Syllabifier* syllabifier = nullptr;
-    std::unique_ptr<cxxime::Syllabifier> syllabifier_owner;
-
-    if (!spellings_path.empty()) {
-        if (spellings.load(spellings_path) && spellings.has_spellings()) {
-            syllabifier_owner = std::make_unique<cxxime::Syllabifier>(spellings);
-            syllabifier = syllabifier_owner.get();
-            std::puts("Spellings trie loaded.");
-        } else {
-            std::puts("WARNING: Spellings not loaded, abbreviation expansion disabled.");
-        }
+    const auto requirement = spellings_path.empty()
+                                 ? cxxime::PinyinSpellingRequirement::kOptionalForFullPinyin
+                                 : cxxime::PinyinSpellingRequirement::kRequired;
+    auto pinyin_resources = cxxime::PinyinResourceSet::create(
+        "full_pinyin", cxxime::PinyinSchemeKind::kFullPinyin, spellings_path, requirement);
+    if (!pinyin_resources) {
+        std::puts("WARNING: Spellings not loaded, abbreviation expansion disabled.");
+        pinyin_resources = cxxime::PinyinResourceSet::create(
+            "full_pinyin", cxxime::PinyinSchemeKind::kFullPinyin, {},
+            cxxime::PinyinSpellingRequirement::kOptionalForFullPinyin);
+    } else if (pinyin_resources->has_spellings()) {
+        std::puts("Spellings trie loaded.");
     }
 
     cxxime::PinyinTranslator translator;
     translator.set_dict(&dict);
-    if (syllabifier)
-        translator.set_syllabifier(syllabifier);
+    translator.bind_pinyin(pinyin_resources, {});
 
     std::puts("Pinyin mode. Type :q to quit, :s <code> to show segmentation.\n");
 
@@ -119,8 +116,8 @@ static void run_pinyin(const std::string& dict_path, const std::string& spelling
         if (input.size() > 2 && input[0] == ':' && input[1] == 's') {
             // Show segmentation
             std::string code = input.substr(3);
-            if (syllabifier && !code.empty()) {
-                auto result = syllabifier->segment(code);
+            if (pinyin_resources->has_spellings() && !code.empty()) {
+                auto result = pinyin_resources->segment(code);
                 std::printf("  %zu path(s):\n", result.paths.size());
                 for (size_t i = 0; i < result.paths.size(); ++i) {
                     std::printf("  [%zu] ", i);

@@ -10,6 +10,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -22,41 +23,37 @@
 #include <cxxime/ipc_protocol.h>
 #include <cxxime/output_composer.h>
 #include <cxxime/punct_types.h>
-#include <cxxime/spellings_index.h>
 #include <cxxime/symbol_table.h>
-#include <cxxime/syllabifier.h>
 #include <cxxime/user_dict.h>
 
 struct SharedResourceSnapshot {
-    std::shared_ptr<cxxime::Dict> dict;
-    std::shared_ptr<cxxime::Dict> wubi_dict;
-    std::shared_ptr<cxxime::SpellingsIndex> spellings;
-    std::shared_ptr<cxxime::Syllabifier> syllabifier;
-    std::shared_ptr<const cxxime::SymbolTable> symbol_table;
-    std::shared_ptr<const cxxime::Config> config;
+    std::shared_ptr<const cxxime::EngineRuntimeState> runtime;
     std::shared_ptr<const cxxime::PunctMapping> punct_mapping;
-    std::shared_ptr<cxxime::CompositionLearningService> composition_learning;
 };
 
 // Replaceable resources shared across all sessions.
 struct SharedResources {
-    std::shared_ptr<cxxime::Dict> dict;
-    std::shared_ptr<cxxime::Dict> wubi_dict;
-    std::shared_ptr<cxxime::SpellingsIndex> spellings;
-    std::shared_ptr<cxxime::Syllabifier> syllabifier;
-    std::shared_ptr<const cxxime::SymbolTable> symbol_table;
-    std::shared_ptr<const cxxime::Config> config;
+private:
+    // Caller holds mutex so the selected runtime cannot change during the operation.
+    std::shared_ptr<cxxime::Dict> dict_for_kind_locked(cxxime::UserDictKind kind) const;
+
+    struct PendingRuntime {
+        std::shared_ptr<const cxxime::EngineRuntimeState> runtime;
+        std::shared_ptr<const cxxime::Config> requested_config;
+        std::uint64_t base_generation = 0;
+    };
+
+    std::shared_ptr<const cxxime::EngineRuntimeState> runtime;
     std::shared_ptr<const cxxime::PunctMapping> punct_mapping;
-    std::shared_ptr<cxxime::CompositionLearningService> composition_learning;
     std::string punct_path;   // Stored for reload
     std::string dict_path;    // Stored for dictionary reload
     std::string wubi_dict_path;
     std::string manifest_path;
-    std::shared_ptr<const cxxime::Config> prepared_config;
-    std::shared_ptr<cxxime::SpellingsIndex> prepared_spellings;
-    std::shared_ptr<cxxime::Syllabifier> prepared_syllabifier;
+    std::optional<PendingRuntime> pending_runtime;
+    std::uint64_t generation = 0;
     mutable std::mutex mutex;
 
+public:
     bool load(const std::string& dict_path,
         const std::shared_ptr<const cxxime::Config>& config);
     SharedResourceSnapshot snapshot() const;

@@ -20,6 +20,8 @@ namespace cxxime {
 
 class DisabledSystemLexicon {
 public:
+    explicit DisabledSystemLexicon(UserDictKind kind) : kind_(kind) {}
+
     bool load(const std::string& path);
     bool save();
     static bool validate_contents(const std::string& contents);
@@ -43,6 +45,7 @@ private:
     static std::string serialize_entries(const std::unordered_set<std::string>& entries);
     bool persist_entries(std::unordered_set<std::string> entries, const std::string& path);
 
+    const UserDictKind kind_;
     mutable std::shared_mutex mutex_;
     std::mutex transaction_mutex_;
     std::unordered_set<std::string> entries_;

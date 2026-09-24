@@ -24,6 +24,7 @@ import subprocess
 import sys
 import time
 
+from dictionary_bundle_layout import PINYIN_SPELLING_FILES
 from install_payload import write_install_payload
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -766,11 +767,8 @@ def print_summary(config: str, include_x86_modules: bool, host_diagnostics: bool
     print("    dictionary_manifest.json Dictionary bundle manifest")
     print("    pinyin.dict.bin        Pinyin binary dictionary (runtime)")
     print("    pinyin.dict.idx        Pinyin syllable index (runtime)")
-    print("    pinyin.spellings.bin   Pinyin spelling trie (runtime)")
-    print("    pinyin.microsoft-shuangpin.spellings.bin Microsoft Shuangpin spelling trie")
-    print("    pinyin.xiaohe-shuangpin.spellings.bin Xiaohe Shuangpin spelling trie")
-    print("    pinyin.ziranma-shuangpin.spellings.bin Ziranma Shuangpin spelling trie")
-    print("    pinyin.sogou-shuangpin.spellings.bin Sogou Shuangpin spelling trie")
+    for filename in PINYIN_SPELLING_FILES:
+        print(f"    {filename:<26} Pinyin spelling trie (runtime)")
     print("    pinyin.topn.bin        Short code cache (runtime)")
     print("    pinyin.reverse.idx     Pinyin Settings reverse index")
     print("    wubi86.dict.bin        Wubi binary dictionary")

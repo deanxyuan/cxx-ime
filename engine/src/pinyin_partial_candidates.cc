@@ -10,9 +10,9 @@
 #include <vector>
 
 #include <cxxime/dict.h>
+#include <cxxime/pinyin_resource.h>
 #include <cxxime/query_budget.h>
 #include <cxxime/query_trace.h>
-#include <cxxime/syllabifier.h>
 
 #include "pinyin_path_filter.h"
 #include "pinyin_query_key.h"
@@ -277,7 +277,8 @@ void merge_or_append_visible_candidate(std::vector<CandidateEntry>& entries,
 } // namespace
 
 void append_pinyin_partial_candidates(Dict& dict,
-                                      const Syllabifier& syllabifier,
+                                      const PinyinResourceSet& pinyin_resources,
+                                      PinyinQueryPolicy pinyin_query_policy,
                                       const TranslationRequest& request,
                                       bool shuangpin,
                                       bool candidate_learning_enabled,
@@ -288,8 +289,11 @@ void append_pinyin_partial_candidates(Dict& dict,
     }
 
     const QueryDeadline* deadline = request.budget ? &request.budget->deadline : nullptr;
-    const SegmentResult segmented = syllabifier.segment(
-        request.input, deadline, shuangpin, true);
+    SyllabifierOptions options;
+    options.enable_fuzzy = pinyin_query_policy.enable_fuzzy;
+    options.enable_terminal_completion = shuangpin;
+    options.collect_path_metadata = true;
+    const SegmentResult segmented = pinyin_resources.segment(request.input, deadline, options);
     if (segmented.deadline_exceeded) {
         status = status == TranslationStatus::kFailed ? TranslationStatus::kFailed
                                                       : TranslationStatus::kStableDegraded;

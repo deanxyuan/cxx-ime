@@ -28,7 +28,7 @@ std::string make_temp_path(const char* prefix) {
 
 TEST(CandidatePreferenceSaveWorker, coalesces_updates_and_flushes_complete_frequency) {
     const std::string preference_path = make_temp_path("cps");
-    cxxime::Dict dictionary;
+    cxxime::Dict dictionary{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dictionary.load_candidate_preferences(preference_path));
 
     cxxime::Candidate candidate;
@@ -57,7 +57,7 @@ TEST(CandidatePreferenceSaveWorker, coalesces_updates_and_flushes_complete_frequ
     ASSERT_EQ(forced_saves.load(), 1);
     dictionary.close();
 
-    cxxime::Dict reloaded;
+    cxxime::Dict reloaded{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(reloaded.load_candidate_preferences(preference_path));
     const auto entries = reloaded.query_candidate_preferences("nihao", 0, 10);
     ASSERT_EQ(entries.size(), static_cast<std::size_t>(1));

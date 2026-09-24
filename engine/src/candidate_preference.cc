@@ -174,7 +174,8 @@ bool CandidatePreference::merge_contents_and_save(const std::string& imported,
     const std::string path = path_;
     UserDataMergeResult merged;
     if (path.empty() ||
-        !merge_user_data_contents("learning_pinyin.tsv", current, imported, &merged)) {
+        !merge_lexicon_resource_contents(LexiconResource::kCandidatePreference, kind_, current,
+                                         imported, &merged)) {
         return false;
     }
 

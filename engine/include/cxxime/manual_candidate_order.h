@@ -19,9 +19,10 @@ namespace cxxime {
 
 class ManualCandidateOrder {
 public:
-    bool load(const std::string& path, std::size_t max_code_length);
-    static bool validate_contents(const std::string& contents,
-                                  std::size_t max_code_length);
+    explicit ManualCandidateOrder(UserDictKind kind) : kind_(kind) {}
+
+    bool load(const std::string& path);
+    static bool validate_contents(const std::string& contents, UserDictKind kind);
     bool merge_contents_and_save(const std::string& imported, UserDataMergeResult* result);
 
     std::vector<ManualCandidateOrderEntry> entries_for(const std::string& input_code) const;
@@ -39,18 +40,17 @@ public:
 private:
     using Orders = std::unordered_map<std::string, std::vector<ManualCandidateOrderEntry>>;
 
-    static bool validate_orders(const Orders& orders, std::size_t max_code_length);
-    static bool parse_contents(const std::string& contents,
-                               std::size_t max_code_length, Orders* orders);
+    static bool validate_orders(const Orders& orders, UserDictKind kind);
+    static bool parse_contents(const std::string& contents, UserDictKind kind, Orders* orders);
     static std::string serialize(const Orders& orders);
     bool replace_and_save_locked(const std::string& input_code,
                                  const std::vector<ManualCandidateOrderEntry>& entries);
 
+    const UserDictKind kind_;
     mutable std::shared_mutex mutex_;
     std::mutex mutation_mutex_;
     Orders orders_;
     std::string path_;
-    std::size_t max_code_length_ = 0;
     std::atomic<std::uint64_t> version_{0};
 };
 

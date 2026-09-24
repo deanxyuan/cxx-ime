@@ -3,18 +3,18 @@
 #ifndef CXXIME_TRANSLATOR_H_
 #define CXXIME_TRANSLATOR_H_
 
+#include <memory>
 #include <string>
 #include <vector>
 
 #include <cxxime/candidate.h>
 #include <cxxime/dict.h>
-#include <cxxime/pinyin_scheme.h>
+#include <cxxime/pinyin_resource.h>
 #include <cxxime/segmentor.h>
 #include <cxxime/translation_result.h>
 
 namespace cxxime {
 
-class Syllabifier;
 class ShortCodeCache;
 class CompositionLearningService;
 struct QueryTrace;
@@ -36,8 +36,8 @@ public:
 class PinyinTranslator : public ITranslator {
 public:
     void set_dict(Dict* dict);
-    void set_syllabifier(Syllabifier* syllabifier);
-    void set_pinyin_scheme(PinyinSchemeKind scheme);
+    void bind_pinyin(std::shared_ptr<const PinyinResourceSet> resources,
+                     PinyinQueryPolicy policy);
     void set_short_cache(const ShortCodeCache* cache) { short_cache_ = cache; }
 
     void clear_query_cache() override { query_cache_.clear(); }
@@ -89,11 +89,12 @@ private:
     void store_query_cache(const std::string& input, int page_index, int candidate_offset,
                            int page_size, const QueryCacheVersions& versions,
                            const CandidatePage& page);
+    PinyinSchemeKind pinyin_scheme() const;
     Dict* dict_ = nullptr;
-    Syllabifier* syllabifier_ = nullptr;
+    std::shared_ptr<const PinyinResourceSet> pinyin_resources_;
+    PinyinQueryPolicy pinyin_query_policy_;
     const ShortCodeCache* short_cache_ = nullptr;
     PinyinSegmentor segmentor_;
-    PinyinSchemeKind pinyin_scheme_ = PinyinSchemeKind::kFullPinyin;
 
     std::vector<QueryCacheEntry> query_cache_;
     uint64_t query_cache_sequence_ = 0;

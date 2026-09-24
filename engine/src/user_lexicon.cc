@@ -52,6 +52,8 @@ void trim_trailing_space(std::string& value) {
 
 } // namespace
 
+UserLexicon::UserLexicon(UserDictKind kind) : kind_(kind) {}
+
 std::string UserLexicon::entry_key(const std::string& text, const std::string& code) {
     std::string key;
     key.reserve(text.size() + code.size() + 1);
@@ -62,7 +64,7 @@ std::string UserLexicon::entry_key(const std::string& text, const std::string& c
 }
 
 bool UserLexicon::parse_entries(const std::string& contents, bool reject_invalid_lines,
-                                UserScoringProfile profile, bool require_canonical_pinyin,
+                                UserDictKind kind, bool require_canonical_pinyin,
                                 std::vector<Entry>* entries, std::uint64_t* sequence) {
     if (!entries || !sequence) {
         return false;
@@ -88,7 +90,7 @@ bool UserLexicon::parse_entries(const std::string& contents, bool reject_invalid
             trim_trailing_space(syllables);
             valid = parse_frequency(fields[2], &frequency) &&
                     is_valid_user_dict_entry(fields[0], fields[1], syllables);
-            if (valid && require_canonical_pinyin && profile == UserScoringProfile::kPinyin) {
+            if (valid && require_canonical_pinyin && kind == UserDictKind::PINYIN) {
                 valid = is_canonical_pinyin_user_code(fields[1], syllables);
             }
         }
@@ -120,10 +122,10 @@ bool UserLexicon::parse_entries(const std::string& contents, bool reject_invalid
     return true;
 }
 
-bool UserLexicon::validate_contents(const std::string& contents, UserScoringProfile profile) {
+bool UserLexicon::validate_contents(const std::string& contents, UserDictKind kind) {
     std::vector<Entry> entries;
     std::uint64_t sequence = 0;
-    return parse_entries(contents, true, profile, true, &entries, &sequence);
+    return parse_entries(contents, true, kind, true, &entries, &sequence);
 }
 
 std::string UserLexicon::serialize_entries(const std::vector<Entry>& entries) {
@@ -142,9 +144,10 @@ std::string UserLexicon::serialize_entries(const std::vector<Entry>& entries) {
 }
 
 bool UserLexicon::add_to_snapshot(Snapshot* snapshot, const std::string& text,
-                                  const std::string& code, const std::string& syllables) {
+                                  const std::string& code,
+                                  const std::string& syllables) const {
     if (!snapshot || !is_valid_user_dict_entry(text, code, syllables) ||
-        (snapshot->scoring_profile == UserScoringProfile::kPinyin &&
+        (kind_ == UserDictKind::PINYIN &&
          !is_canonical_pinyin_user_code(code, syllables))) {
         return false;
     }
@@ -191,9 +194,9 @@ bool UserLexicon::delete_from_snapshot(Snapshot* snapshot,
 bool UserLexicon::replace_in_snapshot(Snapshot* snapshot, const std::string& old_text,
                                       const std::string& old_code, const std::string& new_text,
                                       const std::string& new_code,
-                                      const std::string& syllables) {
+                                      const std::string& syllables) const {
     if (!snapshot || !is_valid_user_dict_entry(new_text, new_code, syllables) ||
-        (snapshot->scoring_profile == UserScoringProfile::kPinyin &&
+        (kind_ == UserDictKind::PINYIN &&
          !is_canonical_pinyin_user_code(new_code, syllables))) {
         return false;
     }
@@ -232,16 +235,11 @@ bool UserLexicon::load(const std::string& path) {
 
     std::vector<Entry> entries;
     std::uint64_t sequence = 0;
-    UserScoringProfile profile;
-    {
-        std::shared_lock<std::shared_mutex> lock(mutex_);
-        profile = scoring_profile_;
-    }
-    if (!parse_entries(contents, false, profile, false, &entries, &sequence)) {
+    if (!parse_entries(contents, false, kind_, false, &entries, &sequence)) {
         return false;
     }
-    if (profile == UserScoringProfile::kPinyin) {
-        const bool requires_migration = !validate_contents(contents, profile);
+    if (kind_ == UserDictKind::PINYIN) {
+        const bool requires_migration = !validate_contents(contents, kind_);
         std::vector<Entry> canonical_entries;
         canonical_entries.reserve(entries.size());
         for (auto& entry : entries) {
@@ -277,10 +275,6 @@ bool UserLexicon::load(const std::string& path) {
     next.entries = std::move(entries);
     next.sequence = sequence;
     next.path = path;
-    {
-        std::shared_lock<std::shared_mutex> lock(mutex_);
-        next.scoring_profile = scoring_profile_;
-    }
     publish_snapshot(prepare_snapshot(std::move(next)), false);
     return true;
 }
@@ -307,12 +301,6 @@ bool UserLexicon::save() {
         dirty_.store(false, std::memory_order_release);
     }
     return true;
-}
-
-void UserLexicon::set_scoring_profile(UserScoringProfile profile) {
-    std::lock_guard<std::mutex> transaction_lock(transaction_mutex_);
-    std::unique_lock<std::shared_mutex> lock(mutex_);
-    scoring_profile_ = profile;
 }
 
 bool UserLexicon::add_entry(const std::string& text, const std::string& code,
@@ -353,7 +341,6 @@ UserLexicon::Snapshot UserLexicon::snapshot() const {
     Snapshot result;
     result.entries = entries_;
     result.sequence = sequence_;
-    result.scoring_profile = scoring_profile_;
     result.path = path_;
     return result;
 }
@@ -370,7 +357,6 @@ void UserLexicon::publish_snapshot(Snapshot snapshot, bool dirty) {
         mixed_index_.swap(snapshot.mixed_index);
         code_sorted_.swap(snapshot.code_sorted);
         sequence_ = snapshot.sequence;
-        scoring_profile_ = snapshot.scoring_profile;
         path_.swap(snapshot.path);
         dirty_.store(dirty, std::memory_order_release);
         version_.fetch_add(1, std::memory_order_acq_rel);
@@ -392,7 +378,7 @@ bool UserLexicon::add_entry_and_save(const std::string& text, const std::string&
     std::lock_guard<std::mutex> transaction_lock(transaction_mutex_);
     Snapshot next = snapshot();
     if (!is_valid_user_dict_entry(text, code, syllables) ||
-        (next.scoring_profile == UserScoringProfile::kPinyin &&
+        (kind_ == UserDictKind::PINYIN &&
          !is_canonical_pinyin_user_code(code, syllables))) {
         return false;
     }
@@ -431,12 +417,7 @@ bool UserLexicon::import_file(const std::string& source_path) {
 
     std::vector<Entry> imported_entries;
     std::uint64_t imported_sequence = 0;
-    UserScoringProfile profile;
-    {
-        std::shared_lock<std::shared_mutex> lock(mutex_);
-        profile = scoring_profile_;
-    }
-    if (!parse_entries(contents, true, profile, true, &imported_entries, &imported_sequence)) {
+    if (!parse_entries(contents, true, kind_, true, &imported_entries, &imported_sequence)) {
         return false;
     }
     Snapshot next;
@@ -445,7 +426,6 @@ bool UserLexicon::import_file(const std::string& source_path) {
     {
         std::shared_lock<std::shared_mutex> lock(mutex_);
         next.path = path_;
-        next.scoring_profile = scoring_profile_;
     }
     next = prepare_snapshot(std::move(next));
     if (next.path.empty() ||
@@ -464,16 +444,14 @@ bool UserLexicon::merge_contents_and_save(const std::string& imported,
     std::lock_guard<std::mutex> transaction_lock(transaction_mutex_);
     Snapshot current = snapshot();
     UserDataMergeResult merged;
-    const char* file_name =
-        current.scoring_profile == UserScoringProfile::kWubi ? "user_wubi.tsv" : "user_pinyin.tsv";
     if (current.path.empty() ||
-        !merge_user_data_contents(file_name, serialize_entries(current.entries), imported,
-                                  &merged)) {
+        !merge_lexicon_resource_contents(LexiconResource::kUserLexicon, kind_,
+                                         serialize_entries(current.entries), imported, &merged)) {
         return false;
     }
     std::vector<Entry> entries;
     std::uint64_t sequence = 0;
-    if (!parse_entries(merged.contents, true, current.scoring_profile, true, &entries, &sequence)) {
+    if (!parse_entries(merged.contents, true, kind_, true, &entries, &sequence)) {
         return false;
     }
     current.entries = std::move(entries);

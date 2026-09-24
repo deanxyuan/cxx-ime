@@ -12,6 +12,7 @@
 #include <cxxime/query_trace.h>
 
 #include "support/testutil.h"
+#include "support/test_runtime.h"
 
 // Build a path relative to the project root.
 static std::string project_path(const char* rel) {
@@ -28,7 +29,7 @@ public:
 
     ~BenchmarkEngineFixture() {
         engine.finalize();
-        dict_.close();
+        dict_->close();
         std::remove(user_dict_path_.c_str());
     }
 
@@ -37,29 +38,33 @@ public:
         std::string topn_path = load_topn
             ? project_path("data/pinyin.topn.bin")
             : std::string();
-        if (!dict_.open_bundle(dict_path, user_dict_path_,
+        if (!dict_->open_bundle(dict_path, user_dict_path_,
                                project_path("data/pinyin.dict.idx"), topn_path))
             return false;
 
         config_.load(project_path("data/default.json"));
 
-        std::string sp_path = cxxime::Engine::derive_spellings_path(dict_path);
-        if (!sp_path.empty() && spellings_.load(sp_path) && spellings_.has_spellings())
-            syllabifier_ = std::make_unique<cxxime::Syllabifier>(spellings_);
-
-        return engine.initialize(dict_, spellings_, syllabifier_.get(), config_);
+        const std::string sp_path = cxxime::Engine::derive_spellings_path(dict_path);
+        pinyin_resources_ = cxxime::PinyinResourceSet::create(
+            "full_pinyin", cxxime::PinyinSchemeKind::kFullPinyin, sp_path);
+        return engine.initialize(cxxime::EngineRuntimeState::create(
+            config_, dict_, nullptr, pinyin_resources_));
     }
 
     void set_page_size(int page_size) {
         config_.page_size = page_size;
+        if (pinyin_resources_) {
+            ASSERT_TRUE(engine.apply_runtime_state(cxxime::EngineRuntimeState::create(
+                config_, dict_, nullptr, pinyin_resources_)));
+        }
     }
 
     cxxime::Engine engine;
 
 private:
-    cxxime::Dict dict_;
-    cxxime::SpellingsIndex spellings_;
-    std::unique_ptr<cxxime::Syllabifier> syllabifier_;
+    std::shared_ptr<cxxime::Dict> dict_ =
+        std::make_shared<cxxime::Dict>(cxxime::UserDictKind::PINYIN);
+    std::shared_ptr<const cxxime::PinyinResourceSet> pinyin_resources_;
     cxxime::Config config_;
     std::string user_dict_path_;
 };
@@ -252,7 +257,7 @@ TEST(Benchmark, CheckQueryBenchPass) {
 
         engine.set_query_deadline_ms(0);
         engine.set_trace_enabled(true);
-        engine.set_config_page_size(7);
+        fixture.set_page_size(7);
 
         std::ofstream f(jsonl_path);
         // Run "s" 10 times — short input, should be fast
@@ -320,7 +325,7 @@ TEST(Benchmark, CacheHitScanZero) {
 
     engine.set_query_deadline_ms(0);
     engine.set_trace_enabled(true);
-    engine.set_config_page_size(7);
+    fixture.set_page_size(7);
 
     cxxime::KeyEvent event;
     event.keycode = 'S';
@@ -348,7 +353,7 @@ TEST(Benchmark, CacheMissScanPositive) {
 
     engine.set_query_deadline_ms(0);
     engine.set_trace_enabled(true);
-    engine.set_config_page_size(7);
+    fixture.set_page_size(7);
 
     const char* input = "nihaoshijie";
     for (const char* p = input; *p; ++p) {

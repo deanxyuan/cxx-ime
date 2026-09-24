@@ -23,7 +23,7 @@ TEST(Wubi, single_char) {
         {"aaaa", "工", 300}, // 工 (full code)
     });
 
-    cxxime::Dict dict;
+    cxxime::Dict dict{cxxime::UserDictKind::WUBI};
     ASSERT_TRUE(dict.open(dict_path));
 
     auto results = dict.lookup("a", 10);
@@ -44,7 +44,7 @@ TEST(Wubi, prefix_match) {
         {"rnnw", "据", 80},  // 据
     });
 
-    cxxime::Dict dict;
+    cxxime::Dict dict{cxxime::UserDictKind::WUBI};
     ASSERT_TRUE(dict.open(dict_path));
 
     // Prefix "rn" should match all entries starting with "rn"
@@ -66,7 +66,7 @@ TEST(Wubi, multi_code_same_text) {
         {"aaaa", "工", 300}, // 工 — full code
     });
 
-    cxxime::Dict dict;
+    cxxime::Dict dict{cxxime::UserDictKind::WUBI};
     ASSERT_TRUE(dict.open(dict_path));
 
     // Both codes should return 工, deduplicated
@@ -91,7 +91,7 @@ TEST(Wubi, nonexistent_code) {
         {"a", "工", 200},
     });
 
-    cxxime::Dict dict;
+    cxxime::Dict dict{cxxime::UserDictKind::WUBI};
     ASSERT_TRUE(dict.open(dict_path));
 
     auto results = dict.lookup("zzzz", 10);
@@ -109,7 +109,7 @@ TEST(Wubi, exact_prefix_boundary) {
         {"aaa", "工", 200}, // 工 (different code length)
     });
 
-    cxxime::Dict dict;
+    cxxime::Dict dict{cxxime::UserDictKind::WUBI};
     ASSERT_TRUE(dict.open(dict_path));
 
     auto results = dict.lookup("aa", 10);
@@ -129,7 +129,7 @@ TEST(Wubi, sort_by_frequency) {
         {"c", "在", 200}, // 在 — mid freq
     });
 
-    cxxime::Dict dict;
+    cxxime::Dict dict{cxxime::UserDictKind::WUBI};
     ASSERT_TRUE(dict.open(dict_path));
 
     // Empty prefix matches all, sorted by frequency descending
@@ -151,7 +151,7 @@ TEST(Wubi, limit_results) {
         {"c", "在", 200},
     });
 
-    cxxime::Dict dict;
+    cxxime::Dict dict{cxxime::UserDictKind::WUBI};
     ASSERT_TRUE(dict.open(dict_path));
 
     auto results = dict.lookup("", 2);

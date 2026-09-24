@@ -6,14 +6,15 @@
 #include <chrono>
 #include <climits>
 #include <iterator>
+#include <utility>
 
 #include <cxxime/composition_learning.h>
-#include <cxxime/query_budget.h>
 #include <cxxime/pinyin_composer.h>
+#include <cxxime/pinyin_resource.h>
+#include <cxxime/query_budget.h>
 #include <cxxime/query_scratch.h>
 #include <cxxime/query_trace.h>
 #include <cxxime/short_code_cache.h>
-#include <cxxime/syllabifier.h>
 #include <cxxime/topk_collector.h>
 
 #include "pinyin_path_filter.h"
@@ -172,16 +173,19 @@ void PinyinTranslator::set_dict(Dict* dict) {
     query_cache_sequence_ = 0;
 }
 
-void PinyinTranslator::set_syllabifier(Syllabifier* syllabifier) {
-    syllabifier_ = syllabifier;
-}
-
-void PinyinTranslator::set_pinyin_scheme(PinyinSchemeKind scheme) {
-    if (pinyin_scheme_ == scheme) {
+void PinyinTranslator::bind_pinyin(std::shared_ptr<const PinyinResourceSet> resources,
+                                   PinyinQueryPolicy policy) {
+    if (pinyin_resources_ == resources &&
+        pinyin_query_policy_.enable_fuzzy == policy.enable_fuzzy) {
         return;
     }
-    pinyin_scheme_ = scheme;
+    pinyin_resources_ = std::move(resources);
+    pinyin_query_policy_ = policy;
     query_cache_.clear();
+}
+
+PinyinSchemeKind PinyinTranslator::pinyin_scheme() const {
+    return pinyin_resources_ ? pinyin_resources_->kind() : PinyinSchemeKind::kFullPinyin;
 }
 
 void PinyinTranslator::set_sentence_composition_enabled(bool enabled) {
@@ -450,7 +454,7 @@ CandidatePage PinyinTranslator::translate_page(const std::string& pinyin, int pa
     };
 
     // Full Pinyin keeps its existing zero-decode Top-N fast path.
-    if (pinyin_scheme_ == PinyinSchemeKind::kFullPinyin && is_indexable_key(pinyin)) {
+    if (pinyin_scheme() == PinyinSchemeKind::kFullPinyin && is_indexable_key(pinyin)) {
         fast = lookup_indexed_fast(pinyin, need, trace);
         remove_oversized_candidates(fast.candidates);
         if (finish_complete_fast_path()) {
@@ -520,15 +524,19 @@ CandidatePage PinyinTranslator::translate_page(const std::string& pinyin, int pa
     if (sentence_composition_enabled_) {
         composition_specs.reserve(kMaxCompositionPaths + 1);
     }
-    if (syllabifier_) {
+    if (pinyin_resources_) {
         // Check deadline before syllabifier (it can be slow on long inputs)
         if (budget && budget->deadline.expired()) {
             deadline_hit = true;
         } else {
             // Pass the deadline to the syllabifier for internal checks.
-            segment_result = syllabifier_->segment(
-                pinyin, budget ? &budget->deadline : nullptr,
-                pinyin_scheme_ == PinyinSchemeKind::kShuangpin, true);
+            SyllabifierOptions options;
+            options.enable_fuzzy = pinyin_query_policy_.enable_fuzzy;
+            options.enable_terminal_completion =
+                pinyin_scheme() == PinyinSchemeKind::kShuangpin;
+            options.collect_path_metadata = true;
+            segment_result = pinyin_resources_->segment(
+                pinyin, budget ? &budget->deadline : nullptr, options);
             id_sequences.reserve(std::min(segment_result.paths.size(), kMaxPaths) + 1);
             path_tiers.reserve(std::min(segment_result.paths.size(), kMaxPaths) + 1);
             path_query_keys.reserve(std::min(segment_result.paths.size(), kMaxPaths) + 1);
@@ -537,13 +545,13 @@ CandidatePage PinyinTranslator::translate_page(const std::string& pinyin, int pa
             CompositionPathSpec repeated_short_spec;
             for (size_t i = 0; i < segment_result.paths.size() && i < kMaxPaths; ++i) {
                 const auto& segmented_path = segment_result.paths[i];
-                if (pinyin_scheme_ == PinyinSchemeKind::kShuangpin &&
+                if (pinyin_scheme() == PinyinSchemeKind::kShuangpin &&
                     !path_consumes_entire_input(pinyin, segmented_path)) {
                     continue;
                 }
                 const size_t id_index = add_path(
                     segmented_path.syllables, classify_path(segmented_path),
-                    pinyin_scheme_ == PinyinSchemeKind::kShuangpin
+                    pinyin_scheme() == PinyinSchemeKind::kShuangpin
                         ? canonical_pinyin_key(segmented_path.syllables)
                         : std::string{});
                 if (id_index == SIZE_MAX) {
@@ -558,7 +566,7 @@ CandidatePage PinyinTranslator::translate_page(const std::string& pinyin, int pa
                                    id_sequences[id_index];
                         });
                     const bool normal_composition_path =
-                        pinyin_scheme_ == PinyinSchemeKind::kShuangpin
+                        pinyin_scheme() == PinyinSchemeKind::kShuangpin
                             ? is_complete_normal_path(pinyin, segmented_path)
                             : is_normal_composition_path(pinyin, segmented_path);
                     if (normal_composition_path) {
@@ -569,7 +577,7 @@ CandidatePage PinyinTranslator::translate_page(const std::string& pinyin, int pa
                                                         CompositionPathKind::kNormal,
                                                         static_cast<uint16_t>(i)});
                         }
-                    } else if (pinyin_scheme_ == PinyinSchemeKind::kFullPinyin &&
+                    } else if (pinyin_scheme() == PinyinSchemeKind::kFullPinyin &&
                                !has_repeated_short_path &&
                                is_repeated_short_code_path(pinyin, segmented_path)) {
                         repeated_short_spec = {id_index, i,
@@ -594,7 +602,7 @@ CandidatePage PinyinTranslator::translate_page(const std::string& pinyin, int pa
         id_sequences.reserve(2);
     }
 
-    if (pinyin_scheme_ == PinyinSchemeKind::kShuangpin && !deadline_hit) {
+    if (pinyin_scheme() == PinyinSchemeKind::kShuangpin && !deadline_hit) {
         std::vector<IndexedShuangpinPath> indexed_paths;
         for (std::size_t index = 0;
              index < segment_result.paths.size() && index < kMaxPaths; ++index) {
@@ -656,7 +664,7 @@ CandidatePage PinyinTranslator::translate_page(const std::string& pinyin, int pa
     }
 
     // 2. Normal segmentation (skip if deadline already hit)
-    if (!deadline_hit && pinyin_scheme_ == PinyinSchemeKind::kFullPinyin)
+    if (!deadline_hit && pinyin_scheme() == PinyinSchemeKind::kFullPinyin)
         add_path(segmentor_.segment_best(pinyin), PathMatchTier::kNormal);
 
     // If deadline hit, return empty page with trace flags
@@ -692,9 +700,13 @@ CandidatePage PinyinTranslator::translate_page(const std::string& pinyin, int pa
 
     // If valid full-syllable paths have no dictionary continuation, retry with
     // terminal syllable completion (for example, "ji" -> "jie").
-    if (live_path_indices.empty() && syllabifier_ && !deadline_hit) {
-        auto completion_result = syllabifier_->segment(
-            pinyin, budget ? &budget->deadline : nullptr, true, true);
+    if (live_path_indices.empty() && pinyin_resources_ && !deadline_hit) {
+        SyllabifierOptions completion_options;
+        completion_options.enable_fuzzy = pinyin_query_policy_.enable_fuzzy;
+        completion_options.enable_terminal_completion = true;
+        completion_options.collect_path_metadata = true;
+        auto completion_result = pinyin_resources_->segment(
+            pinyin, budget ? &budget->deadline : nullptr, completion_options);
         if (completion_result.deadline_exceeded) {
             deadline_hit = true;
             if (trace) {
@@ -708,12 +720,12 @@ CandidatePage PinyinTranslator::translate_page(const std::string& pinyin, int pa
             for (size_t i = 0;
                  i < completion_result.paths.size() && i < kMaxPaths; ++i) {
                 const auto& completion_path = completion_result.paths[i];
-                if (pinyin_scheme_ == PinyinSchemeKind::kShuangpin &&
+                if (pinyin_scheme() == PinyinSchemeKind::kShuangpin &&
                     !path_consumes_entire_input(pinyin, completion_path)) {
                     continue;
                 }
                 add_path(completion_path.syllables, classify_path(completion_path),
-                         pinyin_scheme_ == PinyinSchemeKind::kShuangpin
+                         pinyin_scheme() == PinyinSchemeKind::kShuangpin
                              ? canonical_pinyin_key(completion_path.syllables)
                              : std::string{});
             }
@@ -769,7 +781,7 @@ CandidatePage PinyinTranslator::translate_page(const std::string& pinyin, int pa
         for (auto& c : candidates) {
             rank_fallback_candidate(c, path_tiers[live_path_index], ids.size());
         }
-        if (pinyin_scheme_ == PinyinSchemeKind::kShuangpin) {
+        if (pinyin_scheme() == PinyinSchemeKind::kShuangpin) {
             rank_shuangpin_path(path_query_keys[live_path_index], candidates);
         }
         for (auto& c : candidates) {
@@ -863,11 +875,11 @@ CandidatePage PinyinTranslator::translate_page(const std::string& pinyin, int pa
 
     remove_oversized_candidates(sorted);
 
-    if (pinyin_scheme_ == PinyinSchemeKind::kFullPinyin && candidate_learning_enabled_) {
+    if (pinyin_scheme() == PinyinSchemeKind::kFullPinyin && candidate_learning_enabled_) {
         dict_->apply_candidate_preferences(pinyin, CandidateSource::kPinyin, sorted, need);
     }
     dict_->filter_disabled_system_candidates(sorted);
-    if (pinyin_scheme_ == PinyinSchemeKind::kFullPinyin && candidate_learning_enabled_ &&
+    if (pinyin_scheme() == PinyinSchemeKind::kFullPinyin && candidate_learning_enabled_ &&
         composition_learning_) {
         auto learned = composition_learning_->lookup_candidates(pinyin, need);
         dict_->filter_disabled_system_candidates(learned);
@@ -879,7 +891,7 @@ CandidatePage PinyinTranslator::translate_page(const std::string& pinyin, int pa
             sorted.resize(need);
         }
     }
-    if (pinyin_scheme_ == PinyinSchemeKind::kFullPinyin) {
+    if (pinyin_scheme() == PinyinSchemeKind::kFullPinyin) {
         dict_->apply_manual_candidate_order(pinyin, CandidateSource::kPinyin, sorted, need);
     } else {
         std::vector<std::string> query_keys;
@@ -970,7 +982,8 @@ TranslationResult PinyinTranslator::translate(const TranslationRequest& request)
         request.page_offset + request.page_size + 1,
         static_cast<int>(kLeadingFullSpanCandidateCount + 1));
     const bool require_runtime_paths =
-        syllabifier_ && syllabifier_->has_fuzzy_path(request.input);
+        pinyin_resources_ && pinyin_query_policy_.enable_fuzzy &&
+        pinyin_resources_->has_fuzzy_path(request.input);
     CandidatePage full = translate_page(request.input, 0, fetch_count, effective_request.trace,
                                         request.budget, request.scratch, 0,
                                         require_runtime_paths);
@@ -988,9 +1001,10 @@ TranslationResult PinyinTranslator::translate(const TranslationRequest& request)
                                        : TranslationStatus::kStableDegraded;
     }
     const std::size_t full_count = merged.size();
-    if (syllabifier_) {
-        append_pinyin_partial_candidates(*dict_, *syllabifier_, effective_request,
-                                         pinyin_scheme_ == PinyinSchemeKind::kShuangpin,
+    if (pinyin_resources_) {
+        append_pinyin_partial_candidates(*dict_, *pinyin_resources_, pinyin_query_policy_,
+                                         effective_request,
+                                         pinyin_scheme() == PinyinSchemeKind::kShuangpin,
                                          candidate_learning_enabled_, merged, result.status);
     }
     const std::size_t added_partial_count = merged.size() - full_count;

@@ -14,7 +14,7 @@ TEST(Deadline, expired_deadline_stops_dict_scan) {
     }
     cxxime::Dict::create_test_dict(dict_path, entries);
 
-    cxxime::Dict dict;
+    cxxime::Dict dict{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dict.open_dict(dict_path));
 
     cxxime::QueryTrace trace = {};
@@ -50,9 +50,10 @@ TEST(Deadline, syllabifier_deadline_returns_partial_paths) {
     }
     ASSERT_TRUE(cxxime::SpellingsIndex::create_test_trie(spellings_path, entries));
 
-    cxxime::SpellingsIndex spellings;
-    ASSERT_TRUE(spellings.load(spellings_path));
-    cxxime::Syllabifier syllabifier(spellings);
+    auto pinyin_resources = cxxime::PinyinResourceSet::create(
+        "full_pinyin", cxxime::PinyinSchemeKind::kFullPinyin, spellings_path,
+    cxxime::PinyinSpellingRequirement::kRequired);
+    ASSERT_TRUE(pinyin_resources != nullptr);
 
     // Create an already-expired deadline
     cxxime::QueryDeadline deadline;
@@ -60,7 +61,7 @@ TEST(Deadline, syllabifier_deadline_returns_partial_paths) {
     deadline.expires_at = std::chrono::steady_clock::now() - std::chrono::milliseconds(1);
     deadline.check_interval = 1;  // check every path
 
-    auto result = syllabifier.segment("abcdefghijklmnopqrstuvwxyz", &deadline);
+    auto result = pinyin_resources->segment("abcdefghijklmnopqrstuvwxyz", &deadline);
 
     // Should have returned with deadline flags set
     ASSERT_TRUE(result.deadline_exceeded);

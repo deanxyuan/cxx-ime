@@ -16,6 +16,7 @@
 #include <cxxime/logging.h>
 #include <cxxime/mixed_translator.h>
 #include <cxxime/output_composer.h>
+#include <cxxime/pinyin_resource.h>
 #include <cxxime/pinyin_scheme.h>
 #include <cxxime/symbol_table.h>
 #include <cxxime/wubi_input_policy.h>
@@ -91,8 +92,9 @@ static bool is_ascii_symbol(char ch) {
 std::atomic<uint64_t> Engine::next_query_id_{0};
 
 bool Engine::symbol_input_enabled(const OutputOptions& opts) const {
-    return symbol_table_ &&
-           !symbol_table_->empty() &&
+    const SymbolTable* symbol_table = runtime_ ? runtime_->symbol_table() : nullptr;
+    return symbol_table &&
+           !symbol_table->empty() &&
            opts.chinese_mode &&
            opts.chinese_punct &&
            !opts.full_shape;
@@ -100,45 +102,52 @@ bool Engine::symbol_input_enabled(const OutputOptions& opts) const {
 
 // Self-contained: owns all resources (tests/tools).
 bool Engine::initialize(const std::string& dict_path, const std::string& config_path) {
-    if (!owned_dict_.open(dict_path))
+    auto dict = std::make_shared<Dict>(UserDictKind::PINYIN);
+    if (!dict->open(dict_path))
         return false;
 
+    Config config;
     if (!config_path.empty()) {
-        owned_config_.load(config_path);
+        config.load(config_path);
     }
 
     std::string sp_path = derive_spellings_path(dict_path);
-    const auto& scheme = resolve_pinyin_scheme(owned_config_.pinyin_scheme);
+    const auto& scheme = resolve_pinyin_scheme(config.pinyin_scheme);
     if (scheme.kind == PinyinSchemeKind::kShuangpin) {
         const std::size_t separator = sp_path.find_last_of("\\/");
         sp_path = separator == std::string::npos
                       ? scheme.spelling_filename
                       : sp_path.substr(0, separator + 1) + scheme.spelling_filename;
     }
-    const bool spellings_loaded = !sp_path.empty() && owned_spellings_.load(sp_path) &&
-                                  owned_spellings_.has_spellings();
-    if (spellings_loaded) {
-        owned_syllabifier_ = std::make_unique<Syllabifier>(owned_spellings_);
-    } else if (scheme.kind == PinyinSchemeKind::kShuangpin) {
-        return false;
-    }
-
-    return initialize(owned_dict_, owned_spellings_,
-                      owned_syllabifier_.get(), owned_config_);
+    const PinyinSpellingRequirement requirement =
+        scheme.kind == PinyinSchemeKind::kFullPinyin
+            ? PinyinSpellingRequirement::kOptionalForFullPinyin
+            : PinyinSpellingRequirement::kRequired;
+    auto pinyin_resources =
+        PinyinResourceSet::create(scheme.id, scheme.kind, sp_path, requirement);
+    return initialize(EngineRuntimeState::create(
+        std::move(config), std::move(dict), nullptr, std::move(pinyin_resources)));
 }
 
-// Shared-resource: references pre-loaded data (server sessions).
-bool Engine::initialize(Dict& dict, SpellingsIndex& spellings,
-                        Syllabifier* syllabifier, const Config& config,
-                        const SymbolTable* symbol_table) {
-    pinyin_dict_ = &dict;
-    spellings_ = &spellings;
-    syllabifier_ = syllabifier;
-    config_ = &config;
-    symbol_table_ = symbol_table;
-
+bool Engine::initialize(std::shared_ptr<const EngineRuntimeState> runtime) {
+    if (!runtime) {
+        return false;
+    }
+    auto previous_runtime = std::move(runtime_);
+    runtime_ = std::move(runtime);
     rebuild_pipeline(InputMode::PINYIN, true);
-    init_per_session(config);
+    init_per_session(runtime_->config());
+    return true;
+}
+
+bool Engine::apply_runtime_state(std::shared_ptr<const EngineRuntimeState> runtime) {
+    if (!runtime) {
+        return false;
+    }
+    auto previous_runtime = std::move(runtime_);
+    runtime_ = std::move(runtime);
+    init_per_session(runtime_->config());
+    rebuild_pipeline(mode_, true);
     return true;
 }
 
@@ -148,11 +157,11 @@ void Engine::init_per_session(const Config& config) {
 }
 
 void Engine::finalize() {
-    if (pinyin_dict_ == &owned_dict_) {
-        owned_dict_.close();
-    }
     reset_composition_state();
     handled_shortcut_key_ = 0;
+    translator_.reset();
+    processor_.reset();
+    runtime_.reset();
 }
 
 CandidatePage Engine::translate_for_search(const std::string& input, int limit) {
@@ -184,34 +193,14 @@ bool Engine::record_search_result(const std::string& input, const std::string& r
     if (candidate == page.candidates.end()) {
         return false;
     }
-    Dict* dict = candidate->source == CandidateSource::kWubi ? wubi_dict_ : pinyin_dict_;
+    Dict* dict = candidate->source == CandidateSource::kWubi
+                     ? runtime_->wubi_dict()
+                     : &runtime_->pinyin_dict();
     const std::string& learning_code =
         candidate->source == CandidateSource::kPinyin && !candidate->input_code.empty()
             ? candidate->input_code
             : input;
     return record_candidate_preference(dict, &*candidate, learning_code);
-}
-
-void Engine::reload_config(const Config& config) {
-    config_ = &config;
-    ascii_composer_.load_config(config);
-    input_mode_switch_shortcut_ = config.input_mode_switch_shortcut;
-    if (mode_ == InputMode::MIXED && translator_) {
-        static_cast<MixedTranslator*>(translator_.get())
-            ->set_candidate_preference(config.mixed_candidate_preference);
-    }
-    if (translator_) {
-        translator_->set_candidate_learning_enabled(config.candidate_learning);
-    }
-}
-
-void Engine::rebind_shared_resources(Dict& dict, SpellingsIndex& spellings,
-                                     Syllabifier* syllabifier, Dict* wubi_dict) {
-    pinyin_dict_ = &dict;
-    spellings_ = &spellings;
-    syllabifier_ = syllabifier;
-    wubi_dict_ = wubi_dict;
-    rebuild_pipeline(mode_, true);
 }
 
 ProcessResult Engine::process_key(const KeyEvent& event) {
@@ -488,7 +477,8 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
     const WubiFifthKeyAction fifth_key_action = plain_letter_key
         ? WubiInputPolicy::fifth_key_action(context_.composition_scheme(),
                                             context_.active_input(), context_.preedit_cursor(),
-                                            context_.translation(), *config_, event.keycode)
+                                            context_.translation(), runtime_->config(),
+                                            event.keycode)
         : WubiFifthKeyAction::kNone;
     if (!routed_result && fifth_key_action == WubiFifthKeyAction::kCommitFirstAndRestart) {
         const CandidateEntry* first = context_.candidate_entry(0);
@@ -614,7 +604,7 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
     if (result == ProcessResult::ACCEPTED && context_.is_composing()) {
         if (trace_enabled_) {
             trace_.page_index = context_.page_index();
-            trace_.page_size = config_->page_size;
+            trace_.page_size = runtime_->config().page_size;
         }
         bool append_raw = context_.composition_scheme() == CompositionScheme::kInlineAscii ||
                                 context_.commit_source() == CommitSource::kRawCodePreserveCase;
@@ -701,7 +691,7 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
             WubiInputPolicy::should_auto_commit(context_.composition_scheme(),
                                                 context_.active_input(),
                                                 context_.translation(),
-                                                *config_)) {
+                                                runtime_->config())) {
             const CandidateEntry* first = context_.candidate_entry(0);
             if (first && finalize_selection(*first)) {
                 result = ProcessResult::COMMITTED;
@@ -949,14 +939,15 @@ TranslationResult Engine::translate_composition(const CompositionState& state,
         request.input = state.active().input.substr(1);
         request.page_index = page_index;
         request.page_offset = page_offset;
-        request.page_size = candidate_limit > 0 ? candidate_limit : config_->page_size;
-        return symbol_table_ ? symbol_table_->translate(request) : TranslationResult{};
+        request.page_size = candidate_limit > 0 ? candidate_limit : runtime_->config().page_size;
+        const SymbolTable* symbol_table = runtime_->symbol_table();
+        return symbol_table ? symbol_table->translate(request) : TranslationResult{};
     }
 
     scratch_.reset_for_query();
     QueryBudget effective_budget =
         make_budget(static_cast<int>(state.active().input.size()),
-            candidate_limit > 0 ? candidate_limit : config_->page_size);
+                    candidate_limit > 0 ? candidate_limit : runtime_->config().page_size);
     effective_budget = scale_query_budget(effective_budget, continuation_effort);
     effective_budget.deadline = deadline;
     TranslationRequest request;
@@ -964,13 +955,13 @@ TranslationResult Engine::translate_composition(const CompositionState& state,
     request.input = state.active().input;
     request.page_index = page_index;
     request.page_offset = page_offset;
-    request.page_size = candidate_limit > 0 ? candidate_limit : config_->page_size;
+    request.page_size = candidate_limit > 0 ? candidate_limit : runtime_->config().page_size;
     request.policy = translation_policy_;
     request.trace = trace_enabled_ ? &trace_ : nullptr;
     request.budget = &effective_budget;
     request.scratch = &scratch_;
     TranslationResult result = translator_->translate(request);
-    if (config_->wubi_code_hint) {
+    if (runtime_->config().wubi_code_hint) {
         add_wubi_code_hints(state.active().input, result);
     }
     return result;
@@ -992,7 +983,7 @@ TranslationResult Engine::translate_after_visible_anchor(const QueryDeadline& de
         return unavailable;
     }
 
-    const int prefix_limit = target_offset + config_->page_size + 1;
+    const int prefix_limit = target_offset + runtime_->config().page_size + 1;
     TranslationResult prefix = translate_composition(context_.composition(), 0, 0, deadline,
                                                      prefix_limit, continuation_effort);
     if (!prefix.usable()) {
@@ -1010,9 +1001,9 @@ TranslationResult Engine::translate_after_visible_anchor(const QueryDeadline& de
         }
         prefix.page_index = 0;
         prefix.page_offset = 0;
-        prefix.page_size = config_->page_size;
-        if (static_cast<int>(prefix.entries.size()) > config_->page_size) {
-            prefix.entries.resize(config_->page_size);
+        prefix.page_size = runtime_->config().page_size;
+        if (static_cast<int>(prefix.entries.size()) > runtime_->config().page_size) {
+            prefix.entries.resize(runtime_->config().page_size);
         }
         const bool prefix_incomplete = !prefix.extent.complete;
         prefix.extent = make_candidate_extent(
@@ -1030,12 +1021,12 @@ TranslationResult Engine::translate_after_visible_anchor(const QueryDeadline& de
         }
     }
     const int available_after_anchor = static_cast<int>(remaining.size());
-    const int next_count = (std::min)(config_->page_size, available_after_anchor);
+    const int next_count = (std::min)(runtime_->config().page_size, available_after_anchor);
     TranslationResult next;
     next.status = prefix.status;
     next.page_index = context_.page_index() + 1;
     next.page_offset = target_offset;
-    next.page_size = config_->page_size;
+    next.page_size = runtime_->config().page_size;
     next.entries.assign(std::make_move_iterator(remaining.begin()),
                         std::make_move_iterator(remaining.begin() + next_count));
     if (!next.entries.empty()) {
@@ -1066,20 +1057,20 @@ bool Engine::finalize_selection(const CandidateEntry& entry) {
 
 void Engine::apply_commit_learning_plan() {
     CommitLearningPlan plan = context_.take_commit_learning_plan();
-    if (!config_ || !config_->candidate_learning || plan.empty()) {
+    if (!runtime_ || !runtime_->config().candidate_learning || plan.empty()) {
         return;
     }
     for (const CandidatePreferenceLearningEvent& event : plan.candidate_preferences) {
         Dict* dictionary = nullptr;
         if (event.target == LearningTarget::kPinyin) {
-            dictionary = pinyin_dict_;
+            dictionary = &runtime_->pinyin_dict();
         } else if (event.target == LearningTarget::kWubi) {
-            dictionary = wubi_dict_;
+            dictionary = runtime_->wubi_dict();
         }
         record_candidate_preference(dictionary, &event.candidate, event.typed_code);
     }
-    if (plan.composition && composition_learning_) {
-        composition_learning_->enqueue(*plan.composition);
+    if (plan.composition && runtime_->composition_learning()) {
+        runtime_->composition_learning()->enqueue(*plan.composition);
     }
 }
 
@@ -1147,31 +1138,21 @@ void Engine::clear_query_cache() {
     }
 }
 
-void Engine::set_wubi_dict(Dict* dict) {
-    wubi_dict_ = dict;
-}
-
-void Engine::set_fuzzy_enabled(bool enabled) {
-    if (!spellings_)
-        return;
-    spellings_->set_fuzzy_enabled(enabled);
-    rebuild_pipeline(mode_, true);
-}
-
 void Engine::switch_mode(InputMode mode) {
     rebuild_pipeline(mode);
 }
 
-void Engine::set_composition_learning_service(CompositionLearningService* service) {
-    composition_learning_ = service;
-    if (translator_) {
-        translator_->set_composition_learning_service(service);
-    }
-}
-
 void Engine::rebuild_pipeline(InputMode mode, bool force) {
+    if (!runtime_) {
+        return;
+    }
+    Dict& pinyin_dict = runtime_->pinyin_dict();
+    Dict* wubi_dict = runtime_->wubi_dict();
+    const Config& config = runtime_->config();
+    const PinyinResourceSet& pinyin_resources = runtime_->pinyin_resources();
+
     // Fall back to pinyin when the optional Wubi dictionary is unavailable.
-    if ((mode == InputMode::WUBI || mode == InputMode::MIXED) && !wubi_dict_)
+    if ((mode == InputMode::WUBI || mode == InputMode::MIXED) && !wubi_dict)
         mode = InputMode::PINYIN;
 
     if (!force && mode == mode_) return;
@@ -1180,47 +1161,42 @@ void Engine::rebuild_pipeline(InputMode mode, bool force) {
 
     mode_ = mode;
     context_.set_ime_scheme(scheme_for_mode(mode_));
-    const PinyinSchemeKind pinyin_scheme =
-        resolve_pinyin_scheme(config_->pinyin_scheme).kind;
+    const PinyinSchemeKind pinyin_scheme = pinyin_resources.kind();
     if (mode == InputMode::WUBI) {
         processor_ = std::make_unique<WubiProcessor>();
         auto wubi_trans = std::make_unique<WubiTranslator>();
-        wubi_trans->set_dict(wubi_dict_);
+        wubi_trans->set_dict(wubi_dict);
         translator_ = std::move(wubi_trans);
     } else if (mode == InputMode::MIXED) {
         auto pinyin_processor = std::make_unique<PinyinProcessor>();
         pinyin_processor->set_shuangpin_enabled(pinyin_scheme == PinyinSchemeKind::kShuangpin);
         processor_ = std::move(pinyin_processor);
         auto mixed_trans = std::make_unique<MixedTranslator>();
-        mixed_trans->set_pinyin_dict(pinyin_dict_);
-        mixed_trans->set_wubi_dict(wubi_dict_);
-        if (syllabifier_) {
-            mixed_trans->set_syllabifier(syllabifier_);
+        mixed_trans->set_pinyin_dict(&pinyin_dict);
+        mixed_trans->set_wubi_dict(wubi_dict);
+        mixed_trans->bind_pinyin(runtime_->pinyin_resources_ptr(),
+                                 runtime_->pinyin_query_policy());
+        if (pinyin_dict.has_short_cache()) {
+            mixed_trans->set_short_cache(&pinyin_dict.short_cache());
         }
-        if (pinyin_dict_->has_short_cache()) {
-            mixed_trans->set_short_cache(&pinyin_dict_->short_cache());
-        }
-        mixed_trans->set_pinyin_scheme(pinyin_scheme);
-        mixed_trans->set_candidate_preference(config_->mixed_candidate_preference);
+        mixed_trans->set_candidate_preference(config.mixed_candidate_preference);
         translator_ = std::move(mixed_trans);
     } else {
         auto pinyin_processor = std::make_unique<PinyinProcessor>();
         pinyin_processor->set_shuangpin_enabled(pinyin_scheme == PinyinSchemeKind::kShuangpin);
         processor_ = std::move(pinyin_processor);
         auto pinyin_trans = std::make_unique<PinyinTranslator>();
-        pinyin_trans->set_dict(pinyin_dict_);
-        if (syllabifier_) {
-            pinyin_trans->set_syllabifier(syllabifier_);
+        pinyin_trans->set_dict(&pinyin_dict);
+        pinyin_trans->bind_pinyin(runtime_->pinyin_resources_ptr(),
+                                  runtime_->pinyin_query_policy());
+        if (pinyin_dict.has_short_cache()) {
+            pinyin_trans->set_short_cache(&pinyin_dict.short_cache());
         }
-        if (pinyin_dict_->has_short_cache()) {
-            pinyin_trans->set_short_cache(&pinyin_dict_->short_cache());
-        }
-        pinyin_trans->set_pinyin_scheme(pinyin_scheme);
         translator_ = std::move(pinyin_trans);
     }
     translator_->set_sentence_composition_enabled(sentence_composition_enabled_);
-    translator_->set_candidate_learning_enabled(config_->candidate_learning);
-    translator_->set_composition_learning_service(composition_learning_);
+    translator_->set_candidate_learning_enabled(config.candidate_learning);
+    translator_->set_composition_learning_service(runtime_->composition_learning());
 }
 
 std::string Engine::derive_spellings_path(const std::string& dict_path) {

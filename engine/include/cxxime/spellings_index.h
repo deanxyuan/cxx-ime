@@ -6,10 +6,11 @@
 #define CXXIME_SPELLINGS_INDEX_H_
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <vector>
-#include <memory>
 
 namespace cxxime {
 
@@ -71,16 +72,15 @@ public:
 
     bool load(const std::string& bin_path);
     void unload();
-    bool has_spellings() const { return node_count_ > 0; }
+    bool has_spellings() const { return has_spelling_entries_; }
 
     // O(k) trie walk: returns all spellings where the stored key is a prefix of `prefix`.
-    std::vector<SpellingMatch> prefix_search(std::string_view prefix) const;
+    std::vector<SpellingMatch> prefix_search(std::string_view prefix,
+                                            bool enable_fuzzy = true) const;
 
     // Returns spellings whose stored input key is strictly longer than and starts with `prefix`.
-    std::vector<SpellingMatch> completion_search(std::string_view prefix) const;
-
-    void set_fuzzy_enabled(bool enabled) { fuzzy_enabled_ = enabled; }
-    bool fuzzy_enabled() const { return fuzzy_enabled_; }
+    std::vector<SpellingMatch> completion_search(std::string_view prefix,
+                                                 bool enable_fuzzy = true) const;
 
     // For tests: create a v2 trie binary file from entries
     static bool create_test_trie(const std::string& path,
@@ -92,10 +92,10 @@ private:
     const char* nodes_ = nullptr;      // raw node data
     const char* strings_ = nullptr;
     uint32_t node_count_ = 0;
+    bool has_spelling_entries_ = false;
 
     // Pre-built offset table for O(1) node access.
     std::unique_ptr<uint32_t[]> node_offsets_;
-    bool fuzzy_enabled_ = true;
 };
 
 } // namespace cxxime

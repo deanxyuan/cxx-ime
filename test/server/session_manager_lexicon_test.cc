@@ -719,3 +719,28 @@ TEST(SessionIntegration, user_lexicon_import_is_atomic_and_server_owned) {
     DeleteFileA(replacement_source.c_str());
     DeleteFileA(empty_source.c_str());
 }
+
+TEST(SessionIntegration, server_accepts_only_canonical_pinyin_user_codes) {
+    const std::string dict_path = make_temp_path("test_shuangpin_user_dict.bin");
+    create_test_dictionary_bundle(dict_path, {{"ni:hao", "你好", 1000}});
+    const std::string user_path = test_user_data_dir + "\\user_pinyin.tsv";
+    DeleteFileA(user_path.c_str());
+
+    auto config = std::make_shared<cxxime::Config>();
+    config->pinyin_scheme = "microsoft_shuangpin";
+    SharedResources resources;
+    ASSERT_TRUE(resources.load(dict_path, config));
+    ASSERT_TRUE(resources.add_user_entry(cxxime::UserDictKind::PINYIN, "不可达", "nihk") !=
+                cxxime::IPCStatus::OK);
+    ASSERT_EQ(resources.add_user_entry(cxxime::UserDictKind::PINYIN, "拟好", "nihao"),
+              cxxime::IPCStatus::OK);
+
+    const auto result = resources.query_user_entries("拟好", cxxime::UserDictKind::PINYIN, 0, 10);
+    ASSERT_EQ(result.entries.size(), static_cast<std::size_t>(1));
+    ASSERT_EQ(result.entries[0].code, "nihao");
+    ASSERT_TRUE(result.entries[0].syllables.empty());
+    ASSERT_TRUE(resources.freeze_and_stop_composition_learning());
+
+    DeleteFileA(user_path.c_str());
+    delete_test_dictionary_bundle(dict_path);
+}

@@ -10,10 +10,12 @@
 namespace cxxime {
 
 class Dict;
-class Syllabifier;
+class PinyinResourceSet;
+struct PinyinQueryPolicy;
 
 void append_pinyin_partial_candidates(Dict& dict,
-                                      const Syllabifier& syllabifier,
+                                      const PinyinResourceSet& pinyin_resources,
+                                      PinyinQueryPolicy pinyin_query_policy,
                                       const TranslationRequest& request,
                                       bool shuangpin,
                                       bool candidate_learning_enabled,

@@ -262,9 +262,10 @@ TEST(Engine, capslock_clear_off_restores_chinese_without_ascii_letter_intercept)
     cxxime::Config config;
     config.ascii_switch_key["Caps_Lock"] = "clear";
 
+    auto dict = std::make_shared<cxxime::Dict>(cxxime::UserDictKind::PINYIN);
+    ASSERT_TRUE(dict->open_dict(dict_path));
     cxxime::Engine engine;
-    engine.initialize(dict_path);
-    engine.reload_config(config);
+    ASSERT_TRUE(test::initialize_engine(engine, dict, config));
     ASSERT_TRUE(!engine.ascii_composer().is_ascii_mode());
 
     cxxime::KeyEvent caps_on;
@@ -333,7 +334,7 @@ TEST(Engine, ascii_mode_capslock_uppercase) {
     ASSERT_TRUE(cxxime::SpellingsIndex::create_test_trie(spellings_path, {{"a", "a", 0, 0.0f}}));
 
     cxxime::Engine engine;
-    engine.initialize(dict_path, spellings_path);
+    ASSERT_TRUE(test::initialize_engine(engine, dict_path, cxxime::Config{}, spellings_path));
     engine.ascii_composer().set_ascii_mode(true);
 
     cxxime::KeyEvent event;

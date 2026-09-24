@@ -16,6 +16,8 @@
 
 namespace cxxime {
 
+class PinyinResourceSet;
+
 struct QueryDeadline;  // forward declaration
 
 // A possible syllable at a graph edge
@@ -46,24 +48,37 @@ struct SegmentResult {
     bool deadline_exceeded = false;
 };
 
+struct SyllabifierOptions {
+    bool enable_fuzzy = true;
+    bool enable_terminal_completion = false;
+    bool collect_path_metadata = false;
+};
+
 class Syllabifier {
 public:
-    explicit Syllabifier(const SpellingsIndex& spellings);
+    Syllabifier(const Syllabifier&) = delete;
+    Syllabifier& operator=(const Syllabifier&) = delete;
+    Syllabifier(Syllabifier&&) = delete;
+    Syllabifier& operator=(Syllabifier&&) = delete;
 
     // Build syllable graph from input.
     // Corresponds to librime BuildSyllableGraph.
     SyllableGraph build_graph(const std::string& input,
-                              bool enable_terminal_completion = false) const;
+                              const SyllabifierOptions& options = {}) const;
 
     // Segment input into syllable paths, sorted by quality.
     // Best (all-normal) paths first, then fuzzy, then abbreviation.
     // Optional deadline for internal checks during DFS.
     SegmentResult segment(const std::string& input, const QueryDeadline* deadline = nullptr,
-                          bool enable_terminal_completion = false,
-                          bool collect_path_metadata = false) const;
-    bool has_fuzzy_path(const std::string& input) const;
+                          const SyllabifierOptions& options = {}) const;
+    bool has_fuzzy_path(const std::string& input,
+                        const SyllabifierOptions& options = {}) const;
 
 private:
+    friend class PinyinResourceSet;
+
+    explicit Syllabifier(const SpellingsIndex& spellings);
+
     const SpellingsIndex& spellings_;
 
     // DFS enumeration of all paths through the graph

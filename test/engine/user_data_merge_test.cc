@@ -14,7 +14,9 @@ TEST(UserDataMerge, user_lexicon_merges_valid_rows_and_skips_invalid_rows) {
                                  "导入词\tdaoruci\t4\tdao:ru:ci\n"
                                  "invalid\n";
     cxxime::UserDataMergeResult result;
-    ASSERT_TRUE(cxxime::merge_user_data_contents("user_pinyin.tsv", current, imported, &result));
+    ASSERT_TRUE(cxxime::merge_lexicon_resource_contents(cxxime::LexiconResource::kUserLexicon,
+                                                        cxxime::UserDictKind::PINYIN, current,
+                                                        imported, &result));
     ASSERT_EQ(result.imported_count, static_cast<std::size_t>(2));
     ASSERT_EQ(result.skipped_count, static_cast<std::size_t>(1));
     ASSERT_TRUE(result.contents.find("本机词\tbenjici\t2") != std::string::npos);
@@ -29,13 +31,32 @@ TEST(UserDataMerge, learning_merge_uses_maximum_values_and_is_idempotent) {
     const std::string current = "你好\tnihao\tnihao\t5\t9\tni:hao\n";
     const std::string imported = "你好\tnihao\tnihao\t3\t12\tni:hao\n";
     cxxime::UserDataMergeResult first;
-    ASSERT_TRUE(cxxime::merge_user_data_contents("learning_pinyin.tsv", current, imported, &first));
+    ASSERT_TRUE(cxxime::merge_lexicon_resource_contents(
+        cxxime::LexiconResource::kCandidatePreference, cxxime::UserDictKind::PINYIN, current,
+        imported, &first));
     ASSERT_TRUE(first.contents.find("你好\tnihao\tnihao\t5\t12\tni:hao") != std::string::npos);
 
     cxxime::UserDataMergeResult second;
-    ASSERT_TRUE(
-        cxxime::merge_user_data_contents("learning_pinyin.tsv", first.contents, imported, &second));
+    ASSERT_TRUE(cxxime::merge_lexicon_resource_contents(
+        cxxime::LexiconResource::kCandidatePreference, cxxime::UserDictKind::PINYIN,
+        first.contents, imported, &second));
     ASSERT_EQ(second.contents, first.contents);
+}
+
+TEST(UserDataMerge, wubi_learning_and_manual_order_keep_distinct_length_rules) {
+    cxxime::UserDataMergeResult learning;
+    ASSERT_TRUE(cxxime::merge_lexicon_resource_contents(
+    cxxime::LexiconResource::kCandidatePreference, cxxime::UserDictKind::WUBI, {},
+        "word\tabcd\tabcde\t1\t2\t\n", &learning));
+    ASSERT_EQ(learning.imported_count, static_cast<std::size_t>(1));
+    ASSERT_EQ(learning.skipped_count, static_cast<std::size_t>(0));
+
+    cxxime::UserDataMergeResult manual_order;
+    ASSERT_TRUE(cxxime::merge_lexicon_resource_contents(
+        cxxime::LexiconResource::kManualCandidateOrder, cxxime::UserDictKind::WUBI, {},
+        "# cxxime-candidate-order format=1\nabcde\tword\tabcd\t\t1\n", &manual_order));
+    ASSERT_EQ(manual_order.imported_count, static_cast<std::size_t>(0));
+    ASSERT_EQ(manual_order.skipped_count, static_cast<std::size_t>(1));
 }
 
 TEST(UserDataMerge, candidate_order_replaces_each_valid_code_group) {
@@ -46,8 +67,9 @@ TEST(UserDataMerge, candidate_order_replaces_each_valid_code_group) {
                                           "nihao\t导入次选\tnihao\tni:hao\t2\n"
                                           "broken\trow\n";
     cxxime::UserDataMergeResult result;
-    ASSERT_TRUE(
-        cxxime::merge_user_data_contents("candidate_order_pinyin.tsv", current, imported, &result));
+    ASSERT_TRUE(cxxime::merge_lexicon_resource_contents(
+        cxxime::LexiconResource::kManualCandidateOrder, cxxime::UserDictKind::PINYIN, current,
+        imported, &result));
     ASSERT_EQ(result.imported_count, static_cast<std::size_t>(2));
     ASSERT_EQ(result.skipped_count, static_cast<std::size_t>(1));
     ASSERT_TRUE(result.contents.find("本机首选") == std::string::npos);
@@ -57,8 +79,9 @@ TEST(UserDataMerge, candidate_order_replaces_each_valid_code_group) {
 
 TEST(UserDataMerge, disabled_words_are_unioned) {
     cxxime::UserDataMergeResult result;
-    ASSERT_TRUE(cxxime::merge_user_data_contents("disabled_pinyin.tsv", "本机停用\n",
-                                                 "导入停用\n本机停用\n", &result));
+    ASSERT_TRUE(cxxime::merge_lexicon_resource_contents(
+        cxxime::LexiconResource::kDisabledSystemLexicon, cxxime::UserDictKind::PINYIN,
+        "本机停用\n", "导入停用\n本机停用\n", &result));
     ASSERT_EQ(result.imported_count, static_cast<std::size_t>(2));
     ASSERT_EQ(result.skipped_count, static_cast<std::size_t>(0));
     ASSERT_TRUE(result.contents.find("本机停用\n") != std::string::npos);
@@ -71,8 +94,7 @@ TEST(UserDataMerge, composition_learning_applies_runtime_record_limit) {
         imported << "学习词" << index << "\tnihao\tni:hao\t1\t" << index + 1 << '\n';
     }
     cxxime::UserDataMergeResult result;
-    ASSERT_TRUE(
-        cxxime::merge_user_data_contents("learning_composition.tsv", "", imported.str(), &result));
+    ASSERT_TRUE(cxxime::merge_composition_learning_contents("", imported.str(), &result));
     ASSERT_EQ(result.imported_count, static_cast<std::size_t>(1024));
     ASSERT_EQ(result.skipped_count, static_cast<std::size_t>(1));
     ASSERT_TRUE(result.contents.find("学习词0\t") == std::string::npos);

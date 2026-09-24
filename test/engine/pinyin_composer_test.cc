@@ -1,6 +1,7 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
 #include <algorithm>
+#include <memory>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -8,10 +9,10 @@
 #include <windows.h>
 
 #include <cxxime/dict.h>
+#include <cxxime/pinyin_resource.h>
 #include <cxxime/query_budget.h>
 #include <cxxime/query_trace.h>
 #include <cxxime/spellings_index.h>
-#include <cxxime/syllabifier.h>
 #include <cxxime/translator.h>
 
 #include "support/testutil.h"
@@ -47,8 +48,8 @@ size_t candidate_index(const cxxime::CandidatePage& page, const std::string& tex
 struct ComposerFixture {
     std::string dictionary_path = make_temp_path("pcd");
     std::string spellings_path = make_temp_path("pcs");
-    cxxime::Dict dictionary;
-    cxxime::SpellingsIndex spellings;
+    cxxime::Dict dictionary{cxxime::UserDictKind::PINYIN};
+    std::shared_ptr<const cxxime::PinyinResourceSet> pinyin_resources;
 
     bool initialize(
         const std::vector<std::tuple<std::string, std::string, int>>& dictionary_entries,
@@ -57,11 +58,12 @@ struct ComposerFixture {
                cxxime::Dict::create_test_dict(dictionary_path, dictionary_entries) &&
                dictionary.open_dict(dictionary_path) &&
                cxxime::SpellingsIndex::create_test_trie(spellings_path, spelling_entries) &&
-               spellings.load(spellings_path);
+               (pinyin_resources = cxxime::PinyinResourceSet::create(
+                    "full_pinyin", cxxime::PinyinSchemeKind::kFullPinyin,
+                    spellings_path)) != nullptr;
     }
 
     ~ComposerFixture() {
-        spellings.unload();
         dictionary.close();
         if (!dictionary_path.empty()) {
             DeleteFileA(dictionary_path.c_str());
@@ -170,10 +172,9 @@ TEST(PinyinComposer, appends_composed_sentence_after_existing_candidates) {
             {"li", "li", cxxime::kNormalSpelling, 0.0f},
         }));
 
-    cxxime::Syllabifier syllabifier(fixture.spellings);
     cxxime::PinyinTranslator translator;
     translator.set_dict(&fixture.dictionary);
-    translator.set_syllabifier(&syllabifier);
+    translator.bind_pinyin(fixture.pinyin_resources, {});
 
     translator.set_sentence_composition_enabled(false);
     const auto baseline = translator.translate_page("wushuchu", 0, 10);
@@ -211,10 +212,9 @@ TEST(PinyinComposer, composes_complete_and_repeated_short_code_paths) {
             {"ha", "ha", cxxime::kNormalSpelling, 0.0f},
         }));
 
-    cxxime::Syllabifier syllabifier(fixture.spellings);
     cxxime::PinyinTranslator translator;
     translator.set_dict(&fixture.dictionary);
-    translator.set_syllabifier(&syllabifier);
+    translator.bind_pinyin(fixture.pinyin_resources, {});
 
     const auto five_a = translator.translate_page("aaaaa", 0, 10);
     const size_t existing_index = candidate_index(five_a, "啊啊啊啊啊啊");
@@ -277,10 +277,9 @@ TEST(PinyinComposer, normal_paths_do_not_expand_low_frequency_homophones) {
             {"ha", "ha", cxxime::kNormalSpelling, 0.0f},
         }));
 
-    cxxime::Syllabifier syllabifier(fixture.spellings);
     cxxime::PinyinTranslator translator;
     translator.set_dict(&fixture.dictionary);
-    translator.set_syllabifier(&syllabifier);
+    translator.bind_pinyin(fixture.pinyin_resources, {});
 
     const auto page = translator.translate_page("wahahaha", 0, 10);
     ASSERT_TRUE(find_candidate(page, "哇哈哈哈") != nullptr);
@@ -313,10 +312,9 @@ TEST(PinyinComposer, rejects_single_tail_and_mixed_abbreviation_paths) {
             {"f", "fa", cxxime::kAbbreviation, -1.0f},
         }));
 
-    cxxime::Syllabifier syllabifier(fixture.spellings);
     cxxime::PinyinTranslator translator;
     translator.set_dict(&fixture.dictionary);
-    translator.set_syllabifier(&syllabifier);
+    translator.bind_pinyin(fixture.pinyin_resources, {});
 
     ASSERT_TRUE(translator.translate_page("nih", 0, 10).candidates.empty());
     ASSERT_TRUE(translator.translate_page("wahahah", 0, 10).candidates.empty());
@@ -333,10 +331,9 @@ TEST(PinyinComposer, composed_candidates_do_not_enter_learning_preferences) {
             {"a", "a", cxxime::kNormalSpelling, 0.0f},
         }));
 
-    cxxime::Syllabifier syllabifier(fixture.spellings);
     cxxime::PinyinTranslator translator;
     translator.set_dict(&fixture.dictionary);
-    translator.set_syllabifier(&syllabifier);
+    translator.bind_pinyin(fixture.pinyin_resources, {});
     const auto page = translator.translate_page("aaaaaaa", 0, 10);
     const auto* composed = find_candidate(page, "啊啊啊啊啊啊啊");
     ASSERT_TRUE(composed != nullptr);

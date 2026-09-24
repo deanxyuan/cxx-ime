@@ -65,8 +65,9 @@ bool DisabledSystemLexicon::merge_contents_and_save(const std::string& imported,
         path = path_;
     }
     UserDataMergeResult merged;
-    if (path.empty() || !merge_user_data_contents("disabled_pinyin.tsv", serialize_entries(current),
-                                                  imported, &merged)) {
+    if (path.empty() ||
+        !merge_lexicon_resource_contents(LexiconResource::kDisabledSystemLexicon, kind_,
+                                         serialize_entries(current), imported, &merged)) {
         return false;
     }
     std::unordered_set<std::string> next;

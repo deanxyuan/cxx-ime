@@ -6,6 +6,8 @@
 #include <cstddef>
 #include <string>
 
+#include <cxxime/user_dict.h>
+
 namespace cxxime {
 
 struct UserDataMergeResult {
@@ -14,8 +16,12 @@ struct UserDataMergeResult {
     std::size_t skipped_count = 0;
 };
 
-bool merge_user_data_contents(const std::string& file_name, const std::string& current,
-                              const std::string& imported, UserDataMergeResult* result);
+bool merge_lexicon_resource_contents(LexiconResource resource, UserDictKind kind,
+                                     const std::string& current, const std::string& imported,
+                                     UserDataMergeResult* result);
+bool merge_composition_learning_contents(const std::string& current,
+                                         const std::string& imported,
+                                         UserDataMergeResult* result);
 
 } // namespace cxxime
 

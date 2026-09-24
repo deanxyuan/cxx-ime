@@ -1,6 +1,7 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
 #include <cstdio>
+#include <memory>
 #include <string>
 
 #include <windows.h>
@@ -13,6 +14,7 @@
 #include <cxxime/symbol_table.h>
 
 #include "support/testutil.h"
+#include "support/test_runtime.h"
 
 namespace {
 
@@ -43,8 +45,9 @@ public:
 
         if (!cxxime::Dict::create_test_dict(
                 dict_path_, {{"a", "first", 100}, {"a", "second", 90}}) ||
-            !dict_.open(dict_path_, user_path_) ||
-            !symbols_.load(std::string(CXXIME_DATA_DIR) + "symbols.json")) {
+            !dict_->open(dict_path_, user_path_) ||
+            !wubi_dict_->open_dict(dict_path_) ||
+            !symbols_->load(std::string(CXXIME_DATA_DIR) + "symbols.json")) {
             return false;
         }
 
@@ -52,17 +55,17 @@ public:
         config_.wubi_auto_commit = true;
         config_.wubi_commit_first_on_fifth_key = true;
         config_.ascii_switch_key["Shift_L"] = "code";
-        if (!engine_.initialize(dict_, spellings_, nullptr, config_, &symbols_)) {
+        if (!test::initialize_engine(engine_, dict_, config_, {}, wubi_dict_, symbols_)) {
             return false;
         }
         engine_.set_trace_enabled(false);
-        engine_.set_wubi_dict(&dict_);
         return true;
     }
 
     ~SymbolEngineFixture() {
         engine_.finalize();
-        dict_.close();
+        dict_->close();
+        wubi_dict_->close();
         DeleteFileA(dict_path_.c_str());
         DeleteFileA(user_path_.c_str());
     }
@@ -72,10 +75,10 @@ public:
 private:
     std::string dict_path_;
     std::string user_path_;
-    cxxime::Dict dict_;
-    cxxime::SpellingsIndex spellings_;
+    std::shared_ptr<cxxime::Dict> dict_ = std::make_shared<cxxime::Dict>(cxxime::UserDictKind::PINYIN);
+    std::shared_ptr<cxxime::Dict> wubi_dict_ = std::make_shared<cxxime::Dict>(cxxime::UserDictKind::WUBI);
     cxxime::Config config_;
-    cxxime::SymbolTable symbols_;
+    std::shared_ptr<cxxime::SymbolTable> symbols_ = std::make_shared<cxxime::SymbolTable>();
     cxxime::Engine engine_;
 };
 

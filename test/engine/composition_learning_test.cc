@@ -365,7 +365,7 @@ TEST(CompositionLearningTranslator, successful_save_invalidates_topn_query_cache
     ASSERT_TRUE(cxxime::test::create_test_topn(
         topn_path, dict_path, {{"huaruijishu", {baseline}}}));
 
-    cxxime::Dict dict;
+    cxxime::Dict dict{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dict.open(dict_path));
     const std::string disabled_path = temp_path(".tsv");
     ASSERT_TRUE(dict.load_disabled_system_entries(disabled_path));

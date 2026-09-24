@@ -74,7 +74,7 @@ TEST(DisabledSystemLexicon, persists_current_format_and_filters_only_system_sour
     const std::string path = make_temp_path("dsl");
     ASSERT_TRUE(!path.empty());
 
-    cxxime::Dict dictionary;
+    cxxime::Dict dictionary{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dictionary.load_disabled_system_entries(path));
     ASSERT_TRUE(dictionary.disable_system_entry("停用词"));
     ASSERT_TRUE(dictionary.disable_system_entry("另一个"));
@@ -97,7 +97,7 @@ TEST(DisabledSystemLexicon, persists_current_format_and_filters_only_system_sour
     ASSERT_EQ(candidates[1].source, cxxime::CandidateSource::kSymbol);
     ASSERT_EQ(candidates[2].text, "保留词");
 
-    cxxime::Dict reloaded;
+    cxxime::Dict reloaded{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(reloaded.load_disabled_system_entries(path));
     ASSERT_EQ(reloaded.disabled_system_entry_count(), static_cast<std::size_t>(2));
     const auto entries = reloaded.query_disabled_system_entries("停用", 0, 10);
@@ -106,7 +106,7 @@ TEST(DisabledSystemLexicon, persists_current_format_and_filters_only_system_sour
     ASSERT_TRUE(reloaded.restore_system_entry("停用词"));
     ASSERT_TRUE(reloaded.save_disabled_system_entries());
 
-    cxxime::Dict restored;
+    cxxime::Dict restored{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(restored.load_disabled_system_entries(path));
     ASSERT_TRUE(!restored.is_system_entry_disabled("停用词"));
     ASSERT_TRUE(restored.is_system_entry_disabled("另一个"));
@@ -120,7 +120,7 @@ TEST(DisabledSystemLexicon, disabled_system_word_does_not_hide_same_text_user_en
     ASSERT_TRUE(cxxime::Dict::create_test_dict(
         dictionary_path, {{"aa", "系统同词", 1000}, {"aa", "系统可见", 900}}));
 
-    cxxime::Dict dictionary;
+    cxxime::Dict dictionary{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dictionary.open(dictionary_path, user_path));
     ASSERT_TRUE(dictionary.load_disabled_system_entries(disabled_path));
     ASSERT_TRUE(dictionary.disable_system_entry("系统同词"));
@@ -151,7 +151,7 @@ TEST(DisabledSystemLexicon, failed_atomic_replace_preserves_previous_file) {
         output << "原有\n";
     }
 
-    cxxime::Dict dictionary;
+    cxxime::Dict dictionary{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dictionary.load_disabled_system_entries(path));
     ASSERT_TRUE(dictionary.disable_system_entry("新增"));
     ASSERT_TRUE(SetFileAttributesA(path.c_str(), FILE_ATTRIBUTE_READONLY) != FALSE);
@@ -174,7 +174,7 @@ TEST(DisabledSystemLexicon, failed_transaction_preserves_live_state) {
         output << "原有\n";
     }
 
-    cxxime::Dict dictionary;
+    cxxime::Dict dictionary{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dictionary.load_disabled_system_entries(path));
     ASSERT_TRUE(SetFileAttributesA(path.c_str(), FILE_ATTRIBUTE_READONLY) != FALSE);
     ASSERT_TRUE(!dictionary.disable_system_entry_and_save("新增"));
@@ -203,7 +203,7 @@ TEST(DisabledSystemLexicon, pinyin_cache_and_learned_fallback_cannot_restore_dis
             {make_candidate("缓存停用", cxxime::CandidateOrigin::kSystem),
              make_candidate("缓存可见", cxxime::CandidateOrigin::kSystem)}}}));
 
-    cxxime::Dict dictionary;
+    cxxime::Dict dictionary{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dictionary.open_dict(dictionary_path));
     ASSERT_TRUE(dictionary.load_disabled_system_entries(disabled_path));
     ASSERT_TRUE(dictionary.disable_system_entry("缓存停用"));
@@ -242,8 +242,8 @@ TEST(DisabledSystemLexicon, input_method_scopes_are_independent_in_mixed_mode) {
         topn_path, pinyin_dict_path,
         {{"aa", {make_candidate("同文词", cxxime::CandidateOrigin::kSystem)}}}));
 
-    cxxime::Dict pinyin_dictionary;
-    cxxime::Dict wubi_dictionary;
+    cxxime::Dict pinyin_dictionary{cxxime::UserDictKind::PINYIN};
+    cxxime::Dict wubi_dictionary{cxxime::UserDictKind::WUBI};
     ASSERT_TRUE(pinyin_dictionary.open_dict(pinyin_dict_path));
     ASSERT_TRUE(wubi_dictionary.open_dict(wubi_dict_path));
     ASSERT_TRUE(pinyin_dictionary.load_disabled_system_entries(pinyin_disabled_path));
@@ -297,15 +297,15 @@ TEST(DisabledSystemLexicon, composed_candidate_is_filtered_and_restore_invalidat
                          {"shu", "shu", cxxime::kNormalSpelling, 0.0f},
                          {"chu", "chu", cxxime::kNormalSpelling, 0.0f}}));
 
-    cxxime::Dict dictionary;
+    cxxime::Dict dictionary{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dictionary.open_dict(dictionary_path));
     ASSERT_TRUE(dictionary.load_disabled_system_entries(disabled_path));
-    cxxime::SpellingsIndex spellings;
-    ASSERT_TRUE(spellings.load(spellings_path));
-    cxxime::Syllabifier syllabifier(spellings);
+    auto pinyin_resources = cxxime::PinyinResourceSet::create(
+        "full_pinyin", cxxime::PinyinSchemeKind::kFullPinyin, spellings_path);
+    ASSERT_TRUE(pinyin_resources != nullptr);
     cxxime::PinyinTranslator translator;
     translator.set_dict(&dictionary);
-    translator.set_syllabifier(&syllabifier);
+    translator.bind_pinyin(pinyin_resources, {});
 
     const auto baseline = translator.translate_page("wushuchu", 0, 10);
     ASSERT_TRUE(contains_text(baseline, "无输出"));
@@ -320,7 +320,6 @@ TEST(DisabledSystemLexicon, composed_candidate_is_filtered_and_restore_invalidat
     const auto restored = translator.translate_page("wushuchu", 0, 10);
     ASSERT_TRUE(contains_text(restored, "无输出"));
 
-    spellings.unload();
     dictionary.close();
     DeleteFileA(dictionary_path.c_str());
     DeleteFileA(disabled_path.c_str());

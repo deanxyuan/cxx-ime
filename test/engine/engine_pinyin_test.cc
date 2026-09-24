@@ -17,14 +17,14 @@ TEST(Engine, translate_shurufa) {
         {"fa",   "fa",  0, 0.0f},
     }));
 
-    cxxime::Dict dict;
+    cxxime::Dict dict{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dict.open_dict(dict_path));
-    cxxime::SpellingsIndex spellings;
-    ASSERT_TRUE(spellings.load(spellings_path));
-    cxxime::Syllabifier syllabifier(spellings);
+    auto pinyin_resources = cxxime::PinyinResourceSet::create(
+        "full_pinyin", cxxime::PinyinSchemeKind::kFullPinyin, spellings_path);
+    ASSERT_TRUE(pinyin_resources != nullptr);
     cxxime::PinyinTranslator translator;
     translator.set_dict(&dict);
-    translator.set_syllabifier(&syllabifier);
+    translator.bind_pinyin(pinyin_resources, {});
 
     auto page = translator.translate_page("shurufa", 0, 10);
     ASSERT_GE(page.candidates.size(), 1u);
@@ -55,15 +55,12 @@ TEST(Engine, composed_pinyin_candidate_is_not_learned) {
             {"chu", "chu", cxxime::kNormalSpelling, 0.0f},
         }));
 
-    cxxime::Dict dict;
-    ASSERT_TRUE(dict.open(dict_path, user_path));
-    cxxime::SpellingsIndex spellings;
-    ASSERT_TRUE(spellings.load(spellings_path));
-    cxxime::Syllabifier syllabifier(spellings);
+    auto dict = std::make_shared<cxxime::Dict>(cxxime::UserDictKind::PINYIN);
+    ASSERT_TRUE(dict->open(dict_path, user_path));
     cxxime::Config config;
     config.candidate_learning = true;
     cxxime::Engine engine;
-    ASSERT_TRUE(engine.initialize(dict, spellings, &syllabifier, config));
+    ASSERT_TRUE(test::initialize_engine(engine, dict, config, spellings_path));
 
     type_code(engine, "wushuchu");
     const auto candidates = engine.context().candidate_page().candidates;
@@ -73,11 +70,11 @@ TEST(Engine, composed_pinyin_candidate_is_not_learned) {
     ASSERT_TRUE(candidate->origin == cxxime::CandidateOrigin::kComposed);
     ASSERT_TRUE(engine.select_candidate(static_cast<int>(candidate - candidates.begin())));
     ASSERT_EQ(engine.get_commit_text(), "无输出");
-    ASSERT_TRUE(!dict.has_user_entry("无输出"));
-    ASSERT_EQ(dict.candidate_preference_count(), static_cast<size_t>(0));
+    ASSERT_TRUE(!dict->has_user_entry("无输出"));
+    ASSERT_EQ(dict->candidate_preference_count(), static_cast<size_t>(0));
 
     engine.finalize();
-    dict.close();
+    dict->close();
     DeleteFileA(dict_path.c_str());
     DeleteFileA(spellings_path.c_str());
     DeleteFileA(user_path.c_str());
@@ -97,14 +94,14 @@ TEST(Engine, translate_nihao) {
         {"hao", "hao", 0, 0.0f},
     }));
 
-    cxxime::Dict dict;
+    cxxime::Dict dict{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dict.open_dict(dict_path));
-    cxxime::SpellingsIndex spellings;
-    ASSERT_TRUE(spellings.load(spellings_path));
-    cxxime::Syllabifier syllabifier(spellings);
+    auto pinyin_resources = cxxime::PinyinResourceSet::create(
+        "full_pinyin", cxxime::PinyinSchemeKind::kFullPinyin, spellings_path);
+    ASSERT_TRUE(pinyin_resources != nullptr);
     cxxime::PinyinTranslator translator;
     translator.set_dict(&dict);
-    translator.set_syllabifier(&syllabifier);
+    translator.bind_pinyin(pinyin_resources, {});
 
     auto page = translator.translate_page("nihao", 0, 10);
     ASSERT_GE(page.candidates.size(), 1u);
@@ -132,14 +129,14 @@ TEST(Engine, translate_abbrev_bj) {
         {"jing", "jing", 0, 0.0f},
     }));
 
-    cxxime::Dict dict;
+    cxxime::Dict dict{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dict.open_dict(dict_path));
-    cxxime::SpellingsIndex spellings;
-    ASSERT_TRUE(spellings.load(spellings_path));
-    cxxime::Syllabifier syllabifier(spellings);
+    auto pinyin_resources = cxxime::PinyinResourceSet::create(
+        "full_pinyin", cxxime::PinyinSchemeKind::kFullPinyin, spellings_path);
+    ASSERT_TRUE(pinyin_resources != nullptr);
     cxxime::PinyinTranslator translator;
     translator.set_dict(&dict);
-    translator.set_syllabifier(&syllabifier);
+    translator.bind_pinyin(pinyin_resources, {});
 
     auto page = translator.translate_page("bj", 0, 10);
     ASSERT_GE(page.candidates.size(), 1u);
@@ -167,14 +164,14 @@ TEST(Engine, translate_abbrev_srf) {
         {"f", "fa",  2, -0.693f},
     }));
 
-    cxxime::Dict dict;
+    cxxime::Dict dict{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dict.open_dict(dict_path));
-    cxxime::SpellingsIndex spellings;
-    ASSERT_TRUE(spellings.load(spellings_path));
-    cxxime::Syllabifier syllabifier(spellings);
+    auto pinyin_resources = cxxime::PinyinResourceSet::create(
+        "full_pinyin", cxxime::PinyinSchemeKind::kFullPinyin, spellings_path);
+    ASSERT_TRUE(pinyin_resources != nullptr);
     cxxime::PinyinTranslator translator;
     translator.set_dict(&dict);
-    translator.set_syllabifier(&syllabifier);
+    translator.bind_pinyin(pinyin_resources, {});
 
     auto page = translator.translate_page("srf", 0, 10);
     ASSERT_GE(page.candidates.size(), 1u);
@@ -203,14 +200,14 @@ TEST(Engine, translate_mixed_zhg) {
         {"g",  "guo",   2, -0.693f},
     }));
 
-    cxxime::Dict dict;
+    cxxime::Dict dict{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dict.open_dict(dict_path));
-    cxxime::SpellingsIndex spellings;
-    ASSERT_TRUE(spellings.load(spellings_path));
-    cxxime::Syllabifier syllabifier(spellings);
+    auto pinyin_resources = cxxime::PinyinResourceSet::create(
+        "full_pinyin", cxxime::PinyinSchemeKind::kFullPinyin, spellings_path);
+    ASSERT_TRUE(pinyin_resources != nullptr);
     cxxime::PinyinTranslator translator;
     translator.set_dict(&dict);
-    translator.set_syllabifier(&syllabifier);
+    translator.bind_pinyin(pinyin_resources, {});
 
     auto page = translator.translate_page("zhg", 0, 10);
     ASSERT_GE(page.candidates.size(), 1u);
@@ -237,14 +234,14 @@ TEST(Engine, translate_mixed_zguo) {
         {"guo", "guo",   0, 0.0f},
     }));
 
-    cxxime::Dict dict;
+    cxxime::Dict dict{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dict.open_dict(dict_path));
-    cxxime::SpellingsIndex spellings;
-    ASSERT_TRUE(spellings.load(spellings_path));
-    cxxime::Syllabifier syllabifier(spellings);
+    auto pinyin_resources = cxxime::PinyinResourceSet::create(
+        "full_pinyin", cxxime::PinyinSchemeKind::kFullPinyin, spellings_path);
+    ASSERT_TRUE(pinyin_resources != nullptr);
     cxxime::PinyinTranslator translator;
     translator.set_dict(&dict);
-    translator.set_syllabifier(&syllabifier);
+    translator.bind_pinyin(pinyin_resources, {});
 
     auto page = translator.translate_page("zguo", 0, 10);
     ASSERT_GE(page.candidates.size(), 1u);
@@ -273,14 +270,14 @@ TEST(Engine, translate_fuzzy_zongguo) {
         {"guo",  "guo",   0, 0.0f},
     }));
 
-    cxxime::Dict dict;
+    cxxime::Dict dict{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dict.open_dict(dict_path));
-    cxxime::SpellingsIndex spellings;
-    ASSERT_TRUE(spellings.load(spellings_path));
-    cxxime::Syllabifier syllabifier(spellings);
+    auto pinyin_resources = cxxime::PinyinResourceSet::create(
+        "full_pinyin", cxxime::PinyinSchemeKind::kFullPinyin, spellings_path);
+    ASSERT_TRUE(pinyin_resources != nullptr);
     cxxime::PinyinTranslator translator;
     translator.set_dict(&dict);
-    translator.set_syllabifier(&syllabifier);
+    translator.bind_pinyin(pinyin_resources, {});
 
     auto page = translator.translate_page("zongguo", 0, 10);
     ASSERT_GE(page.candidates.size(), 1u);
@@ -307,14 +304,14 @@ TEST(Engine, translate_fuzzy_cifan) {
         {"fan", "fan", 0, 0.0f},
     }));
 
-    cxxime::Dict dict;
+    cxxime::Dict dict{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dict.open_dict(dict_path));
-    cxxime::SpellingsIndex spellings;
-    ASSERT_TRUE(spellings.load(spellings_path));
-    cxxime::Syllabifier syllabifier(spellings);
+    auto pinyin_resources = cxxime::PinyinResourceSet::create(
+        "full_pinyin", cxxime::PinyinSchemeKind::kFullPinyin, spellings_path);
+    ASSERT_TRUE(pinyin_resources != nullptr);
     cxxime::PinyinTranslator translator;
     translator.set_dict(&dict);
-    translator.set_syllabifier(&syllabifier);
+    translator.bind_pinyin(pinyin_resources, {});
 
     auto page = translator.translate_page("cifan", 0, 10);
     ASSERT_GE(page.candidates.size(), 1u);

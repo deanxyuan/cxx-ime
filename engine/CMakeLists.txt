@@ -7,6 +7,7 @@ add_library(cxxime-engine STATIC
     src/context.cc
     src/pinyin_segment_paths.cc
     src/pinyin_segmentor.cc
+    src/pinyin_resource.cc
     src/pinyin_scheme.cc
     src/pinyin_user_code.cc
     src/dict.cc
@@ -35,6 +36,7 @@ add_library(cxxime-engine STATIC
     src/wubi_input_policy.cc
     src/config.cc
     src/engine.cc
+    src/engine_runtime.cc
     src/ascii_composer.cc
     src/short_code_cache.cc
     src/output_composer.cc

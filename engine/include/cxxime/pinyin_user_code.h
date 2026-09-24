@@ -10,12 +10,12 @@
 
 namespace cxxime {
 
-class Syllabifier;
+class PinyinResourceSet;
 
 bool is_canonical_pinyin_user_code(std::string_view code, std::string_view syllables = {});
 
 bool canonicalize_pinyin_user_code(std::string_view input, PinyinSchemeKind input_scheme,
-                                   const Syllabifier* syllabifier, std::string* code,
+                                   const PinyinResourceSet* pinyin_resources, std::string* code,
                                    std::string* syllables);
 
 } // namespace cxxime

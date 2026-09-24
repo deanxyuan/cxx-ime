@@ -22,18 +22,14 @@ struct QueryBudget;
 struct QueryTrace;
 struct UserLookupStats;
 
-enum class UserScoringProfile {
-    kPinyin,
-    kWubi,
-};
-
 class UserLexicon {
 public:
+    explicit UserLexicon(UserDictKind kind);
+
     bool load(const std::string& path);
     bool save();
-    static bool validate_contents(const std::string& contents, UserScoringProfile profile);
+    static bool validate_contents(const std::string& contents, UserDictKind kind);
 
-    void set_scoring_profile(UserScoringProfile profile);
     bool add_entry(const std::string& text, const std::string& code,
                    const std::string& syllables = {});
     bool delete_entries(const std::vector<LexiconEntryKey>& entries);
@@ -101,29 +97,29 @@ private:
         std::unordered_map<std::string, Bucket> mixed_index;
         std::vector<EntryId> code_sorted;
         std::uint64_t sequence = 0;
-        UserScoringProfile scoring_profile = UserScoringProfile::kPinyin;
         std::string path;
     };
 
     static std::string entry_key(const std::string& text, const std::string& code);
     static bool parse_entries(const std::string& contents, bool reject_invalid_lines,
-                              UserScoringProfile profile, bool require_canonical_pinyin,
+                              UserDictKind kind, bool require_canonical_pinyin,
                               std::vector<Entry>* entries, std::uint64_t* sequence);
     static std::string serialize_entries(const std::vector<Entry>& entries);
-    static bool add_to_snapshot(Snapshot* snapshot, const std::string& text,
-                                const std::string& code, const std::string& syllables);
+    bool add_to_snapshot(Snapshot* snapshot, const std::string& text,
+                         const std::string& code, const std::string& syllables) const;
     static bool delete_from_snapshot(Snapshot* snapshot,
                                      const std::vector<LexiconEntryKey>& entries);
-    static bool replace_in_snapshot(Snapshot* snapshot, const std::string& old_text,
-                                    const std::string& old_code, const std::string& new_text,
-                                    const std::string& new_code, const std::string& syllables);
-    static Snapshot prepare_snapshot(Snapshot snapshot);
+    bool replace_in_snapshot(Snapshot* snapshot, const std::string& old_text,
+                             const std::string& old_code, const std::string& new_text,
+                             const std::string& new_code, const std::string& syllables) const;
+    Snapshot prepare_snapshot(Snapshot snapshot) const;
     static void sort_bucket(Snapshot* snapshot, Bucket* bucket);
-    static void insert_into_indexes(Snapshot* snapshot, EntryId id);
+    void insert_into_indexes(Snapshot* snapshot, EntryId id) const;
     Snapshot snapshot() const;
     void publish_snapshot(Snapshot snapshot, bool dirty);
     bool persist_snapshot(Snapshot snapshot);
 
+    const UserDictKind kind_;
     std::vector<Entry> entries_;
     std::unordered_map<std::string, std::vector<EntryId>> text_index_;
     std::unordered_map<std::string, EntryId> entry_index_;
@@ -134,7 +130,6 @@ private:
     std::vector<EntryId> code_sorted_;
     std::atomic<std::uint64_t> version_{0};
     std::uint64_t sequence_ = 0;
-    UserScoringProfile scoring_profile_ = UserScoringProfile::kPinyin;
     mutable std::shared_mutex mutex_;
     std::mutex transaction_mutex_;
     std::atomic<bool> dirty_{false};

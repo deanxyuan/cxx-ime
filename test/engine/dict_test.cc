@@ -25,7 +25,7 @@ TEST(Dict, open_close) {
         {"de", "的", 1000},
     });
 
-    cxxime::Dict dict;
+    cxxime::Dict dict{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dict.open_dict(path));
     ASSERT_TRUE(dict.is_open());
     dict.close();
@@ -41,7 +41,7 @@ TEST(Dict, lookup) {
         {"de:dao", "得到", 300},
     });
 
-    cxxime::Dict dict;
+    cxxime::Dict dict{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dict.open_dict(path));
 
     auto results = dict.lookup("de", 10);
@@ -64,7 +64,7 @@ TEST(Dict, lookup_by_syllables) {
         {"da:da", "大大", 400},
     });
 
-    cxxime::Dict dict;
+    cxxime::Dict dict{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dict.open_dict(path));
 
     std::vector<std::string> syllables = {"di", "di"};
@@ -85,7 +85,7 @@ TEST(Dict, lookup_empty) {
     std::string path = make_temp_path("test_dict_empty.bin");
     cxxime::Dict::create_test_dict(path, {});
 
-    cxxime::Dict dict;
+    cxxime::Dict dict{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dict.open_dict(path));
 
     auto results = dict.lookup("zzz", 10);
@@ -101,7 +101,7 @@ TEST(Dict, reverse_lookup) {
         {"ni:hao", "你好", 800},
     });
 
-    cxxime::Dict dict;
+    cxxime::Dict dict{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dict.open_dict(path));
 
     auto code = dict.reverse_lookup("你好");
@@ -118,7 +118,7 @@ TEST(Dict, candidate_preference_frequency) {
         {"de", "得", 100},
     });
 
-    cxxime::Dict dict;
+    cxxime::Dict dict{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dict.open_dict(path));
 
     cxxime::Candidate candidate;
@@ -153,7 +153,7 @@ TEST(Dict, lookup_by_ids_topk_limits_results) {
     }
     cxxime::Dict::create_test_dict(path, entries);
 
-    cxxime::Dict dict;
+    cxxime::Dict dict{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dict.open_dict(path));
 
     // Need to get the syllable ID for "de"
@@ -196,7 +196,7 @@ TEST(Dict, lookup_by_ids_topk_returns_highest_freq) {
     }
     cxxime::Dict::create_test_dict(path, entries);
 
-    cxxime::Dict dict;
+    cxxime::Dict dict{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dict.open_dict(path));
 
     uint32_t de_id = dict.syllable_to_id("de");
@@ -234,7 +234,7 @@ TEST(Dict, lookup_by_ids_scan_budget_with_topk) {
     }
     cxxime::Dict::create_test_dict(path, entries);
 
-    cxxime::Dict dict;
+    cxxime::Dict dict{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dict.open_dict(path));
 
     uint32_t de_id = dict.syllable_to_id("de");
@@ -275,7 +275,7 @@ TEST(Dict, lookup_by_ids_topk_sets_flag) {
     }
     cxxime::Dict::create_test_dict(path, entries);
 
-    cxxime::Dict dict;
+    cxxime::Dict dict{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dict.open_dict(path));
 
     uint32_t de_id = dict.syllable_to_id("de");
@@ -311,7 +311,7 @@ TEST(Dict, lookup_by_ids_respects_limit) {
     }
     cxxime::Dict::create_test_dict(path, entries);
 
-    cxxime::Dict dict;
+    cxxime::Dict dict{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dict.open_dict(path));
 
     uint32_t de_id = dict.syllable_to_id("de");
@@ -331,7 +331,7 @@ TEST(Dict, lookup_by_ids_no_match_returns_empty) {
         {"de", "的", 1000},
     });
 
-    cxxime::Dict dict;
+    cxxime::Dict dict{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dict.open_dict(path));
 
     // Query a non-existent syllable ID
@@ -356,7 +356,7 @@ TEST(Dict, lookup_by_ids_scan_budget_sets_truncated) {
     }
     cxxime::Dict::create_test_dict(path, entries);
 
-    cxxime::Dict dict;
+    cxxime::Dict dict{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dict.open_dict(path));
 
     uint32_t de_id = dict.syllable_to_id("de");
@@ -393,7 +393,7 @@ TEST(Dict, user_dict_3col_and_4col_tsv) {
         fclose(f);
     }
 
-    cxxime::Dict dict;
+    cxxime::Dict dict{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dict.open(path, tsv3));
     auto r1 = dict.lookup("de", 10);
     ASSERT_GE(r1.size(), 1u);
@@ -422,7 +422,7 @@ TEST(Dict, user_dict_exact_index) {
     std::string path = make_temp_path("test_dict_exact_idx.bin");
     cxxime::Dict::create_test_dict(path, {{"de", "的", 1000}});
 
-    cxxime::Dict dict;
+    cxxime::Dict dict{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dict.open_dict(path));
 
     // Insert user words
@@ -449,7 +449,7 @@ TEST(Dict, user_dict_prefix_index) {
     std::string path = make_temp_path("test_dict_prefix_idx.bin");
     cxxime::Dict::create_test_dict(path, {{"de", "的", 1000}});
 
-    cxxime::Dict dict;
+    cxxime::Dict dict{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dict.open_dict(path));
 
     ASSERT_TRUE(dict.add_user_entry("输入法", "shurufa"));
@@ -477,7 +477,7 @@ TEST(Dict, user_dict_count_indexed) {
     std::string path = make_temp_path("test_dict_count_idx.bin");
     cxxime::Dict::create_test_dict(path, {{"de", "的", 1000}});
 
-    cxxime::Dict dict;
+    cxxime::Dict dict{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dict.open_dict(path));
 
     ASSERT_TRUE(dict.add_user_entry("输入法", "shurufa"));
@@ -500,7 +500,7 @@ TEST(Dict, user_dict_add_new_word) {
     std::string path = make_temp_path("test_dict_uf_new.bin");
     cxxime::Dict::create_test_dict(path, {{"de", "的", 1000}});
 
-    cxxime::Dict dict;
+    cxxime::Dict dict{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dict.open_dict(path));
 
     ASSERT_TRUE(dict.add_user_entry("输入法", "shurufa", "shu:ru:fa"));
@@ -535,7 +535,7 @@ TEST(Dict, user_dict_same_text_keeps_distinct_codes) {
     std::string path = make_temp_path("test_dict_uf_chg.bin");
     cxxime::Dict::create_test_dict(path, {{"de", "的", 1000}});
 
-    cxxime::Dict dict;
+    cxxime::Dict dict{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dict.open_dict(path));
 
     ASSERT_TRUE(dict.add_user_entry("测试", "ceshi"));
@@ -576,7 +576,7 @@ TEST(Dict, user_dict_management_query_replace_delete) {
     std::string user_path = make_temp_path("test_dict_manage_user.tsv");
     cxxime::Dict::create_test_dict(path, {{"de", "的", 1000}});
 
-    cxxime::Dict dict;
+    cxxime::Dict dict{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dict.open(path, user_path));
 
     ASSERT_TRUE(dict.add_user_entry("hello", "nihao"));
@@ -620,7 +620,7 @@ TEST(Dict, user_dict_scan_count_bounded) {
     std::string path = make_temp_path("test_dict_scan_bound.bin");
     cxxime::Dict::create_test_dict(path, {{"de", "的", 1000}});
 
-    cxxime::Dict dict;
+    cxxime::Dict dict{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dict.open_dict(path));
 
     const char* suffixes[] = {"ba",  "bai", "ban",  "bang", "bao",
@@ -645,7 +645,7 @@ TEST(Dict, user_dict_max_user_scan_truncated) {
     std::string path = make_temp_path("test_dict_trunc.bin");
     cxxime::Dict::create_test_dict(path, {{"de", "的", 1000}});
 
-    cxxime::Dict dict;
+    cxxime::Dict dict{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dict.open_dict(path));
 
     // Insert several user words with same prefix
@@ -671,10 +671,10 @@ TEST(Dict, user_dict_deadline_exceeded) {
     std::string path = make_temp_path("test_dict_deadline.bin");
     cxxime::Dict::create_test_dict(path, {{"de", "的", 1000}});
 
-    cxxime::Dict dict;
+    cxxime::Dict dict{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dict.open_dict(path));
 
-ASSERT_TRUE(dict.add_user_entry("输入法", "shurufa", "shu:ru:fa"));
+    ASSERT_TRUE(dict.add_user_entry("输入法", "shurufa", "shu:ru:fa"));
 
     // Create a budget with an already-expired deadline
     cxxime::QueryBudget budget;
@@ -699,7 +699,7 @@ TEST(Dict, user_dict_mixed_index) {
     std::string path = make_temp_path("test_dict_mixed.bin");
     cxxime::Dict::create_test_dict(path, {{"de", "的", 1000}});
 
-    cxxime::Dict dict;
+    cxxime::Dict dict{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dict.open_dict(path));
 
     // Insert user word with syllables — generates abbr "srf" and mixed "shurf"
@@ -752,7 +752,7 @@ TEST(Dict, user_dict_high_freq_in_scan_budget) {
     std::string user_path = make_temp_path("test_dict_hf.tsv");
     cxxime::Dict::create_test_dict(path, {{"de", "的", 1000}});
 
-    cxxime::Dict dict;
+    cxxime::Dict dict{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dict.open_dict(path));
 
     FILE* file = fopen(user_path.c_str(), "w");
@@ -789,7 +789,7 @@ TEST(Dict, user_dict_stress_10k) {
     std::string user_path = make_temp_path("test_user_dict_stress.tsv");
     cxxime::Dict::create_test_dict(path, {{"de", "的", 1000}});
 
-    cxxime::Dict dict;
+    cxxime::Dict dict{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dict.open_dict(path));
 
     FILE* f = fopen(user_path.c_str(), "w");

@@ -103,7 +103,7 @@ TEST(WubiEngine, translator_basic_lookup) {
         {"aa", "式", 200},
     });
 
-    cxxime::Dict dict;
+    cxxime::Dict dict{cxxime::UserDictKind::WUBI};
     ASSERT_TRUE(dict.open(dict_path));
 
     cxxime::WubiTranslator trans;
@@ -130,7 +130,7 @@ TEST(WubiEngine, translator_uses_explicit_candidate_offset) {
     };
     cxxime::Dict::create_test_dict(dict_path, entries);
 
-    cxxime::Dict dict;
+    cxxime::Dict dict{cxxime::UserDictKind::WUBI};
     ASSERT_TRUE(dict.open(dict_path));
 
     cxxime::WubiTranslator translator;
@@ -165,7 +165,7 @@ TEST(WubiEngine, translator_keeps_candidate_order_stable_when_page_query_expands
     cxxime::Dict::create_test_dict(dict_path, entries);
     ASSERT_TRUE(cxxime::test::create_test_wubi_index(index_path, entries));
 
-    cxxime::Dict dict;
+    cxxime::Dict dict{cxxime::UserDictKind::WUBI};
     ASSERT_TRUE(dict.open_wubi_bundle(dict_path, user_dict_path, index_path));
 
     cxxime::WubiTranslator translator;
@@ -200,7 +200,7 @@ TEST(WubiEngine, clear_query_cache_discards_candidate_snapshot) {
     ASSERT_TRUE(cxxime::Dict::create_test_dict(
         dict_path, {{"a", "exact", 500}, {"aa", "prefix", 400}}));
 
-    cxxime::Dict dict;
+    cxxime::Dict dict{cxxime::UserDictKind::WUBI};
     ASSERT_TRUE(dict.open(dict_path));
 
     cxxime::WubiTranslator translator;
@@ -252,8 +252,8 @@ TEST(WubiEngine, mixed_order_is_independent_of_page_query_limit) {
     DeleteFileA(pinyin_user_path.c_str());
     DeleteFileA(wubi_user_path.c_str());
 
-    cxxime::Dict pinyin_dict;
-    cxxime::Dict wubi_dict;
+cxxime::Dict pinyin_dict{cxxime::UserDictKind::PINYIN};
+cxxime::Dict wubi_dict{cxxime::UserDictKind::WUBI};
     ASSERT_TRUE(pinyin_dict.open(pinyin_path, pinyin_user_path));
     ASSERT_TRUE(wubi_dict.open_wubi_bundle(wubi_path, wubi_user_path, wubi_index_path));
 
@@ -310,12 +310,11 @@ TEST(WubiEngine, mixed_order_places_manually_pinned_candidate_first) {
     DeleteFileA(wubi_user_path.c_str());
     DeleteFileA(pinyin_order_path.c_str());
 
-    cxxime::Dict pinyin_dict;
-    cxxime::Dict wubi_dict;
+    cxxime::Dict pinyin_dict{cxxime::UserDictKind::PINYIN};
+    cxxime::Dict wubi_dict{cxxime::UserDictKind::WUBI};
     ASSERT_TRUE(pinyin_dict.open(pinyin_path, pinyin_user_path));
     ASSERT_TRUE(wubi_dict.open_wubi_bundle(wubi_path, wubi_user_path, wubi_index_path));
-    ASSERT_TRUE(
-        pinyin_dict.load_manual_candidate_order(pinyin_order_path, cxxime::kMaxInputCodeLength));
+    ASSERT_TRUE(pinyin_dict.load_manual_candidate_order(pinyin_order_path));
     ASSERT_TRUE(pinyin_dict.replace_manual_candidate_order_and_save(
         "a", {{"pinyin-two", "a", "a"}}));
 
@@ -363,13 +362,12 @@ TEST(WubiEngine, mixed_order_preserves_pinned_identity_across_text_deduplication
     DeleteFileA(pinyin_order_path.c_str());
     DeleteFileA(wubi_order_path.c_str());
 
-    cxxime::Dict pinyin_dict;
-    cxxime::Dict wubi_dict;
+    cxxime::Dict pinyin_dict{cxxime::UserDictKind::PINYIN};
+    cxxime::Dict wubi_dict{cxxime::UserDictKind::WUBI};
     ASSERT_TRUE(pinyin_dict.open(pinyin_path, pinyin_user_path));
     ASSERT_TRUE(wubi_dict.open_wubi_bundle(wubi_path, wubi_user_path, wubi_index_path));
-    ASSERT_TRUE(
-        pinyin_dict.load_manual_candidate_order(pinyin_order_path, cxxime::kMaxInputCodeLength));
-    ASSERT_TRUE(wubi_dict.load_manual_candidate_order(wubi_order_path, cxxime::kMaxWubiCodeLength));
+    ASSERT_TRUE(pinyin_dict.load_manual_candidate_order(pinyin_order_path));
+    ASSERT_TRUE(wubi_dict.load_manual_candidate_order(wubi_order_path));
     ASSERT_TRUE(pinyin_dict.replace_manual_candidate_order_and_save(
         "a", {{"shared-text", "a", "a"}, {"shared-second", "a", "a"}}));
 
@@ -424,12 +422,11 @@ TEST(WubiEngine, mixed_order_ignores_stale_manual_entry_from_other_profile) {
     DeleteFileA(wubi_user_path.c_str());
     DeleteFileA(pinyin_order_path.c_str());
 
-    cxxime::Dict pinyin_dict;
-    cxxime::Dict wubi_dict;
+    cxxime::Dict pinyin_dict{cxxime::UserDictKind::PINYIN};
+    cxxime::Dict wubi_dict{cxxime::UserDictKind::WUBI};
     ASSERT_TRUE(pinyin_dict.open(pinyin_path, pinyin_user_path));
     ASSERT_TRUE(wubi_dict.open_wubi_bundle(wubi_path, wubi_user_path, wubi_index_path));
-    ASSERT_TRUE(
-        pinyin_dict.load_manual_candidate_order(pinyin_order_path, cxxime::kMaxInputCodeLength));
+    ASSERT_TRUE(pinyin_dict.load_manual_candidate_order(pinyin_order_path));
     ASSERT_TRUE(
         pinyin_dict.replace_manual_candidate_order_and_save("a", {{"shared-text", "a", "a"}}));
 
@@ -460,7 +457,7 @@ TEST(WubiEngine, translator_empty_code) {
         {"a", "工", 300},
     });
 
-    cxxime::Dict dict;
+    cxxime::Dict dict{cxxime::UserDictKind::WUBI};
     ASSERT_TRUE(dict.open(dict_path));
 
     cxxime::WubiTranslator trans;

@@ -9,6 +9,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iterator>
+#include <memory>
 #include <ostream>
 #include <string_view>
 #include <utility>
@@ -18,9 +19,9 @@
 #include <cxxime/config.h>
 #include <cxxime/dict.h>
 #include <cxxime/engine.h>
+#include <cxxime/engine_runtime.h>
 #include <cxxime/key_event.h>
-#include <cxxime/spellings_index.h>
-#include <cxxime/syllabifier.h>
+#include <cxxime/pinyin_resource.h>
 
 #include "system_lexicon_inspector.h"
 
@@ -332,16 +333,14 @@ std::int64_t delta_ns(std::uint64_t baseline, std::uint64_t current) {
 
 bool add_engine_queries(const LexiconBenchmarkOptions& options, LexiconBenchmarkReport* report,
                         std::string* error) {
-    Dict pinyin_dictionary;
-    Dict wubi_dictionary;
-    SpellingsIndex spellings;
+    auto pinyin_dictionary = std::make_shared<Dict>(UserDictKind::PINYIN);
+    auto wubi_dictionary = std::make_shared<Dict>(UserDictKind::WUBI);
     Config config;
     const std::string pinyin_path = join_path(options.data_directory, "pinyin.dict.bin");
     const std::string wubi_path = join_path(options.data_directory, "wubi86.dict.bin");
-    if (!pinyin_dictionary.open_dict(pinyin_path) ||
-        !wubi_dictionary.open_wubi_dict(wubi_path,
-                                        join_path(options.data_directory, "wubi86.dict.idx")) ||
-        !spellings.load(join_path(options.data_directory, "pinyin.spellings.bin")) ||
+    if (!pinyin_dictionary->open_dict(pinyin_path) ||
+        !wubi_dictionary->open_wubi_dict(wubi_path,
+                                         join_path(options.data_directory, "wubi86.dict.idx")) ||
         !config.load(join_path(options.data_directory, "default.json"))) {
         *error = "Failed to initialize Engine benchmark resources";
         return false;
@@ -352,19 +351,22 @@ bool add_engine_queries(const LexiconBenchmarkOptions& options, LexiconBenchmark
         return false;
     }
     DeleteFileA(disabled_path.c_str());
-    if (!pinyin_dictionary.load_disabled_system_entries(disabled_path) ||
-        !wubi_dictionary.load_disabled_system_entries(disabled_path)) {
+    if (!pinyin_dictionary->load_disabled_system_entries(disabled_path) ||
+        !wubi_dictionary->load_disabled_system_entries(disabled_path)) {
         *error = "Failed to initialize the empty disabled-entry set";
         return false;
     }
 
-    Syllabifier syllabifier(spellings);
+    const auto& scheme = resolve_pinyin_scheme(config.pinyin_scheme);
+    auto pinyin_resources = PinyinResourceSet::create(
+        scheme.id, scheme.kind, join_path(options.data_directory, scheme.spelling_filename),
+        PinyinSpellingRequirement::kRequired);
     Engine engine;
-    if (!engine.initialize(pinyin_dictionary, spellings, &syllabifier, config)) {
+    if (!engine.initialize(EngineRuntimeState::create(
+            config, pinyin_dictionary, wubi_dictionary, std::move(pinyin_resources)))) {
         *error = "Failed to initialize Engine benchmark";
         return false;
     }
-    engine.set_wubi_dict(&wubi_dictionary);
     engine.set_trace_enabled(false);
 
     std::vector<LexiconBenchmarkRecord> empty_records;
@@ -383,8 +385,8 @@ bool add_engine_queries(const LexiconBenchmarkOptions& options, LexiconBenchmark
     report->records.insert(report->records.end(), empty_records.begin(), empty_records.end());
 
     if (!write_small_disabled_set(disabled_path, error) ||
-        !pinyin_dictionary.load_disabled_system_entries(disabled_path) ||
-        !wubi_dictionary.load_disabled_system_entries(disabled_path)) {
+        !pinyin_dictionary->load_disabled_system_entries(disabled_path) ||
+        !wubi_dictionary->load_disabled_system_entries(disabled_path)) {
         if (error->empty()) {
             *error = "Failed to initialize the small disabled-entry set";
         }

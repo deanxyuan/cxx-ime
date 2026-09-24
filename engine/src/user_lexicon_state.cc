@@ -122,9 +122,9 @@ void UserLexicon::sort_bucket(Snapshot* snapshot, Bucket* bucket) {
     });
 }
 
-void UserLexicon::insert_into_indexes(Snapshot* snapshot, EntryId id) {
+void UserLexicon::insert_into_indexes(Snapshot* snapshot, EntryId id) const {
     Entry& entry = snapshot->entries[id];
-    if (snapshot->scoring_profile == UserScoringProfile::kPinyin && entry.syllables.empty()) {
+    if (kind_ == UserDictKind::PINYIN && entry.syllables.empty()) {
         std::string normalized_code;
         canonicalize_pinyin_user_code(entry.code, PinyinSchemeKind::kFullPinyin, nullptr,
                                       &normalized_code, &entry.syllables);
@@ -147,7 +147,7 @@ void UserLexicon::insert_into_indexes(Snapshot* snapshot, EntryId id) {
     snapshot->code_sorted.push_back(id);
 }
 
-UserLexicon::Snapshot UserLexicon::prepare_snapshot(Snapshot snapshot) {
+UserLexicon::Snapshot UserLexicon::prepare_snapshot(Snapshot snapshot) const {
     snapshot.text_index.clear();
     snapshot.entry_index.clear();
     snapshot.exact_index.clear();

@@ -14,9 +14,9 @@ TEST(WubiEngine, engine_switch_mode) {
     cxxime::Engine engine;
     ASSERT_TRUE(engine.initialize(pinyin_path));
 
-    cxxime::Dict wubi_dict;
-    ASSERT_TRUE(wubi_dict.open(wubi_path));
-    engine.set_wubi_dict(&wubi_dict);
+    auto wubi_dict = std::make_shared<cxxime::Dict>(cxxime::UserDictKind::WUBI);
+    ASSERT_TRUE(wubi_dict->open(wubi_path));
+    ASSERT_TRUE(test::apply_runtime(engine, pinyin_path, cxxime::Config{}, wubi_dict));
 
     // 初始应为拼音模式
     engine.switch_mode(cxxime::InputMode::PINYIN);
@@ -28,7 +28,7 @@ TEST(WubiEngine, engine_switch_mode) {
     engine.switch_mode(cxxime::InputMode::PINYIN);
 
     engine.finalize();
-    wubi_dict.close();
+    wubi_dict->close();
     DeleteFileA(pinyin_path.c_str());
     DeleteFileA(wubi_path.c_str());
 }
@@ -47,9 +47,9 @@ TEST(WubiEngine, engine_wubi_input_flow) {
     cxxime::Engine engine;
     ASSERT_TRUE(engine.initialize(pinyin_path));
 
-    cxxime::Dict wubi_dict;
-    ASSERT_TRUE(wubi_dict.open(wubi_path));
-    engine.set_wubi_dict(&wubi_dict);
+    auto wubi_dict = std::make_shared<cxxime::Dict>(cxxime::UserDictKind::WUBI);
+    ASSERT_TRUE(wubi_dict->open(wubi_path));
+    ASSERT_TRUE(test::apply_runtime(engine, pinyin_path, cxxime::Config{}, wubi_dict));
 
     // 切换到五笔模式
     engine.switch_mode(cxxime::InputMode::WUBI);
@@ -63,7 +63,7 @@ TEST(WubiEngine, engine_wubi_input_flow) {
     ASSERT_GE(ctx.candidate_page().candidates.size(), 1u);
 
     engine.finalize();
-    wubi_dict.close();
+    wubi_dict->close();
     DeleteFileA(pinyin_path.c_str());
     DeleteFileA(wubi_path.c_str());
 }
@@ -81,10 +81,11 @@ TEST(WubiEngine, engine_paginates_from_visible_candidate_count_without_skipping)
 
     cxxime::Engine engine;
     ASSERT_TRUE(engine.initialize(pinyin_path));
-    engine.set_config_page_size(7);
-    cxxime::Dict wubi_dict;
-    ASSERT_TRUE(wubi_dict.open(wubi_path));
-    engine.set_wubi_dict(&wubi_dict);
+    cxxime::Config config;
+    config.page_size = 7;
+    auto wubi_dict = std::make_shared<cxxime::Dict>(cxxime::UserDictKind::WUBI);
+    ASSERT_TRUE(wubi_dict->open(wubi_path));
+    ASSERT_TRUE(test::apply_runtime(engine, pinyin_path, config, wubi_dict));
     engine.switch_mode(cxxime::InputMode::WUBI);
 
     ASSERT_EQ(engine.process_key(make_key('A')), cxxime::ProcessResult::ACCEPTED);
@@ -102,7 +103,7 @@ TEST(WubiEngine, engine_paginates_from_visible_candidate_count_without_skipping)
     ASSERT_TRUE(engine.context().translation().extent.complete);
 
     engine.finalize();
-    wubi_dict.close();
+    wubi_dict->close();
     DeleteFileA(pinyin_path.c_str());
     DeleteFileA(wubi_path.c_str());
 }
@@ -119,9 +120,9 @@ TEST(WubiEngine, engine_wubi_auto_commit) {
     cxxime::Engine engine;
     ASSERT_TRUE(engine.initialize(pinyin_path));
 
-    cxxime::Dict wubi_dict;
-    ASSERT_TRUE(wubi_dict.open(wubi_path));
-    engine.set_wubi_dict(&wubi_dict);
+    auto wubi_dict = std::make_shared<cxxime::Dict>(cxxime::UserDictKind::WUBI);
+    ASSERT_TRUE(wubi_dict->open(wubi_path));
+    ASSERT_TRUE(test::apply_runtime(engine, pinyin_path, cxxime::Config{}, wubi_dict));
 
     // 切换到五笔模式
     engine.switch_mode(cxxime::InputMode::WUBI);
@@ -137,7 +138,7 @@ TEST(WubiEngine, engine_wubi_auto_commit) {
     ASSERT_EQ(engine.context().committed_text, "中");
 
     engine.finalize();
-    wubi_dict.close();
+    wubi_dict->close();
     DeleteFileA(pinyin_path.c_str());
     DeleteFileA(wubi_path.c_str());
 }
@@ -157,9 +158,9 @@ TEST(WubiEngine, engine_wubi_fifth_key_commits_first_and_starts_next_code) {
 
     cxxime::Engine engine;
     ASSERT_TRUE(engine.initialize(pinyin_path));
-    cxxime::Dict wubi_dict;
-    ASSERT_TRUE(wubi_dict.open(wubi_path, wubi_user_path));
-    engine.set_wubi_dict(&wubi_dict);
+    auto wubi_dict = std::make_shared<cxxime::Dict>(cxxime::UserDictKind::WUBI);
+    ASSERT_TRUE(wubi_dict->open(wubi_path, wubi_user_path));
+    ASSERT_TRUE(test::apply_runtime(engine, pinyin_path, cxxime::Config{}, wubi_dict));
     engine.switch_mode(cxxime::InputMode::WUBI);
 
     ASSERT_EQ(engine.process_key(make_key('A')), cxxime::ProcessResult::ACCEPTED);
@@ -181,7 +182,7 @@ TEST(WubiEngine, engine_wubi_fifth_key_commits_first_and_starts_next_code) {
     ASSERT_TRUE(engine.context().is_composing());
 
     engine.finalize();
-    wubi_dict.close();
+    wubi_dict->close();
     DeleteFileA(pinyin_path.c_str());
     DeleteFileA(wubi_path.c_str());
     DeleteFileA(wubi_user_path.c_str());
@@ -201,13 +202,13 @@ TEST(WubiEngine, engine_wubi_fifth_key_commit_can_be_disabled) {
 
     cxxime::Engine engine;
     ASSERT_TRUE(engine.initialize(pinyin_path));
-    cxxime::Dict wubi_dict;
-    ASSERT_TRUE(wubi_dict.open(wubi_path, wubi_user_path));
-    engine.set_wubi_dict(&wubi_dict);
+    auto wubi_dict = std::make_shared<cxxime::Dict>(cxxime::UserDictKind::WUBI);
+    ASSERT_TRUE(wubi_dict->open(wubi_path, wubi_user_path));
+    ASSERT_TRUE(test::apply_runtime(engine, pinyin_path, cxxime::Config{}, wubi_dict));
     engine.switch_mode(cxxime::InputMode::WUBI);
     cxxime::Config config;
     config.wubi_commit_first_on_fifth_key = false;
-    engine.reload_config(config);
+    ASSERT_TRUE(test::apply_runtime(engine, pinyin_path, config, wubi_dict));
 
     ASSERT_EQ(engine.process_key(make_key('A')), cxxime::ProcessResult::ACCEPTED);
     ASSERT_EQ(engine.process_key(make_key('B')), cxxime::ProcessResult::ACCEPTED);
@@ -218,7 +219,7 @@ TEST(WubiEngine, engine_wubi_fifth_key_commit_can_be_disabled) {
     ASSERT_EQ(engine.context().active_input(), "abcde");
 
     engine.finalize();
-    wubi_dict.close();
+    wubi_dict->close();
     DeleteFileA(pinyin_path.c_str());
     DeleteFileA(wubi_path.c_str());
     DeleteFileA(wubi_user_path.c_str());
@@ -233,9 +234,9 @@ TEST(WubiEngine, engine_wubi_fifth_key_restarts_after_four_code_miss) {
 
     cxxime::Engine engine;
     ASSERT_TRUE(engine.initialize(pinyin_path));
-    cxxime::Dict wubi_dict;
-    ASSERT_TRUE(wubi_dict.open(wubi_path));
-    engine.set_wubi_dict(&wubi_dict);
+    auto wubi_dict = std::make_shared<cxxime::Dict>(cxxime::UserDictKind::WUBI);
+    ASSERT_TRUE(wubi_dict->open(wubi_path));
+    ASSERT_TRUE(test::apply_runtime(engine, pinyin_path, cxxime::Config{}, wubi_dict));
     engine.switch_mode(cxxime::InputMode::WUBI);
 
     ASSERT_EQ(engine.process_key(make_key('Z')), cxxime::ProcessResult::ACCEPTED);
@@ -251,7 +252,7 @@ TEST(WubiEngine, engine_wubi_fifth_key_restarts_after_four_code_miss) {
     ASSERT_EQ(engine.context().candidate_page().candidates[0].text, "新编码");
 
     engine.finalize();
-    wubi_dict.close();
+    wubi_dict->close();
     DeleteFileA(pinyin_path.c_str());
     DeleteFileA(wubi_path.c_str());
 }
@@ -265,9 +266,9 @@ TEST(WubiEngine, fifth_key_restart_survives_inline_ascii_round_trip) {
 
     cxxime::Engine engine;
     ASSERT_TRUE(engine.initialize(pinyin_path));
-    cxxime::Dict wubi_dict;
-    ASSERT_TRUE(wubi_dict.open(wubi_path));
-    engine.set_wubi_dict(&wubi_dict);
+    auto wubi_dict = std::make_shared<cxxime::Dict>(cxxime::UserDictKind::WUBI);
+    ASSERT_TRUE(wubi_dict->open(wubi_path));
+    ASSERT_TRUE(test::apply_runtime(engine, pinyin_path, cxxime::Config{}, wubi_dict));
     engine.switch_mode(cxxime::InputMode::WUBI);
 
     for (int index = 0; index < 4; ++index) {
@@ -286,7 +287,7 @@ TEST(WubiEngine, fifth_key_restart_survives_inline_ascii_round_trip) {
     ASSERT_EQ(engine.context().candidate_page().candidates[0].text, "新编码");
 
     engine.finalize();
-    wubi_dict.close();
+    wubi_dict->close();
     DeleteFileA(pinyin_path.c_str());
     DeleteFileA(wubi_path.c_str());
 }
@@ -300,9 +301,9 @@ TEST(WubiEngine, technical_symbols_use_inline_ascii_in_wubi_and_mixed_modes) {
 
     cxxime::Engine engine;
     ASSERT_TRUE(engine.initialize(pinyin_path));
-    cxxime::Dict wubi_dict;
-    ASSERT_TRUE(wubi_dict.open(wubi_path));
-    engine.set_wubi_dict(&wubi_dict);
+    auto wubi_dict = std::make_shared<cxxime::Dict>(cxxime::UserDictKind::WUBI);
+    ASSERT_TRUE(wubi_dict->open(wubi_path));
+    ASSERT_TRUE(test::apply_runtime(engine, pinyin_path, cxxime::Config{}, wubi_dict));
 
     for (cxxime::InputMode mode : {cxxime::InputMode::WUBI, cxxime::InputMode::MIXED}) {
         engine.clear();
@@ -318,7 +319,7 @@ TEST(WubiEngine, technical_symbols_use_inline_ascii_in_wubi_and_mixed_modes) {
     }
 
     engine.finalize();
-    wubi_dict.close();
+    wubi_dict->close();
     DeleteFileA(pinyin_path.c_str());
     DeleteFileA(wubi_path.c_str());
 }
@@ -332,9 +333,9 @@ TEST(WubiEngine, inline_ascii_space_cancels_and_enter_commits) {
 
     cxxime::Engine engine;
     ASSERT_TRUE(engine.initialize(pinyin_path));
-    cxxime::Dict wubi_dict;
-    ASSERT_TRUE(wubi_dict.open(wubi_path));
-    engine.set_wubi_dict(&wubi_dict);
+    auto wubi_dict = std::make_shared<cxxime::Dict>(cxxime::UserDictKind::WUBI);
+    ASSERT_TRUE(wubi_dict->open(wubi_path));
+    ASSERT_TRUE(test::apply_runtime(engine, pinyin_path, cxxime::Config{}, wubi_dict));
     engine.switch_mode(cxxime::InputMode::WUBI);
 
     for (uint32_t key : {'H', 'S', 'Q'}) {
@@ -358,7 +359,7 @@ TEST(WubiEngine, inline_ascii_space_cancels_and_enter_commits) {
     ASSERT_EQ(engine.get_commit_text(), "hsq/*");
 
     engine.finalize();
-    wubi_dict.close();
+    wubi_dict->close();
     DeleteFileA(pinyin_path.c_str());
     DeleteFileA(wubi_path.c_str());
 }
@@ -372,9 +373,9 @@ TEST(WubiEngine, fifth_key_restart_requires_cursor_at_end) {
 
     cxxime::Engine engine;
     ASSERT_TRUE(engine.initialize(pinyin_path));
-    cxxime::Dict wubi_dict;
-    ASSERT_TRUE(wubi_dict.open(wubi_path));
-    engine.set_wubi_dict(&wubi_dict);
+    auto wubi_dict = std::make_shared<cxxime::Dict>(cxxime::UserDictKind::WUBI);
+    ASSERT_TRUE(wubi_dict->open(wubi_path));
+    ASSERT_TRUE(test::apply_runtime(engine, pinyin_path, cxxime::Config{}, wubi_dict));
     engine.switch_mode(cxxime::InputMode::WUBI);
 
     for (int index = 0; index < 4; ++index) {
@@ -385,7 +386,7 @@ TEST(WubiEngine, fifth_key_restart_requires_cursor_at_end) {
     ASSERT_EQ(engine.context().active_input(), "zzzez");
 
     engine.finalize();
-    wubi_dict.close();
+    wubi_dict->close();
     DeleteFileA(pinyin_path.c_str());
     DeleteFileA(wubi_path.c_str());
 }
@@ -399,13 +400,13 @@ TEST(WubiEngine, engine_wubi_fifth_key_empty_restart_can_be_disabled) {
 
     cxxime::Engine engine;
     ASSERT_TRUE(engine.initialize(pinyin_path));
-    cxxime::Dict wubi_dict;
-    ASSERT_TRUE(wubi_dict.open(wubi_path));
-    engine.set_wubi_dict(&wubi_dict);
+    auto wubi_dict = std::make_shared<cxxime::Dict>(cxxime::UserDictKind::WUBI);
+    ASSERT_TRUE(wubi_dict->open(wubi_path));
+    ASSERT_TRUE(test::apply_runtime(engine, pinyin_path, cxxime::Config{}, wubi_dict));
     engine.switch_mode(cxxime::InputMode::WUBI);
     cxxime::Config config;
     config.wubi_restart_on_fifth_after_miss = false;
-    engine.reload_config(config);
+    ASSERT_TRUE(test::apply_runtime(engine, pinyin_path, config, wubi_dict));
 
     for (int index = 0; index < 4; ++index) {
         ASSERT_EQ(engine.process_key(make_key('Z')), cxxime::ProcessResult::ACCEPTED);
@@ -415,7 +416,7 @@ TEST(WubiEngine, engine_wubi_fifth_key_empty_restart_can_be_disabled) {
     ASSERT_TRUE(engine.context().candidate_page().candidates.empty());
 
     engine.finalize();
-    wubi_dict.close();
+    wubi_dict->close();
     DeleteFileA(pinyin_path.c_str());
     DeleteFileA(wubi_path.c_str());
 }
@@ -429,9 +430,9 @@ TEST(WubiEngine, engine_mixed_fifth_key_does_not_restart_after_empty_four_code) 
 
     cxxime::Engine engine;
     ASSERT_TRUE(engine.initialize(pinyin_path));
-    cxxime::Dict wubi_dict;
-    ASSERT_TRUE(wubi_dict.open(wubi_path));
-    engine.set_wubi_dict(&wubi_dict);
+    auto wubi_dict = std::make_shared<cxxime::Dict>(cxxime::UserDictKind::WUBI);
+    ASSERT_TRUE(wubi_dict->open(wubi_path));
+    ASSERT_TRUE(test::apply_runtime(engine, pinyin_path, cxxime::Config{}, wubi_dict));
     engine.switch_mode(cxxime::InputMode::MIXED);
 
     for (int index = 0; index < 4; ++index) {
@@ -441,7 +442,7 @@ TEST(WubiEngine, engine_mixed_fifth_key_does_not_restart_after_empty_four_code) 
     ASSERT_EQ(engine.context().active_input(), "zzzze");
 
     engine.finalize();
-    wubi_dict.close();
+    wubi_dict->close();
     DeleteFileA(pinyin_path.c_str());
     DeleteFileA(wubi_path.c_str());
 }
@@ -456,9 +457,9 @@ TEST(WubiEngine, engine_wubi_space_without_candidates_clears) {
     cxxime::Engine engine;
     ASSERT_TRUE(engine.initialize(pinyin_path));
 
-    cxxime::Dict wubi_dict;
-    ASSERT_TRUE(wubi_dict.open(wubi_path));
-    engine.set_wubi_dict(&wubi_dict);
+    auto wubi_dict = std::make_shared<cxxime::Dict>(cxxime::UserDictKind::WUBI);
+    ASSERT_TRUE(wubi_dict->open(wubi_path));
+    ASSERT_TRUE(test::apply_runtime(engine, pinyin_path, cxxime::Config{}, wubi_dict));
     engine.switch_mode(cxxime::InputMode::WUBI);
 
     engine.process_key(make_key('N'));
@@ -476,7 +477,7 @@ TEST(WubiEngine, engine_wubi_space_without_candidates_clears) {
     ASSERT_TRUE(engine.context().candidate_page().candidates.empty());
 
     engine.finalize();
-    wubi_dict.close();
+    wubi_dict->close();
     DeleteFileA(pinyin_path.c_str());
     DeleteFileA(wubi_path.c_str());
 }
@@ -489,7 +490,6 @@ TEST(WubiEngine, engine_no_wubi_dict_fallback) {
     ASSERT_TRUE(engine.initialize(pinyin_path));
 
     // 不设置五笔词典，尝试切换到五笔模式
-    engine.set_wubi_dict(nullptr);
     engine.switch_mode(cxxime::InputMode::WUBI);
 
     // 应自动回退到拼音模式

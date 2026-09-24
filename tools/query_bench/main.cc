@@ -8,13 +8,18 @@
 #include <cstring>
 #include <fstream>
 #include <iostream>
+#include <memory>
 #include <sstream>
 #include <string>
 #include <vector>
 
 #include <json.hpp>
 
+#include <cxxime/config.h>
+#include <cxxime/dict.h>
 #include <cxxime/engine.h>
+#include <cxxime/engine_runtime.h>
+#include <cxxime/pinyin_resource.h>
 #include <cxxime/query_budget.h>
 #include <cxxime/query_trace.h>
 
@@ -473,13 +478,24 @@ int main(int argc, char* argv[]) {
     std::string dict_path = config.data_dir + "/pinyin.dict.bin";
     std::string config_path = config.data_dir + "/default.json";
 
-    if (!engine.initialize(dict_path, config_path)) {
+    cxxime::Config engine_config;
+    auto pinyin_dict = std::make_shared<cxxime::Dict>(cxxime::UserDictKind::PINYIN);
+    if (!engine_config.load(config_path) || !pinyin_dict->open(dict_path)) {
         std::cerr << "Failed to initialize engine with dict: " << dict_path << "\n";
+        return 1;
+    }
+    engine_config.page_size = config.page_size;
+    const auto& scheme = cxxime::resolve_pinyin_scheme(engine_config.pinyin_scheme);
+    auto pinyin_resources = cxxime::PinyinResourceSet::create(
+        scheme.id, scheme.kind, config.data_dir + "/" + scheme.spelling_filename,
+        cxxime::PinyinSpellingRequirement::kRequired);
+    if (!engine.initialize(cxxime::EngineRuntimeState::create(
+            engine_config, std::move(pinyin_dict), nullptr, std::move(pinyin_resources)))) {
+        std::cerr << "Failed to initialize engine runtime\n";
         return 1;
     }
 
     // Apply overrides
-    engine.set_config_page_size(config.page_size);
     engine.set_trace_enabled(true);
     engine.set_query_deadline_ms(config.deadline_ms);
 

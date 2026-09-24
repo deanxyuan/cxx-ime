@@ -66,11 +66,12 @@ static void set_candidate_code(Candidate& candidate, const char* syllable_ids, u
     candidate.code = compact_syllable_code(syllable_ids, len);
 }
 
-Dict::Dict()
-    : user_lexicon_(std::make_unique<UserLexicon>())
-    , candidate_preference_(std::make_unique<CandidatePreference>())
-    , manual_candidate_order_(std::make_unique<ManualCandidateOrder>())
-    , disabled_system_lexicon_(std::make_unique<DisabledSystemLexicon>()) {}
+Dict::Dict(UserDictKind kind)
+    : kind_(kind)
+    , user_lexicon_(std::make_unique<UserLexicon>(kind))
+    , candidate_preference_(std::make_unique<CandidatePreference>(kind))
+    , manual_candidate_order_(std::make_unique<ManualCandidateOrder>(kind))
+    , disabled_system_lexicon_(std::make_unique<DisabledSystemLexicon>(kind)) {}
 
 Dict::~Dict() { unload_dict(); }
 
@@ -94,17 +95,21 @@ bool Dict::open_bundle(const std::string& dict_path,
                        const std::string& user_dict_path,
                        const std::string& idx_path,
                        const std::string& topn_path) {
+    if (kind_ != UserDictKind::PINYIN) {
+        return false;
+    }
     if (!open_dict_with_aux(dict_path, idx_path, topn_path, false))
         return false;
-    user_lexicon_->set_scoring_profile(UserScoringProfile::kPinyin);
     return load_user_dict(user_dict_path);
 }
 
 bool Dict::open_wubi_dict(const std::string& dict_path, const std::string& prefix_index_path) {
+    if (kind_ != UserDictKind::WUBI) {
+        return false;
+    }
     if (!open_dict_with_aux(dict_path, prefix_index_path, {}, false, true)) {
         return false;
     }
-    user_lexicon_->set_scoring_profile(UserScoringProfile::kWubi);
     return true;
 }
 
@@ -128,7 +133,6 @@ bool Dict::open_dict(const std::string& bin_path) {
     if (!open_dict_with_aux(bin_path, {}, {}, true)) {
         return false;
     }
-    user_lexicon_->set_scoring_profile(UserScoringProfile::kPinyin);
     return true;
 }
 

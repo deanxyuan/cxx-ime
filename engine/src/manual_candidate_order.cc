@@ -22,6 +22,10 @@ constexpr const char* kHeader = "# cxxime-candidate-order format=1";
 constexpr std::size_t kMaxEntries = 100000;
 constexpr std::size_t kMaxFileSize = 16 * 1024 * 1024;
 
+std::size_t max_code_length(UserDictKind kind) {
+    return kind == UserDictKind::WUBI ? kMaxWubiCodeLength : kMaxInputCodeLength;
+}
+
 std::vector<std::string> split_fields(const std::string& line) {
     std::vector<std::string> fields;
     std::size_t start = 0;
@@ -72,9 +76,9 @@ std::uint64_t version_token(std::string_view contents) {
 
 } // namespace
 
-bool ManualCandidateOrder::parse_contents(const std::string& contents, std::size_t max_code_length,
+bool ManualCandidateOrder::parse_contents(const std::string& contents, UserDictKind kind,
                                           Orders* orders) {
-    if (!orders || max_code_length == 0 || max_code_length > kMaxInputCodeLength) {
+    if (!orders) {
         return false;
     }
     Orders loaded;
@@ -114,20 +118,19 @@ bool ManualCandidateOrder::parse_contents(const std::string& contents, std::size
             entries.push_back({fields[1], fields[2], fields[3]});
         }
     }
-    if (!validate_orders(loaded, max_code_length)) {
+    if (!validate_orders(loaded, kind)) {
         return false;
     }
     *orders = std::move(loaded);
     return true;
 }
 
-bool ManualCandidateOrder::validate_contents(const std::string& contents,
-                                             std::size_t max_code_length) {
+bool ManualCandidateOrder::validate_contents(const std::string& contents, UserDictKind kind) {
     Orders orders;
-    return contents.size() <= kMaxFileSize && parse_contents(contents, max_code_length, &orders);
+    return contents.size() <= kMaxFileSize && parse_contents(contents, kind, &orders);
 }
 
-bool ManualCandidateOrder::load(const std::string& path, std::size_t max_code_length) {
+bool ManualCandidateOrder::load(const std::string& path) {
     std::lock_guard<std::mutex> mutation_lock(mutation_mutex_);
     std::string contents;
     if (!read_user_data_file(path, kMaxFileSize, &contents)) {
@@ -135,7 +138,7 @@ bool ManualCandidateOrder::load(const std::string& path, std::size_t max_code_le
     }
 
     Orders loaded;
-    if (!parse_contents(contents, max_code_length, &loaded)) {
+    if (!parse_contents(contents, kind_, &loaded)) {
         return false;
     }
 
@@ -143,7 +146,6 @@ bool ManualCandidateOrder::load(const std::string& path, std::size_t max_code_le
     std::unique_lock<std::shared_mutex> lock(mutex_);
     orders_ = std::move(loaded);
     path_ = path;
-    max_code_length_ = max_code_length;
     version_.store(version, std::memory_order_release);
     return true;
 }
@@ -156,21 +158,17 @@ bool ManualCandidateOrder::merge_contents_and_save(const std::string& imported,
     std::lock_guard<std::mutex> mutation_lock(mutation_mutex_);
     Orders current;
     std::string path;
-    std::size_t max_code_length = 0;
     {
         std::shared_lock<std::shared_mutex> lock(mutex_);
         current = orders_;
         path = path_;
-        max_code_length = max_code_length_;
     }
     UserDataMergeResult merged;
     Orders next;
     if (path.empty() ||
-        !merge_user_data_contents(max_code_length == kMaxWubiCodeLength
-                                      ? "candidate_order_wubi.tsv"
-                                      : "candidate_order_pinyin.tsv",
-                                  serialize(current), imported, &merged) ||
-        !parse_contents(merged.contents, max_code_length, &next) ||
+        !merge_lexicon_resource_contents(LexiconResource::kManualCandidateOrder, kind_,
+                                         serialize(current), imported, &merged) ||
+        !parse_contents(merged.contents, kind_, &next) ||
         !write_user_data_file_atomically(path, merged.contents)) {
         return false;
     }
@@ -202,7 +200,7 @@ bool ManualCandidateOrder::contains(const std::string& input_code, const std::st
 
 bool ManualCandidateOrder::replace_and_save(const std::string& input_code,
                                             const std::vector<ManualCandidateOrderEntry>& entries) {
-    if (!is_valid_user_dict_code(input_code) || input_code.size() > max_code_length_) {
+    if (!is_valid_user_dict_code(input_code) || input_code.size() > max_code_length(kind_)) {
         return false;
     }
     std::lock_guard<std::mutex> mutation_lock(mutation_mutex_);
@@ -216,7 +214,7 @@ bool ManualCandidateOrder::replace_and_save_if_version(
         return false;
     }
     *version_conflict = false;
-    if (!is_valid_user_dict_code(input_code) || input_code.size() > max_code_length_) {
+    if (!is_valid_user_dict_code(input_code) || input_code.size() > max_code_length(kind_)) {
         return false;
     }
     std::lock_guard<std::mutex> mutation_lock(mutation_mutex_);
@@ -244,7 +242,7 @@ bool ManualCandidateOrder::replace_and_save_locked(
     } else {
         next[input_code] = entries;
     }
-    if (!validate_orders(next, max_code_length_)) {
+    if (!validate_orders(next, kind_)) {
         return false;
     }
     const std::string contents = serialize(next);
@@ -261,17 +259,18 @@ std::uint64_t ManualCandidateOrder::version() const {
     return version_.load(std::memory_order_acquire);
 }
 
-bool ManualCandidateOrder::validate_orders(const Orders& orders, std::size_t max_code_length) {
+bool ManualCandidateOrder::validate_orders(const Orders& orders, UserDictKind kind) {
+    const std::size_t code_length_limit = max_code_length(kind);
     std::size_t total = 0;
     for (const auto& item : orders) {
-        if (!is_valid_user_dict_code(item.first) || item.first.size() > max_code_length ||
+        if (!is_valid_user_dict_code(item.first) || item.first.size() > code_length_limit ||
             item.second.empty() || item.second.size() > MANUAL_CANDIDATE_ORDER_MAX_ENTRIES) {
             return false;
         }
         std::unordered_set<std::string> seen;
         for (const auto& entry : item.second) {
             if (!is_valid_user_dict_text(entry.text) || !is_valid_user_dict_code(entry.code) ||
-                entry.code.size() > max_code_length ||
+                entry.code.size() > code_length_limit ||
                 !is_valid_user_dict_syllables(entry.syllables) ||
                 !seen.insert(entry_key(entry)).second) {
                 return false;

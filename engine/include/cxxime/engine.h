@@ -14,15 +14,14 @@
 #include <cxxime/config.h>
 #include <cxxime/context.h>
 #include <cxxime/dict.h>
+#include <cxxime/engine_runtime.h>
 #include <cxxime/ipc_protocol.h>
 #include <cxxime/output_options.h>
 #include <cxxime/processor.h>
 #include <cxxime/query_budget.h>
 #include <cxxime/query_scratch.h>
 #include <cxxime/query_trace.h>
-#include <cxxime/spellings_index.h>
 #include <cxxime/symbol_processor.h>
-#include <cxxime/syllabifier.h>
 #include <cxxime/translator.h>
 
 namespace cxxime {
@@ -34,21 +33,10 @@ public:
     // Self-contained Pinyin init: owns resources loaded from the supplied paths.
     bool initialize(const std::string& dict_path, const std::string& config_path = "");
 
-    // Shared-resource init: Engine references pre-loaded resources (server sessions).
-    bool initialize(Dict& dict, SpellingsIndex& spellings,
-                    Syllabifier* syllabifier, const Config& config,
-                    const SymbolTable* symbol_table = nullptr);
+    bool initialize(std::shared_ptr<const EngineRuntimeState> runtime);
+    bool apply_runtime_state(std::shared_ptr<const EngineRuntimeState> runtime);
 
     void finalize();
-
-    // Hot-reload config: update config_ pointer and rebuild AsciiComposer.
-    // The new Config object must outlive this Engine.
-    void reload_config(const Config& config);
-
-    // Rebind replaceable shared resources used by server sessions. The caller
-    // owns the resource lifetime and must keep them alive for the Engine.
-    void rebind_shared_resources(Dict& dict, SpellingsIndex& spellings,
-                                 Syllabifier* syllabifier, Dict* wubi_dict);
 
     ProcessResult process_key(const KeyEvent& event);
     ProcessResult process_key(const KeyEvent& event, const OutputOptions& opts,
@@ -71,21 +59,16 @@ public:
 
     // Query trace access
     const QueryTrace& last_trace() const { return trace_; }
-    bool has_short_cache() const { return pinyin_dict_ && pinyin_dict_->has_short_cache(); }
+    bool has_short_cache() const {
+        return runtime_ && runtime_->pinyin_dict().has_short_cache();
+    }
     void set_trace_enabled(bool enabled) { trace_enabled_ = enabled; }
     void set_trace_session_id(uint32_t id) { trace_.session_id = id; }
     void set_sentence_composition_enabled(bool enabled);
     bool sentence_composition_enabled() const { return sentence_composition_enabled_; }
     void clear_query_cache();
-    void set_composition_learning_service(CompositionLearningService* service);
     CandidatePage translate_for_search(const std::string& input, int limit = 10);
     bool record_search_result(const std::string& input, const std::string& result);
-
-    // Override config page_size (only for self-contained init)
-    void set_config_page_size(int size) {
-        if (config_ == &owned_config_)
-            owned_config_.page_size = size;
-    }
 
     // Query budget (scan limits); deadline is set separately via set_query_deadline_ms().
     void set_query_budget(const QueryBudget& budget) { budget_ = budget; }
@@ -94,12 +77,6 @@ public:
     // Query deadline protection
     void set_query_deadline_ms(uint32_t deadline_ms) { query_deadline_ms_ = deadline_ms; }
     uint32_t query_deadline_ms() const { return query_deadline_ms_; }
-
-    // Wubi dict optional load
-    void set_wubi_dict(Dict* dict);
-
-    // Fuzzy pinyin toggle
-    void set_fuzzy_enabled(bool enabled);
 
     // Mode switching
     void switch_mode(InputMode mode);
@@ -131,27 +108,14 @@ private:
     void apply_commit_learning_plan();
     static CompositionScheme scheme_for_mode(InputMode mode);
 
+    std::shared_ptr<const EngineRuntimeState> runtime_;
+
     std::unique_ptr<IProcessor> processor_;
     std::unique_ptr<ITranslator> translator_;
 
     Context context_;
     AsciiComposer ascii_composer_;
     SymbolProcessor symbol_processor_;
-
-    // Self-contained resources (owned when initialized from file paths).
-    Dict owned_dict_;
-    SpellingsIndex owned_spellings_;
-    Config owned_config_;
-    std::unique_ptr<Syllabifier> owned_syllabifier_;
-
-    // Active resource references point to owned_* or caller-owned objects.
-    Dict* pinyin_dict_ = nullptr;
-    Dict* wubi_dict_ = nullptr;
-    SpellingsIndex* spellings_ = nullptr;
-    Syllabifier* syllabifier_ = nullptr;
-    const Config* config_ = nullptr;
-    const SymbolTable* symbol_table_ = nullptr;
-    CompositionLearningService* composition_learning_ = nullptr;
 
     // Input mode
     InputMode mode_ = InputMode::PINYIN;

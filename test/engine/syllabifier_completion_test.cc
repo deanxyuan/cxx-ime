@@ -1,14 +1,15 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
 #include <algorithm>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include <windows.h>
 
 #include <cxxime/dict.h>
+#include <cxxime/pinyin_resource.h>
 #include <cxxime/spellings_index.h>
-#include <cxxime/syllabifier.h>
 #include <cxxime/translator.h>
 
 #include "support/testutil.h"
@@ -41,7 +42,7 @@ bool contains_path(const cxxime::SegmentResult& result,
 
 struct CompletionFixture {
     std::string spelling_path = make_temp_path("cxs");
-    cxxime::SpellingsIndex spellings;
+    std::shared_ptr<const cxxime::PinyinResourceSet> pinyin_resources;
 
     bool initialize() {
         if (spelling_path.empty()) {
@@ -57,11 +58,12 @@ struct CompletionFixture {
         })) {
             return false;
         }
-        return spellings.load(spelling_path);
+        pinyin_resources = cxxime::PinyinResourceSet::create(
+            "full_pinyin", cxxime::PinyinSchemeKind::kFullPinyin, spelling_path);
+        return pinyin_resources != nullptr;
     }
 
     ~CompletionFixture() {
-        spellings.unload();
         if (!spelling_path.empty()) {
             DeleteFileA(spelling_path.c_str());
         }
@@ -74,7 +76,7 @@ TEST(SyllabifierCompletion, search_returns_only_strict_extensions) {
     CompletionFixture fixture;
     ASSERT_TRUE(fixture.initialize());
 
-    const auto matches = fixture.spellings.completion_search("ji");
+    const auto matches = fixture.pinyin_resources->completion_search("ji");
     ASSERT_TRUE(!contains_spelling(matches, "ji"));
     ASSERT_TRUE(contains_spelling(matches, "jie"));
     ASSERT_TRUE(contains_spelling(matches, "jin"));
@@ -83,15 +85,17 @@ TEST(SyllabifierCompletion, search_returns_only_strict_extensions) {
 TEST(SyllabifierCompletion, segment_adds_terminal_completion_on_request) {
     CompletionFixture fixture;
     ASSERT_TRUE(fixture.initialize());
-    cxxime::Syllabifier syllabifier(fixture.spellings);
 
     const std::vector<std::string> exact = {"ni", "hao", "shi", "ji"};
     const std::vector<std::string> completed = {"ni", "hao", "shi", "jie"};
-    const auto normal_result = syllabifier.segment("nihaoshiji");
+    const auto normal_result = fixture.pinyin_resources->segment("nihaoshiji");
     ASSERT_TRUE(contains_path(normal_result, exact));
     ASSERT_TRUE(!contains_path(normal_result, completed));
 
-    const auto completion_result = syllabifier.segment("nihaoshiji", nullptr, true);
+    cxxime::SyllabifierOptions completion_options;
+    completion_options.enable_terminal_completion = true;
+    const auto completion_result =
+        fixture.pinyin_resources->segment("nihaoshiji", nullptr, completion_options);
     ASSERT_TRUE(contains_path(completion_result, exact));
     ASSERT_TRUE(contains_path(completion_result, completed));
 }
@@ -99,14 +103,15 @@ TEST(SyllabifierCompletion, segment_adds_terminal_completion_on_request) {
 TEST(SyllabifierCompletion, path_metadata_is_collected_only_on_request) {
     CompletionFixture fixture;
     ASSERT_TRUE(fixture.initialize());
-    cxxime::Syllabifier syllabifier(fixture.spellings);
-
-    const auto baseline = syllabifier.segment("nihao");
+    const auto baseline = fixture.pinyin_resources->segment("nihao");
     ASSERT_TRUE(!baseline.paths.empty());
     ASSERT_TRUE(baseline.paths[0].spelling_types.empty());
     ASSERT_TRUE(baseline.paths[0].input_lengths.empty());
 
-    const auto with_metadata = syllabifier.segment("nihao", nullptr, false, true);
+    cxxime::SyllabifierOptions metadata_options;
+    metadata_options.collect_path_metadata = true;
+    const auto with_metadata =
+        fixture.pinyin_resources->segment("nihao", nullptr, metadata_options);
     ASSERT_TRUE(!with_metadata.paths.empty());
     ASSERT_EQ(with_metadata.paths[0].syllables.size(),
               with_metadata.paths[0].spelling_types.size());
@@ -122,12 +127,11 @@ TEST(SyllabifierCompletion, translator_retries_when_exact_path_has_no_word) {
         {"ni:hao:shi:jie", "hello-world", 1000},
     }));
 
-    cxxime::Dict dictionary;
+    cxxime::Dict dictionary{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dictionary.open_dict(dictionary_path));
-    cxxime::Syllabifier syllabifier(fixture.spellings);
     cxxime::PinyinTranslator translator;
     translator.set_dict(&dictionary);
-    translator.set_syllabifier(&syllabifier);
+    translator.bind_pinyin(fixture.pinyin_resources, {});
 
     const auto page = translator.translate_page("nihaoshiji", 0, 10);
     ASSERT_TRUE(!page.candidates.empty());
@@ -147,12 +151,11 @@ TEST(SyllabifierCompletion, translator_keeps_valid_exact_path_authoritative) {
         {"ni:hao:shi:jie", "completed-jie", 1000},
     }));
 
-    cxxime::Dict dictionary;
+    cxxime::Dict dictionary{cxxime::UserDictKind::PINYIN};
     ASSERT_TRUE(dictionary.open_dict(dictionary_path));
-    cxxime::Syllabifier syllabifier(fixture.spellings);
     cxxime::PinyinTranslator translator;
     translator.set_dict(&dictionary);
-    translator.set_syllabifier(&syllabifier);
+    translator.bind_pinyin(fixture.pinyin_resources, {});
 
     const auto page = translator.translate_page("nihaoshiji", 0, 10);
     ASSERT_TRUE(!page.candidates.empty());

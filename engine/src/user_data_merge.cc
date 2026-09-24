@@ -29,6 +29,12 @@ constexpr std::size_t kMaxMergedFileSize = 64ULL * 1024ULL * 1024ULL;
 constexpr std::size_t kMaxCandidateOrderFileSize = 16ULL * 1024ULL * 1024ULL;
 constexpr std::size_t kMaxCandidateOrderEntries = 100000;
 
+enum class RecordFormat {
+    kCandidatePreference,
+    kDisabledSystemLexicon,
+    kCompositionLearning,
+};
+
 std::vector<std::string> lines(const std::string& contents) {
     std::vector<std::string> result;
     std::istringstream input(contents);
@@ -95,44 +101,44 @@ serialize_candidate_orders(const std::map<std::string, std::vector<std::string>>
     return contents;
 }
 
-bool valid_line(const std::string& file_name, const std::string& line) {
+bool valid_record_line(RecordFormat format, const std::string& line) {
     const std::string contents = line + '\n';
-    if (file_name == "user_pinyin.tsv" || file_name == "user_wubi.tsv") {
-        return UserLexicon::validate_contents(
-            contents, file_name == "user_wubi.tsv" ? UserScoringProfile::kWubi
-                                                  : UserScoringProfile::kPinyin);
-    }
-    if (file_name == "learning_pinyin.tsv" || file_name == "learning_wubi.tsv") {
+    if (format == RecordFormat::kCandidatePreference) {
         return CandidatePreference::validate_contents(contents);
     }
-    if (file_name == "learning_composition.tsv") {
+    if (format == RecordFormat::kCompositionLearning) {
         return CompositionLearningService::validate_contents(contents);
     }
-    if (file_name == "disabled_pinyin.tsv" || file_name == "disabled_wubi.tsv") {
+    if (format == RecordFormat::kDisabledSystemLexicon) {
         return DisabledSystemLexicon::validate_contents(contents);
     }
     return false;
 }
 
-bool valid_contents(const std::string& file_name, const std::string& contents) {
-    if (file_name == "user_pinyin.tsv" || file_name == "user_wubi.tsv") {
-        return UserLexicon::validate_contents(
-            contents, file_name == "user_wubi.tsv" ? UserScoringProfile::kWubi
-                                                  : UserScoringProfile::kPinyin);
-    }
-    if (file_name == "learning_pinyin.tsv" || file_name == "learning_wubi.tsv") {
+bool valid_record_contents(RecordFormat format, const std::string& contents) {
+    if (format == RecordFormat::kCandidatePreference) {
         return CandidatePreference::validate_contents(contents);
     }
-    if (file_name == "candidate_order_pinyin.tsv" || file_name == "candidate_order_wubi.tsv") {
-        return ManualCandidateOrder::validate_contents(
-            contents,
-            file_name == "candidate_order_wubi.tsv" ? kMaxWubiCodeLength : kMaxInputCodeLength);
-    }
-    if (file_name == "learning_composition.tsv") {
+    if (format == RecordFormat::kCompositionLearning) {
         return CompositionLearningService::validate_contents(contents);
     }
-    if (file_name == "disabled_pinyin.tsv" || file_name == "disabled_wubi.tsv") {
+    if (format == RecordFormat::kDisabledSystemLexicon) {
         return DisabledSystemLexicon::validate_contents(contents);
+    }
+    return false;
+}
+
+bool valid_lexicon_contents(LexiconResource resource, UserDictKind kind,
+                            const std::string& contents) {
+    switch (resource) {
+    case LexiconResource::kUserLexicon:
+        return UserLexicon::validate_contents(contents, kind);
+    case LexiconResource::kCandidatePreference:
+        return CandidatePreference::validate_contents(contents);
+    case LexiconResource::kDisabledSystemLexicon:
+        return DisabledSystemLexicon::validate_contents(contents);
+    case LexiconResource::kManualCandidateOrder:
+        return ManualCandidateOrder::validate_contents(contents, kind);
     }
     return false;
 }
@@ -165,7 +171,7 @@ std::string merge_learning_line(const std::string& current, const std::string& i
     return output.str();
 }
 
-bool merge_user_lexicon(const std::string& file_name, const std::string& current,
+bool merge_user_lexicon(UserDictKind kind, const std::string& current,
                         const std::string& imported, UserDataMergeResult* result) {
     std::vector<std::string> records = lines(current);
     std::map<std::string, std::size_t> positions;
@@ -180,7 +186,7 @@ bool merge_user_lexicon(const std::string& file_name, const std::string& current
     }
     for (const std::string& line : lines(imported)) {
         const auto item = fields(line);
-        if (!valid_line(file_name, line)) {
+        if (!UserLexicon::validate_contents(line + '\n', kind)) {
             ++result->skipped_count;
             continue;
         }
@@ -206,7 +212,7 @@ bool merge_user_lexicon(const std::string& file_name, const std::string& current
             result->contents += line + '\n';
         }
     }
-    return valid_contents(file_name, result->contents);
+    return UserLexicon::validate_contents(result->contents, kind);
 }
 
 bool learning_record_less_valuable(const std::pair<const std::string, std::string>& left,
@@ -230,14 +236,11 @@ bool learning_record_less_valuable(const std::pair<const std::string, std::strin
     return left.first < right.first;
 }
 
-bool merge_records(const std::string& file_name, const std::string& current,
+bool merge_records(RecordFormat format, const std::string& current,
                    const std::string& imported, UserDataMergeResult* result) {
-    const bool disabled = file_name == "disabled_pinyin.tsv" || file_name == "disabled_wubi.tsv";
-    const bool preference = file_name == "learning_pinyin.tsv" || file_name == "learning_wubi.tsv";
-    const bool composition = file_name == "learning_composition.tsv";
-    if (!disabled && !preference && !composition) {
-        return false;
-    }
+    const bool disabled = format == RecordFormat::kDisabledSystemLexicon;
+    const bool preference = format == RecordFormat::kCandidatePreference;
+    const bool composition = format == RecordFormat::kCompositionLearning;
     const auto key_for = [&](const std::string& line, const std::vector<std::string>& item) {
         return disabled ? line : make_key(item, 1, 0);
     };
@@ -245,7 +248,7 @@ bool merge_records(const std::string& file_name, const std::string& current,
     std::size_t serialized_size = 0;
     for (const std::string& line : lines(current)) {
         const auto item = fields(line);
-        if (valid_line(file_name, line)) {
+        if (valid_record_line(format, line)) {
             records[key_for(line, item)] = line;
         }
     }
@@ -260,7 +263,7 @@ bool merge_records(const std::string& file_name, const std::string& current,
     std::map<std::string, std::size_t> imported_occurrences;
     for (const std::string& line : lines(imported)) {
         const auto item = fields(line);
-        if (!valid_line(file_name, line)) {
+        if (!valid_record_line(format, line)) {
             ++result->skipped_count;
             continue;
         }
@@ -313,11 +316,13 @@ bool merge_records(const std::string& file_name, const std::string& current,
         }
     }
     result->contents = serialize(records);
-    return valid_contents(file_name, result->contents);
+    return valid_record_contents(format, result->contents);
 }
 
 bool merge_candidate_order(const std::string& current, const std::string& imported,
-                           std::size_t max_code_length, UserDataMergeResult* result) {
+                           UserDictKind kind, UserDataMergeResult* result) {
+    const std::size_t max_code_length =
+        kind == UserDictKind::WUBI ? kMaxWubiCodeLength : kMaxInputCodeLength;
     std::map<std::string, std::vector<std::string>> groups;
     std::size_t total_entries = 0;
     std::size_t serialized_size = std::char_traits<char>::length(kCandidateOrderHeader) + 1;
@@ -360,7 +365,7 @@ bool merge_candidate_order(const std::string& current, const std::string& import
             for (const auto& line : group.second) {
                 candidate += line + '\n';
             }
-            if (ManualCandidateOrder::validate_contents(candidate, max_code_length)) {
+            if (ManualCandidateOrder::validate_contents(candidate, kind)) {
                 if (!replace) {
                     total_entries += group.second.size();
                     for (const auto& line : group.second) {
@@ -401,30 +406,52 @@ bool merge_candidate_order(const std::string& current, const std::string& import
     collect(current, false);
     collect(imported, true);
     result->contents = serialize_candidate_orders(groups);
-    return ManualCandidateOrder::validate_contents(result->contents, max_code_length);
+    return ManualCandidateOrder::validate_contents(result->contents, kind);
 }
 
 } // namespace
 
-bool merge_user_data_contents(const std::string& file_name, const std::string& current,
-                              const std::string& imported, UserDataMergeResult* result) {
-    if (!result || current.size() > kMaxMergedFileSize || !valid_contents(file_name, current)) {
+bool merge_lexicon_resource_contents(LexiconResource resource, UserDictKind kind,
+                                     const std::string& current, const std::string& imported,
+                                     UserDataMergeResult* result) {
+    if (!result || current.size() > kMaxMergedFileSize ||
+        !valid_lexicon_contents(resource, kind, current)) {
         return false;
     }
     UserDataMergeResult merged;
     bool succeeded = false;
-    if (file_name == "user_pinyin.tsv" || file_name == "user_wubi.tsv") {
-        succeeded = merge_user_lexicon(file_name, current, imported, &merged);
-    } else if (file_name == "candidate_order_pinyin.tsv" ||
-               file_name == "candidate_order_wubi.tsv") {
-        succeeded = merge_candidate_order(
-            current, imported,
-            file_name == "candidate_order_wubi.tsv" ? kMaxWubiCodeLength : kMaxInputCodeLength,
-            &merged);
-    } else {
-        succeeded = merge_records(file_name, current, imported, &merged);
+    switch (resource) {
+    case LexiconResource::kUserLexicon:
+        succeeded = merge_user_lexicon(kind, current, imported, &merged);
+        break;
+    case LexiconResource::kCandidatePreference:
+        succeeded = merge_records(RecordFormat::kCandidatePreference, current, imported, &merged);
+        break;
+    case LexiconResource::kDisabledSystemLexicon:
+        succeeded =
+            merge_records(RecordFormat::kDisabledSystemLexicon, current, imported, &merged);
+        break;
+    case LexiconResource::kManualCandidateOrder:
+        succeeded = merge_candidate_order(current, imported, kind, &merged);
+        break;
     }
     if (!succeeded || merged.contents.size() > kMaxMergedFileSize) {
+        return false;
+    }
+    *result = std::move(merged);
+    return true;
+}
+
+bool merge_composition_learning_contents(const std::string& current,
+                                         const std::string& imported,
+                                         UserDataMergeResult* result) {
+    if (!result || current.size() > kMaxMergedFileSize ||
+        !valid_record_contents(RecordFormat::kCompositionLearning, current)) {
+        return false;
+    }
+    UserDataMergeResult merged;
+    if (!merge_records(RecordFormat::kCompositionLearning, current, imported, &merged) ||
+        merged.contents.size() > kMaxMergedFileSize) {
         return false;
     }
     *result = std::move(merged);
