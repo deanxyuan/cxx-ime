@@ -326,4 +326,136 @@ TEST(TextServiceComposition, queued_commit_does_not_modify_another_context_compo
     ASSERT_EQ(next_host.composition.ends, 0);
 }
 
+TEST(TextServiceComposition, popup_placeholder_survives_updates_and_is_replaced_or_canceled) {
+    for (bool commit : {true, false}) {
+        Fixture fixture;
+        TextServiceTestPeer::popup_only(fixture.service);
+        // A plausible host rectangle must not suppress the nonempty composition range.
+        fixture.host.active_view = &fixture.view;
+        fixture.view.text_result = S_OK;
+        fixture.view.text_rect = {100, 100, 117, 120};
+        BOOL eaten = FALSE;
+        ASSERT_TRUE(fixture.apply(fixture.key('N'), &eaten));
+        ASSERT_TRUE(fixture.service.empty_composition_placeholder_active());
+        ASSERT_TRUE(fixture.host.range.text == L" ");
+        ASSERT_TRUE(fixture.apply(fixture.key('I'), &eaten));
+        ASSERT_TRUE(fixture.host.range.text == L" ");
+        ASSERT_EQ(fixture.host.starts, 1);
+        ASSERT_EQ(fixture.host.composition.ends, 0);
+        for (const auto& text : fixture.host.range.written_texts) {
+            ASSERT_TRUE(text == L" ");
+        }
+
+        auto response = fixture.key(VK_ESCAPE);
+        if (commit) {
+            strcpy_s(response.commit_text, "chosen");
+        }
+        ASSERT_TRUE(fixture.apply(response, &eaten));
+        ASSERT_TRUE(fixture.host.range.text == (commit ? L"chosen" : L""));
+        ASSERT_EQ(fixture.host.composition.ends, 1);
+        ASSERT_TRUE(!fixture.service.empty_composition_placeholder_active());
+        ASSERT_TRUE(TextServiceTestPeer::empty(fixture.service));
+    }
+}
+
+TEST(TextServiceComposition, popup_first_write_failure_preserves_original_selection) {
+    Fixture fixture;
+    TextServiceTestPeer::popup_only(fixture.service);
+    fixture.host.range.text = L"original selection";
+    fixture.host.range.fail_write = true;
+    BOOL eaten = FALSE;
+    ASSERT_TRUE(!fixture.apply(fixture.key('N'), &eaten));
+    ASSERT_EQ(eaten, TRUE);
+    ASSERT_TRUE(fixture.host.range.text == L"original selection");
+    ASSERT_EQ(fixture.host.composition.ends, 1);
+    ASSERT_TRUE(!fixture.service.empty_composition_placeholder_active());
+    fixture.assert_cleared();
+}
+
+TEST(TextServiceComposition, popup_selection_failure_removes_placeholder) {
+    Fixture fixture;
+    TextServiceTestPeer::popup_only(fixture.service);
+    fixture.host.fail_selection = true;
+    BOOL eaten = FALSE;
+    ASSERT_TRUE(!fixture.apply(fixture.key('N'), &eaten));
+    ASSERT_EQ(eaten, TRUE);
+    ASSERT_TRUE(fixture.host.range.written_texts.front() == L" ");
+    ASSERT_TRUE(fixture.host.range.text.empty());
+    ASSERT_EQ(fixture.host.composition.ends, 1);
+    ASSERT_TRUE(!fixture.service.empty_composition_placeholder_active());
+    fixture.assert_cleared();
+}
+
+TEST(TextServiceComposition, popup_deferred_update_failure_cleans_existing_placeholder) {
+    Fixture fixture;
+    TextServiceTestPeer::popup_only(fixture.service);
+    BOOL eaten = FALSE;
+    ASSERT_TRUE(fixture.apply(fixture.key('N'), &eaten));
+    ASSERT_TRUE(fixture.host.range.text == L" ");
+    fixture.host.defer_write = true;
+    fixture.host.range.fail_write = true;
+    ASSERT_TRUE(fixture.apply(fixture.key('I'), &eaten));
+    ASSERT_TRUE(fixture.apply(fixture.key('H'), &eaten));
+    ASSERT_EQ(fixture.host.complete_pending(), S_OK);
+    const int writes = fixture.host.range.writes;
+    ASSERT_EQ(fixture.host.complete_pending(), S_OK);
+    ASSERT_EQ(fixture.host.range.writes, writes);
+    ASSERT_TRUE(fixture.host.range.text.empty());
+    ASSERT_EQ(fixture.host.composition.ends, 1);
+    ASSERT_TRUE(!fixture.service.empty_composition_placeholder_active());
+    fixture.assert_cleared();
+}
+
+TEST(TextServiceComposition, popup_host_termination_cleans_only_unchanged_readable_placeholder) {
+    for (int scenario = 0; scenario < 4; ++scenario) {
+        Fixture fixture;
+        TextServiceTestPeer::popup_only(fixture.service);
+        BOOL eaten = FALSE;
+        ASSERT_TRUE(fixture.apply(fixture.key('N'), &eaten));
+        ASSERT_TRUE(fixture.host.range.text == L" ");
+        fixture.host.defer_write = true;
+        ASSERT_TRUE(fixture.apply(fixture.key('I'), &eaten));
+        if (scenario == 1) {
+            fixture.host.range.text = L"host replacement";
+        } else if (scenario == 2) {
+            fixture.host.range.text.clear();
+        } else if (scenario == 3) {
+            fixture.host.range.fail_read = true;
+        }
+        const auto expected = scenario == 0 ? L"" : fixture.host.range.text;
+        const int writes_before_termination = fixture.host.range.writes;
+        ASSERT_EQ(fixture.service.OnCompositionTerminated(1, &fixture.host.composition), S_OK);
+        ASSERT_TRUE(fixture.host.range.text == expected);
+        ASSERT_EQ(fixture.host.range.writes, writes_before_termination + (scenario == 0 ? 1 : 0));
+        const int writes = fixture.host.range.writes;
+        ASSERT_EQ(fixture.host.complete_pending(), S_OK);
+        ASSERT_EQ(fixture.host.range.writes, writes);
+        ASSERT_EQ(fixture.host.starts, 1);
+        ASSERT_TRUE(!fixture.service.empty_composition_placeholder_active());
+        fixture.assert_cleared();
+    }
+}
+
+TEST(TextServiceComposition, popup_deferred_commit_replaces_placeholder_before_restart) {
+    Fixture fixture;
+    TextServiceTestPeer::popup_only(fixture.service);
+    BOOL eaten = FALSE;
+    ASSERT_TRUE(fixture.apply(fixture.key('N'), &eaten));
+    ASSERT_TRUE(fixture.host.range.text == L" ");
+    auto response = fixture.key('I');
+    strcpy_s(response.commit_text, "chosen");
+    fixture.host.defer_write = true;
+    ASSERT_TRUE(fixture.apply(response, &eaten));
+    ASSERT_EQ(fixture.host.complete_pending(), S_OK);
+    ASSERT_EQ(fixture.host.range.written_texts.size(), 3u);
+    ASSERT_TRUE(fixture.host.range.written_texts[1] == L"chosen");
+    ASSERT_TRUE(fixture.host.range.written_texts[2] == L" ");
+    ASSERT_EQ(fixture.host.starts, 2);
+    ASSERT_EQ(fixture.host.composition.ends, 1);
+    ASSERT_TRUE(fixture.service.empty_composition_placeholder_active());
+    fixture.host.defer_write = false;
+    ASSERT_TRUE(fixture.apply(fixture.key(VK_ESCAPE), &eaten));
+    ASSERT_TRUE(fixture.host.range.text.empty());
+}
+
 RUN_ALL_TESTS();

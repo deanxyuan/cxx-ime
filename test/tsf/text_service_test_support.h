@@ -173,10 +173,19 @@ public:
 class HostRange : public HostObject<ITfRange> {
 public:
     bool fail_write = false;
+    bool fail_read = false;
     int writes = 0;
     std::wstring text;
     std::vector<std::wstring> written_texts;
-    STDMETHODIMP GetText(TfEditCookie, DWORD, WCHAR*, ULONG, ULONG*) override { return E_NOTIMPL; }
+    STDMETHODIMP GetText(TfEditCookie, DWORD flags, WCHAR* buffer, ULONG count,
+                         ULONG* fetched) override {
+        *fetched = 0;
+        if (fail_read || flags != 0) {
+            return E_FAIL;
+        }
+        *fetched = static_cast<ULONG>(text.copy(buffer, count));
+        return S_OK;
+    }
     STDMETHODIMP SetText(TfEditCookie, DWORD, const WCHAR* value, LONG count) override {
         ++writes;
         if (fail_write && count > 0) {
