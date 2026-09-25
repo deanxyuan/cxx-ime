@@ -250,33 +250,36 @@ void StatusWindow::show() {
                  SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
 }
 
-void StatusWindow::show_below(HWND upper_window) {
-    if (!upper_window || !IsWindow(upper_window)) {
-        show();
-        return;
-    }
+void StatusWindow::show_preserving_z_order() {
     if (!hwnd_ || !IsWindow(hwnd_)) {
         return;
     }
     if (IsWindowVisible(hwnd_) == FALSE && layered_ready_) {
         RedrawLayered();
     }
+    SetWindowPos(hwnd_, nullptr, 0, 0, 0, 0,
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOZORDER | SWP_SHOWWINDOW);
+}
 
-    constexpr UINT flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE;
-    HDWP positions = BeginDeferWindowPos(2);
-    if (positions) {
-        positions =
-            DeferWindowPos(positions, hwnd_, HWND_TOPMOST, 0, 0, 0, 0, flags | SWP_SHOWWINDOW);
-    }
-    if (positions) {
-        positions = DeferWindowPos(positions, upper_window, HWND_TOPMOST, 0, 0, 0, 0, flags);
-    }
-    if (positions && EndDeferWindowPos(positions)) {
+void StatusWindow::show_below(HWND upper_window) {
+    if (!hwnd_ || !IsWindow(hwnd_)) {
         return;
     }
-
-    show();
-    SetWindowPos(upper_window, HWND_TOPMOST, 0, 0, 0, 0, flags);
+    if (!upper_window || upper_window == hwnd_ || !IsWindowVisible(upper_window) ||
+        (GetWindowLongPtrW(upper_window, GWL_EXSTYLE) & WS_EX_TOPMOST) == 0) {
+        show_preserving_z_order();
+        return;
+    }
+    if (IsWindowVisible(hwnd_) == FALSE && layered_ready_) {
+        RedrawLayered();
+    }
+    // Do not raise either window before lowering the status window: the candidate
+    // can be owned by an elevated host and must remain under its presenter's control.
+    if (!SetWindowPos(hwnd_, upper_window, 0, 0, 0, 0,
+                      SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER |
+                          SWP_SHOWWINDOW)) {
+        show_preserving_z_order();
+    }
 }
 
 void StatusWindow::hide() {

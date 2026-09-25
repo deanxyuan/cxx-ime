@@ -58,6 +58,8 @@ public:
     bool is_created() const;
 
     void show();
+    void show_preserving_z_order();
+    // Only moves this window; upper_window may belong to another process.
     void show_below(HWND upper_window);
     void hide();
     bool is_visible() const;

@@ -39,7 +39,7 @@ enum class UiPacketParseResult : std::uint8_t {
 
 enum class UiOwnership : std::uint32_t {
     kNone = 0,
-    kExternal = 1, // CxxIME server UI owns presentation.
+    kExternal = 1, // CxxIME presents UI (server or TSF local window).
     kHost = 2,     // The application consumes the TSF UI element.
 };
 
@@ -83,7 +83,7 @@ struct UiPresentationSnapshot {
     std::uint64_t target_generation = 0;
     std::uint64_t composition_generation = 0;
     std::uint64_t presentation_generation = 0;
-    // Source window for coordinate conversion only; never a parent or owner.
+    // TSF view window used for coordinate conversion and candidate owner identity.
     std::uint64_t target_window = 0;
     std::uint32_t flags = 0;
     UiOwnership ownership = UiOwnership::kNone;
@@ -102,6 +102,9 @@ struct UiPresentationSnapshot {
     std::uint32_t candidate_known_count = 0;
     CandidateExtentState candidate_extent_state = CandidateExtentState::kExhausted;
     std::uint32_t candidate_extent_complete = 1;
+    // Optional native window for z-order coordination when kTsfLocalCandidate is set.
+    // Append after the complete 0.6.1 payload, including its tail padding.
+    std::uint64_t local_candidate_window = 0;
 };
 
 enum class UiCommandType : std::uint32_t {
@@ -186,6 +189,8 @@ static_assert(offsetof(UiPresentationSnapshot, candidate_extent_complete) ==
               "UiPresentationSnapshot candidate extent completeness extension moved");
 static_assert(sizeof(UiPresentationSnapshot) >= UI_SNAPSHOT_BASELINE_SIZE,
               "UiPresentationSnapshot cannot shrink below the 0.4.0 baseline");
+static_assert(offsetof(UiPresentationSnapshot, local_candidate_window) == 3096,
+              "Local candidate window must follow the complete 0.6.0 payload");
 static_assert(alignof(UiCommand) == 8, "UiCommand alignment changed");
 static_assert(offsetof(UiCommand, type) == 40, "UiCommand::type offset changed");
 static_assert(offsetof(UiCommand, value) == 48, "UiCommand::value offset changed");
