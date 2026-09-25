@@ -200,6 +200,16 @@ target_sources(ui_presentation_router_test PRIVATE
 target_include_directories(ui_presentation_router_test PRIVATE
     ${CMAKE_SOURCE_DIR}/server/src
 )
+add_cxxime_test(ui_presentation_controller_test
+    SOURCES
+        server/ui_presentation_controller_test.cc
+        ${CMAKE_SOURCE_DIR}/server/src/ui_presentation_controller.cc
+    DEPS cxxime-engine cxxime-ui cxxime-ipc ole32
+)
+target_include_directories(ui_presentation_controller_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/server/src
+)
+set_tests_properties(ui_presentation_controller_test PROPERTIES RUN_SERIAL TRUE)
 add_cxxime_test(system_lifecycle_monitor_test
     SOURCES server/system_lifecycle_monitor_test.cc
     DEPS cxxime-shared

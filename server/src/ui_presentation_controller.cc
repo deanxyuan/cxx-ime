@@ -37,6 +37,43 @@ bool has_flag(const cxxime::UiPresentationSnapshot& snapshot, cxxime::UiSnapshot
     return (snapshot.flags & cxxime::ui_snapshot_flag(flag)) != 0;
 }
 
+HWND local_candidate_window(const cxxime::UiPresentationSnapshot& snapshot) {
+    const HWND candidate = reinterpret_cast<HWND>(snapshot.local_candidate_window);
+    if (!candidate || !IsWindowVisible(candidate) ||
+        (GetWindowLongPtrW(candidate, GWL_STYLE) & WS_CHILD) != 0 ||
+        (GetWindowLongPtrW(candidate, GWL_EXSTYLE) & WS_EX_TOPMOST) == 0) {
+        return nullptr;
+    }
+    wchar_t class_name[64] = {};
+    if (!GetClassNameW(candidate, class_name, 64) ||
+        lstrcmpW(class_name, L"CxxIMECandidateWindow") != 0) {
+        return nullptr;
+    }
+    const HWND owner = GetWindow(candidate, GW_OWNER);
+    DWORD candidate_process = 0;
+    GetWindowThreadProcessId(candidate, &candidate_process);
+    if (!candidate_process || !IsWindow(owner)) {
+        return nullptr;
+    }
+    const HWND target = reinterpret_cast<HWND>(snapshot.target_window);
+    if (target) {
+        DWORD target_process = 0;
+        GetWindowThreadProcessId(target, &target_process);
+        if (target_process != candidate_process ||
+            (owner != target && owner != GetAncestor(target, GA_ROOT))) {
+            return nullptr;
+        }
+    } else {
+        DWORD owner_process = 0;
+        GetWindowThreadProcessId(owner, &owner_process);
+        if (owner_process != candidate_process) {
+            return nullptr;
+        }
+    }
+    // With no TSF view HWND, the local presenter may have used GetFocus as owner.
+    return candidate;
+}
+
 bool transform_caret_to_physical(std::uint64_t source_window, RECT* caret) {
     const HWND hwnd = reinterpret_cast<HWND>(source_window);
     RECT transformed = {};
@@ -292,12 +329,12 @@ private:
                                  : cxxime::UiCommandType::kPageNext);
         });
         candidate_window_.set_layout_changed_callback([this]() {
-            if (applying_candidate_presentation_ || !rendered_presentation_ ||
+            if (applying_presentation_ || !rendered_presentation_ ||
                 !candidate_window_.is_visible()) {
                 return;
             }
             store_visible_candidate_count(rendered_presentation_->snapshot);
-            reconcile_status_window_z_order(status_window_.is_visible(), true);
+            reconcile_current_status_window_z_order();
         });
         status_window_.set_click_callback([this](cxxime::StatusButton button) {
             switch (button) {
@@ -320,12 +357,10 @@ private:
                              static_cast<std::uint32_t>(command));
         });
         status_window_.set_geometry_changed_callback([this]() {
-            reconcile_status_window_z_order(status_window_.is_visible(),
-                                            candidate_window_.is_visible());
+            reconcile_current_status_window_z_order();
         });
         status_window_.set_position_callback([this](int x, int y) {
-            reconcile_status_window_z_order(status_window_.is_visible(),
-                                            candidate_window_.is_visible());
+            reconcile_current_status_window_z_order();
             PositionHandler handler;
             {
                 std::lock_guard<std::mutex> lock(mutex_);
@@ -337,29 +372,41 @@ private:
         });
     }
 
-    void reconcile_status_window_z_order(bool status_visible, bool candidate_visible) {
+    void reconcile_current_status_window_z_order() {
+        if (!applying_presentation_) {
+            reconcile_status_window_z_order(
+                status_window_.is_visible(),
+                rendered_presentation_ ? &rendered_presentation_->snapshot : nullptr);
+        }
+    }
+
+    void reconcile_status_window_z_order(bool status_visible,
+                                         const cxxime::UiPresentationSnapshot* snapshot) {
         if (!status_visible) {
             status_window_.hide();
             return;
         }
-        if (!candidate_visible) {
+        const bool local_candidate_visible =
+            snapshot && snapshot->ownership == cxxime::UiOwnership::kExternal &&
+            has_flag(*snapshot, cxxime::UiSnapshotFlag::kCandidateVisible) &&
+            has_flag(*snapshot, cxxime::UiSnapshotFlag::kTsfLocalCandidate);
+        const HWND candidate = local_candidate_visible
+                ? local_candidate_window(*snapshot)
+                : (candidate_window_.is_visible() ? candidate_window_.native_handle() : nullptr);
+        if (!candidate && local_candidate_visible) {
+            // Old senders have no HWND extension. A stale or unavailable local
+            // window likewise gives us no reason to raise status over its presenter.
+            status_window_.show_preserving_z_order();
+            return;
+        }
+        if (!candidate) {
             status_window_.show();
             return;
         }
 
-        RECT candidate_rect = {};
-        RECT status_rect = {};
-        RECT intersection = {};
-        const bool have_window_rects = candidate_window_.get_window_rect(&candidate_rect) &&
-                                        status_window_.get_window_rect(&status_rect);
-        const bool windows_overlap =
-            !have_window_rects ||
-            IntersectRect(&intersection, &candidate_rect, &status_rect) != FALSE;
-        if (windows_overlap) {
-            status_window_.show_below(candidate_window_.native_handle());
-        } else {
-            status_window_.show();
-        }
+        // Keep a stable priority even before overlap. A TSF-local candidate can
+        // move or resize on its own UI thread without publishing a new snapshot.
+        status_window_.show_below(candidate);
     }
 
     void apply_config(const std::shared_ptr<const cxxime::Config>& config) {
@@ -474,7 +521,7 @@ private:
         if (!applied.candidate_visible) {
             candidate_window_.hide();
             clear_visible_candidate_count();
-            reconcile_status_window_z_order(applied.status_visible, false);
+            reconcile_status_window_z_order(applied.status_visible, &current);
             if (applied.status_visible) {
                 rendered_presentation_ = presentation;
             } else {
@@ -487,15 +534,13 @@ private:
         // Bind the popup to the active TSF view before showing it so ordinary
         // desktop hosts keep the candidate window in their owner hierarchy.
         const HWND candidate_owner = reinterpret_cast<HWND>(current.target_window);
-        applying_candidate_presentation_ = true;
         bool owner_binding_fallback = false;
         if (!candidate_window_.ensure_created_with_ownerless_fallback(
                 candidate_owner, &owner_binding_fallback)) {
-            applying_candidate_presentation_ = false;
             applied.candidate_visible = false;
             candidate_window_.hide();
             clear_visible_candidate_count();
-            reconcile_status_window_z_order(applied.status_visible, false);
+            reconcile_status_window_z_order(applied.status_visible, &current);
             if (applied.status_visible) {
                 rendered_presentation_ = presentation;
             } else {
@@ -534,11 +579,10 @@ private:
         candidate_window_.update(candidate_page_from_snapshot(current));
         candidate_window_.show();
         applied.candidate_visible = candidate_window_.is_visible();
-        applying_candidate_presentation_ = false;
         if (!applied.candidate_visible) {
             candidate_window_.hide();
             clear_visible_candidate_count();
-            reconcile_status_window_z_order(applied.status_visible, false);
+            reconcile_status_window_z_order(applied.status_visible, &current);
             if (applied.status_visible) {
                 rendered_presentation_ = presentation;
             } else {
@@ -547,7 +591,7 @@ private:
             trace_presentation(*presentation, applied);
             return;
         }
-        reconcile_status_window_z_order(applied.status_visible, true);
+        reconcile_status_window_z_order(applied.status_visible, &current);
         rendered_presentation_ = presentation;
         store_visible_candidate_count(current);
         trace_presentation(*presentation, applied);
@@ -648,6 +692,9 @@ private:
             pending_status_handoff_ = false;
         }
         const bool config_changed = config_revision != applied_config_revision_;
+        // Window geometry callbacks must not reconcile against the previous target
+        // while configuration or presentation for a new target is being applied.
+        applying_presentation_ = true;
         if (config_changed) {
             apply_config(config);
             applied_config_revision_ = config_revision;
@@ -657,6 +704,7 @@ private:
                                candidate_placement_cycle);
             applied_presentation_revision_ = presentation_revision;
         }
+        applying_presentation_ = false;
     }
 
     void run() {
@@ -747,7 +795,7 @@ private:
     std::shared_ptr<const cxxime::Config> current_config_;
     std::optional<RoutedPresentation> pending_snapshot_;
     std::optional<RoutedPresentation> rendered_presentation_;
-    bool applying_candidate_presentation_ = false;
+    bool applying_presentation_ = false;
     bool pending_status_handoff_ = false;
     bool status_handoff_active_ = false;
     UINT_PTR status_handoff_timer_ = 0;

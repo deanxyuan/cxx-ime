@@ -253,3 +253,32 @@ TEST(TextServicePresentation, deadline_without_extent_stops_queries_but_later_in
     ASSERT_TRUE(fixture.apply(fixture.key('I'), &eaten));
     probe.wait(true);
 }
+
+TEST(TextServicePresentation, local_candidate_snapshot_tracks_native_window_visibility) {
+    Fixture fixture;
+    PresentationProbe probe(fixture);
+    const HWND owner =
+        CreateWindowExW(WS_EX_NOACTIVATE, L"STATIC", L"TSF UI test", WS_OVERLAPPEDWINDOW, 50, 50,
+                        400, 200, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    ASSERT_TRUE(owner != nullptr);
+    TextServiceTestPeer::local_candidate_host(fixture.service, owner);
+    BOOL eaten = FALSE;
+    ASSERT_TRUE(fixture.apply(fixture.key('N'), &eaten));
+    const RECT anchor = {100, 100, 101, 120};
+    fixture.service.update_candidate_position(
+        anchor, &fixture.host, false, TextServiceTestPeer::generation(fixture.service), true);
+    const auto shown = probe.wait(true);
+    ASSERT_TRUE(
+        (shown.flags & cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kTsfLocalCandidate)) != 0);
+    const HWND candidate = reinterpret_cast<HWND>(shown.local_candidate_window);
+    ASSERT_TRUE(IsWindowVisible(candidate) != FALSE);
+    ASSERT_EQ(GetWindow(candidate, GW_OWNER), owner);
+
+    ASSERT_TRUE(fixture.apply(fixture.key(VK_ESCAPE), &eaten));
+    const auto hidden = probe.wait(false);
+    ASSERT_EQ(hidden.local_candidate_window, static_cast<std::uint64_t>(0));
+    ASSERT_TRUE(
+        (hidden.flags & cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kTsfLocalCandidate)) == 0);
+    ASSERT_TRUE(IsWindowVisible(candidate) == FALSE);
+    DestroyWindow(owner);
+}

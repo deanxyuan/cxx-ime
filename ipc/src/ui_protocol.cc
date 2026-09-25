@@ -168,6 +168,11 @@ UiPacketParseResult decode_ui_snapshot_packet(const void* data, std::size_t size
                                             : CandidateExtentState::kExhausted;
         parsed.candidate_extent_complete = 1;
     }
+    constexpr std::size_t kLocalCandidateWindowPayloadSize =
+        offsetof(UiPresentationSnapshot, local_candidate_window) + sizeof(std::uint64_t);
+    if (header.payload_size < kLocalCandidateWindowPayloadSize) {
+        parsed.local_candidate_window = 0;
+    }
     if ((parsed.flags & ~kKnownSnapshotFlags) != 0 || !valid_ownership(parsed.ownership)) {
         return UiPacketParseResult::kIgnored;
     }

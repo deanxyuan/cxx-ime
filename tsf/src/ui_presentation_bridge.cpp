@@ -305,6 +305,8 @@ void TextService::_publish_ui_presentation() {
     if (local_candidate_visible) {
         snapshot.flags |=
             cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kTsfLocalCandidate);
+        snapshot.local_candidate_window =
+            reinterpret_cast<std::uint64_t>(_localCandidateWindow->native_handle());
     } else if (snapshot.ownership == cxxime::UiOwnership::kHost) {
         _hide_local_candidate_window();
         _candidatePresentation.set_presenter(cxxime_tsf::CandidatePresenter::kHost);

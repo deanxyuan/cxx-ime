@@ -100,6 +100,11 @@ struct TextServiceTestPeer {
         return service._pendingCompositionEdits;
     }
     static void popup_only(TextService& service) { service._config.inline_preedit = false; }
+    static void local_candidate_host(TextService& service, HWND view) {
+        service._activateFlags |= TF_TMF_IMMERSIVEMODE;
+        service._effectiveEditTarget.view_window = reinterpret_cast<uintptr_t>(view);
+        service._config.render_backend = "gdi";
+    }
     static void start_ui(TextService& service, const std::wstring& pipe) {
         service._uiSessionGeneration = 1;
         service._uiTargetGeneration = 1;
