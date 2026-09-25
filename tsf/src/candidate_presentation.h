@@ -43,6 +43,7 @@ class CandidatePresentation {
 public:
     using Clock = std::chrono::steady_clock;
     using TimePoint = Clock::time_point;
+    static constexpr int kRepositionFallbackDelayMs = 150;
 
     void update_content(const cxxime::CandidatePresentationPage& page,
                         const std::string& popup_preedit,
@@ -73,11 +74,10 @@ public:
     bool pending_caret_fallback_due(TimePoint now, int delay_ms) const;
     bool accept_provisional_caret_after_timeout(TimePoint now, RECT* caret_rect);
     void begin_composition_restart(TimePoint now);
-    bool fail_composition_restart(std::uint64_t generation);
     bool should_keep_waiting_for_caret(const RECT& caret_rect, bool from_layout_change,
                                        bool used_trusted_caret, TimePoint now,
                                        int pending_delay_ms, int reposition_delay_ms);
-    bool complete_composition_restart(std::uint64_t generation);
+    bool complete_composition_restart(std::uint64_t generation, TimePoint now = Clock::now());
     bool accept_caret(std::uint64_t generation);
     RECT display_caret(const RECT& sample, std::uint64_t sample_serial,
                        std::uint64_t target_generation, TimePoint now);
@@ -85,6 +85,9 @@ public:
     bool caret_jump_pending() const { return caret_jump_pending_; }
     bool caret_jump_filtered() const { return caret_jump_filtered_; }
     bool caret_ready_to_show() const { return has_displayed_caret_; }
+    bool can_retain_displayed_caret(std::uint64_t target_generation) const;
+    bool caret_poll_pending() const;
+    bool expire_caret_wait(TimePoint now);
     bool initial_layout_pending() const {
         return waiting_for_caret() && initial_layout_wait_;
     }

@@ -37,6 +37,91 @@ TEST(CandidatePresentation, external_ready_expects_window) {
     ASSERT_TRUE(presentation.should_show_external_window(true));
 }
 
+TEST(CandidatePresentation, displayed_caret_retention_obeys_target_and_wait_lifetime) {
+    cxxime_tsf::CandidatePresentation presentation;
+    const auto now = cxxime_tsf::CandidatePresentation::Clock::now();
+    const RECT caret = {10, 20, 11, 40};
+    presentation.update_content(page_with_candidate("old"), "", 0, 1, 1);
+    presentation.set_ownership(cxxime_tsf::CandidateOwnership::kExternal);
+    ASSERT_TRUE(!presentation.can_retain_displayed_caret(1));
+    presentation.display_caret(caret, 1, 1, now);
+    presentation.update_content(page_with_candidate("new"), "", 0, 1, 1);
+    ASSERT_TRUE(presentation.can_retain_displayed_caret(1));
+    ASSERT_TRUE(!presentation.can_retain_displayed_caret(2));
+
+    presentation.set_ownership(cxxime_tsf::CandidateOwnership::kHost);
+    ASSERT_TRUE(!presentation.can_retain_displayed_caret(1));
+    presentation.set_ownership(cxxime_tsf::CandidateOwnership::kExternal);
+    presentation.begin_composition_restart(now);
+    ASSERT_TRUE(!presentation.can_retain_displayed_caret(1));
+    ASSERT_TRUE(presentation.complete_composition_restart(presentation.generation()));
+    ASSERT_TRUE(!presentation.can_retain_displayed_caret(1));
+    ASSERT_TRUE(presentation.accept_caret(presentation.generation()));
+    presentation.begin_waiting_for_initial_layout(caret, now);
+    ASSERT_TRUE(!presentation.can_retain_displayed_caret(1));
+    presentation.finish();
+    ASSERT_TRUE(!presentation.can_retain_displayed_caret(1));
+}
+
+TEST(CandidatePresentation, content_and_unstable_layout_do_not_extend_fast_poll_budget) {
+    cxxime_tsf::CandidatePresentation presentation;
+    using TimePoint = cxxime_tsf::CandidatePresentation::TimePoint;
+    const auto start = TimePoint(std::chrono::milliseconds(100));
+    const RECT caret = {10, 20, 11, 40};
+    const RECT changed = {300, 300, 301, 320};
+    presentation.update_content(page_with_candidate("candidate"), "", 0, 1, 1);
+    presentation.begin_waiting_for_initial_layout(caret, start);
+    ASSERT_TRUE(presentation.caret_poll_pending());
+    ASSERT_TRUE(!presentation.expire_caret_wait(start + std::chrono::milliseconds(89)));
+    presentation.update_content(page_with_candidate("new"), "", 0, 1, 1);
+    ASSERT_TRUE(presentation.should_keep_waiting_for_caret(
+        changed, true, false, start + std::chrono::milliseconds(89), 30, 150));
+    ASSERT_TRUE(presentation.expire_caret_wait(start + std::chrono::milliseconds(90)));
+    ASSERT_TRUE(!presentation.caret_poll_pending());
+    presentation.begin_waiting_for_caret(false, nullptr, start + std::chrono::milliseconds(500));
+    ASSERT_TRUE(!presentation.caret_poll_pending());
+    ASSERT_TRUE(!presentation.should_keep_waiting_for_caret(
+        changed, true, false, start + std::chrono::milliseconds(500), 30, 150));
+
+    presentation.finish();
+    presentation.begin_waiting_for_caret(false, nullptr, start);
+    ASSERT_TRUE(presentation.caret_poll_pending());
+    ASSERT_TRUE(!presentation.expire_caret_wait(start + std::chrono::milliseconds(89)));
+    ASSERT_TRUE(presentation.expire_caret_wait(start + std::chrono::milliseconds(90)));
+    ASSERT_TRUE(!presentation.caret_poll_pending());
+}
+
+TEST(CandidatePresentation, fast_poll_covers_restart_deadline_and_stops_after_resolution) {
+    cxxime_tsf::CandidatePresentation presentation;
+    using TimePoint = cxxime_tsf::CandidatePresentation::TimePoint;
+    const auto start = TimePoint(std::chrono::milliseconds(100));
+    presentation.begin_composition_restart(start);
+    ASSERT_TRUE(!presentation.caret_poll_pending());
+    ASSERT_TRUE(!presentation.expire_caret_wait(start + std::chrono::seconds(1)));
+    const auto completed = start + std::chrono::seconds(1);
+    ASSERT_TRUE(presentation.complete_composition_restart(presentation.generation(), completed));
+    ASSERT_TRUE(presentation.caret_poll_pending());
+    ASSERT_TRUE(!presentation.expire_caret_wait(completed + std::chrono::milliseconds(149)));
+    // A later write in the same episode must not renew the deadline.
+    ASSERT_TRUE(presentation.complete_composition_restart(
+        presentation.generation(), completed + std::chrono::milliseconds(149)));
+    ASSERT_TRUE(presentation.expire_caret_wait(completed + std::chrono::milliseconds(150)));
+    ASSERT_TRUE(!presentation.caret_poll_pending());
+    ASSERT_TRUE(presentation.accept_caret(presentation.generation()));
+    ASSERT_TRUE(!presentation.caret_poll_pending());
+
+    const RECT initial = {10, 20, 11, 40};
+    const RECT changed = {300, 300, 301, 320};
+    presentation.display_caret(initial, 1, 1, start);
+    presentation.display_caret(changed, 2, 1, start);
+    ASSERT_TRUE(presentation.caret_poll_pending());
+    ASSERT_TRUE(!presentation.accept_pending_caret_after_timeout(
+        start + std::chrono::milliseconds(89)));
+    ASSERT_TRUE(
+        presentation.accept_pending_caret_after_timeout(start + std::chrono::milliseconds(90)));
+    ASSERT_TRUE(!presentation.caret_poll_pending());
+}
+
 TEST(CandidatePresentation, caret_jump_needs_fresh_confirmation) {
     cxxime_tsf::CandidatePresentation presentation;
     using TimePoint = cxxime_tsf::CandidatePresentation::TimePoint;
@@ -317,7 +402,7 @@ TEST(CandidatePresentation, changed_caret_finishes_wait_immediately) {
         cxxime_tsf::CandidatePresentation::TimePoint(std::chrono::milliseconds(100));
     presentation.begin_composition_restart(started);
     presentation.begin_waiting_for_caret(true, &stale, started);
-    ASSERT_TRUE(presentation.complete_composition_restart(presentation.generation()));
+    ASSERT_TRUE(presentation.complete_composition_restart(presentation.generation(), started));
 
     ASSERT_TRUE(!presentation.should_keep_waiting_for_caret(
         current, true, true, started + std::chrono::milliseconds(1), 30, 150));
@@ -331,7 +416,7 @@ TEST(CandidatePresentation, repeated_wait_preserves_original_deadline) {
     const auto started =
         cxxime_tsf::CandidatePresentation::TimePoint(std::chrono::milliseconds(100));
     presentation.begin_composition_restart(started);
-    ASSERT_TRUE(presentation.complete_composition_restart(presentation.generation()));
+    ASSERT_TRUE(presentation.complete_composition_restart(presentation.generation(), started));
     presentation.begin_waiting_for_caret(true, &stale, started + std::chrono::milliseconds(100));
 
     ASSERT_TRUE(presentation.caret_resolution_allowed());
@@ -389,22 +474,22 @@ TEST(CandidatePresentation, composition_restart_blocks_an_existing_ordinary_wait
     ASSERT_TRUE(!presentation.caret_resolution_allowed());
     ASSERT_TRUE(presentation.composition_restart_pending());
     ASSERT_TRUE(!presentation.accept_caret(presentation.generation()));
-    ASSERT_TRUE(presentation.complete_composition_restart(presentation.generation()));
+    ASSERT_TRUE(presentation.complete_composition_restart(presentation.generation(), restarted));
     ASSERT_TRUE(!presentation.composition_restart_pending());
     ASSERT_TRUE(presentation.should_keep_waiting_for_caret(
         current, false, false, restarted + std::chrono::milliseconds(10), 30, 150));
 }
 
-TEST(CandidatePresentation, restart_failure_only_clears_the_matching_generation) {
+TEST(CandidatePresentation, finish_clears_a_pending_composition_restart) {
     cxxime_tsf::CandidatePresentation presentation;
     presentation.update_content(page_with_candidate("candidate"), "preedit", 3, 1, 1);
     presentation.set_ownership(cxxime_tsf::CandidateOwnership::kExternal);
     const std::uint64_t generation = presentation.generation();
     presentation.begin_composition_restart(cxxime_tsf::CandidatePresentation::Clock::now());
 
-    ASSERT_TRUE(!presentation.fail_composition_restart(generation - 1));
     ASSERT_TRUE(presentation.composition_restart_pending());
-    ASSERT_TRUE(presentation.fail_composition_restart(generation));
+    presentation.finish();
+    ASSERT_TRUE(!presentation.generation_matches(generation));
     ASSERT_EQ(presentation.content_state(), cxxime_tsf::CandidateContentState::kEmpty);
     ASSERT_EQ(presentation.ownership(), cxxime_tsf::CandidateOwnership::kNone);
     ASSERT_TRUE(!presentation.waiting_for_caret());
@@ -421,7 +506,7 @@ TEST(CandidatePresentation, caret_resolution_does_not_end_restart_episode) {
 
     ASSERT_TRUE(!presentation.composition_restart_pending());
     ASSERT_TRUE(presentation.composition_restart_active());
-    ASSERT_TRUE(presentation.fail_composition_restart(generation));
+    presentation.finish();
     ASSERT_EQ(presentation.content_state(), cxxime_tsf::CandidateContentState::kEmpty);
     ASSERT_TRUE(!presentation.composition_restart_active());
 }
@@ -438,8 +523,9 @@ TEST(CandidatePresentation, restart_episode_follows_the_latest_content_generatio
     ASSERT_TRUE(presentation.composition_restart_active());
     ASSERT_TRUE(!presentation.complete_composition_restart(old_generation));
     ASSERT_TRUE(presentation.composition_restart_pending());
-    ASSERT_TRUE(!presentation.fail_composition_restart(old_generation));
-    ASSERT_TRUE(presentation.fail_composition_restart(current_generation));
+    ASSERT_TRUE(presentation.complete_composition_restart(current_generation));
+    ASSERT_TRUE(!presentation.composition_restart_pending());
+    presentation.finish();
     ASSERT_TRUE(!presentation.composition_restart_active());
 }
 
@@ -567,7 +653,7 @@ TEST(CandidatePresentation, no_stale_rect_waits_for_trusted_position_or_deadline
     presentation.begin_composition_restart(started);
     ASSERT_TRUE(presentation.should_keep_waiting_for_caret(
         caret, true, true, started + std::chrono::milliseconds(200), 30, 150));
-    ASSERT_TRUE(presentation.complete_composition_restart(presentation.generation()));
+    ASSERT_TRUE(presentation.complete_composition_restart(presentation.generation(), started));
 
     ASSERT_TRUE(presentation.should_keep_waiting_for_caret(
         caret, false, false, started + std::chrono::milliseconds(10), 30, 150));

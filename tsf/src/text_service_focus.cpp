@@ -127,6 +127,7 @@ void TextService::_release_effective_edit_target() {
 }
 
 void TextService::_clear_effective_edit_target(const char* source, bool target_unavailable) {
+    invalidate_composition_edit_requests();
     const cxxime_tsf::EffectiveEditTargetSnapshot previous = _effectiveEditTarget;
     const cxxime_tsf::EffectiveEditTargetSnapshot unavailable;
     const cxxime_tsf::EffectiveEditTargetBindings bindings =
@@ -174,8 +175,7 @@ void TextService::_clear_effective_edit_target(const char* source, bool target_u
 
 bool TextService::_synchronize_effective_edit_target(ITfContext* event_context,
                                                      ITfDocumentMgr* event_document_mgr,
-                                                     const char* source,
-                                                     bool context_already_validated) {
+                                                     const char* source) {
     ITfDocumentMgr* document_mgr = nullptr;
     ITfContext* context = nullptr;
 
@@ -211,20 +211,12 @@ bool TextService::_synchronize_effective_edit_target(ITfContext* event_context,
         return false;
     }
 
-    if (!context_already_validated) {
-        const char* block_reason = _input_context_block_reason(context);
-        if (block_reason) {
-            context->Release();
-            document_mgr->Release();
-            _clear_effective_edit_target(source, unavailable_target_reason(block_reason));
-            return false;
-        }
-        if (_context_has_no_edit_target(context)) {
-            context->Release();
-            document_mgr->Release();
-            _clear_effective_edit_target(source, true);
-            return false;
-        }
+    const char* block_reason = _input_context_block_reason(context);
+    if (block_reason) {
+        context->Release();
+        document_mgr->Release();
+        _clear_effective_edit_target(source, unavailable_target_reason(block_reason));
+        return false;
     }
 
     cxxime_tsf::EffectiveEditTargetSnapshot next;
@@ -321,7 +313,7 @@ bool TextService::_synchronize_effective_edit_target(ITfContext* event_context,
 }
 
 bool TextService::_synchronize_effective_edit_target_from_thread_mgr(const char* source) {
-    return _synchronize_effective_edit_target(nullptr, nullptr, source, false);
+    return _synchronize_effective_edit_target(nullptr, nullptr, source);
 }
 
 STDMETHODIMP TextService::OnSetThreadFocus() {

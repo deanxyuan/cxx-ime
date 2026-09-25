@@ -22,7 +22,6 @@ bool is_valid_caret_rect(const RECT& rc) {
 namespace {
 
 constexpr int kCandidatePendingFallbackDelayMs = 30;
-constexpr int kCandidateRepositionFallbackDelayMs = 150;
 constexpr LONG kUnknownCaretInsetPx = 8;
 constexpr LONG kUnknownCaretHeightPx = 20;
 
@@ -136,7 +135,8 @@ void TextService::update_candidate_position(const RECT& rc,
         if (_candidatePresentation.should_keep_waiting_for_caret(
                 final_rect, from_layout_change, used_trusted_caret,
                 cxxime_tsf::CandidatePresentation::Clock::now(),
-                kCandidatePendingFallbackDelayMs, kCandidateRepositionFallbackDelayMs)) {
+                kCandidatePendingFallbackDelayMs,
+                cxxime_tsf::CandidatePresentation::kRepositionFallbackDelayMs)) {
             return;
         }
         uint64_t generation = _candidatePresentation.generation();

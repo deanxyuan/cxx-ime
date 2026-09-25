@@ -28,6 +28,7 @@ public:
         END_COMPOSITION,
         UPDATE_COMPOSITION,
         ENSURE_COMPOSITION_TEXT,
+        COMMIT_AND_RESTART_COMPOSITION,
         COMMIT_COMPOSITION,
         QUERY_CARET,
         UPDATE_CANDIDATE_POSITION
@@ -50,6 +51,11 @@ public:
         _candidatePresentationGeneration = generation;
         _candidatePresentationContextIdentity = context_identity;
     }
+    void set_composition_edit_request(uint64_t generation, uintptr_t context_identity) {
+        _compositionEditGeneration = generation;
+        _compositionEditContextIdentity = context_identity;
+    }
+    void set_commit_before_preedit(const std::wstring& text) { _commitBeforePreedit = text; }
     bool get_caret_rect(RECT& out) const {
         if (_resultValid) {
             out = _resultRect;
@@ -62,6 +68,8 @@ public:
     bool composition_start_attempted() const { return _compositionStartAttempted; }
     HRESULT composition_start_result() const { return _compositionStartResult; }
     bool composition_returned() const { return _compositionReturned; }
+    uint64_t composition_edit_generation() const { return _compositionEditGeneration; }
+    uintptr_t composition_edit_context_identity() const { return _compositionEditContextIdentity; }
 
 private:
     LONG _cRef = 1;
@@ -69,7 +77,9 @@ private:
     ITfContext* _context;
     ITfComposition* _expectedComposition = nullptr;
     Action _action = Action::INSERT_TEXT;
+    bool _registeredWrite = false;
     std::wstring _text;
+    std::wstring _commitBeforePreedit;
     size_t _selectionOffset = 0;
     bool _hasSelectionOffset = false;
     size_t _convertedPrefixUtf16 = 0;
@@ -83,6 +93,8 @@ private:
     bool _positionUpdateFromLayoutChange = false;
     uint64_t _candidatePresentationGeneration = 0;
     uintptr_t _candidatePresentationContextIdentity = 0;
+    uint64_t _compositionEditGeneration = 0;
+    uintptr_t _compositionEditContextIdentity = 0;
     HRESULT _actionResult = E_PENDING;
     bool _compositionStartAttempted = false;
     HRESULT _compositionStartResult = E_PENDING;

@@ -311,6 +311,7 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
 
 STDMETHODIMP TextService::Deactivate() {
     CXXIME_LOG(L"Deactivate: sessionId=%u", _sessionId);
+    invalidate_composition_edit_requests();
     _activated = false;
     _inputFocused = false;
     _inputTargetUnavailable = false;

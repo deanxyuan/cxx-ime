@@ -15,6 +15,11 @@
 
 namespace {
 
+bool edit_request_can_defer(HRESULT request, HRESULT session) {
+    return request == TF_E_LOCKED || request == TF_E_SYNCHRONOUS ||
+           (SUCCEEDED(request) && session == TF_E_SYNCHRONOUS);
+}
+
 HRESULT replace_composition_text_if_unchanged(ITfRange* range, TfEditCookie edit_cookie,
                                               const std::wstring& expected,
                                               const std::wstring& replacement) {
@@ -101,6 +106,7 @@ STDMETHODIMP TextService::OnCompositionTerminated(TfEditCookie ecWrite,
         host_terminated && _hostTerminationCompositionText.has_value();
     HRESULT normalization_result = normalization_requested ? E_POINTER : S_FALSE;
     if (host_terminated) {
+        invalidate_composition_edit_requests();
         if ((_emptyCompositionPlaceholderActive || normalization_requested) && pComposition) {
             ITfRange* range = nullptr;
             if (SUCCEEDED(pComposition->GetRange(&range)) && range) {
@@ -143,7 +149,12 @@ STDMETHODIMP TextService::OnCompositionTerminated(TfEditCookie ecWrite,
     return S_OK;
 }
 
-HRESULT TextService::insert_text(const std::wstring& text, bool sync) {
+HRESULT TextService::insert_text(const std::wstring& text, bool sync,
+                                 uint64_t* request_generation) {
+    const uint64_t generation = begin_composition_edit_request();
+    if (request_generation) {
+        *request_generation = generation;
+    }
     if (!_threadMgr || text.empty()) {
         return E_FAIL;
     }
@@ -167,47 +178,59 @@ HRESULT TextService::insert_text(const std::wstring& text, bool sync) {
     }
 
     edit_session->set_action(EditSession::Action::INSERT_TEXT, text);
+    edit_session->set_composition_edit_request(generation, _effectiveEditTarget.context_identity);
 
     HRESULT edit_hr = E_FAIL;
-    const DWORD flags = TF_ES_READWRITE | (sync ? TF_ES_SYNC : TF_ES_ASYNC);
+    const DWORD flags =
+        TF_ES_READWRITE | ordered_composition_edit_mode(sync ? TF_ES_SYNC : TF_ES_ASYNC);
     const HRESULT request_hr =
         context->RequestEditSession(_clientId, edit_session, flags, &edit_hr);
     if (sync) {
         char detail[128] = {};
-        snprintf(detail, sizeof(detail),
-                 "insert sync=1 request=0x%08lx edit=0x%08lx len=%u",
+        snprintf(detail, sizeof(detail), "insert sync=1 request=0x%08lx edit=0x%08lx len=%u",
                  static_cast<unsigned long>(request_hr), static_cast<unsigned long>(edit_hr),
                  static_cast<unsigned int>(text.length()));
-        _enqueue_event_trace("composition_commit", detail,
-                             FAILED(request_hr) || FAILED(edit_hr));
+        _enqueue_event_trace("composition_commit", detail, FAILED(request_hr) || FAILED(edit_hr));
     }
 
+    const HRESULT action_hr = edit_session->action_result();
     edit_session->Release();
     context->Release();
     document_mgr->Release();
-    return edit_hr;
+    if (FAILED(request_hr) || FAILED(edit_hr)) {
+        return FAILED(request_hr) ? request_hr : edit_hr;
+    }
+    return action_hr == E_PENDING ? edit_hr : action_hr;
 }
 
 HRESULT TextService::_commit_text(ITfContext* context,
                                    const std::wstring& text,
-                                   bool sync) {
+                                   bool sync,
+                                   uint64_t* request_generation) {
     if (!context) {
-        return insert_text(text, sync);
+        return insert_text(text, sync, request_generation);
     }
 
+    const uint64_t generation = begin_composition_edit_request();
+    if (request_generation) {
+        *request_generation = generation;
+    }
     EditSession* edit_session = new (std::nothrow) EditSession(this, context);
     if (!edit_session) {
         return E_OUTOFMEMORY;
     }
 
     edit_session->set_action(EditSession::Action::COMMIT_COMPOSITION, text);
+    edit_session->set_composition_edit_request(generation, _effectiveEditTarget.context_identity);
 
     HRESULT edit_hr = E_FAIL;
-    const DWORD flags = TF_ES_READWRITE | (sync ? TF_ES_SYNC : TF_ES_ASYNCDONTCARE);
-    const HRESULT request_hr =
+    const DWORD mode = ordered_composition_edit_mode(sync ? TF_ES_SYNC : TF_ES_ASYNCDONTCARE);
+    const DWORD flags = TF_ES_READWRITE | mode;
+    HRESULT request_hr =
         context->RequestEditSession(_clientId, edit_session, flags, &edit_hr);
     const HRESULT action_hr = edit_session->action_result();
-    if (sync && (FAILED(request_hr) || FAILED(edit_hr))) {
+    if (mode == TF_ES_SYNC && action_hr == E_PENDING &&
+        edit_request_can_defer(request_hr, edit_hr)) {
         char detail[128] = {};
         snprintf(detail, sizeof(detail),
                  "commit sync_fallback request=0x%08lx edit=0x%08lx action=0x%08lx len=%u",
@@ -216,7 +239,7 @@ HRESULT TextService::_commit_text(ITfContext* context,
                  static_cast<unsigned int>(text.length()));
         _enqueue_event_trace("composition_commit", detail, true);
         edit_hr = E_FAIL;
-        context->RequestEditSession(
+        request_hr = context->RequestEditSession(
             _clientId, edit_session, TF_ES_READWRITE | TF_ES_ASYNCDONTCARE, &edit_hr);
     } else if (sync) {
         char detail[128] = {};
@@ -227,8 +250,12 @@ HRESULT TextService::_commit_text(ITfContext* context,
                  static_cast<unsigned int>(text.length()));
         _enqueue_event_trace("composition_commit", detail, FAILED(action_hr));
     }
+    const HRESULT final_action_hr = edit_session->action_result();
     edit_session->Release();
-    return edit_hr;
+    if (FAILED(request_hr) || FAILED(edit_hr)) {
+        return FAILED(request_hr) ? request_hr : edit_hr;
+    }
+    return final_action_hr == E_PENDING ? edit_hr : final_action_hr;
 }
 
 HRESULT TextService::_commit_then_restart_composition(ITfContext* context,
@@ -240,32 +267,51 @@ HRESULT TextService::_commit_then_restart_composition(ITfContext* context,
                                                       size_t focused_end_utf16,
                                                       bool focused_converted,
                                                       const std::optional<std::wstring>&
-                                                          host_termination_text) {
+                                                          host_termination_text,
+                                                      uint64_t* request_generation) {
     if (!context || commit_text.empty()) {
+        const uint64_t generation = begin_composition_edit_request();
+        if (request_generation) {
+            *request_generation = generation;
+        }
         return E_INVALIDARG;
     }
-    HRESULT result = _commit_text(context, commit_text, true);
-    if (FAILED(result)) {
-        return result;
-    }
-
-    // Let the host finish applying the committed selection before starting a popup-only
-    // composition, which can legitimately contain no inline text.
-    return update_composition(context, preedit, preedit_cursor, true, TF_ES_ASYNCDONTCARE,
-                              converted_prefix_utf16, focused_start_utf16,
-                              focused_end_utf16, focused_converted,
-                              host_termination_text);
+    // Keep commit and restart in one write session: a synchronous restart must not
+    // overtake a queued commit, and a failed commit must not apply its suffix.
+    return update_composition(context, preedit, preedit_cursor, true, TF_ES_SYNC,
+                              converted_prefix_utf16, focused_start_utf16, focused_end_utf16,
+                              focused_converted, host_termination_text, nullptr, request_generation,
+                              commit_text);
 }
 
 void TextService::handle_composition_restart_success(uint64_t expected_generation) {
-    _candidatePresentation.complete_composition_restart(expected_generation);
+    if (_candidatePresentation.complete_composition_restart(expected_generation)) {
+        _update_state_poll_timer();
+    }
 }
 
-bool TextService::candidate_presentation_request_is_current(
+bool TextService::composition_edit_request_is_current(
     uint64_t expected_generation, uintptr_t expected_context_identity) const {
-    return _candidatePresentation.generation_matches(expected_generation) &&
+    return expected_generation != 0 && _compositionEditGeneration == expected_generation &&
            _effectiveEditTarget.valid() && expected_context_identity != 0 &&
            expected_context_identity == _effectiveEditTarget.context_identity;
+}
+
+uint64_t TextService::begin_composition_edit_request() {
+    // Pending writes share a lifetime and execute in TSF's asynchronous FIFO.
+    // A failed earlier write must also cancel its dependent preedit updates.
+    if (_pendingCompositionEdits != 0 && _compositionEditGeneration != 0) {
+        return _compositionEditGeneration;
+    }
+    return invalidate_composition_edit_requests();
+}
+
+uint64_t TextService::invalidate_composition_edit_requests() {
+    ++_compositionEditGeneration;
+    if (_compositionEditGeneration == 0) {
+        ++_compositionEditGeneration;
+    }
+    return _compositionEditGeneration;
 }
 
 bool TextService::inline_composition_requires_placeholder(const std::wstring& next_text) const {
@@ -274,14 +320,23 @@ bool TextService::inline_composition_requires_placeholder(const std::wstring& ne
         is_immersive_mode(), _composing && _composition, _lastInlineCompositionText, next_text);
 }
 
-bool TextService::handle_composition_restart_failure(uint64_t expected_generation) {
-    if (!_candidatePresentation.fail_composition_restart(expected_generation)) {
+bool TextService::handle_composition_edit_failure(uint64_t expected_generation,
+                                                  uintptr_t expected_context_identity) {
+    // A response can fail after focus has disappeared. Matching the saved lifetime
+    // still permits clearing its engine state even when there is no bound context.
+    if (expected_generation == 0 || expected_generation != _compositionEditGeneration ||
+        expected_context_identity != _effectiveEditTarget.context_identity) {
         return false;
     }
-    _enqueue_event_trace("candidate_presentation", "restart_failed", true);
-    _hide_candidate_projection("hide:composition_restart_failed");
-    _end_reading_ui_element("hide:composition_restart_failed_reading");
-    clear_applied_inline_composition_text();
+    _enqueue_event_trace("composition_edit", "apply_failed", true);
+    if (_sessionId && !_client.clear_composition(_sessionId)) {
+        // Never reuse a server session whose buffered input could not be discarded.
+        _publish_ui_session_ended();
+        _client.disconnect();
+        _sessionId = 0;
+        _ipcHealthy = false;
+    }
+    _AbortComposition();
     return true;
 }
 
@@ -295,7 +350,17 @@ HRESULT TextService::update_composition(ITfContext* context,
                                          size_t focused_end_utf16,
                                          bool focused_converted,
                                          const std::optional<std::wstring>&
-                                             host_termination_text) {
+                                             host_termination_text,
+                                         bool* host_edit_started,
+                                         uint64_t* request_generation,
+                                         const std::wstring& commit_before_preedit) {
+    const uint64_t generation = begin_composition_edit_request();
+    if (request_generation) {
+        *request_generation = generation;
+    }
+    if (host_edit_started) {
+        *host_edit_started = _composition != nullptr;
+    }
     if (!context) {
         return E_POINTER;
     }
@@ -309,22 +374,28 @@ HRESULT TextService::update_composition(ITfContext* context,
     }
 
     edit_session->set_composition_action(
-        ensure ? EditSession::Action::ENSURE_COMPOSITION_TEXT
-               : EditSession::Action::UPDATE_COMPOSITION,
-        preedit, preedit_cursor, converted_prefix_utf16, focused_start_utf16,
-        focused_end_utf16, focused_converted, host_termination_text);
+        !commit_before_preedit.empty() ? EditSession::Action::COMMIT_AND_RESTART_COMPOSITION
+        : ensure                       ? EditSession::Action::ENSURE_COMPOSITION_TEXT
+                                       : EditSession::Action::UPDATE_COMPOSITION,
+        preedit, preedit_cursor, converted_prefix_utf16, focused_start_utf16, focused_end_utf16,
+        focused_converted, host_termination_text);
+    edit_session->set_commit_before_preedit(commit_before_preedit);
+    edit_session->set_composition_edit_request(generation,
+                                               _effectiveEditTarget.context_identity);
     if (ensure) {
         edit_session->set_candidate_presentation_request(
             _candidatePresentation.generation(), _effectiveEditTarget.context_identity);
     }
 
     HRESULT edit_hr = E_FAIL;
+    edit_session_mode = ordered_composition_edit_mode(edit_session_mode);
     const bool sync = edit_session_mode == TF_ES_SYNC;
     const DWORD flags = TF_ES_READWRITE | edit_session_mode;
     HRESULT request_hr =
         context->RequestEditSession(_clientId, edit_session, flags, &edit_hr);
     const HRESULT initial_request_hr = request_hr;
-    const bool async_fallback = sync && FAILED(request_hr);
+    const bool async_fallback = sync && edit_request_can_defer(request_hr, edit_hr) &&
+                                edit_session->action_result() == E_PENDING;
     if (async_fallback) {
         edit_hr = E_FAIL;
         request_hr = context->RequestEditSession(
@@ -348,6 +419,12 @@ HRESULT TextService::update_composition(ITfContext* context,
     result.composition_active = _composing && _composition != nullptr;
     result.empty_placeholder_active = _emptyCompositionPlaceholderActive;
     cxxime_tsf::trace_composition_edit(this, result);
+    if (host_edit_started) {
+        // Once deferred, the original key cannot be replayed even if the callback fails.
+        const bool deferred = SUCCEEDED(request_hr) && SUCCEEDED(edit_hr) &&
+                              action_hr == E_PENDING;
+        *host_edit_started = *host_edit_started || result.composition_returned || deferred;
+    }
     edit_session->Release();
 
     if (FAILED(request_hr)) {
@@ -460,10 +537,11 @@ HRESULT TextService::_end_composition(ITfContext* context, bool sync) {
     edit_session->set_end_composition_action(composition);
 
     HRESULT edit_hr = E_FAIL;
-    const DWORD mode = sync ? TF_ES_SYNC : TF_ES_ASYNC;
+    const DWORD mode = ordered_composition_edit_mode(sync ? TF_ES_SYNC : TF_ES_ASYNC);
     HRESULT request_hr =
         context->RequestEditSession(_clientId, edit_session, TF_ES_READWRITE | mode, &edit_hr);
-    if (sync && FAILED(request_hr)) {
+    if (mode == TF_ES_SYNC && edit_session->action_result() == E_PENDING &&
+        edit_request_can_defer(request_hr, edit_hr)) {
         edit_hr = E_FAIL;
         request_hr = context->RequestEditSession(
             _clientId, edit_session, TF_ES_READWRITE | TF_ES_ASYNCDONTCARE, &edit_hr);
@@ -482,16 +560,23 @@ HRESULT TextService::_end_composition(ITfContext* context, bool sync) {
 }
 
 void TextService::_AbortComposition() {
+    invalidate_composition_edit_requests();
+    ITfComposition* aborted_composition = _composition;
     _hide_candidate_window("hide:abort_composition");
     _end_reading_ui_element("hide:abort_composition_reading");
     clear_applied_inline_composition_text();
-    if (_composing) {
+    if (_composition) {
         ITfContext* pContext = _current_edit_context_for_composition();
         if (pContext) {
             _end_composition(pContext);
             pContext->Release();
         }
-        _composing = false;
     }
-    _reset_trace_composition("abort");
+    // EndComposition may synchronously reenter and install a newer composition.
+    // Do not let cleanup for the old object overwrite that newer state.
+    if (!_composition || _composition == aborted_composition) {
+        _composing = false;
+        _emptyCompositionPlaceholderActive = false;
+        _reset_trace_composition("abort");
+    }
 }

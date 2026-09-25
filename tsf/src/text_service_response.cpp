@@ -33,7 +33,7 @@ bool TextService::_apply_engine_response(ITfContext* context, const cxxime::IPCR
         _sync_ime_status(response.ime_status);
     }
 
-    const bool starts_composition = !_composing;
+    const bool starts_composition = !_composing && !_composition;
     const bool has_commit = response.commit_text[0] != '\0';
     const bool commit_continues = has_commit && response.composing && response.preedit[0] != '\0';
     std::wstring commit_text;
@@ -41,14 +41,20 @@ bool TextService::_apply_engine_response(ITfContext* context, const cxxime::IPCR
         if (!cxxime_tsf::decode_engine_commit_text(response, &commit_text) || commit_text.empty()) {
             return false;
         }
+        // A commit can partially modify the host even when the edit action reports failure.
+        *eaten = TRUE;
         if (commit_continues) {
             _hide_external_candidate_window("hide:commit_continue_reposition");
         } else {
             _hide_candidate_window("hide:commit");
             _end_reading_ui_element("hide:commit_reading");
+            const uintptr_t commit_context = _effectiveEditTarget.context_identity;
+            uint64_t commit_generation = 0;
             const HRESULT commit_result =
-                context ? _commit_text(context, commit_text, true) : insert_text(commit_text, true);
+                context ? _commit_text(context, commit_text, true, &commit_generation)
+                        : insert_text(commit_text, true, &commit_generation);
             if (FAILED(commit_result)) {
+                handle_composition_edit_failure(commit_generation, commit_context);
                 return false;
             }
             _composing = false;
@@ -109,28 +115,34 @@ bool TextService::_apply_engine_response(ITfContext* context, const cxxime::IPCR
         cxxime_tsf::trace_context(trace_input_id(), trace_composition_id(), context, _threadMgr,
                                   ui_element_only ? "candidate_first_standard_tsf_compat"
                                                   : "standard_tsf");
-        _caretRect = {};
+        const auto can_retain_candidate_position = [&]() {
+            return !starts_composition && !commit_continues && _composing &&
+                   _caretRectTargetGeneration == _uiTargetGeneration &&
+                   _candidatePresentation.can_retain_displayed_caret(_uiTargetGeneration) &&
+                   cxxime_tsf::is_valid_caret_rect(_caretRect) &&
+                   _context_matches_effective_edit_target(context);
+        };
+        if (!can_retain_candidate_position()) {
+            _caretRect = {};
+        }
         bool external_candidate_window = true;
         bool candidate_ui_published = false;
-        const bool composition_restart_was_active =
-            _candidatePresentation.composition_restart_active();
+        const uintptr_t composition_context = _effectiveEditTarget.context_identity;
+        bool host_edit_started = _composition != nullptr;
+        uint64_t composition_generation = 0;
         auto apply_composition = [&](const std::wstring& text, size_t cursor,
                                      size_t converted_prefix, size_t focused_start,
                                      size_t focused_end, bool focused_converted,
-                                     const std::optional<std::wstring>&
-                                        host_termination_text) {
-            if (!context) {
-                return E_POINTER;
-            }
+                                     const std::optional<std::wstring>& host_termination_text) {
             if (commit_continues) {
-                return _commit_then_restart_composition(context, commit_text, text, cursor,
-                                                        converted_prefix, focused_start,
-                                                        focused_end, focused_converted,
-                                                        host_termination_text);
+                return _commit_then_restart_composition(
+                    context, commit_text, text, cursor, converted_prefix, focused_start,
+                    focused_end, focused_converted, host_termination_text, &composition_generation);
             }
             return update_composition(context, text, cursor, true, TF_ES_SYNC, converted_prefix,
                                       focused_start, focused_end, focused_converted,
-                                      host_termination_text);
+                                      host_termination_text, &host_edit_started,
+                                      &composition_generation);
         };
         HRESULT composition_result = S_OK;
         if (ui_element_only) {
@@ -161,16 +173,15 @@ bool TextService::_apply_engine_response(ITfContext* context, const cxxime::IPCR
             // terminate that range when the user moves the selection with the mouse.
             composition_result = apply_composition(L"", 0, 0, 0, 0, false, std::nullopt);
         }
-        const bool composition_restart_failed =
-            composition_restart_was_active && FAILED(composition_result);
-        if (composition_restart_failed) {
-            handle_composition_restart_failure(_candidatePresentation.generation());
-        } else if (FAILED(composition_result)) {
-            _hide_candidate_window("hide:composition_apply_failed");
-            _end_reading_ui_element("hide:composition_apply_failed_reading");
-            _composing = false;
+        if (FAILED(composition_result)) {
+            handle_composition_edit_failure(composition_generation, composition_context);
         }
-        *eaten = TRUE;
+        // Only a synchronous first-key rejection before any host edit can pass through.
+        // Existing/partial composition and commit-continue failures must never replay keys.
+        *eaten = FAILED(composition_result) && starts_composition && !has_commit &&
+                         !host_edit_started
+                     ? FALSE
+                     : TRUE;
 
         const auto window_start = std::chrono::steady_clock::now();
         if (SUCCEEDED(composition_result) &&
@@ -204,6 +215,8 @@ bool TextService::_apply_engine_response(ITfContext* context, const cxxime::IPCR
                 }
                 const bool has_trusted_caret =
                     has_trusted_native_caret || caret_uses_viewport_fallback;
+                const bool retain_candidate_position =
+                    !caret_resolved && !has_trusted_caret && can_retain_candidate_position();
                 const bool wait_for_composition_layout =
                     cxxime_tsf::should_wait_for_composition_layout(
                         empty_composition_placeholder_active(), caret_resolved,
@@ -212,7 +225,7 @@ bool TextService::_apply_engine_response(ITfContext* context, const cxxime::IPCR
                     if (has_trusted_native_caret) {
                         caret_rect = trusted_native_rect;
                         caret_resolved = true;
-                    } else if (!wait_for_composition_layout) {
+                    } else if (!wait_for_composition_layout && !retain_candidate_position) {
                         caret_rect = _resolve_caret_rect(context);
                         trace_caret_event("show_query", "fallback",
                                           cxxime_tsf::is_valid_caret_rect(caret_rect), &caret_rect,
@@ -223,7 +236,14 @@ bool TextService::_apply_engine_response(ITfContext* context, const cxxime::IPCR
                     caret_rect = trusted_native_rect;
                 }
 
-                if (_candidatePresentation.initial_layout_pending()) {
+                if (retain_candidate_position) {
+                    // Missing layout does not invalidate an already displayed position.
+                    // Keep the sample serial unchanged: this is not a new caret observation.
+                    trace_caret_event("show_keep", "displayed_position", true, &_caretRect,
+                                      S_FALSE);
+                    _show_candidate_window("show:preedit_keep_position");
+                    _request_candidate_position_update(context, "show:preedit_layout_follow");
+                } else if (_candidatePresentation.initial_layout_pending()) {
                     if (has_trusted_caret) {
                         update_candidate_position(caret_rect, context, false,
                                                   _candidatePresentation.generation(),
@@ -277,6 +297,9 @@ bool TextService::_apply_engine_response(ITfContext* context, const cxxime::IPCR
 
     if (!has_commit && (response.status == cxxime::IPCStatus::OK ||
                         response.status == cxxime::IPCStatus::ERR_STALE_CANDIDATE)) {
+        // Invalidate any queued first-composition request before hiding the UI.
+        // The request may not have created a host composition yet.
+        invalidate_composition_edit_requests();
         const bool was_composing = _composing;
         _hide_candidate_window("hide:clear");
         _end_reading_ui_element("hide:clear_reading");
