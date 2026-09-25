@@ -18,8 +18,8 @@ HRESULT set_composition_range_text(ITfRange* range, TfEditCookie edit_cookie,
         return E_INVALIDARG;
     }
 
-    // Some text stores return the view origin for an empty composition range. Use a blank
-    // placeholder only when the existing selection cannot provide a usable insertion point.
+    // Keep a nonempty host range when the composition policy requires a placeholder.
+    // A successful geometry query alone does not guarantee an up-to-date insertion point.
     const bool store_placeholder = text.empty() && use_empty_placeholder;
     const wchar_t* stored_text = store_placeholder ? L" " : text.c_str();
     const LONG stored_length = store_placeholder ? 1 : static_cast<LONG>(text.length());
@@ -527,8 +527,9 @@ HRESULT apply_composition_text(TextService* service, ITfContext* context, TfEdit
 
     const bool placeholder_already_active =
         service->empty_composition_placeholder_active();
+    const bool preserve_empty_composition = service->composition_requires_placeholder(text);
     bool caret_resolved_before_write = false;
-    if (text.empty() && !placeholder_already_active) {
+    if (text.empty() && !placeholder_already_active && !preserve_empty_composition) {
         RECT caret_rect = {};
         caret_resolved_before_write =
             resolve_caret_rect_from_selection(service, context, ec, &caret_rect);
@@ -536,8 +537,6 @@ HRESULT apply_composition_text(TextService* service, ITfContext* context, TfEdit
             service->set_caret_rect(caret_rect);
         }
     }
-    const bool preserve_empty_composition =
-        service->inline_composition_requires_placeholder(text);
     const bool use_empty_placeholder =
         text.empty() && (placeholder_already_active || preserve_empty_composition ||
         (composition_started && !caret_resolved_before_write));

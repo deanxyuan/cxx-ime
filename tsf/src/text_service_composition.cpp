@@ -103,15 +103,17 @@ STDMETHODIMP TextService::OnCompositionTerminated(TfEditCookie ecWrite,
     const bool host_terminated = _composition != nullptr;
     bool clear_succeeded = false;
     const bool normalization_requested =
-        host_terminated && _hostTerminationCompositionText.has_value();
+        host_terminated &&
+        (_emptyCompositionPlaceholderActive || _hostTerminationCompositionText.has_value());
     HRESULT normalization_result = normalization_requested ? E_POINTER : S_FALSE;
     if (host_terminated) {
         invalidate_composition_edit_requests();
-        if ((_emptyCompositionPlaceholderActive || normalization_requested) && pComposition) {
+        if (normalization_requested && pComposition) {
             ITfRange* range = nullptr;
             if (SUCCEEDED(pComposition->GetRange(&range)) && range) {
                 if (_emptyCompositionPlaceholderActive) {
-                    range->SetText(ecWrite, 0, nullptr, 0);
+                    normalization_result =
+                        replace_composition_text_if_unchanged(range, ecWrite, L" ", L"");
                 } else {
                     normalization_result = replace_composition_text_if_unchanged(
                         range, ecWrite, _lastInlineCompositionText,
@@ -314,8 +316,12 @@ uint64_t TextService::invalidate_composition_edit_requests() {
     return _compositionEditGeneration;
 }
 
-bool TextService::inline_composition_requires_placeholder(const std::wstring& next_text) const {
-    // Keep an observable range in immersive text stores and across non-empty-to-empty updates.
+bool TextService::composition_requires_placeholder(const std::wstring& next_text) const {
+    // Popup-only compositions need an observable range even when the host returns a
+    // plausible rectangle: an empty range can still describe an obsolete insertion point.
+    if (!_config.inline_preedit && next_text.empty()) {
+        return true;
+    }
     return cxxime_tsf::empty_composition_requires_placeholder(
         is_immersive_mode(), _composing && _composition, _lastInlineCompositionText, next_text);
 }

@@ -30,7 +30,7 @@ struct PreeditDecision {
     // Logical text to retain if the host ends a composition containing generated boundaries.
     std::optional<std::wstring> host_termination_text;
     bool show_preedit_in_popup; // Whether candidate window shows raw input
-    bool start_composition;     // Whether to start TSF composition
+    bool start_composition;     // Whether to write inline preedit to the TSF composition
 };
 
 inline size_t clamp_preedit_cursor(size_t cursor, size_t preedit_length) {
@@ -39,8 +39,8 @@ inline size_t clamp_preedit_cursor(size_t cursor, size_t preedit_length) {
 
 // Decide what to show inline vs. in the candidate window popup.
 //
-// inline_preedit=false: no TSF composition, candidate window shows raw input.
-//   preedit_type is ignored.
+// inline_preedit=false: candidate window shows raw input; the host composition uses a
+//   placeholder for layout and lifecycle tracking. preedit_type is ignored.
 // inline_preedit=true: TSF composition active.
 //   composition shows the display preedit inline and hides duplicate popup preedit.
 //   preview shows the highlighted candidate after the converted prefix and keeps logical

@@ -169,8 +169,8 @@ bool TextService::_apply_engine_response(ITfContext* context, const cxxime::IPCR
                                                    decision.host_termination_text);
         } else {
             _update_reading_ui_element(context, decoded.logical_preedit.text);
-            // Popup-only mode still needs an empty TSF composition. Hosts such as Scintilla
-            // terminate that range when the user moves the selection with the mouse.
+            // Popup-only mode still needs a TSF composition for layout and selection tracking.
+            // The write session represents the empty preedit with a temporary placeholder.
             composition_result = apply_composition(L"", 0, 0, 0, 0, false, std::nullopt);
         }
         if (FAILED(composition_result)) {

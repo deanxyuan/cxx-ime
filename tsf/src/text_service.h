@@ -188,7 +188,7 @@ public:
     void clear_applied_inline_composition_text() {
         set_applied_inline_composition_text(L"");
     }
-    bool inline_composition_requires_placeholder(const std::wstring& next_text) const;
+    bool composition_requires_placeholder(const std::wstring& next_text) const;
     void set_caret_rect(const RECT& rc) {
         _caretRect = rc;
         _caretRectTargetGeneration = _uiTargetGeneration;
