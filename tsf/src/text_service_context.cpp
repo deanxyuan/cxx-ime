@@ -2,9 +2,6 @@
 
 #include "text_service.h"
 
-#include "edit_target.h"
-#include "tsf_trace.h"
-
 void TextService::_show_status_window_if_allowed(const char* reason) {
     _enqueue_event_trace("ui_presentation", reason);
     _publish_ui_presentation();
@@ -23,37 +20,58 @@ bool TextService::_context_belongs_to_foreground(ITfContext* context) const {
     if (!foreground)
         return false;
 
-    ITfContextView* view = nullptr;
-    if (FAILED(context->GetActiveView(&view)) || !view)
-        return false;
-
     HWND context_hwnd = nullptr;
-    HRESULT hr = view->GetWnd(&context_hwnd);
-    if (FAILED(hr)) {
+    ITfContextView* view = nullptr;
+    if (SUCCEEDED(context->GetActiveView(&view)) && view) {
+        view->GetWnd(&context_hwnd);
         view->Release();
+    }
+
+    if (context_hwnd == foreground || IsChild(foreground, context_hwnd)) {
+        return true;
+    }
+
+    if (context_hwnd) {
+        HWND context_root = GetAncestor(context_hwnd, GA_ROOT);
+        HWND foreground_root = GetAncestor(foreground, GA_ROOT);
+        if (context_root && context_root == foreground_root) {
+            return true;
+        }
+    }
+
+    // TSF supports windowless contexts and hosts whose view geometry is not ready.
+    // Use the foreground process and the thread-manager focus identity as the
+    // ownership check instead of requiring GetWnd/GetScreenExt to succeed.
+    DWORD foreground_process = 0;
+    GetWindowThreadProcessId(foreground, &foreground_process);
+    if (foreground_process != GetCurrentProcessId() || !_threadMgr) {
         return false;
     }
-    if (!context_hwnd) {
-        RECT screen_rect = {};
-        hr = view->GetScreenExt(&screen_rect);
-        view->Release();
-        if (FAILED(hr) || screen_rect.right <= screen_rect.left ||
-            screen_rect.bottom <= screen_rect.top) {
-            return false;
-        }
 
-        DWORD foreground_process = 0;
-        GetWindowThreadProcessId(foreground, &foreground_process);
-        return foreground_process == GetCurrentProcessId();
+    ITfDocumentMgr* document = nullptr;
+    ITfContext* focused_context = nullptr;
+    if (SUCCEEDED(_threadMgr->GetFocus(&document)) && document) {
+        document->GetTop(&focused_context);
     }
-    view->Release();
-
-    if (context_hwnd == foreground || IsChild(foreground, context_hwnd))
-        return true;
-
-    HWND context_root = GetAncestor(context_hwnd, GA_ROOT);
-    HWND foreground_root = GetAncestor(foreground, GA_ROOT);
-    return context_root && context_root == foreground_root;
+    if (document) {
+        document->Release();
+    }
+    IUnknown* context_identity = nullptr;
+    IUnknown* focus_identity = nullptr;
+    context->QueryInterface(IID_IUnknown, reinterpret_cast<void**>(&context_identity));
+    if (focused_context) {
+        focused_context->QueryInterface(IID_IUnknown,
+                                        reinterpret_cast<void**>(&focus_identity));
+        focused_context->Release();
+    }
+    const bool matches = context_identity && context_identity == focus_identity;
+    if (context_identity) {
+        context_identity->Release();
+    }
+    if (focus_identity) {
+        focus_identity->Release();
+    }
+    return matches;
 }
 
 bool TextService::_read_context_compartment_bool(ITfContext* context, REFGUID guid,
@@ -122,8 +140,13 @@ const char* TextService::_input_context_block_reason(ITfContext* context) const 
         return "keyboard_disabled";
 
     TF_STATUS status = {};
-    if (FAILED(context->GetStatus(&status)))
+    const HRESULT status_hr = context->GetStatus(&status);
+    if (status_hr == TF_E_DISCONNECTED) {
+        return "no_context";
+    }
+    if (FAILED(status_hr)) {
         return nullptr;
+    }
 
     if ((status.dwDynamicFlags & TF_SD_READONLY) != 0)
         return "readonly";
@@ -147,19 +170,6 @@ bool TextService::_document_allows_input(ITfDocumentMgr* doc_mgr) const {
     bool allowed = _context_allows_input(context);
     context->Release();
     return allowed;
-}
-
-bool TextService::_context_has_no_edit_target(ITfContext* context) {
-    if (!context) {
-        return false;
-    }
-
-    cxxime_tsf::EditTargetEvidence evidence;
-    const cxxime_tsf::EditTargetState state =
-        cxxime_tsf::inspect_edit_target(context, _clientId, &evidence);
-    cxxime_tsf::trace_edit_target(trace_input_id(), trace_composition_id(), state, evidence);
-    _inputTargetUnavailable = state == cxxime_tsf::EditTargetState::NoEditTarget;
-    return state == cxxime_tsf::EditTargetState::NoEditTarget;
 }
 
 bool TextService::_query_input_focus_from_thread_mgr() const {

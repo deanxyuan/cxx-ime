@@ -452,7 +452,8 @@ HRESULT clear_and_end_composition(TextService* service,
                                   ITfContext* context,
                                   TfEditCookie ec,
                                   const std::wstring* commit_text,
-                                  ITfComposition* expected_composition = nullptr) {
+                                  ITfComposition* expected_composition = nullptr,
+                                  bool preserve_text = false) {
     ITfComposition* composition =
         expected_composition ? expected_composition
                              : (service ? service->get_composition() : nullptr);
@@ -466,10 +467,12 @@ HRESULT clear_and_end_composition(TextService* service,
     ITfRange* range = nullptr;
     HRESULT hr = composition->GetRange(&range);
     if (SUCCEEDED(hr) && range) {
-        clear_display_attribute(context, ec, range);
         const wchar_t* text = commit_text ? commit_text->c_str() : L"";
         LONG length = commit_text ? static_cast<LONG>(commit_text->length()) : 0;
-        action_result = range->SetText(ec, 0, text, length);
+        if (!preserve_text) {
+            clear_display_attribute(context, ec, range);
+            action_result = range->SetText(ec, 0, text, length);
+        }
 
         if (SUCCEEDED(action_result) && commit_text && length > 0) {
             action_result = range->Clone(&committed_end);
@@ -515,7 +518,9 @@ HRESULT apply_composition_text(TextService* service, ITfContext* context, TfEdit
                                size_t focused_start_utf16, size_t focused_end_utf16,
                                bool focused_converted,
                                const std::optional<std::wstring>& host_termination_text,
-                               bool composition_started) {
+                               bool composition_started,
+                               bool* text_written) {
+    *text_written = false;
     if (!service || !context || !range) {
         return E_INVALIDARG;
     }
@@ -541,6 +546,7 @@ HRESULT apply_composition_text(TextService* service, ITfContext* context, TfEdit
     if (FAILED(result)) {
         return result;
     }
+    *text_written = true;
     service->set_empty_composition_placeholder_active(use_empty_placeholder);
     service->set_applied_inline_composition_text(text, host_termination_text);
 
@@ -563,24 +569,50 @@ HRESULT insert_at_selection(ITfContext* context,
     if (!context || text.empty())
         return E_INVALIDARG;
 
+    ITfInsertAtSelection* insert_at_selection = nullptr;
+    HRESULT hr = context->QueryInterface(
+        IID_ITfInsertAtSelection, reinterpret_cast<void**>(&insert_at_selection));
+    if (FAILED(hr) || !insert_at_selection) {
+        return FAILED(hr) ? hr : E_NOINTERFACE;
+    }
     ITfRange* pRange = nullptr;
-    TF_SELECTION sel = {};
-    ULONG fetched = 0;
-    if (SUCCEEDED(context->GetSelection(ec, TF_DEFAULT_SELECTION, 1, &sel, &fetched)) && fetched > 0) {
-        pRange = sel.range;
-    } else if (SUCCEEDED(context->GetStart(ec, &pRange))) {
-        // Fallback to document start.
+    hr = insert_at_selection->InsertTextAtSelection(
+        ec, TF_IAS_QUERYONLY, nullptr, 0, &pRange);
+    insert_at_selection->Release();
+    if (FAILED(hr) || !pRange) {
+        return FAILED(hr) ? hr : E_FAIL;
     }
-    if (pRange) {
-        HRESULT hr = pRange->SetText(
-            ec, TF_ST_CORRECTION, text.c_str(), static_cast<LONG>(text.length()));
-        if (SUCCEEDED(hr)) {
-            hr = set_selection_to_range(context, ec, pRange);
-        }
-        pRange->Release();
-        return hr;
+    hr = pRange->SetText(
+        ec, TF_ST_CORRECTION, text.c_str(), static_cast<LONG>(text.length()));
+    if (SUCCEEDED(hr)) {
+        hr = set_selection_to_range(context, ec, pRange);
     }
-    return E_FAIL;
+    pRange->Release();
+    return hr;
+}
+
+HRESULT commit_to_context(TextService* service, ITfContext* context, TfEditCookie ec,
+                          const std::wstring& text) {
+    ITfContext* composition_context = service->get_composition_context();
+    IUnknown* target_identity = nullptr;
+    IUnknown* composition_identity = nullptr;
+    if (context) {
+        context->QueryInterface(IID_IUnknown, reinterpret_cast<void**>(&target_identity));
+    }
+    if (composition_context) {
+        composition_context->QueryInterface(IID_IUnknown,
+                                            reinterpret_cast<void**>(&composition_identity));
+    }
+    const bool matches = target_identity && target_identity == composition_identity;
+    if (target_identity) {
+        target_identity->Release();
+    }
+    if (composition_identity) {
+        composition_identity->Release();
+    }
+    return matches && service->get_composition()
+        ? clear_and_end_composition(service, context, ec, &text)
+        : insert_at_selection(context, ec, text);
 }
 
 } // namespace
@@ -594,6 +626,9 @@ EditSession::EditSession(TextService* service, ITfContext* context)
 }
 
 EditSession::~EditSession() {
+    if (_registeredWrite) {
+        _service->release_composition_edit();
+    }
     if (_expectedComposition)
         _expectedComposition->Release();
     if (_context)
@@ -627,6 +662,14 @@ STDMETHODIMP_(ULONG) EditSession::Release() {
 }
 
 void EditSession::set_action(Action action, const std::wstring& text) {
+    if (_registeredWrite) {
+        _service->release_composition_edit();
+        _registeredWrite = false;
+    }
+    if (_service && action != Action::QUERY_CARET && action != Action::UPDATE_CANDIDATE_POSITION) {
+        _service->register_composition_edit();
+        _registeredWrite = true;
+    }
     if (_expectedComposition) {
         _expectedComposition->Release();
         _expectedComposition = nullptr;
@@ -674,10 +717,19 @@ void EditSession::set_composition_action(Action action, const std::wstring& text
 STDMETHODIMP EditSession::DoEditSession(TfEditCookie ec) {
     if (_action == Action::INSERT_TEXT && !_text.empty()) {
         _actionResult = insert_at_selection(_context, ec, _text);
+        if (FAILED(_actionResult) && _service) {
+            _service->handle_composition_edit_failure(
+                _compositionEditGeneration, _compositionEditContextIdentity);
+        }
 } else if (_action == Action::END_COMPOSITION) {
         _actionResult = clear_and_end_composition(
             _service, _context, ec, nullptr, _expectedComposition);
 } else if (_action == Action::UPDATE_COMPOSITION) {
+        if (!_service->composition_edit_request_is_current(
+                _compositionEditGeneration, _compositionEditContextIdentity)) {
+            _actionResult = S_FALSE;
+            return S_OK;
+        }
         ITfComposition* pComp = _service->get_composition();
         ITfRange* pRange = nullptr;
         _actionResult = pComp ? pComp->GetRange(&pRange) : E_UNEXPECTED;
@@ -707,38 +759,60 @@ STDMETHODIMP EditSession::DoEditSession(TfEditCookie ec) {
             update_caret_rect(_service, _context, ec, pRange);
             pRange->Release();
         }
-    } else if (_action == Action::ENSURE_COMPOSITION_TEXT) {
+    } else if (_action == Action::ENSURE_COMPOSITION_TEXT ||
+               _action == Action::COMMIT_AND_RESTART_COMPOSITION) {
         if (!_service ||
-            !_service->candidate_presentation_request_is_current(
-                _candidatePresentationGeneration, _candidatePresentationContextIdentity)) {
+            (_action == Action::ENSURE_COMPOSITION_TEXT &&
+             !_service->composition_edit_request_is_current(
+                 _compositionEditGeneration, _compositionEditContextIdentity))) {
             _actionResult = S_FALSE;
         } else {
+            _actionResult = S_OK;
+            if (_action == Action::COMMIT_AND_RESTART_COMPOSITION) {
+                _actionResult = commit_to_context(_service, _context, ec, _commitBeforePreedit);
+            }
             ITfRange* range = nullptr;
-            _actionResult = get_or_create_composition_range(
-                _service, _context, ec, &range, &_compositionStartAttempted,
-                &_compositionStartResult, &_compositionReturned);
-            if (SUCCEEDED(_actionResult) && range) {
-                _actionResult = apply_composition_text(
-                    _service, _context, ec, range, _text, _selectionOffset,
-                    _hasSelectionOffset, _convertedPrefixUtf16, _focusedStartUtf16,
-                    _focusedEndUtf16, _focusedConverted, _hostTerminationText,
-                    _compositionStartAttempted);
-                range->Release();
+            bool composition_text_written = false;
+            if (SUCCEEDED(_actionResult) &&
+                _service->composition_edit_request_is_current(_compositionEditGeneration,
+                                                              _compositionEditContextIdentity)) {
+                _actionResult = get_or_create_composition_range(
+                    _service, _context, ec, &range, &_compositionStartAttempted,
+                    &_compositionStartResult, &_compositionReturned);
             }
-            if (SUCCEEDED(_actionResult)) {
-                _service->handle_composition_restart_success(
-                    _candidatePresentationGeneration);
-            } else if (_service->handle_composition_restart_failure(
-                            _candidatePresentationGeneration) &&
-                        _service->get_composition()) {
-                clear_and_end_composition(_service, _context, ec, nullptr);
-            }
+                if (SUCCEEDED(_actionResult) && range) {
+                    _actionResult = apply_composition_text(
+                        _service, _context, ec, range, _text, _selectionOffset,
+                        _hasSelectionOffset, _convertedPrefixUtf16, _focusedStartUtf16,
+                        _focusedEndUtf16, _focusedConverted, _hostTerminationText,
+                        _compositionStartAttempted, &composition_text_written);
+                    range->Release();
+                }
+                if (SUCCEEDED(_actionResult) && range) {
+                    _service->handle_composition_restart_success(
+                        _candidatePresentationGeneration);
+                } else if (FAILED(_actionResult) &&
+                           _service->composition_edit_request_is_current(
+                               _compositionEditGeneration, _compositionEditContextIdentity)) {
+                    // Use the granted write cookie to remove a partially applied composition.
+                    // A stale callback must not end or clear a newer composition/session.
+                    if (_service->get_composition()) {
+                        // A new range can cover the host's existing selection. If our first
+                        // write failed, end it without deleting that original host text.
+                        const bool preserve_text =
+                            _compositionReturned && !composition_text_written;
+                        clear_and_end_composition(_service, _context, ec, nullptr, nullptr,
+                                                  preserve_text);
+                    }
+                    _service->handle_composition_edit_failure(
+                        _compositionEditGeneration, _compositionEditContextIdentity);
+                }
         }
     } else if (_action == Action::COMMIT_COMPOSITION) {
-        if (_service->get_composition()) {
-            _actionResult = clear_and_end_composition(_service, _context, ec, &_text);
-        } else if (!_text.empty()) {
-            _actionResult = insert_at_selection(_context, ec, _text);
+        _actionResult = commit_to_context(_service, _context, ec, _text);
+        if (FAILED(_actionResult)) {
+            _service->handle_composition_edit_failure(
+                _compositionEditGeneration, _compositionEditContextIdentity);
         }
     } else if (_action == Action::QUERY_CARET) {
         RECT rc = {};

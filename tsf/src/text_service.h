@@ -120,7 +120,8 @@ public:
     STDMETHODIMP SetResult(BSTR query, BSTR application_id, BSTR result) override;
 
     // Helper
-    HRESULT insert_text(const std::wstring& text, bool sync = false);
+    HRESULT insert_text(const std::wstring& text, bool sync = false,
+                        uint64_t* request_generation = nullptr);
     bool select_candidate_from_ui(UINT index, uint64_t candidate_revision);
     bool navigate_candidate_page_from_ui(bool previous);
     void abort_candidate_ui_from_tsf();
@@ -149,7 +150,10 @@ public:
                                size_t focused_end_utf16 = 0,
                                bool focused_converted = false,
                                const std::optional<std::wstring>& host_termination_text =
-                                   std::nullopt);
+                                   std::nullopt,
+                               bool* host_edit_started = nullptr,
+                               uint64_t* request_generation = nullptr,
+                               const std::wstring& commit_before_preedit = L"");
     bool apply_composition_display_attributes(ITfContext* pic,
                                               ITfRange* range,
                                               TfEditCookie ec,
@@ -204,10 +208,18 @@ public:
                                    bool from_layout_change = false,
                                    uint64_t expected_generation = 0,
                                    bool viewport_fallback = false);
-    bool candidate_presentation_request_is_current(
+    bool composition_edit_request_is_current(
         uint64_t expected_generation, uintptr_t expected_context_identity) const;
+    uint64_t begin_composition_edit_request();
+    uint64_t invalidate_composition_edit_requests();
+    void register_composition_edit() { ++_pendingCompositionEdits; }
+    void release_composition_edit() { --_pendingCompositionEdits; }
+    DWORD ordered_composition_edit_mode(DWORD requested) const {
+        return _pendingCompositionEdits > 1 ? TF_ES_ASYNC : requested;
+    }
     void handle_composition_restart_success(uint64_t expected_generation);
-    bool handle_composition_restart_failure(uint64_t expected_generation);
+    bool handle_composition_edit_failure(uint64_t expected_generation,
+                                         uintptr_t expected_context_identity);
     RECT _resolve_caret_rect(ITfContext* pic);
 
     // TSF layer trace (lightweight, no cross-module QueryTrace dependency)
@@ -239,6 +251,7 @@ public:
 
 private:
     friend class cxxime_tsf::UiPresentationBatch;
+    friend struct TextServiceTestPeer;
 
     HRESULT _initialize_required_activation_sinks();
     void _initialize_optional_activation_services();
@@ -254,7 +267,8 @@ private:
     HRESULT _unregister_preserved_key();
     bool _register_display_attribute_atom();
     HRESULT _end_composition(ITfContext* pic, bool sync = false);
-    HRESULT _commit_text(ITfContext* pic, const std::wstring& text, bool sync = false);
+    HRESULT _commit_text(ITfContext* pic, const std::wstring& text, bool sync = false,
+                         uint64_t* request_generation = nullptr);
     HRESULT _commit_then_restart_composition(ITfContext* pic,
                                              const std::wstring& commit_text,
                                              const std::wstring& preedit,
@@ -264,7 +278,8 @@ private:
                                              size_t focused_end_utf16,
                                              bool focused_converted,
                                              const std::optional<std::wstring>&
-                                                 host_termination_text);
+                                                 host_termination_text,
+                                             uint64_t* request_generation = nullptr);
     bool _apply_engine_response(ITfContext* context,
                                 const cxxime::IPCResponse& response,
                                 BOOL* eaten,
@@ -301,12 +316,10 @@ private:
     const char* _input_context_block_reason(ITfContext* context) const;
     bool _context_allows_input(ITfContext* context) const;
     bool _document_allows_input(ITfDocumentMgr* doc_mgr) const;
-    bool _context_has_no_edit_target(ITfContext* context);
     bool _query_input_focus_from_thread_mgr() const;
     bool _synchronize_effective_edit_target(ITfContext* event_context,
                                             ITfDocumentMgr* event_document_mgr,
-                                            const char* source,
-                                            bool context_already_validated = false);
+                                            const char* source);
     bool _synchronize_effective_edit_target_from_thread_mgr(const char* source);
     void _clear_effective_edit_target(const char* source, bool target_unavailable = false);
     void _release_effective_edit_target();
@@ -398,6 +411,8 @@ private:
     cxxime::IpcClient _client;
     uint32_t _sessionId = 0;
     bool _composing = false;
+    uint64_t _compositionEditGeneration = 0;
+    unsigned int _pendingCompositionEdits = 0;
     bool _emptyCompositionPlaceholderActive = false;
     bool _chinese_mode = true;
     bool _caps_lock = false;

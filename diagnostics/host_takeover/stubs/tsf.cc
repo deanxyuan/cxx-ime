@@ -58,9 +58,6 @@ void trace_key_route(uint64_t,
 void trace_context(
                    uint64_t, uint64_t, ITfContext*, ITfThreadMgr*, const char*) {}
 
-void trace_edit_target(
-                       uint64_t, uint64_t, EditTargetState, const EditTargetEvidence&) {}
-
 void trace_key_result(
                       uint64_t, uint64_t, uint32_t, bool, size_t, size_t, uint32_t, size_t, const char*) {}
 

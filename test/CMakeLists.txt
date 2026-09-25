@@ -103,6 +103,29 @@ target_sources(edit_target_test PRIVATE
     ${CMAKE_SOURCE_DIR}/tsf/src/globals.cpp
 )
 target_link_libraries(edit_target_test PRIVATE ole32 oleaut32 user32)
+add_cxxime_test(text_service_test
+    SOURCES
+        tsf/text_service_composition_test.cc
+        tsf/text_service_key_test.cc
+        tsf/text_service_presentation_test.cc
+)
+# Exercise the real service and edit-session implementation; only the host COM
+# interfaces are controlled by the test. Keep its sources/dependencies aligned
+# with the DLL without importing its entry point, exports or version resource.
+get_target_property(TSF_TEST_SOURCES cxxime-tsf SOURCES)
+foreach(TSF_TEST_SOURCE IN LISTS TSF_TEST_SOURCES)
+    if(TSF_TEST_SOURCE MATCHES "\\.(cpp|cc)$" AND
+       NOT TSF_TEST_SOURCE MATCHES "[/\\\\]dllmain\\.cpp$")
+        if(NOT IS_ABSOLUTE "${TSF_TEST_SOURCE}")
+            set(TSF_TEST_SOURCE "${CMAKE_SOURCE_DIR}/tsf/${TSF_TEST_SOURCE}")
+        endif()
+        target_sources(text_service_test PRIVATE "${TSF_TEST_SOURCE}")
+    endif()
+endforeach()
+get_target_property(TSF_TEST_INCLUDE_DIRS cxxime-tsf INCLUDE_DIRECTORIES)
+get_target_property(TSF_TEST_LIBRARIES cxxime-tsf LINK_LIBRARIES)
+target_include_directories(text_service_test PRIVATE ${TSF_TEST_INCLUDE_DIRS})
+target_link_libraries(text_service_test PRIVATE ${TSF_TEST_LIBRARIES})
 add_cxxime_test(effective_edit_target_test SOURCES tsf/effective_edit_target_test.cc)
 target_sources(effective_edit_target_test PRIVATE
     ${CMAKE_SOURCE_DIR}/tsf/src/effective_edit_target.cpp

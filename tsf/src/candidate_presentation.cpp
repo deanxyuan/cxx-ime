@@ -195,7 +195,7 @@ bool CandidatePresentation::pending_caret_fallback_due(TimePoint now, int delay_
 bool CandidatePresentation::accept_provisional_caret_after_timeout(TimePoint now,
                                                                    RECT* caret_rect) {
     if (!caret_rect || !waiting_for_caret() || !caret_resolution_allowed_ ||
-        !initial_layout_wait_ || !has_stale_rect_ ||
+        !initial_layout_wait_ || !has_stale_rect_ || waiting_since_ == TimePoint{} ||
         now - waiting_since_ < kCaretSampleMaxWait) {
         return false;
     }
@@ -213,14 +213,6 @@ void CandidatePresentation::begin_composition_restart(TimePoint now) {
     waiting_since_ = now;
     composition_restart_active_ = true;
     caret_resolution_allowed_ = false;
-}
-
-bool CandidatePresentation::fail_composition_restart(std::uint64_t generation) {
-    if (!generation_matches(generation) || !composition_restart_active_) {
-        return false;
-    }
-    finish();
-    return true;
 }
 
 bool CandidatePresentation::should_keep_waiting_for_caret(const RECT& caret_rect,
@@ -270,11 +262,15 @@ bool CandidatePresentation::should_keep_waiting_for_caret(const RECT& caret_rect
     return reposition_wait_ || (!from_layout_change && !used_trusted_caret);
 }
 
-bool CandidatePresentation::complete_composition_restart(std::uint64_t generation) {
+bool CandidatePresentation::complete_composition_restart(std::uint64_t generation, TimePoint now) {
     if (!generation_matches(generation) || !composition_restart_active_) {
         return false;
     }
-    caret_resolution_allowed_ = true;
+    if (!caret_resolution_allowed_) {
+        // A queued host edit cannot supply layout yet. Start the budget only once it succeeds.
+        waiting_since_ = now;
+        caret_resolution_allowed_ = true;
+    }
     return true;
 }
 
@@ -323,6 +319,32 @@ RECT CandidatePresentation::display_caret(const RECT& sample, std::uint64_t samp
 
     pending_caret_ = sample;
     return has_displayed_caret_ ? displayed_caret_ : sample;
+}
+
+bool CandidatePresentation::can_retain_displayed_caret(std::uint64_t target_generation) const {
+    return should_show_external_window(true) && !composition_restart_active_ &&
+           has_displayed_caret_ && displayed_target_generation_ == target_generation;
+}
+
+bool CandidatePresentation::caret_poll_pending() const {
+    if (waiting_for_caret()) {
+        return caret_resolution_allowed_ && waiting_since_ != TimePoint{};
+    }
+    return caret_jump_pending_;
+}
+
+bool CandidatePresentation::expire_caret_wait(TimePoint now) {
+    if (!waiting_for_caret() || !caret_poll_pending()) {
+        return false;
+    }
+    const auto budget = reposition_wait_ ? std::chrono::milliseconds(kRepositionFallbackDelayMs)
+                                         : kCaretSampleMaxWait;
+    if (now - waiting_since_ < budget) {
+        return false;
+    }
+    // Keep the unresolved presentation recoverable by events, without rearming its timer.
+    waiting_since_ = {};
+    return true;
 }
 
 bool CandidatePresentation::accept_pending_caret_after_timeout(TimePoint now) {

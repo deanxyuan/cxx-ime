@@ -184,20 +184,11 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
     bool status_key = is_status_key(wParam);
     uint32_t modifiers = _get_modifiers();
     const char* block_reason = _input_context_block_reason(pic);
-    bool no_edit_target = false;
-    bool edit_target_validated = false;
     const bool starts_new_composition =
         !_composing && !status_key && _chinese_mode && can_start_text_input(wParam, modifiers);
     const bool should_validate_edit_target =
-        !_inputFocused || !_effectiveEditTarget.valid() || starts_new_composition;
-    if (!block_reason && trace_composition_id() == 0 && should_validate_edit_target) {
-        no_edit_target = _context_has_no_edit_target(pic);
-        if (no_edit_target) {
-            block_reason = "no_edit_target";
-        } else {
-            edit_target_validated = true;
-        }
-    }
+        !_inputFocused || !_effectiveEditTarget.valid() || starts_new_composition ||
+        !_context_matches_effective_edit_target(pic);
     bool input_allowed = block_reason == nullptr;
     _trace_input_decision(block_reason);
     if (!input_allowed && !status_key) {
@@ -209,7 +200,7 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
             "blocked", block_reason ? block_reason : "input_context");
         _clear_effective_edit_target(
             "key_context_rejected",
-            no_edit_target || indicates_unavailable_input_target(block_reason));
+            indicates_unavailable_input_target(block_reason));
         if (wParam < _passThroughKeyUps.size()) {
             _passThroughKeyUps.set(wParam);
         }
@@ -218,7 +209,7 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
 
     if (input_allowed && should_validate_edit_target) {
         input_allowed = _synchronize_effective_edit_target(
-            pic, nullptr, "key_event", edit_target_validated);
+            pic, nullptr, "key_event");
         if (!input_allowed && !status_key) {
             if (wParam < _passThroughKeyUps.size()) {
                 _passThroughKeyUps.set(wParam);
@@ -326,7 +317,10 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
                static_cast<unsigned int>(strnlen_s(response.preedit, sizeof(response.preedit))),
                response.composing);
 
-    _apply_engine_response(pic, response, pfEaten, &trace);
+    const bool response_applied = _apply_engine_response(pic, response, pfEaten, &trace);
+    if (!response_applied && !*pfEaten && wParam < _passThroughKeyUps.size()) {
+        _passThroughKeyUps.set(wParam);
+    }
 
     // Finalize and enqueue trace (async, non-blocking)
     auto total_end = std::chrono::steady_clock::now();
