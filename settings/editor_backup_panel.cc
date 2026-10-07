@@ -175,9 +175,10 @@ void EditorApp::set_backup_controls_enabled(bool enabled) {
     }
     EnableWindow(hBackupImport_,
                  enabled && !selectedBackupPath_.empty() && selected_backup_components(true) != 0);
-    for (int id : {2001, 2002, 2003}) {
+    for (int id : {2001, 2002}) {
         EnableWindow(GetDlgItem(hwnd_, id), enabled);
     }
+    update_apply_state();
 }
 
 bool EditorApp::handle_backup_command(int control_id, int notification) {

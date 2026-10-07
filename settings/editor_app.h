@@ -42,6 +42,8 @@ public:
     cxxime::Config build_cand_preview_config();
 
 private:
+    friend struct EditorApplyStateTest;
+
     void create_controls(HWND hwnd);
     void create_input_panel(HWND panel);
     void create_candidate_panel(HWND panel);
@@ -76,6 +78,9 @@ private:
     void show_panel(int idx);
     bool load_config();
     bool save_config();
+    std::vector<std::string> settings_snapshot() const;
+    void reset_apply_state();
+    void update_apply_state();
     void readback(HWND hwnd);
     std::string selected_theme_id() const;
     std::string selected_pinyin_scheme_id() const;
@@ -288,6 +293,7 @@ private:
     bool candPreviewVisible_ = false;
 
     cxxime::Config config_;
+    std::vector<std::string> saved_settings_;
     static LRESULT CALLBACK wndproc(HWND, UINT, WPARAM, LPARAM);
 };
 

@@ -271,6 +271,17 @@ target_sources(system_lexicon_inspector_test PRIVATE
 target_include_directories(system_lexicon_inspector_test PRIVATE
     ${CMAKE_SOURCE_DIR}/settings
 )
+add_cxxime_test(editor_apply_state_test
+    SOURCES
+        settings/editor_apply_state_test.cc
+        ${CMAKE_SOURCE_DIR}/settings/editor_apply_state.cc
+        ${CMAKE_SOURCE_DIR}/settings/editor_controls.cc
+    DEPS cxxime-engine cxxime-ipc cxxime-ui comctl32.lib
+)
+target_include_directories(editor_apply_state_test
+PRIVATE
+    ${CMAKE_SOURCE_DIR}/settings
+)
 add_cxxime_test(lexicon_panel_model_test
     SOURCES settings/lexicon_panel_model_test.cc
     DEPS cxxime-engine cxxime-shared

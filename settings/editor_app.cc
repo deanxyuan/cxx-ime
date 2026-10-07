@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <utility>
 
 #include <commctrl.h>
 
@@ -166,7 +167,8 @@ void EditorApp::create_controls(HWND window) {
     CreateWindowExW(0, L"BUTTON", L"取消", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
                     cancel_x, button_y, button_width, button_height, window,
                     reinterpret_cast<HMENU>(static_cast<INT_PTR>(2002)), nullptr, nullptr);
-    CreateWindowExW(0, L"BUTTON", L"应用", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+    CreateWindowExW(0, L"BUTTON", L"应用",
+                    WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_DISABLED | BS_PUSHBUTTON,
                     apply_x, button_y, button_width, button_height, window,
                     reinterpret_cast<HMENU>(static_cast<INT_PTR>(2003)), nullptr, nullptr);
     for (int id : {2001, 2002, 2003}) {
@@ -222,7 +224,7 @@ void EditorApp::release_fonts() {
 }
 
 bool EditorApp::load_config() {
-    config_ = {};
+    cxxime::Config loaded;
     // Load defaults from program directory, then overlay C:\Users\<user>\cxxime\default.json.
     const std::string default_path = cxxime::data_path("default.json");
     const std::string user_path = cxxime::user_data_path("default.json");
@@ -234,7 +236,7 @@ bool EditorApp::load_config() {
         MessageBoxW(hwnd_, message.c_str(), L"CxxIME 设置", MB_OK | MB_ICONERROR);
     };
 
-    if (!config_.load(default_path)) {
+    if (!loaded.load(default_path)) {
         show_load_error(L"默认配置", default_path);
         return false;
     }
@@ -242,7 +244,7 @@ bool EditorApp::load_config() {
     const std::wstring wide_user_path = path_for_display(user_path);
     const DWORD user_attributes = GetFileAttributesW(wide_user_path.c_str());
     if (user_attributes != INVALID_FILE_ATTRIBUTES) {
-        if ((user_attributes & FILE_ATTRIBUTE_DIRECTORY) != 0 || !config_.load_user(user_path)) {
+        if ((user_attributes & FILE_ATTRIBUTE_DIRECTORY) != 0 || !loaded.load_user(user_path)) {
             show_load_error(L"用户配置", user_path);
             return false;
         }
@@ -254,10 +256,13 @@ bool EditorApp::load_config() {
         }
     }
 
-    if (!config_.load_themes(themes_path)) {
+    if (!loaded.load_themes(themes_path)) {
         show_load_error(L"主题配置", themes_path);
         return false;
     }
+
+    // Keep the current form and Apply baseline intact if a reload fails.
+    config_ = std::move(loaded);
 
     // Populate controls
     SendMessageW(hThemeCombo_, CB_RESETCONTENT, 0, 0);
@@ -346,6 +351,7 @@ bool EditorApp::load_config() {
     update_input_mode_enabled();
 
     show_panel(settings_panel_index(initial_panel_));
+    reset_apply_state();
     return true;
 }
 
@@ -392,6 +398,7 @@ bool EditorApp::save_config() {
         MessageBoxW(hwnd_, message, L"CxxIME 设置", MB_OK | MB_ICONERROR);
         return false;
     }
+    reset_apply_state();
     return true;
 }
 
@@ -582,20 +589,24 @@ LRESULT CALLBACK EditorApp::wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             DestroyWindow(hwnd);
             return 0;
         case 2003:
-            a->save_config();
+            if (IsWindowEnabled(GetDlgItem(hwnd, 2003))) {
+                a->save_config();
+            }
             return 0;
         default:
             break;
         }
-        if (a->handle_input_command(control_id, notification) ||
+        const bool handled = a->handle_input_command(control_id, notification) ||
             a->handle_candidate_command(control_id, notification) ||
             a->handle_advanced_layout_command(control_id, notification) ||
             a->handle_shortcuts_command(control_id, notification) ||
             a->handle_dictionary_command(control_id, notification) ||
             a->handle_symbols_command(control_id, notification) ||
             a->handle_backup_command(control_id, notification) ||
-            a->handle_diagnostics_command(control_id, notification)) {
-            return 0;
+            a->handle_diagnostics_command(control_id, notification);
+        if (handled || notification == BN_CLICKED || notification == EN_CHANGE ||
+            notification == CBN_SELCHANGE) {
+            a->update_apply_state();
         }
         return 0;
     }

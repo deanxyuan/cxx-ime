@@ -6,6 +6,7 @@ add_executable(cxxime-settings WIN32
     main.cc
     editor_about_panel.cc
     editor_advanced_panel.cc
+    editor_apply_state.cc
     editor_app.cc
     editor_app.h
     editor_app_internal.h
