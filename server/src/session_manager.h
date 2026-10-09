@@ -239,7 +239,8 @@ private:
 
     void reset_global_state(const SharedResourceSnapshot& resources);
     GlobalVisibleState snapshot_global_state();
-    void commit_global_state(GlobalVisibleState next);
+    void set_global_caps_lock(bool caps_lock);
+    void set_global_input_mode(cxxime::InputMode input_mode);
     void align_session_to_global(SessionEntry& entry);
 
     void persist_input_mode(cxxime::InputMode mode);

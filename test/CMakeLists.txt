@@ -112,24 +112,70 @@ add_cxxime_test(text_service_test
         tsf/text_service_composition_test.cc
         tsf/text_service_key_test.cc
         tsf/text_service_presentation_test.cc
+        tsf/text_service_status_test.cc
+        tsf/text_service_status_focus_test.cc
+        tsf/text_service_status_recovery_test.cc
+        tsf/text_service_status_lifecycle_test.cc
+        tsf/text_service_status_settings_test.cc
+        tsf/text_service_compartment_test.cc
 )
 # Exercise the real service and edit-session implementation; only the host COM
 # interfaces are controlled by the test. Keep its sources/dependencies aligned
 # with the DLL without importing its entry point, exports or version resource.
 get_target_property(TSF_TEST_SOURCES cxxime-tsf SOURCES)
+set(TSF_TEST_IMPLEMENTATION_SOURCES)
 foreach(TSF_TEST_SOURCE IN LISTS TSF_TEST_SOURCES)
     if(TSF_TEST_SOURCE MATCHES "\\.(cpp|cc)$" AND
        NOT TSF_TEST_SOURCE MATCHES "[/\\\\]dllmain\\.cpp$")
         if(NOT IS_ABSOLUTE "${TSF_TEST_SOURCE}")
             set(TSF_TEST_SOURCE "${CMAKE_SOURCE_DIR}/tsf/${TSF_TEST_SOURCE}")
         endif()
-        target_sources(text_service_test PRIVATE "${TSF_TEST_SOURCE}")
+        list(APPEND TSF_TEST_IMPLEMENTATION_SOURCES "${TSF_TEST_SOURCE}")
     endif()
 endforeach()
+target_sources(text_service_test PRIVATE ${TSF_TEST_IMPLEMENTATION_SOURCES})
 get_target_property(TSF_TEST_INCLUDE_DIRS cxxime-tsf INCLUDE_DIRECTORIES)
 get_target_property(TSF_TEST_LIBRARIES cxxime-tsf LINK_LIBRARIES)
 target_include_directories(text_service_test PRIVATE ${TSF_TEST_INCLUDE_DIRS})
 target_link_libraries(text_service_test PRIVATE ${TSF_TEST_LIBRARIES})
+add_cxxime_test(status_process_integration_test
+    SOURCES
+        tsf/status_process_integration_test.cc
+        tsf/status_process_host.cc
+        tsf/status_test_platform.cc
+        server/session_manager_integration_test_support.cc
+        ${CMAKE_SOURCE_DIR}/server/src/session_manager.cc
+        ${CMAKE_SOURCE_DIR}/server/src/ipc_response_builder.cc
+        ${CMAKE_SOURCE_DIR}/server/src/ui_presentation_router.cc
+    DEPS cxxime-test-topn-data cxxime-test-wubi-index-data
+)
+target_sources(status_process_integration_test PRIVATE ${TSF_TEST_IMPLEMENTATION_SOURCES})
+target_include_directories(status_process_integration_test PRIVATE
+    ${TSF_TEST_INCLUDE_DIRS}
+    ${CMAKE_SOURCE_DIR}/server/src
+)
+target_link_libraries(status_process_integration_test PRIVATE ${TSF_TEST_LIBRARIES})
+# Only this controlled-host target substitutes OS input samples. Keep production code,
+# native TextService tests, transport and window validation on their existing paths.
+if(MSVC)
+    set(STATUS_TEST_PLATFORM_OPTIONS
+        "/FI${CMAKE_CURRENT_SOURCE_DIR}/tsf/status_test_platform.h")
+else()
+    set(STATUS_TEST_PLATFORM_OPTIONS
+        -include "${CMAKE_CURRENT_SOURCE_DIR}/tsf/status_test_platform.h")
+endif()
+get_target_property(STATUS_TEST_SOURCES status_process_integration_test SOURCES)
+foreach(STATUS_TEST_SOURCE IN LISTS STATUS_TEST_SOURCES)
+    # globals.cpp must define INITGUID before including any Windows headers.
+    if(NOT STATUS_TEST_SOURCE MATCHES "[/\\\\]globals\\.cpp$")
+        foreach(STATUS_TEST_OPTION IN LISTS STATUS_TEST_PLATFORM_OPTIONS)
+            set_property(SOURCE ${STATUS_TEST_SOURCE} APPEND PROPERTY COMPILE_OPTIONS
+                "$<$<STREQUAL:$<TARGET_PROPERTY:NAME>,status_process_integration_test>:${STATUS_TEST_OPTION}>"
+            )
+        endforeach()
+    endif()
+endforeach()
+set_tests_properties(status_process_integration_test PROPERTIES RUN_SERIAL TRUE TIMEOUT 90)
 add_cxxime_test(effective_edit_target_test SOURCES tsf/effective_edit_target_test.cc)
 target_sources(effective_edit_target_test PRIVATE
     ${CMAKE_SOURCE_DIR}/tsf/src/effective_edit_target.cpp
@@ -360,6 +406,7 @@ target_include_directories(session_manager_status_test PRIVATE
 add_cxxime_test(session_manager_integration_test
     SOURCES
         server/session_manager_integration_test.cc
+        server/session_manager_language_test.cc
         server/session_manager_candidate_test.cc
         server/ipc_response_builder_test.cc
         server/session_manager_segmented_test.cc

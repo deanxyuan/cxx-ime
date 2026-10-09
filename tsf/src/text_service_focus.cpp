@@ -8,6 +8,7 @@
 #include <cxxime/diagnostics_config.h>
 
 #include "candidate_ui_element.h"
+#include "ui_presentation_batch.h"
 
 namespace {
 
@@ -127,6 +128,7 @@ void TextService::_release_effective_edit_target() {
 }
 
 void TextService::_clear_effective_edit_target(const char* source, bool target_unavailable) {
+    _cancel_caps_lock_refresh();
     invalidate_composition_edit_requests();
     const cxxime_tsf::EffectiveEditTargetSnapshot previous = _effectiveEditTarget;
     const cxxime_tsf::EffectiveEditTargetSnapshot unavailable;
@@ -316,15 +318,38 @@ bool TextService::_synchronize_effective_edit_target_from_thread_mgr(const char*
     return _synchronize_effective_edit_target(nullptr, nullptr, source);
 }
 
+bool TextService::_synchronize_focus_state(ITfContext* context, ITfDocumentMgr* document,
+                                           const char* source) {
+    cxxime_tsf::UiPresentationBatch batch(*this);
+    if (!_synchronize_effective_edit_target(context, document, source)) {
+        return false;
+    }
+
+    // Focus callbacks can precede the host's keyboard-state queue synchronization.
+    // Consume the server snapshot first; sample CapsLock after queued input is handled.
+    cxxime::IPCResponse response = {};
+    const bool synchronized = _ensure_ipc_session() && _client.focus_in(_sessionId, &response);
+    if (synchronized) {
+        _sync_ime_status(response.ime_status);
+    } else {
+        // Do not present a previous focus's cached value as a refreshed status.
+        _imeStatusCurrent.store(false, std::memory_order_release);
+    }
+    char detail[160] = {};
+    std::snprintf(detail, sizeof(detail), "source=%s result=%s caps=%d", source,
+                  synchronized ? "success" : "failed",
+                  synchronized && response.ime_status.caps_lock() ? 1 : 0);
+    _enqueue_event_trace("focus_status", detail, !synchronized);
+    _schedule_caps_lock_refresh();
+    return true;
+}
+
 STDMETHODIMP TextService::OnSetThreadFocus() {
     if (!_activated) {
         return S_OK;
     }
 
-    if (_synchronize_effective_edit_target_from_thread_mgr("thread_focus")) {
-        _refresh_caps_lock_on_focus("thread_focus");
-        _schedule_caps_lock_refresh();
-    }
+    _synchronize_focus_state(nullptr, nullptr, "thread_focus");
     return S_OK;
 }
 
@@ -356,33 +381,21 @@ STDMETHODIMP TextService::OnSetFocus(ITfDocumentMgr* pDocMgrFocus,
         return S_OK;
     }
 
-    if (!_synchronize_effective_edit_target(nullptr, pDocMgrFocus, "document_focus")) {
-        return S_OK;
-    }
-
-    cxxime::IPCResponse response = {};
-    if (_ensure_ipc_session() && _client.get_status(_sessionId, response) &&
-        response.status == cxxime::IPCStatus::OK) {
-        _sync_ime_status(response.ime_status);
-    }
-    _refresh_caps_lock_on_focus("document_focus");
-    _schedule_caps_lock_refresh();
+    _synchronize_focus_state(nullptr, pDocMgrFocus, "document_focus");
     return S_OK;
 }
 
 STDMETHODIMP TextService::OnPushContext(ITfContext* pic) {
-    if (_activated && _synchronize_effective_edit_target(pic, nullptr, "push_context")) {
-        _refresh_caps_lock_on_focus("push_context");
-        _schedule_caps_lock_refresh();
+    if (_activated) {
+        _synchronize_focus_state(pic, nullptr, "push_context");
     }
     return S_OK;
 }
 
 STDMETHODIMP TextService::OnPopContext(ITfContext* pic) {
     UNREFERENCED_PARAMETER(pic);
-    if (_activated && _synchronize_effective_edit_target_from_thread_mgr("pop_context")) {
-        _refresh_caps_lock_on_focus("pop_context");
-        _schedule_caps_lock_refresh();
+    if (_activated) {
+        _synchronize_focus_state(nullptr, nullptr, "pop_context");
     }
     return S_OK;
 }

@@ -998,18 +998,14 @@ bool StatusWindow::RedrawLayered() {
         PaintGdiplus();
     }
 
-    // Present via UpdateLayeredWindow
-    RECT rc = {};
-    if (!GetWindowRect(hwnd_, &rc)) {
-        return false;
-    }
+    // Repaint without repositioning. GetWindowRect can be DPI-virtualized for
+    // the caller, while the layered surface and its size use physical pixels.
     HDC screen_dc = GetDC(nullptr);
     BLENDFUNCTION bf = {AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
     POINT ptSrc = {0, 0};
     SIZE sz = {win_w_, win_h_};
-    POINT ptDst = {rc.left, rc.top};
     const BOOL updated =
-        UpdateLayeredWindow(hwnd_, screen_dc, &ptDst, &sz, layered_dc_, &ptSrc, 0, &bf, ULW_ALPHA);
+        UpdateLayeredWindow(hwnd_, screen_dc, nullptr, &sz, layered_dc_, &ptSrc, 0, &bf, ULW_ALPHA);
     ReleaseDC(nullptr, screen_dc);
     return updated != FALSE;
 }

@@ -55,8 +55,8 @@ bool TextService::_start_config_updates() {
 }
 
 void TextService::_stop_config_updates() {
+    _cancel_caps_lock_refresh();
     if (!_configWindow) {
-        _capsLockRefreshPending = false;
         cxxime_tsf::shutdown_tsf_log_writer_if_no_config_subscribers();
         return;
     }
@@ -64,7 +64,6 @@ void TextService::_stop_config_updates() {
     cxxime_tsf::unsubscribe_config_updates(_configWindow, _configSubscriptionId);
     DestroyWindow(_configWindow);
     _configWindow = nullptr;
-    _capsLockRefreshPending = false;
     _configSubscriptionId = 0;
     _configGeneration = {};
 }
@@ -108,10 +107,13 @@ LRESULT CALLBACK TextService::_config_window_proc(HWND hwnd, UINT msg, WPARAM wp
         service->_drain_ui_commands();
         return 0;
     }
-    if (msg == cxxime_tsf::WM_CXXIME_REFRESH_CAPS_LOCK && service) {
-        service->_capsLockRefreshPending = false;
-        if (service->_activated && service->_inputFocused) {
-            service->_refresh_caps_lock_on_focus("focus_deferred");
+    if (msg == WM_TIMER && service && service->_capsLockRefreshTimer != 0 &&
+        wp == service->_capsLockRefreshTimer) {
+        const bool current =
+            service->_capsLockRefreshTargetGeneration == service->_uiTargetGeneration;
+        service->_cancel_caps_lock_refresh();
+        if (current) {
+            service->_refresh_caps_lock_state("focus_deferred", true);
         }
         return 0;
     }

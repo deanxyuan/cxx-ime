@@ -321,6 +321,8 @@ private:
                                             ITfDocumentMgr* event_document_mgr,
                                             const char* source);
     bool _synchronize_effective_edit_target_from_thread_mgr(const char* source);
+    bool _synchronize_focus_state(ITfContext* context, ITfDocumentMgr* document,
+                                  const char* source);
     void _clear_effective_edit_target(const char* source, bool target_unavailable = false);
     void _release_effective_edit_target();
     cxxime_tsf::EffectiveEditTargetBindings _effective_edit_target_bindings(
@@ -335,16 +337,20 @@ private:
     bool _sync_caps_lock_state(bool caps_lock,
                                const char* source,
                                cxxime::ImeStatus* synced_status = nullptr);
-    bool _refresh_caps_lock_on_focus(const char* source);
+    bool _has_foreground_input_focus() const;
+    bool _refresh_caps_lock_state(const char* source, bool force = false);
     void _schedule_caps_lock_refresh();
+    void _cancel_caps_lock_refresh();
     bool _ensure_ipc_session();
+    bool _start_ipc_session();
     bool _recreate_ipc_session_preserving_status();
     bool _heartbeat_ipc();
     bool _refresh_input_indicator();
     void _schedule_input_indicator_refresh_retry();
     void _stop_input_indicator_refresh_retry();
     bool _has_synced_ime_status() const noexcept {
-        return _hasLastImeStatus.load(std::memory_order_acquire);
+        return _hasLastImeStatus.load(std::memory_order_acquire) &&
+               _imeStatusCurrent.load(std::memory_order_acquire);
     }
     void _show_status_window_if_allowed(const char* reason = "input_allowed");
     void _hide_status_window(const char* reason);
@@ -419,6 +425,8 @@ private:
     std::mutex _lastImeStatusMutex;
     cxxime::ImeStatus _lastImeStatus;
     std::atomic<bool> _hasLastImeStatus{false};
+    // A failed focus refresh hides the status without discarding recovery preferences.
+    std::atomic<bool> _imeStatusCurrent{false};
     bool _activated = false;
     bool _inputFocused = false;
     bool _inputTargetUnavailable = false;
@@ -445,7 +453,9 @@ private:
     cxxime::ConfigGeneration _configGeneration;
     HWND _configWindow = nullptr;
     std::uint32_t _configSubscriptionId = 0;
-    bool _capsLockRefreshPending = false;
+    UINT_PTR _capsLockRefreshTimer = 0;
+    UINT_PTR _capsLockRefreshSerial = 0xD000;
+    std::uint64_t _capsLockRefreshTargetGeneration = 0;
 
     cxxime_tsf::InputIndicatorController _inputIndicator;
 

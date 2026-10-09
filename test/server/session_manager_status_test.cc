@@ -616,7 +616,15 @@ TEST(SessionStatus, input_state_is_session_local_while_input_mode_remains_global
     ASSERT_EQ(st8, cxxime::IPCStatus::OK);
     ASSERT_EQ(s7.input_mode, cxxime::InputMode::WUBI);
     ASSERT_EQ(s8.input_mode, cxxime::InputMode::WUBI);
-    }
+
+    auto [caps_result, caps_status] = mgr.sync_caps_lock(id2, true);
+    ASSERT_EQ(caps_result, cxxime::IPCStatus::OK);
+    ASSERT_EQ(caps_status.input_mode, cxxime::InputMode::WUBI);
+    auto [mode_result, mode_status] = mgr.switch_input_mode(id1, cxxime::InputMode::PINYIN);
+    ASSERT_EQ(mode_result, cxxime::IPCStatus::OK);
+    ASSERT_TRUE(mode_status.caps_lock());
+    ASSERT_EQ(mode_status.input_mode, cxxime::InputMode::PINYIN);
+}
 
 TEST(SessionStatus, session_language_mode_survives_other_session_changes) {
     SessionManager mgr;

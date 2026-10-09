@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <string>
 #include <vector>
 
 #include <windows.h>
@@ -12,10 +13,20 @@
 
 #include "support/dpi_testutil.h"
 #include "support/testutil.h"
+#include "support/window_transition_probe.h"
 
 static bool create_test_window(cxxime::StatusWindow& window) {
     const cxxime::StatusTheme theme;
     return window.create(theme);
+}
+
+static std::wstring language_tooltip(HWND hwnd) {
+    NMTTDISPINFOW info = {};
+    info.hdr.code = TTN_GETDISPINFOW;
+    info.hdr.idFrom = 0;
+    SendMessageW(hwnd, WM_NOTIFY, 0, reinterpret_cast<LPARAM>(&info));
+    ASSERT_TRUE(info.lpszText != nullptr);
+    return info.lpszText;
 }
 
 static int scale_status_metric(HWND hwnd, int metric) {
@@ -133,11 +144,14 @@ TEST(StatusWindow, ShowHidePreservesTopmostStyle) {
     ASSERT_TRUE(create_test_window(window));
     ASSERT_TRUE((GetWindowLongPtrW(window.hwnd_for_test(), GWL_EXSTYLE) & WS_EX_TOPMOST) != 0);
 
+    test::WindowTransitionProbe transitions(window.hwnd_for_test());
     window.show();
+    transitions.expect(1, 0);
     ASSERT_TRUE(window.is_visible());
     ASSERT_TRUE((GetWindowLongPtrW(window.hwnd_for_test(), GWL_EXSTYLE) & WS_EX_TOPMOST) != 0);
 
     window.show();
+    transitions.expect(1, 0);
     ASSERT_TRUE(window.is_visible());
     ASSERT_TRUE((GetWindowLongPtrW(window.hwnd_for_test(), GWL_EXSTYLE) & WS_EX_TOPMOST) != 0);
 
@@ -150,14 +164,101 @@ TEST(StatusWindow, ShowHidePreservesTopmostStyle) {
     ASSERT_TRUE((GetWindowLongPtrW(window.hwnd_for_test(), GWL_EXSTYLE) & WS_EX_TOPMOST) != 0);
 
     window.hide();
+    transitions.expect(1, 1);
     ASSERT_TRUE(!window.is_visible());
     ASSERT_TRUE((GetWindowLongPtrW(window.hwnd_for_test(), GWL_EXSTYLE) & WS_EX_TOPMOST) != 0);
 
     window.show();
+    transitions.expect(2, 1);
     ASSERT_TRUE(window.is_visible());
     ASSERT_TRUE((GetWindowLongPtrW(window.hwnd_for_test(), GWL_EXSTYLE) & WS_EX_TOPMOST) != 0);
 
     window.destroy();
+}
+
+TEST(StatusWindow, StateUpdatesPreserveVisibilityAndHiddenUpdatesSurviveReshow) {
+    const DPI_AWARENESS_CONTEXT contexts[] = {
+        DPI_AWARENESS_CONTEXT_UNAWARE,
+        DPI_AWARENESS_CONTEXT_SYSTEM_AWARE,
+        DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+    };
+    for (HMONITOR monitor : monitor_handles()) {
+        for (const auto context : contexts) {
+            test::ScopedDpiAwarenessContext caller(context);
+            cxxime::StatusWindow window;
+            ASSERT_TRUE(create_test_window(window));
+            {
+                test::ScopedDpiAwarenessContext physical;
+                MONITORINFO info = {sizeof(info)};
+                ASSERT_TRUE(GetMonitorInfoW(monitor, &info));
+                window.set_position(info.rcWork.left + 40, info.rcWork.top + 40);
+            }
+            const HWND hwnd = window.hwnd_for_test();
+            const std::wstring normal_tip = language_tooltip(hwnd);
+            test::WindowTransitionProbe transitions(hwnd);
+            window.show();
+            transitions.expect(1, 0);
+            cxxime::ButtonState state;
+            for (bool chinese : {false, true}) {
+                state.chinese_mode = chinese;
+                for (bool caps : {true, false}) {
+                    state.caps_lock = caps;
+                    window.update_state(state);
+                    window.update_state(state);
+                    ASSERT_TRUE(window.is_visible());
+                    ASSERT_EQ(language_tooltip(hwnd) == normal_tip, !caps);
+                    transitions.expect(1, 0);
+                }
+            }
+            window.hide();
+            for (bool caps : {true, false, true}) {
+                state.caps_lock = caps;
+                window.update_state(state);
+                ASSERT_TRUE(!window.is_visible());
+                ASSERT_EQ(language_tooltip(hwnd) == normal_tip, !caps);
+                transitions.expect(1, 1);
+            }
+            window.show();
+            ASSERT_TRUE(window.is_visible());
+            ASSERT_NE(language_tooltip(hwnd), normal_tip);
+            transitions.expect(2, 1);
+            ASSERT_TRUE(AreDpiAwarenessContextsEqual(GetThreadDpiAwarenessContext(), context));
+        }
+    }
+}
+
+TEST(WindowTransitionProbe, DifferentDpiContextsDoNotConcealRealMovement) {
+    test::ScopedDpiAwarenessContext dpi_context;
+    const HWND hwnd =
+        CreateWindowExW(WS_EX_NOACTIVATE, L"STATIC", L"Transition probe", WS_POPUP, 200, 200, 100,
+                        50, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    ASSERT_TRUE(hwnd != nullptr);
+    const DPI_AWARENESS_CONTEXT contexts[] = {
+        DPI_AWARENESS_CONTEXT_UNAWARE,
+        DPI_AWARENESS_CONTEXT_SYSTEM_AWARE,
+        DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+    };
+    for (const auto context : contexts) {
+        test::ScopedDpiAwarenessContext caller(context);
+        test::WindowTransitionProbe transitions(hwnd);
+        ASSERT_TRUE(AreDpiAwarenessContextsEqual(GetThreadDpiAwarenessContext(), context));
+        ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+        transitions.expect(1, 0);
+        ASSERT_TRUE(AreDpiAwarenessContextsEqual(GetThreadDpiAwarenessContext(), context));
+        {
+            test::ScopedDpiAwarenessContext physical;
+            ASSERT_TRUE(SetWindowPos(hwnd, nullptr, 220, 210, 0, 0,
+                                     SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE));
+            transitions.expect(1, 0, 1);
+            ASSERT_TRUE(SetWindowPos(hwnd, nullptr, 200, 200, 0, 0,
+                                     SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE));
+            // Returning to the original position must not erase the intermediate move.
+            transitions.expect(1, 0, 1);
+        }
+        ShowWindow(hwnd, SW_HIDE);
+        transitions.expect(1, 1, 1);
+    }
+    ASSERT_TRUE(DestroyWindow(hwnd));
 }
 
 // ============================================================
@@ -211,7 +312,7 @@ TEST(StatusWindow, FullscreenRequiresCoveringTheEntireMonitor) {
     ASSERT_TRUE(!cxxime::rect_covers_monitor({}, monitor));
 }
 
-TEST(StatusWindow, RestoredPositionFitsTheWorkArea) {
+TEST(StatusWindow, RestoredPositionClampsWithinTheSameMonitor) {
     test::ScopedDpiAwarenessContext dpi_context;
 
     cxxime::StatusWindow window;
@@ -220,20 +321,19 @@ TEST(StatusWindow, RestoredPositionFitsTheWorkArea) {
     HWND hwnd = window.hwnd_for_test();
     RECT window_rect = {};
     ASSERT_TRUE(GetWindowRect(hwnd, &window_rect));
-    const POINT virtual_right_edge = {
-        GetSystemMetrics(SM_XVIRTUALSCREEN) + GetSystemMetrics(SM_CXVIRTUALSCREEN) - 1,
-        GetSystemMetrics(SM_YVIRTUALSCREEN),
-    };
-    HMONITOR monitor = MonitorFromPoint(virtual_right_edge, MONITOR_DEFAULTTONEAREST);
+    HMONITOR monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
     MONITORINFO monitor_info = {sizeof(monitor_info)};
     ASSERT_TRUE(GetMonitorInfoW(monitor, &monitor_info));
 
     const int width = window_rect.right - window_rect.left;
-    const int partial_x = monitor_info.rcWork.right - width / 2;
-    ASSERT_TRUE(SetWindowPos(hwnd, nullptr, partial_x, monitor_info.rcWork.top, 0, 0,
-                             SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE));
-    ASSERT_TRUE(GetWindowRect(hwnd, &window_rect));
-    ASSERT_EQ(window_rect.left, partial_x);
+    const int height = window_rect.bottom - window_rect.top;
+    ASSERT_TRUE(width > 3 && width <= monitor_info.rcWork.right - monitor_info.rcWork.left);
+    ASSERT_TRUE(height <= monitor_info.rcWork.bottom - monitor_info.rcWork.top);
+    // Leave three quarters on this monitor: a half-width split can select its neighbour.
+    const int partial_x = monitor_info.rcWork.right - width + width / 4;
+    const int y = monitor_info.rcWork.top;
+    const RECT requested = {partial_x, y, partial_x + width, y + height};
+    ASSERT_EQ(MonitorFromRect(&requested, MONITOR_DEFAULTTONEAREST), monitor);
 
     int callback_count = 0;
     POINT saved_position = {};
@@ -241,15 +341,67 @@ TEST(StatusWindow, RestoredPositionFitsTheWorkArea) {
         ++callback_count;
         saved_position = {x, y};
     });
-    window.set_position(partial_x, monitor_info.rcWork.top);
+    window.set_position(partial_x, y);
 
     ASSERT_TRUE(GetWindowRect(hwnd, &window_rect));
     ASSERT_EQ(window_rect.right, monitor_info.rcWork.right);
+    ASSERT_EQ(window_rect.top, y);
+    ASSERT_EQ(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), monitor);
+    ASSERT_TRUE(window_rect.left >= monitor_info.rcWork.left);
+    ASSERT_TRUE(window_rect.top >= monitor_info.rcWork.top);
+    ASSERT_TRUE(window_rect.bottom <= monitor_info.rcWork.bottom);
     ASSERT_EQ(callback_count, 1);
     ASSERT_EQ(saved_position.x, window_rect.left);
     ASSERT_EQ(saved_position.y, window_rect.top);
+    window.set_position(saved_position.x, saved_position.y);
+    ASSERT_EQ(callback_count, 1);
 
     window.destroy();
+}
+
+TEST(StatusWindow, RestoredPositionAcrossSeamUsesMonitorWithLargerIntersection) {
+    test::ScopedDpiAwarenessContext dpi_context;
+    const std::vector<HMONITOR> monitors = monitor_handles();
+    for (HMONITOR left_handle : monitors) {
+        MONITORINFO left = {sizeof(left)};
+        ASSERT_TRUE(GetMonitorInfoW(left_handle, &left));
+        for (HMONITOR right_handle : monitors) {
+            MONITORINFO right = {sizeof(right)};
+            ASSERT_TRUE(GetMonitorInfoW(right_handle, &right));
+            if (left.rcMonitor.right != right.rcMonitor.left ||
+                left.rcWork.right != right.rcWork.left) {
+                continue;
+            }
+            cxxime::StatusWindow window;
+            ASSERT_TRUE(create_test_window(window));
+            window.set_position(left.rcWork.left, left.rcWork.top);
+            const HWND hwnd = window.hwnd_for_test();
+            RECT initial = {};
+            ASSERT_TRUE(GetWindowRect(hwnd, &initial));
+            const int width = initial.right - initial.left;
+            const int height = initial.bottom - initial.top;
+            const int top = (std::max)(left.rcWork.top, right.rcWork.top);
+            const int bottom = (std::min)(left.rcWork.bottom, right.rcWork.bottom);
+            if (bottom - top < height * 2 || right.rcWork.right - right.rcWork.left < width * 2) {
+                continue;
+            }
+            const int x = right.rcWork.left - width / 4;
+            const LONG y = top;
+            const RECT requested = {x, y, x + width, y + height};
+            ASSERT_EQ(MonitorFromRect(&requested, MONITOR_DEFAULTTONEAREST), right_handle);
+            window.set_position(x, y);
+            RECT actual = {};
+            ASSERT_TRUE(GetWindowRect(hwnd, &actual));
+            ASSERT_EQ(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), right_handle);
+            ASSERT_EQ(actual.left, right.rcWork.left);
+            const LONG expected_y =
+                (std::max)(right.rcWork.top,
+                           (std::min)(y, right.rcWork.bottom - (actual.bottom - actual.top)));
+            ASSERT_EQ(actual.top, expected_y);
+            ASSERT_TRUE(actual.right <= right.rcWork.right);
+            ASSERT_TRUE(actual.bottom <= right.rcWork.bottom);
+        }
+    }
 }
 
 TEST(StatusWindow, DragConstrainsPositionWithoutClickingAndSavesOnRelease) {

@@ -634,9 +634,14 @@ SessionManager::GlobalVisibleState SessionManager::snapshot_global_state() {
     return global_state_;
 }
 
-void SessionManager::commit_global_state(GlobalVisibleState next) {
+void SessionManager::set_global_caps_lock(bool caps_lock) {
     std::lock_guard<std::mutex> lock(state_mutex_);
-    global_state_ = next;
+    global_state_.caps_lock = caps_lock;
+}
+
+void SessionManager::set_global_input_mode(cxxime::InputMode input_mode) {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    global_state_.input_mode = input_mode;
 }
 
 void SessionManager::align_session_to_global(SessionEntry& entry) {
@@ -661,8 +666,7 @@ void SessionManager::align_session_to_global(SessionEntry& entry) {
         ? previous.revision
         : previous.revision + 1;
     if (entry.ime_status.input_mode != state.input_mode) {
-        state.input_mode = entry.ime_status.input_mode;
-        commit_global_state(state);
+        set_global_input_mode(entry.ime_status.input_mode);
     }
 }
 
@@ -1230,10 +1234,8 @@ bool SessionManager::apply_config(const std::shared_ptr<const cxxime::Config>& c
     // Sync input_mode from config to all active sessions
     if (resources.runtime) {
         if (input_mode_changed) {
-            GlobalVisibleState state = snapshot_global_state();
-            state.input_mode =
-                static_cast<cxxime::InputMode>(resources.runtime->config().input_mode);
-            commit_global_state(state);
+            set_global_input_mode(
+                static_cast<cxxime::InputMode>(resources.runtime->config().input_mode));
         }
         for (auto& entry : entries) {
             std::lock_guard<std::mutex> lock(entry->mutex);
@@ -1368,9 +1370,7 @@ SessionManager::switch_input_mode(uint32_t id, cxxime::InputMode mode) {
     const CandidateStateToken candidate_state_before = candidate_state_token(*entry->engine);
     align_session_to_global(*entry);
     entry->engine->switch_mode(mode);
-    GlobalVisibleState state = snapshot_global_state();
-    state.input_mode = entry->engine->mode();
-    commit_global_state(state);
+    set_global_input_mode(entry->engine->mode());
     align_session_to_global(*entry);
     advance_candidate_revision(*entry, candidate_state_before);
     persist_input_mode(entry->ime_status.input_mode);
@@ -1394,9 +1394,7 @@ std::pair<cxxime::IPCStatus, cxxime::ImeStatus> SessionManager::sync_caps_lock(u
     if (!entry) return {cxxime::IPCStatus::ERR_INVALID_SESSION, {}};
     std::lock_guard<std::mutex> lock(entry->mutex);
     const CandidateStateToken candidate_state_before = candidate_state_token(*entry->engine);
-    GlobalVisibleState state = snapshot_global_state();
-    state.caps_lock = caps_lock;
-    commit_global_state(state);
+    set_global_caps_lock(caps_lock);
     align_session_to_global(*entry);
     advance_candidate_revision(*entry, candidate_state_before);
     return {cxxime::IPCStatus::OK, entry->ime_status};
@@ -1442,9 +1440,7 @@ ProcessKeyResult SessionManager::process_key(uint32_t id, const cxxime::KeyEvent
     // The physical modifier bit on the first real key is still authoritative.
     bool is_caps_lock_key = event.keycode == VK_CAPITAL;
     if (!is_caps_lock_key && s.ime_status.caps_lock() != event.is_caps_lock()) {
-        GlobalVisibleState state = snapshot_global_state();
-        state.caps_lock = event.is_caps_lock();
-        commit_global_state(state);
+        set_global_caps_lock(event.is_caps_lock());
         align_session_to_global(s);
     }
 
@@ -1462,10 +1458,9 @@ ProcessKeyResult SessionManager::process_key(uint32_t id, const cxxime::KeyEvent
     const bool temporary_ascii = engine.ascii_composer().is_temporary_ascii();
     bool new_ascii = engine.ascii_composer().is_ascii_mode();
     GlobalVisibleState state = snapshot_global_state();
-    bool shared_state_changed = false;
     if (is_caps_lock_key && !event.is_key_up) {
         state.caps_lock = event.is_caps_lock();
-        shared_state_changed = true;
+        set_global_caps_lock(state.caps_lock);
     }
     if (!state.caps_lock && !temporary_ascii) {
         s.base_chinese_mode = !new_ascii;
@@ -1490,12 +1485,7 @@ ProcessKeyResult SessionManager::process_key(uint32_t id, const cxxime::KeyEvent
         s.chinese_punct = !s.chinese_punct;
     } else if (result == cxxime::ProcessResult::SWITCH_INPUT_MODE) {
         engine.switch_mode(next_input_mode(engine.mode()));
-        state.input_mode = engine.mode();
-        shared_state_changed = true;
-    }
-
-    if (shared_state_changed) {
-        commit_global_state(state);
+        set_global_input_mode(engine.mode());
     }
     align_session_to_global(s);
     ret.ime_status = s.ime_status;

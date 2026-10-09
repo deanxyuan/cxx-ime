@@ -15,7 +15,6 @@ namespace {
 
 constexpr UINT kIpcHeartbeatIntervalMs = 1500;
 constexpr auto kIpcHeartbeatInterval = std::chrono::milliseconds(kIpcHeartbeatIntervalMs);
-constexpr int kTsfIpcTimeoutMs = 800;
 constexpr UINT kStatePollFastIntervalMs = 30;
 constexpr UINT kEditTargetValidationIntervalMs = 250;
 constexpr unsigned int kEditTargetValidationFailureLimit = 2;
@@ -43,6 +42,7 @@ void TextService::_sync_ime_status(const cxxime::ImeStatus& status) {
         visible_changed = status_became_available || !same_visible_status(_lastImeStatus, status);
         _lastImeStatus = status;
         _hasLastImeStatus.store(true, std::memory_order_release);
+        _imeStatusCurrent.store(true, std::memory_order_release);
     }
     if (!local_changed && !visible_changed) {
         return;
@@ -71,8 +71,11 @@ bool TextService::_ensure_ipc_session() {
     if (_sessionId && _client.is_connected())
         return true;
 
-    if (!_client.is_connected() &&
-        !_client.connect(cxxime::IPC_PIPE_BASE_NAME, kTsfIpcTimeoutMs)) {
+    return _activated ? _recreate_ipc_session_preserving_status() : _start_ipc_session();
+}
+
+bool TextService::_start_ipc_session() {
+    if (!_client.ensure_connected()) {
         if (_ipcHealthy) {
             CXXIME_LOG(L"IPC unavailable");
             _enqueue_event_trace("ipc_session", "connect_failed", true);
@@ -114,45 +117,41 @@ bool TextService::_recreate_ipc_session_preserving_status() {
     bool has_desired_status = false;
     {
         std::lock_guard<std::mutex> lock(_lastImeStatusMutex);
-        has_desired_status = _has_synced_ime_status();
+        has_desired_status = _hasLastImeStatus.load(std::memory_order_acquire);
         if (has_desired_status) {
             desired_status = _lastImeStatus;
         }
     }
-    bool desired_chinese_mode = has_desired_status ? desired_status.chinese_mode() : _chinese_mode;
-    bool input_allows_input = _query_input_focus_from_thread_mgr();
-    bool physical_caps_lock = false;
-
     _publish_ui_session_ended();
     _sessionId = 0;
     _ipcHealthy = false;
-    if (!_ensure_ipc_session())
+    if (!_start_ipc_session())
         return false;
 
+    const auto discard_session = [this]() {
+        _client.end_session(_sessionId);
+        _client.disconnect();
+        _sessionId = 0;
+        _ipcHealthy = false;
+        return false;
+    };
     cxxime::ImeStatus synced_status = {};
-    if (input_allows_input) {
-        physical_caps_lock = _is_caps_lock_on();
-        if (!_sync_caps_lock_state(physical_caps_lock, "session_recreate", &synced_status)) {
-            return false;
-        }
-    } else {
-        cxxime::IPCResponse status_resp = {};
-        if (!_client.get_status(_sessionId, status_resp) ||
-            status_resp.status != cxxime::IPCStatus::OK) {
-            return false;
-        }
-        synced_status = status_resp.ime_status;
-        _sync_ime_status(synced_status);
+    cxxime::IPCResponse status_resp = {};
+    if (!_client.get_status(_sessionId, status_resp) ||
+        status_resp.status != cxxime::IPCStatus::OK) {
+        return discard_session();
     }
+    synced_status = status_resp.ime_status;
 
-    if (!synced_status.caps_lock() && synced_status.chinese_mode() != desired_chinese_mode) {
+    // CapsLock's effective English status does not describe the lost session's base mode.
+    if (has_desired_status && !desired_status.caps_lock() && !synced_status.caps_lock() &&
+        synced_status.chinese_mode() != desired_status.chinese_mode()) {
         cxxime::IPCResponse mode_resp = {};
-        if (_client.set_chinese_mode(_sessionId, desired_chinese_mode, mode_resp) &&
+        if (_client.set_chinese_mode(_sessionId, desired_status.chinese_mode(), mode_resp) &&
             mode_resp.status == cxxime::IPCStatus::OK) {
             synced_status = mode_resp.ime_status;
-            _sync_ime_status(mode_resp.ime_status);
         } else {
-            return false;
+            return discard_session();
         }
     }
     if (has_desired_status && synced_status.input_mode != desired_status.input_mode) {
@@ -160,9 +159,8 @@ bool TextService::_recreate_ipc_session_preserving_status() {
         if (_client.switch_input_mode(_sessionId, desired_status.input_mode, mode_resp) &&
             mode_resp.status == cxxime::IPCStatus::OK) {
             synced_status = mode_resp.ime_status;
-            _sync_ime_status(mode_resp.ime_status);
         } else {
-            return false;
+            return discard_session();
         }
     }
     if (has_desired_status && synced_status.full_shape() != desired_status.full_shape()) {
@@ -170,26 +168,29 @@ bool TextService::_recreate_ipc_session_preserving_status() {
         if (_client.toggle_shape(_sessionId, shape_resp) &&
             shape_resp.status == cxxime::IPCStatus::OK) {
             synced_status = shape_resp.ime_status;
-            _sync_ime_status(shape_resp.ime_status);
         } else {
-            return false;
+            return discard_session();
         }
     }
     if (has_desired_status && synced_status.chinese_punct() != desired_status.chinese_punct()) {
         cxxime::IPCResponse punct_resp = {};
         if (_client.toggle_punct(_sessionId, punct_resp) &&
             punct_resp.status == cxxime::IPCStatus::OK) {
-            _sync_ime_status(punct_resp.ime_status);
+            synced_status = punct_resp.ime_status;
         } else {
-            return false;
+            return discard_session();
         }
     }
+    // A new session must publish even when its restored flags match the old cache.
+    _imeStatusCurrent.store(false, std::memory_order_release);
+    _sync_ime_status(synced_status);
+    _schedule_caps_lock_refresh();
     _enqueue_event_trace("ipc_session", "recreated", true);
     return true;
 }
 
 bool TextService::_heartbeat_ipc() {
-    if (!_activated || !_sessionId)
+    if (!_activated)
         return false;
 
     auto now = std::chrono::steady_clock::now();
@@ -198,6 +199,10 @@ bool TextService::_heartbeat_ipc() {
         return _ipcHealthy;
     }
     _lastIpcHeartbeat = now;
+
+    if (!_sessionId) {
+        return _recreate_ipc_session_preserving_status();
+    }
 
     if (!_client.ensure_connected()) {
         CXXIME_LOG(L"IPC heartbeat reconnect failed");
@@ -210,7 +215,13 @@ bool TextService::_heartbeat_ipc() {
     }
 
     cxxime::IPCResponse resp = {};
-    if (_client.get_status(_sessionId, resp) && resp.status == cxxime::IPCStatus::OK) {
+    // A foreground heartbeat also repairs global state, even when the local cache
+    // happens to equal the keyboard sample. Background sessions are read-only.
+    const bool sample_keyboard = !_capsLockRefreshTimer && _has_foreground_input_focus();
+    const bool received = sample_keyboard
+        ? _client.sync_caps_lock(_sessionId, _is_caps_lock_on(), resp)
+        : _client.get_status(_sessionId, resp);
+    if (received && resp.status == cxxime::IPCStatus::OK) {
         _ipcHealthy = true;
         _sync_ime_status(resp.ime_status);
         return true;
@@ -284,9 +295,21 @@ bool TextService::_sync_caps_lock_state(bool caps_lock,
     return false;
 }
 
-bool TextService::_refresh_caps_lock_on_focus(const char* source) {
+bool TextService::_has_foreground_input_focus() const {
+    BOOL focused = FALSE;
+    return _activated && _inputFocused && _effectiveEditTarget.valid() && _effectiveContext &&
+           _threadMgr && SUCCEEDED(_threadMgr->IsThreadFocus(&focused)) && focused &&
+           _context_belongs_to_foreground(_effectiveContext);
+}
+
+bool TextService::_refresh_caps_lock_state(const char* source, bool force) {
+    // A lost session is restored by the throttled heartbeat, including its base language.
+    if (!_sessionId || !_client.is_connected() || _capsLockRefreshTimer ||
+        !_has_foreground_input_focus()) {
+        return false;
+    }
     const bool physical_caps_lock = _is_caps_lock_on();
-    if (physical_caps_lock == _caps_lock) {
+    if (!force && physical_caps_lock == _caps_lock) {
         return true;
     }
 
@@ -294,11 +317,29 @@ bool TextService::_refresh_caps_lock_on_focus(const char* source) {
 }
 
 void TextService::_schedule_caps_lock_refresh() {
-    if (!_configWindow || _capsLockRefreshPending) {
+    if (!_configWindow || !_inputFocused || !_effectiveEditTarget.valid()) {
         return;
     }
-    _capsLockRefreshPending =
-        PostMessageW(_configWindow, cxxime_tsf::WM_CXXIME_REFRESH_CAPS_LOCK, 0, 0) != FALSE;
+    if (_capsLockRefreshTimer && _capsLockRefreshTargetGeneration == _uiTargetGeneration) {
+        return;
+    }
+    _cancel_caps_lock_refresh();
+    // Unlike posted messages, WM_TIMER yields to queued keyboard/focus input.
+    // Unique IDs also reject already-queued timer messages from an older focus.
+    if (++_capsLockRefreshSerial < 0xD000) {
+        _capsLockRefreshSerial = 0xD000;
+    }
+    _capsLockRefreshTargetGeneration = _uiTargetGeneration;
+    _capsLockRefreshTimer =
+        SetTimer(_configWindow, _capsLockRefreshSerial, USER_TIMER_MINIMUM, nullptr);
+}
+
+void TextService::_cancel_caps_lock_refresh() {
+    if (_capsLockRefreshTimer && _configWindow) {
+        KillTimer(_configWindow, _capsLockRefreshTimer);
+    }
+    _capsLockRefreshTimer = 0;
+    _capsLockRefreshTargetGeneration = 0;
 }
 
 void TextService::_update_state_poll_timer() {
@@ -379,6 +420,8 @@ void TextService::_poll_runtime_state() {
             return;
         }
     }
+
+    _refresh_caps_lock_state("runtime_poll");
 
     if (!_candidatePresentation.external_window_expected() ||
         !_candidatePresentation.caret_poll_pending()) {

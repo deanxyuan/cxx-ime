@@ -21,6 +21,8 @@
 
 namespace {
 
+constexpr int kTsfIpcTimeoutMs = 800;
+
 std::string wstring_to_utf8(const wchar_t* text) {
     if (!text || *text == L'\0') {
         return {};
@@ -41,7 +43,8 @@ std::string wstring_to_utf8(const wchar_t* text) {
 
 } // namespace
 
-TextService::TextService() {
+TextService::TextService()
+    : _client(cxxime::IPC_PIPE_BASE_NAME, kTsfIpcTimeoutMs) {
     DllAddRef();
 }
 
@@ -246,11 +249,6 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
     bool initial_caps_lock = initial_input_allows_input && _is_caps_lock_on();
     _sessionId = 0;
     if (_ensure_ipc_session()) {
-        if (initial_input_allows_input) {
-            if (_sync_caps_lock_state(initial_caps_lock, "activate_focused", &initial_status)) {
-                initial_status_available = true;
-            }
-        }
         cxxime::IPCResponse status_resp = {};
         if (_ensure_ipc_session() &&
             _client.get_status(_sessionId, status_resp) && status_resp.status == cxxime::IPCStatus::OK) {
@@ -258,7 +256,7 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
             initial_status_available = true;
         }
     }
-    if (initial_input_allows_input && initial_caps_lock) {
+    if (!initial_status_available && initial_caps_lock) {
         initial_status.set_caps_lock(true);
         auto caps_it = _config.ascii_switch_key.find("Caps_Lock");
         if (caps_it != _config.ascii_switch_key.end() && caps_it->second != "noop") {
@@ -274,6 +272,7 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
         std::lock_guard<std::mutex> lock(_lastImeStatusMutex);
         _lastImeStatus = initial_status;
         _hasLastImeStatus.store(true, std::memory_order_release);
+        _imeStatusCurrent.store(true, std::memory_order_release);
     }
 
     if (!_inputIndicator.initialize(
@@ -281,12 +280,11 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
             [this]() {
                 CXXIME_LOG(L"toggle_chinese: sessionId=%u", _sessionId);
                 cxxime::IPCResponse resp = {};
-                if (_ensure_ipc_session()) {
-                    _client.toggle_chinese(_sessionId, resp);
-                }
+                const bool received = _ensure_ipc_session() &&
+                                      _client.toggle_chinese(_sessionId, resp);
                 CXXIME_LOG(L"toggle_chinese: result status=%d, chinese=%d",
                            static_cast<int>(resp.status), resp.ime_status.chinese_mode());
-                if (resp.status == cxxime::IPCStatus::OK) {
+                if (received && resp.status == cxxime::IPCStatus::OK) {
                     _sync_ime_status(resp.ime_status);
                 }
             },

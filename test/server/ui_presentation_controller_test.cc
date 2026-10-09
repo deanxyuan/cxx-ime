@@ -13,6 +13,7 @@
 
 #include "support/dpi_testutil.h"
 #include "support/testutil.h"
+#include "support/window_transition_probe.h"
 #include "ui_presentation_controller.h"
 
 namespace {
@@ -231,16 +232,27 @@ TEST(UiPresentationController, local_candidate_stays_above_status_without_being_
                         10, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
     ASSERT_TRUE(marker != nullptr);
     raise_window(marker);
-    for (int update = 0; update < 4; ++update) {
-        fixture.present();
-        ASSERT_TRUE(is_above(fixture.host.candidate, fixture.status));
-        ASSERT_TRUE(is_above(marker, fixture.host.candidate));
-        ASSERT_TRUE((GetWindowLongPtrW(fixture.status, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0);
+    fixture.present();
+    {
+        test::WindowTransitionProbe transitions(fixture.status, fixture.host.candidate);
+        for (int update = 0; update < 4; ++update) {
+            fixture.snapshot.ime_status.set_chinese_mode(update < 2 && update % 2 == 0);
+            fixture.snapshot.ime_status.set_caps_lock(update % 2 != 0);
+            fixture.present();
+            transitions.expect(0, 0);
+            ASSERT_TRUE(is_above(fixture.host.candidate, fixture.status));
+            ASSERT_TRUE(is_above(marker, fixture.host.candidate));
+            ASSERT_TRUE((GetWindowLongPtrW(fixture.status, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0);
+        }
     }
     ShowWindow(fixture.status, SW_HIDE);
-    fixture.present();
-    ASSERT_TRUE(IsWindowVisible(fixture.status) != FALSE);
-    ASSERT_TRUE(is_above(fixture.host.candidate, fixture.status));
+    {
+        test::WindowTransitionProbe transitions(fixture.status, fixture.host.candidate);
+        fixture.present();
+        transitions.expect(1, 0);
+        ASSERT_TRUE(IsWindowVisible(fixture.status) != FALSE);
+        ASSERT_TRUE(is_above(fixture.host.candidate, fixture.status));
+    }
 
     // DPI/geometry notifications must use the local candidate too, without a new snapshot.
     RECT rect = {};
@@ -297,6 +309,7 @@ TEST(UiPresentationController, source_switch_and_independent_layout_preserve_can
     ControllerFixture fixture;
     fixture.present();
     ASSERT_TRUE(is_above(fixture.host.candidate, fixture.status));
+    test::WindowTransitionProbe transitions(fixture.status);
     RECT rect = {};
     ASSERT_TRUE(GetWindowRect(fixture.status, &rect) != FALSE);
     ASSERT_TRUE(SetWindowPos(fixture.host.candidate, nullptr, rect.left, rect.top + 100, 0, 0,
@@ -325,8 +338,12 @@ TEST(UiPresentationController, source_switch_and_independent_layout_preserve_can
     fixture.present();
     ASSERT_TRUE(IsWindowVisible(server_candidate) == FALSE);
     ASSERT_TRUE(IsWindowVisible(fixture.status) != FALSE);
+    transitions.expect(0, 0);
     fixture.controller.present(1, nullptr, false, 0, ++fixture.snapshot.presentation_generation);
     ASSERT_TRUE(wait_for([&]() { return !IsWindowVisible(fixture.status); }));
+    // A synchronous message waits for the hide operation's hook to finish too.
+    send_message(fixture.status, WM_NULL, 0, 0);
+    transitions.expect(0, 1);
 }
 
 TEST(UiPresentationController, embedded_target_can_have_an_owner_in_another_process) {

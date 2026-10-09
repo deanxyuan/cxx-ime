@@ -21,6 +21,9 @@ struct CandidateSelectionCallResult {
 class IpcClient {
 public:
     IpcClient() = default;
+    IpcClient(const std::wstring& pipe_name, int timeout_ms)
+        : pipe_name_(pipe_name)
+        , timeout_ms_(timeout_ms) {}
     ~IpcClient();
 
     bool connect(const std::wstring& pipe_name = IPC_PIPE_BASE_NAME, int timeout_ms = 3000);
@@ -41,7 +44,7 @@ public:
                                                                 uint64_t candidate_revision);
     bool commit_composition(uint32_t session_id, IPCResponse& response);
     bool clear_composition(uint32_t session_id);
-    bool focus_in(uint32_t session_id);
+    bool focus_in(uint32_t session_id, IPCResponse* response = nullptr);
     bool focus_out(uint32_t session_id);
 
     bool toggle_chinese(uint32_t session_id, IPCResponse& response);

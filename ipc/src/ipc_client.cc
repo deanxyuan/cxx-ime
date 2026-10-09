@@ -292,13 +292,17 @@ bool IpcClient::clear_composition(uint32_t session_id) {
     return send_request(req, resp) && resp.status == IPCStatus::OK;
 }
 
-bool IpcClient::focus_in(uint32_t session_id) {
+bool IpcClient::focus_in(uint32_t session_id, IPCResponse* response) {
     IPCRequest req = {};
     req.command = IPCCommand::FOCUS_IN;
     req.session_id = session_id;
 
     IPCResponse resp = {};
-    return send_request(req, resp);
+    const bool received = send_request(req, resp);
+    if (response) {
+        *response = resp;
+    }
+    return received && resp.status == IPCStatus::OK;
 }
 
 bool IpcClient::focus_out(uint32_t session_id) {

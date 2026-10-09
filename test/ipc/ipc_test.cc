@@ -75,6 +75,23 @@ static bool raw_round_trip(const std::vector<uint8_t>& request,
 // Protocol Tests
 // ============================================================
 
+TEST(IpcClient, configured_endpoint_survives_disconnect_without_changing_default_clients) {
+    cxxime::IpcClient unconfigured;
+    ASSERT_TRUE(!unconfigured.ensure_connected());
+    TestServer server;
+    ASSERT_TRUE(server.start([](const cxxime::IPCRequest&) {
+        return make_response(cxxime::IPCStatus::OK);
+    }));
+    cxxime::IpcClient client(test_pipe_name(), 2000);
+    ASSERT_TRUE(!client.is_connected());
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        ASSERT_TRUE(client.ensure_connected());
+        ASSERT_TRUE(client.ping());
+        client.disconnect();
+        ASSERT_TRUE(!client.is_connected());
+    }
+}
+
 TEST(Protocol, pipe_names_are_scoped_once_per_user) {
     ASSERT_TRUE(wcscmp(cxxime::IPC_PIPE_BASE_NAME, L"\\\\.\\pipe\\CxxIME") == 0);
     ASSERT_TRUE(wcscmp(cxxime::CONTROL_PIPE_BASE_NAME, L"\\\\.\\pipe\\CxxIME-Control") == 0);

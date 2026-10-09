@@ -7,6 +7,8 @@
 using namespace tsf_test;
 
 TEST(TextServiceKey, key_admission_does_not_request_selection_or_layout_preflight) {
+    KeyboardState keyboard;
+    keyboard.caps(false);
     Fixture fixture;
     fixture.view.foreground_window = true;
     fixture.host.active_view = &fixture.view;
@@ -21,6 +23,8 @@ TEST(TextServiceKey, key_admission_does_not_request_selection_or_layout_prefligh
 }
 
 TEST(TextServiceKey, composition_key_rebinds_changed_context) {
+    KeyboardState keyboard;
+    keyboard.caps(false);
     HostContext next_host;
     Fixture fixture;
     fixture.view.foreground_window = true;
@@ -38,6 +42,8 @@ TEST(TextServiceKey, composition_key_rebinds_changed_context) {
 }
 
 TEST(TextServiceKey, explicit_readonly_or_disconnected_context_rejects_text_keys) {
+    KeyboardState keyboard;
+    keyboard.caps(false);
     Fixture fixture;
     fixture.view.foreground_window = true;
     fixture.host.active_view = &fixture.view;
@@ -58,6 +64,8 @@ TEST(TextServiceKey, explicit_readonly_or_disconnected_context_rejects_text_keys
 }
 
 TEST(TextServiceKey, explicit_disabled_and_empty_compartments_reject_text_keys) {
+    KeyboardState keyboard;
+    keyboard.caps(false);
     Fixture fixture;
     fixture.view.foreground_window = true;
     fixture.host.active_view = &fixture.view;

@@ -30,10 +30,9 @@ void TextService::_handle_ime_menu_command(cxxime::ImeMenuCommand command) {
         CXXIME_LOG(L"menu_command: input_mode=%d, sessionId=%u",
                    static_cast<int>(mode), _sessionId);
         cxxime::IPCResponse response = {};
-        if (_ensure_ipc_session()) {
-            _client.switch_input_mode(_sessionId, mode, response);
-        }
-        if (response.status == cxxime::IPCStatus::OK) {
+        if (_ensure_ipc_session() &&
+            _client.switch_input_mode(_sessionId, mode, response) &&
+            response.status == cxxime::IPCStatus::OK) {
             _sync_ime_status(response.ime_status);
         }
         return;
@@ -216,13 +215,7 @@ void TextService::_initialize_optional_activation_services() {
 }
 
 void TextService::_synchronize_activation_focus() {
-    if (_synchronize_effective_edit_target_from_thread_mgr("activate_complete")) {
-        _refresh_caps_lock_on_focus("activate_complete");
-        _schedule_caps_lock_refresh();
-        if (_sessionId && _client.ensure_connected()) {
-            _client.focus_in(_sessionId);
-        }
-    }
+    _synchronize_focus_state(nullptr, nullptr, "activate_complete");
 
     if (_config.status_window.enable && _config.status_window.show_on_startup && _inputFocused) {
         _show_status_window_if_allowed("show:activate_startup");

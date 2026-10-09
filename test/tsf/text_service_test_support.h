@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cstring>
 #include <deque>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -25,12 +26,21 @@
 // Only this peer accesses service internals. These helpers arrange lifecycle boundaries;
 // behavior is checked through host writes, engine state and published UI snapshots.
 struct TextServiceTestPeer {
+    static void set_status_window_enabled(TextService& service, bool enabled);
+    static void select_input_mode(TextService& service, cxxime::ImeMenuCommand command) {
+        service._handle_ime_menu_command(command);
+    }
+    static void attach_conversion_compartment(TextService& service, ITfCompartment* compartment) {
+        service._clientId = 1;
+        service._conversionCompartment = compartment;
+        compartment->AddRef();
+    }
     static void bind(TextService& service, ITfContext* context) {
         service._effectiveEditTarget = {1, reinterpret_cast<uintptr_t>(context), 0, true};
         service._config.inline_preedit = true;
         service._config.preedit_type = "composition";
     }
-    static bool connect(TextService& service, const std::wstring& pipe) {
+    static bool wait_for_input_pipe(const std::wstring& pipe) {
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
         const auto pipe_name = cxxime::make_user_pipe_name(pipe);
         for (;;) {
@@ -41,9 +51,7 @@ struct TextServiceTestPeer {
                 return false;
             }
             if (WaitNamedPipeW(pipe_name.c_str(), static_cast<DWORD>(remaining))) {
-                // Keep the request timeout independent of the startup wait budget.
-                return service._client.connect(pipe, 2000) &&
-                       service._client.start_session(service._sessionId);
+                return true;
             }
             if (GetLastError() != ERROR_FILE_NOT_FOUND) {
                 return false;
@@ -51,6 +59,12 @@ struct TextServiceTestPeer {
             // No pipe exists until the accept thread starts; WaitNamedPipe returns immediately.
             Sleep(1);
         }
+    }
+    static bool connect(TextService& service, const std::wstring& pipe,
+                        bool start_session = true) {
+        // Keep the request timeout independent of the startup wait budget.
+        return wait_for_input_pipe(pipe) && service._client.connect(pipe, 2000) &&
+               (!start_session || service._client.start_session(service._sessionId));
     }
     static cxxime::IPCResponse key(TextService& service, uint32_t key) {
         cxxime::IPCResponse response = {};
@@ -66,6 +80,52 @@ struct TextServiceTestPeer {
     }
     static void clear_focus(TextService& service) {
         service._clear_effective_edit_target("test_focus_lost");
+    }
+    static void prepare_status_dispatch(TextService& service) {
+        WNDCLASSW window_class = {};
+        window_class.lpfnWndProc = TextService::_config_window_proc;
+        window_class.hInstance = GetModuleHandleW(nullptr);
+        window_class.lpszClassName = L"CxxIME.Test.StatusDispatch";
+        ASSERT_TRUE(RegisterClassW(&window_class) || GetLastError() == ERROR_CLASS_ALREADY_EXISTS);
+        service._configWindow =
+            CreateWindowExW(0, window_class.lpszClassName, L"", 0, 0, 0, 0, 0, HWND_MESSAGE,
+                            nullptr, window_class.hInstance, &service);
+        ASSERT_TRUE(service._configWindow != nullptr);
+    }
+    static void start_status_dispatch(TextService& service) {
+        prepare_status_dispatch(service);
+        service._activated = true;
+    }
+    static void stop_status_dispatch(TextService& service) {
+        service._cancel_caps_lock_refresh();
+        service._stop_state_poll_timer();
+        DestroyWindow(service._configWindow);
+        service._configWindow = nullptr;
+        service._activated = false;
+    }
+    static UINT_PTR status_timer(const TextService& service) {
+        return service._capsLockRefreshTimer;
+    }
+    static void dispatch_status_timer(TextService& service, UINT_PTR timer) {
+        SendMessageW(service._configWindow, WM_TIMER, timer, 0);
+    }
+    static void seed_status(TextService& service, const cxxime::ImeStatus& status) {
+        service._sync_ime_status(status);
+    }
+    static cxxime::ImeStatus status(TextService& service) {
+        std::lock_guard<std::mutex> lock(service._lastImeStatusMutex);
+        return service._lastImeStatus;
+    }
+    static void poll_status(TextService& service, bool heartbeat = false) {
+        service._lastIpcHeartbeat =
+            heartbeat ? std::chrono::steady_clock::time_point{} : std::chrono::steady_clock::now();
+        service._poll_runtime_state();
+    }
+    static bool recreate_session(TextService& service) {
+        return service._recreate_ipc_session_preserving_status();
+    }
+    static uint64_t session_generation(const TextService& service) {
+        return service._uiSessionGeneration;
     }
     static bool empty(const TextService& service) {
         return !service._composing && !service._composition &&
@@ -96,6 +156,9 @@ struct TextServiceTestPeer {
     static bool target_matches(const TextService& service, ITfContext* context) {
         return service._context_matches_effective_edit_target(context);
     }
+    static bool target_unavailable(const TextService& service) {
+        return service._inputTargetUnavailable;
+    }
     static unsigned int pending_writes(const TextService& service) {
         return service._pendingCompositionEdits;
     }
@@ -105,12 +168,23 @@ struct TextServiceTestPeer {
         service._effectiveEditTarget.view_window = reinterpret_cast<uintptr_t>(view);
         service._config.render_backend = "gdi";
     }
-    static void start_ui(TextService& service, const std::wstring& pipe) {
+    static void start_ui(TextService& service, const std::wstring& pipe,
+                         bool handle_commands = false) {
         service._uiSessionGeneration = 1;
         service._uiTargetGeneration = 1;
-        ASSERT_TRUE(service._uiChannel.start({}, pipe));
+        ASSERT_TRUE(service._uiChannel.start(
+            [&service, handle_commands](const cxxime::UiCommand& command) {
+                if (handle_commands) {
+                    service._queue_ui_command(command);
+                }
+            },
+            pipe));
     }
     static void stop_ui(TextService& service) { service._uiChannel.stop(); }
+    static uint32_t session_id(const TextService& service) { return service._sessionId; }
+    static uint64_t target_generation(const TextService& service) {
+        return service._uiTargetGeneration;
+    }
     static uint64_t caret_sample(const TextService& service) { return service._caretSampleSerial; }
     static void change_target_generation(TextService& service) { ++service._uiTargetGeneration; }
     static UINT poll_without_status(TextService& service) {
@@ -151,6 +225,21 @@ struct TextServiceTestPeer {
 };
 
 namespace tsf_test {
+
+// Define thread-local test input without inheriting physical modifiers or changing LEDs.
+class KeyboardState {
+public:
+    KeyboardState() { ASSERT_TRUE(GetKeyboardState(original_)); }
+    ~KeyboardState() { SetKeyboardState(original_); }
+    void caps(bool enabled) {
+        BYTE state[256] = {};
+        state[VK_CAPITAL] = enabled ? 1 : 0;
+        ASSERT_TRUE(SetKeyboardState(state));
+    }
+
+private:
+    BYTE original_[256] = {};
+};
 
 // A controlled host for service integration tests, not a complete TSF text store.
 // Ranges share one text buffer (Clone has no independent offsets), and tests explicitly
@@ -475,6 +564,8 @@ public:
     HRESULT text_result = TF_E_NOLAYOUT;
     RECT text_rect = {};
     bool foreground_window = false;
+    HWND explicit_window = nullptr;
+    HWND last_window = nullptr;
     STDMETHODIMP GetRangeFromPoint(TfEditCookie, const POINT*, DWORD, ITfRange**) override {
         return E_NOTIMPL;
     }
@@ -488,7 +579,8 @@ public:
         return E_FAIL;
     }
     STDMETHODIMP GetWnd(HWND* window) override {
-        *window = foreground_window ? GetForegroundWindow() : nullptr;
+        *window = foreground_window ? GetForegroundWindow() : explicit_window;
+        last_window = *window;
         return S_OK;
     }
 };
@@ -515,6 +607,8 @@ public:
 class HostThreadManager : public HostObject<ITfThreadMgr> {
 public:
     HostDocument document;
+    BOOL focused = TRUE;
+    HRESULT focus_result = S_OK;
     STDMETHODIMP Activate(TfClientId*) override { return E_NOTIMPL; }
     STDMETHODIMP Deactivate() override { return E_NOTIMPL; }
     STDMETHODIMP CreateDocumentMgr(ITfDocumentMgr**) override { return E_NOTIMPL; }
@@ -528,7 +622,10 @@ public:
     STDMETHODIMP AssociateFocus(HWND, ITfDocumentMgr*, ITfDocumentMgr**) override {
         return E_NOTIMPL;
     }
-    STDMETHODIMP IsThreadFocus(BOOL*) override { return E_NOTIMPL; }
+    STDMETHODIMP IsThreadFocus(BOOL* out) override {
+        *out = focused;
+        return focus_result;
+    }
     STDMETHODIMP GetFunctionProvider(REFCLSID, ITfFunctionProvider**) override { return E_NOTIMPL; }
     STDMETHODIMP EnumFunctionProviders(IEnumTfFunctionProviders**) override { return E_NOTIMPL; }
     STDMETHODIMP GetGlobalCompartment(ITfCompartmentMgr**) override { return E_NOTIMPL; }
