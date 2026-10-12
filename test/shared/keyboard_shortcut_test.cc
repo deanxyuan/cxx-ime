@@ -121,4 +121,46 @@ TEST(KeyboardShortcut, converts_modifiers_for_register_hotkey) {
     ASSERT_TRUE((modifiers & MOD_NOREPEAT) != 0);
 }
 
+TEST(KeyboardShortcut, host_commands_exclude_text_modifiers_and_builtin_ime_bindings) {
+    const cxxime::KeyEvent ime_keys[] = {
+        {VK_RETURN, 0},
+        {'A', cxxime::kKeyModifierShift},
+        {'1', cxxime::kKeyModifierShift},
+        {VK_OEM_PLUS, cxxime::kKeyModifierShift},
+        {VK_SPACE, cxxime::kKeyModifierShift},
+        {VK_OEM_PERIOD, cxxime::kKeyModifierControl},
+        {VK_SHIFT, cxxime::kKeyModifierShift},
+        {VK_LSHIFT, cxxime::kKeyModifierShift},
+        {VK_CONTROL, cxxime::kKeyModifierControl},
+        {VK_RCONTROL, cxxime::kKeyModifierControl},
+        {VK_MENU, cxxime::kKeyModifierAlt},
+        {VK_LMENU, cxxime::kKeyModifierAlt},
+        {VK_LWIN, cxxime::kKeyModifierWin},
+        {VK_CAPITAL, cxxime::kKeyModifierCapsLock},
+    };
+    for (auto event : ime_keys) {
+        ASSERT_TRUE(!cxxime::is_application_shortcut(event)) << event.keycode;
+        event.is_key_up = true;
+        ASSERT_TRUE(!cxxime::is_application_shortcut(event)) << event.keycode;
+    }
+    ASSERT_TRUE(!cxxime::normalize_ascii_key({'A', cxxime::kKeyModifierWin}).has_value());
+}
+
+TEST(KeyboardShortcut, windows_key_state_preserves_both_win_keys_and_other_modifiers) {
+    BYTE original[256] = {};
+    ASSERT_TRUE(GetKeyboardState(original));
+    for (uint32_t win_key : {VK_LWIN, VK_RWIN}) {
+        BYTE state[256] = {};
+        state[win_key] = 0x80;
+        state[VK_CONTROL] = 0x80;
+        state[VK_CAPITAL] = 1;
+        ASSERT_TRUE(SetKeyboardState(state));
+        const auto event = cxxime::from_windows_key('A', 0, false);
+        ASSERT_TRUE(SetKeyboardState(original));
+        ASSERT_EQ(event.modifiers, cxxime::kKeyModifierWin | cxxime::kKeyModifierControl |
+                                       cxxime::kKeyModifierCapsLock);
+        ASSERT_TRUE(cxxime::is_application_shortcut(event));
+    }
+}
+
 RUN_ALL_TESTS()

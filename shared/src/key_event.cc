@@ -6,6 +6,32 @@
 
 namespace cxxime {
 
+namespace {
+
+bool is_non_text_command_key(uint32_t keycode) {
+    switch (keycode) {
+    case VK_BACK:
+    case VK_TAB:
+    case VK_RETURN:
+    case VK_ESCAPE:
+    case VK_PRIOR:
+    case VK_NEXT:
+    case VK_END:
+    case VK_HOME:
+    case VK_LEFT:
+    case VK_UP:
+    case VK_RIGHT:
+    case VK_DOWN:
+    case VK_INSERT:
+    case VK_DELETE:
+        return true;
+    default:
+        return keycode >= VK_F1 && keycode <= VK_F24;
+    }
+}
+
+} // namespace
+
 KeyEvent from_windows_key(uint32_t vk_code, uint32_t /*lparam*/, bool is_key_up) {
     KeyEvent event;
     event.keycode = vk_code;
@@ -21,6 +47,9 @@ KeyEvent from_windows_key(uint32_t vk_code, uint32_t /*lparam*/, bool is_key_up)
             event.set_alt();
         if (keyboard_state[VK_CAPITAL] & 0x01)
             event.set_caps_lock();
+        if ((keyboard_state[VK_LWIN] | keyboard_state[VK_RWIN]) & 0x80) {
+            event.set_win();
+        }
     }
 
     return event;
@@ -35,7 +64,7 @@ bool is_digit_key(uint32_t vk_code) {
 }
 
 std::optional<char> normalize_ascii_key(const KeyEvent& event) {
-    if (event.is_key_up || event.is_ctrl() || event.is_alt()) {
+    if (event.is_key_up || event.is_ctrl() || event.is_alt() || event.is_win()) {
         return std::nullopt;
     }
 
@@ -90,6 +119,36 @@ std::optional<char> normalize_ascii_key(const KeyEvent& event) {
     default:
         return std::nullopt;
     }
+}
+
+bool is_application_shortcut(const KeyEvent& event) {
+    switch (event.keycode) {
+    case VK_SHIFT:
+    case VK_LSHIFT:
+    case VK_RSHIFT:
+    case VK_CONTROL:
+    case VK_LCONTROL:
+    case VK_RCONTROL:
+    case VK_MENU:
+    case VK_LMENU:
+    case VK_RMENU:
+    case VK_LWIN:
+    case VK_RWIN:
+    case VK_CAPITAL:
+        return false;
+    default:
+        break;
+    }
+    if (event.is_win()) {
+        return true;
+    }
+    if (event.keycode == VK_OEM_PERIOD && event.is_ctrl() && !event.is_shift() && !event.is_alt()) {
+        return false;
+    }
+    if (event.is_ctrl() || event.is_alt()) {
+        return true;
+    }
+    return event.is_shift() && is_non_text_command_key(event.keycode);
 }
 
 } // namespace cxxime

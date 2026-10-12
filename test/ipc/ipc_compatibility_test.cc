@@ -47,7 +47,8 @@ private:
 
 class BaselineResponseServer {
 public:
-    bool start() {
+    bool start(bool legacy_tail = false) {
+        legacy_tail_ = legacy_tail;
         ready_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
         if (!ready_) {
             return false;
@@ -88,7 +89,15 @@ private:
                 response.candidate_count = 1;
                 response.candidate_total = 2;
                 response.candidate_revision = 99;
-                const auto payload = cxxime::test::make_main_response_baseline(response);
+                const auto baseline = cxxime::test::make_main_response_baseline(response);
+                std::vector<uint8_t> payload(baseline.begin(), baseline.end());
+                if (legacy_tail_) {
+                    response.candidate_known_count = response.candidate_total;
+                    payload.resize(3216);
+                    memcpy(payload.data(), &response, payload.size());
+                    // Old structure padding is not initialized protocol data.
+                    memset(payload.data() + 3212, 0xFF, 4);
+                }
                 cxxime::IPCWireHeader header;
                 header.payload_size = static_cast<uint32_t>(payload.size());
                 std::vector<unsigned char> response_wire(sizeof(header) + payload.size());
@@ -105,6 +114,7 @@ private:
     }
 
     HANDLE ready_ = nullptr;
+    bool legacy_tail_ = false;
     std::thread worker_;
 };
 
@@ -181,4 +191,19 @@ TEST(IpcCompatibility, current_client_accepts_0_4_response_prefix) {
     ASSERT_EQ(response.candidate_known_count, response.candidate_total);
     ASSERT_EQ(response.candidate_extent_state, cxxime::CandidateExtentState::kHasMore);
     ASSERT_EQ(response.candidate_extent_complete, 1u);
+}
+
+TEST(IpcCompatibility, legacy_tail_padding_is_not_an_explicit_key_result) {
+    BaselineResponseServer server;
+    ASSERT_TRUE(server.start(true));
+    cxxime::IpcClient client;
+    ASSERT_TRUE(client.connect(compatibility_pipe_name(), 2000));
+    cxxime::IPCRequest request = {};
+    request.command = cxxime::IPCCommand::PROCESS_KEY;
+    cxxime::IPCResponse response = {};
+    ASSERT_TRUE(client.send_request(request, response));
+    ASSERT_EQ(response.status, cxxime::IPCStatus::OK);
+    ASSERT_EQ(response.candidate_revision, 99u);
+    ASSERT_EQ(response.key_disposition, cxxime::KeyDisposition::Unspecified);
+    ASSERT_EQ(response.presentation_changed, 0u);
 }

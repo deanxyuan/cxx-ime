@@ -127,6 +127,9 @@ void apply_resource_snapshot(SessionEntry& entry, const SharedResourceSnapshot& 
 struct ProcessKeyResult {
     cxxime::IPCStatus status = cxxime::IPCStatus::ERR_INVALID_SESSION;
     cxxime::ProcessResult result = cxxime::ProcessResult::REJECTED;
+    bool explicit_key_result = false;
+    cxxime::KeyDisposition key_disposition = cxxime::KeyDisposition::Unspecified;
+    bool presentation_changed = false;
     std::string commit_text;
     bool composing = false;
     std::string preedit;

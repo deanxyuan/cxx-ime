@@ -142,6 +142,13 @@ enum class IPCStatus : uint32_t {
 
 constexpr uint64_t kClientCapabilitySegmentedSelection = 1ULL << 0;
 constexpr uint64_t kClientCapabilitySegmentedPreeditPresentation = 1ULL << 1;
+constexpr uint64_t kClientCapabilityExplicitKeyResult = 1ULL << 2;
+
+enum class KeyDisposition : uint32_t {
+    Unspecified = 0,  // Non-key response or failed request.
+    Handled = 1,
+    PassToHost = 2,
+};
 
 enum class PreeditPresentationFlag : uint32_t {
     SyllableBoundaries = 1u << 0,
@@ -252,7 +259,18 @@ struct IPCResponse {
     uint32_t candidate_known_count = 0;
     CandidateExtentState candidate_extent_state = CandidateExtentState::kExhausted;
     uint32_t candidate_extent_complete = 1;
+    uint32_t reserved_legacy_padding = 0;
+    // Explicit PROCESS_KEY result for clients advertising the corresponding capability.
+    // Ownership is independent of composition updates; ImeStatus is always synchronized.
+    KeyDisposition key_disposition = KeyDisposition::Unspecified;
+    uint32_t presentation_changed = 0;
 };
+
+static_assert(offsetof(IPCResponse, key_disposition) == 3216,
+              "Explicit key result must follow the complete legacy payload");
+static_assert(offsetof(IPCResponse, presentation_changed) == 3220,
+              "IPCResponse presentation change flag moved");
+static_assert(sizeof(IPCResponse) == 3224, "IPCResponse layout changed");
 
 static_assert(std::is_standard_layout<IPCResponse>::value,
               "IPCResponse must use standard layout");

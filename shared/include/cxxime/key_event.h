@@ -12,6 +12,7 @@ constexpr uint32_t kKeyModifierShift = 0x01;
 constexpr uint32_t kKeyModifierControl = 0x02;
 constexpr uint32_t kKeyModifierAlt = 0x04;
 constexpr uint32_t kKeyModifierCapsLock = 0x08;
+constexpr uint32_t kKeyModifierWin = 0x10;
 constexpr uint32_t kShortcutModifierMask =
     kKeyModifierShift | kKeyModifierControl | kKeyModifierAlt;
 
@@ -24,11 +25,13 @@ struct KeyEvent {
     bool is_ctrl() const { return (modifiers & kKeyModifierControl) != 0; }
     bool is_alt() const { return (modifiers & kKeyModifierAlt) != 0; }
     bool is_caps_lock() const { return (modifiers & kKeyModifierCapsLock) != 0; }
+    bool is_win() const { return (modifiers & kKeyModifierWin) != 0; }
 
     void set_shift() { modifiers |= kKeyModifierShift; }
     void set_ctrl() { modifiers |= kKeyModifierControl; }
     void set_alt() { modifiers |= kKeyModifierAlt; }
     void set_caps_lock() { modifiers |= kKeyModifierCapsLock; }
+    void set_win() { modifiers |= kKeyModifierWin; }
 };
 
 // Convert Windows WPARAM/LPARAM to KeyEvent
@@ -40,9 +43,14 @@ bool is_letter_key(uint32_t vk_code);
 // Check if a key is a digit (0-9)
 bool is_digit_key(uint32_t vk_code);
 
-// Map a key event to its US QWERTY printable ASCII character. Ctrl/Alt combinations and
+// Map a key event to its US QWERTY printable ASCII character. Ctrl/Alt/Win combinations and
 // key-up events are application commands, not text input.
 std::optional<char> normalize_ascii_key(const KeyEvent& event);
+
+// Recognize modified host commands, excluding modifier keys themselves and the
+// built-in Shift+Space / Ctrl+. bindings. Configurable IME shortcuts take priority
+// and must be resolved by the caller before applying this default policy.
+bool is_application_shortcut(const KeyEvent& event);
 
 } // namespace cxxime
 

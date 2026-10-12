@@ -38,6 +38,36 @@ bool is_valid_utf8_offset(const std::string& value, size_t offset) {
 
 } // namespace
 
+void fill_key_response(const ProcessKeyResult& result, uint32_t key_code,
+                       cxxime::IPCResponse* response) {
+    if (!response) {
+        return;
+    }
+    fill_process_response(result, response);
+    if (response->status != cxxime::IPCStatus::OK) {
+        // Never publish a partially serialized commit or an executable key result.
+        const auto status = response->status;
+        *response = {};
+        response->status = status;
+        return;
+    }
+    if (result.explicit_key_result) {
+        response->key_disposition = result.key_disposition;
+        response->presentation_changed = result.presentation_changed ? 1u : 0u;
+        return;
+    }
+    // Existing clients interpret snapshots and this historical rejection status.
+    response->key_handled = result.result == cxxime::ProcessResult::SWITCH_INPUT_MODE ||
+                            result.result == cxxime::ProcessResult::INPUT_MODE_SHORTCUT_HANDLED;
+    // CapsLock without a commit was historically REJECTED even when its overlay
+    // changed status. Old TSF handles the lock key itself; do not replay its snapshot.
+    const bool legacy_rejected = result.result == cxxime::ProcessResult::REJECTED ||
+                                 (key_code == VK_CAPITAL && result.commit_text.empty());
+    if (legacy_rejected && result.composing) {
+        response->status = cxxime::IPCStatus::ERR_ENGINE_PROCESS_FAILED;
+    }
+}
+
 void fill_process_response(const ProcessKeyResult& result, cxxime::IPCResponse* response) {
     if (!response) {
         return;

@@ -421,7 +421,8 @@ private:
             key.keycode = request.key_code;
             key.modifiers = request.modifiers;
             key.is_key_up = request.is_key_up != 0;
-            fill_process_response(manager_.process_key(request.session_id, key), &response);
+            fill_key_response(manager_.process_key(request.session_id, key), key.keycode,
+                              &response);
             return response;
         }
         default:
@@ -636,8 +637,8 @@ TEST(StatusProcesses, keys_immediately_after_refocus_survive_deferred_confirmati
     server.blur(a, active);
     active = server.focus(b, true, false);
     server.stable(active);
-    // Caps key-up is consumed by TSF; only the two key-downs reach the engine.
-    ASSERT_EQ(server.requests(cxxime::IPCCommand::PROCESS_KEY, a.session), 2u);
+    // Both edges use the engine's explicit disposition, including CapsLock release.
+    ASSERT_EQ(server.requests(cxxime::IPCCommand::PROCESS_KEY, a.session), 4u);
     ASSERT_EQ(server.requests(cxxime::IPCCommand::PROCESS_KEY, b.session), 0u);
 }
 

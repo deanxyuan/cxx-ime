@@ -248,7 +248,7 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
         event.keycode != handled_shortcut_key_) {
         handled_shortcut_key_ = 0;
     }
-    if (!event.is_key_up && input_mode_switch_shortcut_.matches(event)) {
+    if (!event.is_key_up && !event.is_win() && input_mode_switch_shortcut_.matches(event)) {
         if (handled_shortcut_key_ == 0) {
             handled_shortcut_key_ = event.keycode;
             reset_composition_state();
@@ -260,7 +260,7 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
     }
 
     // Handle keyboard shortcuts for mode toggles.
-    if (!event.is_key_up) {
+    if (!event.is_key_up && !event.is_win()) {
         // Shift+Space toggles full/half shape.
         if (event.keycode == 0x20 && event.is_shift() && !event.is_ctrl() && !event.is_alt()) {
             return ProcessResult::TOGGLE_SHAPE;
@@ -272,9 +272,25 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
         }
     }
 
+    // Single-modifier bindings may commit, clear, or only switch mode on release.
+    // Report their ownership here, independently of the remaining composition.
+    if (modifier_binding_applied || event.keycode == VK_CAPITAL) {
+        if (!context_.committed_text.empty()) {
+            apply_commit_learning_plan();
+            record_total_us(trace_, total_start, trace_enabled_);
+            return ProcessResult::COMMITTED;
+        }
+        record_total_us(trace_, total_start, trace_enabled_);
+        return ProcessResult::ACCEPTED;
+    }
+    if (event.keycode == VK_ESCAPE && !context_.is_composing()) {
+        record_total_us(trace_, total_start, trace_enabled_);
+        return ProcessResult::REJECTED;
+    }
+
     // Application and system shortcuts own modified key combinations unless
     // CxxIME matched an explicit shortcut above.
-    if (event.is_ctrl() || event.is_alt()) {
+    if (is_application_shortcut(event) || event.is_ctrl() || event.is_alt() || event.is_win()) {
         record_total_us(trace_, total_start, trace_enabled_);
         return ProcessResult::REJECTED;
     }
@@ -305,13 +321,6 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
         apply_commit_learning_plan();
         record_total_us(trace_, total_start, trace_enabled_);
         return ProcessResult::COMMITTED;
-    }
-
-    // Keep modifier key-up available to the host while allowing the server to return the
-    // composition snapshot after a binding converts IME/Symbol input to inline ASCII.
-    if (event.is_key_up && modifier_binding_applied && context_.is_composing()) {
-        record_total_us(trace_, total_start, trace_enabled_);
-        return ProcessResult::ACCEPTED;
     }
 
     // Enter always submits the exact active preedit without changing the persistent mode.

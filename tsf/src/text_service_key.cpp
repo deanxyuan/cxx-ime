@@ -6,6 +6,7 @@
 #include <cstring>
 
 #include <cxxime/diagnostics_config.h>
+#include <cxxime/key_event.h>
 #include <cxxime/logging.h>
 
 #include "globals.h"
@@ -20,14 +21,15 @@ bool is_shift_key(WPARAM key) {
 bool is_status_key(WPARAM key) {
     return is_shift_key(key) ||
            key == VK_LCONTROL || key == VK_RCONTROL || key == VK_CONTROL ||
-           key == VK_LMENU || key == VK_RMENU ||
+           key == VK_MENU || key == VK_LMENU || key == VK_RMENU ||
            key == VK_LWIN || key == VK_RWIN ||
            key == VK_CAPITAL;
 }
 
 bool can_start_text_input(WPARAM key, uint32_t modifiers) {
-    constexpr uint32_t kControlOrAlt = 0x02 | 0x04;
-    if ((modifiers & kControlOrAlt) != 0) {
+    constexpr uint32_t kCommandModifiers =
+        cxxime::kKeyModifierControl | cxxime::kKeyModifierAlt | cxxime::kKeyModifierWin;
+    if ((modifiers & kCommandModifiers) != 0) {
         return false;
     }
     if ((key >= 'A' && key <= 'Z') || (key >= '0' && key <= '9')) {
@@ -105,9 +107,6 @@ STDMETHODIMP TextService::OnTestKeyDown(ITfContext* pic, WPARAM wParam, LPARAM l
     }
 
     *pfEaten = _ProcessKeyEvent(pic, wParam, lParam, pfEaten);
-    if (wParam == VK_CAPITAL) {
-        *pfEaten = TRUE;
-    }
     _fTestKeyDownPending = *pfEaten != FALSE;
 
     OutputDebugStringA("[CxxIME] OnTestKeyDown\n");
@@ -126,9 +125,9 @@ STDMETHODIMP TextService::OnTestKeyUp(ITfContext* pic, WPARAM wParam, LPARAM lPa
         return S_OK;
     }
 
-    *pfEaten = (wParam == VK_CAPITAL) ? TRUE : FALSE;
+    *pfEaten = FALSE;
     CXXIME_LOG(L"OnTestKeyUp: vk=%u, sessionId=%u", (unsigned int)wParam, _sessionId);
-    if (wParam != VK_CAPITAL && _ProcessKeyUp(wParam, lParam)) {
+    if (_ProcessKeyUp(wParam, lParam)) {
         *pfEaten = TRUE;
     }
     _fTestKeyUpPending = *pfEaten != FALSE;
@@ -143,9 +142,6 @@ STDMETHODIMP TextService::OnKeyDown(ITfContext* pic, WPARAM wParam, LPARAM lPara
     }
     // Some apps call OnKeyDown without OnTestKeyDown (e.g. QQ2012)
     *pfEaten = _ProcessKeyEvent(pic, wParam, lParam, pfEaten);
-        if (wParam == VK_CAPITAL) {
-        *pfEaten = TRUE;
-    }
     return S_OK;
 }
 
@@ -158,10 +154,6 @@ STDMETHODIMP TextService::OnKeyUp(ITfContext* pic, WPARAM wParam, LPARAM lParam,
     if (wParam < _passThroughKeyUps.size() && _passThroughKeyUps.test(wParam)) {
         _passThroughKeyUps.reset(wParam);
         *pfEaten = FALSE;
-        return S_OK;
-    }
-    if (wParam == VK_CAPITAL) {
-        *pfEaten = TRUE;
         return S_OK;
     }
     // Some apps call OnKeyUp without OnTestKeyUp
@@ -312,8 +304,9 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
                static_cast<unsigned int>(strnlen_s(response.preedit, sizeof(response.preedit))),
                response.composing);
 
-    const bool response_applied = _apply_engine_response(pic, response, pfEaten, &trace);
-    if (!response_applied && !*pfEaten && wParam < _passThroughKeyUps.size()) {
+    *pfEaten = _apply_key_response(pic, response, &trace) ? TRUE : FALSE;
+    // Modifier releases must still reach AsciiComposer to complete/cancel a single-key binding.
+    if (!*pfEaten && !status_key && wParam < _passThroughKeyUps.size()) {
         _passThroughKeyUps.set(wParam);
     }
 
@@ -342,10 +335,6 @@ bool TextService::_ProcessKeyEvent(ITfContext* pic, WPARAM wParam, LPARAM lParam
 }
 
 bool TextService::_ProcessKeyUp(WPARAM wParam, LPARAM lParam) {
-    if (wParam == VK_CAPITAL) {
-        return false;
-    }
-
     _hostTraceSession.begin_input(static_cast<uint32_t>(wParam), lParam);
 
     uint32_t modifiers = _get_modifiers();
@@ -391,17 +380,15 @@ bool TextService::_ProcessKeyUp(WPARAM wParam, LPARAM lParam) {
                                          sizeof(response.commit_text))),
                response.composing);
 
-    BOOL eaten = FALSE;
+    bool handled = false;
     if (ok) {
         ITfContext* context = _current_edit_context_for_composition();
-        _apply_engine_response(context, response, &eaten);
+        handled = _apply_key_response(context, response);
         if (context) {
             context->Release();
         }
     }
 
-    const bool handled = ok && response.status == cxxime::IPCStatus::OK &&
-                         (response.key_handled || eaten != FALSE);
     cxxime_tsf::trace_key_result(
         trace_input_id(), trace_composition_id(), static_cast<uint32_t>(wParam), handled,
         strnlen_s(response.preedit, sizeof(response.preedit)), response.preedit_cursor,
@@ -439,6 +426,9 @@ uint32_t TextService::_get_modifiers() const {
             mods |= 0x04;
         if (kb[VK_CAPITAL] & 0x1)
             mods |= 0x08;
+        if ((kb[VK_LWIN] | kb[VK_RWIN]) & 0x80) {
+            mods |= cxxime::kKeyModifierWin;
+        }
     }
     return mods;
 }

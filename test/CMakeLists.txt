@@ -41,6 +41,7 @@ endfunction()
 add_cxxime_test(engine_test
     SOURCES
         engine/engine_test.cc
+        engine/engine_shortcut_test.cc
         engine/engine_pinyin_test.cc
         engine/engine_ascii_mode_test.cc
         engine/engine_ascii_composition_test.cc
@@ -111,6 +112,7 @@ add_cxxime_test(text_service_test
     SOURCES
         tsf/text_service_composition_test.cc
         tsf/text_service_key_test.cc
+        tsf/text_service_shortcut_test.cc
         tsf/text_service_presentation_test.cc
         tsf/text_service_status_test.cc
         tsf/text_service_status_focus_test.cc
@@ -142,6 +144,7 @@ add_cxxime_test(status_process_integration_test
     SOURCES
         tsf/status_process_integration_test.cc
         tsf/status_process_host.cc
+        tsf/shortcut_pipeline_test.cc
         tsf/status_test_platform.cc
         tsf/text_service_status_visibility_test.cc
         server/session_manager_integration_test_support.cc
@@ -421,6 +424,7 @@ add_cxxime_test(session_manager_integration_test
     SOURCES
         server/session_manager_integration_test.cc
         server/session_manager_language_test.cc
+        server/session_manager_shortcut_test.cc
         server/session_manager_candidate_test.cc
         server/ipc_response_builder_test.cc
         server/session_manager_segmented_test.cc

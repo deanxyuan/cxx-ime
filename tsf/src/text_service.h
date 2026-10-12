@@ -229,6 +229,7 @@ public:
         PREEDIT,
         CLEARED,
         HANDLED,
+        PASS_TO_HOST,
         REJECTED,
     };
 
@@ -280,6 +281,8 @@ private:
                                              const std::optional<std::wstring>&
                                                  host_termination_text,
                                              uint64_t* request_generation = nullptr);
+    bool _apply_key_response(ITfContext* context, const cxxime::IPCResponse& response,
+                             TsfTrace* trace = nullptr);
     bool _apply_engine_response(ITfContext* context,
                                 const cxxime::IPCResponse& response,
                                 BOOL* eaten,

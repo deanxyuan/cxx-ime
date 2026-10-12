@@ -243,16 +243,17 @@ bool same_candidate_state(const CandidateStateToken& left, const CandidateStateT
            left.composing == right.composing;
 }
 
-void advance_candidate_revision(SessionEntry& entry, const CandidateStateToken& previous,
+bool advance_candidate_revision(SessionEntry& entry, const CandidateStateToken& previous,
                                 bool force = false) {
-    if (entry.candidate_revision == 0 ||
-        (!(force && previous.composing) &&
-         same_candidate_state(previous, candidate_state_token(*entry.engine)))) {
-        return;
+    if (!(force && previous.composing) &&
+        same_candidate_state(previous, candidate_state_token(*entry.engine))) {
+        return false;
     }
-    if (entry.candidate_revision != (std::numeric_limits<uint64_t>::max)()) {
+    if (entry.candidate_revision != 0 &&
+        entry.candidate_revision != (std::numeric_limits<uint64_t>::max)()) {
         ++entry.candidate_revision;
     }
+    return true;
 }
 
 void fill_session_presentation(const SessionEntry& entry, ProcessKeyResult& result) {
@@ -690,7 +691,8 @@ uint32_t SessionManager::create_session(uint64_t client_capabilities) {
     entry->chinese_punct = entry->resources.runtime->config().initial_chinese_punct;
     entry->client_capabilities =
         client_capabilities & (cxxime::kClientCapabilitySegmentedSelection |
-                               cxxime::kClientCapabilitySegmentedPreeditPresentation);
+                               cxxime::kClientCapabilitySegmentedPreeditPresentation |
+                               cxxime::kClientCapabilityExplicitKeyResult);
     const bool segmented_selection =
         (entry->client_capabilities & cxxime::kClientCapabilitySegmentedSelection) != 0;
     entry->candidate_revision = segmented_selection ? 1 : 0;
@@ -1423,6 +1425,7 @@ ProcessKeyResult SessionManager::process_key(uint32_t id, const cxxime::KeyEvent
     auto& s = *entry;
     auto& engine = *s.engine;
     const CandidateStateToken candidate_state_before = candidate_state_token(engine);
+    const std::size_t preedit_cursor_before = engine.context().preedit_cursor();
     auto resources = shared_.snapshot();
     apply_resource_snapshot(s, resources);
     bool trace_enabled = false;
@@ -1472,6 +1475,11 @@ ProcessKeyResult SessionManager::process_key(uint32_t id, const cxxime::KeyEvent
     ProcessKeyResult ret;
     ret.status = cxxime::IPCStatus::OK;
     ret.result = result;
+    ret.explicit_key_result =
+        (s.client_capabilities & cxxime::kClientCapabilityExplicitKeyResult) != 0;
+    ret.key_disposition = result == cxxime::ProcessResult::REJECTED
+                              ? cxxime::KeyDisposition::PassToHost
+                              : cxxime::KeyDisposition::Handled;
 
     // Handle toggle results and return updated ImeStatus.
     if (result == cxxime::ProcessResult::TOGGLE_SHAPE) {
@@ -1505,7 +1513,10 @@ ProcessKeyResult SessionManager::process_key(uint32_t id, const cxxime::KeyEvent
     } else {
         ret.composing = engine.context().is_composing();
     }
-    advance_candidate_revision(s, candidate_state_before);
+    ret.presentation_changed = advance_candidate_revision(s, candidate_state_before);
+    // Cursor motion updates preedit but deliberately keeps candidate-selection revisions valid.
+    ret.presentation_changed = ret.presentation_changed || !ret.commit_text.empty() ||
+                               preedit_cursor_before != engine.context().preedit_cursor();
     fill_session_presentation(s, ret);
 
     // trace log

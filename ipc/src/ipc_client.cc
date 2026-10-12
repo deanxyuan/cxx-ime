@@ -174,6 +174,18 @@ bool IpcClient::send_request(const IPCRequest& request, IPCResponse& response) {
             const size_t response_size =
                 (std::min)(static_cast<size_t>(response_header.payload_size), sizeof(response));
             memcpy(&response, response_wire.data() + response_header.header_size, response_size);
+            constexpr size_t kExplicitKeyResultPayloadSize =
+                offsetof(IPCResponse, presentation_changed) + sizeof(uint32_t);
+            if (response_header.payload_size < kExplicitKeyResultPayloadSize) {
+                response.key_disposition = KeyDisposition::Unspecified;
+                response.presentation_changed = 0;
+            } else if ((response.key_disposition != KeyDisposition::Unspecified &&
+                        response.key_disposition != KeyDisposition::Handled &&
+                        response.key_disposition != KeyDisposition::PassToHost) ||
+                       response.presentation_changed > 1) {
+                disconnect();
+                continue;
+            }
             constexpr size_t kCandidateExtentPayloadSize =
                 offsetof(IPCResponse, candidate_extent_complete) + sizeof(uint32_t);
             const uint64_t returned_end = static_cast<uint64_t>(response.candidate_offset) +

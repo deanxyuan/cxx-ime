@@ -24,6 +24,35 @@ bool response_has_ime_status(cxxime::IPCStatus status) {
 
 } // namespace
 
+bool TextService::_apply_key_response(ITfContext* context, const cxxime::IPCResponse& response,
+                                      TsfTrace* trace) {
+    const bool handled = response.key_disposition == cxxime::KeyDisposition::Handled;
+    const bool pass = response.key_disposition == cxxime::KeyDisposition::PassToHost;
+    if (response.status != cxxime::IPCStatus::OK || (!handled && !pass) ||
+        response.presentation_changed > 1 ||
+        (response.commit_text[0] != '\0' && (!handled || !response.presentation_changed))) {
+        if (trace) {
+            trace->result = TsfResult::REJECTED;
+        }
+        return false;
+    }
+    _sync_ime_status(response.ime_status);
+    if (response.presentation_changed) {
+        BOOL eaten = FALSE;
+        const bool applied = _apply_engine_response(context, response, &eaten, trace);
+        // Retain host-edit failure semantics: partial writes cannot replay a key;
+        // a rejected first edit before any write may still pass through.
+        if (!applied) {
+            return eaten != FALSE;
+        }
+    }
+    if (trace &&
+        (!response.presentation_changed || (pass && trace->result != TsfResult::CLEARED))) {
+        trace->result = handled ? TsfResult::HANDLED : TsfResult::PASS_TO_HOST;
+    }
+    return handled;
+}
+
 bool TextService::_apply_engine_response(ITfContext* context, const cxxime::IPCResponse& response,
                                          BOOL* eaten, TsfTrace* trace) {
     if (!eaten || response.status == cxxime::IPCStatus::ERR_INVALID_SESSION) {

@@ -87,7 +87,8 @@ bool TextService::_start_ipc_session() {
     uint32_t session_id = 0;
     constexpr uint64_t kClientCapabilities =
         cxxime::kClientCapabilitySegmentedSelection |
-        cxxime::kClientCapabilitySegmentedPreeditPresentation;
+        cxxime::kClientCapabilitySegmentedPreeditPresentation |
+        cxxime::kClientCapabilityExplicitKeyResult;
     if (!_client.start_session(session_id, kClientCapabilities) ||
         session_id == 0) {
         CXXIME_LOG(L"Failed to start IPC session");

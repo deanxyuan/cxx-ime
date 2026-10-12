@@ -8,5 +8,7 @@
 #include "session_manager.h"
 
 void fill_process_response(const ProcessKeyResult& result, cxxime::IPCResponse* response);
+void fill_key_response(const ProcessKeyResult& result, uint32_t key_code,
+                       cxxime::IPCResponse* response);
 
 #endif // CXXIME_SERVER_IPC_RESPONSE_BUILDER_H_

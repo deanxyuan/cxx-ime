@@ -149,7 +149,9 @@ TEST(SessionIntegration, clear_binding_cancels_composition_on_modifier_key_up) {
     shift_up.is_key_up = true;
     const ProcessKeyResult cleared = manager.process_key(id, shift_up);
     ASSERT_EQ(cleared.status, cxxime::IPCStatus::OK);
-    ASSERT_EQ(cleared.result, cxxime::ProcessResult::REJECTED);
+    ASSERT_EQ(cleared.result, cxxime::ProcessResult::ACCEPTED);
+    ASSERT_EQ(cleared.key_disposition, cxxime::KeyDisposition::Handled);
+    ASSERT_TRUE(cleared.presentation_changed);
     ASSERT_TRUE(!cleared.composing);
     ASSERT_TRUE(!cleared.ime_status.chinese_mode());
 }

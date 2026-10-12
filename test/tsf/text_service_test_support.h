@@ -69,7 +69,9 @@ struct TextServiceTestPeer {
                         bool start_session = true) {
         // Keep the request timeout independent of the startup wait budget.
         return wait_for_input_pipe(pipe) && service._client.connect(pipe, 2000) &&
-               (!start_session || service._client.start_session(service._sessionId));
+               (!start_session ||
+                service._client.start_session(service._sessionId,
+                                              cxxime::kClientCapabilityExplicitKeyResult));
     }
     static cxxime::IPCResponse key(TextService& service, uint32_t key) {
         cxxime::IPCResponse response = {};
@@ -662,6 +664,8 @@ public:
             if (request.command == cxxime::IPCCommand::START_SESSION) {
                 response.highlighted = 1;
             } else if (request.command == cxxime::IPCCommand::PROCESS_KEY) {
+                response.key_disposition = cxxime::KeyDisposition::Handled;
+                response.presentation_changed = 1;
                 if (request.key_code == VK_ESCAPE) {
                     engine.clear_composition();
                     response.key_handled = true;

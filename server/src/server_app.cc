@@ -448,20 +448,7 @@ cxxime::IPCResponse ServerApp::handle_request(const cxxime::IPCRequest& request)
         auto r =
             session_mgr_.process_key(request.session_id, event, visible_candidate_count);
 
-        fill_process_response(r, &response);
-        response.key_handled =
-            r.result == cxxime::ProcessResult::SWITCH_INPUT_MODE ||
-            r.result == cxxime::ProcessResult::INPUT_MODE_SHORTCUT_HANDLED;
-
-        if (r.status == cxxime::IPCStatus::OK &&
-            r.result == cxxime::ProcessResult::REJECTED) {
-            // If the engine rejected the key but cleared the composition
-            // (e.g. CapsLock with "clear" style), return OK so the TSF
-            // client can clean up its composition state.
-            if (r.composing) {
-                response.status = cxxime::IPCStatus::ERR_ENGINE_PROCESS_FAILED;
-            }
-        }
+        fill_key_response(r, request.key_code, &response);
         break;
     }
 
