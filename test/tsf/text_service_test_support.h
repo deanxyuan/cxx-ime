@@ -26,7 +26,12 @@
 // Only this peer accesses service internals. These helpers arrange lifecycle boundaries;
 // behavior is checked through host writes, engine state and published UI snapshots.
 struct TextServiceTestPeer {
-    static void set_status_window_enabled(TextService& service, bool enabled);
+    static void set_status_window_enabled(TextService& service, bool enabled) {
+        // Arrange a received preference without touching the user's configuration service.
+        service._config.status_window.enable = enabled;
+        service._publish_ui_presentation();
+        service._update_state_poll_timer();
+    }
     static void select_input_mode(TextService& service, cxxime::ImeMenuCommand command) {
         service._handle_ime_menu_command(command);
     }
@@ -167,6 +172,9 @@ struct TextServiceTestPeer {
         service._activateFlags |= TF_TMF_IMMERSIVEMODE;
         service._effectiveEditTarget.view_window = reinterpret_cast<uintptr_t>(view);
         service._config.render_backend = "gdi";
+    }
+    static void host_ui_only(TextService& service) {
+        service._activateFlags |= TF_TMF_UIELEMENTENABLEDONLY;
     }
     static void start_ui(TextService& service, const std::wstring& pipe,
                          bool handle_commands = false) {
@@ -607,6 +615,7 @@ public:
 class HostThreadManager : public HostObject<ITfThreadMgr> {
 public:
     HostDocument document;
+    ITfDocumentMgr* focus_document = &document;
     BOOL focused = TRUE;
     HRESULT focus_result = S_OK;
     STDMETHODIMP Activate(TfClientId*) override { return E_NOTIMPL; }
@@ -614,9 +623,11 @@ public:
     STDMETHODIMP CreateDocumentMgr(ITfDocumentMgr**) override { return E_NOTIMPL; }
     STDMETHODIMP EnumDocumentMgrs(IEnumTfDocumentMgrs**) override { return E_NOTIMPL; }
     STDMETHODIMP GetFocus(ITfDocumentMgr** out) override {
-        *out = &document;
-        document.AddRef();
-        return S_OK;
+        *out = focus_document;
+        if (*out) {
+            (*out)->AddRef();
+        }
+        return *out ? S_OK : S_FALSE;
     }
     STDMETHODIMP SetFocus(ITfDocumentMgr*) override { return E_NOTIMPL; }
     STDMETHODIMP AssociateFocus(HWND, ITfDocumentMgr*, ITfDocumentMgr**) override {

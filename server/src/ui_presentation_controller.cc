@@ -24,6 +24,7 @@
 #include <cxxime/window_position.h>
 
 #include "ui_candidate_page_conversion.h"
+#include "ui_presentation_target.h"
 
 namespace {
 
@@ -118,6 +119,7 @@ public:
         cxxime::UiEndpointId endpoint = 0;
         cxxime::UiPresentationSnapshot snapshot;
         std::uint64_t received_time_100ns = 0;
+        std::uintptr_t foreground_window = 0;
     };
 
     struct AppliedPresentation {
@@ -210,7 +212,8 @@ public:
     void present(cxxime::UiEndpointId endpoint, const cxxime::UiPresentationSnapshot* snapshot,
                  bool preserve_status_during_handoff,
                  std::uint64_t candidate_placement_cycle,
-                 std::uint64_t router_revision) {
+                 std::uint64_t router_revision,
+                 std::uintptr_t foreground_window) {
         std::lock_guard<std::mutex> lock(mutex_);
         if (!running_ || router_revision <= pending_router_revision_) {
             return;
@@ -221,7 +224,8 @@ public:
                 endpoint, *snapshot,
                 trace_enabled_.load(std::memory_order_relaxed)
                     ? cxxime::ui_presentation_timestamp_100ns()
-                    : 0};
+                    : 0,
+                foreground_window};
         } else {
             pending_snapshot_.reset();
         }
@@ -353,7 +357,9 @@ private:
     void reconcile_current_status_window_z_order() {
         if (!applying_presentation_) {
             reconcile_status_window_z_order(
-                status_window_.is_visible(),
+                status_window_.is_visible() && rendered_presentation_ &&
+                    presentation_target_is_current(rendered_presentation_->snapshot.target_window,
+                                                   rendered_presentation_->foreground_window),
                 rendered_presentation_ ? &rendered_presentation_->snapshot : nullptr);
         }
     }
@@ -418,7 +424,9 @@ private:
     }
 
     bool begin_status_handoff() {
-        if (!status_window_.is_visible()) {
+        const HWND foreground = GetForegroundWindow();
+        if (!status_window_.is_visible() || !foreground ||
+            cxxime::is_fullscreen_window(foreground)) {
             return false;
         }
         if (status_handoff_timer_) {
@@ -464,13 +472,21 @@ private:
 
         cancel_status_handoff();
         const cxxime::UiPresentationSnapshot& current = presentation->snapshot;
+        if (!presentation_target_is_current(current.target_window,
+                                            presentation->foreground_window)) {
+            candidate_window_.hide();
+            clear_visible_candidate_count();
+            status_window_.hide();
+            rendered_presentation_.reset();
+            return;
+        }
         status_window_.update_state(button_state_from_snapshot(current));
         AppliedPresentation applied;
         applied.status_requested = current_config_ && current_config_->status_window.enable &&
                                    has_flag(current, cxxime::UiSnapshotFlag::kStatusVisible);
         applied.status_suppressed_fullscreen =
             applied.status_requested &&
-            cxxime::is_fullscreen_window(reinterpret_cast<HWND>(current.target_window));
+            cxxime::is_fullscreen_window(reinterpret_cast<HWND>(presentation->foreground_window));
         applied.status_visible =
             applied.status_requested && !applied.status_suppressed_fullscreen;
         applied.source_caret = current.caret;
@@ -808,9 +824,10 @@ void UiPresentationController::present(cxxime::UiEndpointId endpoint,
                                        const cxxime::UiPresentationSnapshot* snapshot,
                                        bool preserve_status_during_handoff,
                                        std::uint64_t candidate_placement_cycle,
-                                       std::uint64_t router_revision) {
+                                       std::uint64_t router_revision,
+                                       std::uintptr_t foreground_window) {
     impl_->present(endpoint, snapshot, preserve_status_during_handoff,
-                   candidate_placement_cycle, router_revision);
+                   candidate_placement_cycle, router_revision, foreground_window);
 }
 
 void UiPresentationController::update_config(const std::shared_ptr<const cxxime::Config>& config) {

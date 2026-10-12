@@ -161,7 +161,7 @@ public:
         ASSERT_TRUE(input_.start(pipe));
         ASSERT_TRUE(router_.start(
             [this](cxxime::UiEndpointId endpoint, const cxxime::UiPresentationSnapshot* snapshot,
-                   bool, uint64_t, uint64_t revision) {
+                   bool, uint64_t, uint64_t revision, std::uintptr_t) {
                 std::lock_guard<std::mutex> lock(mutex_);
                 // Match the controller's revision ordering for concurrent router callbacks.
                 if (revision <= sequence_) {

@@ -4,13 +4,6 @@
 
 #include "status_test_support.h"
 
-void TextServiceTestPeer::set_status_window_enabled(TextService& service, bool enabled) {
-    // Arrange a received preference without touching the user's configuration service.
-    service._config.status_window.enable = enabled;
-    service._publish_ui_presentation();
-    service._update_state_poll_timer();
-}
-
 TEST(TextServiceStatusSettings, showing_status_after_hidden_focus_changes_uses_current_state) {
     status_test::KeyboardState keyboard;
     keyboard.caps(false);

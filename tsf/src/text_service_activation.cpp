@@ -215,7 +215,7 @@ void TextService::_initialize_optional_activation_services() {
 }
 
 void TextService::_synchronize_activation_focus() {
-    _synchronize_focus_state(nullptr, nullptr, "activate_complete");
+    _synchronize_focus_state("activate_complete");
 
     if (_config.status_window.enable && _config.status_window.show_on_startup && _inputFocused) {
         _show_status_window_if_allowed("show:activate_startup");

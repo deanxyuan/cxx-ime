@@ -83,7 +83,7 @@ TEST(UiPresentationRouter, ignores_stale_snapshots_and_routes_bound_commands) {
     ASSERT_TRUE(router.start(
         [&](cxxime::UiEndpointId endpoint, const cxxime::UiPresentationSnapshot* snapshot,
             bool preserve_status_during_handoff, std::uint64_t candidate_placement_cycle,
-            std::uint64_t router_revision) {
+            std::uint64_t router_revision, std::uintptr_t) {
             UNREFERENCED_PARAMETER(preserve_status_during_handoff);
             UNREFERENCED_PARAMETER(candidate_placement_cycle);
             UNREFERENCED_PARAMETER(router_revision);
@@ -178,7 +178,7 @@ TEST(UiPresentationRouter, disconnect_clears_only_the_active_endpoint) {
         [&](cxxime::UiEndpointId published_endpoint,
             const cxxime::UiPresentationSnapshot* published_snapshot,
             bool preserve_status_during_handoff, std::uint64_t candidate_placement_cycle,
-            std::uint64_t router_revision) {
+            std::uint64_t router_revision, std::uintptr_t) {
             UNREFERENCED_PARAMETER(preserve_status_during_handoff);
             UNREFERENCED_PARAMETER(candidate_placement_cycle);
             UNREFERENCED_PARAMETER(router_revision);
@@ -208,7 +208,7 @@ TEST(UiPresentationRouter, refreshes_only_connected_sessions_and_clears_resume_u
     UiPresentationRouter router;
     ASSERT_TRUE(router.start(
         [&](cxxime::UiEndpointId, const cxxime::UiPresentationSnapshot* snapshot, bool,
-            std::uint64_t, std::uint64_t) {
+            std::uint64_t, std::uint64_t, std::uintptr_t) {
             if (snapshot) {
                 presentation_count.fetch_add(1);
             } else {
@@ -279,7 +279,7 @@ TEST(UiPresentationRouter, candidate_placement_cycle_tracks_content_lifetime) {
     UiPresentationRouter router;
     ASSERT_TRUE(router.start(
         [&](cxxime::UiEndpointId, const cxxime::UiPresentationSnapshot* snapshot, bool,
-            std::uint64_t candidate_placement_cycle, std::uint64_t) {
+            std::uint64_t candidate_placement_cycle, std::uint64_t, std::uintptr_t) {
             has_snapshot.store(snapshot != nullptr);
             placement_cycle.store(candidate_placement_cycle);
             callback_count.fetch_add(1);
@@ -357,4 +357,86 @@ TEST(UiPresentationRouter, candidate_placement_cycle_tracks_content_lifetime) {
     router.stop();
 }
 
-RUN_ALL_TESTS()
+TEST(UiPresentationRouter, concurrent_endpoints_cannot_restore_superseded_requests) {
+    const std::wstring pipe = test_pipe_name();
+    std::mutex mutex;
+    std::uint64_t last_revision = 0;
+    std::uint64_t selected_session = 0;
+    std::uint64_t selected_generation = 0;
+    std::uint64_t selected_presentation = 0;
+    unsigned int clears = 0;
+    UiPresentationRouter router;
+    ASSERT_TRUE(router.start(
+        [&](cxxime::UiEndpointId, const cxxime::UiPresentationSnapshot* snapshot, bool,
+            std::uint64_t, std::uint64_t revision, std::uintptr_t) {
+            std::lock_guard<std::mutex> lock(mutex);
+            if (revision <= last_revision) {
+                return;
+            }
+            last_revision = revision;
+            selected_session = snapshot ? snapshot->session_id : 0;
+            selected_generation = snapshot ? snapshot->session_generation : 0;
+            selected_presentation = snapshot ? snapshot->presentation_generation : 0;
+            if (!snapshot) {
+                ++clears;
+            }
+        },
+        pipe));
+    std::atomic<std::uint64_t> acknowledged_first{0};
+    std::atomic<std::uint64_t> acknowledged_second{0};
+    cxxime::UiChannelClient first;
+    cxxime::UiChannelClient second;
+    ASSERT_TRUE(first.start(
+        [&](const cxxime::UiCommand& command) { acknowledged_first = command.session_generation; },
+        pipe));
+    ASSERT_TRUE(second.start(
+        [&](const cxxime::UiCommand& command) { acknowledged_second = command.session_generation; },
+        pipe));
+    for (unsigned int round = 1; round <= 8; ++round) {
+        auto a = make_snapshot(1);
+        a.session_id = 1;
+        a.session_generation = round;
+        a.ownership = cxxime::UiOwnership::kNone;
+        a.flags = cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kStatusVisible);
+        auto b = a;
+        b.session_id = 2;
+        // Independent channel workers may deliver these in either order.
+        ASSERT_TRUE(first.publish_latest(a));
+        ASSERT_TRUE(second.publish_latest(b));
+        ASSERT_TRUE(wait_for([&]() {
+            router.reconcile_system_ui(false);
+            return acknowledged_first.load() == round && acknowledged_second.load() == round;
+        }));
+        // Both requests are stored. Establish B as the latest presenter, then remove it.
+        ++b.presentation_generation;
+        ASSERT_TRUE(second.publish_latest(b));
+        ASSERT_TRUE(wait_for([&]() {
+            std::lock_guard<std::mutex> lock(mutex);
+            return selected_session == 2 && selected_generation == round &&
+                   selected_presentation == b.presentation_generation;
+        }));
+        b.flags = 0;
+        ++b.presentation_generation;
+        ASSERT_TRUE(second.publish_latest(b));
+        ASSERT_TRUE(wait_for([&]() {
+            std::lock_guard<std::mutex> lock(mutex);
+            return clears == round;
+        }));
+        std::lock_guard<std::mutex> lock(mutex);
+        ASSERT_EQ(selected_session, static_cast<std::uint64_t>(0));
+    }
+    first.stop();
+    second.stop();
+    router.stop();
+}
+
+int main() {
+    const HWND window = CreateWindowExW(0, L"STATIC", L"Router test foreground", WS_POPUP, 0, 0, 1,
+                                        1, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    ASSERT_TRUE(window != nullptr);
+    test::foreground_sample.store(window);
+    const int result = test::RunAllTests();
+    test::foreground_sample.store(nullptr);
+    ASSERT_TRUE(DestroyWindow(window));
+    return result;
+}

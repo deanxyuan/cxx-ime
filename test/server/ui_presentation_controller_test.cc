@@ -15,6 +15,7 @@
 #include "support/testutil.h"
 #include "support/window_transition_probe.h"
 #include "ui_presentation_controller.h"
+#include "ui_presentation_target.h"
 
 namespace {
 
@@ -156,6 +157,7 @@ private:
 class ControllerFixture {
 public:
     ControllerFixture() {
+        test::foreground_sample.store(host.owner);
         auto config = std::make_shared<cxxime::Config>();
         config->render_backend = "gdi";
         config->status_window.enable = true;
@@ -200,7 +202,8 @@ public:
     void present() {
         ++snapshot.presentation_generation;
         controller.present(1, &snapshot, false, snapshot.target_generation,
-                           snapshot.presentation_generation);
+                           snapshot.presentation_generation,
+                           reinterpret_cast<std::uintptr_t>(GetForegroundWindow()));
         // A real status click echoes the generation of the rendered snapshot.
         // This is a processing barrier, not a fixed sleep or an assertion that
         // can pass against the previous frame's z-order.
@@ -279,10 +282,17 @@ TEST(UiPresentationController, local_window_validation_and_legacy_fallback_prese
         reinterpret_cast<std::uint64_t>(fixture.host.candidate);
     raise_window(fixture.status);
     // A different target's candidate must not constrain this status window.
-    fixture.snapshot.target_window = reinterpret_cast<std::uint64_t>(fixture.status);
+    const HWND other_target =
+        CreateWindowExW(WS_EX_NOACTIVATE, L"STATIC", L"Other input target", WS_OVERLAPPEDWINDOW,
+                        50, 50, 400, 200, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    ASSERT_TRUE(other_target != nullptr);
+    test::foreground_sample.store(other_target);
+    fixture.snapshot.target_window = reinterpret_cast<std::uint64_t>(other_target);
     fixture.present();
     ASSERT_TRUE(is_above(fixture.status, fixture.host.candidate));
     // GetFocus ownership is valid when no view HWND was available to the sender.
+    test::foreground_sample.store(fixture.host.owner);
+    ASSERT_TRUE(DestroyWindow(other_target));
     fixture.snapshot.target_window = 0;
     fixture.present();
     ASSERT_TRUE(is_above(fixture.host.candidate, fixture.status));
@@ -339,7 +349,7 @@ TEST(UiPresentationController, source_switch_and_independent_layout_preserve_can
     ASSERT_TRUE(IsWindowVisible(server_candidate) == FALSE);
     ASSERT_TRUE(IsWindowVisible(fixture.status) != FALSE);
     transitions.expect(0, 0);
-    fixture.controller.present(1, nullptr, false, 0, ++fixture.snapshot.presentation_generation);
+    fixture.controller.present(1, nullptr, false, 0, ++fixture.snapshot.presentation_generation, 0);
     ASSERT_TRUE(wait_for([&]() { return !IsWindowVisible(fixture.status); }));
     // A synchronous message waits for the hide operation's hook to finish too.
     send_message(fixture.status, WM_NULL, 0, 0);
@@ -369,6 +379,21 @@ TEST(UiPresentationController, embedded_target_can_have_an_owner_in_another_proc
     SetWindowLongPtrW(fixture.host.candidate, GWLP_HWNDPARENT,
                       reinterpret_cast<LONG_PTR>(fixture.host.owner));
     DestroyWindow(frame);
+}
+
+TEST(UiPresentationTarget,
+     windowless_views_require_the_foreground_process_but_embedded_views_do_not) {
+    CandidateHost host;
+    test::foreground_sample.store(host.owner);
+    DWORD host_process = 0;
+    GetWindowThreadProcessId(host.owner, &host_process);
+    ASSERT_NE(host_process, GetCurrentProcessId());
+    ASSERT_TRUE(presentation_foreground(0, GetCurrentProcessId()) == nullptr);
+    ASSERT_TRUE(presentation_foreground(0, 0) == nullptr);
+    ASSERT_EQ(presentation_foreground(0, host_process), host.owner);
+    ASSERT_EQ(
+        presentation_foreground(reinterpret_cast<std::uint64_t>(host.owner), GetCurrentProcessId()),
+        host.owner);
 }
 
 } // namespace

@@ -128,6 +128,7 @@ void TextService::_release_effective_edit_target() {
 }
 
 void TextService::_clear_effective_edit_target(const char* source, bool target_unavailable) {
+    cxxime_tsf::UiPresentationBatch batch(*this);
     _cancel_caps_lock_refresh();
     invalidate_composition_edit_requests();
     const cxxime_tsf::EffectiveEditTargetSnapshot previous = _effectiveEditTarget;
@@ -318,10 +319,14 @@ bool TextService::_synchronize_effective_edit_target_from_thread_mgr(const char*
     return _synchronize_effective_edit_target(nullptr, nullptr, source);
 }
 
-bool TextService::_synchronize_focus_state(ITfContext* context, ITfDocumentMgr* document,
-                                           const char* source) {
+bool TextService::_synchronize_focus_state(const char* source) {
     cxxime_tsf::UiPresentationBatch batch(*this);
-    if (!_synchronize_effective_edit_target(context, document, source)) {
+    BOOL focused = FALSE;
+    if (!_threadMgr || FAILED(_threadMgr->IsThreadFocus(&focused)) || !focused) {
+        _clear_effective_edit_target(source);
+        return false;
+    }
+    if (!_synchronize_effective_edit_target_from_thread_mgr(source)) {
         return false;
     }
 
@@ -344,12 +349,36 @@ bool TextService::_synchronize_focus_state(ITfContext* context, ITfDocumentMgr* 
     return true;
 }
 
+void TextService::_synchronize_context_stack(ITfContext* context, const char* source) {
+    if (!_activated || !_threadMgr || !context) {
+        return;
+    }
+
+    ITfDocumentMgr* changed_document = nullptr;
+    ITfDocumentMgr* focused_document = nullptr;
+    context->GetDocumentMgr(&changed_document);
+    _threadMgr->GetFocus(&focused_document);
+    const bool unrelated = changed_document && focused_document &&
+                           com_identity(changed_document) != com_identity(focused_document);
+    if (changed_document) {
+        changed_document->Release();
+    }
+    if (focused_document) {
+        focused_document->Release();
+    }
+    if (!unrelated) {
+        // A stack notification is not a focus grant. Resolve the current top,
+        // including on pop, where the notified context is no longer current.
+        _synchronize_focus_state(source);
+    }
+}
+
 STDMETHODIMP TextService::OnSetThreadFocus() {
     if (!_activated) {
         return S_OK;
     }
 
-    _synchronize_focus_state(nullptr, nullptr, "thread_focus");
+    _synchronize_focus_state("thread_focus");
     return S_OK;
 }
 
@@ -381,21 +410,20 @@ STDMETHODIMP TextService::OnSetFocus(ITfDocumentMgr* pDocMgrFocus,
         return S_OK;
     }
 
-    _synchronize_focus_state(nullptr, pDocMgrFocus, "document_focus");
+    if (!pDocMgrFocus) {
+        _clear_effective_edit_target("document_focus_lost");
+    } else {
+        _synchronize_focus_state("document_focus");
+    }
     return S_OK;
 }
 
 STDMETHODIMP TextService::OnPushContext(ITfContext* pic) {
-    if (_activated) {
-        _synchronize_focus_state(pic, nullptr, "push_context");
-    }
+    _synchronize_context_stack(pic, "push_context");
     return S_OK;
 }
 
 STDMETHODIMP TextService::OnPopContext(ITfContext* pic) {
-    UNREFERENCED_PARAMETER(pic);
-    if (_activated) {
-        _synchronize_focus_state(nullptr, nullptr, "pop_context");
-    }
+    _synchronize_context_stack(pic, "pop_context");
     return S_OK;
 }

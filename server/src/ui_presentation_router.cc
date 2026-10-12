@@ -11,6 +11,8 @@
 
 #include <windows.h>
 
+#include "ui_presentation_target.h"
+
 namespace {
 
 struct SessionKey {
@@ -34,12 +36,14 @@ struct RoutedSnapshot {
     cxxime::UiPresentationSnapshot snapshot;
     std::uint64_t received_revision = 0;
     std::uint64_t candidate_placement_cycle = 0;
+    std::uintptr_t foreground_window = 0;
 };
 
 struct ActivePresentation {
     SessionKey key;
     cxxime::UiPresentationSnapshot snapshot;
     std::uint64_t candidate_placement_cycle = 0;
+    std::uintptr_t foreground_window = 0;
 };
 
 bool has_flag(const cxxime::UiPresentationSnapshot& snapshot, cxxime::UiSnapshotFlag flag) {
@@ -92,25 +96,6 @@ bool command_is_allowed(const cxxime::UiPresentationSnapshot& snapshot,
            !has_flag(snapshot, cxxime::UiSnapshotFlag::kTsfLocalCandidate);
 }
 
-bool belongs_to_foreground(const cxxime::UiPresentationSnapshot& snapshot) {
-    if (snapshot.target_window == 0) {
-        // Some TSF views expose screen coordinates without an HWND. Their focused
-        // target has already been validated by the TSF producer.
-        return true;
-    }
-    const HWND target = reinterpret_cast<HWND>(snapshot.target_window);
-    const HWND foreground = GetForegroundWindow();
-    if (!foreground || !IsWindow(target)) {
-        return false;
-    }
-    if (target == foreground || IsChild(foreground, target) || IsChild(target, foreground)) {
-        return true;
-    }
-    const HWND target_root = GetAncestor(target, GA_ROOT);
-    const HWND foreground_root = GetAncestor(foreground, GA_ROOT);
-    return target_root && target_root == foreground_root;
-}
-
 bool should_preserve_status_during_handoff(const cxxime::UiPresentationSnapshot& snapshot) {
     if (!has_flag(snapshot, cxxime::UiSnapshotFlag::kStatusVisible) ||
         snapshot.target_window == 0) {
@@ -128,7 +113,7 @@ bool should_preserve_status_during_handoff(const cxxime::UiPresentationSnapshot&
     if (foreground_root && foreground_root == GetShellWindow()) {
         return false;
     }
-    return target_root && foreground_root;
+    return target_root && foreground_root && target_root != foreground_root;
 }
 
 } // namespace
@@ -206,7 +191,7 @@ public:
             router_revision = ++router_revision_;
         }
         if (handler) {
-            handler(0, nullptr, false, 0, router_revision);
+            handler(0, nullptr, false, 0, router_revision, 0);
         }
     }
 
@@ -227,7 +212,8 @@ public:
                 command.composition_generation != snapshot.composition_generation ||
                 command.presentation_generation != snapshot.presentation_generation ||
                 !command_is_allowed(snapshot, command.type) ||
-                !belongs_to_foreground(snapshot)) {
+                !presentation_target_is_current(snapshot.target_window,
+                                                found->second.foreground_window)) {
                 return false;
             }
         }
@@ -259,7 +245,7 @@ public:
             }
         }
         if (handler) {
-            handler(0, nullptr, false, 0, router_revision);
+            handler(0, nullptr, false, 0, router_revision, 0);
         }
         for (const auto& entry : commands) {
             channel_.send_command(entry.first, entry.second);
@@ -282,9 +268,15 @@ private:
                                              std::uint64_t* candidate_placement_cycle) {
         const RoutedSnapshot* selected = nullptr;
         SessionKey selected_key;
-        for (const auto& entry : sessions_) {
+        for (auto& entry : sessions_) {
             const cxxime::UiPresentationSnapshot& snapshot = entry.second.snapshot;
-            if (!requests_visible_ui(snapshot) || !belongs_to_foreground(snapshot)) {
+            if (!presentation_target_is_current(snapshot.target_window,
+                                                entry.second.foreground_window)) {
+                // A focus round trip must be confirmed by a new producer snapshot.
+                entry.second.foreground_window = 0;
+                continue;
+            }
+            if (!requests_visible_ui(snapshot)) {
                 continue;
             }
             if (!selected || entry.second.received_revision > selected->received_revision) {
@@ -295,9 +287,17 @@ private:
         if (!selected) {
             return false;
         }
+        for (auto& entry : sessions_) {
+            if (entry.second.received_revision < selected->received_revision) {
+                // Workers may store several snapshots before either selects one.
+                // Retire all older requests, including ones never made active.
+                entry.second.foreground_window = 0;
+            }
+        }
         *presentation = selected->snapshot;
         *candidate_placement_cycle = selected->candidate_placement_cycle;
-        active_ = ActivePresentation{selected_key, *presentation, *candidate_placement_cycle};
+        active_ = ActivePresentation{selected_key, *presentation, *candidate_placement_cycle,
+                                     selected->foreground_window};
         return true;
     }
 
@@ -310,6 +310,7 @@ private:
         bool preserve_status_during_handoff = false;
         std::uint64_t candidate_placement_cycle = 0;
         std::uint64_t router_revision = 0;
+        std::uintptr_t foreground_window = 0;
         {
             std::lock_guard<std::mutex> lock(mutex_);
             if (!running_) {
@@ -321,6 +322,7 @@ private:
                                                     &candidate_placement_cycle)) {
                 publish = force_publish || !previous || !(active_->key == previous->key);
                 endpoint = active_->key.endpoint;
+                foreground_window = active_->foreground_window;
             } else {
                 active_.reset();
                 clear = previous.has_value();
@@ -342,15 +344,18 @@ private:
             return;
         }
         if (publish) {
-            handler(endpoint, &presentation, false, candidate_placement_cycle, router_revision);
+            handler(endpoint, &presentation, false, candidate_placement_cycle, router_revision,
+                    foreground_window);
         } else if (clear) {
             handler(0, nullptr, preserve_status_during_handoff, candidate_placement_cycle,
-                    router_revision);
+                    router_revision, 0);
         }
     }
 
     void on_snapshot(cxxime::UiEndpointId endpoint,
                      const cxxime::UiPresentationSnapshot& snapshot) {
+        const auto foreground_window = reinterpret_cast<std::uintptr_t>(
+            presentation_foreground(snapshot.target_window, channel_.client_process_id(endpoint)));
         {
             std::lock_guard<std::mutex> lock(mutex_);
             if (!running_) {
@@ -380,11 +385,13 @@ private:
                 }
                 if (found == sessions_.end()) {
                     sessions_[key] = {
-                        snapshot, ++received_revision_, candidate_placement_cycle};
+                        snapshot, ++received_revision_, candidate_placement_cycle,
+                        foreground_window};
                 } else {
                     found->second.snapshot = snapshot;
                     found->second.received_revision = ++received_revision_;
                     found->second.candidate_placement_cycle = candidate_placement_cycle;
+                    found->second.foreground_window = foreground_window;
                 }
             }
         }

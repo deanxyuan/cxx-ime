@@ -68,7 +68,7 @@ STDMETHODIMP TextService::OnSetFocus(BOOL fForeground) {
     }
 
     if (fForeground) {
-        if (!_synchronize_focus_state(nullptr, nullptr, "key_sink_focus")) {
+        if (!_synchronize_focus_state("key_sink_focus")) {
             if (_sessionId && _client.is_connected())
                 _client.focus_out(_sessionId);
         }

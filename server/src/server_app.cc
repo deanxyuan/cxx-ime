@@ -261,11 +261,12 @@ bool ServerApp::initialize(const std::string& dict_path, const std::string& conf
                           const cxxime::UiPresentationSnapshot* snapshot,
                           bool preserve_status_during_handoff,
                           std::uint64_t candidate_placement_cycle,
-                          std::uint64_t router_revision) {
+                          std::uint64_t router_revision,
+                          std::uintptr_t foreground_window) {
                        ui_presentation_controller_.present(endpoint, snapshot,
                                                            preserve_status_during_handoff,
                                                            candidate_placement_cycle,
-                                                           router_revision);
+                                                           router_revision, foreground_window);
                    })) {
         CXXIME_LOG(L"%s", L"ui_presentation event=start_channel result=degraded");
         ui_presentation_controller_.stop();

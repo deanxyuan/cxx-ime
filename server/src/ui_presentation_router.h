@@ -16,7 +16,8 @@ public:
         std::function<void(cxxime::UiEndpointId, const cxxime::UiPresentationSnapshot*,
                            bool preserve_status_during_handoff,
                            std::uint64_t candidate_placement_cycle,
-                           std::uint64_t router_revision)>;
+                           std::uint64_t router_revision,
+                           std::uintptr_t foreground_window)>;
 
     UiPresentationRouter();
     ~UiPresentationRouter();

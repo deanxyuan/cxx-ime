@@ -486,6 +486,9 @@ TEST(UiChannel, server_routes_command_to_the_originating_endpoint) {
     ASSERT_TRUE(client.publish_latest(make_snapshot(7)));
     ASSERT_TRUE(wait_for([&]() { return endpoint.load() != 0; }));
 
+    ASSERT_EQ(server.client_process_id(endpoint.load()), GetCurrentProcessId());
+    ASSERT_EQ(server.client_process_id(0), static_cast<std::uint32_t>(0));
+
     cxxime::UiCommand command;
     command.session_id = 17;
     command.session_generation = 3;

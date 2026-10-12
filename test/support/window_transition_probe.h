@@ -3,6 +3,8 @@
 #ifndef CXXIME_TEST_WINDOW_TRANSITION_PROBE_H_
 #define CXXIME_TEST_WINDOW_TRANSITION_PROBE_H_
 
+#include <chrono>
+#include <condition_variable>
 #include <mutex>
 
 #include <windows.h>
@@ -31,6 +33,9 @@ public:
 
     ~WindowTransitionProbe() {
         ASSERT_TRUE(UnhookWindowsHookEx(hook_));
+        if (drain_hook_) {
+            ASSERT_TRUE(UnhookWindowsHookEx(drain_hook_));
+        }
         // A callback already executing must finish before this object's destruction.
         std::lock_guard<std::mutex> lock(mutex_);
         active_ = nullptr;
@@ -38,6 +43,21 @@ public:
 
     WindowTransitionProbe(const WindowTransitionProbe&) = delete;
     WindowTransitionProbe& operator=(const WindowTransitionProbe&) = delete;
+
+    // After the operation has started, wait for the window thread to return to
+    // its posted-message loop. This also works while the observed window is hidden.
+    void drain() {
+        std::unique_lock<std::mutex> lock(mutex_);
+        if (!drain_hook_) {
+            drain_hook_ = SetWindowsHookExW(WH_GETMESSAGE, observe_queued, nullptr,
+                                            GetWindowThreadProcessId(window_, nullptr));
+            ASSERT_TRUE(drain_hook_ != nullptr);
+        }
+        drained_ = false;
+        ASSERT_TRUE(PostMessageW(window_, WM_NULL, 0, reinterpret_cast<LPARAM>(this)));
+        ASSERT_TRUE(
+            drained_cv_.wait_for(lock, std::chrono::seconds(3), [&]() { return drained_; }));
+    }
 
     void expect(int shows, int hides, int moves = 0) const {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -84,6 +104,19 @@ private:
         return CallNextHookEx(nullptr, code, wp, lp);
     }
 
+    static LRESULT CALLBACK observe_queued(int code, WPARAM wp, LPARAM lp) {
+        if (code >= 0 && wp == PM_REMOVE) {
+            const auto& message = *reinterpret_cast<MSG*>(lp);
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (active_ && message.hwnd == active_->window_ && message.message == WM_NULL &&
+                message.lParam == reinterpret_cast<LPARAM>(active_)) {
+                active_->drained_ = true;
+                active_->drained_cv_.notify_all();
+            }
+        }
+        return CallNextHookEx(nullptr, code, wp, lp);
+    }
+
     void record(const WINDOWPOS& position) {
         shows_ += (position.flags & SWP_SHOWWINDOW) != 0;
         hides_ += (position.flags & SWP_HIDEWINDOW) != 0;
@@ -120,6 +153,7 @@ private:
     HWND window_;
     HWND upper_;
     HHOOK hook_ = nullptr;
+    HHOOK drain_hook_ = nullptr;
     RECT initial_ = {};
     RECT first_changed_ = {};
     WINDOWPOS first_change_ = {};
@@ -131,6 +165,8 @@ private:
     int moves_ = 0;
     int raises_ = 0;
     int read_errors_ = 0;
+    bool drained_ = false;
+    std::condition_variable drained_cv_;
 };
 
 } // namespace test

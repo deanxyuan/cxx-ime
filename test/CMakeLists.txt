@@ -143,6 +143,7 @@ add_cxxime_test(status_process_integration_test
         tsf/status_process_integration_test.cc
         tsf/status_process_host.cc
         tsf/status_test_platform.cc
+        tsf/text_service_status_visibility_test.cc
         server/session_manager_integration_test_support.cc
         ${CMAKE_SOURCE_DIR}/server/src/session_manager.cc
         ${CMAKE_SOURCE_DIR}/server/src/ipc_response_builder.cc
@@ -262,7 +263,9 @@ target_include_directories(ui_presentation_router_test PRIVATE
 add_cxxime_test(ui_presentation_controller_test
     SOURCES
         server/ui_presentation_controller_test.cc
+        server/ui_status_visibility_test.cc
         ${CMAKE_SOURCE_DIR}/server/src/ui_presentation_controller.cc
+        ${CMAKE_SOURCE_DIR}/server/src/ui_presentation_router.cc
         ${CMAKE_SOURCE_DIR}/server/src/ui_candidate_page_conversion.cc
     DEPS cxxime-engine cxxime-ui cxxime-ipc ole32
 )
@@ -270,6 +273,17 @@ target_include_directories(ui_presentation_controller_test PRIVATE
     ${CMAKE_SOURCE_DIR}/server/src
 )
 set_tests_properties(ui_presentation_controller_test PROPERTIES RUN_SERIAL TRUE)
+# These targets use real windows and transport with a controlled foreground sample.
+# Limit the substitution to these executables, never the linked production libraries.
+foreach(UI_FOCUS_TEST ui_presentation_router_test ui_presentation_controller_test)
+    if(MSVC)
+        target_compile_options(${UI_FOCUS_TEST} PRIVATE
+            "/FI${CMAKE_CURRENT_SOURCE_DIR}/support/foreground_test.h")
+    else()
+        target_compile_options(${UI_FOCUS_TEST} PRIVATE
+            -include "${CMAKE_CURRENT_SOURCE_DIR}/support/foreground_test.h")
+    endif()
+endforeach()
 add_cxxime_test(system_lifecycle_monitor_test
     SOURCES server/system_lifecycle_monitor_test.cc
     DEPS cxxime-shared

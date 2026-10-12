@@ -60,6 +60,8 @@ public:
 
     // Queues a command for the endpoint without waiting for the pipe.
     bool send_command(UiEndpointId endpoint, const UiCommand& command);
+    // OS-reported pipe peer identity; zero if the endpoint is no longer available.
+    std::uint32_t client_process_id(UiEndpointId endpoint) const;
     std::size_t endpoint_count() const;
     bool is_running() const;
 

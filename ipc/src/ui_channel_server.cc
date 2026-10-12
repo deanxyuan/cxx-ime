@@ -28,6 +28,7 @@ constexpr std::size_t kUiChannelWorkerCount = 2;
 
 struct UiClientContext {
     UiEndpointId endpoint = 0;
+    ULONG process_id = 0;
     HANDLE pipe = INVALID_HANDLE_VALUE;
     OVERLAPPED read = {};
     OVERLAPPED write = {};
@@ -143,6 +144,11 @@ public:
     std::size_t endpoint_count() const {
         std::lock_guard<std::mutex> lock(contexts_mutex_);
         return contexts_.size();
+    }
+
+    std::uint32_t client_process_id(UiEndpointId endpoint) const {
+        const auto client = find_client(endpoint);
+        return client ? client->process_id : 0;
     }
 
     bool is_running() const { return running_.load(std::memory_order_acquire); }
@@ -372,6 +378,9 @@ private:
             auto client = std::make_shared<UiClientContext>();
             client->endpoint = endpoint;
             client->pipe = pipe;
+            if (!GetNamedPipeClientProcessId(pipe, &client->process_id)) {
+                client->process_id = 0;
+            }
             {
                 std::lock_guard<std::mutex> lock(contexts_mutex_);
                 contexts_.emplace(endpoint, client);
@@ -441,6 +450,10 @@ bool UiChannelServer::send_command(UiEndpointId endpoint, const UiCommand& comma
 }
 
 std::size_t UiChannelServer::endpoint_count() const { return impl_->endpoint_count(); }
+
+std::uint32_t UiChannelServer::client_process_id(UiEndpointId endpoint) const {
+    return impl_->client_process_id(endpoint);
+}
 
 bool UiChannelServer::is_running() const { return impl_->is_running(); }
 

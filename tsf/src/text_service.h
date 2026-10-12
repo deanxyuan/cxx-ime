@@ -321,8 +321,8 @@ private:
                                             ITfDocumentMgr* event_document_mgr,
                                             const char* source);
     bool _synchronize_effective_edit_target_from_thread_mgr(const char* source);
-    bool _synchronize_focus_state(ITfContext* context, ITfDocumentMgr* document,
-                                  const char* source);
+    bool _synchronize_focus_state(const char* source);
+    void _synchronize_context_stack(ITfContext* context, const char* source);
     void _clear_effective_edit_target(const char* source, bool target_unavailable = false);
     void _release_effective_edit_target();
     cxxime_tsf::EffectiveEditTargetBindings _effective_edit_target_bindings(

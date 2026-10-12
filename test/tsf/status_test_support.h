@@ -237,6 +237,21 @@ public:
         }
     }
 
+    void expect_visibility_since(size_t begin, bool visible) {
+        const auto target = TextServiceTestPeer::target_generation(service_);
+        std::unique_lock<std::mutex> lock(mutex_);
+        ASSERT_TRUE(changed_.wait_for(lock, std::chrono::seconds(3), [&]() {
+            return snapshots_.size() > begin && snapshots_.back().target_generation == target;
+        }));
+        // Unlike a final-state assertion, reject transient shows from older targets too.
+        for (size_t i = begin; i < snapshots_.size(); ++i) {
+            const bool shown =
+                (snapshots_[i].flags &
+                 cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kStatusVisible)) != 0;
+            ASSERT_EQ(shown, visible);
+        }
+    }
+
 private:
     TextService& service_;
     cxxime::UiChannelServer server_;
