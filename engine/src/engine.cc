@@ -88,6 +88,41 @@ static bool is_ascii_symbol(char ch) {
     return ch >= 0x21 && ch <= 0x7e && !std::isalnum(static_cast<unsigned char>(ch));
 }
 
+// These text-editing commands belong to the active preedit, not the host document.
+// Until a corresponding preedit action exists, accept the command without changes.
+static bool should_suppress_host_edit_shortcut(const KeyEvent& event) {
+    if (event.is_key_up || event.is_alt() || event.is_win()) {
+        return false;
+    }
+    if (!event.is_ctrl()) {
+        // Legacy clipboard bindings: paste and cut.
+        return event.is_shift() && (event.keycode == VK_INSERT || event.keycode == VK_DELETE);
+    }
+    switch (event.keycode) {
+    case 'A':       // Select all.
+    case 'C':       // Copy.
+    case 'X':       // Cut.
+    case 'Y':       // Redo.
+    case VK_INSERT: // Copy.
+        return !event.is_shift();
+    case 'V': // Paste, including paste without formatting.
+    case 'Z': // Undo, or redo with Shift.
+    case VK_BACK:
+    case VK_DELETE:
+    case VK_LEFT:
+    case VK_RIGHT:
+    case VK_UP:
+    case VK_DOWN:
+    case VK_HOME:
+    case VK_END:
+    case VK_PRIOR:
+    case VK_NEXT:
+        return true;
+    default:
+        return false;
+    }
+}
+
 // Static member for global query ID generation
 std::atomic<uint64_t> Engine::next_query_id_{0};
 
@@ -232,8 +267,7 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
 
     // Let AsciiComposer track modifier key state and update ascii_mode when needed.
     const bool modifier_binding_applied =
-        ascii_composer_.process_key(event.keycode, event.is_key_up, context_,
-                                    event.is_caps_lock());
+        ascii_composer_.process_key(event, context_);
 
     CXXIME_LOG(L"Engine::process_key: after ascii_composer, committed_text='%S'",
                context_.committed_text.c_str());
@@ -288,9 +322,16 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
         return ProcessResult::REJECTED;
     }
 
-    // Application and system shortcuts own modified key combinations unless
-    // CxxIME matched an explicit shortcut above.
-    if (is_application_shortcut(event) || event.is_ctrl() || event.is_alt() || event.is_win()) {
+    // Explicit IME bindings above take priority. An unsupported text-editing action
+    // must not alter the host selection, clipboard or document while composing.
+    if (context_.is_composing() && should_suppress_host_edit_shortcut(event)) {
+        record_total_us(trace_, total_start, trace_enabled_);
+        return ProcessResult::ACCEPTED;
+    }
+    // Idle commands belong to the host. During composition, retain the existing
+    // Shift editing/commit/cancel actions; unrelated Ctrl/Alt/Win commands pass.
+    if ((!context_.is_composing() && is_application_shortcut(event)) ||
+        event.is_ctrl() || event.is_alt() || event.is_win()) {
         record_total_us(trace_, total_start, trace_enabled_);
         return ProcessResult::REJECTED;
     }
@@ -921,11 +962,13 @@ std::string Engine::commit_raw_composition() {
 
 void Engine::clear() {
     reset_composition_state();
+    ascii_composer_.reset_modifier_tracking();
     handled_shortcut_key_ = 0;
 }
 
 void Engine::clear_composition() {
     reset_composition_state();
+    ascii_composer_.reset_modifier_tracking();
     handled_shortcut_key_ = 0;
 }
 

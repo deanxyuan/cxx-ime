@@ -85,6 +85,9 @@ ProcessResult SymbolProcessor::process_key(const KeyEvent& event, Context& conte
     if (edit_preedit(event, context)) {
         return ProcessResult::ACCEPTED;
     }
+    if (context.navigate_candidates(event)) {
+        return ProcessResult::ACCEPTED;
+    }
 
     if (event.keycode == VK_SPACE) {
         if (context.candidate_count() > 0) {
@@ -92,17 +95,6 @@ ProcessResult SymbolProcessor::process_key(const KeyEvent& event, Context& conte
             return select_candidate(context, index);
         }
         context.reset();
-        return ProcessResult::ACCEPTED;
-    }
-
-    if (event.keycode == VK_UP || event.keycode == VK_DOWN) {
-        if (context.candidate_count() > 0) {
-            if (event.keycode == VK_DOWN) {
-                context.move_to_next_candidate();
-            } else {
-                context.move_to_previous_candidate();
-            }
-        }
         return ProcessResult::ACCEPTED;
     }
 
@@ -114,23 +106,6 @@ ProcessResult SymbolProcessor::process_key(const KeyEvent& event, Context& conte
         }
         context.insert_preedit(static_cast<char>(event.keycode));
         return ProcessResult::ACCEPTED;
-    }
-
-    const bool shortcut_page_up = event.keycode == VK_OEM_MINUS && !event.is_shift() &&
-                                  !event.is_ctrl() && !event.is_alt();
-    const bool shortcut_page_down = event.keycode == VK_OEM_PLUS && !event.is_shift() &&
-                                    !event.is_ctrl() && !event.is_alt();
-    if (event.keycode == VK_PRIOR || event.keycode == VK_NEXT || shortcut_page_up ||
-        shortcut_page_down) {
-        if (context.candidate_count() > 0) {
-            if (event.keycode == VK_NEXT || shortcut_page_down) {
-                context.request_next_page();
-            } else {
-                context.request_previous_page();
-            }
-            return ProcessResult::ACCEPTED;
-        }
-        return ProcessResult::REJECTED;
     }
 
     if (event.keycode >= 'A' && event.keycode <= 'Z') {

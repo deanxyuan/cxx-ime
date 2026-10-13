@@ -86,6 +86,7 @@ public:
     void clear_translation();
     void replace_composition(CompositionState&& state, TranslationResult&& result);
     void reset_pagination();
+    bool navigate_candidates(const KeyEvent& event);
     void request_next_page();
     void request_previous_page(bool highlight_last = false);
     std::optional<CandidateNavigationRequest> take_candidate_navigation();

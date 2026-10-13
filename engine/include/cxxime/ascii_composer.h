@@ -36,8 +36,8 @@ public:
 
     // Process a key event for modifier tracking and mode toggle.
     // Returns true when a configured modifier binding is applied on key-up.
-    // caps_lock is accepted for existing call sites; mode switching is based on key events.
-    bool process_key(uint32_t key_code, bool is_key_up, Context& ctx, bool caps_lock = false);
+    bool process_key(const KeyEvent& event, Context& ctx);
+    void reset_modifier_tracking();
     InlineAsciiResult process_inline_ascii_composition(const KeyEvent& event, Context& ctx,
                                                        bool chinese_mode);
 
@@ -65,10 +65,9 @@ private:
     bool temporary_ascii_ = false;
     bool caps_lock_overlay_active_ = false;
     bool ascii_mode_before_caps_lock_ = false;
-    bool shift_pressed_ = false;
-    bool ctrl_pressed_ = false;
-    bool alt_pressed_ = false;
-    bool win_pressed_ = false;
+    // Last modifier snapshot and the sole key still eligible for a standalone tap.
+    uint32_t modifiers_down_ = 0;
+    uint32_t pending_modifier_key_ = 0;
 
 };
 

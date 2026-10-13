@@ -37,8 +37,20 @@ TEST(SessionShortcut, ownership_and_presentation_are_independent) {
     assert_result(process(manager, session, 'N'), cxxime::KeyDisposition::Handled, true);
     const auto initial = process(manager, session, 'I');
     ASSERT_EQ(std::string(initial.preedit), "ni");
-    for (uint32_t modifiers : {cxxime::kKeyModifierShift, cxxime::kKeyModifierControl,
-                               cxxime::kKeyModifierAlt, cxxime::kKeyModifierWin}) {
+    for (uint32_t key : {'A', 'C', 'V'}) {
+        for (bool up : {false, false, true}) {
+            const auto response = process(manager, session, key, cxxime::kKeyModifierControl, up);
+            assert_result(response,
+                          up ? cxxime::KeyDisposition::PassToHost : cxxime::KeyDisposition::Handled,
+                          false);
+            ASSERT_EQ(std::string(response.preedit), "ni");
+            ASSERT_EQ(response.preedit_cursor, initial.preedit_cursor);
+            ASSERT_EQ(response.candidate_count, initial.candidate_count);
+            ASSERT_EQ(response.commit_text[0], '\0');
+        }
+    }
+    for (uint32_t modifiers :
+         {cxxime::kKeyModifierControl, cxxime::kKeyModifierAlt, cxxime::kKeyModifierWin}) {
         for (bool up : {false, false, true}) {
             const auto response = process(manager, session, VK_RETURN, modifiers, up);
             assert_result(response, cxxime::KeyDisposition::PassToHost, false);
@@ -165,23 +177,23 @@ TEST(SessionShortcut, modern_and_legacy_sessions_share_real_transport_without_se
     uint32_t legacy_id = 0;
     ASSERT_TRUE(modern.start_session(modern_id, cxxime::kClientCapabilityExplicitKeyResult));
     ASSERT_TRUE(legacy.start_session(legacy_id));
-    const uint32_t keys[] = {'N', 'I', VK_RETURN};
+    const uint32_t keys[] = {'N', 'I', VK_F4};
     for (uint32_t key : keys) {
-        const auto modifiers = key == VK_RETURN ? cxxime::kKeyModifierShift : 0u;
+        const auto modifiers = key == VK_F4 ? cxxime::kKeyModifierAlt : 0u;
         cxxime::IPCResponse next;
         cxxime::IPCResponse old;
         ASSERT_TRUE(modern.process_key(modern_id, key, modifiers, next));
         ASSERT_TRUE(legacy.process_key(legacy_id, key, modifiers, old));
         ASSERT_EQ(next.status, cxxime::IPCStatus::OK);
-        ASSERT_EQ(old.status, key == VK_RETURN ? cxxime::IPCStatus::ERR_ENGINE_PROCESS_FAILED
-                                               : cxxime::IPCStatus::OK);
+        ASSERT_EQ(old.status, key == VK_F4 ? cxxime::IPCStatus::ERR_ENGINE_PROCESS_FAILED
+                                           : cxxime::IPCStatus::OK);
         ASSERT_EQ(old.key_disposition, cxxime::KeyDisposition::Unspecified);
         ASSERT_EQ(old.key_handled, 0u);
         ASSERT_EQ(std::string(next.preedit), std::string(old.preedit));
         assert_result(next,
-                      key == VK_RETURN ? cxxime::KeyDisposition::PassToHost
-                                       : cxxime::KeyDisposition::Handled,
-                      key != VK_RETURN);
+                      key == VK_F4 ? cxxime::KeyDisposition::PassToHost
+                                   : cxxime::KeyDisposition::Handled,
+                      key != VK_F4);
     }
     modern.disconnect();
     legacy.disconnect();
@@ -226,5 +238,31 @@ TEST(SessionShortcut, legacy_caps_snapshots_keep_their_original_status) {
         ASSERT_EQ(response.key_disposition, cxxime::KeyDisposition::Unspecified);
         ASSERT_EQ(response.key_handled, 0u);
         ASSERT_EQ(response.commit_text[0] != '\0', std::string(binding) == "code");
+    }
+}
+
+TEST(SessionShortcut, focus_out_discards_incomplete_modifier_tap) {
+    auto config = std::make_shared<cxxime::Config>();
+    config->ascii_switch_key["Shift_L"] = "code";
+    SessionManager manager;
+    ASSERT_TRUE(manager.initialize(setup_test_dict(), config));
+    const auto session = manager.create_session(cxxime::kClientCapabilityExplicitKeyResult);
+    for (bool delayed_release : {false, true}) {
+        assert_result(process(manager, session, VK_LSHIFT, cxxime::kKeyModifierShift),
+                      cxxime::KeyDisposition::PassToHost, false);
+        ASSERT_EQ(manager.focus_out(session).status, cxxime::IPCStatus::OK);
+        ASSERT_EQ(manager.focus_in(session).status, cxxime::IPCStatus::OK);
+        if (delayed_release) {
+            const auto release = process(manager, session, VK_LSHIFT, 0, true);
+            assert_result(release, cxxime::KeyDisposition::PassToHost, false);
+            ASSERT_TRUE(release.ime_status.chinese_mode());
+        }
+        // Even when the previous release was lost, a fresh standalone tap works.
+        process(manager, session, VK_LSHIFT, cxxime::kKeyModifierShift);
+        const auto release = process(manager, session, VK_LSHIFT, 0, true);
+        assert_result(release, cxxime::KeyDisposition::Handled, false);
+        ASSERT_TRUE(!release.ime_status.chinese_mode());
+        process(manager, session, VK_LSHIFT, cxxime::kKeyModifierShift);
+        ASSERT_TRUE(process(manager, session, VK_LSHIFT, 0, true).ime_status.chinese_mode());
     }
 }

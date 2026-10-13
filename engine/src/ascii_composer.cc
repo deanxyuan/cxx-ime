@@ -76,58 +76,53 @@ void AsciiComposer::load_config(const Config& config) {
     }
 }
 
-bool AsciiComposer::process_key(uint32_t key_code, bool is_key_up, Context& ctx, bool caps_lock) {
+void AsciiComposer::reset_modifier_tracking() {
+    modifiers_down_ = 0;
+    pending_modifier_key_ = 0;
+}
+
+bool AsciiComposer::process_key(const KeyEvent& event, Context& ctx) {
+    const uint32_t key_code = event.keycode;
+    const bool is_key_up = event.is_key_up;
     CXXIME_LOG(L"AsciiComposer::process_key: vk=%u, is_key_up=%d, composing=%d",
                key_code, is_key_up, ctx.is_composing());
 
-    // Multiple modifier keys pressed simultaneously — reset, no toggle
-    int pressed_count = (shift_pressed_ ? 1 : 0) + (ctrl_pressed_ ? 1 : 0) +
-                        (alt_pressed_ ? 1 : 0) + (win_pressed_ ? 1 : 0);
-    if (pressed_count > 1) {
-        CXXIME_LOG(L"AsciiComposer::process_key: multiple modifiers pressed, resetting");
-        shift_pressed_ = false;
-        ctrl_pressed_ = false;
-        alt_pressed_ = false;
-        win_pressed_ = false;
-        return false;
-    }
+    const uint32_t previously_down = modifiers_down_;
+    // The snapshot also accounts for modifiers pressed before this session had focus.
+    modifiers_down_ = event.modifiers &
+                      (kKeyModifierShift | kKeyModifierControl | kKeyModifierAlt | kKeyModifierWin);
 
     // CapsLock is an uppercase ASCII overlay: on key down, when the LED turns
     // on, enter ASCII mode and remember the previous CxxIME mode; when it turns
     // off, restore that previous mode.
     // Cancel any pending modifier toggle (e.g., Shift held then CapsLock pressed).
     if (key_code == VK_CAPITAL) {
-        shift_pressed_ = false;
-        ctrl_pressed_ = false;
-        alt_pressed_ = false;
-        win_pressed_ = false;
+        pending_modifier_key_ = 0;
 
         if (!is_key_up) {
             auto style = get_binding(VK_CAPITAL);
             if (style == AsciiModeSwitchStyle::NOOP)
                 return false;
-            apply_caps_lock_overlay(caps_lock, ctx);
+            apply_caps_lock_overlay(event.is_caps_lock(), ctx);
         }
         return false;
     }
 
-    bool is_shift = is_shift_key(key_code);
-    bool is_ctrl  = is_ctrl_key(key_code);
-    bool is_alt   = is_alt_key(key_code);
-    bool is_win   = is_win_key(key_code);
-
-    if (is_shift || is_ctrl || is_alt || is_win) {
-        if (caps_lock_overlay_active_ && caps_lock) {
-            shift_pressed_ = false;
-            ctrl_pressed_ = false;
-            alt_pressed_ = false;
-            win_pressed_ = false;
+    const uint32_t modifier = is_shift_key(key_code)  ? kKeyModifierShift
+                              : is_ctrl_key(key_code) ? kKeyModifierControl
+                              : is_alt_key(key_code)  ? kKeyModifierAlt
+                              : is_win_key(key_code)  ? kKeyModifierWin
+                                                      : 0;
+    if (modifier != 0) {
+        if (caps_lock_overlay_active_ && event.is_caps_lock()) {
+            pending_modifier_key_ = 0;
             return false;
         }
 
         if (is_key_up) {
-            CXXIME_LOG(L"AsciiComposer::process_key: modifier key up, shift_pressed_=%d", shift_pressed_);
-            if (shift_pressed_ || ctrl_pressed_ || alt_pressed_ || win_pressed_) {
+            const bool standalone = pending_modifier_key_ == key_code && modifiers_down_ == 0;
+            pending_modifier_key_ = 0;
+            if (standalone) {
                 const AsciiModeSwitchStyle style = get_binding(key_code);
                 const bool binding_applied = style != AsciiModeSwitchStyle::NOOP &&
                                              style != AsciiModeSwitchStyle::APPEND;
@@ -135,29 +130,24 @@ bool AsciiComposer::process_key(uint32_t key_code, bool is_key_up, Context& ctx,
                     CXXIME_LOG(L"AsciiComposer::process_key: calling toggle_mode");
                     toggle_mode(key_code, ctx);
                 }
-                shift_pressed_ = false;
-                ctrl_pressed_ = false;
-                alt_pressed_ = false;
-                win_pressed_ = false;
                 return binding_applied;
             }
         } else {
-            CXXIME_LOG(L"AsciiComposer::process_key: modifier key down");
-            if (!shift_pressed_ && !ctrl_pressed_ && !alt_pressed_ && !win_pressed_) {
-                if (is_shift) shift_pressed_ = true;
-                if (is_ctrl)  ctrl_pressed_ = true;
-                if (is_alt)   alt_pressed_ = true;
-                if (is_win)   win_pressed_ = true;
+            modifiers_down_ |= modifier;
+            const bool other_modifier_down = (modifiers_down_ & ~modifier) != 0;
+            if (previously_down == 0 && !other_modifier_down) {
+                pending_modifier_key_ = key_code;
+            } else if (pending_modifier_key_ != key_code || other_modifier_down) {
+                // Another modifier (including the opposite side) cancels the tap.
+                // Repeats of a cancelled tap must not arm it again.
+                pending_modifier_key_ = 0;
             }
         }
         return false;
     }
 
     // Non-modifier key: cancel pending modifier toggle
-    shift_pressed_ = false;
-    ctrl_pressed_ = false;
-    alt_pressed_ = false;
-    win_pressed_ = false;
+    pending_modifier_key_ = 0;
     return false;
 }
 

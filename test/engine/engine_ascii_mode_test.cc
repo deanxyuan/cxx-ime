@@ -15,10 +15,10 @@ TEST(AsciiComposer, shift_l_code_toggles_and_commits) {
     ASSERT_TRUE(!ac.is_ascii_mode());
 
     // Press Shift_L (key-down)
-    ac.process_key(0xA0, false, ctx);
+    ac.process_key({0xA0, cxxime::kKeyModifierShift, false}, ctx);
 
     // Release Shift_L (key-up) — should commit and toggle to ascii mode
-    ac.process_key(0xA0, true, ctx);
+    ac.process_key({0xA0, 0, true}, ctx);
 
     ASSERT_TRUE(ac.is_ascii_mode());
     ASSERT_TRUE(!ctx.committed_text.empty());
@@ -37,8 +37,8 @@ TEST(AsciiComposer, shift_r_set_ascii_mode_toggles_no_commit) {
     ASSERT_TRUE(!ac.is_ascii_mode());
 
     // Press and release Shift_R
-    ac.process_key(0xA1, false, ctx);
-    ac.process_key(0xA1, true, ctx);
+    ac.process_key({0xA1, cxxime::kKeyModifierShift, false}, ctx);
+    ac.process_key({0xA1, 0, true}, ctx);
 
     // set_ascii_mode toggles but does not commit
     ASSERT_TRUE(ac.is_ascii_mode());
@@ -54,8 +54,8 @@ TEST(AsciiComposer, inline_ascii_binding_preserves_ime_origin) {
     cxxime::Context context;
     ASSERT_TRUE(context.start_composition(cxxime::CompositionScheme::kPinyin, "ni", 1));
 
-    composer.process_key(VK_LSHIFT, false, context);
-    composer.process_key(VK_LSHIFT, true, context);
+    composer.process_key({VK_LSHIFT, cxxime::kKeyModifierShift, false}, context);
+    composer.process_key({VK_LSHIFT, 0, true}, context);
 
     ASSERT_TRUE(composer.is_ascii_mode());
     ASSERT_TRUE(composer.is_temporary_ascii());
@@ -77,8 +77,8 @@ TEST(AsciiComposer, inline_ascii_binding_keeps_active_inline_mode_stable) {
         context.start_composition(cxxime::CompositionScheme::kInlineAscii, "c++", 3));
     composer.set_ascii_mode(true);
 
-    composer.process_key(VK_LSHIFT, false, context);
-    composer.process_key(VK_LSHIFT, true, context);
+    composer.process_key({VK_LSHIFT, cxxime::kKeyModifierShift, false}, context);
+    composer.process_key({VK_LSHIFT, 0, true}, context);
 
     ASSERT_TRUE(composer.is_ascii_mode());
     ASSERT_TRUE(!composer.is_temporary_ascii());
@@ -95,8 +95,8 @@ TEST(AsciiComposer, inline_ascii_origin_survives_cursor_navigation) {
     cxxime::Context context;
     ASSERT_TRUE(context.start_composition(cxxime::CompositionScheme::kPinyin, "ni", 2));
 
-    composer.process_key(VK_LSHIFT, false, context);
-    composer.process_key(VK_LSHIFT, true, context);
+    composer.process_key({VK_LSHIFT, cxxime::kKeyModifierShift, false}, context);
+    composer.process_key({VK_LSHIFT, 0, true}, context);
     cxxime::KeyEvent left;
     left.keycode = VK_LEFT;
     ASSERT_EQ(composer.process_inline_ascii_composition(left, context, true),
@@ -116,8 +116,8 @@ TEST(AsciiComposer, set_ascii_mode_binding_does_not_create_origin) {
     cxxime::Context context;
     ASSERT_TRUE(context.start_composition(cxxime::CompositionScheme::kSymbol, "\\bd", 2));
 
-    composer.process_key(VK_RSHIFT, false, context);
-    composer.process_key(VK_RSHIFT, true, context);
+    composer.process_key({VK_RSHIFT, cxxime::kKeyModifierShift, false}, context);
+    composer.process_key({VK_RSHIFT, 0, true}, context);
 
     ASSERT_TRUE(composer.is_ascii_mode());
     ASSERT_TRUE(!composer.is_temporary_ascii());
@@ -136,8 +136,8 @@ TEST(AsciiComposer, shift_no_binding_does_nothing) {
     cxxime::Context ctx;
 
     // Press and release Shift_L
-    ac.process_key(0xA0, false, ctx);
-    ac.process_key(0xA0, true, ctx);
+    ac.process_key({0xA0, cxxime::kKeyModifierShift, false}, ctx);
+    ac.process_key({0xA0, 0, true}, ctx);
 
     ASSERT_TRUE(!ac.is_ascii_mode());
 }
@@ -153,14 +153,14 @@ TEST(AsciiComposer, shift_toggle_back_to_chinese) {
     ASSERT_TRUE(!ac.is_ascii_mode());
 
     // First Shift: Chinese -> English (code toggles)
-    ac.process_key(0xA0, false, ctx);
-    ac.process_key(0xA0, true, ctx);
+    ac.process_key({0xA0, cxxime::kKeyModifierShift, false}, ctx);
+    ac.process_key({0xA0, 0, true}, ctx);
     ASSERT_TRUE(ac.is_ascii_mode());
 
     // Second Shift: English -> Chinese (code toggles back)
     cxxime::Context ctx2;
-    ac.process_key(0xA0, false, ctx2);
-    ac.process_key(0xA0, true, ctx2);
+    ac.process_key({0xA0, cxxime::kKeyModifierShift, false}, ctx2);
+    ac.process_key({0xA0, 0, true}, ctx2);
     ASSERT_TRUE(!ac.is_ascii_mode());
 }
 
@@ -173,14 +173,14 @@ TEST(AsciiComposer, set_ascii_mode_is_one_way) {
     cxxime::Context ctx;
 
     // First Shift: Chinese -> English
-    ac.process_key(0xA0, false, ctx);
-    ac.process_key(0xA0, true, ctx);
+    ac.process_key({0xA0, cxxime::kKeyModifierShift, false}, ctx);
+    ac.process_key({0xA0, 0, true}, ctx);
     ASSERT_TRUE(ac.is_ascii_mode());
 
     // Second Shift: stays English (set_ascii_mode is one-way)
     cxxime::Context ctx2;
-    ac.process_key(0xA0, false, ctx2);
-    ac.process_key(0xA0, true, ctx2);
+    ac.process_key({0xA0, cxxime::kKeyModifierShift, false}, ctx2);
+    ac.process_key({0xA0, 0, true}, ctx2);
     ASSERT_TRUE(ac.is_ascii_mode());
 }
 
@@ -195,8 +195,8 @@ TEST(AsciiComposer, alt_l_supported) {
     ASSERT_TRUE(!ac.is_ascii_mode());
 
     // Press and release Alt_L
-    ac.process_key(0xA4, false, ctx);
-    ac.process_key(0xA4, true, ctx);
+    ac.process_key({0xA4, cxxime::kKeyModifierAlt, false}, ctx);
+    ac.process_key({0xA4, 0, true}, ctx);
 
     ASSERT_TRUE(ac.is_ascii_mode());
 }
@@ -212,8 +212,8 @@ TEST(AsciiComposer, super_l_supported) {
     ASSERT_TRUE(!ac.is_ascii_mode());
 
     // Press and release Super_L
-    ac.process_key(0x5B, false, ctx);
-    ac.process_key(0x5B, true, ctx);
+    ac.process_key({0x5B, cxxime::kKeyModifierWin, false}, ctx);
+    ac.process_key({0x5B, 0, true}, ctx);
 
     ASSERT_TRUE(ac.is_ascii_mode());
 }
@@ -228,10 +228,11 @@ TEST(AsciiComposer, capslock_downgrade) {
 
     // CapsLock ON → toggles (downgraded from inline_ascii to clear)
     ASSERT_TRUE(!ac.is_ascii_mode());
-    ac.process_key(0x14, false, ctx, true);   // VK_CAPITAL down, CapsLock ON
+    ac.process_key({0x14, cxxime::kKeyModifierCapsLock, false},
+                   ctx); // VK_CAPITAL down, CapsLock ON
     ASSERT_TRUE(ac.is_ascii_mode());
     // CapsLock OFF restores the mode from before CapsLock was turned on.
-    ac.process_key(0x14, false, ctx, false);  // VK_CAPITAL down, CapsLock OFF
+    ac.process_key({0x14, 0, false}, ctx);  // VK_CAPITAL down, CapsLock OFF
     ASSERT_TRUE(!ac.is_ascii_mode());
 }
 
@@ -248,7 +249,8 @@ TEST(AsciiComposer, capslock_clear_resets_pinyin) {
     ASSERT_TRUE(ctx.is_composing());
 
     // Press CapsLock — should clear pinyin and toggle ascii_mode
-    ac.process_key(0x14, false, ctx, true);  // VK_CAPITAL down, CapsLock ON
+    ac.process_key({0x14, cxxime::kKeyModifierCapsLock, false},
+                   ctx); // VK_CAPITAL down, CapsLock ON
 
     ASSERT_TRUE(ac.is_ascii_mode());
     ASSERT_TRUE(ctx.active_input().empty());

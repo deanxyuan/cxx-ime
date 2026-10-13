@@ -36,7 +36,6 @@ bool TextService::_apply_key_response(ITfContext* context, const cxxime::IPCResp
         }
         return false;
     }
-    _sync_ime_status(response.ime_status);
     if (response.presentation_changed) {
         BOOL eaten = FALSE;
         const bool applied = _apply_engine_response(context, response, &eaten, trace);
@@ -45,6 +44,8 @@ bool TextService::_apply_key_response(ITfContext* context, const cxxime::IPCResp
         if (!applied) {
             return eaten != FALSE;
         }
+    } else {
+        _sync_ime_status(response.ime_status);
     }
     if (trace &&
         (!response.presentation_changed || (pass && trace->result != TsfResult::CLEARED))) {

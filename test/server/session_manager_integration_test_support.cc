@@ -176,7 +176,7 @@ void create_test_dictionary_bundle(const std::string& dict_path,
     write_test_id_index(idx_path, entries);
 
     std::vector<std::tuple<std::string, std::string, int, float>> spellings;
-    std::vector<std::pair<std::string, std::vector<cxxime::Candidate>>> topn;
+    std::map<std::string, std::vector<cxxime::Candidate>> topn;
     for (const auto& entry : entries) {
         std::string key = input_key_for_code(std::get<0>(entry));
         spellings.push_back({key, std::get<0>(entry), cxxime::kNormalSpelling, 0.0f});
@@ -186,7 +186,7 @@ void create_test_dictionary_bundle(const std::string& dict_path,
         candidate.frequency = std::get<2>(entry);
         candidate.code = std::get<0>(entry);
         candidate.syllables = std::get<0>(entry);
-        topn.push_back({key, {candidate}});
+        topn[key].push_back(std::move(candidate));
     }
     ASSERT_TRUE(cxxime::SpellingsIndex::create_test_trie(spellings_path, spellings));
     const auto make_shuangpin_spellings = [](const char* hao_code, const char* ying_code) {
@@ -206,7 +206,9 @@ void create_test_dictionary_bundle(const std::string& dict_path,
         ziranma_spellings_path, make_shuangpin_spellings("hk", "yy")));
     ASSERT_TRUE(cxxime::SpellingsIndex::create_test_trie(
         sogou_spellings_path, make_shuangpin_spellings("hk", "y;")));
-    ASSERT_TRUE(cxxime::test::create_test_topn(topn_path, dict_path, topn));
+    const std::vector<std::pair<std::string, std::vector<cxxime::Candidate>>> topn_entries(
+        topn.begin(), topn.end());
+    ASSERT_TRUE(cxxime::test::create_test_topn(topn_path, dict_path, topn_entries));
     const std::vector<TestDictEntry> wubi_entries = {{"a", "wubi-test", 100}};
     ASSERT_TRUE(cxxime::Dict::create_test_dict(wubi_path, wubi_entries));
     ASSERT_TRUE(

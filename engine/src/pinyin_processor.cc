@@ -26,6 +26,9 @@ ProcessResult PinyinProcessor::process_key(const KeyEvent& event, Context& conte
     if (context.edit_preedit(event)) {
         return ProcessResult::ACCEPTED;
     }
+    if (context.navigate_candidates(event)) {
+        return ProcessResult::ACCEPTED;
+    }
 
     // Space: select first candidate, or dismiss if no candidates
     if (vk == VK_SPACE) {
@@ -55,19 +58,6 @@ ProcessResult PinyinProcessor::process_key(const KeyEvent& event, Context& conte
         return ProcessResult::REJECTED;
     }
 
-    // Up/Down arrows: navigate candidates
-    if (vk == VK_UP || vk == VK_DOWN) {
-        if (context.is_composing() && context.candidate_count() > 0) {
-            if (vk == VK_DOWN) {
-                context.move_to_next_candidate();
-            } else {
-                context.move_to_previous_candidate();
-            }
-            return ProcessResult::ACCEPTED;
-        }
-        return ProcessResult::REJECTED;
-    }
-
     // Number keys 1-9: select candidate by index
     if (is_digit_key(vk) && vk >= '1' && vk <= '9') {
         if (context.is_composing() && context.candidate_count() > 0) {
@@ -79,23 +69,6 @@ ProcessResult PinyinProcessor::process_key(const KeyEvent& event, Context& conte
             return ProcessResult::ACCEPTED;
         }
         // If not composing, let the number pass through
-        return ProcessResult::REJECTED;
-    }
-
-    // Page Up / Page Down and unmodified - / =: pagination
-    bool shortcut_page_up = vk == VK_OEM_MINUS && !event.is_shift() &&
-                                  !event.is_ctrl() && !event.is_alt();
-    bool shortcut_page_down = vk == VK_OEM_PLUS && !event.is_shift() &&
-                                    !event.is_ctrl() && !event.is_alt();
-    if (vk == VK_PRIOR || vk == VK_NEXT || shortcut_page_up || shortcut_page_down) {
-        if (context.is_composing() && context.candidate_count() > 0) {
-            if (vk == VK_NEXT || shortcut_page_down) {  // Page Down
-                context.request_next_page();
-            } else {  // Page Up
-                context.request_previous_page();
-            }
-            return ProcessResult::ACCEPTED;
-        }
         return ProcessResult::REJECTED;
     }
 

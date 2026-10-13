@@ -17,7 +17,7 @@ TEST(Engine, shift_toggle_then_capslock_uppercase) {
 
     // Step 1: Press and release Shift_L → toggles to English mode
     cxxime::KeyEvent shift_down;
-    shift_down.keycode = 0xA0;  // VK_LSHIFT
+    shift_down.keycode = 0xA0; // VK_LSHIFT
     shift_down.is_key_up = false;
     engine.process_key(shift_down);
 
@@ -30,18 +30,18 @@ TEST(Engine, shift_toggle_then_capslock_uppercase) {
 
     // Step 2: Press CapsLock (OS toggles ON) — should NOT flip mode back
     cxxime::KeyEvent caps_down;
-    caps_down.keycode = 0x14;  // VK_CAPITAL
+    caps_down.keycode = 0x14; // VK_CAPITAL
     caps_down.is_key_up = false;
-    caps_down.set_caps_lock();  // CapsLock now ON
+    caps_down.set_caps_lock(); // CapsLock now ON
     engine.process_key(caps_down);
 
-    ASSERT_TRUE(engine.ascii_composer().is_ascii_mode());  // still English
+    ASSERT_TRUE(engine.ascii_composer().is_ascii_mode()); // still English
 
     // Step 3: Type letter with CapsLock ON → should be uppercase
     cxxime::KeyEvent letter;
     letter.keycode = 'N';
     letter.is_key_up = false;
-    letter.modifiers = 0x08;  // CapsLock ON
+    letter.modifiers = 0x08; // CapsLock ON
 
     auto result = engine.process_key(letter);
     ASSERT_EQ(result, cxxime::ProcessResult::COMMITTED);
@@ -81,7 +81,7 @@ TEST(Engine, ascii_mode_shift_capslock_lowercase) {
     cxxime::KeyEvent event;
     event.keycode = 'N';
     event.is_key_up = false;
-    event.modifiers = 0x09;  // CapsLock (0x08) + Shift (0x01)
+    event.modifiers = 0x09; // CapsLock (0x08) + Shift (0x01)
 
     auto result = engine.process_key(event);
     ASSERT_EQ(result, cxxime::ProcessResult::COMMITTED);
@@ -129,7 +129,7 @@ TEST(Engine, capslock_overlay_shift_keeps_ascii_mode) {
     ASSERT_TRUE(test::initialize_engine(engine, dict_path, config, spellings_path));
 
     cxxime::KeyEvent caps_down;
-    caps_down.keycode = 0x14;  // VK_CAPITAL
+    caps_down.keycode = 0x14; // VK_CAPITAL
     caps_down.is_key_up = false;
     caps_down.set_caps_lock();
     engine.process_key(caps_down);
@@ -138,7 +138,7 @@ TEST(Engine, capslock_overlay_shift_keeps_ascii_mode) {
     cxxime::KeyEvent shift_down;
     shift_down.keycode = VK_LSHIFT;
     shift_down.is_key_up = false;
-    shift_down.modifiers = 0x09;  // Shift + CapsLock
+    shift_down.modifiers = 0x09; // Shift + CapsLock
     engine.process_key(shift_down);
 
     cxxime::KeyEvent shift_up = shift_down;
@@ -181,10 +181,11 @@ TEST(AsciiComposer, capslock_append_noop_during_composing) {
     ASSERT_TRUE(ctx.is_composing());
 
     // Press CapsLock in append mode — should NOT clear or toggle
-    ac.process_key(0x14, false, ctx, true);  // VK_CAPITAL down, CapsLock ON
+    ac.process_key({0x14, cxxime::kKeyModifierCapsLock, false},
+                   ctx); // VK_CAPITAL down, CapsLock ON
 
-    ASSERT_TRUE(!ac.is_ascii_mode());  // still Chinese mode
-    ASSERT_EQ(ctx.active_input(), "nihao");  // buffer unchanged
+    ASSERT_TRUE(!ac.is_ascii_mode());       // still Chinese mode
+    ASSERT_EQ(ctx.active_input(), "nihao"); // buffer unchanged
 }
 
 TEST(AsciiComposer, capslock_candidate_commits_first_candidate) {
@@ -198,15 +199,18 @@ TEST(AsciiComposer, capslock_candidate_commits_first_candidate) {
     // Set up composing state with candidates
     ASSERT_TRUE(ctx.set_preedit("nihao"));
     cxxime::CandidatePage page;
-    cxxime::Candidate c1; c1.text = "你好";
-    cxxime::Candidate c2; c2.text = "拟好";
+    cxxime::Candidate c1;
+    c1.text = "你好";
+    cxxime::Candidate c2;
+    c2.text = "拟好";
     page.candidates.push_back(c1);
     page.candidates.push_back(c2);
     page.highlighted = 0;
     ctx.update_candidates(std::move(page));
 
     // Press CapsLock — should commit first candidate and toggle
-    ac.process_key(0x14, false, ctx, true);  // VK_CAPITAL down, CapsLock ON
+    ac.process_key({0x14, cxxime::kKeyModifierCapsLock, false},
+                   ctx); // VK_CAPITAL down, CapsLock ON
 
     ASSERT_TRUE(ac.is_ascii_mode());
     ASSERT_EQ(ctx.committed_text, "你好");
@@ -221,11 +225,12 @@ TEST(AsciiComposer, capslock_candidate_no_candidates_toggles) {
     ac.load_config(config);
     cxxime::Context ctx;
 
-    ASSERT_TRUE(ctx.set_preedit("zzz"));  // no valid candidates
+    ASSERT_TRUE(ctx.set_preedit("zzz")); // no valid candidates
     ASSERT_TRUE(ctx.is_composing());
 
     // Press CapsLock - no candidates, commit raw text and toggle
-    ac.process_key(0x14, false, ctx, true);  // VK_CAPITAL down, CapsLock ON
+    ac.process_key({0x14, cxxime::kKeyModifierCapsLock, false},
+                   ctx); // VK_CAPITAL down, CapsLock ON
 
     ASSERT_TRUE(ac.is_ascii_mode());
     ASSERT_TRUE(ctx.active_input().empty());
@@ -244,7 +249,8 @@ TEST(AsciiComposer, capslock_code_commits_buffer) {
     ASSERT_TRUE(ctx.set_preedit("nihao"));
 
     // Press CapsLock — should commit raw buffer and toggle
-    ac.process_key(0x14, false, ctx, true);  // VK_CAPITAL down, CapsLock ON
+    ac.process_key({0x14, cxxime::kKeyModifierCapsLock, false},
+                   ctx); // VK_CAPITAL down, CapsLock ON
 
     ASSERT_TRUE(ac.is_ascii_mode());
     ASSERT_EQ(ctx.committed_text, "nihao");
@@ -259,13 +265,13 @@ TEST(Engine, capslock_append_letter_accepted) {
     std::string spellings_path = make_temp_path("test_append_spellings.bin");
 
     cxxime::Dict::create_test_dict(dict_path, {
-        {"a", "啊", 100},
-        {"n", "嗯", 100},
-    });
+                                                  {"a", "啊", 100},
+                                                  {"n", "嗯", 100},
+                                              });
     ASSERT_TRUE(cxxime::SpellingsIndex::create_test_trie(spellings_path, {
-        {"a", "a", 0, 0.0f},
-        {"n", "n", 0, 0.0f},
-    }));
+                                                                             {"a", "a", 0, 0.0f},
+                                                                             {"n", "n", 0, 0.0f},
+                                                                         }));
 
     cxxime::Config config;
     config.ascii_switch_key["Caps_Lock"] = "append";
@@ -281,9 +287,9 @@ TEST(Engine, capslock_append_letter_accepted) {
 
     // Press CapsLock while composing. Append mode should not clear or switch.
     cxxime::KeyEvent caps_event;
-    caps_event.keycode = 0x14;  // VK_CAPITAL
+    caps_event.keycode = 0x14; // VK_CAPITAL
     caps_event.is_key_up = false;
-    caps_event.set_caps_lock();  // OS has toggled CapsLock ON
+    caps_event.set_caps_lock(); // OS has toggled CapsLock ON
     engine.process_key(caps_event);
     ASSERT_TRUE(!engine.ascii_composer().is_ascii_mode());
     ASSERT_EQ(engine.context().active_input(), "n");
@@ -292,7 +298,7 @@ TEST(Engine, capslock_append_letter_accepted) {
     cxxime::KeyEvent event;
     event.keycode = 'A';
     event.is_key_up = false;
-    event.modifiers = 0x08;  // CapsLock ON
+    event.modifiers = 0x08; // CapsLock ON
 
     auto result = engine.process_key(event);
     // In append mode, letter should be accepted (buffered), not committed
@@ -309,11 +315,11 @@ TEST(Engine, capslock_append_clears_candidates_and_commits_raw_code) {
     std::string spellings_path = make_temp_path("test_append_raw_spellings.bin");
 
     cxxime::Dict::create_test_dict(dict_path, {
-        {"ni", "你", 100},
-    });
+                                                  {"ni", "你", 100},
+                                              });
     ASSERT_TRUE(cxxime::SpellingsIndex::create_test_trie(spellings_path, {
-        {"ni", "ni", 0, 0.0f},
-    }));
+                                                                             {"ni", "ni", 0, 0.0f},
+                                                                         }));
 
     cxxime::Config config;
     config.ascii_switch_key["Caps_Lock"] = "append";
@@ -331,7 +337,7 @@ TEST(Engine, capslock_append_clears_candidates_and_commits_raw_code) {
     ASSERT_TRUE(!engine.context().candidate_page().candidates.empty());
 
     cxxime::KeyEvent caps_event;
-    caps_event.keycode = 0x14;  // VK_CAPITAL
+    caps_event.keycode = 0x14; // VK_CAPITAL
     caps_event.is_key_up = false;
     caps_event.set_caps_lock();
     engine.process_key(caps_event);
@@ -364,11 +370,11 @@ TEST(Engine, capslock_append_enter_preserves_case) {
     std::string spellings_path = make_temp_path("test_append_enter_spellings.bin");
 
     cxxime::Dict::create_test_dict(dict_path, {
-        {"ni", "你", 100},
-    });
+                                                  {"ni", "你", 100},
+                                              });
     ASSERT_TRUE(cxxime::SpellingsIndex::create_test_trie(spellings_path, {
-        {"ni", "ni", 0, 0.0f},
-    }));
+                                                                             {"ni", "ni", 0, 0.0f},
+                                                                         }));
 
     cxxime::Config config;
     config.ascii_switch_key["Caps_Lock"] = "append";
@@ -446,14 +452,16 @@ TEST(AsciiComposer, capslock_on_shift_does_not_toggle) {
     cxxime::Context ctx;
 
     // Step 1: CapsLock ON → toggles to English
-    ac.process_key(0x14, false, ctx, true);  // VK_CAPITAL down, CapsLock ON
+    ac.process_key({0x14, cxxime::kKeyModifierCapsLock, false},
+                   ctx); // VK_CAPITAL down, CapsLock ON
     ASSERT_TRUE(ac.is_ascii_mode());
 
     // Step 2: Shift down (CapsLock still ON)
-    ac.process_key(VK_LSHIFT, false, ctx, true);  // caps_lock = true
+    ac.process_key({VK_LSHIFT, cxxime::kKeyModifierShift | cxxime::kKeyModifierCapsLock, false},
+                   ctx);
 
     // Step 3: Shift up must not toggle Chinese/English while CapsLock is ON.
-    ac.process_key(VK_LSHIFT, true, ctx, true);  // caps_lock = true
+    ac.process_key({VK_LSHIFT, cxxime::kKeyModifierCapsLock, true}, ctx); // caps_lock = true
     ASSERT_TRUE(ac.is_ascii_mode());
 }
 
@@ -468,16 +476,17 @@ TEST(AsciiComposer, shift_held_capslock_no_double_toggle) {
     cxxime::Context ctx;
 
     // Step 1: Shift down
-    ac.process_key(VK_LSHIFT, false, ctx, false);  // caps_lock = false
-    ASSERT_TRUE(!ac.is_ascii_mode());  // still Chinese
+    ac.process_key({VK_LSHIFT, cxxime::kKeyModifierShift, false}, ctx); // caps_lock = false
+    ASSERT_TRUE(!ac.is_ascii_mode());                                   // still Chinese
 
     // Step 2: CapsLock ON (while Shift held) → toggles to English
-    ac.process_key(0x14, false, ctx, true);  // VK_CAPITAL down, CapsLock ON
+    ac.process_key({VK_CAPITAL, cxxime::kKeyModifierShift | cxxime::kKeyModifierCapsLock, false},
+                   ctx);
     ASSERT_TRUE(ac.is_ascii_mode());
 
     // Step 3: Shift up → should NOT toggle again (caps_lock = true)
-    ac.process_key(VK_LSHIFT, true, ctx, true);
-    ASSERT_TRUE(ac.is_ascii_mode());  // still English, no double-toggle
+    ac.process_key({VK_LSHIFT, cxxime::kKeyModifierCapsLock, true}, ctx);
+    ASSERT_TRUE(ac.is_ascii_mode()); // still English, no double-toggle
 }
 
 TEST(AsciiComposer, shift_toggle_still_works_without_capslock) {
@@ -490,13 +499,13 @@ TEST(AsciiComposer, shift_toggle_still_works_without_capslock) {
     cxxime::Context ctx;
 
     // Shift down → Shift up → toggles to English
-    ac.process_key(VK_LSHIFT, false, ctx, false);
-    ac.process_key(VK_LSHIFT, true, ctx, false);
+    ac.process_key({VK_LSHIFT, cxxime::kKeyModifierShift, false}, ctx);
+    ac.process_key({VK_LSHIFT, 0, true}, ctx);
     ASSERT_TRUE(ac.is_ascii_mode());
 
     // Shift down → Shift up → toggles back to Chinese
-    ac.process_key(VK_LSHIFT, false, ctx, false);
-    ac.process_key(VK_LSHIFT, true, ctx, false);
+    ac.process_key({VK_LSHIFT, cxxime::kKeyModifierShift, false}, ctx);
+    ac.process_key({VK_LSHIFT, 0, true}, ctx);
     ASSERT_TRUE(!ac.is_ascii_mode());
 }
 

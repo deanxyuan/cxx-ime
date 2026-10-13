@@ -61,6 +61,9 @@ bool initialize_engine(cxxime::Engine& engine, const std::string& dict_path) {
 void start_uppercase_d(cxxime::Engine& engine) {
     ASSERT_EQ(engine.process_key(make_key(VK_LSHIFT, true)), cxxime::ProcessResult::REJECTED);
     ASSERT_EQ(engine.process_key(make_key('D', true)), cxxime::ProcessResult::ACCEPTED);
+    ASSERT_EQ(engine.process_key(make_key('D', true, true)), cxxime::ProcessResult::REJECTED);
+    ASSERT_EQ(engine.process_key(make_key(VK_LSHIFT, false, true)),
+              cxxime::ProcessResult::REJECTED);
 }
 
 }  // namespace
@@ -76,10 +79,6 @@ TEST(TemporaryAscii, shift_letter_starts_without_dictionary_candidates) {
     ASSERT_EQ(engine.context().composition_scheme(), cxxime::CompositionScheme::kInlineAscii);
     ASSERT_TRUE(engine.context().candidate_page().candidates.empty());
     ASSERT_TRUE(!engine.ascii_composer().is_ascii_mode());
-
-    ASSERT_EQ(engine.process_key(make_key(VK_LSHIFT, false, true)),
-              cxxime::ProcessResult::REJECTED);
-    ASSERT_EQ(engine.context().active_input(), "D");
 
     engine.finalize();
     DeleteFileA(dict_path.c_str());
@@ -349,9 +348,16 @@ TEST(TemporaryAscii, active_preedit_precedes_persistent_ascii_and_application_sh
 
     cxxime::KeyEvent shortcut = make_key('C');
     shortcut.set_ctrl();
+    ASSERT_EQ(engine.process_key(shortcut), cxxime::ProcessResult::ACCEPTED);
+    ASSERT_EQ(engine.context().active_input(), "d+");
+    ASSERT_EQ(engine.context().composition_scheme(), cxxime::CompositionScheme::kInlineAscii);
+    ASSERT_TRUE(engine.context().committed_text.empty());
+
+    shortcut.keycode = 'S';
     ASSERT_EQ(engine.process_key(shortcut), cxxime::ProcessResult::REJECTED);
     ASSERT_EQ(engine.context().active_input(), "d+");
     ASSERT_EQ(engine.context().composition_scheme(), cxxime::CompositionScheme::kInlineAscii);
+    ASSERT_TRUE(engine.context().committed_text.empty());
 
     engine.finalize();
     DeleteFileA(dict_path.c_str());

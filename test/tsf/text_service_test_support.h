@@ -143,6 +143,9 @@ struct TextServiceTestPeer {
     static uint64_t generation(const TextService& service) {
         return service._candidatePresentation.generation();
     }
+    static const cxxime::CandidatePresentationPage& candidate_page(const TextService& service) {
+        return service._candidatePresentation.page();
+    }
     static void invalidate_composition_edits(TextService& service) {
         service.invalidate_composition_edit_requests();
     }

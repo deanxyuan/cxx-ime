@@ -388,6 +388,46 @@ int Context::selectable_candidate_count() const {
     return count;
 }
 
+bool Context::navigate_candidates(const KeyEvent& event) {
+    if (!is_composing() || event.is_key_up || event.is_ctrl() || event.is_alt() || event.is_win()) {
+        return false;
+    }
+
+    // Navigation belongs to the composition even when no candidate can move.
+    switch (event.keycode) {
+    case VK_UP:
+        move_to_previous_candidate();
+        return true;
+    case VK_DOWN:
+        move_to_next_candidate();
+        return true;
+    case VK_PRIOR:
+        if (candidate_count() > 0) {
+            request_previous_page();
+        }
+        return true;
+    case VK_NEXT:
+        request_next_page();
+        return true;
+    default:
+        break;
+    }
+
+    // Printable aliases remain characters when there is no candidate list.
+    if (event.is_shift() || candidate_count() == 0) {
+        return false;
+    }
+    if (event.keycode == VK_OEM_MINUS) {
+        request_previous_page();
+        return true;
+    }
+    if (event.keycode == VK_OEM_PLUS) {
+        request_next_page();
+        return true;
+    }
+    return false;
+}
+
 void Context::request_next_page() {
     if (selectable_candidate_count() <= 0) {
         return;

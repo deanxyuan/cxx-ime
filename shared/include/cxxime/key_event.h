@@ -47,9 +47,9 @@ bool is_digit_key(uint32_t vk_code);
 // key-up events are application commands, not text input.
 std::optional<char> normalize_ascii_key(const KeyEvent& event);
 
-// Recognize modified host commands, excluding modifier keys themselves and the
+// Recognize modified host commands while idle, excluding modifier keys themselves and the
 // built-in Shift+Space / Ctrl+. bindings. Configurable IME shortcuts take priority
-// and must be resolved by the caller before applying this default policy.
+// and must be resolved by the caller. Composing requires the engine's editing policy.
 bool is_application_shortcut(const KeyEvent& event);
 
 } // namespace cxxime

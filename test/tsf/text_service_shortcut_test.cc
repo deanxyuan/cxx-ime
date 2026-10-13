@@ -83,9 +83,7 @@ public:
 
 TEST(TextServiceShortcut, host_commands_preserve_composition_at_every_callback) {
     const cxxime::KeyEvent commands[] = {
-        {VK_RETURN, cxxime::kKeyModifierShift}, {VK_TAB, cxxime::kKeyModifierShift},
-        {VK_LEFT, cxxime::kKeyModifierShift},   {VK_BACK, cxxime::kKeyModifierControl},
-        {'C', cxxime::kKeyModifierControl},     {VK_F4, cxxime::kKeyModifierAlt},
+        {VK_F4, cxxime::kKeyModifierAlt},
         {'D', cxxime::kKeyModifierWin},
     };
     for (bool composing : {false, true}) {
@@ -224,7 +222,7 @@ TEST(TextServiceShortcut, ownership_is_not_inferred_from_key_or_snapshot) {
     ASSERT_EQ(host.fixture.host.range.writes, writes);
     host.release_to_host('A', false);
     host.response.key_disposition = cxxime::KeyDisposition::Handled;
-    // An explicit server binding can own a key that the default host policy would pass.
+    // An explicit server result can also own a modified key without rewriting the snapshot.
     set_modifiers(cxxime::kKeyModifierShift);
     ASSERT_EQ(host.down(VK_RETURN, false), TRUE);
     ASSERT_EQ(host.fixture.host.range.writes, writes);
@@ -290,21 +288,21 @@ TEST(TextServiceShortcut, entire_modified_command_reaches_host_without_replaying
         ShortcutHost host(true);
         const int writes = host.fixture.host.range.writes;
         const auto generation = TextServiceTestPeer::generation(host.fixture.service);
-        set_modifiers(cxxime::kKeyModifierShift);
-        ASSERT_EQ(host.down(VK_SHIFT, test_callback), FALSE);
+        set_modifiers(cxxime::kKeyModifierAlt);
+        ASSERT_EQ(host.down(VK_MENU, test_callback), FALSE);
         ASSERT_EQ(host.fixture.host.range.writes, writes);
-        ASSERT_EQ(host.down(VK_RETURN, test_callback), FALSE);
+        ASSERT_EQ(host.down(VK_F4, test_callback), FALSE);
         ASSERT_EQ(host.fixture.host.range.writes, writes);
-        host.release_to_host(VK_RETURN, test_callback);
+        host.release_to_host(VK_F4, test_callback);
         ASSERT_EQ(host.fixture.host.range.writes, writes);
         set_modifiers(0);
         const int calls = host.key_calls;
         BOOL eaten = TRUE;
         if (test_callback) {
-            ASSERT_EQ(host.fixture.service.OnTestKeyUp(&host.fixture.host, VK_SHIFT, 0, &eaten),
+            ASSERT_EQ(host.fixture.service.OnTestKeyUp(&host.fixture.host, VK_MENU, 0, &eaten),
                       S_OK);
         } else {
-            ASSERT_EQ(host.fixture.service.OnKeyUp(&host.fixture.host, VK_SHIFT, 0, &eaten), S_OK);
+            ASSERT_EQ(host.fixture.service.OnKeyUp(&host.fixture.host, VK_MENU, 0, &eaten), S_OK);
         }
         ASSERT_EQ(eaten, FALSE);
         ASSERT_EQ(host.key_calls, calls + 1);
