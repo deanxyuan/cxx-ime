@@ -426,7 +426,7 @@ private:
     bool begin_status_handoff() {
         const HWND foreground = GetForegroundWindow();
         if (!status_window_.is_visible() || !foreground ||
-            cxxime::is_fullscreen_window(foreground)) {
+            cxxime::is_fullscreen_window_or_owner(foreground)) {
             return false;
         }
         if (status_handoff_timer_) {
@@ -486,7 +486,8 @@ private:
                                    has_flag(current, cxxime::UiSnapshotFlag::kStatusVisible);
         applied.status_suppressed_fullscreen =
             applied.status_requested &&
-            cxxime::is_fullscreen_window(reinterpret_cast<HWND>(presentation->foreground_window));
+            cxxime::is_fullscreen_window_or_owner(
+                reinterpret_cast<HWND>(presentation->foreground_window));
         applied.status_visible =
             applied.status_requested && !applied.status_suppressed_fullscreen;
         applied.source_caret = current.caret;

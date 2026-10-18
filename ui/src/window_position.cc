@@ -6,6 +6,8 @@
 #include <cmath>
 #include <limits>
 
+#include <dwmapi.h>
+
 namespace {
 
 bool transform_point(HWND window, const POINT& source, POINT* result) {
@@ -367,6 +369,31 @@ bool is_fullscreen_window(HWND window) {
     MONITORINFO monitor_info = {sizeof(monitor_info)};
     return GetMonitorInfoW(monitor, &monitor_info) &&
            rect_covers_monitor(client_rect, monitor_info.rcMonitor);
+}
+
+bool is_fullscreen_window_or_owner(HWND window) {
+    const HMONITOR monitor = MonitorFromWindow(window, MONITOR_DEFAULTTONULL);
+    if (!monitor) {
+        return false;
+    }
+    // Walk every owner, not just GA_ROOTOWNER: a fullscreen player may itself
+    // belong to a normal application window or a hidden utility window.
+    for (HWND current = GetAncestor(window, GA_ROOT); current;
+         current = GetWindow(current, GW_OWNER)) {
+        if (!IsWindowVisible(current) || IsIconic(current) ||
+            MonitorFromWindow(current, MONITOR_DEFAULTTONULL) != monitor) {
+            continue;
+        }
+        DWORD cloaked = 0;
+        if (SUCCEEDED(DwmGetWindowAttribute(current, DWMWA_CLOAKED, &cloaked, sizeof(cloaked))) &&
+            cloaked != 0) {
+            continue;
+        }
+        if (is_fullscreen_window(current)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 } // namespace cxxime

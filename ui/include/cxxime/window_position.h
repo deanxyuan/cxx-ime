@@ -37,6 +37,9 @@ CandidateWindowPlacement calculate_candidate_window_position(
 bool logical_screen_rect_to_physical(HWND window, const RECT& source, RECT* result);
 bool rect_covers_monitor(const RECT& rect, const RECT& monitor_rect);
 bool is_fullscreen_window(HWND window);
+// Include visible, non-minimized owners on the window's monitor, even when an
+// intermediate popup (rather than the fullscreen player) is the foreground window.
+bool is_fullscreen_window_or_owner(HWND window);
 
 } // namespace cxxime
 
