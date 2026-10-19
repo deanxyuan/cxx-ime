@@ -142,8 +142,7 @@ bool TextService::_publish_candidate_ui_element() {
         static_cast<uint32_t>(_candidatePresentation.page().items.size());
     if (candidate_count > 0 && _candidateUiElement) {
         const bool was_active = _candidateUiElement->is_active();
-        const bool prepare_before_begin =
-            !was_active && (_activateFlags & TF_TMF_UIELEMENTENABLEDONLY) != 0;
+        const bool prepare_before_begin = !was_active && _is_ui_element_only();
         if (prepare_before_begin) {
             _prepare_host_candidate_compatibility();
         }
@@ -160,8 +159,16 @@ bool TextService::_publish_candidate_ui_element() {
                      static_cast<unsigned int>(candidate_count));
             _enqueue_event_trace("ui_element", detail);
         }
-    } else if (_candidateUiElement) {
-        _candidateUiElement->end(_threadMgr);
+    } else if (candidate_count == 0) {
+        // Ending the list does not change who presents the ongoing composition.
+        // Without a previous decision, UI-only mode already exposes preedit in the host.
+        const auto ownership = _candidatePresentation.ownership();
+        show_external =
+            ownership == cxxime_tsf::CandidateOwnership::kExternal ||
+            (ownership == cxxime_tsf::CandidateOwnership::kNone && !_is_ui_element_only());
+        if (_candidateUiElement) {
+            _candidateUiElement->end(_threadMgr);
+        }
     }
     _candidatePresentation.set_ownership(
         show_external ? cxxime_tsf::CandidateOwnership::kExternal

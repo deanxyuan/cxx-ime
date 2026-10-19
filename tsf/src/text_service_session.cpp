@@ -10,6 +10,7 @@
 #include <cxxime/logging.h>
 
 #include "config_coordinator.h"
+#include "ui_presentation_batch.h"
 
 namespace {
 
@@ -200,6 +201,11 @@ bool TextService::_heartbeat_ipc() {
         return _ipcHealthy;
     }
     _lastIpcHeartbeat = now;
+
+    cxxime_tsf::UiPresentationBatch ui_presentation_batch(*this);
+    if (_refresh_runtime_ui_mode("heartbeat")) {
+        _publish_ui_presentation();
+    }
 
     if (!_sessionId) {
         return _recreate_ipc_session_preserving_status();

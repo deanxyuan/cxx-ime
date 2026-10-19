@@ -166,7 +166,7 @@ public:
     ITfContext* get_composition_context() const { return _compositionContext; }
     bool is_composing() const { return _composing; }
     bool is_immersive_mode() const {
-        return (_activateFlags & TF_TMF_IMMERSIVEMODE) != 0;
+        return (_runtimeUiFlags & TF_TMF_IMMERSIVEMODE) != 0;
     }
     void set_composition_context(ITfContext* context);
     void set_composing(bool val) { _composing = val; }
@@ -365,6 +365,10 @@ private:
     void _sync_candidate_ui_element_snapshot();
     cxxime::CandidateUiContext _candidate_ui_context() const;
     static std::wstring utf8_to_wstring(const char* text);
+    bool _is_ui_element_only() const {
+        return (_runtimeUiFlags & TF_TMF_UIELEMENTENABLEDONLY) != 0;
+    }
+    bool _refresh_runtime_ui_mode(const char* source);
     void _start_host_compatibility_runtime();
     void _stop_host_compatibility_runtime();
     void _prepare_host_candidate_compatibility();
@@ -400,6 +404,7 @@ private:
     ITfComposition* _composition = nullptr;
     ITfContext* _compositionContext = nullptr;
     DWORD _activateFlags = 0;
+    DWORD _runtimeUiFlags = 0;
     DWORD _dwThreadFocusCookie = TF_INVALID_COOKIE;
     DWORD _dwThreadMgrEventCookie = TF_INVALID_COOKIE;
     DWORD _dwConversionCompartmentCookie = TF_INVALID_COOKIE;

@@ -2,12 +2,14 @@
 
 #include "text_service.h"
 
+#include <cstdio>
 #include <new>
 
 #include <cxxime/logging.h>
 #include <cxxime/tsf_factory.h>
 
 #include "about_dialog.h"
+#include "candidate_ui_element.h"
 #include "config_coordinator.h"
 #include "display_attribute.h"
 #include "globals.h"
@@ -66,6 +68,41 @@ void TextService::_handle_ime_menu_command(cxxime::ImeMenuCommand command) {
     }
 }
 
+bool TextService::_refresh_runtime_ui_mode(const char* source) {
+    if (!_activated || !_threadMgr) {
+        return false;
+    }
+    ITfThreadMgrEx* manager = nullptr;
+    const HRESULT query_result =
+        _threadMgr->QueryInterface(IID_ITfThreadMgrEx, reinterpret_cast<void**>(&manager));
+    if (FAILED(query_result) || !manager) {
+        return false;
+    }
+    DWORD active_flags = 0;
+    const HRESULT result = manager->GetActiveFlags(&active_flags);
+    manager->Release();
+    if (FAILED(result)) {
+        return false;
+    }
+    const DWORD ui_flags = active_flags & (TF_TMF_UIELEMENTENABLEDONLY | TF_TMF_IMMERSIVEMODE);
+    if (ui_flags == _runtimeUiFlags) {
+        return false;
+    }
+    const DWORD previous = _runtimeUiFlags;
+    _runtimeUiFlags = ui_flags;
+    if (_is_ui_element_only()) {
+        _start_host_compatibility_runtime();
+    } else {
+        _stop_host_compatibility_runtime();
+    }
+    char detail[192] = {};
+    std::snprintf(detail, sizeof(detail),
+                  "source=%s activation=0x%08lx active=0x%08lx ui=0x%08lx->0x%08lx", source,
+                  _activateFlags, active_flags, previous, ui_flags);
+    _enqueue_event_trace("runtime_ui_mode", detail, true);
+    return true;
+}
+
 void TextService::_start_host_compatibility_runtime() {
     if (_hostCompatibilityRuntimeActive) {
         return;
@@ -75,6 +112,11 @@ void TextService::_start_host_compatibility_runtime() {
     cxxime_tsf::start_host_trace_runtime(
         cxxime_tsf::host_classification_compatibility_snapshot());
     _hostCompatibilityRuntimeActive = true;
+    cxxime_tsf::start_ui_element_observer(_threadMgr, _activateFlags | _runtimeUiFlags);
+    if (_candidateUiElement && _candidateUiElement->is_active()) {
+        // A live element keeps its negotiated ownership; prepare before its next update.
+        _prepare_host_candidate_compatibility();
+    }
 }
 
 void TextService::_stop_host_compatibility_runtime() {
@@ -196,10 +238,6 @@ HRESULT TextService::_initialize_required_activation_sinks() {
 }
 
 void TextService::_initialize_optional_activation_services() {
-    cxxime_tsf::trace_activation_step("ui_element_observer", "attempt", S_OK, false);
-    cxxime_tsf::start_ui_element_observer(_threadMgr, _activateFlags);
-    cxxime_tsf::trace_activation_step("ui_element_observer", "complete", S_OK, false);
-
     cxxime_tsf::trace_activation_step("display_attribute", "attempt", S_OK, false);
     const HRESULT display_attribute_hr = _register_display_attribute_atom() ? S_OK : E_FAIL;
     cxxime_tsf::trace_activation_step("display_attribute", "complete", display_attribute_hr,

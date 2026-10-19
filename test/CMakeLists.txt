@@ -147,6 +147,7 @@ add_cxxime_test(status_process_integration_test
         tsf/shortcut_pipeline_test.cc
         tsf/status_test_platform.cc
         tsf/text_service_status_visibility_test.cc
+        tsf/text_service_runtime_ui_mode_test.cc
         server/session_manager_integration_test_support.cc
         ${CMAKE_SOURCE_DIR}/server/src/session_manager.cc
         ${CMAKE_SOURCE_DIR}/server/src/ipc_response_builder.cc

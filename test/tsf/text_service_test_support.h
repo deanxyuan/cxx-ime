@@ -175,11 +175,17 @@ struct TextServiceTestPeer {
     static void popup_only(TextService& service) { service._config.inline_preedit = false; }
     static void local_candidate_host(TextService& service, HWND view) {
         service._activateFlags |= TF_TMF_IMMERSIVEMODE;
+        service._runtimeUiFlags |= TF_TMF_IMMERSIVEMODE;
         service._effectiveEditTarget.view_window = reinterpret_cast<uintptr_t>(view);
         service._config.render_backend = "gdi";
     }
     static void host_ui_only(TextService& service) {
         service._activateFlags |= TF_TMF_UIELEMENTENABLEDONLY;
+        service._runtimeUiFlags |= TF_TMF_UIELEMENTENABLEDONLY;
+    }
+    static DWORD activation_flags(const TextService& service) { return service._activateFlags; }
+    static bool host_runtime_active(const TextService& service) {
+        return service._hostCompatibilityRuntimeActive;
     }
     static void start_ui(TextService& service, const std::wstring& pipe,
                          bool handle_commands = false) {
@@ -617,12 +623,34 @@ public:
     STDMETHODIMP EnumContexts(IEnumTfContexts**) override { return E_NOTIMPL; }
 };
 
-class HostThreadManager : public HostObject<ITfThreadMgr> {
+class HostThreadManager : public HostObject<ITfThreadMgrEx> {
 public:
     HostDocument document;
     ITfDocumentMgr* focus_document = &document;
     BOOL focused = TRUE;
     HRESULT focus_result = S_OK;
+    bool expose_active_flags = false;
+    DWORD active_flags = TF_TMF_ACTIVATED;
+    HRESULT active_flags_result = S_OK;
+    int active_flags_queries = 0;
+    STDMETHODIMP QueryInterface(REFIID iid, void** object) override {
+        if (iid == IID_ITfThreadMgr) {
+            *object = static_cast<ITfThreadMgr*>(this);
+            AddRef();
+            return S_OK;
+        }
+        if (iid == IID_ITfThreadMgrEx && !expose_active_flags) {
+            *object = nullptr;
+            return E_NOINTERFACE;
+        }
+        return HostObject<ITfThreadMgrEx>::QueryInterface(iid, object);
+    }
+    STDMETHODIMP ActivateEx(TfClientId*, DWORD) override { return E_NOTIMPL; }
+    STDMETHODIMP GetActiveFlags(DWORD* flags) override {
+        ++active_flags_queries;
+        *flags = active_flags;
+        return active_flags_result;
+    }
     STDMETHODIMP Activate(TfClientId*) override { return E_NOTIMPL; }
     STDMETHODIMP Deactivate() override { return E_NOTIMPL; }
     STDMETHODIMP CreateDocumentMgr(ITfDocumentMgr**) override { return E_NOTIMPL; }

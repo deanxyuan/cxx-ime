@@ -168,13 +168,17 @@ public:
         std::unique_lock<std::mutex> lock(mutex_);
         ASSERT_TRUE(changed_.wait_for(lock, std::chrono::seconds(3), [&]() {
             for (size_t i = begin; i < snapshots_.size(); ++i) {
-                if (snapshots_[i].target_generation == target) {
+                const bool shown =
+                    (snapshots_[i].flags &
+                     cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kStatusVisible)) != 0;
+                if (snapshots_[i].target_generation == target && shown == visible) {
                     return true;
                 }
             }
             return false;
         }));
         bool observed_target = false;
+        bool observed_visible = false;
         for (size_t i = begin; i < snapshots_.size(); ++i) {
             const auto& snapshot = snapshots_[i];
             // Target release can publish the old composition before advancing generation.
@@ -185,7 +189,14 @@ public:
             observed_target = true;
             const bool shown = (snapshot.flags & cxxime::ui_snapshot_flag(
                                                      cxxime::UiSnapshotFlag::kStatusVisible)) != 0;
-            ASSERT_EQ(shown, visible);
+            // Enabling/restoring status can follow hidden snapshots still in transit.
+            // Once visible, no late hidden snapshot may overwrite the new state.
+            if (visible && !shown && !observed_visible) {
+                continue;
+            }
+            ASSERT_EQ(shown, visible)
+                << " snapshot=" << i << " begin=" << begin << " target=" << target;
+            observed_visible = shown;
             if (visible) {
                 ASSERT_EQ(snapshot.ime_status.caps_lock(), caps);
                 ASSERT_EQ(snapshot.ime_status.chinese_mode(), chinese);
@@ -248,7 +259,39 @@ public:
             const bool shown =
                 (snapshots_[i].flags &
                  cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kStatusVisible)) != 0;
-            ASSERT_EQ(shown, visible);
+            ASSERT_EQ(shown, visible)
+                << " snapshot=" << i << " begin=" << begin
+                << " target=" << snapshots_[i].target_generation << " expected_target=" << target
+                << " composition=" << snapshots_[i].composition_generation
+                << " flags=" << snapshots_[i].flags;
+        }
+    }
+
+    void expect_candidate_ownership_since(size_t begin, cxxime::UiOwnership ownership) {
+        const auto generation = TextServiceTestPeer::generation(service_);
+        std::unique_lock<std::mutex> lock(mutex_);
+        ASSERT_TRUE(changed_.wait_for(lock, std::chrono::seconds(3), [&]() {
+            return snapshots_.size() > begin &&
+                   snapshots_.back().composition_generation == generation &&
+                   snapshots_.back().ownership == ownership;
+        }));
+        bool observed_owner = false;
+        for (size_t i = begin; i < snapshots_.size(); ++i) {
+            const auto& snapshot = snapshots_[i];
+            if (snapshot.ownership == ownership) {
+                observed_owner = true;
+            } else {
+                // The channel preserves a host-owned snapshot before an ownership handoff.
+                // It must remain hidden and must never overwrite the new owner's snapshot.
+                ASSERT_TRUE(!observed_owner);
+                ASSERT_EQ(snapshot.ownership, cxxime::UiOwnership::kHost);
+            }
+            if (snapshot.ownership != cxxime::UiOwnership::kExternal) {
+                const auto visible_flags =
+                    cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kCandidateVisible) |
+                    cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kTsfLocalCandidate);
+                ASSERT_EQ(snapshot.flags & visible_flags, 0u);
+            }
         }
     }
 

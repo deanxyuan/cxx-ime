@@ -17,13 +17,16 @@ TEST(TextServiceStatusSettings, showing_status_after_hidden_focus_changes_uses_c
     TextServiceTestPeer::set_status_window_enabled(fixture.service, false);
     probe.expect_since(before, false, false, false);
 
+    before = probe.mark();
     ASSERT_EQ(fixture.service.OnKillThreadFocus(), S_OK);
     fixture.server_chinese = false;
     fixture.server_caps = true;
     keyboard.caps(true);
     fixture.focus();
     fixture.confirm();
-    before = probe.mark();
+    // Observe the hidden phase too: its asynchronous snapshots may still arrive
+    // when the preference is enabled, but must never replace the new visible state.
+    probe.expect_since(before, false, false, false);
     TextServiceTestPeer::set_status_window_enabled(fixture.service, true);
     probe.expect_since(before, true, true, false);
     keyboard.caps(false);

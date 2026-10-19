@@ -59,13 +59,18 @@ bool TextService::_apply_engine_response(ITfContext* context, const cxxime::IPCR
     if (!eaten || response.status == cxxime::IPCStatus::ERR_INVALID_SESSION) {
         return false;
     }
+    cxxime_tsf::UiPresentationBatch ui_presentation_batch(*this);
+    const bool starts_composition = !_composing && !_composition;
+    const bool has_commit = response.commit_text[0] != '\0';
+    const bool commit_continues = has_commit && response.composing && response.preedit[0] != '\0';
+    if (response.composing && (starts_composition || commit_continues) &&
+        _refresh_runtime_ui_mode("composition_start")) {
+        _publish_ui_presentation();
+    }
     if (response_has_ime_status(response.status)) {
         _sync_ime_status(response.ime_status);
     }
 
-    const bool starts_composition = !_composing && !_composition;
-    const bool has_commit = response.commit_text[0] != '\0';
-    const bool commit_continues = has_commit && response.composing && response.preedit[0] != '\0';
     std::wstring commit_text;
     if (has_commit) {
         if (!cxxime_tsf::decode_engine_commit_text(response, &commit_text) || commit_text.empty()) {
@@ -106,7 +111,6 @@ bool TextService::_apply_engine_response(ITfContext* context, const cxxime::IPCR
             return false;
         }
         ensure_trace_composition_id();
-        cxxime_tsf::UiPresentationBatch ui_presentation_batch(*this);
 
         std::vector<std::wstring> candidate_texts;
         candidate_texts.reserve(decoded.candidates.items.size());
@@ -117,7 +121,7 @@ bool TextService::_apply_engine_response(ITfContext* context, const cxxime::IPCR
             _config.inline_preedit, _config.preedit_type, decoded.logical_preedit,
             decoded.display_preedit, candidate_texts, decoded.candidates.highlighted,
             decoded.has_syllable_boundaries);
-        const bool ui_element_only = (_activateFlags & TF_TMF_UIELEMENTENABLEDONLY) != 0;
+        const bool ui_element_only = _is_ui_element_only();
         const bool has_candidates = !decoded.candidates.items.empty();
         std::string popup_preedit;
         if (ui_element_only || decision.show_preedit_in_popup) {

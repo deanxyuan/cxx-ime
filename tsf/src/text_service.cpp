@@ -208,6 +208,7 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
     _threadMgr->AddRef();
     _clientId = tid;
     _activateFlags = dwFlags;
+    _runtimeUiFlags = dwFlags & (TF_TMF_UIELEMENTENABLEDONLY | TF_TMF_IMMERSIVEMODE);
 
     const HRESULT activation_sinks_hr = _initialize_required_activation_sinks();
     if (FAILED(activation_sinks_hr)) {
@@ -223,7 +224,7 @@ STDMETHODIMP TextService::ActivateEx(ITfThreadMgr* ptim, TfClientId tid, DWORD d
     const HRESULT config_updates_hr = _start_config_updates() ? S_OK : E_FAIL;
     cxxime_tsf::trace_activation_step(
         "config_updates", "complete", config_updates_hr, false);
-    if ((_activateFlags & TF_TMF_UIELEMENTENABLEDONLY) != 0) {
+    if (_is_ui_element_only()) {
         _start_host_compatibility_runtime();
     }
     _initialize_optional_activation_services();
@@ -387,9 +388,8 @@ STDMETHODIMP TextService::Deactivate() {
         _threadMgr = nullptr;
     }
     _clientId = TF_CLIENTID_NULL;
-    if ((_activateFlags & TF_TMF_UIELEMENTENABLEDONLY) != 0) {
-        _stop_host_compatibility_runtime();
-    }
+    _stop_host_compatibility_runtime();
+    _runtimeUiFlags = 0;
 
     return S_OK;
 }

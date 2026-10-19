@@ -198,7 +198,7 @@ void TextService::_publish_ui_presentation() {
     // A top-level immersive target includes surfaces such as Start/SearchUI.
     // Framed immersive applications retain CxxIME's normal status presentation.
     const bool host_suppresses_status = host_suppresses_status_window(
-        (_activateFlags & TF_TMF_UIELEMENTENABLEDONLY) != 0, is_immersive_mode(),
+        _is_ui_element_only(), is_immersive_mode(),
         snapshot.target_window, snapshot.ownership);
     const bool status_visible =
         _activated && _inputFocused && _effectiveEditTarget.valid() &&

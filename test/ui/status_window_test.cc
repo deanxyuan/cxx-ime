@@ -136,6 +136,8 @@ TEST(StatusWindow, LifecycleOperationsAreIdempotent) {
 // ============================================================
 
 TEST(StatusWindow, ShowHidePreservesTopmostStyle) {
+    // Preserve the style established at creation through normal show/hide operations.
+    // Re-promoting a deliberately demoted background window needs desktop permissions.
     cxxime::StatusWindow window;
     window.show();
     window.hide();
@@ -148,30 +150,22 @@ TEST(StatusWindow, ShowHidePreservesTopmostStyle) {
     window.show();
     transitions.expect(1, 0);
     ASSERT_TRUE(window.is_visible());
-    ASSERT_TRUE((GetWindowLongPtrW(window.hwnd_for_test(), GWL_EXSTYLE) & WS_EX_TOPMOST) != 0);
+    transitions.expect_topmost();
 
     window.show();
     transitions.expect(1, 0);
     ASSERT_TRUE(window.is_visible());
-    ASSERT_TRUE((GetWindowLongPtrW(window.hwnd_for_test(), GWL_EXSTYLE) & WS_EX_TOPMOST) != 0);
-
-    ASSERT_TRUE(SetWindowPos(window.hwnd_for_test(), HWND_NOTOPMOST, 0, 0, 0, 0,
-                             SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE) != FALSE);
-    ASSERT_TRUE((GetWindowLongPtrW(window.hwnd_for_test(), GWL_EXSTYLE) & WS_EX_TOPMOST) == 0);
-
-    window.show();
-    ASSERT_TRUE(window.is_visible());
-    ASSERT_TRUE((GetWindowLongPtrW(window.hwnd_for_test(), GWL_EXSTYLE) & WS_EX_TOPMOST) != 0);
+    transitions.expect_topmost();
 
     window.hide();
     transitions.expect(1, 1);
     ASSERT_TRUE(!window.is_visible());
-    ASSERT_TRUE((GetWindowLongPtrW(window.hwnd_for_test(), GWL_EXSTYLE) & WS_EX_TOPMOST) != 0);
+    transitions.expect_topmost();
 
     window.show();
     transitions.expect(2, 1);
     ASSERT_TRUE(window.is_visible());
-    ASSERT_TRUE((GetWindowLongPtrW(window.hwnd_for_test(), GWL_EXSTYLE) & WS_EX_TOPMOST) != 0);
+    transitions.expect_topmost();
 
     window.destroy();
 }

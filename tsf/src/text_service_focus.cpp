@@ -321,6 +321,9 @@ bool TextService::_synchronize_effective_edit_target_from_thread_mgr(const char*
 
 bool TextService::_synchronize_focus_state(const char* source) {
     cxxime_tsf::UiPresentationBatch batch(*this);
+    if (_refresh_runtime_ui_mode(source)) {
+        _publish_ui_presentation();
+    }
     BOOL focused = FALSE;
     if (!_threadMgr || FAILED(_threadMgr->IsThreadFocus(&focused)) || !focused) {
         _clear_effective_edit_target(source);

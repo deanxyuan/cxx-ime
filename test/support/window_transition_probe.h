@@ -78,6 +78,27 @@ public:
         ASSERT_EQ(read_errors_, 0);
     }
 
+    void expect_topmost() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const auto style = GetWindowLongPtrW(window_, GWL_EXSTYLE);
+        const HWND foreground = GetForegroundWindow();
+        DWORD foreground_pid = 0;
+        GetWindowThreadProcessId(foreground, &foreground_pid);
+        ASSERT_TRUE((style & WS_EX_TOPMOST) != 0)
+            << " hwnd=" << window_ << " style=" << style
+            << " owner=" << GetWindow(window_, GW_OWNER) << " foreground=" << foreground
+            << " foreground_pid=" << foreground_pid << " test_pid=" << GetCurrentProcessId()
+            << " changing_count=" << changing_count_
+            << " changing_after=" << last_changing_.hwndInsertAfter
+            << " changing_flags=" << last_changing_.flags
+            << " changing_style=" << last_changing_style_ << " changed_count=" << changed_count_
+            << " changed_after=" << last_changed_.hwndInsertAfter
+            << " changed_flags=" << last_changed_.flags << " changed_style=" << last_changed_style_
+            << " dpi=" << GetDpiForWindow(window_)
+            << " thread_context=" << GetThreadDpiAwarenessContext()
+            << " window_context=" << GetWindowDpiAwarenessContext(window_);
+    }
+
 private:
     static bool read_rect(HWND window, RECT* rect) {
         // Constructor and hook can run on different threads or DPI contexts.
@@ -96,9 +117,17 @@ private:
         if (code >= 0) {
             const auto& message = *reinterpret_cast<CWPSTRUCT*>(lp);
             std::lock_guard<std::mutex> lock(mutex_);
-            if (active_ && message.hwnd == active_->window_ &&
-                message.message == WM_WINDOWPOSCHANGED) {
-                active_->record(*reinterpret_cast<const WINDOWPOS*>(message.lParam));
+            if (active_ && message.hwnd == active_->window_) {
+                if (message.message == WM_WINDOWPOSCHANGING) {
+                    active_->last_changing_ = *reinterpret_cast<const WINDOWPOS*>(message.lParam);
+                    active_->last_changing_style_ = GetWindowLongPtrW(message.hwnd, GWL_EXSTYLE);
+                    ++active_->changing_count_;
+                } else if (message.message == WM_WINDOWPOSCHANGED) {
+                    active_->last_changed_ = *reinterpret_cast<const WINDOWPOS*>(message.lParam);
+                    active_->last_changed_style_ = GetWindowLongPtrW(message.hwnd, GWL_EXSTYLE);
+                    ++active_->changed_count_;
+                    active_->record(active_->last_changed_);
+                }
             }
         }
         return CallNextHookEx(nullptr, code, wp, lp);
@@ -157,6 +186,12 @@ private:
     RECT initial_ = {};
     RECT first_changed_ = {};
     WINDOWPOS first_change_ = {};
+    WINDOWPOS last_changing_ = {};
+    WINDOWPOS last_changed_ = {};
+    LONG_PTR last_changing_style_ = 0;
+    LONG_PTR last_changed_style_ = 0;
+    int changing_count_ = 0;
+    int changed_count_ = 0;
     UINT first_change_dpi_ = 0;
     DPI_AWARENESS_CONTEXT first_thread_context_ = nullptr;
     DPI_AWARENESS_CONTEXT first_window_context_ = nullptr;
