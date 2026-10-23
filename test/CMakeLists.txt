@@ -214,7 +214,9 @@ add_cxxime_test(wubi_prefix_query_test
     DEPS cxxime-engine cxxime-test-wubi-index-data
 )
 add_cxxime_test(candidate_window_test
-    SOURCES ui/candidate_window_test.cc
+    SOURCES
+        ui/candidate_window_test.cc
+        ui/candidate_window_layout_test.cc
     DEPS cxxime-engine cxxime-ui
 )
 add_cxxime_test(candidate_quality_test

@@ -1,5 +1,6 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
+#include <cstddef>
 #include <cwchar>
 #include <vector>
 
@@ -238,6 +239,41 @@ TEST(Layout, vertical_width_max) {
     ASSERT_EQ(lr.rects.size(), 1u);
     ASSERT_LE(lr.width, 100);
 
+    ReleaseDC(nullptr, hdc);
+}
+
+TEST(Layout, vertical_highlights_follow_minimum_and_maximum_window_width) {
+    HDC hdc = GetDC(nullptr);
+    std::vector<cxxime::Candidate> candidates = {make_cand(u8"们"), make_cand(u8"你")};
+    candidates[1].comment = "wq";
+
+    for (UINT dpi : {96u, 144u, 192u}) {
+        auto cfg = make_cfg();
+        cfg.min_width = 0;
+        const auto natural =
+            cxxime::calculate_vertical_layout(hdc, candidates, "Microsoft YaHei UI", 14, cfg, dpi);
+        ASSERT_EQ(natural.rects.size(), candidates.size());
+
+        cfg.min_width = natural.width * 2;
+        for (int maximum : {cfg.min_width * 2, cfg.min_width - cfg.margin_x}) {
+            cfg.max_width = maximum;
+            const auto expanded = cxxime::calculate_vertical_layout(
+                hdc, candidates, "Microsoft YaHei UI", 14, cfg, dpi);
+            ASSERT_GT(expanded.width, natural.width);
+            ASSERT_LE(expanded.width, cfg.max_width);
+            ASSERT_EQ(expanded.rects.size(), candidates.size());
+            for (std::size_t i = 0; i < expanded.rects.size(); ++i) {
+                const auto& before = natural.rects[i];
+                const auto& after = expanded.rects[i];
+                ASSERT_EQ(after.highlight_rect.left, before.highlight_rect.left);
+                ASSERT_EQ(after.highlight_rect.right, expanded.width - cfg.margin_x);
+                ASSERT_EQ(after.highlight_rect.top, before.highlight_rect.top);
+                ASSERT_EQ(after.highlight_rect.bottom, before.highlight_rect.bottom);
+                ASSERT_TRUE(EqualRect(&after.text_rect, &before.text_rect) != FALSE);
+                ASSERT_TRUE(EqualRect(&after.comment_rect, &before.comment_rect) != FALSE);
+            }
+        }
+    }
     ReleaseDC(nullptr, hdc);
 }
 

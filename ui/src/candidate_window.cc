@@ -1080,6 +1080,12 @@ void CandidateWindow::update(const CandidatePage& page) {
     // Extend width for page nav buttons if present
     if (page_total_ > 1 && render_ctx_.next_button_rect.right > lr.width)
         lr.width = render_ctx_.next_button_rect.right + cfg.margin_x;
+    // Preedit and page controls can widen the window after candidate layout.
+    if (layout_orientation_ == "vertical") {
+        for (auto& rect : candidate_rects_) {
+            rect.highlight_rect.right = lr.width - cfg.margin_x;
+        }
+    }
     // Vertical layout: extend height for nav buttons row below candidates
     if (layout_orientation_ == "vertical" && page_total_ > 1 && !candidate_rects_.empty()) {
         int nav_bottom = render_ctx_.next_button_rect.bottom + cfg.hilite_padding_y;

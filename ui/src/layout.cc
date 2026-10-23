@@ -366,6 +366,10 @@ LayoutResult calculate_vertical_layout(HDC hdc,
     result.width = text_x + widest_text + cfg.hilite_padding_x + cfg.margin_x;
     if (result.width < cfg.min_width) result.width = cfg.min_width;
     if (cfg.max_width > 0 && result.width > cfg.max_width) result.width = cfg.max_width;
+    // Vertical rows include the space added by the window width constraints.
+    for (auto& rect : result.rects) {
+        rect.highlight_rect.right = result.width - cfg.margin_x;
+    }
     if (!result.rects.empty())
         y -= cfg.candidate_spacing;
     result.height = y + cfg.margin_y;
