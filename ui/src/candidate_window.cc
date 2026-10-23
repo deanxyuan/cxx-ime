@@ -584,10 +584,6 @@ void CandidateWindow::set_preedit(const std::string& preedit, size_t cursor,
         focused_preedit_end_ = preedit.size();
     }
 }
-void CandidateWindow::set_layout(const std::string& l) {
-    skip_next_show_redraw_ = false;
-    layout_orientation_ = l;
-}
 void CandidateWindow::set_candidate_selection_callback(CandidateSelectionCallback cb) {
     candidate_selection_cb_ = std::move(cb);
 }
@@ -719,7 +715,7 @@ void CandidateWindow::rebuild_render_context(const LayoutConfig& cfg, int window
         const int nw = nav.button_width;
         int nav_h = last.highlight_rect.bottom - last.highlight_rect.top;
 
-        if (layout_orientation_ == "vertical") {
+        if (config_->layout == "vertical") {
             // Vertical layout: nav buttons at bottom-left, use text row height (no highlight padding)
             nav_h = last.text_rect.bottom - last.text_rect.top;
             int nav_y = last.text_rect.bottom;
@@ -813,7 +809,7 @@ void CandidateWindow::update(const CandidatePage& page) {
     HDC hdc = GetDC(hwnd_);
     const UINT window_dpi = GetDpiForWindow(hwnd_);
     auto calculate_layout = [&]() {
-        if (layout_orientation_ == "horizontal") {
+        if (config_->layout == "horizontal") {
             return calculate_horizontal_layout(
                 hdc, page.candidates, config_->font_name, config_->font_size, cfg, page_total_,
                 window_dpi);
@@ -1081,13 +1077,13 @@ void CandidateWindow::update(const CandidatePage& page) {
     if (page_total_ > 1 && render_ctx_.next_button_rect.right > lr.width)
         lr.width = render_ctx_.next_button_rect.right + cfg.margin_x;
     // Preedit and page controls can widen the window after candidate layout.
-    if (layout_orientation_ == "vertical") {
+    if (config_->layout == "vertical") {
         for (auto& rect : candidate_rects_) {
             rect.highlight_rect.right = lr.width - cfg.margin_x;
         }
     }
     // Vertical layout: extend height for nav buttons row below candidates
-    if (layout_orientation_ == "vertical" && page_total_ > 1 && !candidate_rects_.empty()) {
+    if (config_->layout == "vertical" && page_total_ > 1 && !candidate_rects_.empty()) {
         int nav_bottom = render_ctx_.next_button_rect.bottom + cfg.hilite_padding_y;
         if (nav_bottom > lr.height) lr.height = nav_bottom;
     }

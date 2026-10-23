@@ -1,14 +1,13 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 // tsf_position_tool — validates caret-to-window positioning logic
 
-#include <windows.h>
-#include <algorithm>
-#include <cstdlib>
 #include <cstdio>
-#include <string>
-#include <vector>
-#include <cxxime/candidate_window.h>
+#include <cstdlib>
+
+#include <windows.h>
+
 #include <cxxime/candidate.h>
+#include <cxxime/candidate_window.h>
 #include <cxxime/config.h>
 #include <cxxime/data_path.h>
 
@@ -61,8 +60,7 @@ static LRESULT CALLBACK ParentWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         case VK_UP:    g_caret.top -= step; g_caret.bottom -= step; moved = true; break;
         case VK_DOWN:  g_caret.top += step; g_caret.bottom += step; moved = true; break;
         case 'L':
-            { static bool vert = false; vert = !vert;
-              g_window.set_layout(vert ? "vertical" : "horizontal"); }
+            g_config.layout = g_config.layout == "vertical" ? "horizontal" : "vertical";
             break;
         case 'T':
             { // Cycle through the presets actually loaded from themes.json.

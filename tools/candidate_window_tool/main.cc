@@ -1,17 +1,18 @@
 ﻿// Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 // candidate_window_tool — interactive visual test for CandidateWindow
 
-#include <windows.h>
-#include <algorithm>
-#include <cstdlib>
 #include <cstdio>
-#include <vector>
+#include <cstdlib>
 #include <string>
-#include <cxxime/candidate_window.h>
+#include <vector>
+
+#include <windows.h>
+
 #include <cxxime/candidate.h>
-#include <cxxime/render_context.h>
+#include <cxxime/candidate_window.h>
 #include <cxxime/config.h>
 #include <cxxime/data_path.h>
+#include <cxxime/render_context.h>
 
 static cxxime::CandidateWindow g_window;
 static cxxime::CandidatePage g_page;
@@ -149,10 +150,8 @@ static LRESULT CALLBACK ParentWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             update_display();
         } else if (vk == 'L') {
             // Toggle layout
-            static bool vert = false;
-            vert = !vert;
-            g_window.set_layout(vert ? "vertical" : "horizontal");
-            printf("Layout: %s\n", vert ? "vertical" : "horizontal");
+            g_config.layout = g_config.layout == "vertical" ? "horizontal" : "vertical";
+            printf("Layout: %s\n", g_config.layout.c_str());
             update_display();
         } else if (vk == 'D') {
             g_d2d = !g_d2d;
@@ -171,7 +170,6 @@ static LRESULT CALLBACK ParentWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             g_window.destroy();
             g_window.create(nullptr, g_config);
             configure_candidate_window_callbacks();
-            g_window.set_layout(g_config.layout);
             build_page();
             if (g_d2d) g_window.set_render_backend(cxxime::RenderBackend::D2D);
             update_display();

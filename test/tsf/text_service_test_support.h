@@ -179,6 +179,14 @@ struct TextServiceTestPeer {
         service._effectiveEditTarget.view_window = reinterpret_cast<uintptr_t>(view);
         service._config.render_backend = "gdi";
     }
+    static void set_candidate_layout(TextService& service, const std::string& layout) {
+        // Arrange a received preference without changing the user's configuration service.
+        service._config.layout = layout;
+        service._publish_ui_presentation();
+    }
+    static const cxxime::CandidateWindow* local_candidate(const TextService& service) {
+        return service._localCandidateWindow.get();
+    }
     static void host_ui_only(TextService& service) {
         service._activateFlags |= TF_TMF_UIELEMENTENABLEDONLY;
         service._runtimeUiFlags |= TF_TMF_UIELEMENTENABLEDONLY;

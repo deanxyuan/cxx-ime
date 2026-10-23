@@ -48,7 +48,6 @@ public:
     void set_preedit(const std::string& preedit, size_t cursor,
                      size_t converted_prefix, size_t focused_start, size_t focused_end,
                      bool has_syllable_boundaries);
-    void set_layout(const std::string& layout);
     void move_to_caret(const RECT& caretRect);
     void move_to_screen_position(int x, int y);
     void set_candidate_selection_callback(CandidateSelectionCallback cb);
@@ -116,7 +115,6 @@ private:
     bool preedit_has_syllable_boundaries_ = false;
     int preedit_cursor_width_ = 1;
     bool preedit_cursor_emphasized_ = false;
-    std::string layout_orientation_ = "horizontal";
     CandidateSelectionCallback candidate_selection_cb_;
     LayoutChangedCallback layout_changed_cb_;
     PageCallback page_cb_;

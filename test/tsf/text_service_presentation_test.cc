@@ -7,6 +7,7 @@
 #include <mutex>
 #include <vector>
 
+#include <cxxime/candidate_window.h>
 #include <cxxime/ui_channel.h>
 
 #include "text_service_test_support.h"
@@ -280,5 +281,54 @@ TEST(TextServicePresentation, local_candidate_snapshot_tracks_native_window_visi
     ASSERT_TRUE(
         (hidden.flags & cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kTsfLocalCandidate)) == 0);
     ASSERT_TRUE(IsWindowVisible(candidate) == FALSE);
+    DestroyWindow(owner);
+}
+
+TEST(TextServicePresentation, local_candidate_uses_configured_layout_on_creation_and_updates) {
+    Fixture fixture;
+    PresentationProbe probe(fixture);
+    const HWND owner =
+        CreateWindowExW(WS_EX_NOACTIVATE, L"STATIC", L"TSF layout test", WS_OVERLAPPEDWINDOW, 50,
+                        50, 400, 200, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    ASSERT_TRUE(owner != nullptr);
+    TextServiceTestPeer::local_candidate_host(fixture.service, owner);
+    TextServiceTestPeer::set_candidate_layout(fixture.service, "vertical");
+
+    auto response = fixture.key('N');
+    response.candidate_count = 2;
+    strcpy_s(response.candidates[0], u8"你");
+    strcpy_s(response.candidates[1], u8"呢");
+    BOOL eaten = FALSE;
+    ASSERT_TRUE(fixture.apply(response, &eaten));
+    const RECT anchor = {100, 100, 101, 120};
+    fixture.service.update_candidate_position(
+        anchor, &fixture.host, false, TextServiceTestPeer::generation(fixture.service), true);
+    const auto shown = probe.wait(true);
+    const auto* window = TextServiceTestPeer::local_candidate(fixture.service);
+    ASSERT_TRUE(window != nullptr);
+    ASSERT_EQ(reinterpret_cast<HWND>(shown.local_candidate_window), window->native_handle());
+
+    // Inspect each displayed layout, not just the final configuration value.
+    auto assert_layout = [&](bool vertical) {
+        ASSERT_TRUE(window->is_visible());
+        ASSERT_EQ(window->visible_candidate_count(), 2);
+        const RECT first = window->candidate_rect_for_test(0);
+        const RECT second = window->candidate_rect_for_test(1);
+        if (vertical) {
+            ASSERT_EQ(first.left, second.left);
+            ASSERT_EQ(first.right, second.right);
+            ASSERT_LT(first.top, second.top);
+        } else {
+            ASSERT_EQ(first.top, second.top);
+            ASSERT_LE(first.right, second.left);
+        }
+    };
+    assert_layout(true);
+    TextServiceTestPeer::set_candidate_layout(fixture.service, "horizontal");
+    assert_layout(false);
+    TextServiceTestPeer::set_candidate_layout(fixture.service, "vertical");
+    assert_layout(true);
+    ASSERT_TRUE(fixture.apply(fixture.key(VK_ESCAPE), &eaten));
+    probe.wait(false);
     DestroyWindow(owner);
 }

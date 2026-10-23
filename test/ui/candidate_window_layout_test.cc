@@ -47,7 +47,6 @@ TEST(CandidateWindowLayout, vertical_rows_fill_and_select_across_final_width_cha
 
         cxxime::CandidateWindow window;
         ASSERT_TRUE(window.create(nullptr, config));
-        window.set_layout(config.layout);
         window.set_preedit("d");
         window.update(page);
         const int short_width = window.layout_size().cx;
@@ -69,13 +68,21 @@ TEST(CandidateWindowLayout, vertical_rows_fill_and_select_across_final_width_cha
         ASSERT_EQ(window.layout_size().cx, short_width);
         assert_full_width_rows(window, config, page.candidates.size());
 
-        window.set_layout("horizontal");
+        config.layout = "horizontal";
+        window.set_config(config);
         window.update(page);
         const RECT first = window.candidate_rect_for_test(0);
         const RECT second = window.candidate_rect_for_test(1);
         ASSERT_LE(first.right, second.left);
 
-        window.set_layout("vertical");
+        config.layout = "vertical";
+        window.set_config(config);
+        window.update(page);
+        assert_full_width_rows(window, config, page.candidates.size());
+
+        // Recreating a native window must use the same configuration.
+        ASSERT_TRUE(DestroyWindow(window.hwnd_for_test()) != FALSE);
+        ASSERT_TRUE(window.ensure_created(nullptr));
         window.update(page);
         assert_full_width_rows(window, config, page.candidates.size());
         window.destroy();
@@ -94,7 +101,6 @@ TEST(CandidateWindowLayout, vertical_rows_include_width_reserved_for_page_button
     page.candidates.push_back(cxxime::Candidate{"i", ""});
     cxxime::CandidateWindow window;
     ASSERT_TRUE(window.create(nullptr, config));
-    window.set_layout(config.layout);
     window.update(page);
     const int unpaged_width = window.layout_size().cx;
 

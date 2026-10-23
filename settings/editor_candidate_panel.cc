@@ -304,7 +304,6 @@ void EditorApp::update_cand_preview() {
         candPreviewWindow_.set_config(candPreviewConfig_);
     }
 
-    candPreviewWindow_.set_layout(candPreviewConfig_.layout);
     candPreviewWindow_.set_page_info(1, 2);
 
     CandidatePage page;
