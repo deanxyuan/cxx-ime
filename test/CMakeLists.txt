@@ -219,6 +219,28 @@ add_cxxime_test(candidate_window_test
         ui/candidate_window_layout_test.cc
     DEPS cxxime-engine cxxime-ui
 )
+add_cxxime_test(background_layout_test
+    SOURCES ui/background_layout_test.cc
+    DEPS cxxime-engine cxxime-ui
+)
+add_cxxime_test(background_image_test
+    SOURCES ui/background_image_test.cc
+    DEPS cxxime-engine cxxime-ui
+)
+add_cxxime_test(background_window_test
+    SOURCES ui/background_window_test.cc
+    DEPS cxxime-engine cxxime-ui comctl32 psapi
+)
+target_include_directories(background_window_test PRIVATE ${CMAKE_SOURCE_DIR}/ui/src)
+add_cxxime_test(background_dialog_test
+    SOURCES
+        settings/background_dialog_test.cc
+        ${CMAKE_SOURCE_DIR}/settings/background_dialog.cc
+        ${CMAKE_SOURCE_DIR}/settings/settings.manifest
+    DEPS cxxime-engine cxxime-ui comctl32
+)
+target_include_directories(background_dialog_test PRIVATE ${CMAKE_SOURCE_DIR}/settings)
+set_tests_properties(background_dialog_test background_window_test PROPERTIES RUN_SERIAL TRUE)
 add_cxxime_test(candidate_quality_test
     SOURCES engine/candidate_quality_test.cc
     DEPS cxxime-engine

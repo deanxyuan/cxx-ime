@@ -105,6 +105,37 @@ TEST(ConfigWriteCoordinator, replacement_is_an_ordering_barrier) {
     DeleteFileA(user_path.c_str());
 }
 
+TEST(ConfigWriteCoordinator, legacy_replace_preserves_image_but_explicit_reset_removes_it) {
+    const std::string path = test_user_config_path("background");
+    ConfigStore store;
+    std::shared_ptr<const cxxime::Config> initial;
+    ASSERT_TRUE(initialize_store(&store, path, &initial));
+    ConfigWriteCoordinator coordinator;
+    ASSERT_TRUE(coordinator.start(&store, [](const std::shared_ptr<const cxxime::Config>&) {}));
+    cxxime::Config config;
+    config.background.enabled = true;
+    config.background.resource = std::string(64, 'a');
+    config.background.zoom = 2;
+    std::string runtime;
+    unsigned long error = 0;
+    ASSERT_TRUE(coordinator.submit(cxxime::UserConfigMutationKind::kReplace, config.to_user_json(),
+                                   &runtime, &error));
+    ASSERT_TRUE(
+        !coordinator.submit(cxxime::UserConfigMutationKind::kReplace, "null", &runtime, &error));
+    ASSERT_TRUE(coordinator.submit(cxxime::UserConfigMutationKind::kReplace, R"({"theme":"dark"})",
+                                   &runtime, &error));
+    ASSERT_EQ(read_json(path)["background"]["resource"].get<std::string>(),
+              config.background.resource);
+    ASSERT_EQ(read_json(path)["background"]["zoom"].get<double>(), 2.0);
+    config.background = {};
+    ASSERT_TRUE(coordinator.submit(cxxime::UserConfigMutationKind::kReplace, config.to_user_json(),
+                                   &runtime, &error));
+    ASSERT_TRUE(!read_json(path)["background"]["enabled"].get<bool>());
+    ASSERT_TRUE(read_json(path)["background"]["resource"].get<std::string>().empty());
+    coordinator.stop();
+    DeleteFileA(path.c_str());
+}
+
 TEST(ConfigWriteCoordinator, invalid_patch_does_not_write_or_publish) {
     const std::string user_path = test_user_config_path("invalid");
     ConfigStore store;

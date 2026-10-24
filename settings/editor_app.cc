@@ -63,7 +63,8 @@ int EditorApp::run(HINSTANCE hInst,
 
     INITCOMMONCONTROLSEX icc = {
         sizeof(icc),
-        ICC_STANDARD_CLASSES | ICC_LISTVIEW_CLASSES | ICC_HOTKEY_CLASS | ICC_LINK_CLASS};
+        ICC_STANDARD_CLASSES | ICC_LISTVIEW_CLASSES | ICC_HOTKEY_CLASS | ICC_LINK_CLASS |
+        ICC_BAR_CLASSES};
     InitCommonControlsEx(&icc);
 
     WNDCLASSEXW wc = {};
@@ -263,6 +264,8 @@ bool EditorApp::load_config() {
 
     // Keep the current form and Apply baseline intact if a reload fails.
     config_ = std::move(loaded);
+    backgroundPreview_ = load_background_image(config_.background.resource);
+    prune_background_images(config_.background.resource);
 
     // Populate controls
     SendMessageW(hThemeCombo_, CB_RESETCONTENT, 0, 0);
@@ -391,6 +394,8 @@ bool EditorApp::save_config() {
     }
 
     unsigned long error_code = ERROR_SUCCESS;
+    // A lost acknowledgement can follow a successful save; never delete a published draft.
+    backgroundDrafts_.protect(config_.background.resource);
     if (!replace_user_config(config_.to_user_json(), nullptr, &error_code)) {
         const wchar_t* message = error_code == ERROR_HOTKEY_ALREADY_REGISTERED
             ? L"全局快捷键已被其他程序占用，配置未保存。"
@@ -399,6 +404,7 @@ bool EditorApp::save_config() {
         return false;
     }
     reset_apply_state();
+    prune_background_images(config_.background.resource);
     return true;
 }
 
@@ -464,6 +470,9 @@ LRESULT CALLBACK EditorApp::wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         }
         break;
+    case WM_SETTINGCHANGE:
+        a->update_preview();
+        return 0;
     case WM_DPICHANGED: {
         float oldDpi = g_dpi;
         g_dpi = (float)LOWORD(wp) / 96.0f;
@@ -597,6 +606,7 @@ LRESULT CALLBACK EditorApp::wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             break;
         }
         const bool handled = a->handle_input_command(control_id, notification) ||
+            a->handle_background_command(control_id, notification) ||
             a->handle_candidate_command(control_id, notification) ||
             a->handle_advanced_layout_command(control_id, notification) ||
             a->handle_shortcuts_command(control_id, notification) ||

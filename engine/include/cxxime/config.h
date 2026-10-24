@@ -7,6 +7,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include <cxxime/background_config.h>
 #include <cxxime/diagnostics_config.h>
 #include <cxxime/keyboard_shortcut.h>
 
@@ -75,7 +76,8 @@ struct Config {
     std::string preedit_type = "composition";
 
     // theme
-    std::string theme = "azure";
+    std::string theme = "moon_light";
+    BackgroundConfig background;
 
     // layout (spacing and sizing)
     LayoutConfig layout_config;

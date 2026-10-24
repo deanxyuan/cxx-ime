@@ -131,6 +131,36 @@ struct EditorApplyStateTest {
         app.backupRunning_ = false;
         expect_enabled(false);
     }
+
+    void background_draft_and_revert() {
+        const auto original = app.config_.background;
+        app.reset_apply_state();
+        app.config_.background.name = "display name only.png";
+        expect_enabled(false);
+        app.config_.background.enabled = true;
+        app.config_.background.resource = std::string(64, 'a');
+        app.config_.background.fit = "contain";
+        app.config_.background.zoom = 1.75;
+        app.config_.background.x = 0.25;
+        app.config_.background.y = 0.75;
+        app.config_.background.strength = 0.8;
+        expect_enabled(true);
+        app.reset_apply_state();
+        expect_enabled(false);
+        const auto saved = app.config_.background;
+        for (double* value : {&app.config_.background.zoom, &app.config_.background.x,
+                              &app.config_.background.y, &app.config_.background.strength}) {
+            const double previous = *value;
+            *value = previous + 0.001;
+            expect_enabled(true);
+            *value = previous;
+            expect_enabled(false);
+        }
+        app.config_.background = original;
+        expect_enabled(true);
+        app.config_.background = saved;
+        expect_enabled(false);
+    }
 };
 
 } // namespace settings
@@ -149,6 +179,11 @@ TEST(EditorApplyState, TracksSavedControlTypesAndFontSelection) {
 TEST(EditorApplyState, IgnoresUnrelatedActionsAndRespectsBackupBusyState) {
     cxxime::settings::EditorApplyStateTest fixture;
     fixture.non_settings_controls_and_backup_busy();
+}
+
+TEST(EditorApplyState, TracksImageDraftAndRevertsWithoutPreviewNoise) {
+    cxxime::settings::EditorApplyStateTest fixture;
+    fixture.background_draft_and_revert();
 }
 
 RUN_ALL_TESTS()

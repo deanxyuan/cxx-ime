@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <string>
 
+#include <cxxime/background_image.h>
 #include <cxxime/config.h>
 
 namespace cxxime {
@@ -45,6 +46,8 @@ static IDWriteTextFormat* mkfmt(IDWriteFactory* f, const wchar_t* name, float sz
 }
 
 bool D2DRenderer::initialize(HWND hwnd, const Theme& theme, UINT dpi) {
+    hwnd_ = hwnd;
+    dpi_ = dpi;
     HRESULT hr = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &d2d_factory_);
     if (FAILED(hr)) {
         finalize();
@@ -113,6 +116,11 @@ bool D2DRenderer::initialize(HWND hwnd, const Theme& theme, UINT dpi) {
 }
 
 void D2DRenderer::finalize() {
+    if (background_bitmap_) {
+        background_bitmap_->Release();
+        background_bitmap_ = nullptr;
+    }
+    background_source_ = nullptr;
     for (auto* p : {&fmt_small_, &fmt_preedit_, &fmt_right_, &fmt_left_}) { if (*p) { (*p)->Release(); *p = nullptr; } }
     if (dwrite_factory_) { dwrite_factory_->Release(); dwrite_factory_ = nullptr; }
     for (auto* p : {&border_brush_, &nav_brush_, &label_brush_, &preedit_cursor_brush_,
@@ -179,8 +187,44 @@ void D2DRenderer::draw_preedit(const RenderContext& ctx) {
     }
 }
 
-void D2DRenderer::render(const RenderContext& ctx) {
-    if (!render_target_) return;
+void D2DRenderer::draw_background(const RenderContext& ctx) {
+    if (background_source_ != ctx.background_image) {
+        if (background_bitmap_) {
+            background_bitmap_->Release();
+            background_bitmap_ = nullptr;
+        }
+        background_source_ = ctx.background_image;
+        if (background_source_) {
+            render_target_->CreateBitmap(
+                D2D1::SizeU(background_source_->width, background_source_->height),
+                background_source_->pixels.data(), background_source_->width * 4,
+                D2D1::BitmapProperties(
+                    D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED)),
+                &background_bitmap_);
+        }
+    }
+    if (background_bitmap_ && ctx.background_opacity > 0 && !ctx.high_contrast) {
+        render_target_->DrawBitmap(
+            background_bitmap_,
+            D2D1::RectF(static_cast<float>(ctx.background_x), static_cast<float>(ctx.background_y),
+                        static_cast<float>(ctx.background_x + ctx.background_width),
+                        static_cast<float>(ctx.background_y + ctx.background_height)),
+            static_cast<float>(ctx.background_opacity), D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+    }
+}
+
+bool D2DRenderer::finish_draw() {
+    const HRESULT result = render_target_->EndDraw();
+    if (result == D2DERR_RECREATE_TARGET) {
+        finalize();
+    }
+    return SUCCEEDED(result);
+}
+
+bool D2DRenderer::render(const RenderContext& ctx) {
+    if (!render_target_ && (!ctx.theme || !initialize(hwnd_, *ctx.theme, dpi_))) {
+        return false;
+    }
     render_target_->BeginDraw();
     auto* cfg = ctx.layout_cfg;
     float corner = cfg ? (float)cfg->round_corner : 4.0f;
@@ -216,6 +260,7 @@ void D2DRenderer::render(const RenderContext& ctx) {
 
     D2D1_SIZE_F sz = render_target_->GetSize();
     render_target_->FillRectangle(D2D1::RectF(0,0,sz.width,sz.height), bg_brush_);
+    draw_background(ctx);
 
     auto draw_preedit_separator = [&]() {
         if (ctx.preedit.empty() || ctx.preedit_rect.right <= ctx.preedit_rect.left ||
@@ -253,7 +298,7 @@ void D2DRenderer::render(const RenderContext& ctx) {
         }
         draw_preedit_separator();
         draw_border();
-        render_target_->EndDraw(); return;
+        return finish_draw();
     }
 
     // Preedit
@@ -324,7 +369,7 @@ void D2DRenderer::render(const RenderContext& ctx) {
 
     draw_border();
 
-    render_target_->EndDraw();
+    return finish_draw();
 }
 
 void D2DRenderer::resize(int w, int h) { if (render_target_) render_target_->Resize(D2D1::SizeU(w, h)); }

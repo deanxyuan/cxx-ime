@@ -2,6 +2,8 @@
 
 #include "editor_app.h"
 
+#include <json.hpp>
+
 #include "editor_app_internal.h"
 
 namespace cxxime {
@@ -51,6 +53,12 @@ std::vector<std::string> EditorApp::settings_snapshot() const {
         values.push_back(edit_text_utf8(control));
     }
     values.push_back(config_.font_name);
+    const auto& background = config_.background;
+    // The display filename alone does not change the candidate appearance.
+    values.push_back(
+        nlohmann::json({background.enabled, background.resource, background.fit, background.zoom,
+                        background.x, background.y, background.strength})
+            .dump());
     return values;
 }
 

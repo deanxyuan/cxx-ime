@@ -23,9 +23,15 @@ void EditorApp::create_candidate_panel(HWND panel) {
     const int control_width = S(125);
     SetWindowSubclass(panel, PanelForwardProc, 1000, reinterpret_cast<DWORD_PTR>(hwnd_));
 
-    int control_x = make_aligned_label(L"主题:", column_one, label_width, top, panel);
+    int control_x = make_aligned_label(L"配色:", column_one, label_width, top, panel);
     hThemeCombo_ = make_combo(1100, control_x, top, S(160), panel);
     set_combo_drop_count(hThemeCombo_, 14);
+
+    HWND background_button = CreateWindowExW(
+        0, L"BUTTON", L"图片背景…", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+        column_two + S(24), top, S(125), kCtrlH, panel,
+        reinterpret_cast<HMENU>(static_cast<INT_PTR>(1122)), GetModuleHandleW(nullptr), nullptr);
+    SendMessageW(background_button, WM_SETFONT, reinterpret_cast<WPARAM>(get_font()), TRUE);
 
     control_x = make_aligned_label(L"字体:", column_one, label_width, top + kRowH, panel);
     hFontBtn_ = CreateWindowExW(
@@ -303,6 +309,8 @@ void EditorApp::update_cand_preview() {
     } else {
         candPreviewWindow_.set_config(candPreviewConfig_);
     }
+
+    candPreviewWindow_.set_preview_background(backgroundPreview_);
 
     candPreviewWindow_.set_page_info(1, 2);
 

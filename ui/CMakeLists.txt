@@ -1,6 +1,9 @@
 project(cxxime-ui CXX)
 
 add_library(cxxime-ui STATIC
+    src/background_image.cc
+    src/background_layout.cc
+    src/background_loader.cc
     src/candidate_window.cc
     src/d2d_renderer.cc
     src/gdi_renderer.cc
@@ -21,4 +24,7 @@ target_link_libraries(cxxime-ui PUBLIC
     dwmapi
     dwrite
     windowscodecs
+    bcrypt
+    msimg32
+    ole32
 )

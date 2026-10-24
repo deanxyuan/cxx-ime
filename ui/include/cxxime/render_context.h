@@ -5,6 +5,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -75,7 +76,15 @@ struct PreeditTextRun {
     bool focused = false;
 };
 
+struct BackgroundImage;
+
 struct RenderContext {
+    std::shared_ptr<const BackgroundImage> background_image;
+    double background_x = 0;
+    double background_y = 0;
+    double background_width = 0;
+    double background_height = 0;
+    double background_opacity = 0;
     const std::vector<CandidateRect>* rects = nullptr;
     const Theme* theme = nullptr;
     const LayoutConfig* layout_cfg = nullptr;

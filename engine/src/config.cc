@@ -174,6 +174,24 @@ static int default_preedit_active_back_color(const Config::SchemeColors& colors,
 }
 
 static void apply_config_json(Config& config, nlohmann::json& j) {
+    if (j.contains("background") && j["background"].is_object()) {
+        auto& b = j["background"];
+        auto& value = config.background;
+        load_bool(b, "enabled", value.enabled);
+        load_string(b, "resource", value.resource);
+        load_string(b, "name", value.name);
+        load_string(b, "fit", value.fit);
+        auto number = [&](const char* key, double& target, double fallback) {
+            if (b.contains(key)) {
+                target = b[key].is_number() ? b[key].get<double>() : fallback;
+            }
+        };
+        number("zoom", value.zoom, 1.0);
+        number("x", value.x, 0.5);
+        number("y", value.y, 0.5);
+        number("strength", value.strength, kDefaultBackgroundStrength);
+        normalize_background(value);
+    }
     if (j.contains("engine") && j["engine"].is_object()) {
         auto& e = j["engine"];
         load_int(e, "page_size", config.page_size);
@@ -499,6 +517,18 @@ static nlohmann::json build_config_json(const Config& config, bool include_diagn
         config.layout_config.preedit_highlight_border_width;
 
     j["theme"] = config.theme;
+    BackgroundConfig background = config.background;
+    normalize_background(background);
+    j["background"] = {
+        {"enabled", background.enabled},
+        {"resource", background.resource},
+        {"name", background.name},
+        {"fit", background.fit},
+        {"zoom", background.zoom},
+        {"x", background.x},
+        {"y", background.y},
+        {"strength", background.strength},
+    };
 
     j["status_window"]["enable"] = config.status_window.enable;
     j["status_window"]["x"] = config.status_window.x;

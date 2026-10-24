@@ -16,6 +16,9 @@ public:
     void finalize();
 
 private:
+    void draw_background(HDC dc, const RenderContext& ctx);
+    HBITMAP background_bitmap_ = nullptr;
+    std::shared_ptr<const BackgroundImage> background_source_;
     HWND hwnd_ = nullptr;
     HFONT hfont_ = nullptr;
     HFONT preedit_font_ = nullptr;

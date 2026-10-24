@@ -12,6 +12,8 @@ add_executable(cxxime-settings WIN32
     editor_app_internal.h
     editor_backup_panel.cc
     editor_candidate_panel.cc
+    editor_background.cc
+    background_dialog.cc
     editor_candidate_order.cc
     editor_controls.cc
     editor_diagnostics_panel.cc

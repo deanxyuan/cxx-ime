@@ -20,7 +20,7 @@ TEST(Config, defaults) {
     ASSERT_EQ(cfg.font_size, 14);
     ASSERT_TRUE(cfg.font_name == "Microsoft YaHei UI");
     ASSERT_TRUE(cfg.layout == "horizontal");
-    ASSERT_TRUE(cfg.theme == "azure");
+    ASSERT_TRUE(cfg.theme == "moon_light");
     ASSERT_TRUE(cfg.wubi_auto_commit);
     ASSERT_TRUE(cfg.wubi_commit_first_on_fifth_key);
     ASSERT_TRUE(cfg.wubi_restart_on_fifth_after_miss);

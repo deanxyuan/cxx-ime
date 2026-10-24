@@ -3,7 +3,10 @@
 #include "gdi_renderer.h"
 
 #include <algorithm>
+#include <cmath>
+#include <cstring>
 
+#include <cxxime/background_image.h>
 #include <cxxime/config.h>
 
 namespace cxxime {
@@ -151,6 +154,48 @@ void GdiRenderer::initialize(HWND hwnd, const Theme& theme, UINT dpi) {
                             DEFAULT_PITCH | FF_DONTCARE, theme.font_name.c_str());
 }
 
+void GdiRenderer::draw_background(HDC dc, const RenderContext& ctx) {
+    if (background_source_ != ctx.background_image) {
+        if (background_bitmap_) {
+            DeleteObject(background_bitmap_);
+            background_bitmap_ = nullptr;
+        }
+        background_source_ = ctx.background_image;
+        if (background_source_) {
+            BITMAPINFO info{};
+            info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+            info.bmiHeader.biWidth = static_cast<LONG>(background_source_->width);
+            info.bmiHeader.biHeight = -static_cast<LONG>(background_source_->height);
+            info.bmiHeader.biPlanes = 1;
+            info.bmiHeader.biBitCount = 32;
+            info.bmiHeader.biCompression = BI_RGB;
+            void* pixels = nullptr;
+            background_bitmap_ = CreateDIBSection(dc, &info, DIB_RGB_COLORS, &pixels, nullptr, 0);
+            if (pixels) {
+                std::memcpy(pixels, background_source_->pixels.data(),
+                            background_source_->pixels.size());
+            }
+        }
+    }
+    if (!background_bitmap_ || ctx.background_opacity <= 0 || ctx.high_contrast) {
+        return;
+    }
+    HDC source = CreateCompatibleDC(dc);
+    if (!source) {
+        return;
+    }
+    const auto old = SelectObject(source, background_bitmap_);
+    BLENDFUNCTION blend{AC_SRC_OVER, 0, static_cast<BYTE>(std::floor(ctx.background_opacity * 255)),
+                        AC_SRC_ALPHA};
+    AlphaBlend(dc, static_cast<int>(std::round(ctx.background_x)),
+               static_cast<int>(std::round(ctx.background_y)),
+               (std::max)(1, static_cast<int>(std::round(ctx.background_width))),
+               (std::max)(1, static_cast<int>(std::round(ctx.background_height))), source, 0, 0,
+               background_source_->width, background_source_->height, blend);
+    SelectObject(source, old);
+    DeleteDC(source);
+}
+
 void GdiRenderer::render(HDC hdc, const RECT& clip, const RenderContext& ctx) {
     HDC target_dc = hdc;
     HDC buffer_dc = nullptr;
@@ -179,6 +224,7 @@ void GdiRenderer::render(HDC hdc, const RECT& clip, const RenderContext& ctx) {
     }
 
     FillRect(target_dc, &clip, bg_brush_);
+    draw_background(target_dc, ctx);
     auto* cfg = ctx.layout_cfg;
     int margin = cfg ? cfg->margin_x : 12;
     int corner = cfg ? cfg->round_corner : 4;
@@ -304,6 +350,11 @@ void GdiRenderer::render(HDC hdc, const RECT& clip, const RenderContext& ctx) {
 }
 
 void GdiRenderer::finalize() {
+    if (background_bitmap_) {
+        DeleteObject(background_bitmap_);
+        background_bitmap_ = nullptr;
+    }
+    background_source_ = nullptr;
     if (hfont_)        { DeleteObject(hfont_); hfont_ = nullptr; }
     if (preedit_font_) { DeleteObject(preedit_font_); preedit_font_ = nullptr; }
     if (nav_font_)     { DeleteObject(nav_font_); nav_font_ = nullptr; }

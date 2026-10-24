@@ -10,6 +10,7 @@
 
 #include <windows.h>
 
+#include <cxxime/background_loader.h>
 #include <cxxime/candidate.h>
 #include <cxxime/candidate_presentation.h>
 #include <cxxime/config.h>
@@ -41,6 +42,10 @@ public:
     void reset_placement();
     bool is_visible() const;
     void set_config(const Config& config);
+    // Settings supplies an already decoded draft; runtime windows use the async loader.
+    void set_preview_background(std::shared_ptr<const BackgroundImage> image);
+    // Settings scales the rendered view, never the candidate layout or stored image zoom.
+    void draw_preview(HDC dc, const RECT& bounds);
     void update(const CandidatePresentationPage& page);
     void update(const CandidatePage& page);
     void set_preedit(const std::string& preedit);
@@ -66,6 +71,7 @@ public:
     bool get_window_rect(RECT* rect) const;
     HWND native_handle() const { return hwnd_; }
     HWND hwnd_for_test() const { return hwnd_; }
+    const RenderContext& render_context_for_test() const { return render_ctx_; }
     RECT page_button_rect_for_test(CandidatePageDirection direction) const {
         return direction == CandidatePageDirection::Previous ? render_ctx_.prev_button_rect
                                                              : render_ctx_.next_button_rect;
@@ -88,6 +94,8 @@ public:
     }
 
 private:
+    void configure_background();
+    void update_background(int width, int height);
     void rebuild_render_context(const LayoutConfig& cfg, int window_width);
     bool refresh_dpi_scale();
     bool refresh_preedit_cursor_width();
@@ -126,6 +134,10 @@ private:
     Theme render_theme_;
     RenderBackend backend_ = RenderBackend::GDI;
     const Config* config_ = nullptr;
+    BackgroundLoader background_loader_;
+    std::shared_ptr<const BackgroundImage> background_image_;
+    std::shared_ptr<const BackgroundImage> preview_background_;
+    bool background_chosen_ = false;
 
     class GdiRenderer;  GdiRenderer* gdi_renderer_ = nullptr;
     class D2DRenderer; D2DRenderer* d2d_renderer_ = nullptr;

@@ -10,6 +10,7 @@
 
 #include <dwmapi.h>
 
+#include <cxxime/background_layout.h>
 #include <cxxime/config.h>
 #include <cxxime/renderer.h>
 #include <cxxime/window_position.h>
@@ -213,6 +214,7 @@ CandidateWindow::~CandidateWindow() {
 bool CandidateWindow::create(HWND owner, const Config& config) {
     if (hwnd_ && IsWindow(hwnd_)) {
         config_ = &config;
+configure_background();
         return true;
     }
     if (hwnd_) {
@@ -220,6 +222,7 @@ bool CandidateWindow::create(HWND owner, const Config& config) {
     }
 
     config_ = &config;
+    configure_background();
     WNDCLASSEXW wc = {};
     wc.cbSize = sizeof(wc);
     wc.lpfnWndProc = WndProc;
@@ -430,6 +433,7 @@ void CandidateWindow::show() {
     }
 }
 void CandidateWindow::hide() {
+background_chosen_ = false;
     skip_next_show_redraw_ = false;
     clear_preedit_cursor_emphasis();
     if (hwnd_ && IsWindowVisible(hwnd_))
@@ -508,8 +512,79 @@ bool CandidateWindow::get_window_rect(RECT* rect) const {
     ScopedDpiAwarenessContext dpi_context(GetWindowDpiAwarenessContext(hwnd_));
     return rect && hwnd_ && IsWindow(hwnd_) && GetWindowRect(hwnd_, rect) != FALSE;
 }
+void CandidateWindow::configure_background() {
+    const auto& background = config_->background;
+    background_loader_.request(background.enabled ? background.resource : std::string{}, true);
+    background_image_.reset();
+    render_ctx_.background_image = nullptr;
+    background_chosen_ = false;
+}
+
+void CandidateWindow::set_preview_background(std::shared_ptr<const BackgroundImage> image) {
+    preview_background_ = std::move(image);
+    background_chosen_ = false;
+}
+
+void CandidateWindow::draw_preview(HDC dc, const RECT& bounds) {
+    if (!gdi_renderer_ || window_width_ <= 0 || window_height_ <= 0) {
+        return;
+    }
+    HDC buffer = CreateCompatibleDC(dc);
+    HBITMAP bitmap = CreateCompatibleBitmap(dc, window_width_, window_height_);
+    if (buffer && bitmap) {
+        auto old = SelectObject(buffer, bitmap);
+        RECT source{0, 0, window_width_, window_height_};
+        gdi_renderer_->render(buffer, source, render_ctx_);
+        const int saved = SaveDC(dc);
+        SetStretchBltMode(dc, HALFTONE);
+        SetBrushOrgEx(dc, 0, 0, nullptr);
+        const int preview_width = bounds.right - bounds.left;
+        const int preview_height = bounds.bottom - bounds.top;
+        const int corner_width = scaled_cfg_.round_corner_ex * preview_width / window_width_;
+        const int corner_height = scaled_cfg_.round_corner_ex * preview_height / window_height_;
+        HRGN region = CreateRoundRectRgn(bounds.left, bounds.top, bounds.right + 1,
+                                         bounds.bottom + 1, corner_width, corner_height);
+        ExtSelectClipRgn(dc, region, RGN_AND);
+        StretchBlt(dc, bounds.left, bounds.top, preview_width, preview_height, buffer, 0, 0,
+                   window_width_, window_height_, SRCCOPY);
+        RestoreDC(dc, saved);
+        DeleteObject(region);
+        SelectObject(buffer, old);
+    }
+    if (bitmap) {
+        DeleteObject(bitmap);
+    }
+    if (buffer) {
+        DeleteDC(buffer);
+    }
+}
+
+void CandidateWindow::update_background(int width, int height) {
+    const auto& background = config_->background;
+    if (!background_chosen_) {
+        background_image_ = preview_background_ ? preview_background_
+                                                : background_loader_.ready(background.resource);
+        background_chosen_ = true;
+    }
+    render_ctx_.background_image =
+        background.enabled && !render_ctx_.high_contrast ? background_image_ : nullptr;
+    render_ctx_.background_opacity = background.strength;
+    if (!render_ctx_.background_image) {
+        return;
+    }
+    const double inset = scaled_cfg_.border_width + scaled_cfg_.round_corner_ex;
+    const auto target = background_target(width, height, inset, background);
+    const auto rect = background_placement(background_image_->width, background_image_->height,
+                                           target, background);
+    render_ctx_.background_x = rect.x;
+    render_ctx_.background_y = rect.y;
+    render_ctx_.background_width = rect.width;
+    render_ctx_.background_height = rect.height;
+}
+
 void CandidateWindow::set_config(const Config& config) {
     config_ = &config;
+    configure_background();
     refresh_preedit_cursor_width();
     set_theme(build_theme_from_config(config));
     RenderBackend next_backend = config.render_backend != "gdi" ? RenderBackend::D2D : RenderBackend::GDI;
@@ -534,7 +609,7 @@ void CandidateWindow::set_theme(const Theme& t) {
         gdi_renderer_->initialize(hwnd_, render_theme_, GetDpiForWindow(hwnd_));
     }
     if (hwnd_)
-        RedrawWindow(hwnd_, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW | RDW_ALLCHILDREN);
+        RedrawWindow(hwnd_, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN);
 }
 void CandidateWindow::set_render_backend(RenderBackend b) {
     skip_next_show_redraw_ = false;
@@ -1108,6 +1183,7 @@ void CandidateWindow::update(const CandidatePage& page) {
     }
     if (d2d_renderer_) d2d_renderer_->resize(lr.width, lr.height);
     update_window_region(lr.width, lr.height, cfg.round_corner_ex);
+    update_background(lr.width, lr.height);
     RedrawWindow(hwnd_, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE);
 }
 
@@ -1121,10 +1197,10 @@ LRESULT CALLBACK CandidateWindow::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM
     case WM_PAINT: {
         PAINTSTRUCT ps; HDC hdc = BeginPaint(hwnd, &ps); RECT rc; GetClientRect(hwnd, &rc);
         if (self && self->gdi_renderer_) {
-            if (self->backend_ == RenderBackend::D2D && self->d2d_renderer_)
-                self->d2d_renderer_->render(self->render_ctx_);
-            else
+            if (self->backend_ != RenderBackend::D2D || !self->d2d_renderer_ ||
+                !self->d2d_renderer_->render(self->render_ctx_)) {
                 self->gdi_renderer_->render(hdc, rc, self->render_ctx_);
+            }
         }
         EndPaint(hwnd, &ps); return 0;
     }
@@ -1260,6 +1336,10 @@ LRESULT CALLBACK CandidateWindow::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM
         return 0;
     case WM_SETTINGCHANGE:
         if (self) {
+            if (self->render_ctx_.high_contrast != system_high_contrast_enabled()) {
+                self->set_theme(self->theme_);
+                self->recreate_renderers_for_dpi();
+            }
             self->refresh_preedit_cursor_width();
             self->update(self->page_);
             if (self->layout_changed_cb_) {

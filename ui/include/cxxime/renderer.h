@@ -15,11 +15,18 @@ class D2DRenderer {
 public:
     bool initialize(HWND hwnd, const Theme& theme, UINT dpi);
     void finalize();
-    void render(const RenderContext& ctx);
+    bool render(const RenderContext& ctx);
     void resize(int width, int height);
 
 private:
+    bool finish_draw();
+    void draw_background(const RenderContext& ctx);
     void draw_preedit(const RenderContext& ctx);
+
+    ID2D1Bitmap* background_bitmap_ = nullptr;
+    std::shared_ptr<const BackgroundImage> background_source_;
+    HWND hwnd_ = nullptr;
+    UINT dpi_ = USER_DEFAULT_SCREEN_DPI;
 
     ID2D1Factory* d2d_factory_ = nullptr;
     ID2D1HwndRenderTarget* render_target_ = nullptr;

@@ -59,6 +59,8 @@ private:
     void create_about_panel(HWND panel, int panel_width);
     bool handle_input_command(int control_id, int notification);
     bool handle_candidate_command(int control_id, int notification);
+    bool handle_background_command(int control_id, int notification);
+    void choose_background();
     bool handle_advanced_layout_command(int control_id, int notification);
     bool handle_shortcuts_command(int control_id, int notification);
     bool handle_dictionary_command(int control_id, int notification);
@@ -287,6 +289,8 @@ private:
     std::string current_user_dict_path() const;
 
     // Preview
+    BackgroundDraftResources backgroundDrafts_;
+    std::shared_ptr<const BackgroundImage> backgroundPreview_;
     cxxime::CandidateWindow candPreviewWindow_;
     cxxime::Config candPreviewConfig_;
     bool candPreviewCreated_ = false;
