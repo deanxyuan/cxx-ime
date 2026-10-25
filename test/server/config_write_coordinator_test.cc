@@ -105,7 +105,7 @@ TEST(ConfigWriteCoordinator, replacement_is_an_ordering_barrier) {
     DeleteFileA(user_path.c_str());
 }
 
-TEST(ConfigWriteCoordinator, legacy_replace_preserves_image_but_explicit_reset_removes_it) {
+TEST(ConfigWriteCoordinator, image_background_round_trips_and_resets_with_settings) {
     const std::string path = test_user_config_path("background");
     ConfigStore store;
     std::shared_ptr<const cxxime::Config> initial;
@@ -114,24 +114,27 @@ TEST(ConfigWriteCoordinator, legacy_replace_preserves_image_but_explicit_reset_r
     ASSERT_TRUE(coordinator.start(&store, [](const std::shared_ptr<const cxxime::Config>&) {}));
     cxxime::Config config;
     config.background.enabled = true;
-    config.background.resource = std::string(64, 'a');
-    config.background.zoom = 2;
+    config.background.source = std::string(64, 'a');
+    config.background.source_width = 4000;
+    config.background.source_height = 3000;
+    config.background.horizontal.zoom = 2;
+    config.background.vertical.zoom = 3;
     std::string runtime;
     unsigned long error = 0;
     ASSERT_TRUE(coordinator.submit(cxxime::UserConfigMutationKind::kReplace, config.to_user_json(),
                                    &runtime, &error));
+    cxxime::Config loaded;
+    ASSERT_TRUE(loaded.load_runtime_json(runtime));
+    ASSERT_EQ(loaded.background.horizontal.zoom, 2.0);
+    ASSERT_EQ(loaded.background.vertical.zoom, 3.0);
     ASSERT_TRUE(
         !coordinator.submit(cxxime::UserConfigMutationKind::kReplace, "null", &runtime, &error));
-    ASSERT_TRUE(coordinator.submit(cxxime::UserConfigMutationKind::kReplace, R"({"theme":"dark"})",
-                                   &runtime, &error));
-    ASSERT_EQ(read_json(path)["background"]["resource"].get<std::string>(),
-              config.background.resource);
-    ASSERT_EQ(read_json(path)["background"]["zoom"].get<double>(), 2.0);
+    ASSERT_EQ(read_json(path)["background"]["source"].get<std::string>(), config.background.source);
     config.background = {};
     ASSERT_TRUE(coordinator.submit(cxxime::UserConfigMutationKind::kReplace, config.to_user_json(),
                                    &runtime, &error));
     ASSERT_TRUE(!read_json(path)["background"]["enabled"].get<bool>());
-    ASSERT_TRUE(read_json(path)["background"]["resource"].get<std::string>().empty());
+    ASSERT_TRUE(read_json(path)["background"]["source"].get<std::string>().empty());
     coordinator.stop();
     DeleteFileA(path.c_str());
 }

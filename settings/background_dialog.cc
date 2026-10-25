@@ -35,9 +35,22 @@ constexpr int kMonitorReserve = 306;
 class BackgroundDialog {
 public:
     Config config;
+    Config preview_config;
     BackgroundDraftResources drafts;
     BackgroundImport imported;
     BackgroundImport pending;
+    BackgroundPreparation pending_prepared;
+    std::shared_ptr<const BackgroundImage> horizontal;
+    std::shared_ptr<const BackgroundImage> vertical;
+    BackgroundConfig requested_config;
+    std::wstring requested_source;
+    unsigned revision = 0;
+    unsigned running_revision = 0;
+    unsigned enabled_revision = 0;
+    unsigned running_enabled_revision = 0;
+    bool requested = false;
+    bool debouncing = false;
+    bool needs_preparation = false;
     std::wstring pending_source;
     std::wstring error;
     HWND hwnd = nullptr;
@@ -67,6 +80,11 @@ public:
             worker.join();
         }
         drafts.add(pending);
+        for (const auto& resource : pending_prepared.resources) {
+            drafts.add(resource);
+        }
+        pending = {};
+        pending_prepared = {};
         preview.destroy();
         if (picture) {
             DeleteObject(picture);
@@ -77,6 +95,40 @@ public:
     }
 
     int px(int value) const { return MulDiv(value, scale, USER_DEFAULT_SCREEN_DPI); }
+
+    BackgroundView& view() {
+        return config.layout == "vertical" ? config.background.vertical
+                                           : config.background.horizontal;
+    }
+
+    const BackgroundView& view() const {
+        return config.layout == "vertical" ? config.background.vertical
+                                           : config.background.horizontal;
+    }
+
+    bool can_accept() const {
+        if (selecting()) {
+            return !config.background.enabled && enabled_revision != running_enabled_revision;
+        }
+        return !config.background.enabled || !needs_preparation;
+    }
+
+    bool selecting() const {
+        return !ready && (!pending_source.empty() || (requested && !requested_source.empty()));
+    }
+
+    void framing_changed() {
+        view().resource.clear();
+        needs_preparation = true;
+        requested_config = config.background;
+        requested_source.clear();
+        requested = true;
+        debouncing = true;
+        ready = false;
+        error.clear();
+        ++revision;
+        SetTimer(hwnd, 2, 120, nullptr);
+    }
 
     HWND control(const wchar_t* type, const wchar_t* text, int id, int x, int y, int width,
                  int height, DWORD style = 0) {
@@ -100,17 +152,16 @@ public:
                 WS_TABSTOP | WS_GROUP | BS_AUTORADIOBUTTON | BS_PUSHLIKE);
         control(L"BUTTON", L"完整显示", kContain, 100, 52, 96, 28,
                 BS_AUTORADIOBUTTON | BS_PUSHLIKE);
-        control(L"STATIC", L"预览", 0, 432, 56, 44, 24);
         scene = control(L"COMBOBOX", L"", kScene, 480, 52, 136, 100,
                         WS_TABSTOP | WS_GROUP | CBS_DROPDOWNLIST | WS_VSCROLL);
-        for (const wchar_t* text : {L"横排", L"竖排"}) {
+        for (const wchar_t* text : {L"横排取景", L"竖排取景"}) {
             SendMessageW(scene, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(text));
         }
         SendMessageW(scene, CB_SETCURSEL, config.layout == "vertical" ? 1 : 0, 0);
         canvas = control(L"STATIC", L"图片取景与候选效果预览", 3111, 16, kCanvasTop, 600,
                          canvas_height, SS_NOTIFY | WS_TABSTOP);
         SetWindowSubclass(canvas, preview_proc, 1, reinterpret_cast<DWORD_PTR>(this));
-        state = control(L"STATIC", L"", 0, 16, 100 + canvas_height, 600, 24, SS_ENDELLIPSIS);
+        state = control(L"STATIC", L"", 3112, 16, 100 + canvas_height, 600, 24, SS_ENDELLIPSIS);
         control(L"STATIC", L"缩放", 0, 16, 132 + canvas_height, 60, 26);
         zoom = control(TRACKBAR_CLASSW, L"缩放", kZoom, 76, 130 + canvas_height, 360, 30,
                        WS_TABSTOP | TBS_HORZ);
@@ -137,7 +188,7 @@ public:
         return background_target(size.cx, size.cy,
                                  static_cast<int>(config.layout_config.border_width * dpi) +
                                      static_cast<int>(config.layout_config.round_corner_ex * dpi),
-                                 config.background);
+                                 view());
     }
 
     RECT preview_bounds() const {
@@ -157,7 +208,7 @@ public:
         return {x, y, x + width, y + height};
     }
 
-    void refresh(bool appearance_changed = false) {
+    void refresh() {
         const int selected = static_cast<int>(SendMessageW(scene, CB_GETCURSEL, 0, 0));
         config.layout = selected == 1 ? "vertical" : "horizontal";
         if (!preview.is_created()) {
@@ -168,10 +219,20 @@ public:
             SetParent(window, canvas);
             SetWindowLongPtrW(window, GWL_STYLE, WS_CHILD);
             SetWindowLongPtrW(window, GWL_EXSTYLE, 0);
-        } else if (appearance_changed) {
-            preview.set_config(config);
         }
-        preview.set_preview_background(imported.image);
+        preview_config = config;
+        auto pixels = config.layout == "vertical" ? vertical : horizontal;
+        if (view().resource.empty() && imported.image) {
+            pixels = imported.image;
+            auto& frame = config.layout == "vertical" ? preview_config.background.vertical
+                                                      : preview_config.background.horizontal;
+            frame.left = frame.top = 0;
+            frame.width = config.background.source_width;
+            frame.height = config.background.source_height;
+        }
+        // Configuration and pixels are switched together, including a changed orientation.
+        preview.set_config(preview_config);
+        preview.set_preview_background(pixels);
         CandidatePage page;
         page.highlighted = 0;
         for (const char* word : {u8"你", u8"呢", u8"年", u8"能", u8"那", u8"南", u8"内"}) {
@@ -196,23 +257,26 @@ public:
                                     : L"拖动图片，滚轮缩放";
         SetWindowTextW(state, status);
         SendMessageW(enabled, BM_SETCHECK, b.enabled ? BST_CHECKED : BST_UNCHECKED, 0);
-        EnableWindow(enabled, ready && imported.image != nullptr);
-        EnableWindow(GetDlgItem(hwnd, kChoose), ready);
+        EnableWindow(enabled, b.enabled || imported.image != nullptr || horizontal || vertical);
+        EnableWindow(GetDlgItem(hwnd, kChoose), TRUE);
         SetWindowTextW(GetDlgItem(hwnd, kChoose), imported.image ? L"更换图片…" : L"选择图片…");
-        EnableWindow(GetDlgItem(hwnd, IDOK), ready);
-        for (int id : {kCover, kContain, kZoom, kStrength}) {
-            EnableWindow(GetDlgItem(hwnd, id), ready && b.enabled && imported.image != nullptr);
+        EnableWindow(GetDlgItem(hwnd, IDOK), can_accept());
+        for (int id : {kCover, kContain, kZoom}) {
+            EnableWindow(GetDlgItem(hwnd, id),
+                         !selecting() && b.enabled && imported.image != nullptr);
         }
-        CheckRadioButton(hwnd, kCover, kContain, b.fit == "contain" ? kContain : kCover);
+        EnableWindow(strength, b.enabled && (imported.image || horizontal || vertical));
+        CheckRadioButton(hwnd, kCover, kContain, view().fit == "contain" ? kContain : kCover);
         const auto name = std::filesystem::u8path(b.name).wstring();
         SetWindowTextW(filename, name.c_str());
         SendMessageW(strength, TBM_SETPOS, TRUE, static_cast<LPARAM>(std::round(b.strength * 100)));
         SetWindowTextW(
             strength_percent,
             (std::to_wstring(static_cast<int>(std::round(b.strength * 100))) + L"%").c_str());
-        SendMessageW(zoom, TBM_SETPOS, TRUE, static_cast<LPARAM>(std::round(b.zoom * 100)));
-        SetWindowTextW(
-            percent, (std::to_wstring(static_cast<int>(std::round(b.zoom * 100))) + L"%").c_str());
+        SendMessageW(zoom, TBM_SETPOS, TRUE, static_cast<LPARAM>(std::round(view().zoom * 100)));
+        const auto zoom_text =
+            std::to_wstring(static_cast<int>(std::round(view().zoom * 100))) + L"%";
+        SetWindowTextW(percent, zoom_text.c_str());
     }
 
     void update_picture() {
@@ -251,8 +315,8 @@ public:
         HIGHCONTRASTW contrast{sizeof(contrast)};
         SystemParametersInfoW(SPI_GETHIGHCONTRAST, sizeof(contrast), &contrast, 0);
         if (picture && config.background.enabled && !(contrast.dwFlags & HCF_HIGHCONTRASTON)) {
-            const auto image = background_placement(imported.image->width, imported.image->height,
-                                                    target(), config.background);
+            const auto image = background_placement(
+                config.background.source_width, config.background.source_height, target(), view());
             // Use the exact candidate-to-canvas transform, including layout scaling. Do not
             // refit the image to the canvas: panning and zooming must keep the frame stationary.
             const double sx = static_cast<double>(bounds.right - bounds.left) / size.cx;
@@ -278,19 +342,27 @@ public:
     }
 
     void change_zoom(double next, double x, double y) {
-        if (ready && config.background.enabled && imported.image) {
-            zoom_background(config.background, next, imported.image->width, imported.image->height,
-                            target(), x, y);
+        if (!selecting() && config.background.enabled && imported.image) {
+            const auto before = view();
+            zoom_background(view(), next, config.background.source_width,
+                            config.background.source_height, target(), x, y);
+            if (!same_background_framing(before, view())) {
+                framing_changed();
+            }
             refresh();
         }
     }
 
     void pan(double dx, double dy) {
-        if (ready && config.background.enabled && imported.image) {
+        if (!selecting() && config.background.enabled && imported.image) {
+            const auto before = view();
             const auto box = target();
-            const auto image = background_placement(imported.image->width, imported.image->height,
-                                                    box, config.background);
-            pan_background(config.background, box, image, dx, dy);
+            const auto image = background_placement(config.background.source_width,
+                                                    config.background.source_height, box, view());
+            pan_background(view(), box, image, dx, dy);
+            if (!same_background_framing(before, view())) {
+                framing_changed();
+            }
             refresh();
         }
     }
@@ -346,14 +418,15 @@ public:
         case WM_GETDLGCODE:
             return DLGC_WANTARROWS | DLGC_WANTCHARS;
         case WM_SETCURSOR:
-            SetCursor(LoadCursorW(nullptr, self.ready && self.config.background.enabled &&
+            SetCursor(LoadCursorW(nullptr, !self.selecting() && self.config.background.enabled &&
                                                    self.imported.image
                                                ? IDC_SIZEALL
                                                : IDC_ARROW));
             return TRUE;
         case WM_LBUTTONDOWN:
             SetFocus(window);
-            self.dragging = self.ready && self.config.background.enabled && self.imported.image;
+            self.dragging =
+                !self.selecting() && self.config.background.enabled && self.imported.image;
             if (self.dragging) {
                 SetCapture(window);
             }
@@ -388,7 +461,7 @@ public:
             if (PtInRect(&area, point)) {
                 const auto bounds = self.preview_bounds();
                 const auto size = self.preview.layout_size();
-                self.change_zoom(self.config.background.zoom *
+                self.change_zoom(self.view().zoom *
                                      std::pow(1.1, GET_WHEEL_DELTA_WPARAM(wp) / 120.0),
                                  static_cast<double>(point.x - bounds.left) * size.cx /
                                      (bounds.right - bounds.left),
@@ -414,11 +487,11 @@ public:
                 break;
             case VK_ADD:
             case VK_OEM_PLUS:
-                self.change_zoom(self.config.background.zoom * 1.1, size.cx / 2.0, size.cy / 2.0);
+                self.change_zoom(self.view().zoom * 1.1, size.cx / 2.0, size.cy / 2.0);
                 break;
             case VK_SUBTRACT:
             case VK_OEM_MINUS:
-                self.change_zoom(self.config.background.zoom / 1.1, size.cx / 2.0, size.cy / 2.0);
+                self.change_zoom(self.view().zoom / 1.1, size.cx / 2.0, size.cy / 2.0);
                 break;
             default:
                 return DefSubclassProc(window, message, wp, lp);
@@ -479,28 +552,55 @@ public:
     }
 
     void start_load(const std::wstring& source) {
+        debouncing = false;
+        KillTimer(hwnd, 2);
+        requested_config = config.background;
+        requested_source = source;
+        requested = true;
+        ++revision;
+        launch();
+    }
+
+    void launch() {
         if (worker.joinable()) {
             return;
         }
+        const auto source = requested_source;
+        const auto snapshot = requested_config;
+        const bool load_source =
+            !source.empty() || !imported.image || imported.resource != snapshot.source;
+        requested = false;
+        running_revision = revision;
+        running_enabled_revision = enabled_revision;
         pending = {};
+        pending_prepared = {};
         pending_source = source;
         completed.store(false, std::memory_order_relaxed);
         ready = false;
         error.clear();
         refresh();
-        const auto resource = config.background.resource;
         try {
-            worker = std::thread([this, source, resource]() {
+            worker = std::thread([this, source, snapshot, load_source]() {
                 try {
-                    if (source.empty()) {
-                        pending.resource = resource;
-                        pending.image = load_background_image(resource);
-                        pending.error = L"图片不可用，请重新选择。";
-                    } else {
-                        pending = import_background_image(source);
+                    auto next = snapshot;
+                    if (load_source) {
+                        pending = source.empty() ? load_background_source(next.source)
+                                                 : import_background_source(source);
+                    }
+                    if (!source.empty() && pending.image) {
+                        next = {};
+                        next.enabled = true;
+                        next.strength = snapshot.strength;
+                        next.source = pending.resource;
+                        next.source_width = pending.image->source_width;
+                        next.source_height = pending.image->source_height;
+                        next.name = std::filesystem::path(source).filename().u8string();
+                    }
+                    if (source.empty() || pending.image) {
+                        pending_prepared = prepare_background(next);
                     }
                 } catch (...) {
-                    pending.error = L"无法处理图片，请选择较小的静态 PNG 或 JPEG。";
+                    pending_prepared.error = L"无法处理图片，请选择较小的静态 PNG 或 JPEG。";
                 }
                 completed.store(true, std::memory_order_release);
             });
@@ -519,30 +619,49 @@ public:
         KillTimer(hwnd, 1);
         worker.join();
         drafts.add(pending);
-        if (pending.image) {
-            imported = std::move(pending);
-            update_picture();
-            if (!pending_source.empty()) {
-                const double strength = config.background.strength;
-                config.background = {};
-                config.background.enabled = true;
-                config.background.strength = strength;
-                config.background.name =
-                    std::filesystem::path(pending_source).filename().u8string();
+        for (const auto& resource : pending_prepared.resources) {
+            drafts.add(resource);
+        }
+        if (running_revision == revision) {
+            const bool selected = !pending_source.empty();
+            const bool success = pending_prepared.error.empty() && pending_prepared.horizontal &&
+                                 pending_prepared.vertical;
+            // A failed replacement leaves the entire existing draft intact.
+            if (!selected || success) {
+                if (pending.image) {
+                    imported = pending;
+                    update_picture();
+                }
+                if (success) {
+                    const double strength = config.background.strength;
+                    const bool enabled = config.background.enabled;
+                    config.background = pending_prepared.config;
+                    config.background.strength = strength;
+                    config.background.enabled =
+                        selected && enabled_revision == running_enabled_revision ? true : enabled;
+                    horizontal = pending_prepared.horizontal;
+                    vertical = pending_prepared.vertical;
+                    needs_preparation = false;
+                } else {
+                    // Missing source must not hide an intact published derivative.
+                    horizontal = pending_prepared.horizontal;
+                    vertical = pending_prepared.vertical;
+                }
             }
-            config.background.resource = imported.resource;
-        } else {
-            error = pending.error;
+            error = !pending.error.empty() ? pending.error : pending_prepared.error;
         }
         pending = {};
-        ready = true;
-        refresh(true);
+        pending_prepared = {};
+        ready = !requested;
+        pending_source.clear();
+        if (requested && !debouncing) {
+            launch();
+        }
+        refresh();
+        drafts.discard_unused(config.background);
     }
 
     void choose_file() {
-        if (!ready) {
-            return;
-        }
         wchar_t file[32768]{};
         OPENFILENAMEW dialog{sizeof(dialog)};
         dialog.hwndOwner = hwnd;
@@ -580,6 +699,12 @@ public:
         case WM_TIMER:
             if (wp == 1 && self->worker.joinable()) {
                 self->finish_load();
+            } else if (wp == 2) {
+                KillTimer(hwnd, 2);
+                self->debouncing = false;
+                if (self->requested) {
+                    self->launch();
+                }
             }
             return 0;
         case WM_HSCROLL: {
@@ -594,15 +719,18 @@ public:
                 }
                 return 0;
             }
+            const auto position = SendMessageW(self->zoom, TBM_GETPOS, 0, 0);
+            if (position == static_cast<LRESULT>(std::round(self->view().zoom * 100))) {
+                return 0;
+            }
             const auto size = self->preview.layout_size();
-            self->change_zoom(SendMessageW(self->zoom, TBM_GETPOS, 0, 0) / 100.0, size.cx / 2.0,
-                              size.cy / 2.0);
+            self->change_zoom(position / 100.0, size.cx / 2.0, size.cy / 2.0);
             return 0;
         }
         case WM_COMMAND:
             switch (LOWORD(wp)) {
             case IDOK:
-                if (self->ready) {
+                if (self->can_accept()) {
                     self->accepted = true;
                     DestroyWindow(hwnd);
                 }
@@ -614,22 +742,35 @@ public:
                 self->choose_file();
                 return 0;
             case kEnabled:
-                if (self->ready && self->imported.image) {
+                if (IsWindowEnabled(self->enabled)) {
+                    ++self->enabled_revision;
                     self->config.background.enabled =
                         SendMessageW(self->enabled, BM_GETCHECK, 0, 0) == BST_CHECKED;
-                    self->refresh(true);
+                    if (!self->selecting() && self->config.background.enabled &&
+                        (!self->horizontal || !self->vertical || self->needs_preparation)) {
+                        self->needs_preparation = true;
+                        self->start_load({});
+                    }
+                    self->refresh();
                 }
                 return 0;
             case kCover:
-            case kContain:
-                if (!self->ready || !self->config.background.enabled || !self->imported.image) {
+            case kContain: {
+                if (self->selecting() || !self->config.background.enabled ||
+                    !self->imported.image) {
                     return 0;
                 }
-                self->config.background.fit = LOWORD(wp) == kCover ? "cover" : "contain";
-                self->config.background.zoom = 1;
-                self->config.background.x = self->config.background.y = 0.5;
+                const auto before = self->view();
+                self->view().fit = LOWORD(wp) == kCover ? "cover" : "contain";
+                self->view().zoom = 1;
+                self->view().x = self->view().y = 0.5;
+                if (!same_background_framing(before, self->view()) ||
+                    self->view().resource.empty()) {
+                    self->framing_changed();
+                }
                 self->refresh();
                 return 0;
+            }
             case kScene:
                 self->refresh();
                 return 0;
@@ -680,7 +821,7 @@ std::optional<BackgroundEdit> edit_background(HWND owner, const Config& config,
         if (!hwnd) {
             return {};
         }
-        if (!source.empty() || !config.background.resource.empty()) {
+        if (!source.empty() || !config.background.source.empty()) {
             dialog.start_load(source);
         } else {
             dialog.ready = true;
@@ -708,8 +849,26 @@ std::optional<BackgroundEdit> edit_background(HWND owner, const Config& config,
             dialog.worker.join();
         }
         if (dialog.accepted) {
-            dialog.imported.created = dialog.drafts.protect(dialog.imported.resource);
-            result = BackgroundEdit{dialog.config.background, dialog.imported};
+            BackgroundEdit edited;
+            edited.config = dialog.config.background;
+            edited.horizontal = dialog.horizontal;
+            edited.vertical = dialog.vertical;
+            for (bool source_resource : {true, false}) {
+                const std::vector<std::string> ids =
+                    source_resource ? std::vector<std::string>{edited.config.source}
+                                    : std::vector<std::string>{edited.config.horizontal.resource,
+                                                               edited.config.vertical.resource};
+                for (const auto& id : ids) {
+                    BackgroundImport resource;
+                    resource.resource = id;
+                    resource.source = source_resource;
+                    resource.created = dialog.drafts.protect(id);
+                    if (resource.created) {
+                        edited.resources.push_back(std::move(resource));
+                    }
+                }
+            }
+            result = std::move(edited);
         }
         EnableWindow(owner, TRUE);
         SetForegroundWindow(owner);

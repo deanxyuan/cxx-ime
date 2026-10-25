@@ -310,7 +310,8 @@ void EditorApp::update_cand_preview() {
         candPreviewWindow_.set_config(candPreviewConfig_);
     }
 
-    candPreviewWindow_.set_preview_background(backgroundPreview_);
+    candPreviewWindow_.set_preview_background(
+        backgroundPreviews_[candPreviewConfig_.layout == "vertical" ? 1 : 0]);
 
     candPreviewWindow_.set_page_info(1, 2);
 

@@ -15,6 +15,7 @@
 
 #include "cxxime_resource_ids.h"
 #include "editor_app_internal.h"
+#include "editor_instance.h"
 #include "lexicon_view_tabs.h"
 
 #pragma comment(lib, "comctl32.lib")
@@ -56,6 +57,25 @@ int settings_panel_index(cxxime::SettingsPanel panel) {
 int EditorApp::run(HINSTANCE hInst,
                    float dpiScale,
                    cxxime::SettingsPanel initialPanel) {
+    // Keep exclusion alive until the app's workers, previews and drafts are destroyed.
+    EditorInstance instance;
+    if (!instance) {
+        if (instance.error() == ERROR_SHARING_VIOLATION) {
+            HWND existing = FindWindowW(kSettingsWindowClass, kSettingsWindowTitle);
+            if (existing) {
+                PostMessageW(existing, settings_navigate_message(),
+                             static_cast<WPARAM>(initialPanel), 0);
+                ShowWindow(existing, SW_RESTORE);
+                SetForegroundWindow(GetLastActivePopup(existing));
+            } else {
+                MessageBoxW(nullptr, L"设置正在打开，请稍候。", L"CxxIME 设置", MB_OK);
+            }
+        } else {
+            MessageBoxW(nullptr, L"无法访问设置目录，请检查目录权限。", L"CxxIME 设置",
+                        MB_OK | MB_ICONERROR);
+        }
+        return 1;
+    }
     g_dpi = dpiScale;
     EditorApp app;
     g_app = &app;
@@ -264,8 +284,9 @@ bool EditorApp::load_config() {
 
     // Keep the current form and Apply baseline intact if a reload fails.
     config_ = std::move(loaded);
-    backgroundPreview_ = load_background_image(config_.background.resource);
-    prune_background_images(config_.background.resource);
+    backgroundPreviews_[0] = load_background_image(config_.background.horizontal.resource);
+    backgroundPreviews_[1] = load_background_image(config_.background.vertical.resource);
+    prune_background_images(config_.background);
 
     // Populate controls
     SendMessageW(hThemeCombo_, CB_RESETCONTENT, 0, 0);
@@ -395,7 +416,7 @@ bool EditorApp::save_config() {
 
     unsigned long error_code = ERROR_SUCCESS;
     // A lost acknowledgement can follow a successful save; never delete a published draft.
-    backgroundDrafts_.protect(config_.background.resource);
+    backgroundDrafts_.protect(config_.background);
     if (!replace_user_config(config_.to_user_json(), nullptr, &error_code)) {
         const wchar_t* message = error_code == ERROR_HOTKEY_ALREADY_REGISTERED
             ? L"全局快捷键已被其他程序占用，配置未保存。"
@@ -404,7 +425,7 @@ bool EditorApp::save_config() {
         return false;
     }
     reset_apply_state();
-    prune_background_images(config_.background.resource);
+    prune_background_images(config_.background);
     return true;
 }
 

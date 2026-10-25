@@ -17,9 +17,13 @@ void EditorApp::choose_background() {
                                     : 0;
     if (auto edited = edit_background(hwnd_, preview_config)) {
         config_.background = edited->config;
-        backgroundPreview_ = edited->imported.image;
-        backgroundDrafts_.add(edited->imported);
+        backgroundPreviews_[0] = edited->horizontal;
+        backgroundPreviews_[1] = edited->vertical;
+        for (const auto& resource : edited->resources) {
+            backgroundDrafts_.add(resource);
+        }
         show_candidate_preview_window();
+        backgroundDrafts_.discard_unused(config_.background);
     } else if (was_previewing) {
         show_candidate_preview_window();
     }

@@ -3,6 +3,7 @@
 #include <cxxime/background_image.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstring>
 #include <filesystem>
@@ -15,14 +16,15 @@
 #include <wrl/client.h>
 
 #include <cxxime/background_config.h>
+#include <cxxime/background_layout.h>
 #include <cxxime/data_path.h>
 
 namespace cxxime {
 namespace {
 using Microsoft::WRL::ComPtr;
-constexpr unsigned kMaxBytes = 20 * 1024 * 1024;
-constexpr unsigned kMaxPixels = 20000000;
+constexpr unsigned kMaxBytes = 64 * 1024 * 1024;
 constexpr unsigned kMaxSide = 2048;
+constexpr unsigned kPreviewSide = 1024;
 
 struct Apartment {
     HRESULT result = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
@@ -52,8 +54,9 @@ bool animated_png(const std::vector<std::uint8_t>& bytes) {
     return false;
 }
 
-std::shared_ptr<BackgroundImage> decode(const std::wstring& path, bool managed,
-                                        std::wstring& error) {
+std::shared_ptr<BackgroundImage> decode(const std::wstring& path, bool managed, std::wstring& error,
+                                        const BackgroundView* view = nullptr,
+                                        BackgroundRect* retained = nullptr) {
     error = L"图片不可用，请选择有效的静态 PNG 或 JPEG。";
     auto result = std::make_shared<BackgroundImage>();
     result->lease = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
@@ -63,7 +66,7 @@ std::shared_ptr<BackgroundImage> decode(const std::wstring& path, bool managed,
     }
     LARGE_INTEGER size{};
     if (!GetFileSizeEx(result->lease, &size) || size.QuadPart <= 0 || size.QuadPart > kMaxBytes) {
-        error = L"图片文件不能超过 20 MiB。";
+        error = L"图片文件不能超过 64 MiB。";
         return {};
     }
     std::vector<std::uint8_t> bytes(static_cast<std::size_t>(size.QuadPart));
@@ -96,9 +99,9 @@ std::shared_ptr<BackgroundImage> decode(const std::wstring& path, bool managed,
     UINT width = 0;
     UINT height = 0;
     if (FAILED(frame->GetSize(&width, &height)) || !width || !height ||
-        std::uint64_t(width) * height > kMaxPixels ||
+        std::uint64_t(width) * height > kMaxBackgroundSourcePixels ||
         (managed && (width > kMaxSide || height > kMaxSide))) {
-        error = L"图片不能超过 2000 万像素。";
+        error = L"图片不能超过 3200 万像素。";
         return {};
     }
     ComPtr<IWICBitmapSource> source = frame;
@@ -150,7 +153,25 @@ std::shared_ptr<BackgroundImage> decode(const std::wstring& path, bool managed,
             return {};
         }
         source = rotate;
-        source->GetSize(&width, &height);
+        if (FAILED(source->GetSize(&width, &height))) {
+            return {};
+        }
+    }
+    result->source_width = width;
+    result->source_height = height;
+    ComPtr<IWICBitmapClipper> clipper;
+    if (view) {
+        const auto region = background_retained_region(width, height, *view);
+        WICRect crop{static_cast<INT>(region.x), static_cast<INT>(region.y),
+                     static_cast<INT>(region.width), static_cast<INT>(region.height)};
+        if (FAILED(factory->CreateBitmapClipper(&clipper)) ||
+            FAILED(clipper->Initialize(source.Get(), &crop))) {
+            return {};
+        }
+        source = clipper;
+        width = crop.Width;
+        height = crop.Height;
+        *retained = region;
     }
     ComPtr<IWICBitmapScaler> scaler;
     ComPtr<IWICFormatConverter> premultiplied;
@@ -161,8 +182,9 @@ std::shared_ptr<BackgroundImage> decode(const std::wstring& path, bool managed,
         return {};
     }
     source = premultiplied;
-    if (width > kMaxSide || height > kMaxSide) {
-        const double scale = double(kMaxSide) / (std::max)(width, height);
+    const unsigned max_side = managed || view ? kMaxSide : kPreviewSide;
+    if (width > max_side || height > max_side) {
+        const double scale = static_cast<double>(max_side) / (std::max)(width, height);
         width = (std::max)(1u, static_cast<unsigned>(width * scale));
         height = (std::max)(1u, static_cast<unsigned>(height * scale));
         if (FAILED(factory->CreateBitmapScaler(&scaler)) ||
@@ -190,7 +212,8 @@ std::shared_ptr<BackgroundImage> decode(const std::wstring& path, bool managed,
     return result;
 }
 
-std::string digest(const BackgroundImage& image) {
+std::string digest(const std::uint8_t* data, std::size_t size, unsigned width = 0,
+                   unsigned height = 0) {
     BCRYPT_ALG_HANDLE algorithm = nullptr;
     BCRYPT_HASH_HANDLE hash = nullptr;
     std::uint8_t bytes[32]{};
@@ -198,12 +221,11 @@ std::string digest(const BackgroundImage& image) {
     if (ok) {
         ok = BCryptCreateHash(algorithm, &hash, nullptr, 0, nullptr, 0, 0) >= 0;
     }
-    unsigned dimensions[] = {image.width, image.height};
+    unsigned dimensions[] = {width, height};
     if (ok) {
         ok = BCryptHashData(hash, reinterpret_cast<PUCHAR>(dimensions), sizeof(dimensions), 0) >=
                  0 &&
-             BCryptHashData(hash, const_cast<PUCHAR>(image.pixels.data()),
-                            static_cast<ULONG>(image.pixels.size()), 0) >= 0 &&
+             BCryptHashData(hash, const_cast<PUCHAR>(data), static_cast<ULONG>(size), 0) >= 0 &&
              BCryptFinishHash(hash, bytes, sizeof(bytes), 0) >= 0;
     }
     if (hash) {
@@ -263,22 +285,25 @@ BackgroundImage::~BackgroundImage() {
     }
 }
 
-std::wstring background_resource_path(const std::string& resource) {
+std::wstring background_resource_path(const std::string& resource, bool source) {
     if (!valid_background_resource(resource)) {
         return {};
     }
     return (std::filesystem::u8path(user_data_path("backgrounds")) /
-            std::filesystem::u8path(resource + ".png"))
+            std::filesystem::u8path(resource + (source ? ".source" : ".png")))
         .wstring();
 }
 
-BackgroundImport import_background_image(const std::wstring& source) {
+static std::wstring temporary_path(const std::wstring& path) {
+    static std::atomic<unsigned> serial{0};
+    return path + L"." + std::to_wstring(GetCurrentProcessId()) + L"." + std::to_wstring(++serial) +
+           L".tmp";
+}
+
+static BackgroundImport store_image(const std::shared_ptr<BackgroundImage>& image) {
     BackgroundImport result;
-    auto image = decode(source, false, result.error);
-    if (!image) {
-        return result;
-    }
-    result.resource = digest(*image);
+    result.resource =
+        digest(image->pixels.data(), image->pixels.size(), image->width, image->height);
     const auto path = background_resource_path(result.resource);
     if (path.empty()) {
         result.error = L"无法计算图片标识。";
@@ -295,7 +320,7 @@ BackgroundImport import_background_image(const std::wstring& source) {
         // A corrupt copy can be restored by reselecting its original. Reader leases
         // prevent replacing any resource still used by a candidate window.
         const bool existed = GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES;
-        const auto temporary = path + L"." + std::to_wstring(GetCurrentProcessId()) + L".tmp";
+        const auto temporary = temporary_path(path);
         const bool written = encode(temporary, *image);
         const bool published =
             written && MoveFileExW(temporary.c_str(), path.c_str(),
@@ -310,6 +335,139 @@ BackgroundImport import_background_image(const std::wstring& source) {
     }
     if (!result.image) {
         result.error = L"图片副本不可用，请重新选择图片。";
+    }
+    return result;
+}
+
+static bool source_matches(const std::wstring& path, const std::vector<std::uint8_t>& bytes) {
+    const auto file = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
+                                  OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) {
+        return false;
+    }
+    LARGE_INTEGER size{};
+    bool matches = GetFileSizeEx(file, &size) && size.QuadPart == bytes.size();
+    std::uint8_t chunk[65536];
+    for (std::size_t offset = 0; matches && offset < bytes.size();) {
+        const auto count = static_cast<DWORD>((std::min)(sizeof(chunk), bytes.size() - offset));
+        DWORD read = 0;
+        matches = ReadFile(file, chunk, count, &read, nullptr) && read == count &&
+                  std::memcmp(chunk, bytes.data() + offset, count) == 0;
+        offset += count;
+    }
+    CloseHandle(file);
+    return matches;
+}
+
+BackgroundImport import_background_source(const std::wstring& source) {
+    BackgroundImport result;
+    result.source = true;
+    auto image = decode(source, false, result.error);
+    if (!image) {
+        return result;
+    }
+    LARGE_INTEGER size{};
+    LARGE_INTEGER start{};
+    DWORD read = 0;
+    if (!GetFileSizeEx(image->lease, &size) || size.QuadPart <= 0 || size.QuadPart > kMaxBytes ||
+        !SetFilePointerEx(image->lease, start, nullptr, FILE_BEGIN)) {
+        result.error = L"无法读取原始图片。";
+        return result;
+    }
+    std::vector<std::uint8_t> bytes(static_cast<std::size_t>(size.QuadPart));
+    if (!ReadFile(image->lease, bytes.data(), static_cast<DWORD>(bytes.size()), &read, nullptr) ||
+        read != bytes.size()) {
+        result.error = L"无法读取原始图片。";
+        return result;
+    }
+    result.resource = digest(bytes.data(), bytes.size());
+    const auto path = background_resource_path(result.resource, true);
+    std::error_code error;
+    std::filesystem::create_directories(std::filesystem::path(path).parent_path(), error);
+    if (path.empty() || error) {
+        result.error = L"无法创建图片保存目录。";
+        return result;
+    }
+    const bool existed = GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES;
+    // The source is immutable and leased throughout validation and copying.
+    if (!existed || !source_matches(path, bytes)) {
+        const auto temporary = temporary_path(path);
+        const bool published = CopyFileW(source.c_str(), temporary.c_str(), TRUE) &&
+                               MoveFileExW(temporary.c_str(), path.c_str(),
+                                           MOVEFILE_WRITE_THROUGH | MOVEFILE_REPLACE_EXISTING);
+        DeleteFileW(temporary.c_str());
+        if (!published && !source_matches(path, bytes)) {
+            result.error = L"无法保存原始图片。";
+            return result;
+        }
+        result.created = published && !existed;
+    }
+    const auto lease = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
+                                   OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (lease == INVALID_HANDLE_VALUE) {
+        result.error = L"原始图片不可用。";
+        return result;
+    }
+    CloseHandle(image->lease);
+    image->lease = lease;
+    result.image = std::move(image);
+    return result;
+}
+
+BackgroundImport load_background_source(const std::string& resource) {
+    BackgroundImport result;
+    result.source = true;
+    result.resource = resource;
+    result.image = decode(background_resource_path(resource, true), false, result.error);
+    return result;
+}
+
+BackgroundPreparation prepare_background(const BackgroundConfig& config) {
+    BackgroundPreparation result;
+    result.config = config;
+    normalize_background(result.config);
+    if (result.config.source.empty()) {
+        result.error = L"请先选择图片。";
+        return result;
+    }
+    result.horizontal = load_background_image(result.config.horizontal.resource);
+    result.vertical = load_background_image(result.config.vertical.resource);
+    for (bool vertical : {false, true}) {
+        auto& view = vertical ? result.config.vertical : result.config.horizontal;
+        auto& pixels = vertical ? result.vertical : result.horizontal;
+        if (pixels) {
+            continue;
+        }
+        BackgroundRect region;
+        const auto image = decode(background_resource_path(config.source, true), false,
+                                  result.error, &view, &region);
+        if (!image) {
+            return result;
+        }
+        if (image->source_width != config.source_width ||
+            image->source_height != config.source_height) {
+            result.error = L"素材尺寸不匹配，请重新选择图片。";
+            return result;
+        }
+        auto imported = store_image(image);
+        result.resources.push_back(imported);
+        if (!imported.image) {
+            result.error = imported.error;
+            return result;
+        }
+        view.resource = imported.resource;
+        view.generation = kBackgroundGeneration;
+        view.left = static_cast<int>(region.x);
+        view.top = static_cast<int>(region.y);
+        view.width = static_cast<int>(region.width);
+        view.height = static_cast<int>(region.height);
+        pixels = imported.image;
+        // Equal framing can reuse the same result without a second source decode.
+        auto& other = result.config.vertical;
+        if (!vertical && other.resource.empty() && same_background_framing(other, view)) {
+            other = view;
+            result.vertical = pixels;
+        }
     }
     return result;
 }
@@ -344,11 +502,11 @@ std::shared_ptr<const BackgroundImage> load_background_image(const std::string& 
 
 void discard_background_import(const BackgroundImport& imported) {
     if (imported.created) {
-        DeleteFileW(background_resource_path(imported.resource).c_str());
+        DeleteFileW(background_resource_path(imported.resource, imported.source).c_str());
     }
 }
 
-void prune_background_images(const std::string& current_resource) {
+void prune_background_images(const BackgroundConfig& config) {
     const auto directory = std::filesystem::u8path(user_data_path("backgrounds"));
     std::error_code error;
     const auto now = std::filesystem::file_time_type::clock::now();
@@ -356,8 +514,9 @@ void prune_background_images(const std::string& current_resource) {
          it.increment(error)) {
         const auto& path = it->path();
         const auto id = path.stem().u8string();
-        if (path.extension() != L".png" || !valid_background_resource(id) ||
-            id == current_resource) {
+        if ((path.extension() != L".png" && path.extension() != L".source") ||
+            !valid_background_resource(id) || id == config.source ||
+            id == config.horizontal.resource || id == config.vertical.resource) {
             continue;
         }
         const auto modified = it->last_write_time(error);

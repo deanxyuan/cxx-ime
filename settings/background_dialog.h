@@ -16,7 +16,9 @@ namespace settings {
 
 struct BackgroundEdit {
     BackgroundConfig config;
-    BackgroundImport imported;
+    std::vector<BackgroundImport> resources;
+    std::shared_ptr<const BackgroundImage> horizontal;
+    std::shared_ptr<const BackgroundImage> vertical;
 };
 
 std::optional<BackgroundEdit> edit_background(HWND owner, const Config& config,

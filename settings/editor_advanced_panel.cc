@@ -281,7 +281,8 @@ void EditorApp::apply_default_candidate_settings() {
     config_.font_size = defaults.font_size;
     config_.theme = defaults.theme;
     config_.background = defaults.background;
-    backgroundPreview_.reset();
+    backgroundPreviews_[0].reset();
+    backgroundPreviews_[1].reset();
     const auto theme = std::find(themeIds_.begin(), themeIds_.end(), defaults.theme);
     if (theme != themeIds_.end()) {
         combo_set_index(hThemeCombo_, static_cast<int>(theme - themeIds_.begin()));

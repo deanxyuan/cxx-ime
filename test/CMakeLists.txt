@@ -240,6 +240,11 @@ add_cxxime_test(background_dialog_test
     DEPS cxxime-engine cxxime-ui comctl32
 )
 target_include_directories(background_dialog_test PRIVATE ${CMAKE_SOURCE_DIR}/settings)
+add_cxxime_test(editor_instance_test
+    SOURCES settings/editor_instance_test.cc
+    DEPS cxxime-ui
+)
+target_include_directories(editor_instance_test PRIVATE ${CMAKE_SOURCE_DIR}/settings)
 set_tests_properties(background_dialog_test background_window_test PROPERTIES RUN_SERIAL TRUE)
 add_cxxime_test(candidate_quality_test
     SOURCES engine/candidate_quality_test.cc

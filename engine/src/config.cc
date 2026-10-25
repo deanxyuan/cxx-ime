@@ -177,19 +177,36 @@ static void apply_config_json(Config& config, nlohmann::json& j) {
     if (j.contains("background") && j["background"].is_object()) {
         auto& b = j["background"];
         auto& value = config.background;
+        value = {};
         load_bool(b, "enabled", value.enabled);
-        load_string(b, "resource", value.resource);
+        load_string(b, "source", value.source);
         load_string(b, "name", value.name);
-        load_string(b, "fit", value.fit);
-        auto number = [&](const char* key, double& target, double fallback) {
-            if (b.contains(key)) {
-                target = b[key].is_number() ? b[key].get<double>() : fallback;
+        load_int(b, "source_width", value.source_width);
+        load_int(b, "source_height", value.source_height);
+        auto number = [](const nlohmann::json& object, const char* key, double& target) {
+            if (object.contains(key) && object[key].is_number()) {
+                target = object[key].get<double>();
             }
         };
-        number("zoom", value.zoom, 1.0);
-        number("x", value.x, 0.5);
-        number("y", value.y, 0.5);
-        number("strength", value.strength, kDefaultBackgroundStrength);
+        auto view = [&](const char* key, BackgroundView& target) {
+            if (!b.contains(key) || !b[key].is_object()) {
+                return;
+            }
+            auto& object = b[key];
+            load_string(object, "resource", target.resource);
+            load_int(object, "generation", target.generation);
+            load_string(object, "fit", target.fit);
+            number(object, "zoom", target.zoom);
+            number(object, "x", target.x);
+            number(object, "y", target.y);
+            load_int(object, "left", target.left);
+            load_int(object, "top", target.top);
+            load_int(object, "width", target.width);
+            load_int(object, "height", target.height);
+        };
+        view("horizontal", value.horizontal);
+        view("vertical", value.vertical);
+        number(b, "strength", value.strength);
         normalize_background(value);
     }
     if (j.contains("engine") && j["engine"].is_object()) {
@@ -519,14 +536,26 @@ static nlohmann::json build_config_json(const Config& config, bool include_diagn
     j["theme"] = config.theme;
     BackgroundConfig background = config.background;
     normalize_background(background);
+    auto view = [](const BackgroundView& value) {
+        return nlohmann::json{{"resource", value.resource},
+                              {"generation", value.generation},
+                              {"fit", value.fit},
+                              {"zoom", value.zoom},
+                              {"x", value.x},
+                              {"y", value.y},
+                              {"left", value.left},
+                              {"top", value.top},
+                              {"width", value.width},
+                              {"height", value.height}};
+    };
     j["background"] = {
         {"enabled", background.enabled},
-        {"resource", background.resource},
+        {"source", background.source},
         {"name", background.name},
-        {"fit", background.fit},
-        {"zoom", background.zoom},
-        {"x", background.x},
-        {"y", background.y},
+        {"source_width", background.source_width},
+        {"source_height", background.source_height},
+        {"horizontal", view(background.horizontal)},
+        {"vertical", view(background.vertical)},
         {"strength", background.strength},
     };
 

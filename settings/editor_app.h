@@ -290,7 +290,7 @@ private:
 
     // Preview
     BackgroundDraftResources backgroundDrafts_;
-    std::shared_ptr<const BackgroundImage> backgroundPreview_;
+    std::shared_ptr<const BackgroundImage> backgroundPreviews_[2];
     cxxime::CandidateWindow candPreviewWindow_;
     cxxime::Config candPreviewConfig_;
     bool candPreviewCreated_ = false;

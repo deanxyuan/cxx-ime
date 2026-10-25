@@ -11,6 +11,8 @@
 
 #include <windows.h>
 
+#include <cxxime/background_config.h>
+
 namespace cxxime {
 
 struct BackgroundImage {
@@ -20,6 +22,8 @@ struct BackgroundImage {
 
     unsigned width = 0;
     unsigned height = 0;
+    unsigned source_width = 0;
+    unsigned source_height = 0;
     std::vector<std::uint8_t> pixels; // sRGB, premultiplied BGRA, top-down.
     HANDLE lease = INVALID_HANDLE_VALUE;
 
@@ -31,15 +35,26 @@ struct BackgroundImport {
     std::shared_ptr<const BackgroundImage> image;
     std::wstring error;
     bool created = false;
+    bool source = false;
 };
 
-std::wstring background_resource_path(const std::string& resource);
-BackgroundImport import_background_image(const std::wstring& source);
+struct BackgroundPreparation {
+    BackgroundConfig config;
+    std::vector<BackgroundImport> resources;
+    std::shared_ptr<const BackgroundImage> horizontal;
+    std::shared_ptr<const BackgroundImage> vertical;
+    std::wstring error;
+};
+
+std::wstring background_resource_path(const std::string& resource, bool source = false);
+BackgroundImport import_background_source(const std::wstring& source);
+BackgroundImport load_background_source(const std::string& resource);
+BackgroundPreparation prepare_background(const BackgroundConfig& config);
 std::shared_ptr<const BackgroundImage> load_background_image(const std::string& resource);
 void discard_background_import(const BackgroundImport& imported);
 
 // Old files are retained through propagation and while any reader holds a lease.
-void prune_background_images(const std::string& current_resource);
+void prune_background_images(const BackgroundConfig& config);
 
 class BackgroundDraftResources {
 public:
@@ -54,6 +69,7 @@ public:
             BackgroundImport entry;
             entry.resource = imported.resource;
             entry.created = true;
+            entry.source = imported.source;
             resources_.push_back(std::move(entry));
         }
     }
@@ -68,6 +84,27 @@ public:
             }
         }
         return created;
+    }
+
+    void protect(const BackgroundConfig& config) {
+        protect(config.source);
+        protect(config.horizontal.resource);
+        protect(config.vertical.resource);
+    }
+
+    void discard_unused(const BackgroundConfig& config) {
+        for (auto it = resources_.begin(); it != resources_.end();) {
+            if (it->created && it->resource != config.source &&
+                it->resource != config.horizontal.resource &&
+                it->resource != config.vertical.resource) {
+                const auto path = background_resource_path(it->resource, it->source);
+                if (DeleteFileW(path.c_str()) || GetLastError() == ERROR_FILE_NOT_FOUND) {
+                    it = resources_.erase(it);
+                    continue;
+                }
+            }
+            ++it;
+        }
     }
 
 private:

@@ -38,6 +38,14 @@ cxxime::CandidatePage page() {
     return result;
 }
 
+void set_background_dimensions(cxxime::Config& config, unsigned width = 64, unsigned height = 32) {
+    config.background.source = std::string(64, 'a');
+    config.background.source_width = width;
+    config.background.source_height = height;
+    config.background.horizontal.width = config.background.vertical.width = width;
+    config.background.horizontal.height = config.background.vertical.height = height;
+}
+
 struct Surface {
     HDC dc = CreateCompatibleDC(nullptr);
     HBITMAP bitmap = nullptr;
@@ -104,7 +112,7 @@ int benchmark() {
     std::cout << "# preparation: 3000x2000 PNG; OS file cache uncontrolled\n";
     for (int round = 0; round < 7; ++round) {
         const auto begin = Clock::now();
-        auto imported = cxxime::import_background_image(source);
+        auto imported = background_test::import_image(source);
         ASSERT_TRUE(imported.image != nullptr);
         const double import_ms =
             std::chrono::duration<double, std::milli>(Clock::now() - begin).count();
@@ -122,6 +130,7 @@ int benchmark() {
     config.theme = config.preset_color_schemes.begin()->first;
     config.background.enabled = true;
     auto texture = image(2048, 2048);
+    set_background_dimensions(config, 2048, 2048);
     cxxime::CandidateWindow window;
     ASSERT_TRUE(window.create(nullptr, config));
     window.set_preedit("ni'hao");
@@ -187,6 +196,50 @@ int benchmark() {
     }
     return 0;
 }
+
+int preparation_benchmark(const std::wstring& path) {
+    background_test::Files files;
+    cxxime::BackgroundImport previous_source;
+    cxxime::BackgroundPreparation previous_result;
+    // A different, fully sized published pair stays alive throughout all samples.
+    // Do not let identical input hashes hide the replacement overlap in the cache.
+    previous_source.image = image(1024, 1024);
+    previous_result.horizontal = image(2048, 2048);
+    previous_result.vertical = image(2048, 2048);
+    std::cout << "round,source_width,source_height,import_ms,prepare_ms,derived_bytes,"
+                 "working_set_bytes,peak_working_set_bytes,private_bytes,peak_private_bytes\n";
+    for (int round = 0; round < 7; ++round) {
+        const auto begin = Clock::now();
+        auto source = cxxime::import_background_source(path);
+        ASSERT_TRUE(source.image != nullptr);
+        const auto imported_at = Clock::now();
+        cxxime::BackgroundConfig config;
+        config.enabled = true;
+        config.source = source.resource;
+        config.source_width = source.image->source_width;
+        config.source_height = source.image->source_height;
+        config.horizontal.zoom = 4;
+        config.horizontal.x = 0.3 + round * 0.05;
+        config.vertical.fit = "contain";
+        auto prepared = cxxime::prepare_background(config);
+        ASSERT_TRUE(prepared.error.empty() && prepared.horizontal && prepared.vertical);
+        const auto prepared_at = Clock::now();
+        PROCESS_MEMORY_COUNTERS_EX memory{};
+        memory.cb = sizeof(memory);
+        ASSERT_TRUE(GetProcessMemoryInfo(GetCurrentProcess(),
+                                         reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&memory),
+                                         sizeof(memory)));
+        const auto derived_bytes =
+            prepared.horizontal->pixels.size() + prepared.vertical->pixels.size();
+        std::cout << round << ',' << config.source_width << ',' << config.source_height << ','
+                  << std::chrono::duration<double, std::milli>(imported_at - begin).count() << ','
+                  << std::chrono::duration<double, std::milli>(prepared_at - imported_at).count()
+                  << ',' << derived_bytes << ',' << memory.WorkingSetSize << ','
+                  << memory.PeakWorkingSetSize << ',' << memory.PrivateUsage << ','
+                  << memory.PeakPagefileUsage << '\n';
+    }
+    return 0;
+}
 } // namespace
 
 TEST(BackgroundWindow, layout_hit_testing_and_hidden_updates_do_not_depend_on_image) {
@@ -195,6 +248,7 @@ TEST(BackgroundWindow, layout_hit_testing_and_hidden_updates_do_not_depend_on_im
     ASSERT_TRUE(config.load_themes(std::string(CXXIME_DATA_DIR) + "themes.json"));
     config.theme = config.preset_color_schemes.begin()->first;
     auto texture = image();
+    set_background_dimensions(config);
     for (const char* backend : {"gdi", "d2d"}) {
         for (const char* orientation : {"horizontal", "vertical"}) {
             config.render_backend = backend;
@@ -212,8 +266,8 @@ TEST(BackgroundWindow, layout_hit_testing_and_hidden_updates_do_not_depend_on_im
             window.set_config(config);
             window.set_preview_background(texture);
             for (int i = 0; i < 20; ++i) {
-                config.background.zoom = 1 + i / 10.0;
-                config.background.x = i / 20.0;
+                config.background.horizontal.zoom = 1 + i / 10.0;
+                config.background.horizontal.x = i / 20.0;
                 window.update(page());
                 ASSERT_EQ(window.layout_size().cx, size.cx);
                 ASSERT_EQ(window.layout_size().cy, size.cy);
@@ -235,12 +289,13 @@ TEST(BackgroundWindow, layout_hit_testing_and_hidden_updates_do_not_depend_on_im
 
 TEST(BackgroundWindow, asynchronous_resource_never_shows_hidden_window_or_switches_current_frame) {
     background_test::Files files;
-    auto imported = cxxime::import_background_image(
+    auto imported = background_test::import_image(
         files.write(L"async.png", 64, 32, background_test::solid(64, 32, 10, 30, 60)));
     ASSERT_TRUE(imported.image != nullptr);
     cxxime::Config config;
     config.background.enabled = true;
-    config.background.resource = imported.resource;
+    config.background.horizontal.resource = imported.resource;
+    set_background_dimensions(config);
     cxxime::CandidateWindow window;
     ASSERT_TRUE(window.create(nullptr, config));
     window.update(page());
@@ -326,6 +381,7 @@ TEST(BackgroundWindow, explicit_apply_never_paints_a_temporary_plain_frame) {
     config.background.enabled = true;
     config.render_backend = "gdi";
     auto texture = image();
+    set_background_dimensions(config);
     cxxime::CandidateWindow window;
     ASSERT_TRUE(window.create(nullptr, config));
     window.set_preview_background(texture);
@@ -352,6 +408,9 @@ TEST(BackgroundWindow, explicit_apply_never_paints_a_temporary_plain_frame) {
 int main(int argc, char** argv) {
     if (argc == 2 && std::string(argv[1]) == "--benchmark") {
         return benchmark();
+    }
+    if (argc == 3 && std::string(argv[1]) == "--prepare-benchmark") {
+        return preparation_benchmark(std::filesystem::u8path(argv[2]).wstring());
     }
     return test::RunAllTests();
 }

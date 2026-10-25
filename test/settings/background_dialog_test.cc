@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <fstream>
+#include <iostream>
 #include <string>
 #include <vector>
 
@@ -204,8 +205,11 @@ struct DialogDriver {
     UINT_PTR timer = 0;
     ULONGLONG deadline = GetTickCount64() + 5000;
     bool cancel = false;
+    bool cancel_while_preparing = false;
+    ULONGLONG canceled_at = 0;
     bool gestures = false;
     bool visited = false;
+    bool interacted = false;
     bool exercise_controls = false;
     bool disable = false;
     bool inspect_canvas = false;
@@ -279,7 +283,22 @@ struct DialogDriver {
             PostMessageW(self.picker, WM_COMMAND, IDOK, 0);
             return;
         }
+        if (dialog && self.cancel_while_preparing) {
+            self.visited = true;
+            self.canceled_at = GetTickCount64();
+            SendMessageW(dialog, WM_COMMAND, IDCANCEL, 0);
+            return;
+        }
         if (!dialog || !IsWindowEnabled(GetDlgItem(dialog, IDOK))) {
+            return;
+        }
+        wchar_t status[128]{};
+        GetWindowTextW(GetDlgItem(dialog, 3112), status, 128);
+        if (wcscmp(status, L"正在处理图片…") == 0) {
+            return;
+        }
+        if (self.interacted) {
+            SendMessageW(dialog, WM_COMMAND, self.cancel ? IDCANCEL : IDOK, 0);
             return;
         }
         self.visited = true;
@@ -292,9 +311,16 @@ struct DialogDriver {
             return;
         }
         HWND canvas = GetDlgItem(dialog, 3111);
+        self.interacted = true;
         ASSERT_TRUE(canvas != nullptr);
         ASSERT_TRUE(GetWindowLongPtrW(canvas, GWL_STYLE) & WS_TABSTOP);
         ASSERT_TRUE(GetDlgItem(dialog, 3104) != nullptr);
+        if (IsWindowEnabled(GetDlgItem(dialog, 3104))) {
+            // Releasing a slider at its current value must not regenerate or disable Confirm.
+            SendMessageW(dialog, WM_HSCROLL, TB_THUMBPOSITION,
+                         reinterpret_cast<LPARAM>(GetDlgItem(dialog, 3104)));
+            ASSERT_TRUE(IsWindowEnabled(GetDlgItem(dialog, IDOK)));
+        }
         if (SendMessageW(GetDlgItem(dialog, 3120), BM_GETCHECK, 0, 0) != BST_CHECKED) {
             check_plain_preview(dialog, canvas);
         }
@@ -349,6 +375,7 @@ struct DialogDriver {
             SendMessageW(scene, CB_SETCURSEL, 1, 0);
             SendMessageW(dialog, WM_COMMAND, MAKEWPARAM(3103, CBN_SELCHANGE),
                          reinterpret_cast<LPARAM>(scene));
+            const auto direction_zoom = SendMessageW(zoom, TBM_GETPOS, 0, 0);
             // Start outside the candidate frame, then leave the canvas while captured.
             const POINT outside{4, 4};
             SendMessageW(canvas, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(outside.x, outside.y));
@@ -359,10 +386,11 @@ struct DialogDriver {
             ClientToScreen(canvas, &screen);
             SendMessageW(canvas, WM_MOUSEWHEEL, MAKEWPARAM(0, WHEEL_DELTA),
                          MAKELPARAM(screen.x, screen.y));
-            ASSERT_EQ(SendMessageW(zoom, TBM_GETPOS, 0, 0), 193);
+            ASSERT_EQ(SendMessageW(zoom, TBM_GETPOS, 0, 0),
+                      static_cast<LRESULT>(std::round(direction_zoom * 1.1)));
             SendMessageW(canvas, WM_MOUSEWHEEL, MAKEWPARAM(0, -WHEEL_DELTA),
                          MAKELPARAM(screen.x, screen.y));
-            ASSERT_EQ(SendMessageW(zoom, TBM_GETPOS, 0, 0), 175);
+            ASSERT_EQ(SendMessageW(zoom, TBM_GETPOS, 0, 0), direction_zoom);
             for (int index : {0, 1, 0}) {
                 SendMessageW(scene, CB_SETCURSEL, index, 0);
                 SendMessageW(dialog, WM_COMMAND, MAKEWPARAM(3103, CBN_SELCHANGE),
@@ -378,6 +406,10 @@ struct DialogDriver {
             SendMessageW(dialog, WM_COMMAND, MAKEWPARAM(3103, CBN_SELCHANGE),
                          reinterpret_cast<LPARAM>(scene));
             self.capture_files->snapshot(dialog, self.capture_path);
+        }
+        if (self.disable && !self.exercise_controls) {
+            SendMessageW(GetDlgItem(dialog, 3120), BM_CLICK, 0, 0);
+            ASSERT_TRUE(IsWindowEnabled(GetDlgItem(dialog, IDOK)));
         }
         SendMessageW(dialog, WM_COMMAND, self.cancel ? IDCANCEL : IDOK, 0);
     }
@@ -406,21 +438,22 @@ TEST(BackgroundDialog, confirm_keeps_layout_and_draft_until_main_apply) {
     }
     ASSERT_TRUE(result.has_value());
     ASSERT_EQ(config.to_user_json(), original);
-    ASSERT_EQ(result->config.fit, "contain");
-    ASSERT_LT(std::abs(result->config.zoom - 1.75), 0.000001);
+    ASSERT_EQ(result->config.vertical.fit, "contain");
+    ASSERT_LT(std::abs(result->config.vertical.zoom - 1.75), 0.000001);
     ASSERT_EQ(result->config.strength, 0.7);
-    ASSERT_TRUE(result->config.x != 0.5);
-    ASSERT_GT(std::abs(result->config.y - 0.5), 0.001);
-    ASSERT_TRUE(result->imported.image != nullptr);
+    ASSERT_TRUE(result->config.vertical.x != 0.5);
+    ASSERT_EQ(result->config.horizontal.zoom, 1.0);
+    ASSERT_EQ(result->config.horizontal.x, 0.5);
+    ASSERT_TRUE(result->vertical != nullptr);
     const auto saved = result->config;
     config.background = saved;
     {
         DialogDriver reopen(false, false);
         auto untouched = cxxime::settings::edit_background(reopen.owner, config);
         ASSERT_TRUE(untouched.has_value());
-        ASSERT_EQ(untouched->config.x, saved.x);
-        ASSERT_EQ(untouched->config.y, saved.y);
-        ASSERT_EQ(untouched->config.zoom, saved.zoom);
+        ASSERT_EQ(untouched->config.vertical.x, saved.vertical.x);
+        ASSERT_EQ(untouched->config.vertical.y, saved.vertical.y);
+        ASSERT_EQ(untouched->config.vertical.zoom, saved.vertical.zoom);
     }
 }
 
@@ -431,20 +464,21 @@ TEST(BackgroundDialog, cancel_discards_new_copy_but_not_preexisting_resource) {
     cxxime::Config config;
     {
         DialogDriver driver(true, true);
+        driver.cancel_while_preparing = true;
         ASSERT_TRUE(!cxxime::settings::edit_background(driver.owner, config, source));
         ASSERT_TRUE(driver.visited);
     }
     const auto resources = files.directory / "backgrounds";
     ASSERT_TRUE(std::filesystem::is_empty(resources));
-    auto existing = cxxime::import_background_image(source);
-    ASSERT_TRUE(existing.image != nullptr);
-    config.background.resource = existing.resource;
-    config.background.enabled = true;
+    auto existing = background_test::prepare(source);
+    ASSERT_TRUE(existing.horizontal != nullptr);
+    config.background = existing.config;
     {
         DialogDriver driver(true, true);
         ASSERT_TRUE(!cxxime::settings::edit_background(driver.owner, config));
     }
-    ASSERT_TRUE(std::filesystem::exists(cxxime::background_resource_path(existing.resource)));
+    ASSERT_TRUE(
+        std::filesystem::exists(cxxime::background_resource_path(existing.config.source, true)));
 }
 
 TEST(BackgroundDialog, empty_background_can_be_confirmed_without_selecting_a_file) {
@@ -455,8 +489,8 @@ TEST(BackgroundDialog, empty_background_can_be_confirmed_without_selecting_a_fil
     ASSERT_TRUE(driver.visited);
     ASSERT_TRUE(result.has_value());
     ASSERT_TRUE(!result->config.enabled);
-    ASSERT_TRUE(result->config.resource.empty());
-    ASSERT_TRUE(!result->imported.image);
+    ASSERT_TRUE(result->config.source.empty());
+    ASSERT_TRUE(!result->horizontal);
 }
 
 TEST(BackgroundDialog, canvas_shows_source_and_actual_effect_with_a_stationary_frame) {
@@ -479,9 +513,10 @@ TEST(BackgroundDialog, canvas_shows_source_and_actual_effect_with_a_stationary_f
     driver.inspect_canvas = true;
     auto result = cxxime::settings::edit_background(driver.owner, config, source);
     ASSERT_TRUE(result.has_value());
-    ASSERT_EQ(result->config.zoom, 1);
-    ASSERT_EQ(result->config.x, 0.5);
-    ASSERT_EQ(result->config.y, 0.5);
+    ASSERT_EQ(result->config.horizontal.zoom, 1);
+    ASSERT_EQ(result->config.horizontal.x, 0.5);
+    ASSERT_EQ(result->config.vertical.zoom, 1);
+    ASSERT_EQ(result->config.vertical.y, 0.5);
 }
 
 TEST(BackgroundDialog, disable_preserves_picture_and_strength_without_moving_controls) {
@@ -495,16 +530,16 @@ TEST(BackgroundDialog, disable_preserves_picture_and_strength_without_moving_con
     auto result = cxxime::settings::edit_background(driver.owner, config, source);
     ASSERT_TRUE(result.has_value());
     ASSERT_TRUE(!result->config.enabled);
-    ASSERT_TRUE(!result->config.resource.empty());
+    ASSERT_TRUE(!result->config.source.empty());
     ASSERT_EQ(result->config.strength, 0.4);
-    ASSERT_TRUE(result->imported.image != nullptr);
-    ASSERT_TRUE(result->imported.created);
+    ASSERT_TRUE(result->horizontal != nullptr);
+    ASSERT_TRUE(!result->resources.empty());
     config.background = result->config;
     DialogDriver reopen(false, false);
     auto reopened = cxxime::settings::edit_background(reopen.owner, config);
     ASSERT_TRUE(reopened.has_value());
     ASSERT_TRUE(!reopened->config.enabled);
-    ASSERT_EQ(reopened->config.resource, result->config.resource);
+    ASSERT_EQ(reopened->config.source, result->config.source);
     ASSERT_EQ(reopened->config.strength, 0.4);
 }
 
@@ -523,55 +558,92 @@ TEST(BackgroundDialog, choosing_and_rechoosing_inside_dialog_transfers_only_the_
     ASSERT_EQ(driver.next_choice, driver.choices.size());
     ASSERT_TRUE(result->config.enabled);
     ASSERT_EQ(result->config.name, "first.png");
-    ASSERT_TRUE(result->imported.created);
+    ASSERT_TRUE(!result->resources.empty());
     std::size_t count = 0;
     for (const auto& entry : std::filesystem::directory_iterator(files.directory / "backgrounds")) {
-        ASSERT_EQ(entry.path().stem().u8string(), result->config.resource);
+        const auto id = entry.path().stem().u8string();
+        ASSERT_TRUE(id == result->config.source || id == result->config.horizontal.resource);
         ++count;
     }
-    ASSERT_EQ(count, 1);
-    const auto resource = result->config.resource;
+    ASSERT_EQ(count, 2);
+    const auto resource = result->config.source;
     // Main-window cancellation must still own and remove the transferred draft.
     {
         cxxime::BackgroundDraftResources drafts;
-        drafts.add(result->imported);
+        for (const auto& resource : result->resources) {
+            drafts.add(resource);
+        }
         result.reset();
     }
-    ASSERT_TRUE(!std::filesystem::exists(cxxime::background_resource_path(resource)));
+    ASSERT_TRUE(!std::filesystem::exists(cxxime::background_resource_path(resource, true)));
 }
 
 TEST(BackgroundDialog, failed_replacement_preserves_the_existing_picture_and_framing) {
     background_test::Files files;
-    auto original = cxxime::import_background_image(
+    auto original = background_test::prepare(
         files.write(L"valid.png", 64, 32, background_test::solid(64, 32, 30, 40, 50)));
-    ASSERT_TRUE(original.image != nullptr);
+    ASSERT_TRUE(original.horizontal != nullptr);
     const auto damaged = files.directory / "damaged.png";
     std::ofstream(damaged, std::ios::binary) << "not an image";
     cxxime::Config config;
-    config.background.enabled = true;
-    config.background.resource = original.resource;
+    config.background = original.config;
     config.background.name = "valid.png";
-    config.background.fit = "contain";
-    config.background.zoom = 1.75;
-    config.background.x = 0.25;
+    config.background.horizontal.fit = "contain";
+    config.background.horizontal.zoom = 1.75;
+    config.background.horizontal.x = 0.25;
     config.background.strength = 0.4;
     DialogDriver driver(false, false);
     driver.deadline = GetTickCount64() + 15000;
     driver.choices = {damaged.wstring()};
     auto result = cxxime::settings::edit_background(driver.owner, config);
     ASSERT_TRUE(result.has_value());
-    ASSERT_EQ(result->config.resource, original.resource);
+    ASSERT_EQ(result->config.source, original.config.source);
     ASSERT_EQ(result->config.name, config.background.name);
-    ASSERT_EQ(result->config.fit, config.background.fit);
-    ASSERT_EQ(result->config.zoom, config.background.zoom);
-    ASSERT_EQ(result->config.x, config.background.x);
+    ASSERT_EQ(result->config.horizontal.fit, config.background.horizontal.fit);
+    ASSERT_EQ(result->config.horizontal.zoom, config.background.horizontal.zoom);
+    ASSERT_EQ(result->config.horizontal.x, config.background.horizontal.x);
     ASSERT_EQ(result->config.strength, config.background.strength);
     ASSERT_TRUE(result->config.enabled);
-    ASSERT_TRUE(result->imported.image != nullptr);
-    ASSERT_TRUE(!result->imported.created);
+    ASSERT_TRUE(result->horizontal != nullptr);
+    ASSERT_TRUE(result->resources.empty());
+}
+
+TEST(BackgroundDialog, missing_resources_do_not_block_disabling_the_picture) {
+    background_test::Files files;
+    cxxime::Config config;
+    config.background.enabled = true;
+    config.background.source = std::string(64, 'a');
+    config.background.source_width = 800;
+    config.background.source_height = 600;
+    DialogDriver driver(false, false);
+    driver.disable = true;
+    auto result = cxxime::settings::edit_background(driver.owner, config);
+    ASSERT_TRUE(result.has_value());
+    ASSERT_TRUE(!result->config.enabled);
+    ASSERT_EQ(result->config.source, config.background.source);
+    ASSERT_TRUE(result->resources.empty());
 }
 
 int main(int argc, char** argv) {
+    if (argc == 3 && std::string(argv[1]) == "--cancel-benchmark") {
+        test::ScopedDpiAwarenessContext dpi;
+        const auto source = std::filesystem::u8path(argv[2]).wstring();
+        std::cout << "round,total_ms,cancel_wait_ms\n";
+        for (int round = 0; round < 7; ++round) {
+            background_test::Files files;
+            cxxime::Config config;
+            DialogDriver driver(true, false);
+            driver.cancel_while_preparing = true;
+            const auto started = GetTickCount64();
+            ASSERT_TRUE(!cxxime::settings::edit_background(driver.owner, config, source));
+            const auto ended = GetTickCount64();
+            ASSERT_TRUE(driver.canceled_at != 0);
+            ASSERT_TRUE(std::filesystem::is_empty(files.directory / "backgrounds"));
+            std::cout << round << ',' << ended - started << ',' << ended - driver.canceled_at
+                      << '\n';
+        }
+        return 0;
+    }
     if (argc == 4 && std::string(argv[1]) == "--capture") {
         test::ScopedDpiAwarenessContext dpi;
         background_test::Files files;

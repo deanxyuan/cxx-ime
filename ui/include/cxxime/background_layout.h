@@ -15,12 +15,15 @@ struct BackgroundRect {
 };
 
 BackgroundRect background_target(double width, double height, double inset,
-                                 const BackgroundConfig& config);
+                                 const BackgroundView& config);
 BackgroundRect background_placement(double image_width, double image_height, BackgroundRect target,
-                                    const BackgroundConfig& config);
-void pan_background(BackgroundConfig& config, BackgroundRect target, BackgroundRect image,
-                    double dx, double dy);
-void zoom_background(BackgroundConfig& config, double zoom, double image_width, double image_height,
+                                    const BackgroundView& config);
+BackgroundRect background_retained_region(int width, int height, const BackgroundView& view);
+BackgroundRect background_derivative_placement(const BackgroundConfig& config,
+                                               const BackgroundView& view, BackgroundRect target);
+void pan_background(BackgroundView& config, BackgroundRect target, BackgroundRect image, double dx,
+                    double dy);
+void zoom_background(BackgroundView& config, double zoom, double image_width, double image_height,
                      BackgroundRect target, double anchor_x, double anchor_y);
 
 } // namespace cxxime

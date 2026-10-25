@@ -514,7 +514,8 @@ bool CandidateWindow::get_window_rect(RECT* rect) const {
 }
 void CandidateWindow::configure_background() {
     const auto& background = config_->background;
-    background_loader_.request(background.enabled ? background.resource : std::string{}, true);
+    const auto& view = config_->layout == "vertical" ? background.vertical : background.horizontal;
+    background_loader_.request(background.enabled ? view.resource : std::string{}, true);
     background_image_.reset();
     render_ctx_.background_image = nullptr;
     background_chosen_ = false;
@@ -561,9 +562,10 @@ void CandidateWindow::draw_preview(HDC dc, const RECT& bounds) {
 
 void CandidateWindow::update_background(int width, int height) {
     const auto& background = config_->background;
+    const auto& view = config_->layout == "vertical" ? background.vertical : background.horizontal;
     if (!background_chosen_) {
-        background_image_ = preview_background_ ? preview_background_
-                                                : background_loader_.ready(background.resource);
+        background_image_ =
+            preview_background_ ? preview_background_ : background_loader_.ready(view.resource);
         background_chosen_ = true;
     }
     render_ctx_.background_image =
@@ -573,9 +575,8 @@ void CandidateWindow::update_background(int width, int height) {
         return;
     }
     const double inset = scaled_cfg_.border_width + scaled_cfg_.round_corner_ex;
-    const auto target = background_target(width, height, inset, background);
-    const auto rect = background_placement(background_image_->width, background_image_->height,
-                                           target, background);
+    const auto target = background_target(width, height, inset, view);
+    const auto rect = background_derivative_placement(background, view, target);
     render_ctx_.background_x = rect.x;
     render_ctx_.background_y = rect.y;
     render_ctx_.background_width = rect.width;

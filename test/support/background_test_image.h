@@ -19,6 +19,37 @@
 
 namespace background_test {
 
+inline cxxime::BackgroundPreparation prepare(const std::wstring& path) {
+    const auto source = cxxime::import_background_source(path);
+    cxxime::BackgroundConfig config;
+    if (!source.image) {
+        cxxime::BackgroundPreparation result;
+        result.error = source.error;
+        return result;
+    }
+    config.enabled = true;
+    config.source = source.resource;
+    config.source_width = source.image->source_width;
+    config.source_height = source.image->source_height;
+    auto result = cxxime::prepare_background(config);
+    result.resources.push_back(source);
+    return result;
+}
+
+inline cxxime::BackgroundImport import_image(const std::wstring& path) {
+    auto prepared = prepare(path);
+    cxxime::BackgroundImport result;
+    result.resource = prepared.config.horizontal.resource;
+    result.image = prepared.horizontal;
+    result.error = prepared.error;
+    for (const auto& resource : prepared.resources) {
+        if (!resource.source && resource.resource == result.resource) {
+            result.created = resource.created;
+        }
+    }
+    return result;
+}
+
 struct Files {
     std::filesystem::path directory;
     std::string previous = cxxime::user_data_dir();

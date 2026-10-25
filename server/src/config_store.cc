@@ -194,12 +194,6 @@ bool ConfigStore::prepare_update(const std::vector<ConfigMutation>& mutations,
         for (const auto& mutation : mutations) {
             nlohmann::json payload = nlohmann::json::parse(mutation.payload);
             if (mutation.kind == cxxime::UserConfigMutationKind::kReplace) {
-                // Older settings clients do not know image backgrounds. New clients send
-                // an explicit background object even when restoring the pure-color default.
-                if (payload.is_object() && !payload.contains("background") &&
-                    user_config.contains("background")) {
-                    payload["background"] = user_config["background"];
-                }
                 user_config = std::move(payload);
             } else {
                 user_config.merge_patch(payload);
