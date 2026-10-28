@@ -19,6 +19,7 @@ void append_pinyin_partial_candidates(Dict& dict,
                                       const TranslationRequest& request,
                                       bool shuangpin,
                                       bool candidate_learning_enabled,
+                                      bool full_span_first,
                                       std::vector<CandidateEntry>& entries,
                                       TranslationStatus& status);
 

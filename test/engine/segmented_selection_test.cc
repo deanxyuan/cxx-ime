@@ -224,7 +224,18 @@ TEST(SegmentedSelection, missing_page_anchor_rebuilds_the_first_page) {
         fixture.engine.context().translation().entries[anchor_index].candidate.text;
     ASSERT_TRUE(fixture.dict->disable_system_entry(anchor_text));
 
-    ASSERT_EQ(fixture.engine.process_key(make_key(VK_NEXT)), cxxime::ProcessResult::ACCEPTED);
+    bool reset = false;
+    for (int attempt = 0; attempt < 8 && !reset; ++attempt) {
+        ASSERT_EQ(fixture.engine.process_key(make_key(VK_NEXT)), cxxime::ProcessResult::ACCEPTED);
+        reset = fixture.engine.last_trace().navigation_outcome ==
+                cxxime::CandidateNavigationOutcome::kSequenceReset;
+        if (!reset) {
+            ASSERT_EQ(fixture.engine.last_trace().navigation_outcome,
+                      cxxime::CandidateNavigationOutcome::kRetryable);
+            ASSERT_EQ(fixture.engine.context().candidate(anchor_index)->text, anchor_text);
+        }
+    }
+    ASSERT_TRUE(reset);
     ASSERT_EQ(fixture.engine.context().page_offset(), 0);
     for (const cxxime::CandidateEntry& entry : fixture.engine.context().translation().entries) {
         ASSERT_NE(entry.candidate.text, anchor_text);

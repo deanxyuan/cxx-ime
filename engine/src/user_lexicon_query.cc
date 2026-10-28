@@ -226,9 +226,9 @@ std::vector<Candidate> UserLexicon::lookup_prefix(const std::string& prefix, int
     return results;
 }
 
-std::vector<Candidate> UserLexicon::lookup_indexed(const std::string& key, int limit,
-                                                   const QueryBudget& budget, QueryTrace* trace,
-                                                   UserLookupStats* stats) const {
+std::vector<Candidate> UserLexicon::lookup_indexed(
+    const std::string& key, int limit, const QueryBudget& budget, QueryTrace* trace,
+    UserLookupStats* stats, const std::function<bool(const Candidate&)>& filter) const {
     std::vector<Candidate> results;
     if (!stats || limit <= 0) {
         return results;
@@ -259,6 +259,9 @@ std::vector<Candidate> UserLexicon::lookup_indexed(const std::string& key, int l
             score_match(kind_, kind, match_key.size(), entry.code.size(),
                         entry.frequency, sequence_, entry.sequence);
         candidate.origin = CandidateOrigin::kUser;
+        if (filter && !filter(candidate)) {
+            return true;
+        }
         merge_candidate(results, std::move(candidate));
         return static_cast<int>(results.size()) < limit;
     };

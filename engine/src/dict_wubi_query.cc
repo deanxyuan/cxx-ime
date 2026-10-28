@@ -114,7 +114,8 @@ std::vector<Candidate> Dict::lookup(const std::string& code_prefix, int limit, Q
     };
 
     std::vector<uint32_t> best_entries;
-    best_entries.reserve(static_cast<size_t>(limit));
+    best_entries.reserve((std::min)(static_cast<size_t>(limit),
+                                   static_cast<size_t>(dict_entry_count_)));
     uint32_t exact_count = 0;
     uint32_t prefix_count = 0;
     const bool use_prefix_index =
@@ -211,7 +212,7 @@ std::vector<Candidate> Dict::lookup(const std::string& code_prefix, int limit, Q
         std::sort(best_entries.begin(), best_entries.end(), entry_better);
     }
 
-    results.reserve(best_entries.size() + static_cast<size_t>(limit));
+    results.reserve(best_entries.size());
     // Preserve the offline index order while keeping learned exact entries dominant.
     static constexpr int kSystemRankBase = 100000;
     for (size_t rank = 0; rank < best_entries.size(); ++rank) {

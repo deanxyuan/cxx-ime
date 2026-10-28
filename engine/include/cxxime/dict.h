@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -29,6 +30,12 @@ class DisabledSystemLexicon;
 class ManualCandidateOrder;
 class UserLexicon;
 class WubiPrefixIndex;
+
+enum class PinyinLookupScope {
+    kAll,
+    kExact,
+    kPrefix,
+};
 
 struct SpanCandidate {
     uint16_t end = 0;
@@ -90,7 +97,9 @@ public:
     std::vector<Candidate> lookup(const std::string& code_prefix, int limit, const QueryBudget& budget, QueryTrace* trace = nullptr);
     std::vector<Candidate> lookup_by_syllables(const std::vector<std::string>& syllables, int limit, const QueryBudget& budget, QueryTrace* trace = nullptr);
     std::vector<Candidate> lookup_by_ids(const std::vector<uint32_t>& ids, int limit = 10,
-                                         QueryTrace* trace = nullptr, const QueryBudget* budget = nullptr);
+                                         QueryTrace* trace = nullptr,
+                                         const QueryBudget* budget = nullptr,
+                                         PinyinLookupScope scope = PinyinLookupScope::kAll);
     bool lookup_exact_span(const std::vector<uint32_t>& ids,
                            size_t start,
                            size_t end,
@@ -137,8 +146,10 @@ public:
     bool save_candidate_preferences_if_due(std::chrono::milliseconds delay);
     void freeze_candidate_preferences();
     bool record_candidate_preference(const Candidate& candidate, const std::string& code);
-    void apply_candidate_preferences(const std::string& code, CandidateSource source,
-                                     std::vector<Candidate>& candidates, int limit) const;
+    void
+    apply_candidate_preferences(const std::string& code, CandidateSource source,
+                                std::vector<Candidate>& candidates, int limit,
+                                const std::function<bool(const Candidate&)>& filter = {}) const;
     std::vector<UserDictEntryInfo> query_candidate_preferences(
         const std::string& query, size_t offset, size_t limit,
         size_t* match_total = nullptr) const;
@@ -152,9 +163,11 @@ public:
     bool load_manual_candidate_order(const std::string& path);
     bool merge_manual_candidate_order_contents(const std::string& imported,
                                                UserDataMergeResult* result);
-    void apply_manual_candidate_order(const std::string& code, CandidateSource source,
-                                      std::vector<Candidate>& candidates, int limit,
-                                      std::string_view candidate_input_code = {}) const;
+    void
+    apply_manual_candidate_order(const std::string& code, CandidateSource source,
+                                 std::vector<Candidate>& candidates, int limit,
+                                 std::string_view candidate_input_code = {},
+                                 const std::function<bool(const Candidate&)>& filter = {}) const;
     std::vector<ManualCandidateOrderEntry> manual_candidate_order(
         const std::string& code) const;
     bool replace_manual_candidate_order_and_save(
@@ -203,7 +216,8 @@ public:
     std::vector<Candidate> lookup_user_prefix(const std::string& prefix, int limit,
         const QueryBudget& budget, QueryTrace* trace, UserLookupStats* stats) const;
     std::vector<Candidate> lookup_user_indexed(const std::string& key, int limit,
-        const QueryBudget& budget, QueryTrace* trace, UserLookupStats* stats) const;
+        const QueryBudget& budget, QueryTrace* trace, UserLookupStats* stats,
+        const std::function<bool(const Candidate&)>& filter = {}) const;
 
     // Syllable ID mapping (for pinyin integer-ID lookup path)
     uint32_t syllable_to_id(const std::string& syllable) const;

@@ -130,10 +130,10 @@ std::vector<Candidate> Dict::lookup_user_prefix(const std::string& prefix, int l
     return user_lexicon_->lookup_prefix(prefix, limit, budget, trace, stats);
 }
 
-std::vector<Candidate> Dict::lookup_user_indexed(const std::string& key, int limit,
-                                                 const QueryBudget& budget, QueryTrace* trace,
-                                                 UserLookupStats* stats) const {
-    return user_lexicon_->lookup_indexed(key, limit, budget, trace, stats);
+std::vector<Candidate> Dict::lookup_user_indexed(
+    const std::string& key, int limit, const QueryBudget& budget, QueryTrace* trace,
+    UserLookupStats* stats, const std::function<bool(const Candidate&)>& filter) const {
+    return user_lexicon_->lookup_indexed(key, limit, budget, trace, stats, filter);
 }
 
 bool Dict::load_candidate_preferences(const std::string& path) {
@@ -158,13 +158,17 @@ bool Dict::record_candidate_preference(const Candidate& candidate, const std::st
 }
 
 void Dict::apply_candidate_preferences(const std::string& code, CandidateSource source,
-                                       std::vector<Candidate>& candidates, int limit) const {
+                                       std::vector<Candidate>& candidates, int limit,
+                                       const std::function<bool(const Candidate&)>& filter) const {
     if (limit <= 0) {
         return;
     }
     auto preferences = candidate_preference_->preferred_candidates(code, source);
     const bool filter_disabled = disabled_system_entry_count() != 0;
     for (auto& preference : preferences) {
+        if (filter && !filter(preference)) {
+            continue;
+        }
         if (filter_disabled && is_system_entry_disabled(preference.text) &&
             preference.origin != CandidateOrigin::kUser) {
             continue;
@@ -332,7 +336,8 @@ bool Dict::resolve_manual_candidate(const ManualCandidateOrderEntry& entry, Cand
 
 void Dict::apply_manual_candidate_order(const std::string& code, CandidateSource source,
                                         std::vector<Candidate>& candidates, int limit,
-                                        std::string_view candidate_input_code) const {
+                                        std::string_view candidate_input_code,
+                                        const std::function<bool(const Candidate&)>& filter) const {
     if (limit <= 0) {
         return;
     }
@@ -350,9 +355,15 @@ void Dict::apply_manual_candidate_order(const std::string& code, CandidateSource
         });
         Candidate resolved;
         if (existing != candidates.end()) {
+            if (filter && !filter(*existing)) {
+                continue;
+            }
             resolved = std::move(*existing);
             candidates.erase(existing);
         } else if (!resolve_manual_candidate(entry, source, &resolved)) {
+            continue;
+        }
+        if (filter && !filter(resolved)) {
             continue;
         }
         if (!candidate_input_code.empty()) {

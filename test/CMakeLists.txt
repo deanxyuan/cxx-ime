@@ -55,7 +55,10 @@ add_cxxime_test(engine_test
     DEPS cxxime-engine cxxime-test-topn-data
 )
 add_cxxime_test(segmented_selection_test
-    SOURCES engine/segmented_selection_test.cc
+    SOURCES
+        engine/segmented_selection_test.cc
+        engine/pinyin_single_syllable_test.cc
+        engine/pinyin_scoped_candidates_test.cc
     DEPS cxxime-engine cxxime-test-topn-data
 )
 add_cxxime_test(composition_learning_test

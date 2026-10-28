@@ -65,8 +65,9 @@ public:
     bool freeze_and_stop();
     bool merge_contents_and_save(const std::string& imported, UserDataMergeResult* result);
 
-    std::vector<Candidate> lookup_candidates(const std::string& code,
-                                             std::size_t limit) const;
+    std::vector<Candidate> lookup_candidates(
+        const std::string& code, std::size_t limit,
+        const std::function<bool(const Candidate&)>& filter = {}) const;
     std::uint64_t version() const;
     std::size_t entry_count() const;
     std::size_t pending_count() const;

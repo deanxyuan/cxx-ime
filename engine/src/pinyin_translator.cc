@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <chrono>
 #include <climits>
+#include <functional>
 #include <iterator>
 #include <utility>
 
@@ -121,8 +122,9 @@ static bool contains_text(const std::vector<Candidate>& items, const std::string
 static void merge_candidate_by_score(std::vector<Candidate>& items, Candidate candidate) {
     for (auto& item : items) {
         if (item.text == candidate.text) {
-            if (candidate.frequency > item.frequency)
+            if (candidate_rank_before(candidate, item)) {
                 item = std::move(candidate);
+            }
             return;
         }
     }
@@ -130,12 +132,7 @@ static void merge_candidate_by_score(std::vector<Candidate>& items, Candidate ca
 }
 
 static void sort_candidates_by_score(std::vector<Candidate>& items) {
-    std::sort(items.begin(), items.end(),
-        [](const Candidate& a, const Candidate& b) {
-            if (a.frequency != b.frequency) return a.frequency > b.frequency;
-            if (a.text.size() != b.text.size()) return a.text.size() < b.text.size();
-            return a.text < b.text;
-        });
+    std::sort(items.begin(), items.end(), candidate_rank_before);
 }
 
 static void remove_oversized_candidates(std::vector<Candidate>& candidates) {
@@ -399,7 +396,8 @@ CandidatePage PinyinTranslator::translate_page(const std::string& pinyin, int pa
                                                int page_size, QueryTrace* trace,
                                                const QueryBudget* budget, QueryScratch* scratch,
                                                int candidate_offset,
-                                               bool require_runtime_paths) {
+                                               bool require_runtime_paths,
+                                               PinyinLookupScope scope) {
     CandidatePage page;
     page.page_index = page_index;
     page.page_size = page_size;
@@ -413,13 +411,13 @@ CandidatePage PinyinTranslator::translate_page(const std::string& pinyin, int pa
     const int need = offset + fetch_limit + 1;
     const QueryCacheVersions cache_versions = query_cache_versions();
 
-    if (!require_runtime_paths &&
+    if (scope == PinyinLookupScope::kAll && !require_runtime_paths &&
         lookup_query_cache(pinyin, page_index, offset, page_size, cache_versions, page, trace))
         return page;
 
     IndexedFastResult fast;
     auto finish_complete_fast_path = [&]() {
-        if (require_runtime_paths || !fast.complete_index_hit ||
+        if (scope != PinyinLookupScope::kAll || require_runtime_paths || !fast.complete_index_hit ||
             (sentence_composition_enabled_ && static_cast<int>(fast.candidates.size()) < need)) {
             return false;
         }
@@ -454,7 +452,8 @@ CandidatePage PinyinTranslator::translate_page(const std::string& pinyin, int pa
     };
 
     // Full Pinyin keeps its existing zero-decode Top-N fast path.
-    if (pinyin_scheme() == PinyinSchemeKind::kFullPinyin && is_indexable_key(pinyin)) {
+    if (scope == PinyinLookupScope::kAll &&
+        pinyin_scheme() == PinyinSchemeKind::kFullPinyin && is_indexable_key(pinyin)) {
         fast = lookup_indexed_fast(pinyin, need, trace);
         remove_oversized_candidates(fast.candidates);
         if (finish_complete_fast_path()) {
@@ -468,6 +467,7 @@ CandidatePage PinyinTranslator::translate_page(const std::string& pinyin, int pa
     auto& id_sequences = scr.id_sequences;
     std::vector<PathMatchTier> path_tiers;
     std::vector<std::string> path_query_keys;
+    std::vector<std::string> complete_query_keys;
 
     auto add_path = [&](const std::vector<std::string>& syllables,
                         PathMatchTier tier, std::string query_key = {}) -> size_t {
@@ -479,6 +479,9 @@ CandidatePage PinyinTranslator::translate_page(const std::string& pinyin, int pa
             ids.push_back(id);
         }
         id_sequences.push_back(std::move(ids));
+        if (scope != PinyinLookupScope::kAll) {
+            complete_query_keys.push_back(canonical_pinyin_key(syllables));
+        }
         path_tiers.push_back(tier);
         path_query_keys.push_back(std::move(query_key));
         return id_sequences.size() - 1;
@@ -747,10 +750,51 @@ CandidatePage PinyinTranslator::translate_page(const std::string& pinyin, int pa
     size_t topk_cap = (size_t)(offset + fetch_limit + 1);
     TopKCollector merged(topk_cap);
 
-    // Seed the collector with fast-path candidates before fallback.
+    const auto matches_scope = [&](const Candidate& candidate) {
+        if (scope == PinyinLookupScope::kAll) {
+            return true;
+        }
+        const std::string& spelling =
+            candidate.syllables.empty() ? candidate.code : candidate.syllables;
+        const bool exact = std::any_of(
+            complete_query_keys.begin(), complete_query_keys.end(), [&](const std::string& key) {
+                std::size_t position = 0;
+                for (char ch : spelling) {
+                    if (ch == ':') {
+                        continue;
+                    }
+                    if (position == key.size() || key[position++] != ch) {
+                        return false;
+                    }
+                }
+                return position == key.size();
+            });
+        return scope == PinyinLookupScope::kExact ? exact : !exact;
+    };
+    std::function<bool(const Candidate&)> candidate_filter;
+    if (scope != PinyinLookupScope::kAll) {
+        candidate_filter = matches_scope;
+    }
+
+    bool user_query_incomplete = false;
+    if (scope != PinyinLookupScope::kAll) {
+        // The mixed fast path caps its results before scope is known. Query the same
+        // user indexes with the scope filter before collecting or limiting candidates.
+        const QueryBudget default_budget;
+        const QueryBudget& user_budget = budget ? *budget : default_budget;
+        UserLookupStats user_stats;
+        auto users = dict_->lookup_user_indexed(pinyin, need, user_budget, trace, &user_stats,
+                                                candidate_filter);
+        user_query_incomplete = user_stats.truncated;
+        for (auto& candidate : users) {
+            merged.offer(std::move(candidate));
+        }
+    }
+
+    // Unscoped queries can seed the collector from the mixed Top-N fast path.
     if (fast.hit) {
         for (auto& c : fast.candidates) {
-            if (!contains_text(merged.items(), c.text)) {
+            if (matches_scope(c) && !contains_text(merged.items(), c.text)) {
                 Candidate copy = c;
                 merged.offer(std::move(copy));
             }
@@ -777,7 +821,7 @@ CandidatePage PinyinTranslator::translate_page(const std::string& pinyin, int pa
             }
             break;
         }
-        auto candidates = dict_->lookup_by_ids(ids, offset + fetch_limit + 1, trace, budget);
+        auto candidates = dict_->lookup_by_ids(ids, offset + fetch_limit + 1, trace, budget, scope);
         for (auto& c : candidates) {
             rank_fallback_candidate(c, path_tiers[live_path_index], ids.size());
         }
@@ -785,8 +829,9 @@ CandidatePage PinyinTranslator::translate_page(const std::string& pinyin, int pa
             rank_shuangpin_path(path_query_keys[live_path_index], candidates);
         }
         for (auto& c : candidates) {
-            if (!contains_text(merged.items(), c.text))
+            if (matches_scope(c) && !contains_text(merged.items(), c.text)) {
                 merged.offer(std::move(c));
+            }
         }
     }
 
@@ -805,9 +850,20 @@ CandidatePage PinyinTranslator::translate_page(const std::string& pinyin, int pa
             std::chrono::steady_clock::now() - t_merge_start).count();
     }
 
-    if (sentence_composition_enabled_ && !composition_specs.empty() &&
-        sorted.size() < static_cast<size_t>(need) &&
-        !(budget && budget->deadline.expired())) {
+    const bool collector_capacity_incomplete =
+        budget && budget->max_results_before_merge > 0 &&
+        budget->max_results_before_merge < static_cast<uint32_t>(need) &&
+        (!trace || trace->topk_truncated);
+    const bool dictionary_query_incomplete =
+        deadline_hit || collector_capacity_incomplete || user_query_incomplete ||
+        (trace && (trace->deadline_exceeded || trace->scan_budget_truncated));
+    // Do not publish a generated tail before the complete syllable's dictionary group ends.
+    // Enlarging a truncated query could otherwise displace an already published page anchor.
+    const bool defer_composition =
+        dictionary_query_incomplete && is_complete_full_pinyin_syllable(pinyin);
+    if (scope != PinyinLookupScope::kPrefix && sentence_composition_enabled_ &&
+        !composition_specs.empty() && !defer_composition &&
+        sorted.size() < static_cast<size_t>(need) && !(budget && budget->deadline.expired())) {
         std::vector<CompositionPath> composition_paths;
         composition_paths.reserve(composition_specs.size());
         for (const auto& spec : composition_specs) {
@@ -876,12 +932,13 @@ CandidatePage PinyinTranslator::translate_page(const std::string& pinyin, int pa
     remove_oversized_candidates(sorted);
 
     if (pinyin_scheme() == PinyinSchemeKind::kFullPinyin && candidate_learning_enabled_) {
-        dict_->apply_candidate_preferences(pinyin, CandidateSource::kPinyin, sorted, need);
+        dict_->apply_candidate_preferences(pinyin, CandidateSource::kPinyin, sorted, need,
+                                           candidate_filter);
     }
     dict_->filter_disabled_system_candidates(sorted);
     if (pinyin_scheme() == PinyinSchemeKind::kFullPinyin && candidate_learning_enabled_ &&
         composition_learning_) {
-        auto learned = composition_learning_->lookup_candidates(pinyin, need);
+        auto learned = composition_learning_->lookup_candidates(pinyin, need, candidate_filter);
         dict_->filter_disabled_system_candidates(learned);
         for (auto& candidate : learned) {
             merge_candidate_by_score(sorted, std::move(candidate));
@@ -892,7 +949,8 @@ CandidatePage PinyinTranslator::translate_page(const std::string& pinyin, int pa
         }
     }
     if (pinyin_scheme() == PinyinSchemeKind::kFullPinyin) {
-        dict_->apply_manual_candidate_order(pinyin, CandidateSource::kPinyin, sorted, need);
+        dict_->apply_manual_candidate_order(pinyin, CandidateSource::kPinyin, sorted, need, {},
+                                            candidate_filter);
     } else {
         std::vector<std::string> query_keys;
         for (const auto& query_key : path_query_keys) {
@@ -906,13 +964,13 @@ CandidatePage PinyinTranslator::translate_page(const std::string& pinyin, int pa
         }
     }
 
+    sorted.erase(
+        std::remove_if(sorted.begin(), sorted.end(),
+                       [&](const Candidate& candidate) { return !matches_scope(candidate); }),
+        sorted.end());
     const int known_count = static_cast<int>(sorted.size());
     const int returned_end = (std::min)(offset + fetch_limit, known_count);
-    const bool collector_capacity_incomplete = budget &&
-        budget->max_results_before_merge > 0 &&
-        budget->max_results_before_merge < static_cast<uint32_t>(need) &&
-        (!trace || trace->topk_truncated);
-    const bool incomplete = deadline_hit ||
+    const bool incomplete = deadline_hit || user_query_incomplete ||
         (trace && (trace->deadline_exceeded || trace->scan_budget_truncated ||
                    trace->composition_truncated)) ||
         collector_capacity_incomplete;
@@ -933,11 +991,22 @@ CandidatePage PinyinTranslator::translate_page(const std::string& pinyin, int pa
     if (!page.candidates.empty())
         page.highlighted = 0;
 
-    if (!require_runtime_paths && page.extent.complete) {
+    if (scope == PinyinLookupScope::kAll && !require_runtime_paths && page.extent.complete) {
         store_query_cache(pinyin, page_index, offset, page_size, cache_versions, page);
     }
 
     return page;
+}
+
+bool PinyinTranslator::is_complete_full_pinyin_syllable(const std::string& input) const {
+    if (!pinyin_resources_ || pinyin_scheme() != PinyinSchemeKind::kFullPinyin) {
+        return false;
+    }
+    const auto spellings = pinyin_resources_->prefix_search(input, false);
+    return std::any_of(spellings.begin(), spellings.end(), [&](const SpellingMatch& spelling) {
+        return spelling.type == kNormalSpelling && spelling.input_key_len == input.size() &&
+               spelling.syllable == input;
+    });
 }
 
 TranslationResult PinyinTranslator::translate(const TranslationRequest& request) {
@@ -975,22 +1044,25 @@ TranslationResult PinyinTranslator::translate(const TranslationRequest& request)
     effective_request.trace->topk_truncated = false;
     effective_request.trace->composition_truncated = false;
 
-    // Only the leading full-span group must be materialized before partial candidates. Fetching
-    // enough trailing full-span entries for every possible partial up front spends the latency
-    // budget on candidates ranked after the partial group.
+    const bool full_span_first = is_complete_full_pinyin_syllable(request.input);
+    // A complete syllable keeps complete matches ahead of partial choices and predictions.
     const int fetch_count = (std::max)(
         request.page_offset + request.page_size + 1,
         static_cast<int>(kLeadingFullSpanCandidateCount + 1));
     const bool require_runtime_paths =
         pinyin_resources_ && pinyin_query_policy_.enable_fuzzy &&
         pinyin_resources_->has_fuzzy_path(request.input);
-    CandidatePage full = translate_page(request.input, 0, fetch_count, effective_request.trace,
-                                        request.budget, request.scratch, 0,
-                                        require_runtime_paths);
+    CandidatePage full =
+        translate_page(request.input, 0, fetch_count, effective_request.trace, request.budget,
+                       request.scratch, 0, require_runtime_paths,
+                       full_span_first ? PinyinLookupScope::kExact : PinyinLookupScope::kAll);
     std::vector<CandidateEntry> merged;
-    merged.reserve(full.candidates.size() + request.page_size);
+    merged.reserve(full.candidates.size() + kMaxSegmentedPartialCandidateCount);
     for (auto& candidate : full.candidates) {
         merged.push_back(make_text_candidate_entry(std::move(candidate), request.input.size()));
+        if (full_span_first) {
+            merged.back().match_kind = CandidateMatchKind::kExact;
+        }
     }
     const bool full_query_incomplete = effective_request.trace->deadline_exceeded ||
                                        effective_request.trace->scan_budget_truncated ||
@@ -1001,11 +1073,13 @@ TranslationResult PinyinTranslator::translate(const TranslationRequest& request)
                                        : TranslationStatus::kStableDegraded;
     }
     const std::size_t full_count = merged.size();
-    if (pinyin_resources_) {
-        append_pinyin_partial_candidates(*dict_, *pinyin_resources_, pinyin_query_policy_,
-                                         effective_request,
-                                         pinyin_scheme() == PinyinSchemeKind::kShuangpin,
-                                         candidate_learning_enabled_, merged, result.status);
+    const bool full_sequence_finished =
+        !full_query_incomplete && full_count >= static_cast<std::size_t>(full.extent.known_count);
+    if (pinyin_resources_ && (!full_span_first || full_sequence_finished)) {
+        append_pinyin_partial_candidates(
+            *dict_, *pinyin_resources_, pinyin_query_policy_, effective_request,
+            pinyin_scheme() == PinyinSchemeKind::kShuangpin, candidate_learning_enabled_,
+            full_span_first, merged, result.status);
     }
     const std::size_t added_partial_count = merged.size() - full_count;
     const auto is_partial_entry = [&](const CandidateEntry& entry) {
@@ -1020,7 +1094,7 @@ TranslationResult PinyinTranslator::translate(const TranslationRequest& request)
 
     // Keep a fixed number of leading full-span choices, then group all partials
     // before lower-ranked full-span choices. The order is independent of page size.
-    if (visible_full_count > leading_full_count && visible_partial_count > 0) {
+    if (!full_span_first && visible_full_count > leading_full_count && visible_partial_count > 0) {
         std::vector<CandidateEntry> partials;
         std::vector<CandidateEntry> fulls;
         partials.reserve(visible_partial_count);
@@ -1049,6 +1123,44 @@ TranslationResult PinyinTranslator::translate(const TranslationRequest& request)
         }
     }
 
+    int remaining_prediction_count = 0;
+    bool predictions_pending = false;
+    if (full_span_first && full_sequence_finished && result.status == TranslationStatus::kSuccess &&
+        merged.size() < static_cast<std::size_t>(fetch_count)) {
+        QueryTrace prediction_trace;
+        CandidatePage predictions =
+            translate_page(request.input, 0, fetch_count, &prediction_trace, request.budget,
+                           nullptr, 0, true, PinyinLookupScope::kPrefix);
+        for (auto& candidate : predictions.candidates) {
+            const bool duplicate =
+                std::any_of(merged.begin(), merged.end(), [&](const CandidateEntry& entry) {
+                    return entry.candidate.text == candidate.text;
+                });
+            if (!duplicate) {
+                auto entry = make_text_candidate_entry(std::move(candidate), request.input.size());
+                entry.match_kind = CandidateMatchKind::kPrefix;
+                merged.push_back(std::move(entry));
+            }
+        }
+        remaining_prediction_count =
+            (std::max)(0, predictions.extent.known_count -
+                              static_cast<int>(predictions.candidates.size()));
+        predictions_pending = !predictions.extent.complete;
+        auto& trace = *effective_request.trace;
+        trace.syllable_path_count += prediction_trace.syllable_path_count;
+        trace.live_path_count += prediction_trace.live_path_count;
+        trace.exact_scan_count += prediction_trace.exact_scan_count;
+        trace.prefix_scan_count += prediction_trace.prefix_scan_count;
+        trace.user_scan_count += prediction_trace.user_scan_count;
+        trace.lookup_us += prediction_trace.lookup_us;
+        trace.merge_us += prediction_trace.merge_us;
+        trace.truncated = trace.truncated || prediction_trace.truncated;
+        trace.scan_budget_truncated =
+            trace.scan_budget_truncated || prediction_trace.scan_budget_truncated;
+        trace.topk_truncated = trace.topk_truncated || prediction_trace.topk_truncated;
+        trace.deadline_exceeded = trace.deadline_exceeded || prediction_trace.deadline_exceeded;
+    }
+
     result.page_index = request.page_index;
     result.page_offset = request.page_offset;
     result.page_size = request.page_size;
@@ -1056,9 +1168,10 @@ TranslationResult PinyinTranslator::translate(const TranslationRequest& request)
     const int begin = (std::min)(request.page_offset, available);
     const int end = (std::min)(begin + request.page_size, available);
     const int known_count = (std::max)(
-        available, full.extent.known_count + static_cast<int>(added_partial_count));
+        available + remaining_prediction_count,
+        full.extent.known_count + static_cast<int>(added_partial_count));
     const bool incomplete = result.status != TranslationStatus::kSuccess ||
-                            !full.extent.complete;
+                            !full.extent.complete || predictions_pending;
     result.extent = make_candidate_extent(known_count, end, incomplete);
     result.entries.assign(std::make_move_iterator(merged.begin() + begin),
                           std::make_move_iterator(merged.begin() + end));

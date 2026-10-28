@@ -6,6 +6,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <mutex>
 #include <shared_mutex>
 #include <string>
@@ -55,9 +56,10 @@ public:
     std::vector<Candidate> lookup_prefix(const std::string& prefix, int limit,
                                          const QueryBudget& budget, QueryTrace* trace,
                                          UserLookupStats* stats) const;
-    std::vector<Candidate> lookup_indexed(const std::string& key, int limit,
-                                          const QueryBudget& budget, QueryTrace* trace,
-                                          UserLookupStats* stats) const;
+    std::vector<Candidate>
+    lookup_indexed(const std::string& key, int limit, const QueryBudget& budget, QueryTrace* trace,
+                   UserLookupStats* stats,
+                   const std::function<bool(const Candidate&)>& filter = {}) const;
 
     std::string reverse_lookup(const std::string& text) const;
     int count_prefix(const std::string& prefix, QueryTrace* trace) const;

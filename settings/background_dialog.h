@@ -3,8 +3,11 @@
 #ifndef CXXIME_SETTINGS_BACKGROUND_DIALOG_H_
 #define CXXIME_SETTINGS_BACKGROUND_DIALOG_H_
 
+#include <functional>
+#include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include <windows.h>
 
@@ -21,8 +24,9 @@ struct BackgroundEdit {
     std::shared_ptr<const BackgroundImage> vertical;
 };
 
-std::optional<BackgroundEdit> edit_background(HWND owner, const Config& config,
-                                              const std::wstring& source = {});
+std::optional<BackgroundEdit>
+edit_background(HWND owner, const Config& config, const std::wstring& source = {},
+                const std::function<std::wstring(HWND)>& select_file = {});
 } // namespace settings
 } // namespace cxxime
 #endif // CXXIME_SETTINGS_BACKGROUND_DIALOG_H_

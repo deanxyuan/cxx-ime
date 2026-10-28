@@ -39,10 +39,17 @@ struct TranslationRequest {
     QueryScratch* scratch = nullptr;
 };
 
+enum class CandidateMatchKind {
+    kUnspecified,
+    kExact,
+    kPrefix,
+};
+
 struct CandidateEntry {
     Candidate candidate;
     std::string hint;
     CandidateSelection selection;
+    CandidateMatchKind match_kind = CandidateMatchKind::kUnspecified;
 };
 
 inline bool same_candidate_entry_identity(const CandidateEntry& left, const CandidateEntry& right) {

@@ -46,12 +46,14 @@ public:
     void set_composition_learning_service(CompositionLearningService* service) override;
 
     TranslationResult translate(const TranslationRequest& request) override;
+    bool is_complete_full_pinyin_syllable(const std::string& input) const;
     CandidatePage translate_page(const std::string& pinyin, int page_index = 0,
                                  int page_size = 9, QueryTrace* trace = nullptr,
                                  const QueryBudget* budget = nullptr,
                                  QueryScratch* scratch = nullptr,
                                  int candidate_offset = -1,
-                                 bool require_runtime_paths = false);
+                                 bool require_runtime_paths = false,
+                                 PinyinLookupScope scope = PinyinLookupScope::kAll);
 
 private:
     static bool is_indexable_key(const std::string& pinyin);

@@ -241,7 +241,8 @@ void rank_partial_candidates(Dict& dict,
 }
 
 void merge_or_append_visible_candidate(std::vector<CandidateEntry>& entries,
-                                       CandidateEntry candidate, std::size_t input_size) {
+                                       CandidateEntry candidate, std::size_t input_size,
+                                       bool full_span_first) {
     const auto existing =
         std::find_if(entries.begin(), entries.end(), [&](const CandidateEntry& entry) {
             return entry.candidate.text == candidate.candidate.text;
@@ -258,7 +259,8 @@ void merge_or_append_visible_candidate(std::vector<CandidateEntry>& entries,
         }
         return;
     }
-    if (should_prefer_visible_selection(candidate.selection, existing->selection, input_size)) {
+    if (should_prefer_visible_selection(candidate.selection, existing->selection, input_size,
+                                        full_span_first)) {
         const auto* existing_action = std::get_if<TextSelectionAction>(&existing->selection);
         const auto* candidate_action = std::get_if<TextSelectionAction>(&candidate.selection);
         const bool moves_from_full_to_partial =
@@ -282,6 +284,7 @@ void append_pinyin_partial_candidates(Dict& dict,
                                       const TranslationRequest& request,
                                       bool shuangpin,
                                       bool candidate_learning_enabled,
+                                      bool full_span_first,
                                       std::vector<CandidateEntry>& entries,
                                       TranslationStatus& status) {
     if (!request.policy.allow_partial_selection || request.input.size() < 2) {
@@ -386,7 +389,8 @@ void append_pinyin_partial_candidates(Dict& dict,
         partials.resize(kMaxSegmentedPartialCandidateCount);
     }
     for (auto& partial : partials) {
-        merge_or_append_visible_candidate(entries, std::move(partial.entry), request.input.size());
+        merge_or_append_visible_candidate(entries, std::move(partial.entry), request.input.size(),
+                                          full_span_first);
     }
     if (request.trace) {
         request.trace->span_query_count += span_stats.range_queries;

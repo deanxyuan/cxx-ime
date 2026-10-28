@@ -1,6 +1,7 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
 #include <algorithm>
+#include <fstream>
 #include <memory>
 #include <string>
 #include <vector>
@@ -71,6 +72,34 @@ struct CompletionFixture {
 };
 
 } // namespace
+
+TEST(SyllabifierCompletion, split_trie_counts_only_serialized_nodes) {
+    CompletionFixture fixture;
+    ASSERT_TRUE(cxxime::SpellingsIndex::create_test_trie(
+        fixture.spelling_path, {
+                                   {"zong", "zhong", cxxime::kFuzzySpelling, -0.5f},
+                                   {"z", "zhong", cxxime::kAbbreviation, -1.0f},
+                               }));
+    cxxime::SpellingsHeader header{};
+    {
+        std::ifstream input(fixture.spelling_path, std::ios::binary);
+        ASSERT_TRUE(
+            static_cast<bool>(input.read(reinterpret_cast<char*>(&header), sizeof(header))));
+    }
+    // The serialized trie contains root -> z -> ong. The replaced node is unreachable.
+    ASSERT_EQ(header.node_count, 3u);
+    cxxime::SpellingsIndex index;
+    ASSERT_TRUE(index.load(fixture.spelling_path));
+    const auto short_matches = index.prefix_search("z");
+    ASSERT_EQ(short_matches.size(), 1u);
+    ASSERT_EQ(short_matches[0].type, cxxime::kAbbreviation);
+    ASSERT_EQ(short_matches[0].input_key_len, 1u);
+    const auto long_matches = index.prefix_search("zong");
+    ASSERT_EQ(long_matches.size(), 2u);
+    ASSERT_EQ(long_matches[1].syllable, "zhong");
+    ASSERT_EQ(long_matches[1].type, cxxime::kFuzzySpelling);
+    ASSERT_EQ(long_matches[1].input_key_len, 4u);
+}
 
 TEST(SyllabifierCompletion, search_returns_only_strict_extensions) {
     CompletionFixture fixture;

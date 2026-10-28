@@ -32,8 +32,20 @@ constexpr int kCanvasTop = 92;
 constexpr int kClientExtra = 244;
 constexpr int kMonitorReserve = 306;
 
+std::wstring select_background_file(HWND owner) {
+    wchar_t file[32768]{};
+    OPENFILENAMEW dialog{sizeof(dialog)};
+    dialog.hwndOwner = owner;
+    dialog.lpstrFilter = L"静态图片 (PNG、JPEG)\0*.png;*.jpg;*.jpeg\0\0";
+    dialog.lpstrFile = file;
+    dialog.nMaxFile = static_cast<DWORD>(std::size(file));
+    dialog.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
+    return GetOpenFileNameW(&dialog) ? std::wstring(file) : std::wstring{};
+}
+
 class BackgroundDialog {
 public:
+    std::function<std::wstring(HWND)> select_file;
     Config config;
     Config preview_config;
     BackgroundDraftResources drafts;
@@ -662,14 +674,8 @@ public:
     }
 
     void choose_file() {
-        wchar_t file[32768]{};
-        OPENFILENAMEW dialog{sizeof(dialog)};
-        dialog.hwndOwner = hwnd;
-        dialog.lpstrFilter = L"静态图片 (PNG、JPEG)\0*.png;*.jpg;*.jpeg\0\0";
-        dialog.lpstrFile = file;
-        dialog.nMaxFile = static_cast<DWORD>(std::size(file));
-        dialog.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
-        if (GetOpenFileNameW(&dialog)) {
+        const auto file = select_file(hwnd);
+        if (!file.empty()) {
             start_load(file);
         }
     }
@@ -786,10 +792,12 @@ public:
 } // namespace
 
 std::optional<BackgroundEdit> edit_background(HWND owner, const Config& config,
-                                              const std::wstring& source) {
+                                              const std::wstring& source,
+                                              const std::function<std::wstring(HWND)>& select_file) {
     std::optional<BackgroundEdit> result;
     {
         BackgroundDialog dialog;
+        dialog.select_file = select_file ? select_file : select_background_file;
         dialog.config = config;
         // The editor paints into its canvas through draw_preview's GDI path.
         // Do not create an unused GPU window target for this hidden preview.

@@ -100,11 +100,12 @@ inline bool same_selection_action(const CandidateSelection& left,
            left_replace.cursor == right_replace.cursor;
 }
 
-// Identical visible text appears once: prefer a continuing partial action, then the
-// partial action that consumes the longest prefix.
+// Identical visible text appears once. Complete-syllable input preserves full-span
+// actions; other input prefers a continuing action. Among partials, prefer the longest prefix.
 inline bool should_prefer_visible_selection(const CandidateSelection& candidate,
                                             const CandidateSelection& current,
-                                            std::size_t full_input_bytes) {
+                                            std::size_t full_input_bytes,
+                                            bool full_span_first) {
     const auto* candidate_text = std::get_if<TextSelectionAction>(&candidate);
     const auto* current_text = std::get_if<TextSelectionAction>(&current);
     if (!candidate_text || !current_text) {
@@ -113,7 +114,7 @@ inline bool should_prefer_visible_selection(const CandidateSelection& candidate,
     const bool candidate_is_partial = candidate_text->consumed_input_bytes < full_input_bytes;
     const bool current_is_partial = current_text->consumed_input_bytes < full_input_bytes;
     if (candidate_is_partial != current_is_partial) {
-        return candidate_is_partial;
+        return full_span_first ? !candidate_is_partial : candidate_is_partial;
     }
     return candidate_is_partial &&
            candidate_text->consumed_input_bytes > current_text->consumed_input_bytes;

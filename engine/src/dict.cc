@@ -732,7 +732,8 @@ bool Dict::has_prefix(const std::vector<uint32_t>& query_ids, QueryTrace* trace)
 }
 
 std::vector<Candidate> Dict::lookup_by_ids(const std::vector<uint32_t>& query_ids, int limit,
-                                            QueryTrace* trace, const QueryBudget* budget) {
+                                           QueryTrace* trace, const QueryBudget* budget,
+                                           PinyinLookupScope scope) {
     std::vector<Candidate> results;
     if (query_ids.empty() || id_index_.empty())
         return results;
@@ -776,6 +777,18 @@ std::vector<Candidate> Dict::lookup_by_ids(const std::vector<uint32_t>& query_id
     };
 
     uint32_t pos = lo;
+    if (scope == PinyinLookupScope::kPrefix) {
+        // Skip the exact range without materializing its candidates.
+        uint32_t upper = static_cast<uint32_t>(id_index_.size());
+        while (pos < upper) {
+            const uint32_t middle = pos + (upper - pos) / 2;
+            if (ids_eq(id_index_[middle])) {
+                pos = middle + 1;
+            } else {
+                upper = middle;
+            }
+        }
+    }
     uint32_t exact_count = 0;
     uint32_t check_interval = budget ? budget->deadline.check_interval : 64;
     const bool filter_disabled = disabled_system_entry_count() != 0;
@@ -837,7 +850,7 @@ std::vector<Candidate> Dict::lookup_by_ids(const std::vector<uint32_t>& query_id
             }
         }
     }
-    if (!deadline_hit) {
+    if (!deadline_hit && scope != PinyinLookupScope::kExact) {
         auto ids_prefix = [&](const IdEntry& e) {
             if (e.count < query_ids.size()) return false;
             for (size_t k = 0; k < query_ids.size(); ++k)

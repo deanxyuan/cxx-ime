@@ -3,18 +3,36 @@
 #ifndef CXXIME_TOPK_COLLECTOR_H_
 #define CXXIME_TOPK_COLLECTOR_H_
 
-#include <vector>
 #include <algorithm>
+#include <cstddef>
+#include <utility>
+#include <vector>
+
 #include <cxxime/candidate.h>
 
 namespace cxxime {
 
-// Fixed-capacity collector that keeps the top-K candidates by frequency.
-// Uses linear scan for min-replacement — no heap allocation beyond the
-// internal vector.  K is typically small (< 100) so O(K) per offer() is fine.
+inline bool candidate_rank_before(const Candidate& left, const Candidate& right) {
+    if (left.frequency != right.frequency) {
+        return left.frequency > right.frequency;
+    }
+    if (left.source_frequency != right.source_frequency) {
+        return left.source_frequency > right.source_frequency;
+    }
+    if (left.text.size() != right.text.size()) {
+        return left.text.size() < right.text.size();
+    }
+    return left.text < right.text;
+}
+
+// Keeps the top-K candidates using the same ordering for admission and output.
+// The vector grows with actual results; a large retry limit is not preallocated.
 class TopKCollector {
 public:
-    explicit TopKCollector(size_t k) : k_(k) { items_.reserve(k); }
+    explicit TopKCollector(size_t k)
+        : k_(k) {
+        items_.reserve((std::min)(k, size_t{128}));
+    }
 
     void offer(Candidate&& c) {
         if (k_ == 0) return;
@@ -22,26 +40,25 @@ public:
             items_.push_back(std::move(c));
             return;
         }
-        // Find the minimum-frequency item
+        // Find the worst-ranked item, including ties at the capacity boundary.
         size_t min_i = 0;
         for (size_t i = 1; i < items_.size(); ++i) {
-            if (items_[i].frequency < items_[min_i].frequency)
+            if (candidate_rank_before(items_[min_i], items_[i])) {
                 min_i = i;
+            }
         }
-        if (c.frequency > items_[min_i].frequency)
+        if (candidate_rank_before(c, items_[min_i])) {
             items_[min_i] = std::move(c);
+        }
     }
 
     size_t size() const { return items_.size(); }
     bool full() const { return k_ > 0 && items_.size() >= k_; }
     const std::vector<Candidate>& items() const { return items_; }
 
-    // Sort by frequency descending and move results out.
+    // Sort by the same rank used when retaining candidates and move results out.
     std::vector<Candidate> finish() {
-        std::sort(items_.begin(), items_.end(),
-            [](const Candidate& a, const Candidate& b) {
-                return a.frequency > b.frequency;
-            });
+        std::sort(items_.begin(), items_.end(), candidate_rank_before);
         return std::move(items_);
     }
 

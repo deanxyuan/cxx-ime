@@ -421,7 +421,7 @@ bool SpellingsIndex::create_test_trie(const std::string& path,
     memcpy(hdr, SPELLINGS_MAGIC_V2, 8);
     uint32_t ver = 2;
     memcpy(hdr + 8, &ver, 4);
-    uint32_t nc = (uint32_t)nodes.size();
+    uint32_t nc = static_cast<uint32_t>(order.size());
     uint32_t sdsize = (uint32_t)string_data.size();
     memcpy(hdr + 12, &nc, 4);
     memcpy(hdr + 16, &sdsize, 4);

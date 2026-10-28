@@ -79,12 +79,26 @@ void merge_variants(CandidateEntry& target, const CandidateEntry& source) {
 }
 
 void append_candidate(std::vector<CandidateEntry>& output, CandidateEntry candidate,
-                      CandidateSource preferred_source, std::size_t full_input_bytes) {
+                      CandidateSource preferred_source, std::size_t full_input_bytes,
+                      bool full_span_first) {
     auto existing = std::find_if(output.begin(), output.end(), [&](const CandidateEntry& entry) {
         return entry.candidate.text == candidate.candidate.text;
     });
     if (existing == output.end()) {
         output.push_back(std::move(candidate));
+        return;
+    }
+    if (full_span_first &&
+        (existing->match_kind == CandidateMatchKind::kPrefix) !=
+            (candidate.match_kind == CandidateMatchKind::kPrefix)) {
+        if (existing->match_kind == CandidateMatchKind::kPrefix) {
+            if (same_selection_action(existing->selection, candidate.selection)) {
+                merge_variants(candidate, *existing);
+            }
+            *existing = std::move(candidate);
+        } else if (same_selection_action(existing->selection, candidate.selection)) {
+            merge_variants(*existing, candidate);
+        }
         return;
     }
     if (same_selection_action(existing->selection, candidate.selection)) {
@@ -97,7 +111,7 @@ void append_candidate(std::vector<CandidateEntry>& output, CandidateEntry candid
         return;
     }
     if (should_prefer_visible_selection(candidate.selection, existing->selection,
-                                        full_input_bytes)) {
+                                        full_input_bytes, full_span_first)) {
         const auto* existing_action = std::get_if<TextSelectionAction>(&existing->selection);
         const auto* candidate_action = std::get_if<TextSelectionAction>(&candidate.selection);
         const bool moves_from_full_to_partial =
@@ -114,36 +128,48 @@ void append_candidate(std::vector<CandidateEntry>& output, CandidateEntry candid
 }
 
 void append_all(std::vector<CandidateEntry>& output, std::vector<CandidateEntry>& source,
-                CandidateSource preferred_source, std::size_t full_input_bytes) {
+                CandidateSource preferred_source, std::size_t full_input_bytes,
+                bool full_span_first) {
     for (auto& candidate : source) {
-        append_candidate(output, std::move(candidate), preferred_source, full_input_bytes);
+        append_candidate(output, std::move(candidate), preferred_source, full_input_bytes,
+                         full_span_first);
     }
 }
 
 void append_interleaved(std::vector<CandidateEntry>& output,
                         std::vector<CandidateEntry>& first,
                         std::vector<CandidateEntry>& second,
-                        CandidateSource preferred_source, std::size_t full_input_bytes) {
+                        CandidateSource preferred_source, std::size_t full_input_bytes,
+                        bool full_span_first) {
     std::size_t first_index = 0;
     std::size_t second_index = 0;
     while (first_index < first.size() || second_index < second.size()) {
         if (first_index < first.size()) {
             append_candidate(output, std::move(first[first_index++]), preferred_source,
-                             full_input_bytes);
+                             full_input_bytes, full_span_first);
         }
         if (second_index < second.size()) {
             append_candidate(output, std::move(second[second_index++]), preferred_source,
-                             full_input_bytes);
+                             full_input_bytes, full_span_first);
         }
     }
 }
 
 void group_partial_candidates(std::vector<CandidateEntry>& entries,
-                              std::size_t full_input_bytes) {
+                              std::size_t full_input_bytes, bool full_span_first) {
     auto is_partial = [&](const CandidateEntry& entry) {
         const auto* action = std::get_if<TextSelectionAction>(&entry.selection);
         return action && action->consumed_input_bytes < full_input_bytes;
     };
+    if (full_span_first) {
+        const auto predictions =
+            std::stable_partition(entries.begin(), entries.end(), [](const CandidateEntry& entry) {
+                return entry.match_kind != CandidateMatchKind::kPrefix;
+            });
+        std::stable_partition(entries.begin(), predictions,
+                              [&](const CandidateEntry& entry) { return !is_partial(entry); });
+        return;
+    }
     const std::size_t partial_count =
         static_cast<std::size_t>(std::count_if(entries.begin(), entries.end(), is_partial));
     const std::size_t full_count = entries.size() - partial_count;
@@ -254,28 +280,49 @@ TranslationResult MixedTranslator::translate(const TranslationRequest& request) 
     source_request.trace = &wubi_trace;
     TranslationResult wubi = wubi_translator_.translate(source_request);
 
+    const bool full_span_first = pinyin_translator_.is_complete_full_pinyin_syllable(request.input);
+    if (full_span_first &&
+        (wubi.status != TranslationStatus::kSuccess ||
+         candidate_extent_may_continue(wubi.extent, static_cast<int>(wubi.entries.size())))) {
+        // Pinyin may have reached its fallback group before Wubi has finished.
+        // Keep those partials unpublished until both full-span sources are exhausted.
+        pinyin.entries.erase(
+            std::remove_if(
+                pinyin.entries.begin(), pinyin.entries.end(),
+                [&](const CandidateEntry& entry) {
+                    const auto* action = std::get_if<TextSelectionAction>(&entry.selection);
+                    return entry.match_kind == CandidateMatchKind::kPrefix ||
+                           (action && action->consumed_input_bytes < request.input.size());
+                }),
+            pinyin.entries.end());
+    }
+
     std::vector<CandidateEntry> merged;
     merged.reserve(pinyin.entries.size() + wubi.entries.size());
     const MixedOrder order = choose_order(request.input, pinyin.entries, wubi.entries);
     if (candidate_preference_ == MixedCandidatePreference::kWubi) {
         append_interleaved(merged, wubi.entries, pinyin.entries, CandidateSource::kWubi,
-                           request.input.size());
+                           request.input.size(), full_span_first);
     } else if (order == MixedOrder::kWubiFirst) {
-        append_all(merged, wubi.entries, CandidateSource::kWubi, request.input.size());
-        append_all(merged, pinyin.entries, CandidateSource::kWubi, request.input.size());
+        append_all(merged, wubi.entries, CandidateSource::kWubi, request.input.size(),
+                   full_span_first);
+        append_all(merged, pinyin.entries, CandidateSource::kWubi, request.input.size(),
+                   full_span_first);
     } else if (order == MixedOrder::kAmbiguousInterleave) {
         append_interleaved(merged, pinyin.entries, wubi.entries, CandidateSource::kWubi,
-                           request.input.size());
+                           request.input.size(), full_span_first);
     } else {
-        append_all(merged, pinyin.entries, CandidateSource::kPinyin, request.input.size());
-        append_all(merged, wubi.entries, CandidateSource::kPinyin, request.input.size());
+        append_all(merged, pinyin.entries, CandidateSource::kPinyin, request.input.size(),
+                   full_span_first);
+        append_all(merged, wubi.entries, CandidateSource::kPinyin, request.input.size(),
+                   full_span_first);
     }
     std::stable_partition(merged.begin(), merged.end(), [&](const CandidateEntry& entry) {
         const auto* action = std::get_if<TextSelectionAction>(&entry.selection);
         return action && action->consumed_input_bytes == request.input.size() &&
                manually_ordered(request.input, entry);
     });
-    group_partial_candidates(merged, request.input.size());
+    group_partial_candidates(merged, request.input.size(), full_span_first);
 
     if (pinyin.status == TranslationStatus::kFailed &&
         wubi.status == TranslationStatus::kFailed) {

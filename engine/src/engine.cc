@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cstring>
 #include <iterator>
+#include <limits>
 #include <optional>
 
 #include <windows.h>
@@ -1038,7 +1039,13 @@ TranslationResult Engine::translate_after_visible_anchor(const QueryDeadline& de
         return unavailable;
     }
 
-    const int prefix_limit = target_offset + runtime_->config().page_size + 1;
+    const uint32_t lookahead = scale_query_limit(
+        static_cast<uint32_t>(runtime_->config().page_size + 1), continuation_effort);
+    // Leave room for downstream translators' doubled windows and sentinel entries.
+    const uint64_t maximum_prefix =
+        static_cast<uint64_t>((std::numeric_limits<int>::max)() / 2 - 2);
+    const int prefix_limit = static_cast<int>((std::min)(
+        static_cast<uint64_t>(target_offset) + lookahead, maximum_prefix));
     TranslationResult prefix = translate_composition(context_.composition(), 0, 0, deadline,
                                                      prefix_limit, continuation_effort);
     if (!prefix.usable()) {
@@ -1048,7 +1055,8 @@ TranslationResult Engine::translate_after_visible_anchor(const QueryDeadline& de
         prefix.entries.begin(), prefix.entries.end(),
         [&](const CandidateEntry& entry) { return same_candidate_entry_identity(entry, *anchor); });
     if (anchor_position == prefix.entries.end()) {
-        if (!prefix.extent.complete) {
+        if (!prefix.extent.complete ||
+            candidate_extent_may_continue(prefix.extent, static_cast<int>(prefix.entries.size()))) {
             return unavailable;
         }
         if (sequence_invalidated) {
@@ -1076,6 +1084,10 @@ TranslationResult Engine::translate_after_visible_anchor(const QueryDeadline& de
         }
     }
     const int available_after_anchor = static_cast<int>(remaining.size());
+    if (available_after_anchor == 0 &&
+        candidate_extent_may_continue(prefix.extent, static_cast<int>(prefix.entries.size()))) {
+        return unavailable;
+    }
     const int next_count = (std::min)(runtime_->config().page_size, available_after_anchor);
     TranslationResult next;
     next.status = prefix.status;

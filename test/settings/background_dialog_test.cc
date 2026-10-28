@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <string>
@@ -9,8 +10,6 @@
 
 #include <windows.h>
 #include <commctrl.h>
-#include <commdlg.h>
-#include <dlgs.h>
 
 #include "background_dialog.h"
 #include "support/background_test_image.h"
@@ -215,7 +214,6 @@ struct DialogDriver {
     bool inspect_canvas = false;
     std::vector<std::wstring> choices;
     std::size_t next_choice = 0;
-    HWND picker = nullptr;
     background_test::Files* capture_files = nullptr;
     std::wstring capture_path;
     int capture_scene = 0;
@@ -246,43 +244,21 @@ struct DialogDriver {
             *reinterpret_cast<HWND*>(data) = window;
             return TRUE;
         }
-        if (wcscmp(name, L"#32770") == 0) {
-            HWND owner = GetWindow(window, GW_OWNER);
-            GetClassNameW(owner, name, 80);
-            if (wcscmp(name, L"CxxIME.BackgroundDialog") == 0 &&
-                GetWindow(owner, GW_OWNER) == active->owner) {
-                active->picker = window;
-            }
-        }
         return TRUE;
+    }
+    static std::wstring select_file(HWND dialog) {
+        auto& self = *active;
+        ASSERT_EQ(GetWindow(dialog, GW_OWNER), self.owner);
+        ASSERT_LT(self.next_choice, self.choices.size());
+        const auto path = self.choices[self.next_choice++];
+        ASSERT_TRUE(path.empty() || std::filesystem::exists(path));
+        return path;
     }
     static void CALLBACK tick(HWND, UINT, UINT_PTR, DWORD) {
         auto& self = *active;
         HWND dialog = nullptr;
-        self.picker = nullptr;
         EnumThreadWindows(GetCurrentThreadId(), find, reinterpret_cast<LPARAM>(&dialog));
         ASSERT_LT(GetTickCount64(), self.deadline);
-        if (self.picker) {
-            ASSERT_GT(self.next_choice, 0);
-            HWND filename = nullptr;
-            EnumChildWindows(
-                self.picker,
-                [](HWND child, LPARAM data) -> BOOL {
-                    wchar_t name[32]{};
-                    GetClassNameW(child, name, 32);
-                    const int id = GetDlgCtrlID(child);
-                    if (wcscmp(name, L"Edit") == 0 && (id == cmb13 || id == edt1)) {
-                        *reinterpret_cast<HWND*>(data) = child;
-                        return FALSE;
-                    }
-                    return TRUE;
-                },
-                reinterpret_cast<LPARAM>(&filename));
-            ASSERT_TRUE(filename != nullptr);
-            ASSERT_TRUE(SetWindowTextW(filename, self.choices[self.next_choice - 1].c_str()));
-            PostMessageW(self.picker, WM_COMMAND, IDOK, 0);
-            return;
-        }
         if (dialog && self.cancel_while_preparing) {
             self.visited = true;
             self.canceled_at = GetTickCount64();
@@ -303,7 +279,6 @@ struct DialogDriver {
         }
         self.visited = true;
         if (self.next_choice < self.choices.size()) {
-            ++self.next_choice;
             HWND choose = GetDlgItem(dialog, 3121);
             ASSERT_TRUE(IsWindowVisible(choose));
             ASSERT_TRUE(IsWindowEnabled(choose));
@@ -543,7 +518,7 @@ TEST(BackgroundDialog, disable_preserves_picture_and_strength_without_moving_con
     ASSERT_EQ(reopened->config.strength, 0.4);
 }
 
-TEST(BackgroundDialog, choosing_and_rechoosing_inside_dialog_transfers_only_the_final_draft) {
+TEST(BackgroundDialog, replacing_images_and_canceling_selection_transfers_only_the_final_draft) {
     background_test::Files files;
     const auto first =
         files.write(L"first.png", 64, 32, background_test::solid(64, 32, 20, 30, 40));
@@ -552,12 +527,14 @@ TEST(BackgroundDialog, choosing_and_rechoosing_inside_dialog_transfers_only_the_
     cxxime::Config config;
     DialogDriver driver(false, false);
     driver.deadline = GetTickCount64() + 15000;
-    driver.choices = {first, second, first};
-    auto result = cxxime::settings::edit_background(driver.owner, config);
+    // An empty picker result cancels replacement; the last accepted image must survive.
+    driver.choices = {first, second, {}};
+    auto result = cxxime::settings::edit_background(driver.owner, config, {},
+                                                    DialogDriver::select_file);
     ASSERT_TRUE(result.has_value());
     ASSERT_EQ(driver.next_choice, driver.choices.size());
     ASSERT_TRUE(result->config.enabled);
-    ASSERT_EQ(result->config.name, "first.png");
+    ASSERT_EQ(result->config.name, "second.png");
     ASSERT_TRUE(!result->resources.empty());
     std::size_t count = 0;
     for (const auto& entry : std::filesystem::directory_iterator(files.directory / "backgrounds")) {
@@ -595,7 +572,8 @@ TEST(BackgroundDialog, failed_replacement_preserves_the_existing_picture_and_fra
     DialogDriver driver(false, false);
     driver.deadline = GetTickCount64() + 15000;
     driver.choices = {damaged.wstring()};
-    auto result = cxxime::settings::edit_background(driver.owner, config);
+    auto result = cxxime::settings::edit_background(driver.owner, config, {},
+                                                    DialogDriver::select_file);
     ASSERT_TRUE(result.has_value());
     ASSERT_EQ(result->config.source, original.config.source);
     ASSERT_EQ(result->config.name, config.background.name);

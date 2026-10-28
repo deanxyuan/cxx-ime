@@ -74,10 +74,16 @@ TEST(TextServiceStatusLifecycle, service_unavailable_at_activation_recovers_with
     fixture.reject_start = true;
     ASSERT_EQ(fixture.service.ActivateEx(&manager, 1, 0), S_OK);
     ASSERT_EQ(TextServiceTestPeer::session_id(fixture.service), 0u);
+    ASSERT_GT(fixture.start_requests.load(), 0);
     fixture.reject_start = false;
+    // Rejection closes the client connection. The accept thread creates its replacement
+    // asynchronously; changing the handler's flag alone does not make the pipe ready.
+    ASSERT_TRUE(TextServiceTestPeer::wait_for_input_pipe(fixture.pipe));
+    const auto attempts = fixture.start_requests.load();
     // Neither a new focus notification nor a key is needed when the server becomes ready.
     TextServiceTestPeer::poll_status(fixture.service, true);
     ASSERT_NE(TextServiceTestPeer::session_id(fixture.service), 0u);
+    ASSERT_GT(fixture.start_requests.load(), attempts);
     fixture.confirm();
     probe.expect_current(false, true);
     ASSERT_EQ(fixture.service.Deactivate(), S_OK);

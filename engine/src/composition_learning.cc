@@ -618,8 +618,9 @@ bool CompositionLearningService::merge_contents_and_save(const std::string& impo
     return true;
 }
 
-std::vector<Candidate> CompositionLearningService::lookup_candidates(const std::string& code,
-                                                                     std::size_t limit) const {
+std::vector<Candidate> CompositionLearningService::lookup_candidates(
+    const std::string& code, std::size_t limit,
+    const std::function<bool(const Candidate&)>& filter) const {
     std::shared_ptr<const PublishedSnapshot> snapshot;
     {
         std::lock_guard<std::mutex> lock(impl_->mutex);
@@ -635,8 +636,15 @@ std::vector<Candidate> CompositionLearningService::lookup_candidates(const std::
     }
     const std::size_t count = (std::min)(limit, found->second.size());
     candidates.reserve(count);
-    for (std::size_t index = 0; index < count; ++index) {
-        candidates.push_back(candidate_from_record(found->second[index], snapshot->sequence));
+    for (const auto& record : found->second) {
+        Candidate candidate = candidate_from_record(record, snapshot->sequence);
+        if (filter && !filter(candidate)) {
+            continue;
+        }
+        candidates.push_back(std::move(candidate));
+        if (candidates.size() >= limit) {
+            break;
+        }
     }
     return candidates;
 }
