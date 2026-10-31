@@ -14,5 +14,6 @@ data/unicode/**/*.txt -text
 
 # Treat binary assets as binary even if their contents look like text.
 *.ico binary
+*.bmp binary
 *.png binary
 *.zip binary

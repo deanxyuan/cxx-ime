@@ -46,6 +46,7 @@ Name "${PRODUCT} ${VERSION}"
 !endif
 InstallDir "$PROGRAMFILES\CxxIME"
 RequestExecutionLevel admin
+ManifestDPIAware true
 SetCompressor lzma
 ShowInstDetails show
 ShowUninstDetails show
@@ -60,6 +61,10 @@ VIAddVersionKey /LANG=2052 "ProductVersion" "${VERSION}"
 
 !define MUI_ICON "cxxime.ico"
 !define MUI_UNICON "cxxime.ico"
+!define MUI_WELCOMEFINISHPAGE_BITMAP "installer-artwork\wizard.bmp"
+!define MUI_UNWELCOMEFINISHPAGE_BITMAP "installer-artwork\wizard.bmp"
+!define MUI_HEADERIMAGE
+!define MUI_HEADERIMAGE_BITMAP "installer-artwork\header.bmp"
 
 Var ExistingInstall
 Var RegisteredInstallDir
