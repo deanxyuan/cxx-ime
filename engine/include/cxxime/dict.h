@@ -237,6 +237,7 @@ private:
                             bool use_wubi_prefix_index = false);
     void build_syllabary();
     void build_id_index();
+    void sort_homophone_ranges();
     void unload_id_index();
     void fill_system_candidate(uint32_t entry_index, Candidate& candidate,
                                int frequency_boost) const;

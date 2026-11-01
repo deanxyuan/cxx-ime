@@ -18,6 +18,9 @@ import urllib.request
 import urllib.error
 import io
 import zipfile
+import tempfile
+
+from generate_pinyin_syllable_ids import validate_syllables
 
 # rime-ice dictionary files to download (in priority order)
 DICT_URLS = [
@@ -44,13 +47,13 @@ def download_text(url, timeout=30):
 
 
 def parse_rime_dict(content):
-    """Parse RIME dict.yaml content, yielding (text, code, frequency) tuples.
+    """Parse RIME dict.yaml, preserving its explicit syllable boundaries.
 
     RIME dict.yaml format: text<tab>code<tab>frequency
     text = Chinese characters, code = pinyin syllables, frequency = weight.
 
     Note: RIME uses space-separated syllables (e.g. "ni hao"), but CxxIME
-    engine uses concatenated syllables (e.g. "nihao"). We strip spaces from codes.
+    engine stores both the concatenated lookup code and colon-separated syllables.
     """
     in_header = True
     for line in content.splitlines():
@@ -73,7 +76,9 @@ def parse_rime_dict(content):
         parts = line.split("\t")
         if len(parts) >= 2:
             text = parts[0].strip()
-            code = parts[1].strip().replace(" ", "")  # "ni hao" -> "nihao"
+            syllables = parts[1].split()
+            code = "".join(syllables)
+            syllable_ids = ":".join(syllables)
             freq = 0
             if len(parts) > 2:
                 try:
@@ -81,7 +86,8 @@ def parse_rime_dict(content):
                 except ValueError:
                     pass
             if text and code:
-                yield (text, code, freq)
+                validate_syllables(code, syllable_ids)
+                yield (text, code, freq, syllable_ids)
 
 
 def download_dicts_from_zip():
@@ -122,17 +128,18 @@ def try_fallback():
     try:
         content = download_text(LUNA_URL)
         return list(parse_rime_dict(content))
-    except Exception as e:
+    except (urllib.error.URLError, OSError) as e:
         print(f"  Fallback also failed: {e}")
         return []
 
 
 def create_sqlite_db(output_path, entries, limit=0):
     """Create SQLite dictionary from parsed entries."""
-    # Deduplicate: keep highest frequency for each (text, code) pair
+    # Explicit readings remain distinct even when their continuous codes coincide.
     seen = {}
-    for text, code, freq in entries:
-        key = (text, code)
+    for text, code, freq, syllable_ids in entries:
+        validate_syllables(code, syllable_ids)
+        key = (text, code, syllable_ids)
         if key not in seen or freq > seen[key]:
             seen[key] = freq
 
@@ -142,37 +149,33 @@ def create_sqlite_db(output_path, entries, limit=0):
     if limit > 0:
         sorted_entries = sorted_entries[:limit]
 
-    # Write to SQLite
-    if os.path.exists(output_path):
-        os.remove(output_path)
-
-    conn = sqlite3.connect(output_path)
-    cur = conn.cursor()
-
-    cur.execute("""
-        CREATE TABLE dict (
-            id INTEGER PRIMARY KEY,
-            text TEXT NOT NULL,
-            code TEXT NOT NULL,
-            frequency INTEGER DEFAULT 0,
-            syllable_ids TEXT
-        )
-    """)
-    cur.execute("CREATE INDEX idx_code ON dict(code)")
-
-    from generate_pinyin_syllable_ids import load_syllables, segment_code
-    syllables = load_syllables()
-
-    cur.executemany(
-        "INSERT INTO dict (text, code, frequency, syllable_ids) VALUES (?, ?, ?, ?)",
-        [(text, code, freq, ":".join(segment_code(code, syllables)))
-         for (text, code), freq in sorted_entries],
-    )
-
-    conn.commit()
-    count = cur.execute("SELECT COUNT(*) FROM dict").fetchone()[0]
-    conn.close()
-    return count
+    # Publish only after validation and a complete database write have succeeded.
+    parent = os.path.dirname(os.path.abspath(output_path))
+    with tempfile.TemporaryDirectory(prefix="cxxime-pinyin-", dir=parent) as directory:
+        temporary_path = os.path.join(directory, "pinyin.dict.db")
+        conn = sqlite3.connect(temporary_path)
+        try:
+            with conn:
+                conn.execute("""
+                    CREATE TABLE dict (
+                        id INTEGER PRIMARY KEY,
+                        text TEXT NOT NULL,
+                        code TEXT NOT NULL,
+                        frequency INTEGER DEFAULT 0,
+                        syllable_ids TEXT
+                    )
+                """)
+                conn.execute("CREATE INDEX idx_code ON dict(code)")
+                conn.executemany(
+                    "INSERT INTO dict (text, code, frequency, syllable_ids) "
+                    "VALUES (?, ?, ?, ?)",
+                    [(text, code, freq, syllable_ids)
+                     for (text, code, syllable_ids), freq in sorted_entries],
+                )
+        finally:
+            conn.close()
+        os.replace(temporary_path, output_path)
+    return len(sorted_entries)
 
 
 def main():
@@ -210,7 +213,7 @@ def main():
             entries = download_dicts_from_zip()
         else:
             entries = download_dicts_individual()
-    except Exception as e:
+    except (urllib.error.URLError, OSError) as e:
         print(f"  ERROR: Download failed: {e}")
 
     if not entries:

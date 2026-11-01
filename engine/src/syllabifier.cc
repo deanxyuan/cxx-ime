@@ -74,13 +74,19 @@ SyllableGraph Syllabifier::build_graph(const std::string& input,
                 if (completion.type >= kAbbreviation) {
                     continue;
                 }
-                const bool duplicate = std::any_of(
+                const auto existing = std::find_if(
                     edges.begin(), edges.end(), [&completion](const SyllableEdge& edge) {
                         return edge.syllable == completion.syllable;
                     });
-                if (!duplicate) {
-                    edges.push_back({completion.syllable, kCompletionSpelling,
+                const int type = completion.type == kFuzzySpelling ? kFuzzyCompletionSpelling
+                                                                   : kCompletionSpelling;
+                if (existing == edges.end()) {
+                    edges.push_back({completion.syllable, type,
                                      completion.credibility + kCompletionPenalty});
+                } else if (existing->type == kFuzzyCompletionSpelling &&
+                           type == kCompletionSpelling) {
+                    *existing = {completion.syllable, type,
+                                 completion.credibility + kCompletionPenalty};
                 }
             }
             if (edges.empty()) {
@@ -263,7 +269,7 @@ bool Syllabifier::has_fuzzy_path(const std::string& input,
         }
         for (const auto& group : edge_groups->second) {
             for (const SyllableEdge& edge : group.second) {
-                if (edge.type == kFuzzySpelling) {
+                if (edge.type == kFuzzySpelling || edge.type == kFuzzyCompletionSpelling) {
                     reachable_with_fuzzy[group.first] = 1;
                 } else {
                     reachable_without_fuzzy[group.first] =

@@ -46,10 +46,15 @@ bool is_normal_composition_path(const std::string& input, const SegmentedPath& p
     return true;
 }
 
-bool is_complete_normal_path(const std::string& input, const SegmentedPath& path) {
-    return path_consumes_entire_input(input, path) && path.syllables.size() >= 2 &&
-           std::all_of(path.spelling_types.begin(), path.spelling_types.end(),
-                       [](uint8_t type) { return type == kNormalSpelling; });
+bool is_shuangpin_composition_path(const std::string& input, const SegmentedPath& path) {
+    if (!path_consumes_entire_input(input, path) || path.syllables.size() < 2) {
+        return false;
+    }
+    // Only the final syllable may be unfinished; every preceding syllable is complete.
+    return std::all_of(path.spelling_types.begin(), path.spelling_types.end() - 1,
+                       [](uint8_t type) { return type == kNormalSpelling; }) &&
+           (path.spelling_types.back() == kNormalSpelling ||
+            path.spelling_types.back() == kCompletionSpelling);
 }
 
 bool is_repeated_short_code_path(const std::string& input, const SegmentedPath& path) {

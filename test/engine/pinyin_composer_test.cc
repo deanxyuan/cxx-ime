@@ -1,6 +1,7 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
 #include <algorithm>
+#include <fstream>
 #include <memory>
 #include <string>
 #include <tuple>
@@ -48,23 +49,25 @@ size_t candidate_index(const cxxime::CandidatePage& page, const std::string& tex
 struct ComposerFixture {
     std::string dictionary_path = make_temp_path("pcd");
     std::string spellings_path = make_temp_path("pcs");
+    std::string index_path = dictionary_path + ".idx";
     cxxime::Dict dictionary{cxxime::UserDictKind::PINYIN};
     std::shared_ptr<const cxxime::PinyinResourceSet> pinyin_resources;
 
     bool initialize(
         const std::vector<std::tuple<std::string, std::string, int>>& dictionary_entries,
-        const std::vector<std::tuple<std::string, std::string, int, float>>& spelling_entries) {
+        const std::vector<std::tuple<std::string, std::string, int, float>>& spelling_entries,
+        cxxime::PinyinSchemeKind kind = cxxime::PinyinSchemeKind::kFullPinyin) {
         return !dictionary_path.empty() && !spellings_path.empty() &&
                cxxime::Dict::create_test_dict(dictionary_path, dictionary_entries) &&
                dictionary.open_dict(dictionary_path) &&
                cxxime::SpellingsIndex::create_test_trie(spellings_path, spelling_entries) &&
-               (pinyin_resources = cxxime::PinyinResourceSet::create(
-                    "full_pinyin", cxxime::PinyinSchemeKind::kFullPinyin,
-                    spellings_path)) != nullptr;
+               (pinyin_resources = cxxime::PinyinResourceSet::create("composer_test", kind,
+                                                                     spellings_path)) != nullptr;
     }
 
     ~ComposerFixture() {
         dictionary.close();
+        DeleteFileA(index_path.c_str());
         if (!dictionary_path.empty()) {
             DeleteFileA(dictionary_path.c_str());
         }
@@ -153,6 +156,136 @@ TEST(PinyinComposer, exact_span_query_honors_scan_and_deadline_limits) {
     ASSERT_TRUE(spans.empty());
     ASSERT_TRUE(stats.deadline_exceeded);
     ASSERT_TRUE(stats.truncated);
+}
+
+TEST(PinyinComposer, exact_span_topk_is_ordered_and_unique_for_both_index_sources) {
+    ComposerFixture fixture;
+    const std::vector<std::tuple<std::string, std::string, int>> entries = {
+        {"wu", "物", 1000}, {"wu", "无", 900}, {"wu", "无", 800},
+        {"wu", "午", 700},  {"wu", "吴", 700}, {"wu", "五", 100},
+    };
+    ASSERT_TRUE(fixture.initialize(entries, {{"wu", "wu", cxxime::kNormalSpelling, 0.0f}}));
+
+    for (bool file_index : {false, true}) {
+        if (file_index) {
+            // A valid v3 index deliberately keeps the dictionary's text order, not rank order.
+            std::ofstream output(fixture.index_path, std::ios::binary);
+            const auto write = [&](uint32_t value) {
+                output.write(reinterpret_cast<const char*>(&value), sizeof(value));
+            };
+            output.write("CXIDX\0\0\0", 8);
+            for (uint32_t value : {3u, 1u, 3u, 6u, 72u, 0u}) {
+                write(value);
+            }
+            output.write("wu\0", 3);
+            for (uint32_t index = 0; index < 6; ++index) {
+                write(index * 12);
+            }
+            for (uint32_t index = 0; index < 6; ++index) {
+                write(1);
+                write(0);
+                write(index);
+            }
+            output.close();
+            ASSERT_TRUE(output.good());
+            fixture.dictionary.close();
+            ASSERT_TRUE(fixture.dictionary.open_bundle(fixture.dictionary_path, "",
+                                                       fixture.index_path, ""));
+        }
+        const std::vector<uint32_t> ids = {fixture.dictionary.syllable_to_id("wu")};
+        cxxime::SpanLookupLimits limits;
+        limits.max_candidates_per_range = 4;
+        limits.max_entry_scans = 5;
+        cxxime::SpanLookupStats stats;
+        std::vector<cxxime::Candidate> candidates;
+        ASSERT_TRUE(fixture.dictionary.lookup_exact_span(ids, 0, 1, limits, {}, candidates, stats));
+        ASSERT_EQ(candidates.size(), 4u);
+        ASSERT_EQ(candidates[0].text, "物");
+        ASSERT_EQ(candidates[1].text, "无");
+        ASSERT_EQ(candidates[1].frequency, 900);
+        ASSERT_EQ(candidates[2].text, "午");
+        ASSERT_EQ(candidates[3].text, "吴");
+        ASSERT_EQ(stats.entry_scans, 5u);
+        ASSERT_TRUE(!stats.truncated);
+
+        limits.max_entry_scans = 4;
+        stats = {};
+        ASSERT_TRUE(fixture.dictionary.lookup_exact_span(ids, 0, 1, limits, {}, candidates, stats));
+        ASSERT_EQ(candidates.size(), 3u);
+        ASSERT_TRUE(stats.truncated);
+    }
+}
+
+TEST(PinyinComposer, partial_results_survive_an_incomplete_full_query) {
+    ComposerFixture fixture;
+    ASSERT_TRUE(fixture.initialize(
+        {{"ni", "你", 1000}, {"hao", "好", 1000}, {"ni:hao:ma", "你好吗", 1000}},
+        {{"ni", "ni", cxxime::kNormalSpelling, 0.0f}, {"hk", "hao", cxxime::kNormalSpelling, 0.0f}},
+        cxxime::PinyinSchemeKind::kShuangpin));
+    cxxime::PinyinTranslator translator;
+    translator.set_dict(&fixture.dictionary);
+    translator.bind_pinyin(fixture.pinyin_resources, {});
+    translator.set_sentence_composition_enabled(false);
+    cxxime::QueryBudget budget;
+    budget.max_prefix_scan = 0;
+    cxxime::QueryTrace trace;
+    cxxime::TranslationRequest request;
+    request.input = "nihk";
+    request.policy.allow_partial_selection = true;
+    request.budget = &budget;
+    request.trace = &trace;
+    const auto partial = translator.translate(request);
+    ASSERT_EQ(partial.status, cxxime::TranslationStatus::kStableDegraded);
+    ASSERT_EQ(partial.entries.size(), 1u);
+    ASSERT_EQ(partial.entries[0].candidate.text, "你");
+    ASSERT_EQ(
+        std::get<cxxime::TextSelectionAction>(partial.entries[0].selection).consumed_input_bytes,
+        2u);
+    ASSERT_TRUE(!partial.extent.complete);
+    ASSERT_TRUE(trace.scan_budget_truncated);
+
+    request.page_offset = 20;
+    const auto unavailable_page = translator.translate(request);
+    ASSERT_TRUE(unavailable_page.entries.empty());
+    ASSERT_EQ(unavailable_page.status, cxxime::TranslationStatus::kFailed);
+
+    request.page_offset = 0;
+    budget.deadline.enabled = true;
+    budget.deadline.expires_at = cxxime::QueryDeadline::Clock::time_point::min();
+    const auto expired = translator.translate(request);
+    ASSERT_TRUE(expired.entries.empty());
+    ASSERT_EQ(expired.status, cxxime::TranslationStatus::kFailed);
+    ASSERT_TRUE(trace.deadline_exceeded);
+}
+
+TEST(PinyinComposer, dense_homophone_ranges_do_not_starve_later_syllables) {
+    ComposerFixture fixture;
+    const std::vector<std::string> syllables = {"ni",    "hao", "shi", "jie",
+                                                "zhong", "guo", "ren", "min"};
+    const std::vector<std::string> words = {"你", "好", "世", "界", "中", "国", "人", "民"};
+    std::vector<std::tuple<std::string, std::string, int>> entries;
+    std::vector<std::tuple<std::string, std::string, int, float>> spellings;
+    std::string input;
+    for (std::size_t index = 0; index < syllables.size(); ++index) {
+        const std::string code(2, static_cast<char>('a' + index));
+        input += code;
+        spellings.push_back({code, syllables[index], cxxime::kNormalSpelling, 0.0f});
+        entries.push_back({syllables[index], words[index], 10000});
+        for (int variant = 0; variant < 300; ++variant) {
+            entries.push_back({syllables[index], "同音词" + std::to_string(variant), variant});
+        }
+    }
+    ASSERT_TRUE(fixture.initialize(entries, spellings, cxxime::PinyinSchemeKind::kShuangpin));
+    cxxime::PinyinTranslator translator;
+    translator.set_dict(&fixture.dictionary);
+    translator.bind_pinyin(fixture.pinyin_resources, {});
+    for (const std::string& code : {input.substr(0, input.size() - 1), input}) {
+        cxxime::QueryTrace trace;
+        const auto page = translator.translate_page(code, 0, 7, &trace);
+        ASSERT_TRUE(find_candidate(page, "你好世界中国人民") != nullptr);
+        ASSERT_EQ(trace.span_entry_scan_count, 8u);
+        ASSERT_TRUE(!trace.composition_truncated);
+    }
 }
 
 TEST(PinyinComposer, appends_composed_sentence_after_existing_candidates) {
@@ -319,6 +452,39 @@ TEST(PinyinComposer, rejects_single_tail_and_mixed_abbreviation_paths) {
     ASSERT_TRUE(translator.translate_page("nih", 0, 10).candidates.empty());
     ASSERT_TRUE(translator.translate_page("wahahah", 0, 10).candidates.empty());
     ASSERT_TRUE(translator.translate_page("srf", 0, 10).candidates.empty());
+}
+
+TEST(PinyinComposer, shuangpin_completion_does_not_enable_internal_or_fuzzy_composition) {
+    ComposerFixture fixture;
+    ASSERT_TRUE(fixture.initialize({{"ni", "你", 9000}, {"hao", "好", 8000}},
+                                   {
+                                       {"ni", "ni", cxxime::kNormalSpelling, 0.0f},
+                                       {"hk", "hao", cxxime::kNormalSpelling, 0.0f},
+                                       {"n", "ni", cxxime::kAbbreviation, -1.0f},
+                                       {"li", "ni", cxxime::kFuzzySpelling, -1.0f},
+                                       {"lk", "hao", cxxime::kFuzzySpelling, -1.0f},
+                                       {"xn", "ni", cxxime::kCompletionSpelling, -1.0f},
+                                   },
+                                   cxxime::PinyinSchemeKind::kShuangpin));
+    cxxime::PinyinTranslator translator;
+    translator.set_dict(&fixture.dictionary);
+    translator.bind_pinyin(fixture.pinyin_resources, {});
+
+    ASSERT_TRUE(find_candidate(translator.translate_page("nih", 0, 10), "你好") != nullptr);
+    for (const auto* input : {"nh", "lih", "xnh", "nil", "nilk"}) {
+        const auto page = translator.translate_page(input, 0, 10);
+        ASSERT_TRUE(find_candidate(page, "你好") == nullptr);
+    }
+
+    // Fuzzy completion still finds dictionary entries when enabled; it cannot compose.
+    for (bool fuzzy_enabled : {false, true}) {
+        cxxime::PinyinQueryPolicy policy;
+        policy.enable_fuzzy = fuzzy_enabled;
+        translator.bind_pinyin(fixture.pinyin_resources, policy);
+        ASSERT_TRUE(find_candidate(translator.translate_page("nil", 0, 10), "你好") == nullptr);
+        const auto partial = translator.translate_page("l", 0, 10);
+        ASSERT_EQ(find_candidate(partial, "好") != nullptr, fuzzy_enabled);
+    }
 }
 
 TEST(PinyinComposer, composed_candidates_do_not_enter_learning_preferences) {

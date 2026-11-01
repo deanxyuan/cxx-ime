@@ -55,7 +55,8 @@ PathMatchTier classify_path(const SegmentedPath& path) {
         has_normal_or_fuzzy = has_normal_or_fuzzy || type <= kFuzzySpelling;
         has_fuzzy = has_fuzzy || type == kFuzzySpelling;
         has_abbreviation = has_abbreviation || type == kAbbreviation;
-        has_completion = has_completion || type == kCompletionSpelling;
+        has_completion = has_completion || type == kCompletionSpelling ||
+                         type == kFuzzyCompletionSpelling;
     }
     if (has_completion) {
         return PathMatchTier::kCompletion;
@@ -570,7 +571,7 @@ CandidatePage PinyinTranslator::translate_page(const std::string& pinyin, int pa
                         });
                     const bool normal_composition_path =
                         pinyin_scheme() == PinyinSchemeKind::kShuangpin
-                            ? is_complete_normal_path(pinyin, segmented_path)
+                            ? is_shuangpin_composition_path(pinyin, segmented_path)
                             : is_normal_composition_path(pinyin, segmented_path);
                     if (normal_composition_path) {
                         has_normal_composition_path = true;
@@ -1177,6 +1178,9 @@ TranslationResult PinyinTranslator::translate(const TranslationRequest& request)
                           std::make_move_iterator(merged.begin() + end));
     if (!result.entries.empty()) {
         result.highlighted = 0;
+        if (result.status == TranslationStatus::kFailed) {
+            result.status = TranslationStatus::kStableDegraded;
+        }
     }
     return result;
 }

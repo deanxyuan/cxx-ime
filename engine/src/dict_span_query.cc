@@ -8,46 +8,6 @@
 
 namespace cxxime {
 
-namespace {
-
-bool candidate_better(const Candidate& left, const Candidate& right) {
-    if (left.frequency != right.frequency) {
-        return left.frequency > right.frequency;
-    }
-    return left.text < right.text;
-}
-
-void offer_bounded(std::vector<Candidate>& candidates, Candidate candidate, size_t capacity) {
-    for (auto& existing : candidates) {
-        if (existing.text == candidate.text) {
-            if (candidate_better(candidate, existing)) {
-                existing = std::move(candidate);
-            }
-            return;
-        }
-    }
-
-    if (capacity == 0) {
-        return;
-    }
-    if (candidates.size() < capacity) {
-        candidates.push_back(std::move(candidate));
-        return;
-    }
-
-    size_t worst = 0;
-    for (size_t i = 1; i < candidates.size(); ++i) {
-        if (candidate_better(candidates[worst], candidates[i])) {
-            worst = i;
-        }
-    }
-    if (candidate_better(candidate, candidates[worst])) {
-        candidates[worst] = std::move(candidate);
-    }
-}
-
-} // namespace
-
 bool Dict::lookup_exact_span(const std::vector<uint32_t>& ids, size_t start, size_t end,
                              const SpanLookupLimits& limits, const QueryDeadline& deadline,
                              std::vector<Candidate>& output, SpanLookupStats& stats) const {
@@ -113,7 +73,10 @@ bool Dict::lookup_exact_span(const std::vector<uint32_t>& ids, size_t start, siz
 
     std::vector<Candidate> candidates;
     candidates.reserve(limits.max_candidates_per_range);
-    for (size_t position = low; position < id_index_.size() && exact_matches(id_index_[position]);
+    // Homophone ranges are sorted at load time. Reaching the requested Top-K is complete work,
+    // not scan-budget exhaustion; leave the remaining budget for later syllables.
+    for (size_t position = low; position < id_index_.size() && exact_matches(id_index_[position]) &&
+                                candidates.size() < limits.max_candidates_per_range;
          ++position) {
         if (stats.entry_scans >= limits.max_entry_scans) {
             stats.truncated = true;
@@ -130,10 +93,14 @@ bool Dict::lookup_exact_span(const std::vector<uint32_t>& ids, size_t start, siz
         Candidate candidate;
         fill_system_candidate(id_index_[position].index, candidate, 0);
         candidate.source_frequency = candidate.frequency;
-        offer_bounded(candidates, std::move(candidate), limits.max_candidates_per_range);
+        const bool duplicate =
+            std::any_of(candidates.begin(), candidates.end(),
+                        [&](const Candidate& item) { return item.text == candidate.text; });
+        if (!duplicate) {
+            candidates.push_back(std::move(candidate));
+        }
     }
 
-    std::sort(candidates.begin(), candidates.end(), candidate_better);
     const uint32_t remaining = limits.max_results - stats.result_count;
     if (candidates.size() > remaining) {
         candidates.resize(remaining);

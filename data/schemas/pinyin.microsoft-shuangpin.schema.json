@@ -85,8 +85,7 @@
             "x": {"u": "v", "uan": "van", "ue": "ve", "un": "vn"},
             "y": {"u": "v", "uan": "van", "ue": "ve", "un": "vn"}
         },
-        "passthrough_syllables": ["f", "g", "i", "l", "n", "r", "u", "v"],
-        "ignored_syllables": ["0", "1"],
+        "ignored_syllables": ["0", "1", "f", "g", "i", "l", "n", "r", "u", "v"],
         "expected_collisions": {
             "lt": ["lue", "lve"],
             "lv": ["lue", "lve"],

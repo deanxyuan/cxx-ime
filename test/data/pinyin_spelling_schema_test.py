@@ -7,6 +7,9 @@ import sys
 import tempfile
 import unittest
 import zipfile
+from contextlib import closing
+from pathlib import Path
+from unittest import mock
 
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -96,6 +99,9 @@ sys.path.insert(0, DATA_TOOLS)
 
 from dict_builder.pinyin_spellings import PatriciaTrie
 from generate_pinyin_spellings import build_shuangpin_script, load_schema
+from fetch_pinyin_dictionary import create_sqlite_db, parse_rime_dict
+import fetch_pinyin_dictionary as fetcher
+from generate_pinyin_syllable_ids import load_syllables, segment_code, update_syllable_ids
 
 
 def production_syllabary():
@@ -166,6 +172,11 @@ class PinyinSpellingSchemaTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unknown=\\['display_name'\\]"):
             build_shuangpin_script(self.syllabary, unknown_root_field)
 
+        passthrough = json.loads(json.dumps(self.schemas["microsoft_shuangpin"]))
+        passthrough["speller"]["passthrough_syllables"] = ["u"]
+        with self.assertRaisesRegex(ValueError, "passthrough_syllables"):
+            build_shuangpin_script(self.syllabary, passthrough)
+
         unknown_type = json.loads(json.dumps(schema))
         unknown_type["speller"]["type"] = "future_type"
         with self.assertRaisesRegex(ValueError, "unsupported speller.type"):
@@ -218,6 +229,15 @@ class PinyinSpellingSchemaTest(unittest.TestCase):
             }
             self.assertEqual(self.syllabary - ignored, generated, scheme_id)
 
+    def test_legacy_fragments_cannot_become_normal_single_key_spellings(self):
+        for scheme_id, script in self.scripts.items():
+            for key in ("f", "g", "i", "l", "n", "r", "u", "v"):
+                with self.subTest(scheme=scheme_id, key=key):
+                    self.assertNotIn(key, script)
+            # Explicit zero-initial mappings remain available.
+            if scheme_id in ("microsoft_shuangpin", "sogou_shuangpin"):
+                self.assert_normal_mapping(scheme_id, "o", "o")
+
     def test_binary_generation_is_deterministic(self):
         for scheme_id, schema in self.schemas.items():
             rebuilt = build_shuangpin_script(self.syllabary, schema)
@@ -226,6 +246,100 @@ class PinyinSpellingSchemaTest(unittest.TestCase):
                 serialize_script(rebuilt),
                 scheme_id,
             )
+
+
+class PinyinSourceAnnotationTest(unittest.TestCase):
+    def test_import_preserves_explicit_boundaries_and_highest_frequency(self):
+        source = (
+            "---\nname: fixture\n...\n"
+            "尽管\tjin guan\t100\n"
+            "韩国\than guo\t90\n"
+            "西安\txi an\t80\n"
+            "先\txian\t70\n"
+            "尽管\tjin guan\t120\n"
+        )
+        entries = list(parse_rime_dict(source))
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "pinyin.db"
+            self.assertEqual(create_sqlite_db(path, entries), 4)
+            with closing(sqlite3.connect(path)) as connection:
+                rows = connection.execute(
+                    "SELECT text, code, frequency, syllable_ids FROM dict ORDER BY id"
+                ).fetchall()
+            self.assertEqual(rows, [
+                ("尽管", "jinguan", 120, "jin:guan"),
+                ("韩国", "hanguo", 90, "han:guo"),
+                ("西安", "xian", 80, "xi:an"),
+                ("先", "xian", 70, "xian"),
+            ])
+            original = path.read_bytes()
+            with self.assertRaisesRegex(ValueError, "invalid syllable annotation"):
+                create_sqlite_db(path, [("尽管", "jinguan", 100, "jin:guo")])
+            self.assertEqual(path.read_bytes(), original)
+
+    def test_continuous_code_requires_one_complete_parse(self):
+        syllables = load_syllables()
+        self.assertEqual(segment_code("xingu", syllables), ["xin", "gu"])
+        with self.assertRaisesRegex(ValueError, "ambiguous"):
+            segment_code("xian", syllables)
+        with self.assertRaisesRegex(ValueError, "cannot segment"):
+            segment_code("nihaob", syllables)
+        with self.assertRaisesRegex(ValueError, "invalid syllable annotation"):
+            list(parse_rime_dict("尽管\tjin 9guan\t100\n"))
+
+    def test_explicit_rare_readings_are_not_limited_by_the_legacy_segmentor(self):
+        source = "𤭢\tcei\t1000\n𰻝\tbiang\t1000\n覅\tfiao\t1000\n挼\trua\t1000\n"
+        entries = list(parse_rime_dict(source))
+        self.assertEqual([entry[3] for entry in entries], ["cei", "biang", "fiao", "rua"])
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "pinyin.db"
+            self.assertEqual(create_sqlite_db(path, entries), 4)
+            self.assertEqual(update_syllable_ids(path), 0)
+            with closing(sqlite3.connect(path)) as connection:
+                self.assertEqual(connection.execute(
+                    "SELECT syllable_ids FROM dict ORDER BY id"
+                ).fetchall(), [("cei",), ("biang",), ("fiao",), ("rua",)])
+
+    def test_invalid_source_does_not_switch_dictionary_or_publish(self):
+        with (
+            mock.patch.object(sys, "argv", ["fetch_pinyin_dictionary.py"]),
+            mock.patch.object(
+                fetcher,
+                "download_dicts_from_zip",
+                side_effect=ValueError("invalid source"),
+            ),
+            mock.patch.object(fetcher, "try_fallback") as fallback,
+            mock.patch.object(fetcher, "create_sqlite_db") as publish,
+        ):
+            with self.assertRaisesRegex(ValueError, "invalid source"):
+                fetcher.main()
+            fallback.assert_not_called()
+            publish.assert_not_called()
+
+    def test_maintenance_preserves_explicit_readings_and_rejects_partial_updates(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "pinyin.db"
+            create_sqlite_db(path, [("西安", "xian", 100, "xi:an")])
+            with closing(sqlite3.connect(path)) as connection, connection:
+                connection.execute(
+                    "INSERT INTO dict (text, code, syllable_ids) VALUES (?, ?, ?)",
+                    ("新股", "xingu", "xing::u"),
+                )
+            self.assertEqual(update_syllable_ids(path), 1)
+            with closing(sqlite3.connect(path)) as connection, connection:
+                self.assertEqual(connection.execute(
+                    "SELECT syllable_ids FROM dict ORDER BY id"
+                ).fetchall(), [("xi:an",), ("xin:gu",)])
+                connection.execute(
+                    "UPDATE dict SET syllable_ids = NULL WHERE text = ?", ("新股",)
+                )
+                connection.execute(
+                    "INSERT INTO dict (text, code) VALUES (?, ?)", ("先", "xian")
+                )
+            original = path.read_bytes()
+            with self.assertRaisesRegex(ValueError, "ambiguous"):
+                update_syllable_ids(path)
+            self.assertEqual(path.read_bytes(), original)
 
 
 if __name__ == "__main__":

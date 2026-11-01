@@ -4,6 +4,7 @@
 #include <fstream>
 #include <memory>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include <windows.h>
@@ -145,6 +146,32 @@ TEST(SyllabifierCompletion, path_metadata_is_collected_only_on_request) {
     ASSERT_EQ(with_metadata.paths[0].syllables.size(),
               with_metadata.paths[0].spelling_types.size());
     ASSERT_EQ(with_metadata.paths[0].syllables.size(), with_metadata.paths[0].input_lengths.size());
+}
+
+TEST(SyllabifierCompletion, normal_completion_is_not_hidden_by_a_fuzzy_alias) {
+    CompletionFixture fixture;
+    std::vector<std::tuple<std::string, std::string, int, float>> spellings = {
+        {"la", "ni", cxxime::kFuzzySpelling, -1.0f},
+        {"lz", "ni", cxxime::kNormalSpelling, 0.0f},
+    };
+    for (int order = 0; order < 2; ++order) {
+        ASSERT_TRUE(cxxime::SpellingsIndex::create_test_trie(fixture.spelling_path, spellings));
+        auto resources = cxxime::PinyinResourceSet::create(
+            "completion_test", cxxime::PinyinSchemeKind::kShuangpin, fixture.spelling_path);
+        ASSERT_TRUE(resources != nullptr);
+        cxxime::SyllabifierOptions options;
+        options.collect_path_metadata = true;
+        options.enable_terminal_completion = true;
+        for (bool fuzzy_enabled : {true, false}) {
+            options.enable_fuzzy = fuzzy_enabled;
+            const auto result = resources->segment("l", nullptr, options);
+            ASSERT_EQ(result.paths.size(), 1u);
+            ASSERT_EQ(result.paths[0].syllables[0], "ni");
+            ASSERT_EQ(result.paths[0].spelling_types[0], cxxime::kCompletionSpelling);
+            ASSERT_EQ(result.paths[0].input_lengths[0], 1u);
+        }
+        std::reverse(spellings.begin(), spellings.end());
+    }
 }
 
 TEST(SyllabifierCompletion, translator_retries_when_exact_path_has_no_word) {

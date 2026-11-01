@@ -11,7 +11,7 @@ namespace cxxime {
 
 bool path_consumes_entire_input(const std::string& input, const SegmentedPath& path);
 bool is_normal_composition_path(const std::string& input, const SegmentedPath& path);
-bool is_complete_normal_path(const std::string& input, const SegmentedPath& path);
+bool is_shuangpin_composition_path(const std::string& input, const SegmentedPath& path);
 bool is_repeated_short_code_path(const std::string& input, const SegmentedPath& path);
 
 } // namespace cxxime

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Generate colon-separated Pinyin syllable IDs for a SQLite dictionary.
 
-Segments spaceless pinyin codes (e.g. "dedao" -> "de:dao") using greedy
-longest-match against the standard pinyin syllable list.
+Preserves explicit syllable boundaries. Missing or malformed annotations are
+repaired only when the continuous code has one complete, unambiguous parse.
 """
 
 import sys
@@ -248,60 +248,79 @@ def load_syllables():
     return syllables
 
 def segment_code(code, syllables):
-    """Greedy longest-match segmentation of a spaceless pinyin code."""
-    result = []
-    pos = 0
-    while pos < len(code):
-        matched = False
-        for syl in syllables:
-            if code.startswith(syl, pos):
-                result.append(syl)
-                pos += len(syl)
-                matched = True
+    """Return the unique full parse; never invent syllables or guess boundaries."""
+    paths = [[] for _ in range(len(code) + 1)]
+    paths[-1] = [()]
+    for position in range(len(code) - 1, -1, -1):
+        for syllable in syllables:
+            if not code.startswith(syllable, position):
+                continue
+            for tail in paths[position + len(syllable)]:
+                paths[position].append((syllable,) + tail)
+                if len(paths[position]) == 2:
+                    break
+            if len(paths[position]) == 2:
                 break
-        if not matched:
-            result.append(code[pos])
-            pos += 1
-    return result
+    if not code or not paths[0]:
+        raise ValueError(f"cannot segment pinyin code: {code!r}")
+    if len(paths[0]) != 1:
+        raise ValueError(f"ambiguous pinyin code requires explicit syllables: {code!r}")
+    return list(paths[0][0])
+
+
+def validate_syllables(code, syllable_ids):
+    parts = syllable_ids.split(":")
+    # Validate representation, not pronunciation: an old segmentation inventory
+    # must not rewrite explicit rare readings such as biang into bi:ang.
+    if ("".join(parts) != code or
+            any(not part or any(ch < "a" or ch > "z" for ch in part) for part in parts)):
+        raise ValueError(f"invalid syllable annotation: {code!r}, {syllable_ids!r}")
+    return parts
+
+
+def update_syllable_ids(db_path):
+    """Validate every row before publishing any changes to the dictionary."""
+    syllables = load_syllables()
+    connection = sqlite3.connect(db_path)
+    try:
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(dict)")}
+        annotation = "syllable_ids" if "syllable_ids" in columns else "NULL"
+        rows = connection.execute(f"SELECT id, code, {annotation} FROM dict").fetchall()
+        updates = []
+        for row_id, code, existing in rows:
+            if existing:
+                try:
+                    validate_syllables(code, existing)
+                    continue
+                except ValueError:
+                    pass
+            try:
+                replacement = ":".join(segment_code(code, syllables))
+            except ValueError as error:
+                raise ValueError(f"dictionary row {row_id}: {error}") from error
+            updates.append((replacement, row_id))
+        with connection:
+            connection.execute("BEGIN")
+            if "syllable_ids" not in columns:
+                connection.execute("ALTER TABLE dict ADD COLUMN syllable_ids TEXT")
+            connection.executemany(
+                "UPDATE dict SET syllable_ids = ? WHERE id = ?", updates
+            )
+        return len(updates)
+    finally:
+        connection.close()
 
 def main():
     if len(sys.argv) < 2:
         print(f"Usage: {sys.argv[0]} <dict.db>")
         sys.exit(1)
 
-    db_path = sys.argv[1]
-    syllables = load_syllables()
-    print(f"Loaded {len(syllables)} valid pinyin syllables")
-
-    conn = sqlite3.connect(db_path)
-    cur = conn.cursor()
-
-    # Ensure syllable_ids column exists
-    cur.execute("PRAGMA table_info(dict)")
-    cols = [row[1] for row in cur.fetchall()]
-    if 'syllable_ids' not in cols:
-        cur.execute('ALTER TABLE dict ADD COLUMN syllable_ids TEXT')
-
-    cur.execute('SELECT id, code FROM dict')
-    rows = cur.fetchall()
-    print(f"Processing {len(rows)} rows...")
-
-    batch = []
-    for row_id, code in rows:
-        seg = segment_code(code, syllables)
-        sid = ':'.join(seg)
-        batch.append((sid, row_id))
-
-    cur.executemany('UPDATE dict SET syllable_ids = ? WHERE id = ?', batch)
-    conn.commit()
-
-    # Verify known entries
-    cur.execute("SELECT text, code, syllable_ids FROM dict WHERE text IN ('弟弟', '得到', '的地方', '你好', '中国', '北京', '输入法')")
-    for row in cur.fetchall():
-        print(f"  {row[0]}  code={row[1]}  sid={row[2]}")
-
-    conn.close()
-    print("Done.")
+    try:
+        count = update_syllable_ids(sys.argv[1])
+    except (ValueError, sqlite3.Error) as error:
+        print(f"error: {error}", file=sys.stderr)
+        sys.exit(1)
+    print(f"Updated {count} rows; existing valid annotations were preserved.")
 
 if __name__ == '__main__':
     main()

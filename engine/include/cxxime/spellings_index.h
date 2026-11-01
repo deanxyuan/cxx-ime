@@ -19,6 +19,7 @@ enum SpellingType {
     kFuzzySpelling = 1,
     kAbbreviation = 2,
     kCompletionSpelling = 3,
+    kFuzzyCompletionSpelling = 4, // Runtime-only completion retaining its fuzzy origin.
 };
 
 struct SpellingMatch {

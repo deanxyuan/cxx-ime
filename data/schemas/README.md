@@ -3,7 +3,7 @@
 拼音方案由 `data/schemas/` 下的 schema 文件描述，加载与校验见 `data/tools/generate_pinyin_spellings.py`：
 
 - `pinyin.full-pinyin.schema.json`：全拼方案的拼写代数（spelling algebra）规则，规则语法与 librime schema 兼容；本 README 自「文件结构」起的逐条说明即针对该文件。
-- `pinyin.microsoft-shuangpin.schema.json`：微软双拼方案，用 `initials` / `finals` / `zero_initials` / `final_aliases_by_initial` 等映射表描述，并声明 `passthrough_syllables`、`ignored_syllables`、`expected_collisions` 与 `fuzzy_algebra`。
+- `pinyin.microsoft-shuangpin.schema.json`：微软双拼方案，用 `initials` / `finals` / `zero_initials` / `final_aliases_by_initial` 等映射表描述，并声明 `ignored_syllables`、`expected_collisions` 与 `fuzzy_algebra`。
 
 两份 schema 都带 `scheme_id` 与 `speller.type`，字段集必须与实现完全一致（多一个少一个字段都会被拒绝）。JSON 不支持注释，因此每条规则的语义统一在此文档中描述。
 

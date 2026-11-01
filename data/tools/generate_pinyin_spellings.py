@@ -38,7 +38,6 @@ _SHUANGPIN_FIELDS = {
     "finals",
     "zero_initials",
     "final_aliases_by_initial",
-    "passthrough_syllables",
     "ignored_syllables",
     "expected_collisions",
     "fuzzy_algebra",
@@ -421,7 +420,6 @@ def _shuangpin_encoder(schema, usage=None):
     finals = speller.get("finals")
     zero_initials = speller.get("zero_initials")
     aliases = speller.get("final_aliases_by_initial", {})
-    passthrough_syllables = speller["passthrough_syllables"]
     ignored_syllables = speller["ignored_syllables"]
     if not isinstance(alphabet, str) or not alphabet:
         raise ValueError("speller.alphabet must be a non-empty string")
@@ -435,17 +433,12 @@ def _shuangpin_encoder(schema, usage=None):
         )
     if not all(isinstance(value, dict) for value in (initials, finals, zero_initials, aliases)):
         raise ValueError("shuangpin mapping fields must be objects")
-    if not isinstance(passthrough_syllables, list) or not all(
-        isinstance(item, str) and item for item in passthrough_syllables
-    ):
-        raise ValueError("speller.passthrough_syllables must be a string array")
     if not isinstance(ignored_syllables, list) or not all(
         isinstance(item, str) and item for item in ignored_syllables
     ):
         raise ValueError("speller.ignored_syllables must be a string array")
 
     initial_names = sorted(initials, key=len, reverse=True)
-    passthrough_set = set(passthrough_syllables)
     ignored_set = set(ignored_syllables)
 
     def record(field, key):
@@ -467,9 +460,6 @@ def _shuangpin_encoder(schema, usage=None):
         if syllable in ignored_set:
             record("ignored_syllables", syllable)
             return []
-        if syllable in passthrough_set:
-            record("passthrough_syllables", syllable)
-            return validate_codes([syllable], syllable)
         if syllable in zero_initials:
             record("zero_initials", syllable)
             return validate_codes(
@@ -517,8 +507,6 @@ def build_shuangpin_script(syllabary, schema):
         "initials": set(speller["initials"]),
         "finals": set(speller["finals"]),
         "zero_initials": set(speller["zero_initials"]),
-        "passthrough_syllables": set(speller["passthrough_syllables"]),
-        "ignored_syllables": set(speller["ignored_syllables"]),
         "final_aliases_by_initial": {
             f"{initial}:{source_final}"
             for initial, final_aliases in speller.get("final_aliases_by_initial", {}).items()

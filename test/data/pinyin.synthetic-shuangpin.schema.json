@@ -13,7 +13,6 @@
         },
         "zero_initials": {},
         "final_aliases_by_initial": {},
-        "passthrough_syllables": [],
         "ignored_syllables": [],
         "expected_collisions": {},
         "fuzzy_algebra": []

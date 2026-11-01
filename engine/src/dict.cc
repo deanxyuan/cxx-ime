@@ -241,6 +241,7 @@ bool Dict::open_dict_with_aux(const std::string& bin_path,
             build_syllabary();
             build_id_index();
         }
+        sort_homophone_ranges();
 
         // Try to load the pre-built Top-N index (pinyin.topn.bin).
         if (derive_aux_paths) {
@@ -689,6 +690,32 @@ void Dict::build_id_index() {
         });
 
     CXXIME_LOG(L"Dict::build_id_index %zu entries", id_index_.size());
+}
+
+void Dict::sort_homophone_ranges() {
+    // Keep the syllable-ID order; exact-span Top-K only needs frequency order within each range.
+    const auto better = [this](const IdEntry& left, const IdEntry& right) {
+        const auto& a = dict_entries_[left.index];
+        const auto& b = dict_entries_[right.index];
+        if (a.frequency != b.frequency) {
+            return a.frequency > b.frequency;
+        }
+        const std::string_view a_text(dict_strings_ + a.text_offset, a.text_len);
+        const std::string_view b_text(dict_strings_ + b.text_offset, b.text_len);
+        if (a_text != b_text) {
+            return a_text < b_text;
+        }
+        return left.index < right.index;
+    };
+    for (auto begin = id_index_.begin(); begin != id_index_.end();) {
+        auto end = begin + 1;
+        while (end != id_index_.end() && begin->count == end->count &&
+               std::equal(begin->ids, begin->ids + begin->count, end->ids)) {
+            ++end;
+        }
+        std::sort(begin, end, better);
+        begin = end;
+    }
 }
 
 uint32_t Dict::syllable_to_id(const std::string& syllable) const {
