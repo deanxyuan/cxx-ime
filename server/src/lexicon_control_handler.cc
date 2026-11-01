@@ -8,6 +8,7 @@
 #include <windows.h>
 
 #include <cxxime/candidate.h>
+#include <cxxime/custom_phrases.h>
 #include <cxxime/input_limits.h>
 #include <cxxime/ipc_protocol.h>
 #include <cxxime/lexicon_control.h>
@@ -47,6 +48,49 @@ std::uint32_t validate_user_entry(const std::string& text, const std::string& co
     return ERROR_SUCCESS;
 }
 
+void handle_custom_phrases(SessionManager& manager, const cxxime::LexiconControlRequest& request,
+                           cxxime::LexiconControlResult& result) {
+    using cxxime::LexiconOperation;
+    const auto phrases = manager.custom_phrases();
+    if (!phrases) {
+        result.error_code = ERROR_NOT_READY;
+        return;
+    }
+    const cxxime::LexiconEntryKey entry{request.text, request.code};
+    switch (request.operation) {
+    case LexiconOperation::kQuery:
+        // Literal text may double in size when JSON-escaped. Keep every valid page in 64 KiB.
+        result.query =
+            phrases->query(request.query, request.offset,
+                           (std::min)(request.limit, cxxime::LEXICON_CONTROL_DEFAULT_LIMIT));
+        result.succeeded = true;
+        break;
+    case LexiconOperation::kAdd:
+        result.succeeded = phrases->add(request.code, request.text);
+        break;
+    case LexiconOperation::kReplace:
+        result.succeeded = phrases->replace({request.old_text, request.old_code}, entry);
+        break;
+    case LexiconOperation::kDelete:
+        result.succeeded = phrases->erase(request.entries);
+        break;
+    case LexiconOperation::kMoveUp:
+    case LexiconOperation::kMoveDown:
+        result.succeeded = phrases->move(entry, request.operation == LexiconOperation::kMoveUp);
+        break;
+    case LexiconOperation::kImport:
+        result.succeeded = phrases->import_file(request.source_path);
+        break;
+    case LexiconOperation::kExport:
+        result.succeeded = phrases->export_file(request.source_path);
+        break;
+    default:
+        result.error_code = ERROR_NOT_SUPPORTED;
+        return;
+    }
+    result.error_code = result.succeeded ? ERROR_SUCCESS : ERROR_INVALID_DATA;
+}
+
 } // namespace
 
 bool handle_lexicon_control_request(SessionManager& session_manager,
@@ -59,6 +103,10 @@ bool handle_lexicon_control_request(SessionManager& session_manager,
 
     cxxime::LexiconControlResult result;
     result.operation = request.operation;
+    if (request.resource == cxxime::LexiconResource::kCustomPhrases) {
+        handle_custom_phrases(session_manager, request, result);
+        return cxxime::encode_lexicon_result(result, response_payload);
+    }
     switch (request.operation) {
         case cxxime::LexiconOperation::kQuery:
             if (request.exact_text &&

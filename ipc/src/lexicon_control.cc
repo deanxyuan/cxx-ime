@@ -45,12 +45,27 @@ const char* operation_name(LexiconOperation operation) {
             return "set_candidate_order";
         case LexiconOperation::kClearCandidateOrder:
             return "clear_candidate_order";
+        case LexiconOperation::kMoveUp:
+            return "move_up";
+        case LexiconOperation::kMoveDown:
+            return "move_down";
+        case LexiconOperation::kExport:
+            return "export";
         default:
             return "unknown";
     }
 }
 
 LexiconOperation parse_operation(const std::string& operation) {
+    if (operation == "move_up") {
+        return LexiconOperation::kMoveUp;
+    }
+    if (operation == "move_down") {
+        return LexiconOperation::kMoveDown;
+    }
+    if (operation == "export") {
+        return LexiconOperation::kExport;
+    }
     if (operation == "query") {
         return LexiconOperation::kQuery;
     }
@@ -112,6 +127,8 @@ bool parse_kind(const std::string& value, UserDictKind* kind) {
 
 const char* resource_name(LexiconResource resource) {
     switch (resource) {
+        case LexiconResource::kCustomPhrases:
+            return "custom_phrases";
         case LexiconResource::kCandidatePreference:
             return "candidate_preference";
         case LexiconResource::kDisabledSystemLexicon:
@@ -130,6 +147,10 @@ bool parse_resource(const std::string& value, LexiconResource* resource) {
     }
     if (value == "user_lexicon") {
         *resource = LexiconResource::kUserLexicon;
+        return true;
+    }
+    if (value == "custom_phrases") {
+        *resource = LexiconResource::kCustomPhrases;
         return true;
     }
     if (value == "candidate_preference") {
@@ -245,6 +266,8 @@ bool encode_lexicon_request(const LexiconControlRequest& request, std::string* p
             object["offset"] = request.offset;
             object["limit"] = request.limit;
             break;
+        case LexiconOperation::kMoveUp:
+        case LexiconOperation::kMoveDown:
         case LexiconOperation::kAdd:
             object["text"] = request.text;
             object["code"] = request.code;
@@ -277,6 +300,7 @@ bool encode_lexicon_request(const LexiconControlRequest& request, std::string* p
                 object["syllables"] = request.syllables;
             }
             break;
+        case LexiconOperation::kExport:
         case LexiconOperation::kImport:
             object["source_path"] = request.source_path;
             break;
@@ -337,6 +361,8 @@ bool decode_lexicon_request(const std::string& payload, LexiconControlRequest* r
                     parsed.exact_text = object["exact_text"].get<bool>();
                 }
                 break;
+            case LexiconOperation::kMoveUp:
+            case LexiconOperation::kMoveDown:
             case LexiconOperation::kAdd:
                 if (!object.contains("text") || !object["text"].is_string() ||
                     !object.contains("code") || !object["code"].is_string() ||
@@ -400,6 +426,7 @@ bool decode_lexicon_request(const std::string& payload, LexiconControlRequest* r
                     parsed.syllables = object["syllables"].get<std::string>();
                 }
                 break;
+            case LexiconOperation::kExport:
             case LexiconOperation::kImport:
                 if (!object.contains("source_path") || !object["source_path"].is_string() ||
                     object["source_path"].get_ref<const std::string&>().empty()) {
@@ -471,6 +498,9 @@ bool encode_lexicon_result(const LexiconControlResult& result, std::string* payl
                  {"frequency", entry.frequency},
                  {"sequence", entry.sequence},
                  {"syllables", entry.syllables}});
+            if (entry.same_code_count != 0) {
+                object["entries"].back()["same_code_count"] = entry.same_code_count;
+            }
         }
     } else if (result.operation == LexiconOperation::kQueryCandidateOrder ||
                result.operation == LexiconOperation::kSetCandidateOrder ||
@@ -538,6 +568,10 @@ bool decode_lexicon_result(const std::string& payload, LexiconControlResult* res
                 if (item.contains("syllables")) {
                     entry.syllables = item["syllables"].get<std::string>();
                 }
+                if (item.contains("same_code_count") &&
+                    !read_size(item, "same_code_count", &entry.same_code_count)) {
+                    return false;
+                }
                 parsed.query.entries.push_back(std::move(entry));
             }
         } else if (parsed.operation == LexiconOperation::kQueryCandidateOrder ||
@@ -583,6 +617,12 @@ bool decode_lexicon_result(const std::string& payload, LexiconControlResult* res
 LexiconControlClient::LexiconControlClient(int timeout_ms, const std::wstring& pipe_name)
     : timeout_ms_(timeout_ms)
     , pipe_name_(pipe_name) {}
+
+bool LexiconControlClient::custom_phrase_request(LexiconControlRequest request,
+                                                 LexiconControlResult* result) const {
+    request.resource = LexiconResource::kCustomPhrases;
+    return execute(request, result);
+}
 
 bool LexiconControlClient::execute(const LexiconControlRequest& request,
                                     LexiconControlResult* result, int response_timeout_ms) const {

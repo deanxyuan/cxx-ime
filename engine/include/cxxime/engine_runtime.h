@@ -12,6 +12,7 @@
 namespace cxxime {
 
 class CompositionLearningService;
+class CustomPhrases;
 class SymbolTable;
 
 class EngineRuntimeState final {
@@ -20,7 +21,8 @@ public:
     create(Config config, std::shared_ptr<Dict> pinyin_dict, std::shared_ptr<Dict> wubi_dict,
            std::shared_ptr<const PinyinResourceSet> pinyin_resources,
            std::shared_ptr<const SymbolTable> symbol_table = nullptr,
-           std::shared_ptr<CompositionLearningService> composition_learning = nullptr);
+           std::shared_ptr<CompositionLearningService> composition_learning = nullptr,
+           std::shared_ptr<CustomPhrases> custom_phrases = nullptr);
 
     EngineRuntimeState(const EngineRuntimeState&) = delete;
     EngineRuntimeState& operator=(const EngineRuntimeState&) = delete;
@@ -32,6 +34,7 @@ public:
     Dict* wubi_dict() const { return wubi_dict_.get(); }
     const PinyinResourceSet& pinyin_resources() const { return *pinyin_resources_; }
     const SymbolTable* symbol_table() const { return symbol_table_.get(); }
+    const std::shared_ptr<CustomPhrases>& custom_phrases() const { return custom_phrases_; }
     CompositionLearningService* composition_learning() const { return composition_learning_.get(); }
     PinyinQueryPolicy pinyin_query_policy() const { return pinyin_query_policy_; }
     const std::shared_ptr<Dict>& pinyin_dict_ptr() const { return pinyin_dict_; }
@@ -49,7 +52,8 @@ private:
                        std::shared_ptr<Dict> wubi_dict,
                        std::shared_ptr<const PinyinResourceSet> pinyin_resources,
                        std::shared_ptr<const SymbolTable> symbol_table,
-                       std::shared_ptr<CompositionLearningService> composition_learning);
+                       std::shared_ptr<CompositionLearningService> composition_learning,
+                       std::shared_ptr<CustomPhrases> custom_phrases);
 
     const Config config_;
     const std::shared_ptr<Dict> pinyin_dict_;
@@ -57,6 +61,7 @@ private:
     const std::shared_ptr<const PinyinResourceSet> pinyin_resources_;
     const std::shared_ptr<const SymbolTable> symbol_table_;
     const std::shared_ptr<CompositionLearningService> composition_learning_;
+    const std::shared_ptr<CustomPhrases> custom_phrases_;
     const PinyinQueryPolicy pinyin_query_policy_;
 };
 

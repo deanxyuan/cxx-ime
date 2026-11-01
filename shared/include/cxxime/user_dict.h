@@ -22,6 +22,7 @@ enum class LexiconResource : std::uint32_t {
     kCandidatePreference = 1,
     kDisabledSystemLexicon = 2,
     kManualCandidateOrder = 3,
+    kCustomPhrases = 4,
 };
 
 enum class CandidateOrderReason : std::uint32_t {
@@ -37,6 +38,8 @@ struct UserDictEntryInfo {
     int frequency = 1;
     std::uint64_t sequence = 0;
     std::string syllables;
+    // Custom phrases: group size for rank controls, independent of query filtering/pagination.
+    std::size_t same_code_count = 0;
 };
 
 struct LexiconEntryKey {

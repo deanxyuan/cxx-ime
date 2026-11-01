@@ -32,6 +32,7 @@ struct UserDataMapping {
 constexpr UserDataMapping kUserDataMappings[] = {
     {"lexicon/user_pinyin.tsv", "user_pinyin.tsv", cxxime::UserBackupComponent::kUserLexicon},
     {"lexicon/user_wubi.tsv", "user_wubi.tsv", cxxime::UserBackupComponent::kUserLexicon},
+    {"lexicon/custom_phrases.tsv", "custom_phrases.tsv", cxxime::UserBackupComponent::kUserLexicon},
     {"ranking/candidate_order_pinyin.tsv", "candidate_order_pinyin.tsv",
      cxxime::UserBackupComponent::kCandidateOrder},
     {"ranking/candidate_order_wubi.tsv", "candidate_order_wubi.tsv",
@@ -218,7 +219,9 @@ bool required_entries_present(const cxxime::UserBackupArchive& archive, std::uin
     }
     return std::all_of(std::begin(kUserDataMappings), std::end(kUserDataMappings),
                        [&](const UserDataMapping& mapping) {
-                           return !includes(components, mapping.component) ||
+                           // Older backups have no custom-phrase file to merge.
+                           return std::string(mapping.file_name) == "custom_phrases.tsv" ||
+                                  !includes(components, mapping.component) ||
                                   find_entry(archive, mapping.archive_path);
                        });
 }

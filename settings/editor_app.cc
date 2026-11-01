@@ -542,18 +542,7 @@ LRESULT CALLBACK EditorApp::wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         for (int i = 0; i < kPanelCount; ++i) {
             if (!a->hPanels_[i]) continue;
             SetWindowPos(a->hPanels_[i], nullptr, panelX, panelY, panelW_, panelContH, SWP_NOZORDER);
-            // Scale panel children by ratio (preserves relative layout)
-            for (HWND c = GetWindow(a->hPanels_[i], GW_CHILD); c; c = GetWindow(c, GW_HWNDNEXT)) {
-                RECT cr2; GetWindowRect(c, &cr2);
-                POINT cpt = {cr2.left, cr2.top};
-                ScreenToClient(a->hPanels_[i], &cpt);
-                SetWindowPos(c, nullptr,
-                             (int)(cpt.x * ratio + 0.5f), (int)(cpt.y * ratio + 0.5f),
-                             (int)((cr2.right - cr2.left) * ratio + 0.5f),
-                             (int)((cr2.bottom - cr2.top) * ratio + 0.5f),
-                             SWP_NOZORDER);
-                SendMessageW(c, WM_SETFONT, (WPARAM)newFont, TRUE);
-            }
+            scale_panel_children(a->hPanels_[i], ratio, newFont);
         }
         if (a->hAboutTitle_) {
             SendMessageW(a->hAboutTitle_, WM_SETFONT, (WPARAM)a->hAboutTitleFont_, TRUE);
@@ -657,11 +646,13 @@ LRESULT CALLBACK EditorApp::wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_DRAWITEM: {
         LPDRAWITEMSTRUCT dis = (LPDRAWITEMSTRUCT)lp;
         const HWND selected_lexicon_tab =
-            a->lexiconResource_ == LexiconResource::kCandidatePreference
-                ? a->lexiconViewTabs_.preferences
-                : a->lexiconResource_ == LexiconResource::kManualCandidateOrder
-                      ? a->lexiconViewTabs_.candidate_order
-                      : a->lexiconViewTabs_.entries;
+            a->lexiconResource_ == LexiconResource::kCustomPhrases
+                ? a->lexiconViewTabs_.custom_phrases
+                : a->lexiconResource_ == LexiconResource::kCandidatePreference
+                      ? a->lexiconViewTabs_.preferences
+                      : a->lexiconResource_ == LexiconResource::kManualCandidateOrder
+                            ? a->lexiconViewTabs_.candidate_order
+                            : a->lexiconViewTabs_.entries;
         if (draw_lexicon_view_tab(*dis, a->lexiconViewTabs_, selected_lexicon_tab)) {
             return TRUE;
         }

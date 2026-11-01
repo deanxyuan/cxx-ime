@@ -30,6 +30,9 @@ enum class LexiconOperation {
     kQueryCandidateOrder,
     kSetCandidateOrder,
     kClearCandidateOrder,
+    kMoveUp,
+    kMoveDown,
+    kExport,
 };
 
 // JSON is encoded by name; append future optional members and accept absent or unknown fields.
@@ -113,6 +116,8 @@ public:
     bool replace_entry(UserDictKind kind, const std::string& old_text, const std::string& old_code,
                        const std::string& new_text, const std::string& new_code,
                        LexiconControlResult* result, const std::string& syllables) const;
+
+    bool custom_phrase_request(LexiconControlRequest request, LexiconControlResult* result) const;
 
 private:
     bool execute(const LexiconControlRequest& request, LexiconControlResult* result,

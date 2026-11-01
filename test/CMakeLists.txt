@@ -355,6 +355,7 @@ add_cxxime_test(output_composer_test
 )
 add_cxxime_test(engine_source_test SOURCES engine/engine_source_test.cc DEPS cxxime-engine)
 add_cxxime_test(symbol_input_test SOURCES engine/symbol_input_test.cc DEPS cxxime-engine)
+add_cxxime_test(custom_phrases_test SOURCES engine/custom_phrases_test.cc DEPS cxxime-engine)
 add_cxxime_test(symbol_table_test SOURCES engine/symbol_table_test.cc DEPS cxxime-engine)
 add_cxxime_test(system_lexicon_inspector_test
     SOURCES settings/system_lexicon_inspector_test.cc
@@ -372,6 +373,7 @@ add_cxxime_test(editor_apply_state_test
         settings/editor_apply_state_test.cc
         ${CMAKE_SOURCE_DIR}/settings/editor_apply_state.cc
         ${CMAKE_SOURCE_DIR}/settings/editor_controls.cc
+        ${CMAKE_SOURCE_DIR}/settings/custom_phrase_panel.cc
     DEPS cxxime-engine cxxime-ipc cxxime-ui comctl32.lib
 )
 target_include_directories(editor_apply_state_test
@@ -463,6 +465,10 @@ add_cxxime_test(session_manager_integration_test
         server/session_manager_segmented_test.cc
         server/session_manager_pinyin_scheme_test.cc
         server/session_manager_lexicon_test.cc
+        server/session_manager_custom_phrases_test.cc
+        settings/custom_phrase_panel_test.cc
+        ${CMAKE_SOURCE_DIR}/settings/custom_phrase_panel.cc
+        ${CMAKE_SOURCE_DIR}/settings/editor_controls.cc
         server/session_manager_lifecycle_test.cc
         server/user_backup_service_test.cc
         server/session_manager_integration_test_support.cc
@@ -480,7 +486,10 @@ add_cxxime_test(session_manager_integration_test
 )
 target_include_directories(session_manager_integration_test PRIVATE
     ${CMAKE_SOURCE_DIR}/server/src
+    ${CMAKE_SOURCE_DIR}/settings
+    ${CMAKE_CURRENT_SOURCE_DIR}/server
 )
+target_link_libraries(session_manager_integration_test PRIVATE cxxime-ui comctl32.lib)
 
 find_package(Python3 QUIET)
 if(Python3_FOUND)

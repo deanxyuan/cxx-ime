@@ -13,6 +13,7 @@
 #include <windows.h>
 
 #include <cxxime/composition_learning.h>
+#include <cxxime/custom_phrases.h>
 #include <cxxime/input_limits.h>
 #include <cxxime/logging.h>
 #include <cxxime/mixed_translator.h>
@@ -23,6 +24,8 @@
 #include <cxxime/wubi_input_policy.h>
 #include <cxxime/wubi_processor.h>
 #include <cxxime/wubi_translator.h>
+
+#include "custom_phrase_translation.h"
 
 namespace cxxime {
 
@@ -528,12 +531,25 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
     const bool plain_letter_key = !event.is_key_up && !event.is_shift() && !event.is_ctrl() &&
                                   !event.is_alt() && !event.is_caps_lock() &&
                                   event.keycode >= 'A' && event.keycode <= 'Z';
-    const WubiFifthKeyAction fifth_key_action = plain_letter_key
-        ? WubiInputPolicy::fifth_key_action(context_.composition_scheme(),
-                                            context_.active_input(), context_.preedit_cursor(),
-                                            context_.translation(), runtime_->config(),
-                                            event.keycode)
-        : WubiFifthKeyAction::kNone;
+    const auto& phrases = runtime_->custom_phrases();
+    const bool continues_phrase =
+        plain_letter_key && phrases &&
+        context_.preedit_cursor() == context_.active_input().size() &&
+        phrases->has_prefix(context_.active_input() + static_cast<char>(event.keycode - 'A' + 'a'));
+    // A reserved phrase prefix can defer an otherwise automatic Wubi commit.
+    // If the next key leaves that prefix, finish the Wubi word before starting the next code.
+    const bool deferred_wubi_commit =
+        plain_letter_key && !continues_phrase &&
+        context_.preedit_cursor() == context_.active_input().size() &&
+        WubiInputPolicy::should_auto_commit(context_.composition_scheme(), context_.active_input(),
+                                            context_.translation(), runtime_->config());
+    const WubiFifthKeyAction fifth_key_action =
+        deferred_wubi_commit ? WubiFifthKeyAction::kCommitFirstAndRestart
+        : plain_letter_key && !continues_phrase
+            ? WubiInputPolicy::fifth_key_action(
+                  context_.composition_scheme(), context_.active_input(), context_.preedit_cursor(),
+                  context_.translation(), runtime_->config(), event.keycode)
+            : WubiFifthKeyAction::kNone;
     if (!routed_result && fifth_key_action == WubiFifthKeyAction::kCommitFirstAndRestart) {
         const CandidateEntry* first = context_.candidate_entry(0);
         if (first && finalize_selection(*first)) {
@@ -742,6 +758,7 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
         // Auto-commit a unique 4-code Wubi candidate in Wubi or mixed mode.
         if ((refresh_candidates || previous_page_applied) && !append_raw &&
             result == ProcessResult::ACCEPTED &&
+            !(phrases && phrases->has_prefix(context_.active_input())) &&
             WubiInputPolicy::should_auto_commit(context_.composition_scheme(),
                                                 context_.active_input(),
                                                 context_.translation(),
@@ -1016,7 +1033,12 @@ TranslationResult Engine::translate_composition(const CompositionState& state,
     request.trace = trace_enabled_ ? &trace_ : nullptr;
     request.budget = &effective_budget;
     request.scratch = &scratch_;
-    TranslationResult result = translator_->translate(request);
+    std::size_t converted_text_bytes = 0;
+    for (const auto& segment : state.converted_segments()) {
+        converted_text_bytes += segment.text.size();
+    }
+    TranslationResult result = translate_with_custom_phrases(
+        *translator_, request, runtime_->custom_phrases().get(), converted_text_bytes);
     if (runtime_->config().wubi_code_hint) {
         add_wubi_code_hints(state.active().input, result);
     }

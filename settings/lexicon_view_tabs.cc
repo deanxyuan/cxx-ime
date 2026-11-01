@@ -74,27 +74,33 @@ HWND create_view_tab(HWND parent, int id, const wchar_t* text, int x, int y, int
 } // namespace
 
 LexiconViewTabs create_lexicon_view_tabs(HWND parent, int entries_id, int candidate_order_id,
-                                         int preferences_id, int x, int y, int width, int height,
-                                         HFONT font) {
-    const int entries_width = width / 3;
-    const int order_width = width / 3;
+                                         int preferences_id, int phrases_id, int x, int y,
+                                         int width, int height, HFONT font) {
+    const int entries_width = width / 4;
+    const int order_width = width / 4;
     LexiconViewTabs tabs;
     tabs.entries =
         create_view_tab(parent, entries_id, L"词条", x, y, entries_width, height, font, true);
     tabs.candidate_order = create_view_tab(parent, candidate_order_id, L"候选排序",
                                            x + entries_width, y, order_width, height, font, false);
-    tabs.preferences = create_view_tab(parent, preferences_id, L"选词偏好",
-                                       x + entries_width + order_width, y,
-                                       width - entries_width - order_width, height, font, false);
-    SetPropW(tabs.entries, kPreviousProperty, tabs.preferences);
+    tabs.preferences =
+        create_view_tab(parent, preferences_id, L"选词偏好", x + entries_width + order_width, y,
+                        order_width, height, font, false);
+    tabs.custom_phrases =
+        create_view_tab(parent, phrases_id, L"自定义短语", x + entries_width + 2 * order_width, y,
+                        width - entries_width - 2 * order_width, height, font, false);
+    SetPropW(tabs.entries, kPreviousProperty, tabs.custom_phrases);
     SetPropW(tabs.entries, kNextProperty, tabs.candidate_order);
     SetPropW(tabs.candidate_order, kPreviousProperty, tabs.entries);
     SetPropW(tabs.candidate_order, kNextProperty, tabs.preferences);
     SetPropW(tabs.preferences, kPreviousProperty, tabs.candidate_order);
-    SetPropW(tabs.preferences, kNextProperty, tabs.entries);
+    SetPropW(tabs.preferences, kNextProperty, tabs.custom_phrases);
+    SetPropW(tabs.custom_phrases, kPreviousProperty, tabs.preferences);
+    SetPropW(tabs.custom_phrases, kNextProperty, tabs.entries);
     SetWindowSubclass(tabs.entries, view_tab_proc, 1, 0);
     SetWindowSubclass(tabs.candidate_order, view_tab_proc, 1, 0);
     SetWindowSubclass(tabs.preferences, view_tab_proc, 1, 0);
+    SetWindowSubclass(tabs.custom_phrases, view_tab_proc, 1, 0);
     return tabs;
 }
 
@@ -102,14 +108,16 @@ void select_lexicon_view_tab(const LexiconViewTabs& tabs, HWND selected) {
     set_tab_stop(tabs.entries, selected == tabs.entries);
     set_tab_stop(tabs.candidate_order, selected == tabs.candidate_order);
     set_tab_stop(tabs.preferences, selected == tabs.preferences);
+    set_tab_stop(tabs.custom_phrases, selected == tabs.custom_phrases);
     InvalidateRect(tabs.entries, nullptr, FALSE);
     InvalidateRect(tabs.candidate_order, nullptr, FALSE);
     InvalidateRect(tabs.preferences, nullptr, FALSE);
+    InvalidateRect(tabs.custom_phrases, nullptr, FALSE);
 }
 
 bool draw_lexicon_view_tab(const DRAWITEMSTRUCT& item, const LexiconViewTabs& tabs, HWND selected) {
     if (item.hwndItem != tabs.entries && item.hwndItem != tabs.candidate_order &&
-        item.hwndItem != tabs.preferences) {
+        item.hwndItem != tabs.preferences && item.hwndItem != tabs.custom_phrases) {
         return false;
     }
 
@@ -123,8 +131,7 @@ bool draw_lexicon_view_tab(const DRAWITEMSTRUCT& item, const LexiconViewTabs& ta
     HGDIOBJ old_font = font ? SelectObject(item.hDC, font) : nullptr;
     SetBkMode(item.hDC, TRANSPARENT);
     SetTextColor(item.hDC,
-                 is_selected || hot ? GetSysColor(COLOR_HIGHLIGHT)
-                                    : GetSysColor(COLOR_BTNTEXT));
+                 is_selected || hot ? GetSysColor(COLOR_HIGHLIGHT) : GetSysColor(COLOR_BTNTEXT));
     RECT text_rect = item.rcItem;
     DrawTextW(item.hDC, text, -1, &text_rect, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
 

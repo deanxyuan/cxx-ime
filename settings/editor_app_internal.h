@@ -37,6 +37,7 @@ extern int kCtlX;
 int S(int value);
 void init_layout();
 HFONT get_font();
+void scale_panel_children(HWND panel, float ratio, HFONT font);
 
 int make_label(const wchar_t* text, int x, int y, HWND parent);
 void make_aligned_label(const wchar_t* text, int y, HWND parent);

@@ -14,6 +14,7 @@
 
 #include <cxxime/data_path.h>
 #include <cxxime/candidate_preference.h>
+#include <cxxime/custom_phrases.h>
 #include <cxxime/diagnostics_config.h>
 #include <cxxime/disabled_system_lexicon.h>
 #include <cxxime/dictionary_manifest.h>
@@ -69,7 +70,8 @@ struct LexiconDataFile {
     cxxime::UserDictKind kind;
 };
 
-constexpr std::array<LexiconDataFile, 8> kLexiconDataFiles = {{
+constexpr std::array<LexiconDataFile, 9> kLexiconDataFiles = {{
+    {"custom_phrases.tsv", cxxime::LexiconResource::kCustomPhrases, cxxime::UserDictKind::PINYIN},
     {"user_pinyin.tsv", cxxime::LexiconResource::kUserLexicon, cxxime::UserDictKind::PINYIN},
     {"user_wubi.tsv", cxxime::LexiconResource::kUserLexicon, cxxime::UserDictKind::WUBI},
     {"candidate_order_pinyin.tsv", cxxime::LexiconResource::kManualCandidateOrder,
@@ -99,6 +101,8 @@ bool known_user_data_file(const std::string& name) {
 bool valid_lexicon_data_file_contents(const LexiconDataFile& file,
                                       const std::string& contents) {
     switch (file.resource) {
+    case cxxime::LexiconResource::kCustomPhrases:
+        return cxxime::CustomPhrases::validate_contents(contents);
     case cxxime::LexiconResource::kUserLexicon:
         return cxxime::UserLexicon::validate_contents(contents, file.kind);
     case cxxime::LexiconResource::kCandidatePreference:
@@ -491,9 +495,14 @@ bool SharedResources::load(const std::string& dict_path,
         CXXIME_LOG(L"%s", L"SharedResources: composition learning worker disabled");
         loaded_composition_learning.reset();
     }
+    auto loaded_phrases = std::make_shared<cxxime::CustomPhrases>();
+    if (!loaded_phrases->load(cxxime::user_data_path("custom_phrases.tsv"))) {
+        return false;
+    }
     auto loaded_runtime = cxxime::EngineRuntimeState::create(
         *loaded_config, dictionaries.dict, dictionaries.wubi_dict,
-        dictionaries.pinyin_resources, loaded_symbol_table, loaded_composition_learning);
+        dictionaries.pinyin_resources, loaded_symbol_table, loaded_composition_learning,
+        loaded_phrases);
     if (!loaded_runtime) {
         return false;
     }
@@ -586,7 +595,7 @@ bool SharedResources::reload_dictionaries() {
     auto next_runtime = cxxime::EngineRuntimeState::create(
         current_runtime->config(), dictionaries.dict, dictionaries.wubi_dict,
         dictionaries.pinyin_resources, current_runtime->symbol_table_ptr(),
-        current_runtime->composition_learning_ptr());
+        current_runtime->composition_learning_ptr(), current_runtime->custom_phrases());
     if (!next_runtime) {
         return false;
     }
@@ -799,7 +808,7 @@ bool SharedResources::prepare_config(const std::shared_ptr<const cxxime::Config>
     auto next_runtime = cxxime::EngineRuntimeState::create(
         *next_config, current_runtime->pinyin_dict_ptr(), current_runtime->wubi_dict_ptr(),
         std::move(next_pinyin_resources), current_runtime->symbol_table_ptr(),
-        current_runtime->composition_learning_ptr());
+        current_runtime->composition_learning_ptr(), current_runtime->custom_phrases());
     if (!next_runtime) {
         return false;
     }
@@ -1854,6 +1863,11 @@ bool SessionManager::save_candidate_preferences(bool force) {
     return shared_.save_candidate_preferences(force);
 }
 
+std::shared_ptr<cxxime::CustomPhrases> SessionManager::custom_phrases() const {
+    const auto resources = shared_.snapshot();
+    return resources.runtime ? resources.runtime->custom_phrases() : nullptr;
+}
+
 bool SessionManager::snapshot_user_data(const std::vector<std::string>& file_names,
                                         std::map<std::string, std::string>* files) {
     if (!files || file_names.empty()) {
@@ -1877,6 +1891,11 @@ bool SessionManager::snapshot_user_data(const std::vector<std::string>& file_nam
             ready = false;
         } else if (ready) {
             switch (file->resource) {
+            case cxxime::LexiconResource::kCustomPhrases:
+                ready = resources.runtime->custom_phrases() &&
+                        resources.runtime->custom_phrases()->export_file(
+                            cxxime::user_data_path("custom_phrases.tsv"));
+                break;
             case cxxime::LexiconResource::kUserLexicon:
                 ready = dict->save_user_dict();
                 break;
@@ -1922,6 +1941,10 @@ void SessionManager::merge_user_data(const std::map<std::string, std::string>& f
                         item.second, &merged);
         } else if (ready) {
             switch (file->resource) {
+            case cxxime::LexiconResource::kCustomPhrases:
+                ready = resources.runtime->custom_phrases() &&
+                        resources.runtime->custom_phrases()->merge_contents(item.second, &merged);
+                break;
             case cxxime::LexiconResource::kUserLexicon:
                 ready = dict->merge_user_dict_contents(item.second, &merged);
                 break;

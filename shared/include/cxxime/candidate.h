@@ -16,6 +16,7 @@ enum class CandidateSource {
     kPinyin,
     kWubi,
     kSymbol,
+    kCustomPhrase,
 };
 
 enum class CandidateOrigin {

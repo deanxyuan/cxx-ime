@@ -207,17 +207,25 @@ public:
         const auto id = TextServiceTestPeer::session_id(service_);
         const auto generation = TextServiceTestPeer::session_generation(service_);
         std::unique_lock<std::mutex> lock(mutex_);
-        ASSERT_TRUE(changed_.wait_for(lock, std::chrono::seconds(3), [&]() {
-            if (snapshots_.empty()) {
-                return false;
-            }
-            const auto& snapshot = snapshots_.back();
-            return snapshot.session_id == id && snapshot.session_generation == generation &&
-                   snapshot.ime_status.caps_lock() == caps &&
-                   snapshot.ime_status.chinese_mode() == chinese &&
-                   (snapshot.flags &
-                    cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kStatusVisible)) != 0;
-        }));
+        ASSERT_TRUE(changed_.wait_for(
+            lock, std::chrono::seconds(3),
+            [&]() {
+                if (snapshots_.empty()) {
+                    return false;
+                }
+                const auto& snapshot = snapshots_.back();
+                return snapshot.session_id == id && snapshot.session_generation == generation &&
+                       snapshot.ime_status.caps_lock() == caps &&
+                       snapshot.ime_status.chinese_mode() == chinese &&
+                       (snapshot.flags &
+                        cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kStatusVisible)) != 0;
+            }))
+            << " snapshots=" << snapshots_.size() << " expected_session=" << id
+            << " expected_generation=" << generation << " expected_caps=" << caps
+            << " expected_chinese=" << chinese
+            << " last_flags=" << (snapshots_.empty() ? 0 : snapshots_.back().flags)
+            << " last_target=" << (snapshots_.empty() ? 0 : snapshots_.back().target_window)
+            << " foreground=" << GetForegroundWindow();
     }
     void expect_recovered_since(size_t begin, bool caps, bool chinese) {
         expect_current(caps, chinese);

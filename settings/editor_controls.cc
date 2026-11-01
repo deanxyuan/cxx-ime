@@ -3,6 +3,7 @@
 #include "editor_app_internal.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cwchar>
 
 namespace cxxime {
@@ -41,6 +42,35 @@ HFONT get_font() {
                               L"Microsoft YaHei UI");
     }
     return g_hFont;
+}
+
+void scale_panel_children(HWND panel, float ratio, HFONT font) {
+    const auto scale = [ratio](int value) { return static_cast<int>(std::lround(value * ratio)); };
+    for (HWND control = GetWindow(panel, GW_CHILD); control;
+         control = GetWindow(control, GW_HWNDNEXT)) {
+        // Recurse through layout containers, not the internal children of native controls.
+        if ((GetWindowLongPtrW(control, GWL_EXSTYLE) & WS_EX_CONTROLPARENT) != 0) {
+            scale_panel_children(control, ratio, font);
+        }
+        RECT rect = {};
+        GetWindowRect(control, &rect);
+        POINT origin = {rect.left, rect.top};
+        ScreenToClient(panel, &origin);
+        SetWindowPos(control, nullptr, scale(origin.x), scale(origin.y),
+                     scale(rect.right - rect.left), scale(rect.bottom - rect.top),
+                     SWP_NOZORDER | SWP_NOACTIVATE);
+        SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+
+        wchar_t class_name[32] = {};
+        GetClassNameW(control, class_name, 32);
+        if (_wcsicmp(class_name, WC_LISTVIEWW) == 0) {
+            const int columns = Header_GetItemCount(ListView_GetHeader(control));
+            for (int column = 0; column < columns; ++column) {
+                ListView_SetColumnWidth(control, column,
+                                        scale(ListView_GetColumnWidth(control, column)));
+            }
+        }
+    }
 }
 
 int make_label(const wchar_t* text, int x, int y, HWND parent) {

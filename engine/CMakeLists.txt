@@ -37,6 +37,8 @@ add_library(cxxime-engine STATIC
     src/config.cc
     src/engine.cc
     src/engine_runtime.cc
+    src/custom_phrases.cc
+    src/custom_phrase_translation.cc
     src/ascii_composer.cc
     src/short_code_cache.cc
     src/output_composer.cc

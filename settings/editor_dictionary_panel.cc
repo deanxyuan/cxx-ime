@@ -49,11 +49,22 @@ void EditorApp::create_dictionary_panel(HWND panel, int panel_width) {
     SetWindowSubclass(panel, PanelForwardProc, 4000, reinterpret_cast<DWORD_PTR>(hwnd_));
     lexiconQueryService_ = std::make_shared<LexiconQueryService>();
 
-    lexiconViewTabs_ = create_lexicon_view_tabs(panel, 4014, 4019, 4018, kPanelPadLeft, top,
-                                                S(270), kCtrlH, get_font());
+    lexiconViewTabs_ = create_lexicon_view_tabs(panel, 4014, 4019, 4018, 4030, kPanelPadLeft, top,
+                                                S(380), kCtrlH, get_font());
+
+    const int content_top = top + kRowH;
+    customPhrasePanel_.create(panel, kPanelPadLeft, content_top,
+                              panel_width - kPanelPadLeft - S(10), panel_rect.bottom - content_top);
+    dictionaryContent_ = CreateWindowExW(WS_EX_CONTROLPARENT, L"STATIC", L"",
+                                         WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN, 0, content_top,
+                                         panel_width, panel_rect.bottom - content_top, panel,
+                                         nullptr, GetModuleHandleW(nullptr), nullptr);
+    panel = dictionaryContent_;
+    panel_rect.bottom -= content_top;
+    SetWindowSubclass(panel, PanelForwardProc, 4000, reinterpret_cast<DWORD_PTR>(hwnd_));
 
     const int content_right = panel_width - S(10);
-    const int query_y = top + kRowH;
+    const int query_y = 0;
     const int kind_width = S(100);
     const int query_button_width = S(68);
     const int control_gap = S(8);
@@ -229,27 +240,34 @@ bool EditorApp::handle_dictionary_command(int control_id, int notification) {
         return true;
     case 4014:
     case 4019:
+    case 4030:
     case 4018: {
         if (notification != BN_CLICKED) {
             return true;
         }
-        const LexiconResource resource = control_id == 4018
-                                             ? LexiconResource::kCandidatePreference
-                                             : control_id == 4019
-                                                   ? LexiconResource::kManualCandidateOrder
-                                                   : LexiconResource::kUserLexicon;
+        const LexiconResource resource =
+            control_id == 4030   ? LexiconResource::kCustomPhrases
+            : control_id == 4018 ? LexiconResource::kCandidatePreference
+            : control_id == 4019 ? LexiconResource::kManualCandidateOrder
+                                 : LexiconResource::kUserLexicon;
         if (resource == lexiconResource_) {
             return true;
         }
         lexiconResource_ = resource;
-        const HWND selected = resource == LexiconResource::kCandidatePreference
-                                  ? lexiconViewTabs_.preferences
-                                  : resource == LexiconResource::kManualCandidateOrder
-                                        ? lexiconViewTabs_.candidate_order
-                                        : lexiconViewTabs_.entries;
+        const HWND selected = resource == LexiconResource::kCustomPhrases
+                                  ? lexiconViewTabs_.custom_phrases
+                                  : resource == LexiconResource::kCandidatePreference
+                                        ? lexiconViewTabs_.preferences
+                                        : resource == LexiconResource::kManualCandidateOrder
+                                              ? lexiconViewTabs_.candidate_order
+                                              : lexiconViewTabs_.entries;
         select_lexicon_view_tab(lexiconViewTabs_, selected);
         clear_lexicon_entry_form();
         update_lexicon_entry_actions();
+        if (resource == LexiconResource::kCustomPhrases) {
+            customPhrasePanel_.refresh();
+            return true;
+        }
         query_lexicon_entries(false);
         return true;
     }

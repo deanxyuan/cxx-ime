@@ -111,6 +111,10 @@ std::string selected_combo_text_utf8(HWND combo) {
 void EditorApp::refresh_lexicon_entries() { query_lexicon_entries(true); }
 
 void EditorApp::query_lexicon_entries(bool preserve_editor) {
+    if (current_lexicon_resource() == LexiconResource::kCustomPhrases) {
+        customPhrasePanel_.refresh();
+        return;
+    }
     if (!hLexiconList_) {
         return;
     }
@@ -723,6 +727,16 @@ void EditorApp::on_lexicon_selection_changed() {
 }
 
 void EditorApp::update_lexicon_entry_actions() {
+    const bool phrases_page = current_lexicon_resource() == LexiconResource::kCustomPhrases;
+    if (dictionaryContent_) {
+        ShowWindow(dictionaryContent_, phrases_page ? SW_HIDE : SW_SHOW);
+    }
+    if (customPhrasePanel_.hwnd()) {
+        ShowWindow(customPhrasePanel_.hwnd(), phrases_page ? SW_SHOW : SW_HIDE);
+    }
+    if (phrases_page) {
+        return;
+    }
     const bool lexicon_page = current_lexicon_resource() == LexiconResource::kUserLexicon;
     const bool candidate_order_page =
         current_lexicon_resource() == LexiconResource::kManualCandidateOrder;

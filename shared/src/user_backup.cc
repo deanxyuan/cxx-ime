@@ -48,6 +48,7 @@ constexpr KnownBackupPath kKnownPaths[] = {
     {"config/device.json", UserBackupComponent::kDeviceSettings},
     {"lexicon/user_pinyin.tsv", UserBackupComponent::kUserLexicon},
     {"lexicon/user_wubi.tsv", UserBackupComponent::kUserLexicon},
+    {"lexicon/custom_phrases.tsv", UserBackupComponent::kUserLexicon},
     {"ranking/candidate_order_pinyin.tsv", UserBackupComponent::kCandidateOrder},
     {"ranking/candidate_order_wubi.tsv", UserBackupComponent::kCandidateOrder},
     {"learning/learning_pinyin.tsv", UserBackupComponent::kLearning},
@@ -187,7 +188,9 @@ bool read_file(const std::wstring& path, std::vector<unsigned char>* contents,
 bool components_are_complete(const std::set<std::string>& paths, std::uint32_t components) {
     return std::all_of(std::begin(kKnownPaths), std::end(kKnownPaths),
                        [&](const KnownBackupPath& item) {
-                           return (components & user_backup_component_flag(item.component)) == 0 ||
+                           // This optional file was added without changing backup format v1.
+                           return std::strcmp(item.path, "lexicon/custom_phrases.tsv") == 0 ||
+                                  (components & user_backup_component_flag(item.component)) == 0 ||
                                   paths.find(item.path) != paths.end();
                        });
 }

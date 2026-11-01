@@ -108,6 +108,28 @@ TEST(UserBackupService, exports_and_imports_settings_and_user_lexicon) {
     ASSERT_EQ(imported_config["status_window"]["y"].get<int>(), 654);
     ASSERT_TRUE(imported_config["status_window"]["enable"].get<bool>());
 
+    // Backups made before custom phrases remain importable without that optional file.
+    std::wstring wide_backup(backup.size(), L'\0');
+    const int wide_length = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, backup.data(),
+                                                static_cast<int>(backup.size()), wide_backup.data(),
+                                                static_cast<int>(wide_backup.size()));
+    ASSERT_GT(wide_length, 0);
+    wide_backup.resize(static_cast<std::size_t>(wide_length));
+    cxxime::UserBackupArchive legacy_archive;
+    ASSERT_TRUE(cxxime::read_user_backup_archive(wide_backup, &legacy_archive));
+    const auto phrase_file =
+        std::find_if(legacy_archive.entries.begin(), legacy_archive.entries.end(),
+                     [](const auto& entry) { return entry.path == "lexicon/custom_phrases.tsv"; });
+    ASSERT_TRUE(phrase_file != legacy_archive.entries.end());
+    legacy_archive.entries.erase(phrase_file);
+    ASSERT_TRUE(DeleteFileW(wide_backup.c_str()));
+    cxxime::UserBackupSummary legacy_summary;
+    ASSERT_TRUE(
+        cxxime::write_user_backup_archive(wide_backup, legacy_archive.entries, &legacy_summary));
+    ASSERT_TRUE(service.handle_request(payload, &response_payload));
+    ASSERT_TRUE(cxxime::decode_user_backup_result(response_payload, &result));
+    ASSERT_TRUE(result.succeeded);
+
     writer.stop();
     DeleteFileA(backup.c_str());
 }

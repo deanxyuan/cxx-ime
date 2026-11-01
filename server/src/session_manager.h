@@ -145,6 +145,7 @@ struct ProcessKeyResult {
 
 class SessionManager {
 public:
+    std::shared_ptr<cxxime::CustomPhrases> custom_phrases() const;
     using ConfigPatchHandler = std::function<void(const std::string& merge_patch_json)>;
 
     bool initialize(const std::string& dict_path,

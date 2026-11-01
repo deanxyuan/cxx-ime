@@ -21,6 +21,7 @@
 #include <cxxime/user_dict.h>
 #include <cxxime/user_backup_control.h>
 
+#include "custom_phrase_panel.h"
 #include "lexicon_panel_model.h"
 #include "lexicon_view_tabs.h"
 
@@ -220,6 +221,8 @@ private:
     // Dictionary panel
     HWND hLexiconStatus_ = nullptr;
     LexiconViewTabs lexiconViewTabs_;
+    HWND dictionaryContent_ = nullptr;
+    CustomPhrasePanel customPhrasePanel_;
     HWND hLexiconKind_ = nullptr;
     HWND hLexiconQuery_ = nullptr;
     HWND hLexiconList_ = nullptr;

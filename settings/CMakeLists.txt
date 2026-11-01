@@ -19,6 +19,7 @@ add_executable(cxxime-settings WIN32
     editor_diagnostics_panel.cc
     editor_dictionary_files.cc
     editor_dictionary_panel.cc
+    custom_phrase_panel.cc
     editor_lexicon_entries.cc
     editor_lexicon_mutations.cc
     editor_input_panel.cc

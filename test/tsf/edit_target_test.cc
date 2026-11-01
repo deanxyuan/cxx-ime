@@ -9,7 +9,8 @@
 
 
 TEST(EditTarget, text_ext_fallback_uses_caret_owner_instead_of_focus) {
-    HWND parent = CreateWindowExW(0, L"STATIC", L"", WS_POPUP | WS_VISIBLE, 100, 100, 700, 200,
+    // Caret mapping needs thread-local focus, not a visible desktop activation.
+    HWND parent = CreateWindowExW(WS_EX_NOACTIVATE, L"STATIC", L"", WS_POPUP, 100, 100, 700, 200,
                                   nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
     ASSERT_TRUE(parent != nullptr);
     HWND focus = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE, 30, 30, 200, 60, parent,
@@ -64,7 +65,7 @@ TEST(EditTarget, text_ext_fallback_uses_caret_owner_instead_of_focus) {
 }
 
 TEST(EditTarget, native_fallback_uses_top_level_caret_owner) {
-    HWND window = CreateWindowExW(0, L"STATIC", L"", WS_POPUP | WS_VISIBLE, 100, 100, 300, 100,
+    HWND window = CreateWindowExW(WS_EX_NOACTIVATE, L"STATIC", L"", WS_POPUP, 100, 100, 300, 100,
                                   nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
     ASSERT_TRUE(window != nullptr);
     HWND focus = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE, 30, 10, 150, 60, window,
