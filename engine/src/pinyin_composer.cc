@@ -91,7 +91,7 @@ bool offer_node(std::vector<CompositionNode>& nodes, std::vector<uint32_t>& beam
 
 bool result_better(const ComposedResult& left, const ComposedResult& right) {
     if (left.kind != right.kind) {
-        return left.kind == CompositionPathKind::kNormal;
+        return left.kind < right.kind;
     }
     if (left.segment_count != right.segment_count) {
         return left.segment_count < right.segment_count;
@@ -231,7 +231,14 @@ PinyinComposer::compose(const std::string& input, const std::vector<CompositionP
             break;
         }
 
-        if (path.kind == CompositionPathKind::kNormal) {
+        // Full-Pinyin completion is a fallback, not a competitor to a valid complete sentence.
+        if (path.kind == CompositionPathKind::kTerminalCompletion &&
+            std::any_of(results.begin(), results.end(), [](const ComposedResult& result) {
+                return result.kind == CompositionPathKind::kNormal;
+            })) {
+            continue;
+        }
+        if (path.kind != CompositionPathKind::kRepeatedShortCode) {
             if (stats.normal_path_count >= limits.max_normal_paths) {
                 continue;
             }
@@ -363,6 +370,10 @@ PinyinComposer::compose(const std::string& input, const std::vector<CompositionP
             const auto& node = nodes[node_index];
             ComposedResult result;
             result.candidate = rebuild_candidate(input, path, nodes, edges, node_index);
+            if (!candidate_text_fits(result.candidate.text) ||
+                dict_.is_system_entry_disabled(result.candidate.text)) {
+                continue;
+            }
             result.kind = path.kind;
             result.path_rank = path.rank;
             result.segment_count = node.segment_count;

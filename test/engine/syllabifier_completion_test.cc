@@ -148,11 +148,13 @@ TEST(SyllabifierCompletion, path_metadata_is_collected_only_on_request) {
     ASSERT_EQ(with_metadata.paths[0].syllables.size(), with_metadata.paths[0].input_lengths.size());
 }
 
-TEST(SyllabifierCompletion, normal_completion_is_not_hidden_by_a_fuzzy_alias) {
+TEST(SyllabifierCompletion, normal_completion_is_not_hidden_by_other_spelling_sources) {
     CompletionFixture fixture;
     std::vector<std::tuple<std::string, std::string, int, float>> spellings = {
         {"la", "ni", cxxime::kFuzzySpelling, -1.0f},
         {"lz", "ni", cxxime::kNormalSpelling, 0.0f},
+        {"l", "ni", cxxime::kAbbreviation, -1.0f},
+        {"l", "l", cxxime::kNormalSpelling, 0.0f},
     };
     for (int order = 0; order < 2; ++order) {
         ASSERT_TRUE(cxxime::SpellingsIndex::create_test_trie(fixture.spelling_path, spellings));
@@ -161,14 +163,19 @@ TEST(SyllabifierCompletion, normal_completion_is_not_hidden_by_a_fuzzy_alias) {
         ASSERT_TRUE(resources != nullptr);
         cxxime::SyllabifierOptions options;
         options.collect_path_metadata = true;
+        const auto uncompleted = resources->segment("l", nullptr, options);
+        ASSERT_EQ(uncompleted.paths.size(), 2u);
+        ASSERT_EQ(uncompleted.paths[1].spelling_types[0], cxxime::kAbbreviation);
         options.enable_terminal_completion = true;
         for (bool fuzzy_enabled : {true, false}) {
             options.enable_fuzzy = fuzzy_enabled;
             const auto result = resources->segment("l", nullptr, options);
-            ASSERT_EQ(result.paths.size(), 1u);
-            ASSERT_EQ(result.paths[0].syllables[0], "ni");
-            ASSERT_EQ(result.paths[0].spelling_types[0], cxxime::kCompletionSpelling);
-            ASSERT_EQ(result.paths[0].input_lengths[0], 1u);
+            ASSERT_EQ(result.paths.size(), 2u);
+            ASSERT_EQ(result.paths[0].syllables[0], "l");
+            ASSERT_EQ(result.paths[0].spelling_types[0], cxxime::kNormalSpelling);
+            ASSERT_EQ(result.paths[1].syllables[0], "ni");
+            ASSERT_EQ(result.paths[1].spelling_types[0], cxxime::kCompletionSpelling);
+            ASSERT_EQ(result.paths[1].input_lengths[0], 1u);
         }
         std::reverse(spellings.begin(), spellings.end());
     }

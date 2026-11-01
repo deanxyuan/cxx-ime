@@ -17,6 +17,7 @@ struct QueryDeadline;
 
 enum class CompositionPathKind : uint8_t {
     kNormal,
+    kTerminalCompletion,
     kRepeatedShortCode,
 };
 

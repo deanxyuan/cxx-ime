@@ -100,7 +100,7 @@ void rank_fallback_candidate(Candidate& candidate, PathMatchTier tier,
 
 struct CompositionPathSpec {
     size_t id_sequence_index = 0;
-    size_t segmented_path_index = 0;
+    const SegmentedPath* segmented_path = nullptr;
     CompositionPathKind kind = CompositionPathKind::kNormal;
     uint16_t rank = 0;
 };
@@ -524,6 +524,8 @@ CandidatePage PinyinTranslator::translate_page(const std::string& pinyin, int pa
     };
     bool deadline_hit = false;
     SegmentResult segment_result;
+    SegmentResult completion_result;
+    bool completion_attempted = false;
     std::vector<CompositionPathSpec> composition_specs;
     if (sentence_composition_enabled_) {
         composition_specs.reserve(kMaxCompositionPaths + 1);
@@ -577,14 +579,14 @@ CandidatePage PinyinTranslator::translate_page(const std::string& pinyin, int pa
                         has_normal_composition_path = true;
                         if (!duplicate_composition_path &&
                             composition_specs.size() < kMaxCompositionPaths) {
-                            composition_specs.push_back({id_index, i,
+                            composition_specs.push_back({id_index, &segmented_path,
                                                         CompositionPathKind::kNormal,
                                                         static_cast<uint16_t>(i)});
                         }
                     } else if (pinyin_scheme() == PinyinSchemeKind::kFullPinyin &&
                                !has_repeated_short_path &&
                                is_repeated_short_code_path(pinyin, segmented_path)) {
-                        repeated_short_spec = {id_index, i,
+                        repeated_short_spec = {id_index, &segmented_path,
                                                CompositionPathKind::kRepeatedShortCode,
                                                static_cast<uint16_t>(i)};
                         has_repeated_short_path = true;
@@ -709,7 +711,8 @@ CandidatePage PinyinTranslator::translate_page(const std::string& pinyin, int pa
         completion_options.enable_fuzzy = pinyin_query_policy_.enable_fuzzy;
         completion_options.enable_terminal_completion = true;
         completion_options.collect_path_metadata = true;
-        auto completion_result = pinyin_resources_->segment(
+        completion_attempted = true;
+        completion_result = pinyin_resources_->segment(
             pinyin, budget ? &budget->deadline : nullptr, completion_options);
         if (completion_result.deadline_exceeded) {
             deadline_hit = true;
@@ -862,19 +865,63 @@ CandidatePage PinyinTranslator::translate_page(const std::string& pinyin, int pa
     // Enlarging a truncated query could otherwise displace an already published page anchor.
     const bool defer_composition =
         dictionary_query_incomplete && is_complete_full_pinyin_syllable(pinyin);
-    if (scope != PinyinLookupScope::kPrefix && sentence_composition_enabled_ &&
-        !composition_specs.empty() && !defer_composition &&
-        sorted.size() < static_cast<size_t>(need) && !(budget && budget->deadline.expired())) {
+    const bool can_compose = scope != PinyinLookupScope::kPrefix && sentence_composition_enabled_ &&
+                             !defer_composition && sorted.size() < static_cast<size_t>(need) &&
+                             !(budget && budget->deadline.expired());
+    if (can_compose && scope == PinyinLookupScope::kAll && sorted.empty() && pinyin_resources_ &&
+        pinyin_scheme() == PinyinSchemeKind::kFullPinyin &&
+        composition_specs.size() < kMaxCompositionPaths) {
+        // Keep dictionary matching authoritative. Completion only supplies missing sentences,
+        // and shares the existing composition budget rather than starting a second composer.
+        if (!completion_attempted) {
+            SyllabifierOptions options;
+            options.enable_fuzzy = pinyin_query_policy_.enable_fuzzy;
+            options.enable_terminal_completion = true;
+            options.collect_path_metadata = true;
+            completion_result =
+                pinyin_resources_->segment(pinyin, budget ? &budget->deadline : nullptr, options);
+        }
+        if (completion_result.deadline_exceeded) {
+            deadline_hit = true;
+            if (trace) {
+                trace->deadline_exceeded = true;
+                trace->truncated = true;
+            }
+        } else {
+            for (size_t i = 0; i < completion_result.paths.size() && i < kMaxPaths &&
+                               composition_specs.size() < kMaxCompositionPaths;
+                 ++i) {
+                const auto& path = completion_result.paths[i];
+                if (!is_normal_composition_path(pinyin, path) ||
+                    path.spelling_types.back() != kCompletionSpelling) {
+                    continue;
+                }
+                const bool duplicate = std::any_of(
+                    composition_specs.begin(), composition_specs.end(), [&](const auto& spec) {
+                        return spec.segmented_path->syllables == path.syllables;
+                    });
+                if (duplicate) {
+                    continue;
+                }
+                const size_t id_index = add_path(path.syllables, PathMatchTier::kCompletion);
+                if (id_index != SIZE_MAX) {
+                    composition_specs.push_back({id_index, &path,
+                                                 CompositionPathKind::kTerminalCompletion,
+                                                 static_cast<uint16_t>(i)});
+                }
+            }
+        }
+    }
+    if (can_compose && !composition_specs.empty() && !deadline_hit) {
         std::vector<CompositionPath> composition_paths;
         composition_paths.reserve(composition_specs.size());
         for (const auto& spec : composition_specs) {
-            if (spec.id_sequence_index >= id_sequences.size() ||
-                spec.segmented_path_index >= segment_result.paths.size()) {
+            if (spec.id_sequence_index >= id_sequences.size() || !spec.segmented_path) {
                 continue;
             }
             CompositionPath path;
             path.ids = &id_sequences[spec.id_sequence_index];
-            path.syllables = &segment_result.paths[spec.segmented_path_index].syllables;
+            path.syllables = &spec.segmented_path->syllables;
             if (!path_query_keys[spec.id_sequence_index].empty()) {
                 path.input_code = &path_query_keys[spec.id_sequence_index];
             }
@@ -892,7 +939,6 @@ CandidatePage PinyinTranslator::translate_page(const std::string& pinyin, int pa
         auto composed = composer.compose(
             pinyin, composition_paths, static_cast<size_t>(need) - sorted.size(),
             composition_deadline, composition_limits, composition_stats);
-        dict_->filter_disabled_system_candidates(composed);
         if (composition_stats.repeated_short_path_count > 0) {
             // Repeated-short composition consumes every key, so a legacy candidate that extends
             // an exact composed result contains text not covered by the input.

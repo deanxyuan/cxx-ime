@@ -9,7 +9,9 @@
 
 #include <windows.h>
 
+#include <cxxime/composition_learning.h>
 #include <cxxime/dict.h>
+#include <cxxime/pinyin_composer.h>
 #include <cxxime/pinyin_resource.h>
 #include <cxxime/query_budget.h>
 #include <cxxime/query_trace.h>
@@ -424,13 +426,14 @@ TEST(PinyinComposer, normal_paths_do_not_expand_low_frequency_homophones) {
         }));
 }
 
-TEST(PinyinComposer, rejects_single_tail_and_mixed_abbreviation_paths) {
+TEST(PinyinComposer, terminal_completion_requires_a_normal_prefix_and_matching_tail) {
     ComposerFixture fixture;
     ASSERT_TRUE(fixture.initialize(
         {
             {"ni", "你", 9000},
             {"wa", "娃", 8000},
             {"ha", "哈", 7000},
+            {"hao", "好", 10000},
             {"shi", "是", 6000},
             {"ren", "人", 5000},
             {"fa", "法", 4000},
@@ -439,6 +442,11 @@ TEST(PinyinComposer, rejects_single_tail_and_mixed_abbreviation_paths) {
             {"ni", "ni", cxxime::kNormalSpelling, 0.0f},
             {"wa", "wa", cxxime::kNormalSpelling, 0.0f},
             {"ha", "ha", cxxime::kNormalSpelling, 0.0f},
+            {"hao", "hao", cxxime::kNormalSpelling, 0.0f},
+            {"n", "ni", cxxime::kAbbreviation, -1.0f},
+            {"li", "ni", cxxime::kFuzzySpelling, -1.0f},
+            {"lo", "hao", cxxime::kFuzzySpelling, -1.0f},
+            {"g", "hao", cxxime::kAbbreviation, -1.0f},
             {"h", "ha", cxxime::kAbbreviation, -1.0f},
             {"s", "shi", cxxime::kAbbreviation, -1.0f},
             {"r", "ren", cxxime::kAbbreviation, -1.0f},
@@ -449,9 +457,75 @@ TEST(PinyinComposer, rejects_single_tail_and_mixed_abbreviation_paths) {
     translator.set_dict(&fixture.dictionary);
     translator.bind_pinyin(fixture.pinyin_resources, {});
 
-    ASSERT_TRUE(translator.translate_page("nih", 0, 10).candidates.empty());
-    ASSERT_TRUE(translator.translate_page("wahahah", 0, 10).candidates.empty());
-    ASSERT_TRUE(translator.translate_page("srf", 0, 10).candidates.empty());
+    for (const char* input : {"nih", "nihao"}) {
+        const auto page = translator.translate_page(input, 0, 10);
+        const auto* candidate = find_candidate(page, "你好");
+        ASSERT_TRUE(candidate != nullptr);
+        ASSERT_EQ(candidate->origin, cxxime::CandidateOrigin::kComposed);
+        ASSERT_EQ(candidate->code, input);
+        ASSERT_EQ(candidate->syllables, "ni:hao");
+    }
+    ASSERT_TRUE(find_candidate(translator.translate_page("wahahah", 0, 10), "娃哈哈哈") != nullptr);
+    for (const char* input : {"nh", "lih", "nil", "nig", "nihx", "srf"}) {
+        const auto page = translator.translate_page(input, 0, 10);
+        // Existing dictionary prefix fallbacks may remain; they must not become sentences.
+        ASSERT_TRUE(std::none_of(page.candidates.begin(), page.candidates.end(),
+                                 [](const auto& candidate) {
+                                     return candidate.origin == cxxime::CandidateOrigin::kComposed;
+                                 }))
+            << input;
+    }
+}
+
+TEST(PinyinComposer, complete_sentence_is_authoritative_until_it_cannot_be_displayed) {
+    ComposerFixture fixture;
+    ASSERT_TRUE(fixture.initialize({{"ni", "你", 1000}, {"ha", "哈", 100}, {"hao", "好", 10000}},
+                                   {{"ni", "ni", cxxime::kNormalSpelling, 0.0f},
+                                    {"ha", "ha", cxxime::kNormalSpelling, 0.0f},
+                                    {"hao", "hao", cxxime::kNormalSpelling, 0.0f}}));
+    const std::string disabled_path = make_temp_path("pcx");
+    ASSERT_TRUE(fixture.dictionary.load_disabled_system_entries(disabled_path));
+    cxxime::CompositionLearningService learning;
+    cxxime::PinyinTranslator translator;
+    translator.set_dict(&fixture.dictionary);
+    translator.bind_pinyin(fixture.pinyin_resources, {});
+    translator.set_composition_learning_service(&learning);
+    for (bool learning_enabled : {false, true}) {
+        translator.set_candidate_learning_enabled(learning_enabled);
+        const auto complete = translator.translate_page("niha", 0, 10);
+        ASSERT_EQ(complete.candidates.size(), 1u);
+        ASSERT_EQ(complete.candidates[0].text, "你哈");
+        ASSERT_TRUE(fixture.dictionary.disable_system_entry("你哈"));
+        const auto completed = translator.translate_page("niha", 0, 10);
+        ASSERT_EQ(completed.candidates.size(), 1u);
+        ASSERT_EQ(completed.candidates[0].text, "你好");
+        ASSERT_TRUE(fixture.dictionary.restore_system_entry("你哈"));
+    }
+    ASSERT_TRUE(fixture.dictionary.disable_system_entry("你哈"));
+    const std::vector<std::string> exact_syllables = {"ni", "ha"};
+    const std::vector<std::string> completed_syllables = {"ni", "hao"};
+    const std::vector<uint32_t> exact_ids = {fixture.dictionary.syllable_to_id("ni"),
+                                             fixture.dictionary.syllable_to_id("ha")};
+    const std::vector<uint32_t> completed_ids = {fixture.dictionary.syllable_to_id("ni"),
+                                                 fixture.dictionary.syllable_to_id("hao")};
+    const std::vector<cxxime::CompositionPath> paths = {
+        {&exact_ids, &exact_syllables, nullptr, cxxime::CompositionPathKind::kNormal, 0},
+        {&completed_ids, &completed_syllables, nullptr,
+         cxxime::CompositionPathKind::kTerminalCompletion, 1},
+    };
+    cxxime::PinyinComposer composer(fixture.dictionary);
+    cxxime::CompositionLimits limits;
+    cxxime::CompositionStats stats;
+    limits.max_normal_paths = 1;
+    ASSERT_TRUE(composer.compose("niha", paths, 10, {}, limits, stats).empty());
+    ASSERT_EQ(stats.normal_path_count, 1u);
+    limits.max_normal_paths = 2;
+    const auto candidates = composer.compose("niha", paths, 10, {}, limits, stats);
+    ASSERT_EQ(candidates.size(), 1u);
+    ASSERT_EQ(candidates[0].text, "你好");
+    ASSERT_EQ(stats.normal_path_count, 2u);
+    ASSERT_EQ(stats.repeated_short_path_count, 0u);
+    DeleteFileA(disabled_path.c_str());
 }
 
 TEST(PinyinComposer, shuangpin_completion_does_not_enable_internal_or_fuzzy_composition) {

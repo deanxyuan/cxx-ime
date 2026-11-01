@@ -36,6 +36,11 @@ bool is_normal_composition_path(const std::string& input, const SegmentedPath& p
 
     size_t input_position = 0;
     for (size_t i = 0; i < path.syllables.size(); ++i) {
+        if (i + 1 == path.syllables.size() && path.spelling_types[i] == kCompletionSpelling) {
+            return path.input_lengths[i] < path.syllables[i].size() &&
+                   input.compare(input_position, path.input_lengths[i], path.syllables[i], 0,
+                                 path.input_lengths[i]) == 0;
+        }
         if (path.spelling_types[i] != kNormalSpelling ||
             path.input_lengths[i] != path.syllables[i].size() ||
             input.compare(input_position, path.input_lengths[i], path.syllables[i]) != 0) {

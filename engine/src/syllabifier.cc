@@ -81,9 +81,10 @@ SyllableGraph Syllabifier::build_graph(const std::string& input,
                 const int type = completion.type == kFuzzySpelling ? kFuzzyCompletionSpelling
                                                                    : kCompletionSpelling;
                 if (existing == edges.end()) {
-                    edges.push_back({completion.syllable, type,
-                                     completion.credibility + kCompletionPenalty});
-                } else if (existing->type == kFuzzyCompletionSpelling &&
+                    edges.push_back(
+                        {completion.syllable, type, completion.credibility + kCompletionPenalty});
+                } else if ((existing->type == kAbbreviation ||
+                            existing->type == kFuzzyCompletionSpelling) &&
                            type == kCompletionSpelling) {
                     *existing = {completion.syllable, type,
                                  completion.credibility + kCompletionPenalty};
