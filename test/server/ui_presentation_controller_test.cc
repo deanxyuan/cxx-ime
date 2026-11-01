@@ -11,6 +11,7 @@
 
 #include <cxxime/candidate_window.h>
 
+#include "support/candidate_geometry_probe.h"
 #include "support/dpi_testutil.h"
 #include "support/testutil.h"
 #include "support/window_transition_probe.h"
@@ -379,6 +380,82 @@ TEST(UiPresentationController, embedded_target_can_have_an_owner_in_another_proc
     SetWindowLongPtrW(fixture.host.candidate, GWLP_HWNDPARENT,
                       reinterpret_cast<LONG_PTR>(fixture.host.owner));
     DestroyWindow(frame);
+}
+
+TEST(UiPresentationController, new_candidate_cycle_never_displays_prepared_old_geometry) {
+    test::ScopedDpiAwarenessContext dpi;
+    ControllerFixture fixture;
+    ShowWindow(fixture.host.candidate, SW_HIDE);
+    fixture.snapshot.flags &= ~cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kTsfLocalCandidate);
+    MONITORINFO monitor = {sizeof(monitor)};
+    ASSERT_TRUE(
+        GetMonitorInfoW(MonitorFromWindow(fixture.host.owner, MONITOR_DEFAULTTONEAREST), &monitor));
+    const LONG x = monitor.rcMonitor.right - 20;
+    const LONG y = monitor.rcMonitor.top + (monitor.rcMonitor.bottom - monitor.rcMonitor.top) / 3;
+    // Screen-coordinate conversion requires an actual point in the host. Place
+    // the editor near the edge too; an off-host caret is not a valid fixture.
+    const auto place_editor = [x, y](HWND owner) {
+        RECT bounds = {x - 300, y - 60, x + 40, y + 180};
+        const auto style = static_cast<DWORD>(GetWindowLongPtrW(owner, GWL_STYLE));
+        const auto extended_style = static_cast<DWORD>(GetWindowLongPtrW(owner, GWL_EXSTYLE));
+        ASSERT_TRUE(AdjustWindowRectExForDpi(&bounds, style, GetMenu(owner) != nullptr,
+                                             extended_style, GetDpiForWindow(owner)));
+        ASSERT_TRUE(SetWindowPos(owner, nullptr, bounds.left, bounds.top,
+                                 bounds.right - bounds.left, bounds.bottom - bounds.top,
+                                 SWP_NOACTIVATE | SWP_NOZORDER));
+    };
+    place_editor(fixture.host.owner);
+    fixture.snapshot.caret = {x, y, x + 1, y + 20};
+    auto& item = fixture.snapshot.candidate_page.candidates[0];
+    strcpy_s(item.text, "WWWWWWWWWWWWWWWW");
+    item.text_length = static_cast<std::uint32_t>(std::strlen(item.text));
+    fixture.present();
+    const HWND candidate = find_window(GetCurrentProcessId(), L"CxxIMECandidateWindow");
+    ASSERT_TRUE(IsWindowVisible(candidate));
+    RECT previous = {};
+    ASSERT_TRUE(GetWindowRect(candidate, &previous));
+
+    // A coalesced hidden snapshot can leave the native window visible when the
+    // next cycle arrives, including a new input context inside the same HWND.
+    ++fixture.snapshot.target_generation;
+    ++fixture.snapshot.composition_generation;
+    OffsetRect(&fixture.snapshot.caret, 0, 40);
+    strcpy_s(item.text, "n");
+    item.text_length = 1;
+    {
+        test::CandidateGeometryProbe geometry(candidate);
+        fixture.present();
+        RECT final_rect = {};
+        ASSERT_TRUE(GetWindowRect(candidate, &final_rect));
+        ASSERT_LT(final_rect.right - final_rect.left, previous.right - previous.left);
+        ASSERT_NE(final_rect.top, previous.top);
+        geometry.assert_visible_geometry(final_rect);
+    }
+
+    // Changing the owner must not re-show the previous cycle before its current
+    // caret and content have been applied, even though the HWND is reused.
+    const HWND other_owner = CreateWindowExW(WS_EX_NOACTIVATE, L"STATIC", L"Next candidate target",
+                                             WS_OVERLAPPEDWINDOW, x - 300, y - 60, 340, 240,
+                                             nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    ASSERT_TRUE(other_owner != nullptr);
+    place_editor(other_owner);
+    test::foreground_sample.store(other_owner);
+    fixture.snapshot.target_window = reinterpret_cast<std::uint64_t>(other_owner);
+    ++fixture.snapshot.target_generation;
+    OffsetRect(&fixture.snapshot.caret, 0, 40);
+    {
+        test::CandidateGeometryProbe geometry(candidate);
+        fixture.present();
+        RECT final_rect = {};
+        ASSERT_TRUE(GetWindowRect(candidate, &final_rect));
+        ASSERT_EQ(GetWindow(candidate, GW_OWNER), other_owner);
+        geometry.assert_visible_geometry(final_rect);
+    }
+    test::foreground_sample.store(fixture.host.owner);
+    fixture.snapshot.target_window = reinterpret_cast<std::uint64_t>(fixture.host.owner);
+    ++fixture.snapshot.target_generation;
+    fixture.present();
+    ASSERT_TRUE(DestroyWindow(other_owner));
 }
 
 TEST(UiPresentationTarget,

@@ -220,6 +220,7 @@ add_cxxime_test(candidate_window_test
     SOURCES
         ui/candidate_window_test.cc
         ui/candidate_window_layout_test.cc
+        ui/candidate_window_presentation_test.cc
     DEPS cxxime-engine cxxime-ui
 )
 add_cxxime_test(background_layout_test

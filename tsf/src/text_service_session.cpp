@@ -445,6 +445,7 @@ void TextService::_poll_runtime_state() {
         _candidatePresentation.accept_provisional_caret_after_timeout(
             cxxime_tsf::CandidatePresentation::Clock::now(), &provisional_rect)) {
         set_caret_rect(provisional_rect);
+        _observe_candidate_caret();
         trace_caret_event("initial_timeout", "provisional", true, &provisional_rect, S_FALSE,
                           true);
         _publish_ui_presentation();
@@ -490,6 +491,7 @@ void TextService::_poll_runtime_state() {
                 cxxime_tsf::is_valid_caret_rect(_caretRect) &&
                 _candidatePresentation.accept_caret(_candidatePresentation.generation())) {
                 // Finalize an observed extent without manufacturing a new caret sample.
+                _observe_candidate_caret();
                 _publish_ui_presentation();
             }
             if (!expired && _candidatePresentation.waiting_for_caret()) {

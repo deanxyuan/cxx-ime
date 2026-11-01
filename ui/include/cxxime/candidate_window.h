@@ -48,6 +48,9 @@ public:
     void draw_preview(HDC dc, const RECT& bounds);
     void update(const CandidatePresentationPage& page);
     void update(const CandidatePage& page);
+    // Measure new content before applying its caret position and native size together.
+    void update(const CandidatePresentationPage& page, const RECT& caret);
+    void update(const CandidatePage& page, const RECT& caret);
     void set_preedit(const std::string& preedit);
     void set_preedit(const std::string& preedit, size_t cursor);
     void set_preedit(const std::string& preedit, size_t cursor,
@@ -94,6 +97,7 @@ public:
     }
 
 private:
+    SIZE measure_page();
     void configure_background();
     void update_background(int width, int height);
     void rebuild_render_context(const LayoutConfig& cfg, int window_width);
@@ -113,6 +117,9 @@ private:
     // the immediately following show() only needs to restore z-order.
     bool skip_next_show_redraw_ = false;
     float dpi_scale_ = 1.0f;
+    bool layout_in_progress_ = false;
+    UINT pending_dpi_ = 0;
+    POINT pending_dpi_origin_ = {};
     LayoutConfig scaled_cfg_;
     CandidatePage page_;
     std::string preedit_text_;

@@ -385,6 +385,7 @@ private:
     bool _start_ui_presentation_channel();
     void _stop_ui_presentation_channel();
     void _publish_ui_presentation();
+    void _observe_candidate_caret();
     bool _present_local_candidate_window(const cxxime::CandidatePresentationPage& page,
                                          int page_current,
                                          int page_total,

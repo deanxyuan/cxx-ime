@@ -210,6 +210,7 @@ bool TextService::set_candidate_ui_element_shown(bool show) {
     if (caret_resolved) {
         set_caret_rect(caret_rect);
         _candidatePresentation.accept_caret(_candidatePresentation.generation());
+        _observe_candidate_caret();
         trace_caret_event("show_move", "ui_element_show", true, &caret_rect);
     } else {
         _candidatePresentation.begin_waiting_for_caret(

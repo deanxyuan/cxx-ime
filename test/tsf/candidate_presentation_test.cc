@@ -151,13 +151,16 @@ TEST(CandidatePresentation, caret_jump_needs_fresh_confirmation) {
     ASSERT_EQ(presentation.display_caret(
         moving, 5, 1, start + std::chrono::milliseconds(99)).left, initial.left);
     ASSERT_EQ(presentation.display_caret(
-        moved, 6, 1, start + std::chrono::milliseconds(100)).left, moved.left);
+        moved, 6, 1, start + std::chrono::milliseconds(100)).left, initial.left);
+    ASSERT_TRUE(presentation.caret_jump_pending());
+    ASSERT_EQ(presentation.display_caret(
+        moved, 7, 1, start + std::chrono::milliseconds(130)).left, moved.left);
     ASSERT_TRUE(!presentation.caret_jump_pending());
     ASSERT_TRUE(!presentation.caret_jump_filtered());
     ASSERT_EQ(presentation.display_caret(
-        nearby, 7, 1, start + std::chrono::milliseconds(101)).left, nearby.left);
+        nearby, 8, 1, start + std::chrono::milliseconds(131)).left, nearby.left);
     ASSERT_EQ(presentation.display_caret(
-        wrong, 8, 2, start + std::chrono::milliseconds(102)).left, wrong.left);
+        wrong, 9, 2, start + std::chrono::milliseconds(132)).left, wrong.left);
 }
 
 TEST(CandidatePresentation, unconfirmed_caret_jump_has_bounded_wait) {
@@ -169,6 +172,12 @@ TEST(CandidatePresentation, unconfirmed_caret_jump_has_bounded_wait) {
 
     presentation.display_caret(initial, 1, 1, start);
     ASSERT_EQ(presentation.display_caret(moved, 2, 1, start).left, initial.left);
+    const RECT changing = {400, 600, 401, 620};
+    ASSERT_EQ(presentation.display_caret(
+        changing, 3, 1, start + std::chrono::milliseconds(60)).left, initial.left);
+    const RECT latest = {300, 500, 301, 520};
+    ASSERT_EQ(presentation.display_caret(
+        latest, 4, 1, start + std::chrono::milliseconds(89)).left, initial.left);
     ASSERT_TRUE(presentation.caret_ready_to_show());
     ASSERT_TRUE(!presentation.accept_pending_caret_after_timeout(
         start + std::chrono::milliseconds(89)));
@@ -178,7 +187,7 @@ TEST(CandidatePresentation, unconfirmed_caret_jump_has_bounded_wait) {
     ASSERT_TRUE(!presentation.caret_jump_pending());
     ASSERT_TRUE(!presentation.caret_jump_filtered());
     ASSERT_EQ(presentation.display_caret(
-        moved, 2, 1, start + std::chrono::milliseconds(90)).left, moved.left);
+        latest, 4, 1, start + std::chrono::milliseconds(90)).left, latest.left);
 }
 
 TEST(CandidatePresentation, finished_composition_does_not_constrain_next_caret) {
@@ -220,7 +229,7 @@ TEST(CandidatePresentation, initial_layout_replaces_provisional_caret_without_ju
     ASSERT_TRUE(presentation.should_show_external_window(true));
 }
 
-TEST(CandidatePresentation, initial_layout_ignores_the_next_synchronous_extent) {
+TEST(CandidatePresentation, initial_confirmation_survives_content_updates) {
     cxxime_tsf::CandidatePresentation presentation;
     using TimePoint = cxxime_tsf::CandidatePresentation::TimePoint;
     const auto start = TimePoint(std::chrono::milliseconds(100));
@@ -232,7 +241,8 @@ TEST(CandidatePresentation, initial_layout_ignores_the_next_synchronous_extent) 
     presentation.set_ownership(cxxime_tsf::CandidateOwnership::kExternal);
     presentation.begin_waiting_for_initial_layout(first_sync, start);
     presentation.update_content(page_with_candidate("updated"), "hu", 2, 1, 1);
-    presentation.update_initial_layout_provisional(next_sync);
+    ASSERT_TRUE(presentation.should_keep_waiting_for_caret(
+        next_sync, false, false, start + std::chrono::milliseconds(10), 30, 150));
 
     ASSERT_TRUE(presentation.initial_layout_pending());
     ASSERT_TRUE(presentation.should_keep_waiting_for_caret(
@@ -240,10 +250,8 @@ TEST(CandidatePresentation, initial_layout_ignores_the_next_synchronous_extent) 
     ASSERT_TRUE(presentation.should_keep_waiting_for_caret(
         follow, false, false, start + std::chrono::milliseconds(30), 30, 150));
     presentation.update_content(page_with_candidate("latest"), "hua", 3, 1, 1);
-    ASSERT_TRUE(presentation.should_keep_waiting_for_caret(
-        follow, false, false, start + std::chrono::milliseconds(59), 30, 150));
     ASSERT_TRUE(!presentation.should_keep_waiting_for_caret(
-        follow, false, false, start + std::chrono::milliseconds(89), 30, 150));
+        follow, false, false, start + std::chrono::milliseconds(59), 30, 150));
 }
 
 TEST(CandidatePresentation, initial_layout_filters_a_late_transient_extent) {
@@ -306,7 +314,7 @@ TEST(CandidatePresentation, provisional_caret_has_bounded_wait) {
         start + std::chrono::milliseconds(89), &fallback));
     ASSERT_TRUE(presentation.accept_provisional_caret_after_timeout(
         start + std::chrono::milliseconds(90), &fallback));
-    ASSERT_EQ(fallback.top, provisional.top);
+    ASSERT_EQ(fallback.top, transient.top);
     ASSERT_TRUE(!presentation.waiting_for_caret());
     ASSERT_TRUE(!presentation.caret_jump_pending());
 }

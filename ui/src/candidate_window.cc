@@ -214,7 +214,7 @@ CandidateWindow::~CandidateWindow() {
 bool CandidateWindow::create(HWND owner, const Config& config) {
     if (hwnd_ && IsWindow(hwnd_)) {
         config_ = &config;
-configure_background();
+        configure_background();
         return true;
     }
     if (hwnd_) {
@@ -239,11 +239,11 @@ configure_background();
         theme_ = build_theme_from_config(config);
         render_ctx_.high_contrast = system_high_contrast_enabled();
         render_theme_ = theme_for_rendering(theme_, render_ctx_.high_contrast);
-        if (config.render_backend != "gdi") set_render_backend(RenderBackend::D2D);
         dpi_scale_ = dpi_to_scale(GetDpiForWindow(hwnd_));
         if (dpi_scale_ <= 0.0f) {
             dpi_scale_ = 1.0f;
         }
+        if (config.render_backend != "gdi") set_render_backend(RenderBackend::D2D);
         refresh_preedit_cursor_width();
         init_gdi_renderer();
     }
@@ -271,9 +271,6 @@ bool CandidateWindow::ensure_created(HWND owner) {
         hide();
     }
     set_owner(owner);
-    if (was_visible && owner_matches(owner)) {
-        show();
-    }
     return is_created() && owner_matches(owner);
 }
 
@@ -308,12 +305,12 @@ bool CandidateWindow::ensure_created_with_ownerless_fallback(HWND preferred_owne
 void CandidateWindow::init_gdi_renderer() {
     ScopedDpiAwarenessContext dpi_context(GetWindowDpiAwarenessContext(hwnd_));
     gdi_renderer_ = new GdiRenderer();
-    gdi_renderer_->initialize(hwnd_, render_theme_, GetDpiForWindow(hwnd_));
+    gdi_renderer_->initialize(hwnd_, render_theme_, dpi());
 }
 void CandidateWindow::init_d2d_renderer() {
     ScopedDpiAwarenessContext dpi_context(GetWindowDpiAwarenessContext(hwnd_));
     d2d_renderer_ = new D2DRenderer();
-    if (!d2d_renderer_->initialize(hwnd_, render_theme_, GetDpiForWindow(hwnd_))) {
+    if (!d2d_renderer_->initialize(hwnd_, render_theme_, dpi())) {
         delete d2d_renderer_;
         d2d_renderer_ = nullptr;
         backend_ = RenderBackend::GDI;
@@ -335,7 +332,7 @@ bool CandidateWindow::refresh_dpi_scale() {
 }
 
 bool CandidateWindow::refresh_preedit_cursor_width() {
-    const UINT window_dpi = hwnd_ ? GetDpiForWindow(hwnd_) : USER_DEFAULT_SCREEN_DPI;
+    const UINT window_dpi = dpi();
     const int minimum_width =
         (std::max)(1, MulDiv(kPreeditCursorMinimumWidthDips, static_cast<int>(window_dpi),
                              USER_DEFAULT_SCREEN_DPI));
@@ -373,7 +370,7 @@ void CandidateWindow::recreate_renderers_for_dpi() {
     refresh_preedit_cursor_width();
     if (gdi_renderer_) {
         gdi_renderer_->finalize();
-        gdi_renderer_->initialize(hwnd_, render_theme_, GetDpiForWindow(hwnd_));
+        gdi_renderer_->initialize(hwnd_, render_theme_, dpi());
     }
     if (d2d_renderer_) {
         d2d_renderer_->finalize();
@@ -386,6 +383,7 @@ void CandidateWindow::recreate_renderers_for_dpi() {
 
 void CandidateWindow::destroy() {
     skip_next_show_redraw_ = false;
+    pending_dpi_ = 0;
     clear_preedit_cursor_emphasis();
     if (gdi_renderer_) { gdi_renderer_->finalize(); delete gdi_renderer_; gdi_renderer_ = nullptr; }
     if (d2d_renderer_) { d2d_renderer_->finalize(); delete d2d_renderer_; d2d_renderer_ = nullptr; }
@@ -505,8 +503,7 @@ SIZE CandidateWindow::layout_size() const {
     return {window_width_, window_height_};
 }
 UINT CandidateWindow::dpi() const {
-    ScopedDpiAwarenessContext dpi_context(GetWindowDpiAwarenessContext(hwnd_));
-    return hwnd_ ? GetDpiForWindow(hwnd_) : 0;
+    return hwnd_ ? static_cast<UINT>(std::lround(dpi_scale_ * USER_DEFAULT_SCREEN_DPI)) : 0;
 }
 bool CandidateWindow::get_window_rect(RECT* rect) const {
     ScopedDpiAwarenessContext dpi_context(GetWindowDpiAwarenessContext(hwnd_));
@@ -607,7 +604,7 @@ void CandidateWindow::set_theme(const Theme& t) {
         kPreeditCursorIdleAccentPercent);
     if (gdi_renderer_) {
         gdi_renderer_->finalize();
-        gdi_renderer_->initialize(hwnd_, render_theme_, GetDpiForWindow(hwnd_));
+        gdi_renderer_->initialize(hwnd_, render_theme_, dpi());
     }
     if (hwnd_)
         RedrawWindow(hwnd_, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN);
@@ -719,7 +716,7 @@ void CandidateWindow::update_window_region(int width, int height, int corner) {
 
     HRGN region = CreateRoundRectRgn(0, 0, width + 1, height + 1, corner, corner);
     if (region) {
-        if (SetWindowRgn(hwnd_, region, TRUE)) {
+        if (SetWindowRgn(hwnd_, region, FALSE)) {
             window_width_ = width;
             window_height_ = height;
             window_corner_ = corner;
@@ -731,27 +728,7 @@ void CandidateWindow::update_window_region(int width, int height, int corner) {
 
 void CandidateWindow::move_to_caret(const RECT& caretRect) {
     if (!hwnd_) return;
-    skip_next_show_redraw_ = false;
-
-    ScopedDpiAwarenessContext dpi_context(GetWindowDpiAwarenessContext(hwnd_));
-
-    has_last_caret_rect_ = true;
-    last_caret_rect_ = caretRect;
-
-    RECT wr = {};
-    GetWindowRect(hwnd_, &wr);
-    int ww = wr.right - wr.left;
-    int wh = wr.bottom - wr.top;
-
-    POINT target = {};
-    if (!calculate_target_position(caretRect, ww, wh, target))
-        return;
-
-    move_window_now(target.x, target.y);
-    if (refresh_dpi_scale()) {
-        recreate_renderers_for_dpi();
-        update(page_);
-    }
+    update(page_, caretRect);
 }
 
 void CandidateWindow::move_to_screen_position(int x, int y) {
@@ -834,12 +811,77 @@ void CandidateWindow::update(const CandidatePage& page) {
         skip_next_show_redraw_ = false;
         return;
     }
+    if (layout_in_progress_) {
+        return;
+    }
     skip_next_show_redraw_ = IsWindowVisible(hwnd_) != FALSE;
     ScopedDpiAwarenessContext dpi_context(GetWindowDpiAwarenessContext(hwnd_));
-    if (refresh_dpi_scale())
+    if (!pending_dpi_ && refresh_dpi_scale()) {
         recreate_renderers_for_dpi();
+    }
 
     page_ = page;
+    layout_in_progress_ = true;
+    bool dpi_changed = false;
+    SIZE size = {};
+    const auto previous_side = placement_side_;
+    const auto previous_monitor = placement_monitor_;
+    do {
+        POINT target = {};
+        bool has_target = false;
+        if (pending_dpi_) {
+            dpi_scale_ = dpi_to_scale(pending_dpi_);
+            pending_dpi_ = 0;
+            dpi_changed = true;
+            if (!has_last_caret_rect_) {
+                target = pending_dpi_origin_;
+                has_target = true;
+            }
+            recreate_renderers_for_dpi();
+        }
+        size = measure_page();
+        if (has_last_caret_rect_) {
+            has_target = calculate_target_position(last_caret_rect_, size.cx, size.cy, target);
+        }
+        UINT flags = SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_NOREDRAW;
+        if (!has_target) {
+            flags |= SWP_NOMOVE;
+        }
+        // Crossing monitors can synchronously deliver WM_DPICHANGED. Consume it before
+        // rebuilding the region, painting, or publishing the final visible count.
+        SetWindowPos(hwnd_, nullptr, target.x, target.y, size.cx, size.cy, flags);
+        if (pending_dpi_) {
+            // Do not lock the placement side using dimensions measured at the old DPI.
+            placement_side_ = previous_side;
+            placement_monitor_ = previous_monitor;
+        }
+    } while (pending_dpi_);
+    if (d2d_renderer_) {
+        d2d_renderer_->resize(size.cx, size.cy);
+    }
+    update_window_region(size.cx, size.cy, scaled_cfg_.round_corner_ex);
+    update_background(size.cx, size.cy);
+    layout_in_progress_ = false;
+    RedrawWindow(hwnd_, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE);
+    if (dpi_changed && layout_changed_cb_) {
+        layout_changed_cb_();
+    }
+}
+
+void CandidateWindow::update(const CandidatePresentationPage& page, const RECT& caret) {
+    has_last_caret_rect_ = true;
+    last_caret_rect_ = caret;
+    update(page);
+}
+
+void CandidateWindow::update(const CandidatePage& page, const RECT& caret) {
+    has_last_caret_rect_ = true;
+    last_caret_rect_ = caret;
+    update(page);
+}
+
+SIZE CandidateWindow::measure_page() {
+    const auto& page = page_;
     candidate_rects_.clear();
 
     // Apply DPI scaling to pixel values (like Weasel's Layout constructor)
@@ -883,7 +925,7 @@ void CandidateWindow::update(const CandidatePage& page) {
     }
     auto& cfg = scaled_cfg_;
     HDC hdc = GetDC(hwnd_);
-    const UINT window_dpi = GetDpiForWindow(hwnd_);
+    const UINT window_dpi = dpi();
     auto calculate_layout = [&]() {
         if (config_->layout == "horizontal") {
             return calculate_horizontal_layout(
@@ -1168,24 +1210,7 @@ void CandidateWindow::update(const CandidatePage& page) {
         lr.width += border * 2;
         lr.height += border * 2;
     }
-    if (lr.width != window_width_ || lr.height != window_height_) {
-        POINT target = {};
-        bool moved_with_resize = false;
-        if (IsWindowVisible(hwnd_) && has_last_caret_rect_ &&
-            calculate_target_position(last_caret_rect_, lr.width, lr.height, target)) {
-            SetWindowPos(hwnd_, nullptr, target.x, target.y, lr.width, lr.height,
-                         SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS);
-            moved_with_resize = true;
-        }
-        if (!moved_with_resize) {
-            SetWindowPos(hwnd_, nullptr, 0, 0, lr.width, lr.height,
-                         SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS);
-        }
-    }
-    if (d2d_renderer_) d2d_renderer_->resize(lr.width, lr.height);
-    update_window_region(lr.width, lr.height, cfg.round_corner_ex);
-    update_background(lr.width, lr.height);
-    RedrawWindow(hwnd_, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE);
+    return {lr.width, lr.height};
 }
 
 // --- WndProc ---
@@ -1197,7 +1222,7 @@ LRESULT CALLBACK CandidateWindow::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM
     switch (msg) {
     case WM_PAINT: {
         PAINTSTRUCT ps; HDC hdc = BeginPaint(hwnd, &ps); RECT rc; GetClientRect(hwnd, &rc);
-        if (self && self->gdi_renderer_) {
+        if (self && !self->layout_in_progress_ && self->gdi_renderer_) {
             if (self->backend_ != RenderBackend::D2D || !self->d2d_renderer_ ||
                 !self->d2d_renderer_->render(self->render_ctx_)) {
                 self->gdi_renderer_->render(hdc, rc, self->render_ctx_);
@@ -1309,28 +1334,13 @@ LRESULT CALLBACK CandidateWindow::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM
     case WM_DPICHANGED:
         if (self) {
             float next_scale = dpi_to_scale(HIWORD(wp));
-            if (next_scale > 0.0f && std::fabs(next_scale - self->dpi_scale_) >= 0.01f) {
-                self->dpi_scale_ = next_scale;
-                RECT* suggested = reinterpret_cast<RECT*>(lp);
-                SetWindowPos(hwnd, nullptr, suggested->left, suggested->top,
-                             suggested->right - suggested->left,
-                             suggested->bottom - suggested->top,
-                             SWP_NOZORDER | SWP_NOACTIVATE);
-                self->recreate_renderers_for_dpi();
-                self->update(self->page_);
-                if (self->has_last_caret_rect_) {
-                    RECT window_rect = {};
-                    if (GetWindowRect(hwnd, &window_rect)) {
-                        POINT target = {};
-                        if (self->calculate_target_position(
-                                self->last_caret_rect_, window_rect.right - window_rect.left,
-                                window_rect.bottom - window_rect.top, target)) {
-                            self->move_window_now(target.x, target.y);
-                        }
-                    }
-                }
-                if (self->layout_changed_cb_) {
-                    self->layout_changed_cb_();
+            if (next_scale > 0.0f &&
+                (self->pending_dpi_ || std::fabs(next_scale - self->dpi_scale_) >= 0.01f)) {
+                self->pending_dpi_ = HIWORD(wp);
+                const auto* suggested = reinterpret_cast<const RECT*>(lp);
+                self->pending_dpi_origin_ = {suggested->left, suggested->top};
+                if (!self->layout_in_progress_) {
+                    self->update(self->page_);
                 }
             }
         }

@@ -148,8 +148,32 @@ void TextService::update_candidate_position(const RECT& rc,
         }
     }
 
+    _observe_candidate_caret();
     trace_caret_event("move", "ui_presentation", resolved, &final_rect);
     _publish_ui_presentation();
+}
+
+void TextService::_observe_candidate_caret() {
+    if (!_candidatePresentation.should_show_external_window(_composing) ||
+        _caretRectTargetGeneration != _uiTargetGeneration ||
+        !cxxime_tsf::is_valid_caret_rect(_caretRect)) {
+        return;
+    }
+    const bool was_pending = _candidatePresentation.caret_jump_pending();
+    const RECT displayed =
+        _candidatePresentation.display_caret(_caretRect, _caretSampleSerial, _uiTargetGeneration,
+                                             cxxime_tsf::CandidatePresentation::Clock::now());
+    const bool jump_pending = _candidatePresentation.caret_jump_pending();
+    if (!was_pending && jump_pending) {
+        trace_caret_event("jump_hold", "stabilizer", true, &_caretRect, S_FALSE, true);
+    } else if (was_pending && !jump_pending) {
+        const char* action =
+            _candidatePresentation.caret_jump_filtered() ? "jump_filtered" : "jump_confirm";
+        trace_caret_event(action, "stabilizer", true, &displayed, S_OK, true);
+    }
+    if (was_pending != jump_pending) {
+        _update_state_poll_timer();
+    }
 }
 
 void TextService::_follow_native_caret() {

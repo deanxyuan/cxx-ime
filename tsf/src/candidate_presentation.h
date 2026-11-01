@@ -70,7 +70,6 @@ public:
     std::uint32_t local_visible_candidate_count() const;
     void begin_waiting_for_caret(bool reposition, const RECT* stale_rect, TimePoint now);
     void begin_waiting_for_initial_layout(const RECT& provisional_rect, TimePoint now);
-    void update_initial_layout_provisional(const RECT& provisional_rect);
     bool pending_caret_fallback_due(TimePoint now, int delay_ms) const;
     bool accept_provisional_caret_after_timeout(TimePoint now, RECT* caret_rect);
     void begin_composition_restart(TimePoint now);
@@ -81,6 +80,7 @@ public:
     bool accept_caret(std::uint64_t generation);
     RECT display_caret(const RECT& sample, std::uint64_t sample_serial,
                        std::uint64_t target_generation, TimePoint now);
+    const RECT& displayed_caret() const { return displayed_caret_; }
     bool accept_pending_caret_after_timeout(TimePoint now);
     bool caret_jump_pending() const { return caret_jump_pending_; }
     bool caret_jump_filtered() const { return caret_jump_filtered_; }
@@ -157,12 +157,14 @@ private:
     bool initial_layout_wait_ = false;
     bool has_stale_rect_ = false;
     RECT stale_rect_ = {};
+    RECT latest_initial_caret_ = {};
     TimePoint waiting_since_ = {};
     RECT displayed_caret_ = {};
     RECT pending_caret_ = {};
     TimePoint pending_caret_since_ = {};
+    TimePoint pending_confirmation_since_ = {};
     std::uint64_t displayed_target_generation_ = 0;
-    std::uint64_t pending_sample_serial_ = 0;
+    std::uint64_t observed_sample_serial_ = 0;
     bool has_reference_caret_ = false;
     bool has_displayed_caret_ = false;
     bool caret_jump_pending_ = false;

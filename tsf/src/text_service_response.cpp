@@ -278,12 +278,10 @@ bool TextService::_apply_engine_response(ITfContext* context, const cxxime::IPCR
                     _show_candidate_window("show:preedit_keep_position");
                     _request_candidate_position_update(context, "show:preedit_layout_follow");
                 } else if (_candidatePresentation.initial_layout_pending()) {
-                    if (has_trusted_caret) {
+                    if (caret_resolved) {
                         update_candidate_position(caret_rect, context, false,
                                                   _candidatePresentation.generation(),
                                                   caret_uses_viewport_fallback);
-                    } else if (caret_resolved) {
-                        _candidatePresentation.update_initial_layout_provisional(caret_rect);
                     }
                     _update_state_poll_timer();
                     _request_candidate_position_update(context, "show:preedit_layout_follow");
@@ -307,6 +305,7 @@ bool TextService::_apply_engine_response(ITfContext* context, const cxxime::IPCR
                 } else {
                     set_caret_rect(caret_rect);
                     _candidatePresentation.accept_caret(_candidatePresentation.generation());
+                    _observe_candidate_caret();
                     trace_caret_event("show_move", "initial", true, &caret_rect);
                     _show_candidate_window("show:preedit");
                     _request_candidate_position_update(context, "show:preedit_layout_follow");

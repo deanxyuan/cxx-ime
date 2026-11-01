@@ -10,6 +10,8 @@
 #include <cxxime/candidate_window.h>
 #include <cxxime/ui_channel.h>
 
+#include "support/candidate_geometry_probe.h"
+#include "support/dpi_testutil.h"
 #include "text_service_test_support.h"
 
 using namespace tsf_test;
@@ -39,16 +41,21 @@ public:
         TextServiceTestPeer::stop_ui(service_);
         server_.stop();
     }
-    cxxime::UiPresentationSnapshot wait(bool visible) {
+    cxxime::UiPresentationSnapshot wait(bool visible, std::size_t after = 0) {
         const auto generation = TextServiceTestPeer::generation(service_);
         std::unique_lock<std::mutex> lock(mutex_);
         ASSERT_TRUE(changed_.wait_for(lock, std::chrono::seconds(3), [&]() {
             const bool shown =
                 (latest_.flags &
                  cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kCandidateVisible)) != 0;
-            return latest_.composition_generation == generation && shown == visible;
+            return snapshots_.size() > after &&
+                   latest_.composition_generation == generation && shown == visible;
         }));
         return latest_;
+    }
+    std::size_t snapshot_count() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return snapshots_.size();
     }
     void assert_visible_since(uint64_t generation) {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -132,6 +139,36 @@ TEST(TextServicePresentation, undisplayed_sample_does_not_skip_initial_layout_wa
     probe.wait(false);
 }
 
+TEST(TextServicePresentation, publishing_settings_does_not_accept_unprocessed_caret_samples) {
+    Fixture fixture;
+    PresentationProbe probe(fixture);
+    BOOL eaten = FALSE;
+    ASSERT_TRUE(fixture.apply(fixture.key('N'), &eaten));
+    const RECT anchor = {100, 100, 101, 120};
+    const auto generation = TextServiceTestPeer::generation(fixture.service);
+    fixture.service.update_candidate_position(anchor, &fixture.host, false, generation, true);
+    probe.wait(true);
+
+    // Edit sessions can cache an extent before the layout decision accepts it. A settings
+    // snapshot must only read the previously accepted presentation, not interpret this cache.
+    const RECT cached = {120, 100, 121, 120};
+    fixture.service.set_caret_rect(cached);
+    const auto sample = TextServiceTestPeer::caret_sample(fixture.service);
+    for (const char* layout : {"vertical", "horizontal"}) {
+        const auto before = probe.snapshot_count();
+        TextServiceTestPeer::set_candidate_layout(fixture.service, layout);
+        const auto shown = probe.wait(true, before);
+        ASSERT_EQ(shown.caret.left, anchor.left);
+        ASSERT_EQ(TextServiceTestPeer::caret_sample(fixture.service), sample);
+        ASSERT_TRUE(!TextServiceTestPeer::caret_poll_pending(fixture.service));
+    }
+
+    const auto before = probe.snapshot_count();
+    fixture.service.update_candidate_position(cached, &fixture.host, true, generation, true);
+    const auto shown = probe.wait(true, before);
+    ASSERT_EQ(shown.caret.left, cached.left);
+}
+
 TEST(TextServicePresentation, changed_target_does_not_retain_displayed_anchor) {
     Fixture fixture;
     PresentationProbe probe(fixture);
@@ -200,7 +237,7 @@ TEST(TextServicePresentation, expired_wait_stops_timer_queries_and_recovers_on_l
     ASSERT_GT(fixture.host.read_requests, event_reads);
 }
 
-TEST(TextServicePresentation, initial_deadline_settles_provisional_position_and_stops_queries) {
+TEST(TextServicePresentation, initial_deadline_settles_latest_observation_and_stops_queries) {
     Fixture fixture;
     PresentationProbe probe(fixture);
     BOOL eaten = FALSE;
@@ -208,9 +245,14 @@ TEST(TextServicePresentation, initial_deadline_settles_provisional_position_and_
     probe.wait(false);
     const RECT provisional = {100, 100, 101, 120};
     TextServiceTestPeer::age_initial_layout(fixture.service, provisional);
+    const RECT latest = {400, 300, 401, 320};
+    fixture.service.update_candidate_position(
+        latest, &fixture.host, true, TextServiceTestPeer::generation(fixture.service));
+    ASSERT_TRUE(TextServiceTestPeer::caret_poll_pending(fixture.service));
     TextServiceTestPeer::poll_without_status(fixture.service);
     const auto shown = probe.wait(true);
-    ASSERT_EQ(shown.caret.left, provisional.left);
+    ASSERT_EQ(shown.caret.left, latest.left);
+    ASSERT_EQ(shown.caret.top, latest.top);
     ASSERT_TRUE(!TextServiceTestPeer::caret_poll_pending(fixture.service));
     const int views = fixture.host.view_requests;
     TextServiceTestPeer::poll_without_status(fixture.service);
@@ -331,4 +373,57 @@ TEST(TextServicePresentation, local_candidate_uses_configured_layout_on_creation
     ASSERT_TRUE(fixture.apply(fixture.key(VK_ESCAPE), &eaten));
     probe.wait(false);
     DestroyWindow(owner);
+}
+
+TEST(TextServicePresentation, local_content_and_caret_update_has_no_intermediate_geometry) {
+    test::ScopedDpiAwarenessContext dpi;
+    Fixture fixture;
+    PresentationProbe probe(fixture);
+    const HWND owner =
+        CreateWindowExW(WS_EX_NOACTIVATE, L"STATIC", L"TSF candidate geometry", WS_OVERLAPPEDWINDOW,
+                        50, 50, 400, 200, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    ASSERT_TRUE(owner != nullptr);
+    MONITORINFO monitor = {sizeof(monitor)};
+    ASSERT_TRUE(GetMonitorInfoW(MonitorFromWindow(owner, MONITOR_DEFAULTTONEAREST), &monitor));
+    const LONG x = monitor.rcMonitor.right - 20;
+    const LONG y = monitor.rcMonitor.top + (monitor.rcMonitor.bottom - monitor.rcMonitor.top) / 3;
+    const RECT anchor = {x, y, x + 1, y + 20};
+    TextServiceTestPeer::local_candidate_host(fixture.service, owner);
+    TextServiceTestPeer::set_candidate_layout(fixture.service, "horizontal");
+    auto response = fixture.key('N');
+    response.candidate_count = 1;
+    strcpy_s(response.candidates[0], "WWWWWWWWWWWWWWWW");
+    BOOL eaten = FALSE;
+    ASSERT_TRUE(fixture.apply(response, &eaten));
+    fixture.service.update_candidate_position(
+        anchor, &fixture.host, false, TextServiceTestPeer::generation(fixture.service), true);
+    const auto shown = probe.wait(true);
+    const HWND candidate = reinterpret_cast<HWND>(shown.local_candidate_window);
+    ASSERT_TRUE(IsWindowVisible(candidate));
+    RECT previous = {};
+    ASSERT_TRUE(GetWindowRect(candidate, &previous));
+
+    // Supply a successful host query for this response, so content shrink and
+    // caret movement enter through the real response/presentation boundary.
+    fixture.view.text_rect = anchor;
+    OffsetRect(&fixture.view.text_rect, 0, 40);
+    fixture.view.text_result = S_OK;
+    response = fixture.key('I');
+    response.candidate_count = 1;
+    strcpy_s(response.candidates[0], "n");
+    {
+        test::CandidateGeometryProbe geometry(candidate);
+        ASSERT_TRUE(fixture.apply(response, &eaten));
+        const auto updated = probe.wait(true);
+        ASSERT_EQ(updated.caret.top, fixture.view.text_rect.top);
+        ASSERT_EQ(reinterpret_cast<HWND>(updated.local_candidate_window), candidate);
+        RECT final_rect = {};
+        ASSERT_TRUE(GetWindowRect(candidate, &final_rect));
+        ASSERT_LT(final_rect.right - final_rect.left, previous.right - previous.left);
+        ASSERT_NE(final_rect.top, previous.top);
+        geometry.assert_visible_geometry(final_rect);
+    }
+    ASSERT_TRUE(fixture.apply(fixture.key(VK_ESCAPE), &eaten));
+    probe.wait(false);
+    ASSERT_TRUE(DestroyWindow(owner));
 }

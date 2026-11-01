@@ -129,8 +129,7 @@ bool TextService::_present_local_candidate_window(const cxxime::CandidatePresent
         _candidatePresentation.focused_preedit_start(),
         _candidatePresentation.focused_preedit_end(),
         _candidatePresentation.has_syllable_boundaries());
-    _localCandidateWindow->move_to_caret(caret);
-    _localCandidateWindow->update(page);
+    _localCandidateWindow->update(page, caret);
     _localCandidateWindow->show();
     if (!_localCandidateWindow->is_visible()) {
         return false;
@@ -208,7 +207,8 @@ void TextService::_publish_ui_presentation() {
         snapshot.flags |= cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kStatusVisible);
     }
 
-    if (cxxime_tsf::is_valid_caret_rect(_caretRect)) {
+    if (_caretRectTargetGeneration == _uiTargetGeneration &&
+        cxxime_tsf::is_valid_caret_rect(_caretRect)) {
         snapshot.caret = _caretRect;
         snapshot.flags |= cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kHasCaret);
     }
@@ -267,31 +267,11 @@ void TextService::_publish_ui_presentation() {
 
     bool candidate_visible = snapshot.ownership == cxxime::UiOwnership::kExternal &&
                              _candidatePresentation.should_show_external_window(_composing) &&
-                             has_flag(snapshot, cxxime::UiSnapshotFlag::kHasCaret);
+                             has_flag(snapshot, cxxime::UiSnapshotFlag::kHasCaret) &&
+                             _candidatePresentation.can_retain_displayed_caret(_uiTargetGeneration);
     if (candidate_visible) {
-        const bool was_pending = _candidatePresentation.caret_jump_pending();
-        snapshot.caret = _candidatePresentation.display_caret(
-            _caretRect, _caretSampleSerial, _uiTargetGeneration,
-            cxxime_tsf::CandidatePresentation::Clock::now());
-        const bool jump_pending = _candidatePresentation.caret_jump_pending();
-        if (!was_pending && jump_pending) {
-            trace_caret_event("jump_hold", "stabilizer", true, &_caretRect, S_FALSE, true);
-        } else if (was_pending && !jump_pending) {
-            if (_candidatePresentation.caret_jump_filtered()) {
-                trace_caret_event("jump_filtered", "stabilizer", true, &snapshot.caret, S_OK,
-                                true);
-            } else {
-                trace_caret_event("jump_confirm", "stabilizer", true, &snapshot.caret, S_OK,
-                                true);
-            }
-        }
-        if (was_pending != jump_pending) {
-            _update_state_poll_timer();
-        }
-        candidate_visible = _candidatePresentation.caret_ready_to_show();
-        if (candidate_visible) {
-            snapshot.flags |= cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kCandidateVisible);
-        }
+        snapshot.caret = _candidatePresentation.displayed_caret();
+        snapshot.flags |= cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kCandidateVisible);
     }
     const bool local_candidate_preferred =
         is_immersive_mode() || current_process_is_elevated();

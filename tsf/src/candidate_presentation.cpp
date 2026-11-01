@@ -56,9 +56,6 @@ void CandidatePresentation::update_content(const cxxime::CandidatePresentationPa
                                            std::size_t focused_preedit_end,
                                            bool has_syllable_boundaries) {
     advance_generation();
-    if (initial_layout_wait_) {
-        caret_jump_pending_ = false;
-    }
     page_ = page;
     page_current_ = page_current;
     page_total_ = page_total;
@@ -170,19 +167,12 @@ void CandidatePresentation::begin_waiting_for_initial_layout(const RECT& provisi
     initial_layout_wait_ = true;
     has_stale_rect_ = true;
     stale_rect_ = provisional_rect;
+    latest_initial_caret_ = provisional_rect;
     waiting_since_ = now;
     has_reference_caret_ = false;
     has_displayed_caret_ = false;
     caret_jump_pending_ = false;
     caret_jump_filtered_ = false;
-}
-
-void CandidatePresentation::update_initial_layout_provisional(const RECT& provisional_rect) {
-    if (!initial_layout_pending()) {
-        return;
-    }
-    stale_rect_ = provisional_rect;
-    has_stale_rect_ = true;
 }
 
 bool CandidatePresentation::pending_caret_fallback_due(TimePoint now, int delay_ms) const {
@@ -199,7 +189,8 @@ bool CandidatePresentation::accept_provisional_caret_after_timeout(TimePoint now
         now - waiting_since_ < kCaretSampleMaxWait) {
         return false;
     }
-    *caret_rect = stale_rect_;
+    // The deadline is a bounded fallback, not confirmation of the first extent.
+    *caret_rect = latest_initial_caret_;
     reset_position_state();
     return true;
 }
@@ -230,6 +221,7 @@ bool CandidatePresentation::should_keep_waiting_for_caret(const RECT& caret_rect
         return false;
     }
     if (initial_layout_wait_) {
+        latest_initial_caret_ = caret_rect;
         if (used_trusted_caret) {
             return false;
         }
@@ -293,8 +285,13 @@ RECT CandidatePresentation::display_caret(const RECT& sample, std::uint64_t samp
         has_reference_caret_ = true;
         has_displayed_caret_ = true;
         caret_jump_pending_ = false;
+        observed_sample_serial_ = sample_serial;
         return sample;
     }
+    if (sample_serial == observed_sample_serial_) {
+        return displayed_caret_;
+    }
+    observed_sample_serial_ = sample_serial;
     if (!distant_caret_position(displayed_caret_, sample)) {
         caret_jump_filtered_ = caret_jump_pending_;
         displayed_caret_ = sample;
@@ -304,8 +301,10 @@ RECT CandidatePresentation::display_caret(const RECT& sample, std::uint64_t samp
     }
 
     if (caret_jump_pending_) {
-        if (sample_serial != pending_sample_serial_ &&
-            now - pending_caret_since_ >= kCaretSampleConfirmDelay) {
+        if (!same_caret_position(pending_caret_, sample)) {
+            // Restart only confirmation, not the episode's bounded fallback deadline.
+            pending_confirmation_since_ = now;
+        } else if (now - pending_confirmation_since_ >= kCaretSampleConfirmDelay) {
             displayed_caret_ = sample;
             has_displayed_caret_ = true;
             caret_jump_pending_ = false;
@@ -313,7 +312,7 @@ RECT CandidatePresentation::display_caret(const RECT& sample, std::uint64_t samp
         }
     } else {
         pending_caret_since_ = now;
-        pending_sample_serial_ = sample_serial;
+        pending_confirmation_since_ = now;
         caret_jump_pending_ = true;
     }
 
