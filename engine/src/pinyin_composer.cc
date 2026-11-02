@@ -13,6 +13,9 @@ namespace cxxime {
 
 namespace {
 
+// Below even weak user prefixes (4000), above unavailable historical preferences (1).
+constexpr int kComposedRankBase = 1024;
+
 struct SpanMemoEntry {
     std::vector<uint32_t> ids;
     std::vector<Candidate> candidates;
@@ -40,25 +43,21 @@ struct ComposedResult {
     CompositionPathKind kind = CompositionPathKind::kNormal;
     uint16_t path_rank = 0;
     uint16_t segment_count = 0;
-    int32_t weakest_frequency = 0;
     int64_t aggregate_score = 0;
     uint32_t sequence = 0;
 };
 
-int64_t frequency_score(int frequency) {
-    const double value = std::log2(static_cast<double>((std::max)(0, frequency)) + 1.0);
-    return static_cast<int64_t>(value * 1024.0 + 0.5);
+int64_t frequency_score(int frequency, double log_total_weight) {
+    const double log_weight = std::log2(static_cast<double>((std::max)(1, frequency)));
+    return std::llround((log_weight - log_total_weight) * 1024.0);
 }
 
 bool node_better(const CompositionNode& left, const CompositionNode& right) {
-    if (left.segment_count != right.segment_count) {
-        return left.segment_count < right.segment_count;
-    }
-    if (left.weakest_frequency != right.weakest_frequency) {
-        return left.weakest_frequency > right.weakest_frequency;
-    }
     if (left.aggregate_score != right.aggregate_score) {
         return left.aggregate_score > right.aggregate_score;
+    }
+    if (left.segment_count != right.segment_count) {
+        return left.segment_count < right.segment_count;
     }
     return left.sequence < right.sequence;
 }
@@ -93,14 +92,11 @@ bool result_better(const ComposedResult& left, const ComposedResult& right) {
     if (left.kind != right.kind) {
         return left.kind < right.kind;
     }
-    if (left.segment_count != right.segment_count) {
-        return left.segment_count < right.segment_count;
-    }
-    if (left.weakest_frequency != right.weakest_frequency) {
-        return left.weakest_frequency > right.weakest_frequency;
-    }
     if (left.aggregate_score != right.aggregate_score) {
         return left.aggregate_score > right.aggregate_score;
+    }
+    if (left.segment_count != right.segment_count) {
+        return left.segment_count < right.segment_count;
     }
     if (left.path_rank != right.path_rank) {
         return left.path_rank < right.path_rank;
@@ -164,9 +160,6 @@ Candidate rebuild_candidate(const std::string& input, const CompositionPath& pat
     candidate.origin = CandidateOrigin::kComposed;
     candidate.source = CandidateSource::kPinyin;
     candidate.source_frequency = nodes[node_index].weakest_frequency;
-    candidate.frequency =
-        static_cast<int>((std::min)(nodes[node_index].aggregate_score,
-                                    static_cast<int64_t>((std::numeric_limits<int>::max)())));
     return candidate;
 }
 
@@ -208,6 +201,9 @@ PinyinComposer::compose(const std::string& input, const std::vector<CompositionP
         return {};
     }
 
+    // A finite per-word cost lets common components outweigh a rare long dictionary entry.
+    const double log_total_weight =
+        std::log2(static_cast<double>((std::max)(uint64_t{1}, dict_.composition_weight_total())));
     SpanLookupLimits lookup_limits;
     lookup_limits.max_range_queries = limits.max_range_queries;
     lookup_limits.max_entry_scans = limits.max_entry_scans;
@@ -293,7 +289,7 @@ PinyinComposer::compose(const std::string& input, const std::vector<CompositionP
                     }
                     SpanEdge edge;
                     edge.end = static_cast<uint16_t>(end);
-                    edge.score = frequency_score(candidate.source_frequency);
+                    edge.score = frequency_score(candidate.source_frequency, log_total_weight);
                     edge.candidate = candidate;
                     edges_by_start[start].push_back(static_cast<uint32_t>(edges.size()));
                     edges.push_back(std::move(edge));
@@ -377,7 +373,6 @@ PinyinComposer::compose(const std::string& input, const std::vector<CompositionP
             result.kind = path.kind;
             result.path_rank = path.rank;
             result.segment_count = node.segment_count;
-            result.weakest_frequency = node.weakest_frequency;
             result.aggregate_score = node.aggregate_score;
             result.sequence = ++result_sequence;
             offer_result(results, std::move(result), result_capacity);
@@ -397,6 +392,10 @@ PinyinComposer::compose(const std::string& input, const std::vector<CompositionP
     std::vector<Candidate> candidates;
     candidates.reserve(results.size());
     for (auto& result : results) {
+        // Preserve the complete ordering through preference and sentence-learning merges.
+        const int rank = static_cast<int>(
+            (std::min)(candidates.size(), static_cast<size_t>(kComposedRankBase - 2)));
+        result.candidate.frequency = kComposedRankBase - rank;
         candidates.push_back(std::move(result.candidate));
     }
     stats.candidate_count = static_cast<uint32_t>(candidates.size());

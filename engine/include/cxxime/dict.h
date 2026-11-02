@@ -223,6 +223,9 @@ public:
     uint32_t syllable_to_id(const std::string& syllable) const;
     bool has_syllabary() const { return !syllable_to_id_.empty(); }
 
+    // Sum of max(1, source frequency) across the loaded dictionary, for composition scoring.
+    uint64_t composition_weight_total() const { return composition_weight_total_; }
+
     // Test helper: create a binary dict file from entries
     static bool create_test_dict(const std::string& path,
                                  const std::vector<std::tuple<std::string, std::string, int>>& entries);
@@ -254,6 +257,7 @@ private:
     uint32_t dict_entry_count_ = 0;
     uint32_t dict_string_size_ = 0;
     uint64_t dict_fingerprint_ = 0;
+    uint64_t composition_weight_total_ = 0;
 
     // Short-code cache
     ShortCodeCache short_cache_;

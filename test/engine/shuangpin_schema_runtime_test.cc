@@ -10,6 +10,7 @@
 
 #include <windows.h>
 
+#include <cxxime/composition_learning.h>
 #include <cxxime/composition_presentation.h>
 #include <cxxime/dict.h>
 #include <cxxime/engine.h>
@@ -241,53 +242,68 @@ TEST(ShuangpinSchemaRuntime, partial_selection_preserves_prefix_tail_and_reopene
     }
 }
 
-TEST(ShuangpinSchemaRuntime, production_dictionary_keeps_candidates_through_a_long_sentence) {
+TEST(ShuangpinSchemaRuntime, long_sentence_order_survives_typing_editing_and_learning) {
     auto dictionary = std::make_shared<cxxime::Dict>(cxxime::UserDictKind::PINYIN);
     ASSERT_TRUE(dictionary->open_dict(CXXIME_DATA_DIR "pinyin.dict.bin"));
-    auto resources =
-        cxxime::PinyinResourceSet::create("sogou_shuangpin", cxxime::PinyinSchemeKind::kShuangpin,
-                                          CXXIME_DATA_DIR "pinyin.sogou-shuangpin.spellings.bin");
-    ASSERT_TRUE(resources != nullptr);
-    cxxime::Config config;
-    config.pinyin_scheme = "sogou_shuangpin";
-    config.candidate_learning = false;
-    config.page_size = 7;
-    cxxime::Engine engine;
-    ASSERT_TRUE(engine.initialize(
-        cxxime::EngineRuntimeState::create(config, dictionary, nullptr, resources)));
-    engine.set_partial_selection_enabled(true);
-    engine.set_query_deadline_ms(0);
-    const std::string input = "hryigeuurufaqiuivgihuibuhvveyhde";
-    for (char character : input) {
-        cxxime::KeyEvent key;
-        key.keycode = static_cast<uint32_t>(character - 'a' + 'A');
-        ASSERT_EQ(engine.process_key(key), cxxime::ProcessResult::ACCEPTED);
-        ASSERT_TRUE(!engine.context().translation().entries.empty());
-        ASSERT_TRUE(engine.context().translation().usable());
-    }
     const std::string expected = "换一个输入法其实正常是不会这样的";
-    const auto& entries = engine.context().translation().entries;
-    const auto found = std::find_if(entries.begin(), entries.end(), [&](const auto& entry) {
-        return entry.candidate.text == expected;
-    });
-    ASSERT_TRUE(found != entries.end());
-    ASSERT_EQ(std::get<cxxime::TextSelectionAction>(found->selection).consumed_input_bytes,
-              input.size());
-    ASSERT_TRUE(engine.select_candidate(static_cast<int>(found - entries.begin())));
-    ASSERT_EQ(engine.get_commit_text(), expected);
-    ASSERT_TRUE(!engine.context().is_composing());
+    for (bool full_pinyin : {false, true}) {
+        const std::string scheme = full_pinyin ? "full_pinyin" : "sogou_shuangpin";
+        auto resources = cxxime::PinyinResourceSet::create(
+            scheme,
+            full_pinyin ? cxxime::PinyinSchemeKind::kFullPinyin
+                        : cxxime::PinyinSchemeKind::kShuangpin,
+            full_pinyin ? CXXIME_DATA_DIR "pinyin.spellings.bin"
+                        : CXXIME_DATA_DIR "pinyin.sogou-shuangpin.spellings.bin");
+        ASSERT_TRUE(resources != nullptr);
+        const std::string input = full_pinyin ? "huanyigeshurufaqishizhengchangshibuhuizheyangde"
+                                              : "hryigeuurufaqiuivgihuibuhvveyhde";
+        for (bool learning : {false, true}) {
+            cxxime::Config config;
+            config.pinyin_scheme = scheme;
+            config.candidate_learning = learning;
+            config.page_size = 7;
+            auto service = std::make_shared<cxxime::CompositionLearningService>();
+            cxxime::Engine engine;
+            ASSERT_TRUE(engine.initialize(cxxime::EngineRuntimeState::create(
+                config, dictionary, nullptr, resources, nullptr, service)));
+            engine.set_partial_selection_enabled(true);
+            engine.set_query_deadline_ms(0);
+            const auto press = [&](uint32_t keycode) {
+                cxxime::KeyEvent key;
+                key.keycode = keycode;
+                ASSERT_EQ(engine.process_key(key), cxxime::ProcessResult::ACCEPTED);
+            };
+            const auto type = [&]() {
+                for (char character : input) {
+                    press(static_cast<uint32_t>(character - 'a' + 'A'));
+                    ASSERT_TRUE(!engine.context().translation().entries.empty());
+                    ASSERT_TRUE(engine.context().translation().usable());
+                }
+            };
+            type();
+            const auto& first = engine.context().translation().entries.front();
+            ASSERT_EQ(first.candidate.text, expected) << scheme << learning;
+            ASSERT_EQ(std::get<cxxime::TextSelectionAction>(first.selection).consumed_input_bytes,
+                      input.size());
+            press(VK_NEXT);
+            ASSERT_GT(engine.context().translation().page_offset, 0);
+            ASSERT_TRUE(!engine.context().translation().entries.empty());
+            press(VK_PRIOR);
+            ASSERT_EQ(engine.context().translation().page_offset, 0);
+            ASSERT_EQ(engine.context().translation().entries.front().candidate.text, expected);
+            cxxime::KeyEvent commit;
+            commit.keycode = VK_SPACE;
+            ASSERT_EQ(engine.process_key(commit), cxxime::ProcessResult::COMMITTED);
+            ASSERT_EQ(engine.get_commit_text(), expected);
+            ASSERT_TRUE(!engine.context().is_composing());
 
-    for (char character : input) {
-        cxxime::KeyEvent key;
-        key.keycode = static_cast<uint32_t>(character - 'a' + 'A');
-        ASSERT_EQ(engine.process_key(key), cxxime::ProcessResult::ACCEPTED);
-    }
-    for (std::size_t remaining = input.size(); remaining > 1; --remaining) {
-        cxxime::KeyEvent key;
-        key.keycode = VK_BACK;
-        ASSERT_EQ(engine.process_key(key), cxxime::ProcessResult::ACCEPTED);
-        ASSERT_EQ(engine.context().active_input(), input.substr(0, remaining - 1));
-        ASSERT_TRUE(!engine.context().translation().entries.empty());
+            type();
+            for (std::size_t remaining = input.size(); remaining > 1; --remaining) {
+                press(VK_BACK);
+                ASSERT_EQ(engine.context().active_input(), input.substr(0, remaining - 1));
+                ASSERT_TRUE(!engine.context().translation().entries.empty());
+            }
+        }
     }
 }
 

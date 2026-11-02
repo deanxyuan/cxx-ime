@@ -71,7 +71,12 @@ add_cxxime_test(syllabifier_completion_test
     SOURCES engine/syllabifier_completion_test.cc
     DEPS cxxime-engine
 )
-add_cxxime_test(pinyin_composer_test SOURCES engine/pinyin_composer_test.cc DEPS cxxime-engine)
+add_cxxime_test(pinyin_composer_test
+    SOURCES
+        engine/pinyin_composer_test.cc
+        engine/pinyin_composition_ranking_test.cc
+    DEPS cxxime-engine
+)
 add_cxxime_test(dict_test SOURCES engine/dict_test.cc DEPS cxxime-engine)
 add_cxxime_test(user_data_separation_test
     SOURCES engine/user_data_separation_test.cc

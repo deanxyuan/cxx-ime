@@ -212,6 +212,8 @@ bool Dict::open_dict_with_aux(const std::string& bin_path,
             unload_dict();
             return false;
         }
+        composition_weight_total_ +=
+            static_cast<uint64_t>((std::max)(1, store.entries[i].frequency));
     }
     dict_fingerprint_ = candidate_store_fingerprint(store);
 
@@ -280,6 +282,7 @@ void Dict::unload_dict() {
     dict_entry_count_ = 0;
     dict_string_size_ = 0;
     dict_fingerprint_ = 0;
+    composition_weight_total_ = 0;
     dict_data_size_ = 0;
 }
 
