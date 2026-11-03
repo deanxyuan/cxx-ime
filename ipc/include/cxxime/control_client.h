@@ -15,6 +15,8 @@ class ControlClient {
 public:
     using SnapshotHandler =
         std::function<void(ConfigGeneration generation, const std::string& config_json)>;
+    // Runs on the connection worker. Must not wait for service readiness.
+    using UnavailableHandler = std::function<void(void* stop_event)>;
 
     ControlClient();
     ~ControlClient();
@@ -22,7 +24,8 @@ public:
     ControlClient(const ControlClient&) = delete;
     ControlClient& operator=(const ControlClient&) = delete;
 
-    bool start(SnapshotHandler handler, const std::wstring& pipe_name = L"");
+    bool start(SnapshotHandler handler, const std::wstring& pipe_name = L"",
+               UnavailableHandler unavailable = {});
     void stop();
     void patch_user_config(const std::string& merge_patch_json);
     bool is_running() const;

@@ -45,6 +45,7 @@ std::string wstring_to_utf8(const wchar_t* text) {
 
 TextService::TextService()
     : _client(cxxime::IPC_PIPE_BASE_NAME, kTsfIpcTimeoutMs) {
+    _client.set_connection_wait_ms(0);
     DllAddRef();
 }
 

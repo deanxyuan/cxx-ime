@@ -160,11 +160,13 @@ public:
         }
     }
 
-    bool start(SnapshotHandler handler, const std::wstring& pipe_name) {
+    bool start(SnapshotHandler handler, const std::wstring& pipe_name,
+               UnavailableHandler unavailable) {
         if (!stop_event_ || !mutation_event_ || running_.exchange(true)) {
             return false;
         }
         handler_ = std::move(handler);
+        unavailable_ = std::move(unavailable);
         pipe_name_ = make_user_pipe_name(pipe_name.empty() ? CONTROL_PIPE_BASE_NAME : pipe_name);
         ResetEvent(stop_event_);
         ResetEvent(mutation_event_);
@@ -358,6 +360,9 @@ private:
         while (running_.load(std::memory_order_acquire)) {
             HANDLE pipe = connect_pipe(pipe_name_, static_cast<int>(kConnectSliceMs), stop_event_);
             if (pipe == INVALID_HANDLE_VALUE) {
+                if (unavailable_ && WaitForSingleObject(stop_event_, 0) != WAIT_OBJECT_0) {
+                    unavailable_(stop_event_);
+                }
                 if (WaitForSingleObject(stop_event_, reconnect_delay_ms) == WAIT_OBJECT_0) {
                     break;
                 }
@@ -381,6 +386,7 @@ private:
     std::atomic<bool> running_{false};
     std::thread worker_;
     SnapshotHandler handler_;
+    UnavailableHandler unavailable_;
     std::wstring pipe_name_;
     std::mutex mutation_mutex_;
     std::deque<std::string> pending_patches_;
@@ -392,8 +398,9 @@ ControlClient::ControlClient()
 
 ControlClient::~ControlClient() = default;
 
-bool ControlClient::start(SnapshotHandler handler, const std::wstring& pipe_name) {
-    return impl_->start(std::move(handler), pipe_name);
+bool ControlClient::start(SnapshotHandler handler, const std::wstring& pipe_name,
+                          UnavailableHandler unavailable) {
+    return impl_->start(std::move(handler), pipe_name, std::move(unavailable));
 }
 
 void ControlClient::stop() { impl_->stop(); }

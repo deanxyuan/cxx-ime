@@ -89,7 +89,10 @@ bool response_copy_field(char* dst, size_t dst_size, const std::string& src) {
 
 } // namespace
 
-bool ServerApp::initialize(const std::string& dict_path, const std::string& config_path) {
+bool ServerApp::initialize(const std::string& dict_path, const std::string& config_path,
+                           bool show_errors) {
+    const ULONGLONG initialize_start = GetTickCount64();
+    CXXIME_LOG(L"server_start event=initialize pid=%lu", GetCurrentProcessId());
     std::string resolved_dict = dict_path.empty() ? cxxime::data_path("pinyin.dict.bin") : dict_path;
     std::string cfg = config_path.empty() ? cxxime::data_path("default.json") : config_path;
     std::string user_config = cxxime::user_data_path("default.json");
@@ -115,7 +118,9 @@ bool ServerApp::initialize(const std::string& dict_path, const std::string& conf
         msg += utf8_to_wide(themes);
         msg += L"\n错误代码: ";
         msg += std::to_wstring(config_error);
-        MessageBoxW(nullptr, msg.c_str(), L"CxxIME Server", MB_OK | MB_ICONERROR);
+        if (show_errors) {
+            MessageBoxW(nullptr, msg.c_str(), L"CxxIME Server", MB_OK | MB_ICONERROR);
+        }
         return false;
     }
     if (!session_mgr_.initialize(resolved_dict, initial_config)) {
@@ -131,10 +136,14 @@ bool ServerApp::initialize(const std::string& dict_path, const std::string& conf
         msg += L"\nUser data dir: ";
         std::string udd = cxxime::user_data_dir();
         msg += utf8_to_wide(udd);
-        MessageBoxW(nullptr, msg.c_str(), L"CxxIME Server", MB_OK | MB_ICONERROR);
+        if (show_errors) {
+            MessageBoxW(nullptr, msg.c_str(), L"CxxIME Server", MB_OK | MB_ICONERROR);
+        }
         return false;
     }
 
+    CXXIME_LOG(L"server_start event=engine_ready elapsed_ms=%llu",
+               GetTickCount64() - initialize_start);
     WNDCLASSEXW wc = {};
     wc.cbSize = sizeof(wc);
     wc.lpfnWndProc = WndProc;
@@ -184,8 +193,11 @@ bool ServerApp::initialize(const std::string& dict_path, const std::string& conf
                 session_mgr_.cancel_prepared_config();
                 SendMessageW(config_window, kCancelConfigMessage, 0, 0);
             })) {
-        MessageBoxW(nullptr, L"Failed to start config writer.", L"CxxIME Server",
-                    MB_OK | MB_ICONERROR);
+        CXXIME_LOG(L"server_start event=failed stage=config_writer error=%lu", GetLastError());
+        if (show_errors) {
+            MessageBoxW(nullptr, L"Failed to start config writer.", L"CxxIME Server",
+                        MB_OK | MB_ICONERROR);
+        }
         return false;
     }
 
@@ -216,8 +228,11 @@ bool ServerApp::initialize(const std::string& dict_path, const std::string& conf
                 return false;
             })) {
         config_writer_.stop();
-        MessageBoxW(nullptr, L"Failed to start config control server.",
-                    L"CxxIME Server", MB_OK | MB_ICONERROR);
+        CXXIME_LOG(L"server_start event=failed stage=control error=%lu", GetLastError());
+        if (show_errors) {
+            MessageBoxW(nullptr, L"Failed to start config control server.", L"CxxIME Server",
+                        MB_OK | MB_ICONERROR);
+        }
         return false;
     }
 
@@ -234,7 +249,11 @@ bool ServerApp::initialize(const std::string& dict_path, const std::string& conf
         session_mgr_.set_config_patch_handler({});
         config_writer_.stop();
         control_server_.stop();
-        MessageBoxW(nullptr, L"Failed to start IPC server.", L"CxxIME Server", MB_OK | MB_ICONERROR);
+        CXXIME_LOG(L"server_start event=failed stage=input_ipc error=%lu", GetLastError());
+        if (show_errors) {
+            MessageBoxW(nullptr, L"Failed to start IPC server.", L"CxxIME Server",
+                        MB_OK | MB_ICONERROR);
+        }
         return false;
     }
 

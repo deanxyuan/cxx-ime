@@ -24,6 +24,8 @@ add_library(cxxime-shared STATIC
     src/query_trace_log.cc
     src/settings_launcher.cc
     src/settings_launcher_util.cc
+    src/server_lifecycle.cc
+    src/server_launcher.cc
     src/tsf_factory.cc
     src/ui_presentation_trace.cc
     src/user_backup.cc

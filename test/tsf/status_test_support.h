@@ -30,6 +30,7 @@ struct StatusFixture {
     std::atomic<int> focus_requests{0};
     std::atomic<int> status_requests{0};
     std::atomic<int> start_requests{0};
+    std::atomic<int> key_requests{0};
     std::atomic<uint32_t> active_session{0};
     std::atomic<bool> reject_sample{false};
     std::atomic<bool> reject_focus{false};
@@ -60,6 +61,8 @@ struct StatusFixture {
                 }
             } else if (request.session_id != active_session.load()) {
                 response.status = cxxime::IPCStatus::ERR_INVALID_SESSION;
+            } else if (request.command == cxxime::IPCCommand::PROCESS_KEY) {
+                ++key_requests;
             } else if (request.command == cxxime::IPCCommand::GET_STATUS) {
                 ++status_requests;
                 if (reject_status.load()) {

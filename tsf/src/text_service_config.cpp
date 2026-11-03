@@ -81,6 +81,13 @@ void TextService::_apply_config_snapshot() {
         return;
     }
 
+    // A new server snapshot is an opportunity to restore an unavailable input session.
+    // If its input accept thread is not ready yet, the existing heartbeat retries.
+    if (!_sessionId || !_ipcHealthy) {
+        _lastIpcHeartbeat = {};
+        _heartbeat_ipc();
+    }
+
     _inputIndicator.set_status_visible(_config.status_window.enable);
     if (_localCandidateWindow) {
         _localCandidateWindow->set_config(_config);

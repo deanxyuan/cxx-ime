@@ -30,6 +30,8 @@ public:
     void disconnect();
     bool is_connected() const;
     bool ensure_connected();
+    // Negative uses the request timeout; zero only tries the currently available instance.
+    void set_connection_wait_ms(int wait_ms) { connection_wait_ms_ = wait_ms; }
 
     bool send_request(const IPCRequest& request, IPCResponse& response);
 
@@ -67,6 +69,7 @@ private:
     void* pipe_handle_ = nullptr;
     std::wstring pipe_name_;
     int timeout_ms_ = 3000;
+    int connection_wait_ms_ = -1;
 
     int64_t last_ipc_us_ = 0;
 };

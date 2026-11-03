@@ -90,3 +90,47 @@ TEST(TextServiceStatusLifecycle, service_unavailable_at_activation_recovers_with
     ASSERT_TRUE(manager.sinks.empty());
     ASSERT_TRUE(manager.key_sink == nullptr);
 }
+
+TEST(TextServiceStatusLifecycle, cold_start_passes_unavailable_keys_and_recovers_without_replay) {
+    status_test::KeyboardState keyboard;
+    keyboard.caps(false);
+    for (int round = 0; round < 3; ++round) {
+        ActivationManager manager;
+        status_test::StatusFixture fixture(false);
+        manager.document.top = &fixture.host;
+        fixture.host.document = &manager.document;
+        // Select an isolated endpoint, then remove it before activation.
+        ASSERT_TRUE(TextServiceTestPeer::connect(fixture.service, fixture.pipe, false));
+        fixture.server.stop();
+        TextServiceTestPeer::prepare_status_dispatch(fixture.service);
+        status_test::StatusProbe probe(fixture.service);
+        const auto start = std::chrono::steady_clock::now();
+        ASSERT_EQ(fixture.service.ActivateEx(&manager, 1, 0), S_OK);
+        const auto activated = std::chrono::steady_clock::now();
+        ASSERT_EQ(TextServiceTestPeer::session_id(fixture.service), 0u);
+        BOOL eaten = TRUE;
+        ASSERT_EQ(fixture.service.OnKeyDown(&fixture.host, 'N', 0, &eaten), S_OK);
+        ASSERT_EQ(eaten, FALSE);
+        const auto first_key = std::chrono::steady_clock::now();
+        ASSERT_EQ(fixture.key_requests.load(), 0);
+        fixture.restart_server();
+        const auto ready = std::chrono::steady_clock::now();
+        const auto mark = probe.mark();
+        TextServiceTestPeer::poll_status(fixture.service, true);
+        const auto recovered = std::chrono::steady_clock::now();
+        ASSERT_NE(TextServiceTestPeer::session_id(fixture.service), 0u);
+        fixture.confirm();
+        probe.expect_recovered_since(mark, false, true);
+        ASSERT_EQ(fixture.key_requests.load(), 0);
+        const auto before_stop = std::chrono::steady_clock::now();
+        ASSERT_EQ(fixture.service.Deactivate(), S_OK);
+        const auto stopped = std::chrono::steady_clock::now();
+        const auto micros = [](std::chrono::steady_clock::duration elapsed) {
+            return std::chrono::duration_cast<std::chrono::microseconds>(elapsed).count();
+        };
+        printf("  cold_start round=%d activate_us=%lld unavailable_key_us=%lld "
+               "ready_to_session_us=%lld deactivate_us=%lld\n",
+               round + 1, micros(activated - start), micros(first_key - activated),
+               micros(recovered - ready), micros(stopped - before_stop));
+    }
+}

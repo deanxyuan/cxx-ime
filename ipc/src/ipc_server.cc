@@ -14,6 +14,8 @@
 
 #include <windows.h>
 
+#include <cxxime/logging.h>
+
 #include "security_attributes.h"
 
 namespace cxxime {
@@ -195,6 +197,7 @@ void IpcServer::set_disconnect_handler(DisconnectHandler handler) {
 // ============================================================
 void IpcServer::accept_loop() {
     SecurityAttributes sa;
+    bool first_instance = true;
 
     while (running_.load()) {
         HANDLE pipe = CreateNamedPipeW(
@@ -211,6 +214,10 @@ void IpcServer::accept_loop() {
             continue;
         }
 
+        if (first_instance) {
+            CXXIME_LOG(L"input_ipc event=listening pid=%lu", GetCurrentProcessId());
+            first_instance = false;
+        }
         if (!connect_pipe_instance(pipe, running_)) {
             CloseHandle(pipe);
             if (!running_.load()) break;

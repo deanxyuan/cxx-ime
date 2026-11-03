@@ -14,6 +14,7 @@
 #include <cxxime/control_client.h>
 #include <cxxime/diagnostics_config.h>
 #include <cxxime/logging.h>
+#include <cxxime/server_lifecycle.h>
 
 #include "tsf_log_writer.h"
 
@@ -47,7 +48,8 @@ public:
             client_.start(
                 [this](cxxime::ConfigGeneration generation, const std::string& config_json) {
                     apply_snapshot(generation, config_json);
-                });
+                },
+                L"", [this](void* stop_event) { launcher_.ensure_started(stop_event); });
         }
         return snapshot;
     }
@@ -105,6 +107,7 @@ private:
     mutable std::mutex mutex_;
     ConfigSnapshot snapshot_;
     std::vector<Subscriber> subscribers_;
+    cxxime::ServerLauncher launcher_;
     cxxime::ControlClient client_;
 };
 

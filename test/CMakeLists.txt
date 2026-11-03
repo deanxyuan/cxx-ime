@@ -278,6 +278,11 @@ if(CXXIME_ENABLE_HOST_DIAGNOSTICS)
     add_cxxime_test(host_trace_test SOURCES shared/host_trace_test.cc DEPS cxxime-shared)
 endif()
 add_cxxime_test(mpscq_test SOURCES shared/mpscq_test.cc DEPS cxxime-shared)
+add_cxxime_test(server_lifecycle_test
+    SOURCES shared/server_lifecycle_test.cc
+    DEPS cxxime-ipc
+)
+add_cxxime_test(server_startup_test SOURCES ipc/server_startup_test.cc DEPS cxxime-ipc)
 add_cxxime_test(control_channel_test SOURCES ipc/control_channel_test.cc DEPS cxxime-ipc)
 add_cxxime_test(control_lifecycle_test
     SOURCES ipc/control_lifecycle_test.cc

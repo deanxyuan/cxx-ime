@@ -11,6 +11,7 @@
 
 #include <cxxime/ipc_client.h>
 #include <cxxime/pipe_names.h>
+#include <cxxime/server_lifecycle.h>
 
 namespace cxxime {
 namespace installer {
@@ -284,73 +285,7 @@ int stop_server(const std::wstring& path, bool force) {
 }
 
 int start_server(const std::wstring& path) {
-    DWORD session_id = 0;
-    if (!current_session_id(&session_id)) {
-        return 1;
-    }
-    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-    if (snapshot == INVALID_HANDLE_VALUE) {
-        return 1;
-    }
-    PROCESSENTRY32W entry = {};
-    entry.dwSize = sizeof(entry);
-    HANDLE token = nullptr;
-    bool found_shell = Process32FirstW(snapshot, &entry) != FALSE;
-    while (found_shell) {
-        DWORD process_session = 0;
-        if (_wcsicmp(entry.szExeFile, L"explorer.exe") == 0 &&
-            ProcessIdToSessionId(entry.th32ProcessID, &process_session) &&
-            process_session == session_id) {
-            HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE,
-                                         entry.th32ProcessID);
-            if (process) {
-                OpenProcessToken(process, TOKEN_DUPLICATE | TOKEN_ASSIGN_PRIMARY | TOKEN_QUERY,
-                                 &token);
-                CloseHandle(process);
-            }
-            if (token) {
-                break;
-            }
-        }
-        found_shell = Process32NextW(snapshot, &entry) != FALSE;
-    }
-    CloseHandle(snapshot);
-    if (!token) {
-        return 1;
-    }
-
-    HANDLE primary_token = nullptr;
-    const BOOL duplicated = DuplicateTokenEx(token, MAXIMUM_ALLOWED, nullptr,
-                                             SecurityImpersonation, TokenPrimary,
-                                             &primary_token);
-    CloseHandle(token);
-    if (!duplicated) {
-        return 1;
-    }
-
-    STARTUPINFOW startup = {};
-    startup.cb = sizeof(startup);
-    startup.lpDesktop = const_cast<wchar_t*>(L"winsta0\\default");
-    PROCESS_INFORMATION process = {};
-    // The command-line buffer must be writable, and the executable path must be quoted because
-    // the default install location contains a space (for example, "Program Files").
-    std::wstring command_line = L"\"" + path + L"\"";
-    BOOL created = CreateProcessAsUserW(primary_token, path.c_str(), command_line.data(), nullptr,
-                                        nullptr, FALSE, CREATE_UNICODE_ENVIRONMENT, nullptr,
-                                        nullptr, &startup, &process);
-    if (!created) {
-        command_line = L"\"" + path + L"\"";
-        created = CreateProcessWithTokenW(primary_token, LOGON_WITH_PROFILE, path.c_str(),
-                                          command_line.data(), CREATE_UNICODE_ENVIRONMENT, nullptr,
-                                          nullptr, &startup, &process);
-    }
-    CloseHandle(primary_token);
-    if (!created) {
-        return 1;
-    }
-    CloseHandle(process.hThread);
-    CloseHandle(process.hProcess);
-    return 0;
+    return cxxime::start_interactive_server(path, true) ? 0 : 1;
 }
 
 } // namespace installer

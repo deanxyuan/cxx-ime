@@ -24,7 +24,8 @@
 
 class ServerApp {
 public:
-    bool initialize(const std::string& dict_path = "", const std::string& config_path = "");
+    bool initialize(const std::string& dict_path = "", const std::string& config_path = "",
+                    bool show_errors = false);
     void run();
     void finalize();
 

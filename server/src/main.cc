@@ -9,6 +9,7 @@
 
 #include <cxxime/data_path.h>
 #include <cxxime/query_trace.h>
+#include <cxxime/server_lifecycle.h>
 
 static std::string wide_to_utf8(const std::wstring& wstr) {
     if (wstr.empty()) return {};
@@ -38,7 +39,13 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
 
     std::string dict_path;
     std::string config_path;
+    bool installer_start = false;
     if (argv) {
+        for (int i = 1; i < argc; ++i) {
+            if (std::wstring(argv[i]) == L"--installer-start") {
+                installer_start = true;
+            }
+        }
         // --data sets base data directory (overrides compile-time/default path)
         std::string data_dir = get_arg(argc, argv, L"--data");
         if (!data_dir.empty())
@@ -49,8 +56,13 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
         LocalFree(argv);
     }
 
+    cxxime::ServerInstance instance;
+    if (!instance.acquire(cxxime::server_lifecycle_names(), installer_start)) {
+        CoUninitialize();
+        return 0;
+    }
     ServerApp app;
-    if (!app.initialize(dict_path, config_path)) {
+    if (!app.initialize(dict_path, config_path, installer_start)) {
         CoUninitialize();
         return 1;
     }
