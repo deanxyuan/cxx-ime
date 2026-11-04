@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import contextlib
+import ctypes
 import io
 import os
 from pathlib import Path
@@ -67,6 +68,8 @@ class PackageEntryTest(unittest.TestCase):
         (self.dist / "sentinel").write_text("existing output", encoding="utf-8")
 
     def invoke(self, *arguments: str) -> None:
+        self.stderr.seek(0)
+        self.stderr.truncate()
         with mock.patch.object(sys, "argv", ["package.py", *arguments]):
             package.main()
 
@@ -77,6 +80,8 @@ class PackageEntryTest(unittest.TestCase):
         self.assertTrue((self.dist / "sentinel").is_file(), self.stderr.getvalue())
 
     def stub_package_outputs(self) -> None:
+        # Keep argument handling, toolchain checks and cleanup real;
+        # omit artifact production.
         for name in (
             "copy_binaries",
             "copy_config",
@@ -90,9 +95,16 @@ class PackageEntryTest(unittest.TestCase):
             "write_install_payload",
             "verify_package_layout",
             "build_nsis",
-            "print_summary",
         ):
             self.stack.enter_context(mock.patch.object(package, name))
+
+    @contextlib.contextmanager
+    def fake_cmake(self, execute=None, executable="cmake.exe"):
+        with (
+            mock.patch.object(package.shutil, "which", return_value=executable),
+            mock.patch.object(package, "run", side_effect=execute or self.cmake_command) as run,
+        ):
+            yield run
 
     def write_cache(self, directory: Path, source: Path | None = None) -> None:
         directory.mkdir(parents=True, exist_ok=True)
@@ -153,39 +165,39 @@ class PackageEntryTest(unittest.TestCase):
         os.environ["CMAKE_GENERATOR_INSTANCE"] = str(self.root / "selected VS")
         self.write_cache(self.build_dir)
         (self.build_dir / "old-output").touch()
-        with (
-            mock.patch.object(package.shutil, "which", return_value=cmake),
-            mock.patch.object(package, "run", side_effect=self.cmake_command) as run,
-        ):
+        with self.fake_cmake(executable=cmake) as run:
             self.invoke(
                 "--generator",
                 "Visual Studio 15 2017",
                 "--skip-dict",
                 "--skip-nsis",
             )
-        commands = [call.args[0] for call in run.call_args_list]
-        self.assertEqual(len(commands), 7)
-        self.assertEqual(commands[0], [cmake, "--version"])
-        self.assertTrue(all(command[0] == cmake for command in commands))
-        configure = [command for command in commands if "-S" in command]
-        self.assertEqual(
-            {command[command.index("-A") + 1] for command in configure},
-            {"x64", "Win32"},
-        )
-        for command in configure:
-            self.assertEqual(command[command.index("-G") + 1], "Visual Studio 15 2017")
+        configured = {}
+        built = set()
+        self.assertEqual(run.call_args_list[0].args[0], [cmake, "--version"])
+        for call in run.call_args_list:
+            command = call.args[0]
+            self.assertEqual(command[0], cmake)
+            if "--build" in command:
+                self.assertEqual(command[command.index("--config") + 1], "Release")
+                directory = command[command.index("--build") + 1]
+                self.assertIn(directory, configured)
+                built.add(directory)
+            elif "-S" in command:
+                self.assertEqual(command[command.index("-G") + 1], "Visual Studio 15 2017")
             if "-DCXXIME_PRODUCTION_BUILD=ON" in command:
+                configured[command[command.index("-B") + 1]] = command[command.index("-A") + 1]
                 self.assertNotIn("-DCMAKE_BUILD_TYPE=Release", command)
                 self.assertIn(
                     f"-DCMAKE_GENERATOR_INSTANCE={self.root / 'selected VS'}",
                     command,
                 )
-        for command in commands:
-            if "--build" in command:
-                self.assertEqual(command[command.index("--config") + 1], "Release")
-        for call in run.call_args_list:
-            if "-DCXXIME_PRODUCTION_BUILD=ON" in call.args[0]:
                 self.assertEqual(call.kwargs["env"]["CXXIME_BUILD_CONFIG"], "Release")
+        self.assertEqual(
+            configured,
+            {str(self.build_dir): "x64", str(self.x86_dir): "Win32"},
+        )
+        self.assertEqual(built, set(configured))
         self.assertNotIn("CXXIME_BUILD_CONFIG", os.environ)
         self.assertFalse((self.build_dir / "old-output").exists())
         self.assertEqual(
@@ -201,22 +213,38 @@ class PackageEntryTest(unittest.TestCase):
                 self.assertTrue((self.dist / "sentinel").exists())
             self.cmake_command(command)
 
-        with (
-            mock.patch.object(package.shutil, "which", return_value="cmake.exe"),
-            mock.patch.object(package, "run", side_effect=configure) as run,
-        ):
+        with self.fake_cmake(configure) as run:
             self.invoke()
         commands = [
             call.args[0]
             for call in run.call_args_list
             if "-S" in call.args[0]
         ]
-        self.assertEqual(len(commands), 4)
         self.assertNotIn("-G", commands[0])
         self.assertEqual(commands[0][commands[0].index("-A") + 1], "x64")
         for command in commands[1:]:
             self.assertEqual(command[command.index("-G") + 1], "Visual Studio 18 2026")
-            self.assertIn(f"-DCMAKE_GENERATOR_INSTANCE={self.root / 'default VS'}", command)
+            self.assertIn(
+                f"-DCMAKE_GENERATOR_INSTANCE={self.root / 'default VS'}",
+                command,
+            )
+        self.assertEqual(
+            {
+                command[command.index("-A") + 1]
+                for command in commands
+                if "-DCXXIME_PRODUCTION_BUILD=ON" not in command
+            },
+            {"x64", "Win32"},
+        )
+        self.assertEqual(
+            {
+                command[command.index("-A") + 1]
+                for command in commands
+                if "-DCXXIME_PRODUCTION_BUILD=ON" in command
+            },
+            {"x64", "Win32"},
+        )
+        self.assertFalse((self.dist / "sentinel").exists())
         package.build_nsis.assert_called_once()
         self.assertNotIn("CMAKE_GENERATOR", os.environ)
         self.assertNotIn("CMAKE_GENERATOR_INSTANCE", os.environ)
@@ -232,12 +260,7 @@ class PackageEntryTest(unittest.TestCase):
                         raise subprocess.CalledProcessError(9, command)
                     self.cmake_command(command)
 
-                self.stderr.seek(0)
-                self.stderr.truncate()
-                with (
-                    mock.patch.object(package.shutil, "which", return_value="cmake.exe"),
-                    mock.patch.object(package, "run", side_effect=configure),
-                ):
+                with self.fake_cmake(configure):
                     self.reject()
                 self.assertIn(
                     f"Toolchain check failed ({architecture}, exit 9)",
@@ -259,11 +282,19 @@ class PackageEntryTest(unittest.TestCase):
         self.assertTrue(generator.startswith("Visual Studio "))
         self.assertEqual(platform, "x64")
         self.assertTrue(instance)
-        commands = [call.args[0] for call in run.call_args_list]
-        self.assertEqual(len(commands), 2)
+        commands = [
+            call.args[0]
+            for call in run.call_args_list
+            if "-S" in call.args[0]
+        ]
         self.assertNotIn("-G", commands[0])
-        self.assertEqual(commands[1][commands[1].index("-A") + 1], "Win32")
-        self.assertIn(f"-DCMAKE_GENERATOR_INSTANCE={instance}", commands[1])
+        self.assertEqual(
+            {command[command.index("-A") + 1] for command in commands},
+            {"x64", "Win32"},
+        )
+        for command in commands[1:]:
+            self.assertEqual(command[command.index("-G") + 1], generator)
+            self.assertIn(f"-DCMAKE_GENERATOR_INSTANCE={instance}", command)
 
     def test_generator_argument_does_not_discard_platform_environment(self) -> None:
         os.environ["CXXIME_CMAKE_PLATFORM"] = "Win32"
@@ -277,8 +308,7 @@ class PackageEntryTest(unittest.TestCase):
         for generator in ("NMake Makefiles", "Ninja", "Ninja Multi-Config"):
             with (
                 self.subTest(generator=generator),
-                mock.patch.object(package.shutil, "which", return_value="cmake.exe"),
-                mock.patch.object(package, "run", side_effect=self.cmake_command) as run,
+                self.fake_cmake() as run,
             ):
                 self.invoke(
                     "--generator",
@@ -288,21 +318,20 @@ class PackageEntryTest(unittest.TestCase):
                     "--skip-x86-tsf",
                     "--skip-nsis",
                 )
-                commands = [call.args[0] for call in run.call_args_list]
-                configure = next(
-                    command
-                    for command in commands
-                    if "-DCXXIME_PRODUCTION_BUILD=ON" in command
-                )
-                self.assertNotIn("-A", configure)
-                self.assertNotIn("-DCMAKE_BUILD_TYPE=Debug", configure)
                 configure_call = next(
                     call
                     for call in run.call_args_list
-                    if call.args[0] == configure
+                    if "-DCXXIME_PRODUCTION_BUILD=ON" in call.args[0]
                 )
+                configure = configure_call.args[0]
+                self.assertNotIn("-A", configure)
+                self.assertNotIn("-DCMAKE_BUILD_TYPE=Debug", configure)
                 self.assertEqual(configure_call.kwargs["env"]["CXXIME_BUILD_CONFIG"], "Debug")
-                build = next(command for command in commands if "--build" in command)
+                build = next(
+                    call.args[0]
+                    for call in run.call_args_list
+                    if "--build" in call.args[0]
+                )
                 self.assertEqual(build[build.index("--config") + 1], "Debug")
                 output = self.build_dir / "server"
                 if generator == "Ninja Multi-Config":
@@ -339,12 +368,7 @@ class PackageEntryTest(unittest.TestCase):
                         raise subprocess.CalledProcessError(9, command)
                     self.cmake_command(command)
 
-                self.stderr.seek(0)
-                self.stderr.truncate()
-                with (
-                    mock.patch.object(package.shutil, "which", return_value="cmake.exe"),
-                    mock.patch.object(package, "run", side_effect=fail_command),
-                ):
+                with self.fake_cmake(fail_command):
                     with self.assertRaises(SystemExit) as result:
                         self.invoke(
                             "--generator",
@@ -367,24 +391,22 @@ class PackageEntryTest(unittest.TestCase):
                 package.copy_binaries.assert_not_called()
 
     def test_tool_override_precedence_and_failure_do_not_fall_back(self) -> None:
-        os.environ["CXXIME_CMAKE"] = "environment-cmake.exe"
-        for explicit, expected in (
-            ("chosen.exe", "chosen.exe"),
-            (None, "environment-cmake.exe"),
+        for explicit, environment, expected in (
+            ("chosen.exe", "environment-cmake.exe", "chosen.exe"),
+            (None, "environment-cmake.exe", "environment-cmake.exe"),
+            (None, None, "cmake"),
         ):
+            if environment:
+                os.environ["CXXIME_CMAKE"] = environment
+            else:
+                os.environ.pop("CXXIME_CMAKE", None)
             with (
+                self.subTest(explicit=explicit, environment=environment),
                 mock.patch.object(package.shutil, "which", return_value=expected) as which,
                 mock.patch.object(package, "run"),
             ):
-                package.resolve_cmake(explicit)
+                self.assertEqual(package.resolve_cmake(explicit), os.path.abspath(expected))
                 which.assert_called_once_with(expected)
-        del os.environ["CXXIME_CMAKE"]
-        with (
-            mock.patch.object(package.shutil, "which", return_value="cmake.exe") as which,
-            mock.patch.object(package, "run"),
-        ):
-            package.resolve_cmake(None)
-            which.assert_called_once_with("cmake")
         for failure in (
             OSError("cannot execute"),
             subprocess.CalledProcessError(7, "cmake"),
@@ -428,13 +450,51 @@ class PackageEntryTest(unittest.TestCase):
         self.assertTrue((source / "CMakeLists.txt").exists())
         self.assertTrue((unknown / "keep.txt").exists())
 
+    @unittest.skipUnless(os.name == "nt", "Windows short paths")
+    def test_short_paths_share_identity_with_long_paths_without_being_redirected(self) -> None:
+        get_short_path = ctypes.windll.kernel32.GetShortPathNameW
+        get_short_path.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint32]
+        get_short_path.restype = ctypes.c_uint32
+        size = get_short_path(str(self.root), None, 0)
+        self.assertGreater(size, 0)
+        buffer = ctypes.create_unicode_buffer(size)
+        self.assertGreater(get_short_path(str(self.root), buffer, size), 0)
+        short_root = Path(buffer.value)
+        if os.path.normcase(short_root) == os.path.normcase(self.root):
+            self.skipTest("The temporary volume does not provide an 8.3 alias")
+        self.stub_package_outputs()
+        for root in (self.root, short_root):
+            with (
+                self.subTest(root=root),
+                mock.patch.object(package, "ROOT", str(root)),
+                self.fake_cmake(),
+            ):
+                # Missing descendants and existing caches must accept either spelling.
+                self.invoke(
+                    "--build-dir",
+                    str(short_root / "build-package"),
+                    "--x86-build-dir",
+                    str(short_root / "build-package-x86"),
+                    "--skip-dict",
+                    "--skip-nsis",
+                )
+                self.assertTrue((self.build_dir / "CMakeCache.txt").exists())
+        self.dist.mkdir(exist_ok=True)
+        (self.dist / "sentinel").touch()
+        self.reject("--x86-build-dir", str(short_root / "build-package"))
+        self.assertIn("must not overlap", self.stderr.getvalue())
+
     @unittest.skipUnless(os.name == "nt", "Windows junction protection")
     def test_redirected_build_and_dictionary_paths_preserve_their_targets(self) -> None:
         target = self.root / "keep"
         target.mkdir()
         sentinel = target / "keep.txt"
         sentinel.touch()
-        for link in (self.build_dir, self.dist / "data"):
+        for link, build_dir in (
+            (self.build_dir, self.build_dir),
+            (self.dist / "data", self.build_dir),
+            (self.root / "linked-parent", self.root / "linked-parent" / "new-build"),
+        ):
             with self.subTest(link=link):
                 subprocess.run(
                     [
@@ -450,7 +510,13 @@ class PackageEntryTest(unittest.TestCase):
                     capture_output=True,
                 )
                 try:
-                    self.reject("--generator", "Visual Studio 15 2017")
+                    self.reject(
+                        "--generator",
+                        "Visual Studio 15 2017",
+                        "--build-dir",
+                        str(build_dir),
+                    )
+                    self.assertIn("Refusing a redirected package path", self.stderr.getvalue())
                     self.assertTrue(sentinel.exists())
                 finally:
                     os.rmdir(link)

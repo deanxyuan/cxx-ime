@@ -20,6 +20,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -218,8 +219,25 @@ def validate_package_paths(build_dirs: list[str], output_dir: str, rebuild: bool
     """Protect package inputs and parallel tasks before any cleanup begins."""
     paths = [*build_dirs, DIST_DIR, output_dir, DATA, SCRIPTS]
     for path in [*paths, os.path.join(DIST_DIR, "data")]:
-        if os.path.normcase(os.path.realpath(path)) != os.path.normcase(os.path.abspath(path)):
-            raise ValueError(f"Refusing a redirected package path: {path}")
+        ancestor = os.path.abspath(path)
+        while True:
+            try:
+                info = os.lstat(ancestor)
+            except FileNotFoundError:
+                pass
+            else:
+                if (
+                    stat.S_ISLNK(info.st_mode)
+                    or getattr(info, "st_file_attributes", 0)
+                    & stat.FILE_ATTRIBUTE_REPARSE_POINT
+                ):
+                    raise ValueError(
+                        f"Refusing a redirected package path: {path}"
+                    )
+            parent = os.path.dirname(ancestor)
+            if parent == ancestor:
+                break
+            ancestor = parent
     for index, path in enumerate(paths):
         for other in paths[index + 1:]:
             same_path = os.path.normcase(os.path.realpath(path)) == os.path.normcase(
@@ -229,11 +247,12 @@ def validate_package_paths(build_dirs: list[str], output_dir: str, rebuild: bool
                 raise ValueError(f"Package paths must not overlap: {path} and {other}")
     if not rebuild:
         return
+    root = os.path.normcase(os.path.realpath(ROOT))
     for build_dir in build_dirs:
         if not is_child_path(ROOT, build_dir):
             raise ValueError(f"Build cleanup must stay inside the repository: {build_dir}")
-        ancestor = os.path.abspath(build_dir)
-        while os.path.normcase(ancestor) != os.path.normcase(os.path.abspath(ROOT)):
+        ancestor = os.path.realpath(build_dir)
+        while os.path.normcase(ancestor) != root:
             if os.path.isfile(os.path.join(ancestor, "CMakeLists.txt")):
                 raise ValueError(f"Refusing to clean a source directory: {build_dir}")
             ancestor = os.path.dirname(ancestor)
@@ -245,7 +264,7 @@ def validate_package_paths(build_dirs: list[str], output_dir: str, rebuild: bool
             source = read_cmake_cache(build_dir, "CMAKE_HOME_DIRECTORY")
             if (
                 not source
-                or os.path.normcase(os.path.realpath(source)) != os.path.normcase(ROOT)
+                or os.path.normcase(os.path.realpath(source)) != root
             ):
                 raise ValueError(f"Refusing to clean an unrecognized build directory: {build_dir}")
 
