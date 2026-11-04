@@ -45,7 +45,7 @@ jobs:
             --output-dir "$env:GITHUB_WORKSPACE\artifacts" `
             --generator "Visual Studio 17 2022" `
             --platform x64 `
-            --jobs 4 `
+            --jobs ([Environment]::ProcessorCount) `
             --dict-workers 2
 
       - name: Stage packaged data for tests

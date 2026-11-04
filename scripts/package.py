@@ -22,6 +22,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 
 from dictionary_bundle_layout import PINYIN_SPELLING_FILES
@@ -41,13 +42,6 @@ _VERSION_MATCH = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?", VERSIO
 if _VERSION_MATCH is None:
     raise RuntimeError("VERSION must contain a valid semantic version")
 VERSION_NUMERIC = ".".join(_VERSION_MATCH.groups()) + ".0"
-SINGLE_CONFIG_GENERATORS = (
-    "NMake Makefiles",
-    "NMake Makefiles JOM",
-    "Ninja",
-    "Unix Makefiles",
-    "MinGW Makefiles",
-)
 
 
 def step(msg: str) -> None:
@@ -111,41 +105,153 @@ def choose_cmake_generator(
     platform: str | None,
 ) -> tuple[str | None, str | None]:
     """Choose CMake generator/platform from explicit args or environment."""
-    if generator:
-        return generator, platform
-
     env_generator = os.environ.get("CXXIME_CMAKE_GENERATOR") or os.environ.get("CMAKE_GENERATOR")
     env_platform = os.environ.get("CXXIME_CMAKE_PLATFORM") or os.environ.get("CMAKE_GENERATOR_PLATFORM")
-    return env_generator, platform or env_platform
+    return generator or env_generator, platform or env_platform
 
 
-def is_single_config_generator(generator: str | None) -> bool:
-    """Return true for generators that use CMAKE_BUILD_TYPE."""
-    if not generator:
-        return False
-    return any(generator == name or generator.startswith(name + " ") for name in SINGLE_CONFIG_GENERATORS)
+def resolve_cmake(executable: str | None) -> str:
+    """Use the requested executable or PATH, without switching installations."""
+    requested = executable if executable is not None else os.environ.get("CXXIME_CMAKE", "cmake")
+    resolved = shutil.which(requested)
+    if not resolved:
+        raise ValueError(
+            f"Cannot find CMake: {requested!r}. Add cmake.exe to PATH or use --cmake."
+        )
+    resolved = os.path.abspath(resolved)
+    print(f"  CMake: {resolved}", flush=True)
+    run([resolved, "--version"])
+    return resolved
 
 
-def supports_cmake_platform(generator: str | None) -> bool:
-    """Return true for generators that support CMake -A platform selection."""
-    return generator is None or generator.startswith("Visual Studio")
+def validate_build_options(
+    generator: str | None,
+    platform: str | None,
+    include_x86_modules: bool,
+) -> str | None:
+    """Validate the architectures produced by the package workflow."""
+    if not generator or generator.startswith("Visual Studio "):
+        if platform and platform != "x64":
+            raise ValueError("The main package build requires platform x64.")
+        return "x64"
+    if include_x86_modules:
+        raise ValueError(
+            "Dual-architecture packaging requires a Visual Studio generator; "
+            "native builds require --skip-x86-tsf --skip-nsis."
+        )
+    if generator not in {"NMake Makefiles", "Ninja", "Ninja Multi-Config"}:
+        raise ValueError(f"Unsupported package generator: {generator}")
+    if platform:
+        raise ValueError(
+            "Native generators do not accept --platform/-A; use an x64 developer prompt."
+        )
+    if os.environ.get("VSCMD_ARG_TGT_ARCH", "").lower() != "x64":
+        raise ValueError("Run native package builds from an x64 Visual Studio developer prompt.")
+    return None
+
+
+def resolve_build_toolchain(
+    cmake: str,
+    generator: str | None,
+    platform: str | None,
+    include_x86_modules: bool,
+) -> tuple[str, str | None, str | None]:
+    """Let CMake select and check the toolchain before removing package outputs."""
+    platform = validate_build_options(generator, platform, include_x86_modules)
+    instance = None
+    with tempfile.TemporaryDirectory(prefix="cxxime-toolchain-") as temporary:
+        source = os.path.join(temporary, "source")
+        os.makedirs(source)
+        with open(os.path.join(source, "CMakeLists.txt"), "w", encoding="utf-8") as output:
+            output.write(
+                "cmake_minimum_required(VERSION 3.15)\n"
+                "project(CxxIMEToolchainCheck LANGUAGES CXX)\n"
+            )
+        platforms = [platform, "Win32"] if include_x86_modules else [platform]
+        for architecture in platforms:
+            build_dir = os.path.join(temporary, architecture or "native")
+            command = [cmake, "-S", source, "-B", build_dir]
+            if generator:
+                command.extend(["-G", generator])
+            if architecture:
+                command.extend(["-A", architecture])
+            if instance:
+                command.append(f"-DCMAKE_GENERATOR_INSTANCE={instance}")
+            print(f"Checking package toolchain ({architecture or 'native'})...", flush=True)
+            try:
+                run(command)
+            except subprocess.CalledProcessError as error:
+                raise ValueError(
+                    f"Toolchain check failed ({architecture or 'native'}, "
+                    f"exit {error.returncode}).\n"
+                    "  See the CMake error above. Install the required C++ tools and Windows SDK;\n"
+                    "  use --cmake or --generator to select a different installed toolchain.\n"
+                    "  NMake/Ninja require an x64 developer prompt "
+                    "and --skip-x86-tsf --skip-nsis.\n"
+                    "  Existing build and package outputs have not been removed."
+                ) from error
+            selected = read_cmake_cache(build_dir, "CMAKE_GENERATOR")
+            if not selected:
+                raise ValueError("CMake did not record a generator during the toolchain check.")
+            validate_build_options(selected, platform, include_x86_modules)
+            generator = selected
+            instance = read_cmake_cache(build_dir, "CMAKE_GENERATOR_INSTANCE") or None
+            if generator.startswith("Visual Studio ") and not instance:
+                raise ValueError("CMake did not record the selected Visual Studio instance.")
+    print(f"  Selected generator: {generator}")
+    if instance:
+        print(f"  Visual Studio instance: {instance}")
+    return generator, platform, instance
 
 
 def is_child_path(parent: str, child: str) -> bool:
     """Return true if child is strictly inside parent."""
-    parent_abs = os.path.normcase(os.path.abspath(parent))
-    child_abs = os.path.normcase(os.path.abspath(child))
+    parent_abs = os.path.normcase(os.path.realpath(parent))
+    child_abs = os.path.normcase(os.path.realpath(child))
     try:
         return os.path.commonpath([parent_abs, child_abs]) == parent_abs and child_abs != parent_abs
     except ValueError:
         return False
 
 
+def validate_package_paths(build_dirs: list[str], output_dir: str, rebuild: bool) -> None:
+    """Protect package inputs and parallel tasks before any cleanup begins."""
+    paths = [*build_dirs, DIST_DIR, output_dir, DATA, SCRIPTS]
+    for path in [*paths, os.path.join(DIST_DIR, "data")]:
+        if os.path.normcase(os.path.realpath(path)) != os.path.normcase(os.path.abspath(path)):
+            raise ValueError(f"Refusing a redirected package path: {path}")
+    for index, path in enumerate(paths):
+        for other in paths[index + 1:]:
+            same_path = os.path.normcase(os.path.realpath(path)) == os.path.normcase(
+                os.path.realpath(other)
+            )
+            if same_path or is_child_path(path, other) or is_child_path(other, path):
+                raise ValueError(f"Package paths must not overlap: {path} and {other}")
+    if not rebuild:
+        return
+    for build_dir in build_dirs:
+        if not is_child_path(ROOT, build_dir):
+            raise ValueError(f"Build cleanup must stay inside the repository: {build_dir}")
+        ancestor = os.path.abspath(build_dir)
+        while os.path.normcase(ancestor) != os.path.normcase(os.path.abspath(ROOT)):
+            if os.path.isfile(os.path.join(ancestor, "CMakeLists.txt")):
+                raise ValueError(f"Refusing to clean a source directory: {build_dir}")
+            ancestor = os.path.dirname(ancestor)
+        if not os.path.exists(build_dir):
+            continue
+        if not os.path.isdir(build_dir):
+            raise ValueError(f"Build path is not a directory: {build_dir}")
+        if os.listdir(build_dir):
+            source = read_cmake_cache(build_dir, "CMAKE_HOME_DIRECTORY")
+            if (
+                not source
+                or os.path.normcase(os.path.realpath(source)) != os.path.normcase(ROOT)
+            ):
+                raise ValueError(f"Refusing to clean an unrecognized build directory: {build_dir}")
+
+
 def recreate_build_dir(build_dir: str) -> None:
-    """Recreate a package build directory from scratch."""
-    if not is_child_path(ROOT, build_dir):
-        print(f"  ERROR: refusing to delete build directory outside repository: {build_dir}", file=sys.stderr)
-        sys.exit(1)
+    """Recreate a build directory already validated before starting package tasks."""
 
     if os.path.exists(build_dir):
         print(f"Recreating build directory: {build_dir}")
@@ -154,22 +260,29 @@ def recreate_build_dir(build_dir: str) -> None:
         print(f"Creating build directory: {build_dir}")
 
 
-def read_cmake_cache_bool(build_dir: str, name: str) -> bool | None:
-    """Read a BOOL entry from an existing CMake cache."""
+def read_cmake_cache(build_dir: str, name: str) -> str | None:
+    """Read a cache entry without depending on its CMake type."""
     cache_path = os.path.join(build_dir, "CMakeCache.txt")
     try:
         with open(cache_path, encoding="utf-8", errors="replace") as cache:
-            prefix = f"{name}:BOOL="
+            prefix = f"{name}:"
             for line in cache:
                 if line.startswith(prefix):
-                    value = line[len(prefix):].strip().upper()
-                    if value in {"1", "ON", "TRUE", "YES", "Y"}:
-                        return True
-                    if value in {"0", "OFF", "FALSE", "NO", "N", "IGNORE", "NOTFOUND"}:
-                        return False
-                    return None
+                    return line.partition("=")[2].strip()
     except OSError:
         return None
+    return None
+
+
+def read_cmake_cache_bool(build_dir: str, name: str) -> bool | None:
+    """Read a Boolean option from an existing CMake cache."""
+    value = read_cmake_cache(build_dir, name)
+    if value is not None:
+        value = value.upper()
+        if value in {"1", "ON", "TRUE", "YES", "Y"}:
+            return True
+        if value in {"0", "OFF", "FALSE", "NO", "N", "IGNORE", "NOTFOUND"}:
+            return False
     return None
 
 
@@ -201,10 +314,12 @@ def verify_prebuilt_host_mode(build_dir: str, host_diagnostics: bool) -> None:
 def build(
     build_dir: str,
     config: str,
+    cmake: str,
     skip_tests: bool = False,
     skip_tools: bool = False,
     generator: str | None = None,
     platform: str | None = None,
+    instance: str | None = None,
     target: str | None = None,
     jobs: int = 1,
     host_diagnostics: bool = False,
@@ -213,14 +328,8 @@ def build(
     print(f"Building {config} with PRODUCTION=ON...")
     jobs = max(1, jobs)
 
-    generator, platform = choose_cmake_generator(generator, platform)
     if generator:
         print(f"  CMake generator: {generator}")
-    single_config = is_single_config_generator(generator)
-    if single_config:
-        platform = None
-    elif supports_cmake_platform(generator) and not platform:
-        platform = "x64"
     if platform:
         print(f"  CMake platform:  {platform}")
 
@@ -228,13 +337,15 @@ def build(
     os.makedirs(build_dir, exist_ok=True)
 
     cmake_args = [
-        "cmake", "-S", ROOT, "-B", build_dir,
+        cmake, "-S", ROOT, "-B", build_dir,
         "-DCXXIME_PRODUCTION_BUILD=ON",
     ]
     if generator:
         cmake_args.extend(["-G", generator])
     if platform:
         cmake_args.extend(["-A", platform])
+    if instance:
+        cmake_args.append(f"-DCMAKE_GENERATOR_INSTANCE={instance}")
     cmake_args.append(f"-DCXXIME_BUILD_TESTS={'OFF' if skip_tests else 'ON'}")
     cmake_args.append(f"-DCXXIME_BUILD_TOOLS={'OFF' if skip_tools else 'ON'}")
     cmake_args.append(
@@ -243,55 +354,54 @@ def build(
     cmake_args.append(
         f"-DCXXIME_BUILD_HOST_PROBE={'ON' if host_diagnostics else 'OFF'}"
     )
-    if single_config:
-        cmake_args.append(f"-DCMAKE_BUILD_TYPE={config}")
-        build_cmd = ["cmake", "--build", build_dir]
-    else:
-        build_cmd = ["cmake", "--build", build_dir, "--config", config]
+    build_cmd = [cmake, "--build", build_dir, "--config", config]
     if target:
         build_cmd.extend(["--target", target])
     build_cmd.extend(["--parallel", str(jobs)])
     print(f"  Build parallelism: {jobs}")
 
-    run(cmake_args)
-    run(build_cmd)
+    configure_env = os.environ.copy()
+    configure_env["CXXIME_BUILD_CONFIG"] = config
+    try:
+        run(cmake_args, env=configure_env)
+    except subprocess.CalledProcessError as error:
+        raise RuntimeError(
+            f"CMake configuration failed (exit {error.returncode}).\n"
+            f"  Command: {subprocess.list2cmdline(cmake_args)}\n"
+            "  Check the original CMake error above: the selected generator must be supported\n"
+            "  by this CMake, and its C++ tools and Windows SDK must be installed.\n"
+            "  NMake/Ninja also require the matching developer prompt.\n"
+            f"  Configure logs, when generated: {os.path.join(build_dir, 'CMakeFiles')}\n"
+            "  (CMakeConfigureLog.yaml or CMakeError.log/CMakeOutput.log)."
+        ) from error
+    try:
+        run(build_cmd)
+    except subprocess.CalledProcessError as error:
+        raise RuntimeError(
+            f"Compilation failed (exit {error.returncode}); see the compiler error above.\n"
+            f"  Retry command: {subprocess.list2cmdline(build_cmd)}"
+        ) from error
 
 
 def build_x86_platform_modules(
     build_dir: str,
     config: str,
+    cmake: str,
     generator: str | None = None,
+    instance: str | None = None,
     jobs: int = 1,
     host_diagnostics: bool = False,
 ) -> None:
     """Build the 32-bit in-process IME modules with a platform-aware generator."""
-    generator, _ = choose_cmake_generator(generator, None)
-    if generator and is_single_config_generator(generator):
-        print(
-            "  ERROR: x86 IME packaging requires a platform-aware CMake generator "
-            "(for example Visual Studio) or an explicit 32-bit native build.",
-            file=sys.stderr,
-        )
-        print(
-            "  Use --generator \"Visual Studio 17 2022\" --platform x64 for release "
-            "packaging, or --skip-x86-tsf --skip-nsis for local dist-only checks.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-    if generator and not supports_cmake_platform(generator):
-        print(
-            f"  ERROR: x86 IME packaging requires a generator with -A support, got: {generator}",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
     build(
         build_dir,
         config,
+        cmake,
         skip_tests=True,
         skip_tools=True,
         generator=generator,
         platform="Win32",
+        instance=instance,
         target="cxxime-platform-modules",
         jobs=jobs,
         host_diagnostics=host_diagnostics,
@@ -857,8 +967,13 @@ def main():
         help="Build and package host diagnostics and the IME host Probe",
     )
     parser.add_argument(
+        "--cmake",
+        help="CMake executable (default: CXXIME_CMAKE, then cmake on PATH)",
+    )
+    parser.add_argument(
         "--generator",
-        help="CMake generator (default: let CMake choose, or use CMAKE_GENERATOR)",
+        help="CMake generator (or CXXIME_CMAKE_GENERATOR/CMAKE_GENERATOR; "
+             "default: CMake selection)",
     )
     parser.add_argument(
         "--platform",
@@ -885,8 +1000,22 @@ def main():
     build_dir = os.path.abspath(args.build_dir)
     x86_build_dir = os.path.abspath(args.x86_build_dir)
     output_dir = os.path.abspath(args.output_dir)
-    if not args.skip_x86_tsf and os.path.normcase(build_dir) == os.path.normcase(x86_build_dir):
-        parser.error("--x86-build-dir must be different from --build-dir")
+    build_dirs = [build_dir] if args.skip_x86_tsf else [build_dir, x86_build_dir]
+    cmake = None
+    generator = None
+    platform = None
+    instance = None
+    try:
+        validate_package_paths(build_dirs, output_dir, rebuild=not args.skip_build)
+        if not args.skip_build:
+            generator, platform = choose_cmake_generator(args.generator, args.platform)
+            platform = validate_build_options(generator, platform, not args.skip_x86_tsf)
+            cmake = resolve_cmake(args.cmake)
+            generator, platform, instance = resolve_build_toolchain(
+                cmake, generator, platform, not args.skip_x86_tsf,
+            )
+    except (ValueError, OSError, subprocess.CalledProcessError) as error:
+        parser.error(str(error))
     if args.skip_build:
         verify_prebuilt_host_mode(build_dir, args.host_diag)
         if not args.skip_x86_tsf:
@@ -928,10 +1057,12 @@ def main():
                     build,
                     build_dir,
                     config,
+                    cmake,
                     skip_tests=args.skip_tests,
                     skip_tools=args.skip_tools,
-                    generator=args.generator,
-                    platform=args.platform,
+                    generator=generator,
+                    platform=platform,
+                    instance=instance,
                     jobs=x64_jobs,
                     host_diagnostics=args.host_diag,
                 ),
@@ -944,7 +1075,9 @@ def main():
                         build_x86_platform_modules,
                         x86_build_dir,
                         config,
-                        generator=args.generator,
+                        cmake,
+                        generator=generator,
+                        instance=instance,
                         jobs=x86_jobs,
                         host_diagnostics=args.host_diag,
                     ),

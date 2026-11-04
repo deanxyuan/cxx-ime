@@ -22,7 +22,8 @@ jobs:
     runs-on: windows-2022
     timeout-minutes: 60
     env:
-      CMAKE_BUILD_PARALLEL_LEVEL: "4"
+      CMAKE_GENERATOR: "Visual Studio 17 2022"
+      CMAKE_GENERATOR_PLATFORM: "x64"
 
     steps:
       - name: Check out source
@@ -34,8 +35,11 @@ jobs:
           python-version: "3.13"
 
       - name: Build
-        shell: cmd
-        run: build.bat
+        shell: pwsh
+        run: |
+          $env:CMAKE_BUILD_PARALLEL_LEVEL = [Environment]::ProcessorCount
+          .\build.bat
+          exit $LASTEXITCODE
 
       - name: Prepare test dictionaries
         shell: pwsh

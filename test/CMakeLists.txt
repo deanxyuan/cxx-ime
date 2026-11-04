@@ -503,132 +503,135 @@ target_include_directories(session_manager_integration_test PRIVATE
 )
 target_link_libraries(session_manager_integration_test PRIVATE cxxime-ui comctl32.lib)
 
-find_package(Python3 QUIET)
-if(Python3_FOUND)
-    add_test(
-        NAME install_payload_test
-        COMMAND ${Python3_EXECUTABLE}
-                ${CMAKE_CURRENT_SOURCE_DIR}/installer/install_payload_test.py
-    )
-    add_test(
-        NAME installer_flow_test
-        COMMAND ${Python3_EXECUTABLE}
-                ${CMAKE_CURRENT_SOURCE_DIR}/installer/installer_flow_test.py
-    )
-    add_test(
-        NAME dictionary_format_verifier_test
-        COMMAND ${Python3_EXECUTABLE}
-                ${CMAKE_CURRENT_SOURCE_DIR}/data/dictionary_format_verifier_test.py
-    )
-    add_test(
-        NAME reverse_index_pipeline_test
-        COMMAND ${Python3_EXECUTABLE}
-                ${CMAKE_CURRENT_SOURCE_DIR}/data/reverse_index_pipeline_test.py
-    )
-    add_test(
-        NAME dictionary_symbol_policy_test
-        COMMAND ${Python3_EXECUTABLE}
-                ${CMAKE_CURRENT_SOURCE_DIR}/data/dictionary_symbol_policy_test.py
-    )
-    add_test(
-        NAME symbol_catalog_test
-        COMMAND ${Python3_EXECUTABLE}
-                ${CMAKE_CURRENT_SOURCE_DIR}/data/symbol_catalog_test.py
-    )
-    add_test(
-        NAME unicode_classification_generator_test
-        COMMAND ${Python3_EXECUTABLE}
-                ${CMAKE_CURRENT_SOURCE_DIR}/data/unicode_classification_generator_test.py
-    )
-    add_test(
-        NAME wubi_prefix_index_test
-        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/data/wubi_prefix_index_test.py
-    )
-    add_test(
-        NAME wubi_symbol_ranking_test
-        COMMAND ${Python3_EXECUTABLE}
-                ${CMAKE_CURRENT_SOURCE_DIR}/data/wubi_symbol_ranking_test.py
-    )
-    add_test(
-        NAME pinyin_topn_pipeline_test
-        COMMAND ${Python3_EXECUTABLE}
-                ${CMAKE_CURRENT_SOURCE_DIR}/data/pinyin_topn_pipeline_test.py
-                --topn-builder $<TARGET_FILE:topn_builder>
-    )
-    add_test(
-        NAME pinyin_spelling_schema_test
-        COMMAND ${Python3_EXECUTABLE}
-                ${CMAKE_CURRENT_SOURCE_DIR}/data/pinyin_spelling_schema_test.py
-    )
-    set(SHUANGPIN_SCHEMA_FIXTURE
-        ${CMAKE_CURRENT_BINARY_DIR}/generated/pinyin.synthetic.spellings.bin
+find_package(Python3 3.10 COMPONENTS Interpreter REQUIRED)
+add_test(
+    NAME build_entry_test
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/scripts/build_entry_test.py ${CMAKE_COMMAND}
+)
+add_test(
+    NAME install_payload_test
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/installer/install_payload_test.py
+)
+add_test(
+    NAME installer_flow_test
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/installer/installer_flow_test.py
+)
+add_test(
+    NAME dictionary_format_verifier_test
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/data/dictionary_format_verifier_test.py
+)
+add_test(
+    NAME reverse_index_pipeline_test
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/data/reverse_index_pipeline_test.py
+)
+add_test(
+    NAME dictionary_symbol_policy_test
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/data/dictionary_symbol_policy_test.py
+)
+add_test(
+    NAME symbol_catalog_test
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/data/symbol_catalog_test.py
+)
+add_test(
+    NAME unicode_classification_generator_test
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/data/unicode_classification_generator_test.py
+)
+add_test(
+    NAME wubi_prefix_index_test
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/data/wubi_prefix_index_test.py
+)
+add_test(
+    NAME wubi_symbol_ranking_test
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/data/wubi_symbol_ranking_test.py
+)
+add_test(
+    NAME pinyin_topn_pipeline_test
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/data/pinyin_topn_pipeline_test.py
+            --topn-builder $<TARGET_FILE:topn_builder>
+)
+add_test(
+    NAME pinyin_spelling_schema_test
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/data/pinyin_spelling_schema_test.py
+)
+set(SHUANGPIN_SCHEMA_FIXTURE
+    ${CMAKE_CURRENT_BINARY_DIR}/generated/pinyin.synthetic.spellings.bin
+)
+add_custom_command(
+    OUTPUT ${SHUANGPIN_SCHEMA_FIXTURE}
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/data/generate_shuangpin_schema_fixture.py
+            --schema
+            ${CMAKE_CURRENT_SOURCE_DIR}/data/pinyin.synthetic-shuangpin.schema.json
+            --syllable ni
+            --syllable hao
+            --output ${SHUANGPIN_SCHEMA_FIXTURE}
+    DEPENDS
+        ${CMAKE_CURRENT_SOURCE_DIR}/data/generate_shuangpin_schema_fixture.py
+        ${CMAKE_CURRENT_SOURCE_DIR}/data/pinyin.synthetic-shuangpin.schema.json
+        ${CMAKE_SOURCE_DIR}/data/tools/generate_pinyin_spellings.py
+        ${CMAKE_SOURCE_DIR}/data/tools/dict_builder/pinyin_spellings.py
+    VERBATIM
+)
+set(PRODUCTION_SHUANGPIN_SCHEMES microsoft xiaohe ziranma sogou)
+set(PRODUCTION_SHUANGPIN_SCHEMA_FIXTURES)
+foreach(SCHEME IN LISTS PRODUCTION_SHUANGPIN_SCHEMES)
+    string(TOUPPER ${SCHEME} SCHEME_UPPER)
+    set(${SCHEME_UPPER}_SHUANGPIN_SCHEMA_FIXTURE
+        ${CMAKE_CURRENT_BINARY_DIR}/generated/pinyin.${SCHEME}-shuangpin.spellings.bin
     )
     add_custom_command(
-        OUTPUT ${SHUANGPIN_SCHEMA_FIXTURE}
+        OUTPUT ${${SCHEME_UPPER}_SHUANGPIN_SCHEMA_FIXTURE}
         COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/data/generate_shuangpin_schema_fixture.py
                 --schema
-                ${CMAKE_CURRENT_SOURCE_DIR}/data/pinyin.synthetic-shuangpin.schema.json
-                --syllable ni
-                --syllable hao
-                --output ${SHUANGPIN_SCHEMA_FIXTURE}
+                ${CMAKE_SOURCE_DIR}/data/schemas/pinyin.${SCHEME}-shuangpin.schema.json
+                --dictionary-archive ${CMAKE_SOURCE_DIR}/data/pinyin.dict.db.zip
+                --output ${${SCHEME_UPPER}_SHUANGPIN_SCHEMA_FIXTURE}
         DEPENDS
             ${CMAKE_CURRENT_SOURCE_DIR}/data/generate_shuangpin_schema_fixture.py
-            ${CMAKE_CURRENT_SOURCE_DIR}/data/pinyin.synthetic-shuangpin.schema.json
+            ${CMAKE_SOURCE_DIR}/data/schemas/pinyin.${SCHEME}-shuangpin.schema.json
+            ${CMAKE_SOURCE_DIR}/data/pinyin.dict.db.zip
             ${CMAKE_SOURCE_DIR}/data/tools/generate_pinyin_spellings.py
             ${CMAKE_SOURCE_DIR}/data/tools/dict_builder/pinyin_spellings.py
         VERBATIM
     )
-    set(PRODUCTION_SHUANGPIN_SCHEMES microsoft xiaohe ziranma sogou)
-    set(PRODUCTION_SHUANGPIN_SCHEMA_FIXTURES)
-    foreach(SCHEME IN LISTS PRODUCTION_SHUANGPIN_SCHEMES)
-        string(TOUPPER ${SCHEME} SCHEME_UPPER)
-        set(${SCHEME_UPPER}_SHUANGPIN_SCHEMA_FIXTURE
-            ${CMAKE_CURRENT_BINARY_DIR}/generated/pinyin.${SCHEME}-shuangpin.spellings.bin
-        )
-        add_custom_command(
-            OUTPUT ${${SCHEME_UPPER}_SHUANGPIN_SCHEMA_FIXTURE}
-            COMMAND ${Python3_EXECUTABLE}
-                    ${CMAKE_CURRENT_SOURCE_DIR}/data/generate_shuangpin_schema_fixture.py
-                    --schema
-                    ${CMAKE_SOURCE_DIR}/data/schemas/pinyin.${SCHEME}-shuangpin.schema.json
-                    --dictionary-archive ${CMAKE_SOURCE_DIR}/data/pinyin.dict.db.zip
-                    --output ${${SCHEME_UPPER}_SHUANGPIN_SCHEMA_FIXTURE}
-            DEPENDS
-                ${CMAKE_CURRENT_SOURCE_DIR}/data/generate_shuangpin_schema_fixture.py
-                ${CMAKE_SOURCE_DIR}/data/schemas/pinyin.${SCHEME}-shuangpin.schema.json
-                ${CMAKE_SOURCE_DIR}/data/pinyin.dict.db.zip
-                ${CMAKE_SOURCE_DIR}/data/tools/generate_pinyin_spellings.py
-                ${CMAKE_SOURCE_DIR}/data/tools/dict_builder/pinyin_spellings.py
-            VERBATIM
-        )
-        list(APPEND PRODUCTION_SHUANGPIN_SCHEMA_FIXTURES
-            ${${SCHEME_UPPER}_SHUANGPIN_SCHEMA_FIXTURE}
-        )
-    endforeach()
-    add_custom_target(shuangpin_schema_fixture DEPENDS
-        ${SHUANGPIN_SCHEMA_FIXTURE}
-        ${PRODUCTION_SHUANGPIN_SCHEMA_FIXTURES}
+    list(APPEND PRODUCTION_SHUANGPIN_SCHEMA_FIXTURES
+        ${${SCHEME_UPPER}_SHUANGPIN_SCHEMA_FIXTURE}
     )
-    add_cxxime_test(shuangpin_schema_runtime_test
-        SOURCES engine/shuangpin_schema_runtime_test.cc
-        DEPS cxxime-engine
+endforeach()
+add_custom_target(shuangpin_schema_fixture DEPENDS
+    ${SHUANGPIN_SCHEMA_FIXTURE}
+    ${PRODUCTION_SHUANGPIN_SCHEMA_FIXTURES}
+)
+add_cxxime_test(shuangpin_schema_runtime_test
+    SOURCES engine/shuangpin_schema_runtime_test.cc
+    DEPS cxxime-engine
+)
+add_dependencies(shuangpin_schema_runtime_test shuangpin_schema_fixture)
+target_compile_definitions(shuangpin_schema_runtime_test PRIVATE
+    CXXIME_SYNTHETIC_SHUANGPIN_PATH="${SHUANGPIN_SCHEMA_FIXTURE}"
+    CXXIME_MICROSOFT_SHUANGPIN_PATH="${MICROSOFT_SHUANGPIN_SCHEMA_FIXTURE}"
+    CXXIME_XIAOHE_SHUANGPIN_PATH="${XIAOHE_SHUANGPIN_SCHEMA_FIXTURE}"
+    CXXIME_ZIRANMA_SHUANGPIN_PATH="${ZIRANMA_SHUANGPIN_SCHEMA_FIXTURE}"
+    CXXIME_SOGOU_SHUANGPIN_PATH="${SOGOU_SHUANGPIN_SCHEMA_FIXTURE}"
+)
+find_program(POWERSHELL_EXECUTABLE powershell)
+if(POWERSHELL_EXECUTABLE)
+    add_test(
+        NAME host_trace_tools_test
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tools/host_trace_tools_test.py
+                --powershell ${POWERSHELL_EXECUTABLE}
     )
-    add_dependencies(shuangpin_schema_runtime_test shuangpin_schema_fixture)
-    target_compile_definitions(shuangpin_schema_runtime_test PRIVATE
-        CXXIME_SYNTHETIC_SHUANGPIN_PATH="${SHUANGPIN_SCHEMA_FIXTURE}"
-        CXXIME_MICROSOFT_SHUANGPIN_PATH="${MICROSOFT_SHUANGPIN_SCHEMA_FIXTURE}"
-        CXXIME_XIAOHE_SHUANGPIN_PATH="${XIAOHE_SHUANGPIN_SCHEMA_FIXTURE}"
-        CXXIME_ZIRANMA_SHUANGPIN_PATH="${ZIRANMA_SHUANGPIN_SCHEMA_FIXTURE}"
-        CXXIME_SOGOU_SHUANGPIN_PATH="${SOGOU_SHUANGPIN_SCHEMA_FIXTURE}"
-    )
-    find_program(POWERSHELL_EXECUTABLE powershell)
-    if(POWERSHELL_EXECUTABLE)
-        add_test(
-            NAME host_trace_tools_test
-            COMMAND ${Python3_EXECUTABLE}
-                    ${CMAKE_CURRENT_SOURCE_DIR}/tools/host_trace_tools_test.py
-                    --powershell ${POWERSHELL_EXECUTABLE}
-        )
-    endif()
 endif()

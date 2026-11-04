@@ -1,6 +1,7 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
 #include <chrono>
+#include <cstdio>
 #include <string>
 #include <vector>
 
@@ -54,6 +55,29 @@ void expect_exit(HANDLE process, DWORD expected) {
     DWORD code = 0;
     ASSERT_TRUE(GetExitCodeProcess(process, &code));
     ASSERT_EQ(code, expected);
+}
+
+DWORD remove_test_executable(const std::wstring& path) {
+    // Call only after all launched processes have exited and their handles are closed.
+    // Other file users can still briefly deny deletion; never hide a persistent failure.
+    const auto deadline = GetTickCount64() + 3000;
+    DWORD first_error = ERROR_SUCCESS;
+    for (;;) {
+        if (DeleteFileW(path.c_str())) {
+            return ERROR_SUCCESS;
+        }
+        const DWORD error = GetLastError();
+        if (first_error == ERROR_SUCCESS) {
+            first_error = error;
+            fprintf(stderr, " temporary executable cleanup: error=%lu path=%ls\n", error,
+                    path.c_str());
+        }
+        if ((error != ERROR_SHARING_VIOLATION && error != ERROR_ACCESS_DENIED) ||
+            GetTickCount64() >= deadline) {
+            return error;
+        }
+        Sleep(20);
+    }
 }
 
 std::wstring test_directory(const std::wstring& name) {
@@ -389,8 +413,10 @@ TEST(ServerLifecycle, registered_and_installer_launch_use_real_paths_arguments_a
     RegCloseKey(install);
     RegCloseKey(root);
     ASSERT_EQ(RegDeleteTreeW(HKEY_CURRENT_USER, registry_root(name).c_str()), ERROR_SUCCESS);
-    ASSERT_TRUE(DeleteFileW(executable.c_str()));
-    ASSERT_TRUE(RemoveDirectoryW(directory.c_str()));
+    ASSERT_EQ(remove_test_executable(executable), static_cast<DWORD>(ERROR_SUCCESS)) << executable;
+    const BOOL directory_removed = RemoveDirectoryW(directory.c_str());
+    const DWORD directory_error = directory_removed ? ERROR_SUCCESS : GetLastError();
+    ASSERT_EQ(directory_error, static_cast<DWORD>(ERROR_SUCCESS)) << directory;
 }
 
 int wmain(int argc, wchar_t** argv) {

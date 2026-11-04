@@ -12,6 +12,7 @@ python scripts\package.py
 ```
 
 `package.py` 负责构建程序、准备词典 bundle、复制项目与第三方许可证、验证数据并生成安装包。
+默认由 CMake 选择工具链，无需先设置环境变量；打包前检查 x64/Win32 并固定同一 VS 实例。
 常用参数：
 
 ```bat
