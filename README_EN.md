@@ -38,7 +38,7 @@ Candidate window theme previews (6 palettes × light/dark):
 
 ## Installation
 
-1. Download `cxxime-v<version>-setup.exe` from [Releases](https://github.com/deanxyuan/cxx-ime/releases) and follow the wizard
+1. Download `cxxime-v<version>-setup.exe` and follow the wizard
 2. **Log off and log back on** after installation (the TSF text service is only loaded at logon)
 3. Switch to CxxIME with `Ctrl+Space` or `Win+Space`
 

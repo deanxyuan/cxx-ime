@@ -38,7 +38,7 @@ CxxIME 是一款基于 Windows TSF（Text Services Framework）的轻量级输�
 
 ## 安装
 
-1. 从 [Releases](https://github.com/deanxyuan/cxx-ime/releases) 下载 `cxxime-v<版本>-setup.exe`，按向导完成安装
+1. 下载 `cxxime-v<版本>-setup.exe`，按向导完成安装
 2. 安装完成后**注销并重新登录**（TSF 文本服务需要重新登录才会被系统加载）
 3. 通过 `Ctrl+Space` 或 `Win+Space` 切换到 CxxIME
 
