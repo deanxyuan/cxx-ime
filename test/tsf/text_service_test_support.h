@@ -213,6 +213,15 @@ struct TextServiceTestPeer {
         return service._uiTargetGeneration;
     }
     static uint64_t caret_sample(const TextService& service) { return service._caretSampleSerial; }
+    static void cache_caret(TextService& service, const RECT& rect) {
+        service._caretRect = rect;
+        service._caretRectTargetGeneration = service._uiTargetGeneration;
+    }
+    static void settle_caret(TextService& service) {
+        service._candidatePresentation.settle_caret(
+            cxxime_tsf::CandidatePresentation::Clock::now() + std::chrono::seconds(1));
+        service._publish_ui_presentation();
+    }
     static void change_target_generation(TextService& service) { ++service._uiTargetGeneration; }
     static UINT poll_without_status(TextService& service) {
         service._activated = true;
@@ -226,26 +235,29 @@ struct TextServiceTestPeer {
         service._inputFocused = false;
         return interval;
     }
-    static void age_caret_wait(TextService& service) {
-        service._candidatePresentation.begin_waiting_for_caret(
-            false, nullptr,
-            cxxime_tsf::CandidatePresentation::Clock::now() - std::chrono::seconds(1));
-    }
     static void expire_caret_wait(TextService& service) {
-        ASSERT_TRUE(service._candidatePresentation.expire_caret_wait(
-            cxxime_tsf::CandidatePresentation::Clock::now() + std::chrono::seconds(1)));
+        service._candidatePresentation.settle_caret(
+            cxxime_tsf::CandidatePresentation::Clock::now() + std::chrono::seconds(1));
+        ASSERT_TRUE(!service._candidatePresentation.caret_poll_pending());
     }
     static bool caret_poll_pending(const TextService& service) {
         return service._candidatePresentation.caret_poll_pending();
     }
     static void age_initial_layout(TextService& service, const RECT& provisional) {
-        service._candidatePresentation.begin_waiting_for_initial_layout(
-            provisional, cxxime_tsf::CandidatePresentation::Clock::now() - std::chrono::seconds(1));
+        const auto start =
+            cxxime_tsf::CandidatePresentation::Clock::now() - std::chrono::seconds(1);
+        service._candidatePresentation.begin_positioning(false, start);
+        service._candidatePresentation.observe_caret(
+            {provisional, {}, cxxime_tsf::CaretSource::TextExtent}, service._uiTargetGeneration,
+            start);
     }
-    static void age_completed_restart(TextService& service) {
+    static void age_completed_restart(TextService& service, const RECT* saved = nullptr) {
         const auto started =
             cxxime_tsf::CandidatePresentation::Clock::now() - std::chrono::seconds(1);
-        service._candidatePresentation.begin_composition_restart(started);
+        service._candidatePresentation.begin_positioning(true, started);
+        if (saved) {
+            service.record_caret_position({*saved, {}, cxxime_tsf::CaretSource::TextExtent});
+        }
         ASSERT_TRUE(service._candidatePresentation.complete_composition_restart(
             service._candidatePresentation.generation(), started));
     }

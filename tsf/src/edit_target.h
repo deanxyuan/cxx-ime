@@ -28,11 +28,35 @@ struct TextExtRectTrace {
     bool caret_map_ok = false;
 };
 
-enum class CaretViewportFallback : uint8_t {
+enum class CaretSource : uint8_t {
     None = 0,
     Anchor,
     Projected,
     Boundary,
+    TextExtent,
+    Native,
+    WindowFallback,
+};
+
+struct CaretPosition {
+    RECT rect = {};
+    RECT view_rect = {};
+    CaretSource source = CaretSource::None;
+    bool clipped = false;
+
+    bool valid() const { return source != CaretSource::None; }
+    bool real() const { return source == CaretSource::Native || source == CaretSource::TextExtent; }
+    bool observed() const {
+        return real() || source == CaretSource::Projected || source == CaretSource::Boundary;
+    }
+    bool has_view() const {
+        return view_rect.right > view_rect.left && view_rect.bottom > view_rect.top;
+    }
+};
+
+struct CaretRequest {
+    std::uint64_t presentation_generation = 0;
+    std::uint64_t target_generation = 0;
 };
 
 class CaretViewportTracker {
@@ -40,11 +64,11 @@ public:
     bool remember(std::uint64_t target_generation,
                   const RECT& view_rect,
                   const RECT& caret_rect);
-    CaretViewportFallback resolve(std::uint64_t target_generation,
-                                  const RECT* view_rect,
-                                  const RECT* logical_rect,
-                                  bool clipped,
-                                  RECT* caret_rect) const;
+    CaretSource resolve(std::uint64_t target_generation,
+                        const RECT* view_rect,
+                        const RECT* logical_rect,
+                        bool clipped,
+                        RECT* caret_rect) const;
 
 private:
     std::uint64_t target_generation_ = 0;

@@ -440,68 +440,23 @@ void TextService::_poll_runtime_state() {
          _candidatePresentation.waiting_for_caret()) {
         _follow_native_caret();
     }
-    RECT provisional_rect = {};
-    if (_candidatePresentation.external_window_expected() &&
-        _candidatePresentation.accept_provisional_caret_after_timeout(
-            cxxime_tsf::CandidatePresentation::Clock::now(), &provisional_rect)) {
-        set_caret_rect(provisional_rect);
-        _observe_candidate_caret();
-        trace_caret_event("initial_timeout", "provisional", true, &provisional_rect, S_FALSE,
-                          true);
+    const auto now = cxxime_tsf::CandidatePresentation::Clock::now();
+    ITfContext* context = _current_edit_context_for_composition();
+    if (context && _candidatePresentation.needs_caret_fallback(now)) {
+        const auto request = caret_request();
+        const auto fallback = _resolve_caret_position(context);
+        update_candidate_position(fallback, context, request);
+    }
+    if (_candidatePresentation.settle_caret(now)) {
+        const RECT& settled = _candidatePresentation.displayed_caret();
+        trace_caret_event("position_timeout", "bounded_fallback", true, &settled, S_FALSE, true);
         _publish_ui_presentation();
     }
-    if (_candidatePresentation.external_window_expected() &&
-        _candidatePresentation.caret_jump_pending() &&
-        !_candidatePresentation.waiting_for_caret() &&
-        _candidatePresentation.accept_pending_caret_after_timeout(
-            cxxime_tsf::CandidatePresentation::Clock::now())) {
-        trace_caret_event("jump_timeout", "stabilizer", true, &_caretRect, S_FALSE, true);
-        _publish_ui_presentation();
-    }
-    if (_candidatePresentation.external_window_expected() &&
-        _candidatePresentation.caret_jump_pending() &&
-        !_candidatePresentation.waiting_for_caret()) {
-        ITfContext* context = _current_edit_context_for_composition();
-        if (context) {
-            _request_candidate_position_update(context, "caret_jump_confirm");
-            context->Release();
+    if (context) {
+        if (_candidatePresentation.caret_poll_pending()) {
+            _request_candidate_position_update(context, "position_confirm");
         }
-    }
-    if (_candidatePresentation.external_window_expected() &&
-        _candidatePresentation.waiting_for_caret()) {
-        const auto now = cxxime_tsf::CandidatePresentation::Clock::now();
-        const bool fallback_due = _candidatePresentation.pending_caret_fallback_due(
-            now, static_cast<int>(kStatePollFastIntervalMs));
-        const bool expired = _candidatePresentation.expire_caret_wait(now);
-        ITfContext* context = _current_edit_context_for_composition();
-        if (context) {
-            if (fallback_due) {
-                RECT fallback_rect = _resolve_caret_rect(context);
-                const bool resolved = cxxime_tsf::is_valid_caret_rect(fallback_rect);
-                trace_caret_event("pending_timeout", "fallback", resolved, &fallback_rect,
-                                  resolved ? S_FALSE : E_FAIL, true);
-                if (resolved) {
-                    update_candidate_position(fallback_rect, context, false,
-                                              _candidatePresentation.generation());
-                }
-            }
-            if (expired && _candidatePresentation.waiting_for_caret() &&
-                _caretRectTargetGeneration == _uiTargetGeneration &&
-                _context_matches_effective_edit_target(context) &&
-                cxxime_tsf::is_valid_caret_rect(_caretRect) &&
-                _candidatePresentation.accept_caret(_candidatePresentation.generation())) {
-                // Finalize an observed extent without manufacturing a new caret sample.
-                _observe_candidate_caret();
-                _publish_ui_presentation();
-            }
-            if (!expired && _candidatePresentation.waiting_for_caret()) {
-                _request_candidate_position_update(context, "show:pending_timeout");
-            }
-            context->Release();
-        }
-        if (expired) {
-            trace_caret_event("wait_timeout", "event_only", false, nullptr, S_FALSE, true);
-        }
+        context->Release();
     }
     _update_state_poll_timer();
 }

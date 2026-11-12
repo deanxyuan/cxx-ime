@@ -21,7 +21,6 @@ bool is_valid_caret_rect(const RECT& rc) {
 
 namespace {
 
-constexpr int kCandidatePendingFallbackDelayMs = 30;
 constexpr LONG kUnknownCaretInsetPx = 8;
 constexpr LONG kUnknownCaretHeightPx = 20;
 
@@ -85,95 +84,59 @@ bool context_view_fallback_rect(ITfContext* context, RECT* out) {
 
 }  // namespace
 
-void TextService::update_candidate_position(const RECT& rc,
-                                            ITfContext* context,
-                                            bool from_layout_change,
-                                            uint64_t expected_generation,
-                                            bool viewport_fallback) {
-    if (expected_generation != 0 &&
-        (!_candidatePresentation.generation_matches(expected_generation) ||
-         !_context_matches_effective_edit_target(context))) {
-        trace_caret_event("move", "stale_presentation", false, &rc, S_FALSE, true);
-        return;
-    }
-    if (_candidatePresentation.waiting_for_caret() &&
-        !_candidatePresentation.caret_resolution_allowed()) {
-        trace_caret_event("move", "composition_restart_pending", false, &rc, S_FALSE, true);
-        return;
-    }
-
-    RECT final_rect = rc;
-    bool resolved = cxxime_tsf::is_valid_caret_rect(final_rect);
-    bool used_trusted_caret = viewport_fallback;
-    if (!resolved) {
-        trace_caret_event("move", "invalid", false, &rc, E_INVALIDARG, true);
-        if (context && _resolve_context_native_caret_rect(context, &final_rect)) {
-            used_trusted_caret = true;
-        } else if (!_resolve_native_caret_rect(&final_rect)) {
-            return;
-        }
-        resolved = true;
-        trace_caret_event("move", "native_fallback", true, &final_rect, S_FALSE, true);
-    } else {
-        RECT native_rect = {};
-        if (context && _resolve_context_native_caret_rect(context, &native_rect)) {
-            final_rect = native_rect;
-            used_trusted_caret = true;
-        }
-    }
-
-    normalize_caret_rect_size(&final_rect);
-    set_caret_rect(final_rect);
-    const bool ui_element_only = _is_ui_element_only();
-    const bool original_ui_allowed =
-        _candidatePresentation.ownership() != cxxime_tsf::CandidateOwnership::kHost;
-    if (ui_element_only && !original_ui_allowed) {
-        trace_caret_event("move", "ui_element_only", false, &final_rect);
-        return;
-    }
-    if (_candidatePresentation.waiting_for_caret()) {
-        if (_candidatePresentation.should_keep_waiting_for_caret(
-                final_rect, from_layout_change, used_trusted_caret,
-                cxxime_tsf::CandidatePresentation::Clock::now(),
-                kCandidatePendingFallbackDelayMs,
-                cxxime_tsf::CandidatePresentation::kRepositionFallbackDelayMs)) {
-            return;
-        }
-        uint64_t generation = _candidatePresentation.generation();
-        if (expected_generation != 0) {
-            generation = expected_generation;
-        }
-        if (!_candidatePresentation.accept_caret(generation)) {
-            return;
-        }
-    }
-
-    _observe_candidate_caret();
-    trace_caret_event("move", "ui_presentation", resolved, &final_rect);
-    _publish_ui_presentation();
+bool TextService::caret_request_is_current(ITfContext* context,
+                                           const cxxime_tsf::CaretRequest& request) const {
+    return _context_matches_effective_edit_target(context) &&
+           _candidatePresentation.generation_matches(request.presentation_generation) &&
+           _uiTargetGeneration == request.target_generation;
 }
 
-void TextService::_observe_candidate_caret() {
-    if (!_candidatePresentation.should_show_external_window(_composing) ||
-        _caretRectTargetGeneration != _uiTargetGeneration ||
-        !cxxime_tsf::is_valid_caret_rect(_caretRect)) {
+void TextService::record_caret_position(const cxxime_tsf::CaretPosition& position) {
+    if (!position.valid() || !cxxime_tsf::is_valid_caret_rect(position.rect)) {
         return;
     }
-    const bool was_pending = _candidatePresentation.caret_jump_pending();
-    const RECT displayed =
-        _candidatePresentation.display_caret(_caretRect, _caretSampleSerial, _uiTargetGeneration,
-                                             cxxime_tsf::CandidatePresentation::Clock::now());
-    const bool jump_pending = _candidatePresentation.caret_jump_pending();
-    if (!was_pending && jump_pending) {
-        trace_caret_event("jump_hold", "stabilizer", true, &_caretRect, S_FALSE, true);
-    } else if (was_pending && !jump_pending) {
-        const char* action =
-            _candidatePresentation.caret_jump_filtered() ? "jump_filtered" : "jump_confirm";
-        trace_caret_event(action, "stabilizer", true, &displayed, S_OK, true);
+    _caretRect = position.rect;
+    _caretRectTargetGeneration = _uiTargetGeneration;
+    if (position.observed()) {
+        ++_caretSampleSerial;
     }
-    if (was_pending != jump_pending) {
-        _update_state_poll_timer();
+    if (position.source == cxxime_tsf::CaretSource::TextExtent && position.has_view() &&
+        !position.clipped) {
+        _caretViewportTracker.remember(_uiTargetGeneration, position.view_rect, position.rect);
     }
+    _candidatePresentation.observe_caret(position, _uiTargetGeneration,
+                                         cxxime_tsf::CandidatePresentation::Clock::now());
+    char detail[128] = {};
+    snprintf(detail, sizeof(detail), "source=%u displayed_source=%u confirmed=%d waiting=%d",
+             static_cast<unsigned int>(position.source),
+             static_cast<unsigned int>(_candidatePresentation.displayed_caret_source()),
+             _candidatePresentation.displayed_caret_confirmed() ? 1 : 0,
+             _candidatePresentation.waiting_for_caret() ? 1 : 0);
+    trace_caret_event("observe", detail, true, &position.rect);
+}
+
+void TextService::update_candidate_position(const cxxime_tsf::CaretPosition& position,
+                                            ITfContext* context,
+                                            const cxxime_tsf::CaretRequest& request) {
+    if (!caret_request_is_current(context, request) ||
+        !_candidatePresentation.caret_resolution_allowed()) {
+        return;
+    }
+    auto result = position;
+    RECT native_rect = {};
+    if (_resolve_context_native_caret_rect(context, &native_rect)) {
+        result = {native_rect, {}, cxxime_tsf::CaretSource::Native};
+    } else if (!result.valid() && _candidatePresentation.needs_caret_fallback(
+                                      cxxime_tsf::CandidatePresentation::Clock::now())) {
+        result = _resolve_caret_position(context);
+    }
+    // GetActiveView/GetWnd may have reentered the service.
+    if (!caret_request_is_current(context, request)) {
+        return;
+    }
+    record_caret_position(result);
+    _publish_ui_presentation();
+    _update_state_poll_timer();
 }
 
 void TextService::_follow_native_caret() {
@@ -182,6 +145,7 @@ void TextService::_follow_native_caret() {
         return;
     }
 
+    const auto request = caret_request();
     RECT native_rect = {};
     bool resolved = _resolve_context_native_caret_rect(context, &native_rect);
     if (!resolved || same_caret_position(native_rect, _caretRect)) {
@@ -190,7 +154,7 @@ void TextService::_follow_native_caret() {
     }
 
     trace_caret_event("follow", "native_caret", true, &native_rect);
-    update_candidate_position(native_rect, context);
+    update_candidate_position({native_rect, {}, cxxime_tsf::CaretSource::Native}, context, request);
     context->Release();
 }
 
@@ -236,9 +200,7 @@ void TextService::_unadvise_text_layout_sink() {
     _dwTextLayoutSinkCookie = TF_INVALID_COOKIE;
 }
 
-void TextService::_request_candidate_position_update(ITfContext* pic,
-                                                     const char* reason,
-                                                     bool from_layout_change) {
+void TextService::_request_candidate_position_update(ITfContext* pic, const char* reason) {
     const bool candidate_active =
         (_candidatePresentation.external_window_expected() &&
         _candidatePresentation.waiting_for_caret()) ||
@@ -266,9 +228,6 @@ void TextService::_request_candidate_position_update(ITfContext* pic,
     }
 
     session->set_action(EditSession::Action::UPDATE_CANDIDATE_POSITION);
-    session->set_position_update_from_layout_change(from_layout_change);
-    session->set_candidate_presentation_request(
-        _candidatePresentation.generation(), _effectiveEditTarget.context_identity);
     HRESULT hr = E_FAIL;
     HRESULT request_hr =
         pic->RequestEditSession(_clientId, session, TF_ES_READ | TF_ES_ASYNCDONTCARE, &hr);
@@ -294,7 +253,7 @@ STDMETHODIMP TextService::OnLayoutChange(ITfContext* pic,
                  static_cast<int>(lcode), (_textLayoutSinkContext == pic) ? 1 : 0);
         _enqueue_event_trace("layout_change", detail);
     }
-    _request_candidate_position_update(pic, "layout_change", true);
+    _request_candidate_position_update(pic, "layout_change");
     return S_OK;
 }
 
@@ -356,33 +315,30 @@ bool TextService::_resolve_context_native_caret_rect(ITfContext* context,
     return true;
 }
 
-RECT TextService::_resolve_caret_rect(ITfContext* pic) {
+cxxime_tsf::CaretPosition TextService::_resolve_caret_position(ITfContext* pic) {
     RECT rc = {};
-
-    if (_resolve_native_caret_rect(&rc))
-        return rc;
-
+    if (_resolve_context_native_caret_rect(pic, &rc)) {
+        return {rc, {}, cxxime_tsf::CaretSource::Native};
+    }
+    if (_resolve_native_caret_rect(&rc)) {
+        return {rc, {}, cxxime_tsf::CaretSource::WindowFallback};
+    }
     if (_caretRectTargetGeneration == _uiTargetGeneration &&
         cxxime_tsf::is_valid_caret_rect(_caretRect)) {
-        return _caretRect;
+        return {_caretRect, {}, cxxime_tsf::CaretSource::Anchor};
     }
-
-    if (resolve_viewport_caret(nullptr, nullptr, false, &rc) !=
-        cxxime_tsf::CaretViewportFallback::None) {
-        return rc;
+    if (resolve_viewport_caret(nullptr, nullptr, false, &rc) != cxxime_tsf::CaretSource::None) {
+        return {rc, {}, cxxime_tsf::CaretSource::Anchor};
     }
-
     if (context_view_fallback_rect(pic, &rc)) {
-        return rc;
+        return {rc, {}, cxxime_tsf::CaretSource::WindowFallback};
     }
-
     HWND foreground = GetForegroundWindow();
     if (foreground && GetWindowRect(foreground, &rc)) {
-        LONG x = rc.left + 24;
-        LONG y = rc.top + 24;
+        const LONG x = rc.left + 24;
+        const LONG y = rc.top + 24;
         SetRect(&rc, x, y, x + 1, y + kUnknownCaretHeightPx);
-        return rc;
+        return {rc, {}, cxxime_tsf::CaretSource::WindowFallback};
     }
-
-    return rc;
+    return {};
 }

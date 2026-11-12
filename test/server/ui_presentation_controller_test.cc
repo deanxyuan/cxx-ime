@@ -11,6 +11,7 @@
 
 #include <cxxime/candidate_window.h>
 
+#include "candidate_presentation.h"
 #include "support/candidate_geometry_probe.h"
 #include "support/dpi_testutil.h"
 #include "support/testutil.h"
@@ -456,6 +457,73 @@ TEST(UiPresentationController, new_candidate_cycle_never_displays_prepared_old_g
     ++fixture.snapshot.target_generation;
     fixture.present();
     ASSERT_TRUE(DestroyWindow(other_owner));
+}
+
+TEST(UiPresentationController, transient_projection_never_paints_at_the_server_candidate) {
+    test::ScopedDpiAwarenessContext dpi;
+    ControllerFixture fixture;
+    ShowWindow(fixture.host.candidate, SW_HIDE);
+    fixture.snapshot.flags &= ~cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kTsfLocalCandidate);
+    POINT client = {40, 50};
+    ASSERT_TRUE(ClientToScreen(fixture.host.owner, &client));
+    const cxxime_tsf::CaretPosition real = {
+        {client.x, client.y, client.x + 1, client.y + 20}, {}, cxxime_tsf::CaretSource::TextExtent};
+    fixture.snapshot.caret = real.rect;
+    fixture.present();
+    const HWND candidate = find_window(GetCurrentProcessId(), L"CxxIMECandidateWindow");
+    ASSERT_TRUE(IsWindowVisible(candidate));
+
+    // Replay the decisions of both reported source sequences into the real server
+    // presenter. Hook before the first show, and inspect all visible geometry and paints.
+    for (LONG displacement : {478L, 408L}) {
+        using cxxime_tsf::CandidatePresentation;
+        const auto at = [](int milliseconds) {
+            return CandidatePresentation::TimePoint(std::chrono::milliseconds(milliseconds));
+        };
+        CandidatePresentation position;
+        position.update_content(cxxime::CandidatePage{}, "n", 1, 0, 0);
+        position.set_ownership(cxxime_tsf::CandidateOwnership::kExternal);
+        position.begin_positioning(false, at(0));
+        ++fixture.snapshot.composition_generation;
+        const auto publish_position = [&]() {
+            const auto visible =
+                cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kCandidateVisible);
+            if (position.should_show_external_window(true)) {
+                fixture.snapshot.flags |= visible;
+                fixture.snapshot.caret = position.displayed_caret();
+            } else {
+                fixture.snapshot.flags &= ~visible;
+                fixture.snapshot.caret = {};
+            }
+            fixture.present();
+        };
+        publish_position();
+        ASSERT_TRUE(!IsWindowVisible(candidate));
+        test::CandidateGeometryProbe geometry(candidate);
+        position.observe_caret(real, 1, at(0));
+        publish_position();
+        auto projected = real;
+        OffsetRect(&projected.rect, displacement, 0);
+        projected.source = cxxime_tsf::CaretSource::Projected;
+        for (int time : {1, 2}) {
+            position.observe_caret(projected, 1, at(time));
+            publish_position();
+            ASSERT_TRUE(!IsWindowVisible(candidate));
+            geometry.assert_hidden();
+        }
+        position.observe_caret(real, 1, at(5));
+        publish_position();
+        ASSERT_TRUE(!IsWindowVisible(candidate));
+        geometry.assert_hidden();
+        position.observe_caret(real, 1, at(31));
+        publish_position();
+        ASSERT_TRUE(IsWindowVisible(candidate));
+        ASSERT_TRUE(EqualRect(&fixture.snapshot.caret, &real.rect));
+        RECT final_rect = {};
+        ASSERT_TRUE(GetWindowRect(candidate, &final_rect));
+        geometry.assert_visible_geometry(final_rect);
+        ASSERT_TRUE(!position.caret_poll_pending());
+    }
 }
 
 TEST(UiPresentationTarget,

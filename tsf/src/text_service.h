@@ -189,25 +189,21 @@ public:
         set_applied_inline_composition_text(L"");
     }
     bool composition_requires_placeholder(const std::wstring& next_text) const;
-    void set_caret_rect(const RECT& rc) {
-        _caretRect = rc;
-        _caretRectTargetGeneration = _uiTargetGeneration;
-        ++_caretSampleSerial;
+    cxxime_tsf::CaretRequest caret_request() const {
+        return {_candidatePresentation.generation(), _uiTargetGeneration};
     }
-    void remember_viewport_caret(const RECT& view_rect, const RECT& caret_rect) {
-        _caretViewportTracker.remember(_uiTargetGeneration, view_rect, caret_rect);
-    }
-    cxxime_tsf::CaretViewportFallback resolve_viewport_caret(const RECT* view_rect,
-                                                             const RECT* logical_rect, bool clipped,
-                                                             RECT* caret_rect) const {
+    bool caret_request_is_current(ITfContext* context,
+                                  const cxxime_tsf::CaretRequest& request) const;
+    void record_caret_position(const cxxime_tsf::CaretPosition& position);
+    cxxime_tsf::CaretSource resolve_viewport_caret(const RECT* view_rect,
+                                                   const RECT* logical_rect, bool clipped,
+                                                   RECT* caret_rect) const {
         return _caretViewportTracker.resolve(_uiTargetGeneration, view_rect, logical_rect, clipped,
                                              caret_rect);
     }
-    void update_candidate_position(const RECT& rc,
-                                   ITfContext* context = nullptr,
-                                   bool from_layout_change = false,
-                                   uint64_t expected_generation = 0,
-                                   bool viewport_fallback = false);
+    void update_candidate_position(const cxxime_tsf::CaretPosition& position,
+                                   ITfContext* context,
+                                   const cxxime_tsf::CaretRequest& request);
     bool composition_edit_request_is_current(
         uint64_t expected_generation, uintptr_t expected_context_identity) const;
     uint64_t begin_composition_edit_request();
@@ -220,7 +216,7 @@ public:
     void handle_composition_restart_success(uint64_t expected_generation);
     bool handle_composition_edit_failure(uint64_t expected_generation,
                                          uintptr_t expected_context_identity);
-    RECT _resolve_caret_rect(ITfContext* pic);
+    cxxime_tsf::CaretPosition _resolve_caret_position(ITfContext* pic);
 
     // TSF layer trace (lightweight, no cross-module QueryTrace dependency)
     enum class TsfResult : uint8_t {
@@ -306,9 +302,7 @@ private:
     void _unadvise_text_edit_sink();
     bool _bind_text_layout_sink(ITfContext* context);
     void _unadvise_text_layout_sink();
-    void _request_candidate_position_update(ITfContext* pic,
-                                            const char* reason,
-                                            bool from_layout_change = false);
+    void _request_candidate_position_update(ITfContext* pic, const char* reason);
     void _follow_native_caret();
     bool _resolve_native_caret_rect(RECT* out) const;
     bool _resolve_context_native_caret_rect(ITfContext* context,
@@ -385,7 +379,6 @@ private:
     bool _start_ui_presentation_channel();
     void _stop_ui_presentation_channel();
     void _publish_ui_presentation();
-    void _observe_candidate_caret();
     bool _present_local_candidate_window(const cxxime::CandidatePresentationPage& page,
                                          int page_current,
                                          int page_total,

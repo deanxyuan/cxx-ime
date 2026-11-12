@@ -92,11 +92,11 @@ bool CaretViewportTracker::remember(std::uint64_t target_generation, const RECT&
     return true;
 }
 
-CaretViewportFallback CaretViewportTracker::resolve(std::uint64_t target_generation,
-                                                    const RECT* view_rect, const RECT* logical_rect,
-                                                    bool clipped, RECT* caret_rect) const {
+CaretSource CaretViewportTracker::resolve(std::uint64_t target_generation,
+                                          const RECT* view_rect, const RECT* logical_rect,
+                                          bool clipped, RECT* caret_rect) const {
     if (!caret_rect) {
-        return CaretViewportFallback::None;
+        return CaretSource::None;
     }
 
     const bool has_anchor = valid_ && target_generation_ == target_generation;
@@ -119,7 +119,7 @@ CaretViewportFallback CaretViewportTracker::resolve(std::uint64_t target_generat
             if (has_anchor) {
                 OffsetRect(&anchor, logical_rect->left - anchor.left, 0);
                 *caret_rect = anchor;
-                return CaretViewportFallback::Projected;
+                return CaretSource::Projected;
             }
 
             RECT boundary = *logical_rect;
@@ -132,16 +132,16 @@ CaretViewportFallback CaretViewportTracker::resolve(std::uint64_t target_generat
                                       : view_rect->top - boundary.top;
                 OffsetRect(&boundary, 0, edge);
                 *caret_rect = boundary;
-                return CaretViewportFallback::Boundary;
+                return CaretSource::Boundary;
             }
         }
     }
 
     if (!has_anchor) {
-        return CaretViewportFallback::None;
+        return CaretSource::None;
     }
     *caret_rect = anchor;
-    return CaretViewportFallback::Anchor;
+    return CaretSource::Anchor;
 }
 
 bool map_fallback_caret_rect(HWND caret_window, POINT caret, RECT* rect) {

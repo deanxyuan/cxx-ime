@@ -13,14 +13,6 @@
 #include "tsf_host_classification.h"
 #include "tsf_host_classification_message.h"
 
-namespace {
-
-bool has_caret_height(const RECT& rect) {
-    return rect.bottom > rect.top;
-}
-
-} // namespace
-
 void TextService::_show_candidate_window(const char* reason) {
     _enqueue_event_trace("ui_presentation", reason);
     _publish_ui_presentation();
@@ -197,25 +189,15 @@ bool TextService::set_candidate_ui_element_shown(bool show) {
     }
 
     ITfContext* context = _current_edit_context_for_composition();
-    RECT caret_rect = {};
-    bool caret_resolved = false;
-    if (context) {
-        caret_resolved = _resolve_context_native_caret_rect(context, &caret_rect);
-        if (!caret_resolved) {
-            caret_rect = _resolve_caret_rect(context);
-            caret_resolved = has_caret_height(caret_rect);
-        }
-    }
     _candidatePresentation.set_ownership(cxxime_tsf::CandidateOwnership::kExternal);
-    if (caret_resolved) {
-        set_caret_rect(caret_rect);
-        _candidatePresentation.accept_caret(_candidatePresentation.generation());
-        _observe_candidate_caret();
-        trace_caret_event("show_move", "ui_element_show", true, &caret_rect);
-    } else {
-        _candidatePresentation.begin_waiting_for_caret(
-            false, nullptr, cxxime_tsf::CandidatePresentation::Clock::now());
-        trace_caret_event("show_move", "ui_element_show", false, nullptr, E_FAIL, true);
+    if (!_candidatePresentation.caret_ready_to_show()) {
+        _candidatePresentation.begin_positioning(
+            false, cxxime_tsf::CandidatePresentation::Clock::now());
+    }
+    if (context) {
+        const auto request = caret_request();
+        const auto position = _resolve_caret_position(context);
+        update_candidate_position(position, context, request);
     }
 
     _show_candidate_window("show:ui_element_show");

@@ -133,11 +133,13 @@ bool TextService::_apply_engine_response(ITfContext* context, const cxxime::IPCR
             popup_preedit.empty() ? 0 : decoded.display_focused_preedit_start_bytes;
         const std::size_t popup_focused_end =
             popup_preedit.empty() ? 0 : decoded.display_focused_preedit_end_bytes;
-        const bool restart_tsf_composition = commit_continues;
-        if (restart_tsf_composition) {
-            _candidatePresentation.begin_composition_restart(
-                cxxime_tsf::CandidatePresentation::Clock::now());
-            _publish_ui_presentation();
+        if (starts_composition || commit_continues ||
+            _candidatePresentation.content_state() == cxxime_tsf::CandidateContentState::kEmpty ||
+            (_caretRectTargetGeneration != _uiTargetGeneration &&
+             !_candidatePresentation.waiting_for_caret())) {
+            _candidatePresentation.begin_positioning(
+                commit_continues, cxxime_tsf::CandidatePresentation::Clock::now());
+            _caretRect = {};
         }
         _candidatePresentation.update_content(
             decoded.candidates, popup_preedit, response.preedit_cursor, popup_converted_prefix,
@@ -145,20 +147,11 @@ bool TextService::_apply_engine_response(ITfContext* context, const cxxime::IPCR
             static_cast<int>(response.page_total), popup_focused_start, popup_focused_end,
             decoded.has_syllable_boundaries);
         _sync_candidate_ui_element_snapshot();
+        const auto position_request = caret_request();
 
         cxxime_tsf::trace_context(trace_input_id(), trace_composition_id(), context, _threadMgr,
                                   ui_element_only ? "candidate_first_standard_tsf_compat"
                                                   : "standard_tsf");
-        const auto can_retain_candidate_position = [&]() {
-            return !starts_composition && !commit_continues && _composing &&
-                   _caretRectTargetGeneration == _uiTargetGeneration &&
-                   _candidatePresentation.can_retain_displayed_caret(_uiTargetGeneration) &&
-                   cxxime_tsf::is_valid_caret_rect(_caretRect) &&
-                   _context_matches_effective_edit_target(context);
-        };
-        if (!can_retain_candidate_position()) {
-            _caretRect = {};
-        }
         bool external_candidate_window = true;
         bool candidate_ui_published = false;
         const uintptr_t composition_context = _effectiveEditTarget.context_identity;
@@ -223,13 +216,9 @@ bool TextService::_apply_engine_response(ITfContext* context, const cxxime::IPCR
             if (!candidate_ui_published) {
                 external_candidate_window = _publish_candidate_ui_element();
             }
-            if (external_candidate_window && context) {
-                RECT caret_rect = {};
-                bool caret_resolved = false;
-                bool caret_uses_viewport_fallback = false;
-                RECT trusted_native_rect = {};
-                const bool has_trusted_native_caret =
-                    _resolve_context_native_caret_rect(context, &trusted_native_rect);
+            if (external_candidate_window && context &&
+                caret_request_is_current(context, position_request)) {
+                cxxime_tsf::CaretPosition position;
                 EditSession* caret_session = new (std::nothrow) EditSession(this, context);
                 if (caret_session) {
                     caret_session->set_action(EditSession::Action::QUERY_CARET);
@@ -237,79 +226,16 @@ bool TextService::_apply_engine_response(ITfContext* context, const cxxime::IPCR
                     const HRESULT request_result = context->RequestEditSession(
                         _clientId, caret_session, TF_ES_READ | TF_ES_SYNC, &edit_result);
                     if (SUCCEEDED(request_result) && SUCCEEDED(edit_result)) {
-                        caret_resolved = caret_session->get_caret_rect(caret_rect);
-                        caret_uses_viewport_fallback =
-                            caret_session->caret_uses_viewport_fallback();
+                        position = caret_session->caret_position();
                     }
-                    trace_caret_event("show_query", "sync_edit", caret_resolved,
-                                      caret_resolved ? &caret_rect : nullptr,
+                    trace_caret_event("show_query", "sync_edit", position.valid(),
+                                      position.valid() ? &position.rect : nullptr,
                                       FAILED(request_result) ? request_result : edit_result,
-                                      !caret_resolved);
+                                      !position.valid());
                     caret_session->Release();
                 }
-                const bool has_trusted_caret =
-                    has_trusted_native_caret || caret_uses_viewport_fallback;
-                const bool retain_candidate_position =
-                    !caret_resolved && !has_trusted_caret && can_retain_candidate_position();
-                const bool wait_for_composition_layout =
-                    cxxime_tsf::should_wait_for_composition_layout(
-                        empty_composition_placeholder_active(), caret_resolved,
-                        has_trusted_caret);
-                if (!caret_resolved) {
-                    if (has_trusted_native_caret) {
-                        caret_rect = trusted_native_rect;
-                        caret_resolved = true;
-                    } else if (!wait_for_composition_layout && !retain_candidate_position) {
-                        caret_rect = _resolve_caret_rect(context);
-                        trace_caret_event("show_query", "fallback",
-                                          cxxime_tsf::is_valid_caret_rect(caret_rect), &caret_rect,
-                                          S_FALSE, true);
-                        caret_resolved = cxxime_tsf::is_valid_caret_rect(caret_rect);
-                    }
-                } else if (has_trusted_native_caret && !commit_continues) {
-                    caret_rect = trusted_native_rect;
-                }
-
-                if (retain_candidate_position) {
-                    // Missing layout does not invalidate an already displayed position.
-                    // Keep the sample serial unchanged: this is not a new caret observation.
-                    trace_caret_event("show_keep", "displayed_position", true, &_caretRect,
-                                      S_FALSE);
-                    _show_candidate_window("show:preedit_keep_position");
-                    _request_candidate_position_update(context, "show:preedit_layout_follow");
-                } else if (_candidatePresentation.initial_layout_pending()) {
-                    if (caret_resolved) {
-                        update_candidate_position(caret_rect, context, false,
-                                                  _candidatePresentation.generation(),
-                                                  caret_uses_viewport_fallback);
-                    }
-                    _update_state_poll_timer();
-                    _request_candidate_position_update(context, "show:preedit_layout_follow");
-                } else if (cxxime_tsf::should_defer_candidate_show(
-                    commit_continues, starts_composition, caret_resolved,
-                    has_trusted_caret)) {
-                    const auto now = cxxime_tsf::CandidatePresentation::Clock::now();
-                    if (starts_composition && caret_resolved && !has_trusted_caret &&
-                        !commit_continues) {
-                        _candidatePresentation.begin_waiting_for_initial_layout(caret_rect, now);
-                        trace_caret_event("show_wait", "initial_layout", true, &caret_rect);
-                    } else {
-                        const RECT* stale_rect =
-                            cxxime_tsf::is_valid_caret_rect(caret_rect) ? &caret_rect : nullptr;
-                        _candidatePresentation.begin_waiting_for_caret(
-                            commit_continues, stale_rect, now);
-                    }
-                    _publish_ui_presentation();
-                    _update_state_poll_timer();
-                    _request_candidate_position_update(context, "show:preedit_layout_follow");
-                } else {
-                    set_caret_rect(caret_rect);
-                    _candidatePresentation.accept_caret(_candidatePresentation.generation());
-                    _observe_candidate_caret();
-                    trace_caret_event("show_move", "initial", true, &caret_rect);
-                    _show_candidate_window("show:preedit");
-                    _request_candidate_position_update(context, "show:preedit_layout_follow");
-                }
+                update_candidate_position(position, context, position_request);
+                _request_candidate_position_update(context, "show:preedit_layout_follow");
             }
         } else if (SUCCEEDED(composition_result)) {
             _hide_candidate_window("hide:no_candidates");

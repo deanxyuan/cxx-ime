@@ -8,6 +8,8 @@
 #include <cstdint>
 #include <optional>
 
+#include "edit_target.h"
+
 class TextService;
 
 class EditSession : public ITfEditSession {
@@ -44,26 +46,12 @@ public:
                                 bool focused_converted = false,
                                 const std::optional<std::wstring>& host_termination_text =
                                     std::nullopt);
-    void set_position_update_from_layout_change(bool from_layout_change) {
-        _positionUpdateFromLayoutChange = from_layout_change;
-    }
-    void set_candidate_presentation_request(uint64_t generation, uintptr_t context_identity) {
-        _candidatePresentationGeneration = generation;
-        _candidatePresentationContextIdentity = context_identity;
-    }
     void set_composition_edit_request(uint64_t generation, uintptr_t context_identity) {
         _compositionEditGeneration = generation;
         _compositionEditContextIdentity = context_identity;
     }
     void set_commit_before_preedit(const std::wstring& text) { _commitBeforePreedit = text; }
-    bool get_caret_rect(RECT& out) const {
-        if (_resultValid) {
-            out = _resultRect;
-            return true;
-        }
-        return false;
-    }
-    bool caret_uses_viewport_fallback() const { return _resultUsesViewportFallback; }
+    const cxxime_tsf::CaretPosition& caret_position() const { return _resultPosition; }
     HRESULT action_result() const { return _actionResult; }
     bool composition_start_attempted() const { return _compositionStartAttempted; }
     HRESULT composition_start_result() const { return _compositionStartResult; }
@@ -87,12 +75,8 @@ private:
     size_t _focusedEndUtf16 = 0;
     bool _focusedConverted = false;
     std::optional<std::wstring> _hostTerminationText;
-    RECT _resultRect = {};
-    bool _resultValid = false;
-    bool _resultUsesViewportFallback = false;
-    bool _positionUpdateFromLayoutChange = false;
-    uint64_t _candidatePresentationGeneration = 0;
-    uintptr_t _candidatePresentationContextIdentity = 0;
+    cxxime_tsf::CaretPosition _resultPosition;
+    cxxime_tsf::CaretRequest _caretRequest;
     uint64_t _compositionEditGeneration = 0;
     uintptr_t _compositionEditContextIdentity = 0;
     HRESULT _actionResult = E_PENDING;

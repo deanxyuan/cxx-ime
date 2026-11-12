@@ -96,18 +96,6 @@ TEST(PreeditMode, segmented_preview_keeps_active_code_without_candidates) {
     ASSERT_TRUE(decision.show_preedit_in_popup);
 }
 
-TEST(PreeditMode, commit_and_continue_waits_for_the_post_commit_caret) {
-    ASSERT_TRUE(cxxime_tsf::should_defer_candidate_show(true, false, true, true));
-    ASSERT_TRUE(cxxime_tsf::should_defer_candidate_show(false, false, false, false));
-    ASSERT_TRUE(!cxxime_tsf::should_defer_candidate_show(false, false, true, false));
-    ASSERT_TRUE(!cxxime_tsf::should_defer_candidate_show(false, false, false, true));
-}
-
-TEST(PreeditMode, new_composition_waits_for_layout_without_a_trusted_caret) {
-    ASSERT_TRUE(cxxime_tsf::should_defer_candidate_show(false, true, true, false));
-    ASSERT_TRUE(!cxxime_tsf::should_defer_candidate_show(false, true, true, true));
-}
-
 // -- inline_preedit=false: no TSF composition, candidate window shows raw input --
 
 TEST(PreeditMode, no_inline_composition) {
@@ -250,13 +238,6 @@ TEST(PreeditMode, desktop_placeholder_is_limited_to_nonempty_to_empty_transition
         cxxime_tsf::empty_composition_requires_placeholder(false, true, L"composition", L""));
     ASSERT_TRUE(!cxxime_tsf::empty_composition_requires_placeholder(false, false, L"", L""));
     ASSERT_TRUE(!cxxime_tsf::empty_composition_requires_placeholder(false, true, L"", L""));
-}
-
-TEST(PreeditMode, empty_placeholder_waits_only_when_no_trusted_caret_is_available) {
-    ASSERT_TRUE(cxxime_tsf::should_wait_for_composition_layout(true, false, false));
-    ASSERT_TRUE(!cxxime_tsf::should_wait_for_composition_layout(false, false, false));
-    ASSERT_TRUE(!cxxime_tsf::should_wait_for_composition_layout(true, true, false));
-    ASSERT_TRUE(!cxxime_tsf::should_wait_for_composition_layout(true, false, true));
 }
 
 RUN_ALL_TESTS()

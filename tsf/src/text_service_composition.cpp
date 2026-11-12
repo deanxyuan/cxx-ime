@@ -388,10 +388,6 @@ HRESULT TextService::update_composition(ITfContext* context,
     edit_session->set_commit_before_preedit(commit_before_preedit);
     edit_session->set_composition_edit_request(generation,
                                                _effectiveEditTarget.context_identity);
-    if (ensure) {
-        edit_session->set_candidate_presentation_request(
-            _candidatePresentation.generation(), _effectiveEditTarget.context_identity);
-    }
 
     HRESULT edit_hr = E_FAIL;
     edit_session_mode = ordered_composition_edit_mode(edit_session_mode);

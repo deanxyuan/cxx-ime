@@ -47,19 +47,12 @@ bool is_placeholder_caret_rect(ITfContext* context, const RECT& caret_rect) {
                                     foreground_rect, caret_rect));
 }
 
-struct RangeCaretResult {
-    RECT rect = {};
-    RECT view_rect = {};
-    bool viewport_fallback = false;
-    bool remember_visible = false;
-};
-
 bool get_range_caret_rect(TextService* service,
                           ITfContext* context,
                           TfEditCookie ec,
                           ITfRange* range,
                           TfAnchor anchor,
-                          RangeCaretResult* out) {
+                          cxxime_tsf::CaretPosition* out) {
     if (!context || !range || !out)
         return false;
 
@@ -84,8 +77,7 @@ bool get_range_caret_rect(TextService* service,
     const bool has_view_rect = SUCCEEDED(view_rect_hr) && view_rect.right > view_rect.left &&
                                view_rect.bottom > view_rect.top;
     bool resolved = SUCCEEDED(text_ext_hr);
-    cxxime_tsf::CaretViewportFallback viewport_fallback =
-        cxxime_tsf::CaretViewportFallback::None;
+    cxxime_tsf::CaretSource viewport_fallback = cxxime_tsf::CaretSource::None;
     cxxime_tsf::TextExtRectTrace trace;
     const auto trace_mode = cxxime::diagnostics_config().trace_mode;
     const bool trace_enabled = service && trace_mode >= cxxime::DiagnosticTraceMode::kNormal;
@@ -118,13 +110,13 @@ bool get_range_caret_rect(TextService* service,
             has_view_rect ? &view_rect : nullptr,
             has_logical_rect ? &logical_rect : nullptr,
             clipped != FALSE, &rc);
-        resolved = viewport_fallback != cxxime_tsf::CaretViewportFallback::None;
+        resolved = viewport_fallback != cxxime_tsf::CaretSource::None;
         if (trace_enabled && resolved) {
             switch (viewport_fallback) {
-            case cxxime_tsf::CaretViewportFallback::Projected:
+            case cxxime_tsf::CaretSource::Projected:
                 trace.branch = "viewport_projection";
                 break;
-            case cxxime_tsf::CaretViewportFallback::Boundary:
+            case cxxime_tsf::CaretSource::Boundary:
                 trace.branch = "viewport_boundary";
                 break;
             default:
@@ -140,9 +132,11 @@ bool get_range_caret_rect(TextService* service,
     }
     if (resolved) {
         out->rect = rc;
-        out->view_rect = view_rect;
-        out->viewport_fallback = viewport_fallback != cxxime_tsf::CaretViewportFallback::None;
-        out->remember_visible = !out->viewport_fallback && has_view_rect && clipped == FALSE;
+        out->view_rect = has_view_rect ? view_rect : RECT{};
+        out->source = viewport_fallback == cxxime_tsf::CaretSource::None
+                          ? cxxime_tsf::CaretSource::TextExtent
+                          : viewport_fallback;
+        out->clipped = clipped != FALSE;
     }
 
     caret_range->Release();
@@ -150,132 +144,71 @@ bool get_range_caret_rect(TextService* service,
     return resolved;
 }
 
-bool resolve_caret_rect_from_range(TextService* service,
-                                   ITfContext* context,
-                                   TfEditCookie ec,
-                                   ITfRange* range,
-                                   TfAnchor anchor,
-                                   RECT* out,
-                                   bool* viewport_fallback_out = nullptr) {
-    RangeCaretResult result;
-    if (!get_range_caret_rect(service, context, ec, range, anchor, &result))
+bool resolve_caret_rect_from_range(TextService* service, ITfContext* context, TfEditCookie ec,
+                                   ITfRange* range, TfAnchor anchor,
+                                   cxxime_tsf::CaretPosition* out) {
+    cxxime_tsf::CaretPosition result;
+    if (!get_range_caret_rect(service, context, ec, range, anchor, &result)) {
         return false;
-    if (!result.viewport_fallback && is_placeholder_caret_rect(context, result.rect)) {
+    }
+    if (result.real() && is_placeholder_caret_rect(context, result.rect)) {
         if (service) {
-            service->trace_caret_event("reject", "placeholder", false, &result.rect, S_FALSE,
-                                       true);
+            service->trace_caret_event("reject", "placeholder", false, &result.rect, S_FALSE, true);
         }
         return false;
     }
-
-    if (service && result.remember_visible) {
-        service->remember_viewport_caret(result.view_rect, result.rect);
-    }
-    if (out)
-        *out = result.rect;
-    if (viewport_fallback_out)
-        *viewport_fallback_out = result.viewport_fallback;
+    *out = result;
     return true;
 }
 
-bool resolve_caret_rect_from_selection(TextService* service,
-                                       ITfContext* context,
-                                       TfEditCookie ec,
-                                       RECT* out,
-                                       bool* viewport_fallback_out = nullptr) {
-    if (!context)
+bool resolve_caret_rect_from_selection(TextService* service, ITfContext* context, TfEditCookie ec,
+                                       cxxime_tsf::CaretPosition* out) {
+    if (!context) {
         return false;
-
+    }
     TF_SELECTION selection = {};
     ULONG fetched = 0;
-    HRESULT hr = context->GetSelection(ec, TF_DEFAULT_SELECTION, 1, &selection, &fetched);
-    if (FAILED(hr) || fetched == 0 || !selection.range)
+    const HRESULT hr = context->GetSelection(ec, TF_DEFAULT_SELECTION, 1, &selection, &fetched);
+    if (FAILED(hr) || fetched == 0 || !selection.range) {
         return false;
-
-    bool resolved = resolve_caret_rect_from_range(service, context, ec, selection.range,
-                                                 TF_ANCHOR_END, out,
-                                                 viewport_fallback_out);
+    }
+    const bool resolved =
+        resolve_caret_rect_from_range(service, context, ec, selection.range, TF_ANCHOR_END, out);
     selection.range->Release();
     return resolved;
 }
 
-bool resolve_caret_rect_from_composition(TextService* service,
-                                       ITfContext* context,
-                                       TfEditCookie ec,
-                                       RECT* out,
-                                       const char** source_out = nullptr,
-                                       bool* viewport_fallback_out = nullptr) {
+bool resolve_current_caret_rect(TextService* service, ITfContext* context, TfEditCookie ec,
+                                cxxime_tsf::CaretPosition* out) {
+    if (resolve_caret_rect_from_selection(service, context, ec, out)) {
+        return true;
+    }
     ITfComposition* composition =
         service && service->is_composing() ? service->get_composition() : nullptr;
     ITfRange* range = nullptr;
-    if (!composition || FAILED(composition->GetRange(&range)) || !range)
+    if (!composition || FAILED(composition->GetRange(&range)) || !range) {
         return false;
-
-    RECT rc = {};
-    bool viewport_fallback = false;
-    bool resolved = resolve_caret_rect_from_range(service, context, ec, range,
-                                                  TF_ANCHOR_END, &rc, &viewport_fallback);
-    const char* source = "composition_end";
-    if (!resolved) {
-        resolved = resolve_caret_rect_from_range(service, context, ec, range,
-                                                 TF_ANCHOR_START, &rc, &viewport_fallback);
-        source = "composition_start";
     }
+    const bool resolved =
+        resolve_caret_rect_from_range(service, context, ec, range, TF_ANCHOR_END, out) ||
+        resolve_caret_rect_from_range(service, context, ec, range, TF_ANCHOR_START, out);
     range->Release();
-    if (!resolved)
-        return false;
-
-    if (out)
-        *out = rc;
-    if (source_out)
-        *source_out = source;
-    if (viewport_fallback_out)
-        *viewport_fallback_out = viewport_fallback;
-    return true;
+    return resolved;
 }
 
-void update_caret_rect(TextService* service, ITfContext* context, TfEditCookie ec, ITfRange* range) {
-    if (!service || !context)
+void update_caret_rect(TextService* service, ITfContext* context, TfEditCookie ec, ITfRange* range,
+                       const cxxime_tsf::CaretRequest& request) {
+    if (!service || !service->caret_request_is_current(context, request)) {
         return;
-
-    RECT rc = {};
-    if (resolve_caret_rect_from_selection(service, context, ec, &rc) ||
-        resolve_caret_rect_from_range(service, context, ec, range, TF_ANCHOR_END, &rc)) {
-        service->set_caret_rect(rc);
     }
-}
-
-bool resolve_current_caret_rect(TextService* service,
-                                ITfContext* context,
-                                TfEditCookie ec,
-                                RECT* out,
-                                const char** source_out = nullptr,
-                                bool* viewport_fallback_out = nullptr) {
-    RECT rc = {};
-    bool viewport_fallback = false;
-    if (resolve_caret_rect_from_selection(service, context, ec, &rc,
-                                          &viewport_fallback)) {
-        if (out)
-            *out = rc;
-        if (source_out)
-            *source_out = viewport_fallback ? "selection_viewport" : "selection";
-        if (viewport_fallback_out)
-            *viewport_fallback_out = viewport_fallback;
-        return true;
+    cxxime_tsf::CaretPosition position;
+    const bool resolved =
+        resolve_caret_rect_from_selection(service, context, ec, &position) ||
+        resolve_caret_rect_from_range(service, context, ec, range, TF_ANCHOR_END, &position);
+    // A host call can reenter TSF and replace this context or composition.
+    if (resolved && service->caret_request_is_current(context, request)) {
+        service->record_caret_position(position);
     }
-
-    if (resolve_caret_rect_from_composition(service, context, ec, &rc, source_out,
-                                            &viewport_fallback)) {
-        if (out)
-            *out = rc;
-        if (viewport_fallback_out)
-            *viewport_fallback_out = viewport_fallback;
-        return true;
-    }
-
-    if (source_out)
-        *source_out = "none";
-    return false;
 }
 
 HRESULT set_selection_to_range(ITfContext* context, TfEditCookie ec, ITfRange* range) {
@@ -519,7 +452,8 @@ HRESULT apply_composition_text(TextService* service, ITfContext* context, TfEdit
                                bool focused_converted,
                                const std::optional<std::wstring>& host_termination_text,
                                bool composition_started,
-                               bool* text_written) {
+                               bool* text_written,
+                               const cxxime_tsf::CaretRequest& caret_request) {
     *text_written = false;
     if (!service || !context || !range) {
         return E_INVALIDARG;
@@ -530,11 +464,13 @@ HRESULT apply_composition_text(TextService* service, ITfContext* context, TfEdit
     const bool preserve_empty_composition = service->composition_requires_placeholder(text);
     bool caret_resolved_before_write = false;
     if (text.empty() && !placeholder_already_active && !preserve_empty_composition) {
-        RECT caret_rect = {};
+        cxxime_tsf::CaretPosition position;
         caret_resolved_before_write =
-            resolve_caret_rect_from_selection(service, context, ec, &caret_rect);
-        if (caret_resolved_before_write) {
-            service->set_caret_rect(caret_rect);
+            service->caret_request_is_current(context, caret_request) &&
+            resolve_caret_rect_from_selection(service, context, ec, &position);
+        if (caret_resolved_before_write &&
+            service->caret_request_is_current(context, caret_request)) {
+            service->record_caret_position(position);
         }
     }
     const bool use_empty_placeholder =
@@ -557,7 +493,7 @@ HRESULT apply_composition_text(TextService* service, ITfContext* context, TfEdit
         ? set_selection_to_range_offset(context, ec, range, selection_offset)
         : set_selection_to_range(context, ec, range);
     if (!caret_resolved_before_write) {
-        update_caret_rect(service, context, ec, range);
+        update_caret_rect(service, context, ec, range, caret_request);
     }
     return result;
 }
@@ -618,8 +554,10 @@ HRESULT commit_to_context(TextService* service, ITfContext* context, TfEditCooki
 
 EditSession::EditSession(TextService* service, ITfContext* context)
     : _service(service), _context(context) {
-    if (_service)
+    if (_service) {
         _service->AddRef();
+        _caretRequest = _service->caret_request();
+    }
     if (_context)
         _context->AddRef();
 }
@@ -755,7 +693,7 @@ STDMETHODIMP EditSession::DoEditSession(TfEditCookie ec) {
             }
         }
         if (pRange) {
-            update_caret_rect(_service, _context, ec, pRange);
+            update_caret_rect(_service, _context, ec, pRange, _caretRequest);
             pRange->Release();
         }
     } else if (_action == Action::ENSURE_COMPOSITION_TEXT ||
@@ -784,12 +722,12 @@ STDMETHODIMP EditSession::DoEditSession(TfEditCookie ec) {
                         _service, _context, ec, range, _text, _selectionOffset,
                         _hasSelectionOffset, _convertedPrefixUtf16, _focusedStartUtf16,
                         _focusedEndUtf16, _focusedConverted, _hostTerminationText,
-                        _compositionStartAttempted, &composition_text_written);
+                        _compositionStartAttempted, &composition_text_written, _caretRequest);
                     range->Release();
                 }
                 if (SUCCEEDED(_actionResult) && range) {
                     _service->handle_composition_restart_success(
-                        _candidatePresentationGeneration);
+                        _caretRequest.presentation_generation);
                 } else if (FAILED(_actionResult) &&
                            _service->composition_edit_request_is_current(
                                _compositionEditGeneration, _compositionEditContextIdentity)) {
@@ -813,40 +751,25 @@ STDMETHODIMP EditSession::DoEditSession(TfEditCookie ec) {
             _service->handle_composition_edit_failure(
                 _compositionEditGeneration, _compositionEditContextIdentity);
         }
-    } else if (_action == Action::QUERY_CARET) {
-        RECT rc = {};
-        const char* source = "none";
-        bool viewport_fallback = false;
-        if (resolve_current_caret_rect(_service, _context, ec, &rc, &source,
-                                       &viewport_fallback)) {
-            _resultRect = rc;
-            _resultValid = true;
-            _resultUsesViewportFallback = viewport_fallback;
-            if (_service) {
-                _service->trace_caret_event("query", source, true, &rc);
-            }
-        } else if (_service) {
-            _service->trace_caret_event("query", source, false, nullptr, E_FAIL, true);
+    } else if (_action == Action::QUERY_CARET ||
+               _action == Action::UPDATE_CANDIDATE_POSITION) {
+        if (!_service || !_service->caret_request_is_current(_context, _caretRequest)) {
+            return S_OK;
         }
-    } else if (_action == Action::UPDATE_CANDIDATE_POSITION) {
-        RECT rc = {};
-        const char* source = "none";
-        bool viewport_fallback = false;
-        if (resolve_current_caret_rect(_service, _context, ec, &rc, &source,
-                                       &viewport_fallback)) {
-            _resultRect = rc;
-            _resultValid = true;
-            _resultUsesViewportFallback = viewport_fallback;
-            if (_service) {
-                _service->trace_caret_event("layout_update", source, true, &rc);
-                _service->update_candidate_position(rc, _context,
-                                                    _positionUpdateFromLayoutChange,
-                                                    _candidatePresentationGeneration,
-                                                    viewport_fallback);
-            }
-        } else if (_service) {
-            _service->trace_caret_event("layout_update", source, false, nullptr, E_FAIL, true);
+        cxxime_tsf::CaretPosition position;
+        const bool resolved = resolve_current_caret_rect(_service, _context, ec, &position);
+        if (!_service->caret_request_is_current(_context, _caretRequest)) {
+            return S_OK;
         }
+        if (resolved) {
+            _resultPosition = position;
+        }
+        if (_action == Action::UPDATE_CANDIDATE_POSITION) {
+            _service->update_candidate_position(position, _context, _caretRequest);
+        }
+        _service->trace_caret_event(
+            _action == Action::QUERY_CARET ? "query" : "layout_update", "host_geometry",
+            resolved, resolved ? &position.rect : nullptr, resolved ? S_OK : E_FAIL, !resolved);
     }
     return S_OK;
 }

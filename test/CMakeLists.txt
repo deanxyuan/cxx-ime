@@ -123,6 +123,7 @@ add_cxxime_test(text_service_test
         tsf/text_service_key_test.cc
         tsf/text_service_shortcut_test.cc
         tsf/text_service_presentation_test.cc
+        tsf/text_service_position_test.cc
         tsf/text_service_status_test.cc
         tsf/text_service_status_focus_test.cc
         tsf/text_service_status_recovery_test.cc
@@ -195,7 +196,9 @@ target_sources(effective_edit_target_test PRIVATE
     ${CMAKE_SOURCE_DIR}/tsf/src/effective_edit_target.cpp
 )
 add_cxxime_test(candidate_presentation_test
-    SOURCES tsf/candidate_presentation_test.cc
+SOURCES
+tsf/candidate_presentation_test.cc
+tsf/candidate_position_test.cc
     DEPS cxxime-shared
 )
 target_sources(candidate_presentation_test PRIVATE
@@ -312,6 +315,7 @@ add_cxxime_test(ui_presentation_controller_test
     SOURCES
         server/ui_presentation_controller_test.cc
         server/ui_status_visibility_test.cc
+        ${CMAKE_SOURCE_DIR}/tsf/src/candidate_presentation.cpp
         ${CMAKE_SOURCE_DIR}/server/src/ui_presentation_controller.cc
         ${CMAKE_SOURCE_DIR}/server/src/ui_presentation_router.cc
         ${CMAKE_SOURCE_DIR}/server/src/ui_candidate_page_conversion.cc

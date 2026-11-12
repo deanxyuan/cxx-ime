@@ -13,6 +13,8 @@
 #include <cxxime/candidate.h>
 #include <cxxime/candidate_presentation.h>
 
+#include "edit_target.h"
+
 namespace cxxime_tsf {
 
 enum class CandidateContentState {
@@ -68,29 +70,17 @@ public:
     void set_presenter(CandidatePresenter presenter);
     void set_local_visible_candidate_count(std::size_t count);
     std::uint32_t local_visible_candidate_count() const;
-    void begin_waiting_for_caret(bool reposition, const RECT* stale_rect, TimePoint now);
-    void begin_waiting_for_initial_layout(const RECT& provisional_rect, TimePoint now);
-    bool pending_caret_fallback_due(TimePoint now, int delay_ms) const;
-    bool accept_provisional_caret_after_timeout(TimePoint now, RECT* caret_rect);
-    void begin_composition_restart(TimePoint now);
-    bool should_keep_waiting_for_caret(const RECT& caret_rect, bool from_layout_change,
-                                       bool used_trusted_caret, TimePoint now,
-                                       int pending_delay_ms, int reposition_delay_ms);
+    void begin_positioning(bool restart, TimePoint now);
     bool complete_composition_restart(std::uint64_t generation, TimePoint now = Clock::now());
-    bool accept_caret(std::uint64_t generation);
-    RECT display_caret(const RECT& sample, std::uint64_t sample_serial,
-                       std::uint64_t target_generation, TimePoint now);
-    const RECT& displayed_caret() const { return displayed_caret_; }
-    bool accept_pending_caret_after_timeout(TimePoint now);
-    bool caret_jump_pending() const { return caret_jump_pending_; }
-    bool caret_jump_filtered() const { return caret_jump_filtered_; }
+    void observe_caret(const CaretPosition& sample, std::uint64_t target_generation, TimePoint now);
+    bool settle_caret(TimePoint now);
+    bool needs_caret_fallback(TimePoint now) const;
+    const RECT& displayed_caret() const { return displayed_position_.rect; }
+    CaretSource displayed_caret_source() const { return displayed_position_.source; }
+    bool displayed_caret_confirmed() const { return displayed_confirmed_; }
     bool caret_ready_to_show() const { return has_displayed_caret_; }
     bool can_retain_displayed_caret(std::uint64_t target_generation) const;
     bool caret_poll_pending() const;
-    bool expire_caret_wait(TimePoint now);
-    bool initial_layout_pending() const {
-        return waiting_for_caret() && initial_layout_wait_;
-    }
     void finish();
 
     CandidateContentState content_state() const { return content_state_; }
@@ -133,6 +123,8 @@ private:
 
     void advance_generation();
     void reset_position_state();
+    void accept_position(const CaretPosition& position, bool confirmed);
+    CaretPosition timeout_position() const;
 
     CandidateContentState content_state_ = CandidateContentState::kEmpty;
     CandidateOwnership ownership_ = CandidateOwnership::kNone;
@@ -153,22 +145,20 @@ private:
     std::uint64_t presentation_generation_ = 1;
     bool composition_restart_active_ = false;
     bool caret_resolution_allowed_ = true;
-    bool reposition_wait_ = false;
-    bool initial_layout_wait_ = false;
-    bool has_stale_rect_ = false;
-    RECT stale_rect_ = {};
-    RECT latest_initial_caret_ = {};
+    bool position_budget_active_ = false;
     TimePoint waiting_since_ = {};
-    RECT displayed_caret_ = {};
-    RECT pending_caret_ = {};
-    TimePoint pending_caret_since_ = {};
-    TimePoint pending_confirmation_since_ = {};
+    CaretPosition real_position_;
+    CaretPosition fallback_position_;
+    CaretPosition displayed_position_;
+    RECT observation_view_ = {};
+    TimePoint real_since_ = {};
+    TimePoint fallback_since_ = {};
     std::uint64_t displayed_target_generation_ = 0;
-    std::uint64_t observed_sample_serial_ = 0;
-    bool has_reference_caret_ = false;
+    bool real_confirmed_ = false;
+    bool real_observed_in_budget_ = false;
+    bool fallback_consistent_ = false;
+    bool displayed_confirmed_ = false;
     bool has_displayed_caret_ = false;
-    bool caret_jump_pending_ = false;
-    bool caret_jump_filtered_ = false;
 };
 
 } // namespace cxxime_tsf
