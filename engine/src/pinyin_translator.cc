@@ -1104,7 +1104,7 @@ TranslationResult PinyinTranslator::translate(const TranslationRequest& request)
                        request.scratch, 0, require_runtime_paths,
                        full_span_first ? PinyinLookupScope::kExact : PinyinLookupScope::kAll);
     std::vector<CandidateEntry> merged;
-    merged.reserve(full.candidates.size() + kMaxSegmentedPartialCandidateCount);
+    merged.reserve(full.candidates.size() + kMaxPartialCandidatesPerBoundary);
     for (auto& candidate : full.candidates) {
         merged.push_back(make_text_candidate_entry(std::move(candidate), request.input.size()));
         if (full_span_first) {
@@ -1139,8 +1139,8 @@ TranslationResult PinyinTranslator::translate(const TranslationRequest& request)
     const std::size_t leading_full_count = (std::min)(
         visible_full_count, kLeadingFullSpanCandidateCount);
 
-    // Keep a fixed number of leading full-span choices, then group all partials
-    // before lower-ranked full-span choices. The order is independent of page size.
+    // Keep leading full-span choices, then alternate partial and remaining full choices.
+    // Neither stream can hide the other, and the order is independent of page size.
     if (!full_span_first && visible_full_count > leading_full_count && visible_partial_count > 0) {
         std::vector<CandidateEntry> partials;
         std::vector<CandidateEntry> fulls;
@@ -1162,11 +1162,13 @@ TranslationResult PinyinTranslator::translate(const TranslationRequest& request)
 
         std::size_t full_index = leading_full_count;
         std::size_t partial_index = 0;
-        while (partial_index < partials.size()) {
-            merged.push_back(std::move(partials[partial_index++]));
-        }
-        while (full_index < fulls.size()) {
-            merged.push_back(std::move(fulls[full_index++]));
+        while (partial_index < partials.size() || full_index < fulls.size()) {
+            if (partial_index < partials.size()) {
+                merged.push_back(std::move(partials[partial_index++]));
+            }
+            if (full_index < fulls.size()) {
+                merged.push_back(std::move(fulls[full_index++]));
+            }
         }
     }
 

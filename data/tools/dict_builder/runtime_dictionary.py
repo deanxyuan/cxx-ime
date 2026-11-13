@@ -6,6 +6,8 @@ import sqlite3
 import struct
 from typing import Dict, Tuple
 
+from .pinyin_syllables import validate_syllables
+
 
 MAGIC = b"CXDIC\x02\x00\x00"
 VERSION = 2
@@ -15,7 +17,9 @@ ENTRY_FORMAT = "<IIIIi"
 ENTRY_SIZE = struct.calcsize(ENTRY_FORMAT)
 
 
-def build(database_path: str, output_path: str) -> int:
+def build(
+    database_path: str, output_path: str, *, pinyin: bool = True, validated: bool = False,
+) -> int:
     connection = sqlite3.connect(database_path)
     cursor = connection.cursor()
     cursor.execute("PRAGMA table_info(dict)")
@@ -26,6 +30,9 @@ def build(database_path: str, output_path: str) -> int:
             "FROM dict ORDER BY syllable_ids, frequency DESC"
         )
     else:
+        if pinyin:
+            connection.close()
+            raise ValueError("Pinyin dictionary requires explicit syllable_ids")
         print("  Note: no syllable_ids column, using code as syllable_ids")
         cursor.execute(
             "SELECT text, code, frequency, code FROM dict ORDER BY code, frequency DESC"
@@ -49,7 +56,12 @@ def build(database_path: str, output_path: str) -> int:
         return offset, len(encoded)
 
     entries = []
-    for text, _, frequency, syllable_ids in rows:
+    for text, code, frequency, syllable_ids in rows:
+        if pinyin and not validated:
+            try:
+                validate_syllables(code, syllable_ids)
+            except ValueError as error:
+                raise ValueError(f"dictionary entry {text!r}: {error}") from error
         code_offset, code_length = intern(syllable_ids)
         text_offset, text_length = intern(text)
         entries.append((code_offset, text_offset, code_length, text_length, frequency))

@@ -9,8 +9,12 @@
 |------|------|---------|------|
 | 词典源数据 | `pinyin.dict.db.zip` | 是 | 拼音 SQLite 词典的压缩分发副本 |
 | 词典源数据 | `wubi86.dict.db.zip` | 是 | 未修改的五笔 86 词典源数据 |
+| 源修正规则 | `pinyin_source/` | 是 | 工具生成的稀疏读音修正及来源摘要，不修改原 ZIP |
 | 授权材料 | `licenses/rime-ice-GPL-3.0.txt` | 是 | 雾凇拼音 GPL-3.0-only 完整许可证 |
-| 可审查派生数据 | `symbols.json` | 是 | 从五笔源词典拆出的独立符号分类 |
+| 收录清单 | `symbol_catalog.json` | 是 | 人工维护分类、中文分组、范围或显式码点及顺序 |
+| 可审查派生数据 | `symbols.json` | 是 | 从独立收录清单生成的特殊符号表 |
+| 冻结分类数据 | `tools/dict_builder/emoji_classification.json` | 是 | 官方 Unicode 文件生成，不逐项手工维护 |
+| 运行时分类范围 | `../shared/src/symbol_ranges.inc` | 是 | 从冻结属性生成，不手工维护 |
 | 默认配置 | `default.json`、`themes.json` 等 | 是 | 安装包使用的出厂配置 |
 | 临时源数据 | `*.dict.db` | 否 | 从压缩源解包或下载得到的 SQLite 文件 |
 | 运行时数据 | `*.dict.bin`、`*.dict.idx`、`*.spellings.bin`、`*.topn.bin`、`*.reverse.idx` | 否 | 打包阶段生成的二进制文件 |
@@ -20,24 +24,28 @@ SHA-256；它同样不作为源文件维护。
 
 ## 数据授权
 
-- 拼音词典派生自 [rime-ice](https：//github.com/iDvel/rime-ice)，按 GPL-3.0-only
+- 拼音词典派生自 [rime-ice](https://github.com/iDvel/rime-ice)，按 GPL-3.0-only
   发布。完整许可证保存在 `licenses/rime-ice-GPL-3.0.txt`，并随安装包分发。
-- 五笔词典和 `symbols.json` 派生自
-  [rime-wubi86-jidian](https：//github.com/KyleBing/rime-wubi86-jidian)，按
-  Apache-2.0 发布。
+- 五笔词典及独立符号清单的既有内容派生自
+  [rime-wubi86-jidian](https://github.com/KyleBing/rime-wubi86-jidian)，按 Apache-2.0
+  发布。清单的补齐项及码点范围参考固定 Unicode 17.0 数据。
 - 项目代码的 Apache-2.0 许可证不替代上述第三方词典数据各自的许可证。
+- Unicode 17.0 分类表按 Unicode-3.0 发布，完整授权见根目录 `THIRD_PARTY_NOTICES.txt`。
+  独立清单及生成的 `symbols.json` 保留历史词典来源与 Unicode 数据来源。
+  拼音词典过滤不会再向符号清单贡献内容或来源标记。
 
 ## 本地工具入口
 
-需要单独调试 SQLite 到运行时格式的转换时，可使用：
+正式运行时数据使用根目录的统一入口（先构建 topn_builder）：
 
 ```bat
-python data\tools\build_runtime_dictionary.py ^
-    --input data\pinyin.dict.db --output data\pinyin
+python scripts\prepare_dictionary_bundle.py --data-dir data --output-dir data ^
+    --topn-builder build\tools\topn_index\Release\topn_builder.exe
 ```
 
-五笔完整前缀索引必须显式指定，且输入必须是已经由 `split_wubi_symbols.py` 过滤符号扩展项的
-临时 SQLite 词典：
+仅调试底层构建器时才分步执行。拼音先用 `prepare_pinyin_source.py` 准备独立副本；
+随后拼音和五笔输入都经 `filter_dictionary_symbols.py` 过滤为临时 SQLite。
+拼音再生成拼写表，五笔完整前缀索引须显式指定：
 
 ```bat
 python data\tools\build_runtime_dictionary.py ^
@@ -51,16 +59,46 @@ python data\tools\build_runtime_dictionary.py ^
 
 拼音导入保留上游空格标注的音节边界。例如 `jin guan` 同时保存连续编码
 `jinguan` 和音节字段 `jin:guan`，不丢弃边界后再猜测切分。
+维护工具 `generate_pinyin_syllable_ids.py` 保留符合规范的已有标注，仅在连续
+编码具有唯一完整切分时补齐缺失或格式损坏的标注；发现歧义或无法解析的
+输入时整次更新失败。结构合法不证明词读音正确，已有标注仍需有来源依据。
 
-维护工具 `generate_pinyin_syllable_ids.py` 保留格式完整的已有标注，仅在连续
-编码具有唯一完整切分时补齐缺失或格式损坏的标注；发现歧义或无法解析的输入时
-整次更新失败。旧音节集合只用于补齐，不用于改写显式生僻读音。
+`dict_builder/pinyin_syllables.py` 是规范音节的唯一人工定义，包括少见读音和
+`m/n/ng`。`generate_pinyin_syllables.py` 从它生成引擎的只读
+`engine/src/pinyin_syllables.inc`，个人词与离线构建共用同一集合。
+输入别名、简拼和模糊拼音由 schema 派生，不作为规范音节入库。
+双拼通过 `ignored_syllables` 明确排除该方案尚未支持的 `m/n/ng`，
+不会把未知片段自动注册为正常拼写。修改 schema 后须重新生成整个 bundle。
 
-历史源词典中仍有旧贪心切分产生的 `jing:u:an` 等异常标注。双拼 schema 通过
-`ignored_syllables` 排除未支持的片段，不再把它们生成成正常单键拼写。这不删除
-源词条，但不保证错误标注在双拼中的可达性；修正此类读音需要可信的上游标注，
-不应重新贪心切分或批量猜读音。正常编码由声韵母及零声母映射定义，不再提供
-原样透传任意音节的入口。修改 schema 后必须重新生成词典 bundle。
+下载与转换入口遵循 Rime 声明的列顺序；未声明时使用 `text/code/weight`。
+只有 `text/weight` 的未注音词表不能直接导入，不能把数字词频当作拼音编码。
+未注音扩展词的离线补码另行评估，不在普通构建中逐字猜读音或联网补齐。
+主词典、拼写表、音节索引及 Top-N 构建均检查规范标注；完整 bundle 在临时目录
+生成成功后发布，manifest 最后替换，文件替换失败时恢复原 bundle。
+
+### 拼音源的构建期修正
+
+本次按与原数据对应的 rime-ice 固定提交
+[`785489b3220dfca98d7ce632e590f416faea4fdf`](https://github.com/iDvel/rime-ice/tree/785489b3220dfca98d7ce632e590f416faea4fdf/cn_dicts)
+核对全部普通拼音记录，未整体升级上游词频或词汇。
+
+- 928,290 条有编码记录均按文字和连续编码找到唯一显式读音；其中修正
+  33,943 条音节边界，保留原记录 ID、文字、连续编码和词频。
+  包含 `一年/yi:nian`，也包含旧标注结构合法但词读音不符的 `西安/xi:an`。
+- 981,634 条 `code=100` 均来自腾讯未注音词表的 `text/weight` 列。
+  它们没有可靠拼音编码，只从构建私有副本排除，原 ZIP 保留全部记录。
+- 五笔关联语料继续读取原始拼音 ZIP，语料摘要与排序指纹均保持不变。
+
+原始 ZIP 保持字节不变，其 SHA-256 为：
+
+```text
+7ee978b1d839e9b26e08cce4af66d2b664c0df7706ca48288fa70aec0e204fc5
+```
+
+构建自动使用 `pinyin_source/` 的文本规则修正临时副本，不依赖外部审计目录或上游仓库。
+修正表由维护工具按固定上游显式读音生成，不手写读音，也不改变候选词频。
+独立 SQLite 准备命令、维护生成命令及来源边界见
+[`pinyin_source/README.md`](pinyin_source/README.md)。
 
 `data/tools/` 中的文件名使用“词典领域 + 动作或产物”命名，避免无法判断用途的通用名称。
 
@@ -72,7 +110,12 @@ python data\tools\build_runtime_dictionary.py ^
 | `convert_rime_dictionary.py` | 将其他 RIME YAML 词典转换为 SQLite 格式 |
 | `generate_pinyin_spellings.py` | 根据拼音 schema 生成 spellings 表 |
 | `generate_pinyin_syllable_ids.py` | 为拼音 SQLite 词典生成音节 ID 分段字段 |
-| `split_wubi_symbols.py` | 从五笔源词典生成符号表和过滤后的临时词典 |
+| `prepare_pinyin_source.py` | 从原 ZIP/DB 生成经过来源修正和规范校验的独立 SQLite |
+| `generate_pinyin_source_corrections.py` | 按固定本地上游数据重生成读音修正表和来源摘要 |
+| `filter_dictionary_symbols.py` | 在临时源中过滤纯符号、emoji 和既有五笔扩展项，不生成符号表 |
+| `generate_symbols.py` | 从独立收录清单生成运行时符号表，不读取任何词典 |
+| `generate_emoji_classification.py` | 校验仓库内固定 Unicode 原始输入，离线重生成分类表 |
+| `generate_symbol_ranges.py` | 从冻结属性生成个人候选准入使用的紧凑 C++ 范围 |
 
 `data/tools/dict_builder/` 是构建实现包，不是面向用户的命令集合：
 
@@ -85,6 +128,7 @@ python data\tools\build_runtime_dictionary.py ^
 | `wubi_ranking.py` | 五笔可见候选的离线语料排序与全量验收 |
 | `reverse_index.py` | Settings 词语反查使用的 `.reverse.idx` |
 | `source_archive.py` | 安全解析 `.dict.db` 与 `.dict.db.zip` 输入 |
+| `symbol_policy.py` | 判断完整 emoji 序列与纯 P/S 文本，不依赖导航分类或收录清单 |
 
 ## 数据流水线
 
@@ -93,7 +137,9 @@ python data\tools\build_runtime_dictionary.py ^
 ```text
 pinyin.dict.db.zip
   -> 临时 SQLite
-  -> 拼写规则与四种内置双拼映射分别展开
+  -> 应用 pinyin_source 稀疏修正，排除误导入的未注音记录
+  -> 与五笔共用符号过滤规则，生成过滤后的临时 SQLite
+  -> 全拼规则与四种内置双拼映射分别展开
   -> 共享 dict.bin + 五份 spellings.bin + syllable idx + reverse idx
 ```
 
@@ -108,6 +154,7 @@ wubi86.dict.db.zip
 ```
 
 符号：
+
 ```text
 symbol_catalog.json(独立收录清单)
   -> generate_symbols.py

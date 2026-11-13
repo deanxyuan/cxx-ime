@@ -212,16 +212,23 @@ class FilteringTest(unittest.TestCase):
         write_database(self.wubi, [("词", "a", 1), ("\u2103", "b", 1)])
         write_database(self.pinyin, [("词", "ci", 1),
                                      ("\U0001f4a1", "deng", 1)])
+        pinyin_archive = self.root / "pinyin.dict.db.zip"
+        with zipfile.ZipFile(pinyin_archive, "w") as archive:
+            archive.write(self.pinyin, "pinyin.dict.db")
+        # ZIP remains authoritative even when a stale unpacked file is present.
+        self.pinyin.write_bytes(b"stale unpacked database")
+        original_archive = pinyin_archive.read_bytes()
         for name in ("symbols.json", "symbol_catalog.json"):
             shutil.copy2(ROOT / "data" / name, self.root / name)
 
-        def pinyin_worker(db, output):
+        def pinyin_worker(db, output, syllabary):
             self.assertEqual([r[1] for r in read_rows(db)], ["词"])
+            self.assertEqual(syllabary, {"ci"})
             return []
 
         def wubi_worker(db, output, ranking_source):
             self.assertEqual([r[1] for r in read_rows(db)], ["词"])
-            self.assertEqual(Path(ranking_source), self.pinyin)
+            self.assertEqual(Path(ranking_source), pinyin_archive)
             return []
 
         for workers in (1, 2):
@@ -244,6 +251,8 @@ class FilteringTest(unittest.TestCase):
                         (self.root / "symbols.json").read_text(encoding="utf-8"),
                         (output / "symbols.json").read_text(encoding="utf-8"),
                     )
+                    self.assertEqual(pinyin_archive.read_bytes(), original_archive)
+                    self.assertEqual(self.pinyin.read_bytes(), b"stale unpacked database")
 
 
 if __name__ == "__main__":

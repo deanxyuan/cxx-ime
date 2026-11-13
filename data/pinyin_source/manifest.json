@@ -1,0 +1,19 @@
+{
+    "schema": 1,
+    "source_commit": "785489b3220dfca98d7ce632e590f416faea4fdf",
+    "source_zip_sha256": "7ee978b1d839e9b26e08cce4af66d2b664c0df7706ca48288fa70aec0e204fc5",
+    "source_db_sha256": "6529a859ea914e5e572ed08eb5bc9b21466bdc3111466d0b3a9047b0594d1864",
+    "before_rows": 1909924,
+    "after_rows": 928290,
+    "boundary_repairs": 33943,
+    "unannotated_removed": 981634,
+    "corrections_sha256": "48848c6210a2c410758cfb03c9db7d559ebf44e7a4d0982ba4de532e22b25e3b",
+    "upstream_files": {
+        "cn_dicts/41448.dict.yaml": "e95f1484842c52197c539afb6591d99d5df4f23e47d1a059d5e2e97d51ef61b9",
+        "cn_dicts/8105.dict.yaml": "98a974f53d042737ad9fb72715ef5dadb08b719753fbca4c55d44d25bfcb80fc",
+        "cn_dicts/base.dict.yaml": "3e0bd5fac9f21494612d7a8525901bb3d1d4647a05770d0c34ffec6f9108572c",
+        "cn_dicts/ext.dict.yaml": "83f3d895ee6d9790d2e0462cab16c51bc8193413c2e7bca44f534808d55e4fa6",
+        "cn_dicts/others.dict.yaml": "6a6b1a77d94c7cdf9203cf426e67f350215d2d73259fe3769c97d2a18f521c28",
+        "cn_dicts/tencent.dict.yaml": "dcc947386d4a3affd1ff0c3ecf27b926520c08d0da07a466a6bff9d24a8d23b8"
+    }
+}

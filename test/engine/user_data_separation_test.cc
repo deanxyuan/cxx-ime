@@ -362,29 +362,34 @@ TEST(UserDataSeparation, user_lexicon_rejects_non_current_column_counts) {
     DeleteFileA(user_path.c_str());
 }
 
-TEST(UserDataSeparation, load_quarantines_noncanonical_pinyin_entries) {
-    const std::string user_path = make_temp_path("udm");
-    const std::string quarantine_path = user_path + ".noncanonical";
-    {
-        std::ofstream output(user_path, std::ios::binary | std::ios::trunc);
-        output << "canonical\tnihao\t2\tni:hao\n";
-        output << "unparsed-old-row\ttoo-few\n";
-        output << "legacy-double\tnihk\t3\n";
+TEST(UserDataSeparation, load_ignores_noncanonical_readings_without_rewriting_source) {
+    for (const bool include_bad_reading : {false, true}) {
+        const std::string user_path = make_temp_path("udm");
+        {
+            std::ofstream output(user_path, std::ios::binary | std::ios::trunc);
+            output << "canonical\tnihao\t2\tni:hao\n";
+            output << "unparsed-old-row\ttoo-few\n";
+            if (include_bad_reading) {
+                output << "legacy-double\tnihk\t3\n";
+            }
+        }
+        const std::string original = read_file(user_path);
+
+        cxxime::Dict dictionary{cxxime::UserDictKind::PINYIN};
+        ASSERT_TRUE(dictionary.load_user_dict(user_path));
+        ASSERT_EQ(dictionary.user_entry_count(), static_cast<std::size_t>(1));
+        ASSERT_EQ(dictionary.query_user_entries("", 0, 10).front().text, "canonical");
+        ASSERT_EQ(read_file(user_path), original);
+        ASSERT_TRUE(dictionary.save_user_dict());
+        ASSERT_EQ(read_file(user_path), original);
+        ASSERT_TRUE(dictionary.add_user_entry("新词", "xinci", "xin:ci"));
+        ASSERT_TRUE(dictionary.save_user_dict());
+        ASSERT_EQ(read_file(user_path + ".noncanonical"), original);
+
+        dictionary.close();
+        DeleteFileA(user_path.c_str());
+        DeleteFileA((user_path + ".noncanonical").c_str());
     }
-
-    cxxime::Dict dictionary{cxxime::UserDictKind::PINYIN};
-    ASSERT_TRUE(dictionary.load_user_dict(user_path));
-    ASSERT_EQ(dictionary.user_entry_count(), static_cast<std::size_t>(1));
-    ASSERT_EQ(dictionary.query_user_entries("", 0, 10).front().text, "canonical");
-    ASSERT_TRUE(read_file(user_path).find("legacy-double") == std::string::npos);
-    ASSERT_TRUE(read_file(quarantine_path).find("legacy-double\tnihk\t3") != std::string::npos);
-    ASSERT_TRUE(read_file(quarantine_path).find("unparsed-old-row\ttoo-few") != std::string::npos);
-    ASSERT_TRUE(cxxime::UserLexicon::validate_contents(read_file(user_path),
-                                                       cxxime::UserDictKind::PINYIN));
-
-    dictionary.close();
-    DeleteFileA(user_path.c_str());
-    DeleteFileA(quarantine_path.c_str());
 }
 
 TEST(UserDataSeparation, replacing_code_removes_stale_syllable_indexes) {

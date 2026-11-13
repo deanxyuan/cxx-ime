@@ -9,7 +9,6 @@
 #include <cstdint>
 #include <map>
 #include <string>
-#include <utility>
 #include <vector>
 
 #include <cxxime/spellings_index.h>
@@ -89,8 +88,9 @@ private:
                          std::vector<SegmentedPath>& results,
                          const QueryDeadline* deadline,
                          bool collect_path_metadata,
-                         uint32_t& path_count,
-                         std::vector<std::pair<size_t, std::vector<SyllableEdge>>>& sorted_scratch,
+                         const std::vector<uint8_t>& suffix_paths,
+                         bool require_abbreviation,
+                         bool used_abbreviation,
                          uint32_t& call_count) const;
 };
 

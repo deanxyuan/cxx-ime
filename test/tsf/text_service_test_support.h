@@ -722,6 +722,11 @@ public:
                     response.key_handled = true;
                     return response;
                 }
+                if (request.key_code == VK_RETURN) {
+                    strcpy_s(response.commit_text, engine.commit_raw_composition().c_str());
+                    response.key_handled = true;
+                    return response;
+                }
                 cxxime::KeyEvent key;
                 key.keycode = request.key_code;
                 ASSERT_EQ(processor.process_key(key, engine.context()),

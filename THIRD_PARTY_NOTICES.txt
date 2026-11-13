@@ -106,6 +106,12 @@ licenses/rime-ice-GPL-3.0.txt. The corresponding dictionary source and
 transformation scripts are available in the CxxIME source distribution at
 https://github.com/deanxyuan/cxx-ime under data/ and data/tools/.
 
+The unmodified upstream YAML inputs used to regenerate reading corrections
+are included under data/pinyin_source/upstream/rime-ice-785489b/ with their
+LICENSE. The pinned revision and offline generation instructions are in
+data/pinyin_source/README.md. These maintenance inputs are not installed
+with the runtime dictionary bundle.
+
 
 rime-wubi86-jidian 4.3 dictionary data
 ---------------------------------------

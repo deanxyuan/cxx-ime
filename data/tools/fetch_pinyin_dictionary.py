@@ -20,13 +20,14 @@ import io
 import zipfile
 import tempfile
 
-from generate_pinyin_syllable_ids import validate_syllables
+from dict_builder.pinyin_source import parse_rime_entries
+from dict_builder.pinyin_syllables import validate_syllables
 
 # rime-ice dictionary files to download (in priority order)
 DICT_URLS = [
     # Core dictionaries from rime-ice
     "https://raw.githubusercontent.com/iDvel/rime-ice/main/cn_dicts/8105.dict.yaml",
-    "https://raw.githubusercontent.com/iDvel/rime-ice/main/cn_dicts/49649.dict.yaml",
+    "https://raw.githubusercontent.com/iDvel/rime-ice/main/cn_dicts/41448.dict.yaml",
     "https://raw.githubusercontent.com/iDvel/rime-ice/main/cn_dicts/base.dict.yaml",
     "https://raw.githubusercontent.com/iDvel/rime-ice/main/cn_dicts/ext.dict.yaml",
 ]
@@ -46,48 +47,9 @@ def download_text(url, timeout=30):
         return resp.read().decode("utf-8")
 
 
-def parse_rime_dict(content):
-    """Parse RIME dict.yaml, preserving its explicit syllable boundaries.
-
-    RIME dict.yaml format: text<tab>code<tab>frequency
-    text = Chinese characters, code = pinyin syllables, frequency = weight.
-
-    Note: RIME uses space-separated syllables (e.g. "ni hao"), but CxxIME
-    engine stores both the concatenated lookup code and colon-separated syllables.
-    """
-    in_header = True
-    for line in content.splitlines():
-        line = line.rstrip()
-        if not line:
-            continue
-        if in_header:
-            if line == "...":
-                in_header = False
-                continue
-            if line.startswith("#") or line.startswith("---"):
-                continue
-            if "\t" not in line and ":" in line:
-                continue
-            in_header = False
-
-        if line.startswith("#"):
-            continue
-
-        parts = line.split("\t")
-        if len(parts) >= 2:
-            text = parts[0].strip()
-            syllables = parts[1].split()
-            code = "".join(syllables)
-            syllable_ids = ":".join(syllables)
-            freq = 0
-            if len(parts) > 2:
-                try:
-                    freq = int(parts[2].strip())
-                except ValueError:
-                    pass
-            if text and code:
-                validate_syllables(code, syllable_ids)
-                yield (text, code, freq, syllable_ids)
+def parse_rime_dict(content, source="<input>"):
+    """Preserve explicitly annotated readings and honor the declared columns."""
+    return iter(parse_rime_entries(content, source)[1])
 
 
 def download_dicts_from_zip():
@@ -98,13 +60,15 @@ def download_dicts_from_zip():
         zip_data = resp.read()
 
     entries = []
+    supported = {url.rsplit("/", 1)[-1] for url in DICT_URLS}
     with zipfile.ZipFile(io.BytesIO(zip_data)) as zf:
         for name in zf.namelist():
-            if "/cn_dicts/" in name and name.endswith(".dict.yaml"):
+            # Unannotated extension tables require a separate encoding pipeline.
+            if "/cn_dicts/" in name and name.rsplit("/", 1)[-1] in supported:
                 print(f"  Extracting: {name.split('/')[-1]}")
                 with zf.open(name) as f:
                     content = f.read().decode("utf-8")
-                    entries.extend(parse_rime_dict(content))
+                    entries.extend(parse_rime_dict(content, name))
 
     return entries
 
@@ -115,7 +79,7 @@ def download_dicts_individual():
     for url in DICT_URLS:
         try:
             content = download_text(url)
-            entries.extend(parse_rime_dict(content))
+            entries.extend(parse_rime_dict(content, url))
         except (urllib.error.URLError, urllib.error.HTTPError) as e:
             print(f"  WARNING: Failed to download {url}: {e}")
             continue

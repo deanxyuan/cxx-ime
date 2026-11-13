@@ -60,6 +60,8 @@ add_cxxime_test(segmented_selection_test
         engine/pinyin_single_syllable_test.cc
         engine/pinyin_scoped_candidates_test.cc
         engine/pinyin_terminal_completion_test.cc
+        engine/pinyin_space_test.cc
+        engine/pinyin_boundary_candidates_test.cc
     DEPS cxxime-engine cxxime-test-topn-data
 )
 add_cxxime_test(composition_learning_test
@@ -196,9 +198,9 @@ target_sources(effective_edit_target_test PRIVATE
     ${CMAKE_SOURCE_DIR}/tsf/src/effective_edit_target.cpp
 )
 add_cxxime_test(candidate_presentation_test
-SOURCES
-tsf/candidate_presentation_test.cc
-tsf/candidate_position_test.cc
+    SOURCES
+        tsf/candidate_presentation_test.cc
+        tsf/candidate_position_test.cc
     DEPS cxxime-shared
 )
 target_sources(candidate_presentation_test PRIVATE
@@ -568,6 +570,11 @@ add_test(
     COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/data/pinyin_spelling_schema_test.py
 )
+add_test(
+    NAME pinyin_source_validation_test
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/data/pinyin_source_validation_test.py
+)
 set(SHUANGPIN_SCHEMA_FIXTURE
     ${CMAKE_CURRENT_BINARY_DIR}/generated/pinyin.synthetic.spellings.bin
 )
@@ -606,6 +613,11 @@ foreach(SCHEME IN LISTS PRODUCTION_SHUANGPIN_SCHEMES)
             ${CMAKE_CURRENT_SOURCE_DIR}/data/generate_shuangpin_schema_fixture.py
             ${CMAKE_SOURCE_DIR}/data/schemas/pinyin.${SCHEME}-shuangpin.schema.json
             ${CMAKE_SOURCE_DIR}/data/pinyin.dict.db.zip
+            ${CMAKE_SOURCE_DIR}/data/pinyin_source/manifest.json
+            ${CMAKE_SOURCE_DIR}/data/pinyin_source/reading_corrections.tsv
+            ${CMAKE_SOURCE_DIR}/data/tools/dict_builder/pinyin_source_repair.py
+            ${CMAKE_SOURCE_DIR}/data/tools/dict_builder/pinyin_syllables.py
+            ${CMAKE_SOURCE_DIR}/data/tools/dict_builder/source_archive.py
             ${CMAKE_SOURCE_DIR}/data/tools/generate_pinyin_spellings.py
             ${CMAKE_SOURCE_DIR}/data/tools/dict_builder/pinyin_spellings.py
         VERBATIM

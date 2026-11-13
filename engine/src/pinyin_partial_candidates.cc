@@ -193,12 +193,19 @@ void rank_partial_candidates(Dict& dict,
         }
 
         dict.filter_disabled_system_candidates(candidates);
+        // Multiple reading boundaries can share one typed prefix (guan / gu:an).
+        // Merge their source order before optional learning and explicit pinning.
+        std::stable_sort(candidates.begin(), candidates.end(),
+                         [](const Candidate& left, const Candidate& right) {
+                             return left.frequency > right.frequency;
+                         });
+        const int group_limit = (std::max)(limit, static_cast<int>(candidates.size()));
         if (candidate_learning_enabled) {
             dict.apply_candidate_preferences(lookup_key, CandidateSource::kPinyin,
-                                             candidates, limit);
+                                             candidates, group_limit);
         }
         dict.apply_manual_candidate_order(lookup_key, CandidateSource::kPinyin,
-                                          candidates, limit);
+                                          candidates, group_limit);
 
         std::vector<PartialCandidate> group;
         group.reserve(candidates.size());
@@ -297,6 +304,11 @@ void append_pinyin_partial_candidates(Dict& dict,
     options.enable_terminal_completion = shuangpin;
     options.collect_path_metadata = true;
     const SegmentResult segmented = pinyin_resources.segment(request.input, deadline, options);
+    if (request.trace) {
+        request.trace->truncated = request.trace->truncated || segmented.truncated;
+        request.trace->deadline_exceeded =
+            request.trace->deadline_exceeded || segmented.deadline_exceeded;
+    }
     if (segmented.deadline_exceeded) {
         status = status == TranslationStatus::kFailed ? TranslationStatus::kFailed
                                                       : TranslationStatus::kStableDegraded;
@@ -317,8 +329,8 @@ void append_pinyin_partial_candidates(Dict& dict,
     const QueryBudget& effective_budget = request.budget ? *request.budget : default_budget;
     SpanLookupLimits limits;
     limits.max_candidates_per_range =
-        static_cast<uint32_t>(kMaxSegmentedPartialCandidateCount);
-    limits.max_results = static_cast<uint32_t>(kMaxSegmentedPartialCandidateCount);
+        static_cast<uint32_t>(kMaxPartialCandidatesPerBoundary);
+    limits.max_results = static_cast<uint32_t>(kMaxPartialCandidatesPerBoundary);
     UserLookupStats user_stats;
     bool span_scan_budget_truncated = false;
 
@@ -385,9 +397,6 @@ void append_pinyin_partial_candidates(Dict& dict,
 
     rank_partial_candidates(dict, candidate_learning_enabled, shuangpin, partials,
                             static_cast<int>(limits.max_candidates_per_range));
-    if (partials.size() > kMaxSegmentedPartialCandidateCount) {
-        partials.resize(kMaxSegmentedPartialCandidateCount);
-    }
     for (auto& partial : partials) {
         merge_or_append_visible_candidate(entries, std::move(partial.entry), request.input.size(),
                                           full_span_first);

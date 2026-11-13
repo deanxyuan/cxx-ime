@@ -253,26 +253,9 @@ bool UserLexicon::load(const std::string& path) {
                 canonical_entries.push_back(std::move(entry));
             }
         }
-        if (requires_migration) {
-            const std::string quarantine_path = path + ".noncanonical";
-            std::string quarantine_contents;
-            if (!read_user_data_file(quarantine_path, &quarantine_contents)) {
-                return false;
-            }
-            const bool already_archived =
-                quarantine_contents.size() >= contents.size() &&
-                quarantine_contents.compare(quarantine_contents.size() - contents.size(),
-                                            contents.size(), contents) == 0;
-            if (!already_archived) {
-                if (!quarantine_contents.empty() && quarantine_contents.back() != '\n') {
-                    quarantine_contents.push_back('\n');
-                }
-                quarantine_contents.append(contents);
-            }
-            if (!write_user_data_file_atomically(quarantine_path, quarantine_contents) ||
-                !write_user_data_file_atomically(path, serialize_entries(canonical_entries))) {
-                return false;
-            }
+        // Loading ignores invalid metadata without rewriting the user's source file.
+        if (requires_migration && !archive_noncanonical_user_data(path, contents)) {
+            return false;
         }
         entries = std::move(canonical_entries);
     }

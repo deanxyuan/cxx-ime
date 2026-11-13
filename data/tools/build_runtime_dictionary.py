@@ -14,6 +14,7 @@ from dict_builder import (
     build_wubi_prefix_index,
     resolve_source_archive,
 )
+from dict_builder.pinyin_syllables import validate_dictionary
 
 
 def parse_args():
@@ -92,11 +93,18 @@ def main() -> int:
             return 1
 
         print(f"Building runtime dictionary from: {database_path}")
+        if not args.wubi_prefix_index:
+            validate_dictionary(database_path)
         if not args.dict_only:
             build_pinyin_spellings(database_path, args.output + ".spellings.bin")
         if not args.spellings_only:
             dictionary_path = args.output + ".dict.bin"
-            build_runtime_dictionary(database_path, dictionary_path)
+            build_runtime_dictionary(
+                database_path,
+                dictionary_path,
+                pinyin=not args.wubi_prefix_index,
+                validated=not args.wubi_prefix_index,
+            )
             if args.wubi_prefix_index:
                 build_wubi_prefix_index(
                     dictionary_path,
@@ -106,7 +114,9 @@ def main() -> int:
                     args.wubi_ranking_overrides,
                 )
             elif not args.skip_idx:
-                build_pinyin_syllable_index(database_path, args.output + ".dict.idx")
+                build_pinyin_syllable_index(
+                    database_path, args.output + ".dict.idx", validated=True,
+                )
         print("Done.")
     return 0
 

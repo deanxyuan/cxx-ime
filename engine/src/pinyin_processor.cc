@@ -30,7 +30,7 @@ ProcessResult PinyinProcessor::process_key(const KeyEvent& event, Context& conte
         return ProcessResult::ACCEPTED;
     }
 
-    // Space: select first candidate, or dismiss if no candidates
+    // Space selects a candidate; an unconverted remainder stays editable.
     if (vk == VK_SPACE) {
         if (context.is_composing() &&
             context.commit_source() == CommitSource::kRawCodePreserveCase) {
@@ -52,7 +52,11 @@ ProcessResult PinyinProcessor::process_key(const KeyEvent& event, Context& conte
                            ? ProcessResult::COMMITTED
                            : ProcessResult::ACCEPTED;
             }
-            context.reset();
+            if (context.active_input().empty()) {
+                return context.finalize_raw(CommitSource::kRawCodePreserveCase)
+                           ? ProcessResult::COMMITTED
+                           : ProcessResult::ACCEPTED;
+            }
             return ProcessResult::ACCEPTED;
         }
         return ProcessResult::REJECTED;

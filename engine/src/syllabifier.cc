@@ -106,15 +106,22 @@ bool Syllabifier::enumerate_paths(
     std::vector<SegmentedPath>& results,
     const QueryDeadline* deadline,
     bool collect_path_metadata,
-    uint32_t& path_count,
-    std::vector<std::pair<size_t, std::vector<SyllableEdge>>>& sorted_scratch,
+    const std::vector<uint8_t>& suffix_paths,
+    bool require_abbreviation,
+    bool used_abbreviation,
     uint32_t& call_count) const {
 
-    // Cap at 256 paths — translator only needs kMaxPaths=8, and dense abbreviation
+    // Cap at 256 paths — the translator consumes a bounded shortlist, and dense abbreviation
     // graphs (150+ edges) can produce 10K+ paths which wastes CPU on sorting/dedup.
     static const size_t kMaxPaths = 256;
     if (results.size() >= kMaxPaths)
         return false;
+
+    // Bit 1: a suffix without abbreviation; bit 2: one containing abbreviation.
+    const uint8_t needed = !require_abbreviation ? 1 : used_abbreviation ? 3 : 2;
+    if ((suffix_paths[pos] & needed) == 0) {
+        return false;
+    }
 
     // Check deadline every 32 recursion calls (not per-call — Clock::now() overhead
     // accumulates when DFS explores millions of partial paths in dense graphs).
@@ -127,7 +134,6 @@ bool Syllabifier::enumerate_paths(
 
     if (pos >= end_pos) {
         results.push_back(current);
-        ++path_count;
         return false;
     }
 
@@ -135,29 +141,15 @@ bool Syllabifier::enumerate_paths(
     if (it == graph.end())
         return false;
 
-    // Fill scratch with edges from current position.
-    // sorted_scratch capacity is reused across recursion levels (no re-allocation).
-    sorted_scratch.clear();
-    for (auto& kv : it->second)
-        sorted_scratch.push_back(kv);
-    for (auto& se : sorted_scratch) {
-        std::sort(se.second.begin(), se.second.end(),
-            [](const SyllableEdge& a, const SyllableEdge& b) {
-                return a.credibility > b.credibility;
-            });
-    }
-    // Sort edge groups by end_pos descending — explore longer edges first.
-    // This ensures non-abbreviation paths (e.g. "zhong:guo") are discovered
-    // before abbreviation paths (e.g. "za:o:n:g:g:u:o") fill kMaxPaths.
-    std::sort(sorted_scratch.begin(), sorted_scratch.end(),
-        [](const auto& a, const auto& b) { return a.first > b.first; });
-
-    // Copy edges to local before recursing (recursive call will clear sorted_scratch).
-    // Use copy instead of move to preserve sorted_scratch data for remaining iterations.
-    auto edges_local = sorted_scratch;
-
-    for (auto& se : edges_local) {
-        for (auto& edge : se.second) {
+    // The graph is sorted once. Reverse map traversal keeps longer spans first
+    // without copying or sorting the same adjacency list on each recursive visit.
+    for (auto group = it->second.rbegin(); group != it->second.rend(); ++group) {
+        const auto& se = *group;
+        for (const auto& edge : se.second) {
+            const bool abbreviation = used_abbreviation || edge.type == kAbbreviation;
+            if (!require_abbreviation && abbreviation) {
+                continue;
+            }
             const size_t input_length = se.first - pos;
             if (input_length > UINT16_MAX) {
                 continue;
@@ -170,8 +162,8 @@ bool Syllabifier::enumerate_paths(
             const float previous_credibility = current.credibility;
             current.credibility += edge.credibility;
             bool expired = enumerate_paths(graph, se.first, end_pos, current, results, deadline,
-                                           collect_path_metadata, path_count, sorted_scratch,
-                                           call_count);
+                                           collect_path_metadata, suffix_paths,
+                                           require_abbreviation, abbreviation, call_count);
             current.credibility = previous_credibility;
             if (collect_path_metadata) {
                 current.input_lengths.pop_back();
@@ -210,19 +202,44 @@ SegmentResult Syllabifier::segment(const std::string& input, const QueryDeadline
     if (farthest == 0)
         return result;
 
+    // Reverse reachability also avoids exponentially exploring branches which cannot
+    // reach the selected endpoint. Keep suffixes with/without abbreviation separate.
+    std::vector<uint8_t> suffix_paths(farthest + 1, 0);
+    suffix_paths[farthest] = 1;
+    for (auto vertex = graph.rbegin(); vertex != graph.rend(); ++vertex) {
+        for (auto& edge_group : vertex->second) {
+            std::sort(edge_group.second.begin(), edge_group.second.end(),
+                      [](const SyllableEdge& left, const SyllableEdge& right) {
+                          return left.credibility > right.credibility;
+                      });
+            const uint8_t suffix = suffix_paths[edge_group.first];
+            for (const auto& edge : edge_group.second) {
+                if (edge.type != kAbbreviation) {
+                    suffix_paths[vertex->first] |= suffix;
+                } else if (suffix != 0) {
+                    suffix_paths[vertex->first] |= 2;
+                }
+            }
+        }
+    }
+
     // Enumerate paths from 0 to farthest.
     // enumerate_paths bails out at kMaxPaths to prevent exponential blowup
     // from dense abbreviation graphs.
     // Pass the deadline for internal checks during DFS.
     std::vector<SegmentedPath> scored;
-    std::vector<std::pair<size_t, std::vector<SyllableEdge>>> sorted_scratch;
     SegmentedPath current;
-    uint32_t path_count = 0;
     uint32_t call_count = 0;
     bool deadline_expired =
         enumerate_paths(graph, 0, farthest, current, scored, deadline,
-                        options.collect_path_metadata,
-                        path_count, sorted_scratch, call_count);
+                        options.collect_path_metadata, suffix_paths, false, false,
+                        call_count);
+    if (!deadline_expired) {
+        deadline_expired =
+            enumerate_paths(graph, 0, farthest, current, scored, deadline,
+                            options.collect_path_metadata, suffix_paths, true, false,
+                            call_count);
+    }
 
     if (deadline_expired) {
         result.deadline_exceeded = true;

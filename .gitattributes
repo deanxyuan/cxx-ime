@@ -7,10 +7,11 @@
 *.nsh text eol=crlf whitespace=trailing-space,space-before-tab,cr-at-eol
 .editorconfig whitespace=trailing-space,space-before-tab,cr-at-eol
 
-# Preserve upstream licenses and the pinned Unicode SHA-256 inputs.
+# Preserve upstream licenses and the pinned data SHA-256 inputs.
 third_party/**/LICENSE -text
 data/licenses/** -text
 data/unicode/**/*.txt -text
+data/pinyin_source/upstream/** -text
 
 # Treat binary assets as binary even if their contents look like text.
 *.ico binary

@@ -39,9 +39,18 @@ from dictionary_bundle_layout import (
     REQUIRED_MANIFEST_ROLES,
     SHUANGPIN_SCHEME_NAMES,
 )
-from dict_builder import build_reverse_index
+from dict_builder import (
+    build_pinyin_spellings,
+    build_pinyin_syllable_index,
+    build_reverse_index,
+    build_runtime_dictionary,
+)
+from dict_builder.pinyin_syllables import validate_dictionary
+from dict_builder.pinyin_source_repair import prepare_source
+from build_pinyin_topn import build_cache, serialize
 from filter_dictionary_symbols import prepare_filtered_sources
 from generate_symbols import generate as generate_symbols
+from generate_pinyin_spellings import generate_spellings
 
 TOPN_RUNTIME_HEADER_FORMAT = "<8s11IQI"
 TOPN_RUNTIME_HEADER_SIZE = struct.calcsize(TOPN_RUNTIME_HEADER_FORMAT)
@@ -56,18 +65,6 @@ def find_source(data_dir: str, name: str) -> str | None:
     if os.path.isfile(db):
         return db
     return None
-
-
-def run_pinyin_spelling_generation(db_path: str, schema_name: str) -> None:
-    """Regenerate spellings table from schema rules."""
-    script = os.path.join(DATA_TOOLS, "generate_pinyin_spellings.py")
-    schema = os.path.join(SCHEMAS, schema_name)
-    print(f"  Generating spellings from {schema_name}...")
-    subprocess.run(
-        [sys.executable, script, db_path, schema],
-        check=True,
-        capture_output=False,
-    )
 
 
 def run_build_runtime_dictionary(
@@ -115,17 +112,6 @@ def verify_generated_text_file(generated_path: str, expected_path: str) -> None:
                 f"Generated {os.path.basename(generated_path)} does not match "
                 f"{expected_path}; regenerate the repository copy"
             )
-
-
-def run_build_pinyin_topn(db_path: str, output_path: str) -> None:
-    """Build the intermediate representation consumed by topn_builder."""
-    script = os.path.join(SCRIPTS, "build_pinyin_topn.py")
-    print("  Building Top-N index intermediate...")
-    subprocess.run(
-        [sys.executable, script, "--input", db_path, "--output", output_path],
-        check=True,
-        capture_output=False,
-    )
 
 
 def finalize_topn_index(output_dir: str, topn_builder: str) -> str:
@@ -207,7 +193,9 @@ def write_dictionary_manifest(output_dir: str) -> str:
 
     manifest = {
         "schema": 1,
-        "generation": datetime.datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
+        "generation": datetime.datetime.now(datetime.timezone.utc).replace(
+            microsecond=0
+        ).isoformat(),
         "files": files,
     }
 
@@ -220,14 +208,20 @@ def write_dictionary_manifest(output_dir: str) -> str:
     return path
 
 
-def prepare_pinyin_dictionary(db_path: str, output_dir: str) -> list[str]:
+def prepare_pinyin_dictionary(db_path: str, output_dir: str, syllabary=None) -> list[str]:
     """Prepare pinyin binary dictionary files."""
     print("--- Pinyin dictionary ---")
     generated = []
-    run_pinyin_spelling_generation(db_path, "pinyin.full-pinyin.schema.json")
+    if syllabary is None:
+        syllabary = validate_dictionary(db_path)
+    generate_spellings(
+        db_path, os.path.join(SCHEMAS, "pinyin.full-pinyin.schema.json"), syllabary,
+    )
 
     output_prefix = os.path.join(output_dir, "pinyin")
-    run_build_runtime_dictionary(db_path, output_prefix)
+    build_pinyin_spellings(db_path, output_prefix + ".spellings.bin")
+    build_runtime_dictionary(db_path, output_prefix + ".dict.bin", validated=True)
+    build_pinyin_syllable_index(db_path, output_prefix + ".dict.idx", validated=True)
     reverse_index_path = output_prefix + ".reverse.idx"
     build_reverse_index(output_prefix + ".dict.bin", reverse_index_path)
     generated.extend([
@@ -239,13 +233,15 @@ def prepare_pinyin_dictionary(db_path: str, output_dir: str) -> list[str]:
 
     for scheme_name in SHUANGPIN_SCHEME_NAMES:
         schema_stem = f"{scheme_name}-shuangpin"
-        run_pinyin_spelling_generation(db_path, f"pinyin.{schema_stem}.schema.json")
+        generate_spellings(
+            db_path, os.path.join(SCHEMAS, f"pinyin.{schema_stem}.schema.json"), syllabary,
+        )
         scheme_prefix = os.path.join(output_dir, f"pinyin.{schema_stem}")
-        run_build_runtime_dictionary(db_path, scheme_prefix, spellings_only=True)
+        build_pinyin_spellings(db_path, scheme_prefix + ".spellings.bin")
         generated.append(scheme_prefix + ".spellings.bin")
 
     topn_path = os.path.join(output_dir, "pinyin.topn.bin")
-    run_build_pinyin_topn(db_path, topn_path)
+    serialize(build_cache(db_path, validated=True), topn_path)
     generated.append(topn_path)
 
     return generated
@@ -275,7 +271,7 @@ def prepare_wubi_dictionary(
     ]
 
 
-def prepare_dictionary_bundle(
+def _generate_dictionary_bundle(
     data_dir: str,
     output_dir: str,
     workers: int = 2,
@@ -291,17 +287,21 @@ def prepare_dictionary_bundle(
     if pinyin_source is None or wubi_source is None:
         raise RuntimeError("pinyin and wubi86 source dictionaries are required")
     with tempfile.TemporaryDirectory(prefix="cxxime_prep_") as tmpdir:
+        prepared_pinyin = os.path.join(tmpdir, "prepared-pinyin.dict.db")
+        source_stats = prepare_source(pinyin_source, prepared_pinyin)
+        print("Pinyin source preparation: " + json.dumps(source_stats))
         pinyin_db = os.path.join(tmpdir, "pinyin.dict.db")
         wubi_db = os.path.join(tmpdir, "wubi86.dict.db")
         symbols = os.path.join(tmpdir, "symbols.json")
         generate_symbols(os.path.join(data_dir, "symbol_catalog.json"), symbols)
         verify_generated_text_file(symbols, os.path.join(data_dir, "symbols.json"))
         stats = prepare_filtered_sources(
-            wubi_source, pinyin_source, wubi_db, pinyin_db,
+            wubi_source, prepared_pinyin, wubi_db, pinyin_db,
         )
         print("Dictionary symbol filtering: " + json.dumps(stats))
+        syllabary = validate_dictionary(pinyin_db)
         tasks = [
-            (prepare_pinyin_dictionary, (pinyin_db, output_dir)),
+            (prepare_pinyin_dictionary, (pinyin_db, output_dir, syllabary)),
             (prepare_wubi_dictionary, (wubi_db, output_dir, pinyin_source)),
         ]
         if workers == 1:
@@ -326,6 +326,66 @@ def prepare_dictionary_bundle(
     manifest_path = write_dictionary_manifest(output_dir)
     generated.append(manifest_path)
     return generated
+
+
+def publish_dictionary_files(generated: list[str], output_dir: str) -> list[str]:
+    """Replace managed files, publishing the manifest last; roll back on failure."""
+    paths = sorted(generated, key=lambda path: os.path.basename(path) == "dictionary_manifest.json")
+    names = [os.path.basename(path) for path in paths]
+    if len(names) != len(set(names)):
+        raise ValueError("Duplicate dictionary publication paths")
+    backup = tempfile.mkdtemp(prefix=".cxxime-dictionary-backup-", dir=output_dir)
+    saved = []
+    installed = []
+    try:
+        # Withdraw the old manifest before changing any of its resources.
+        for name in sorted(names, key=lambda name: name != "dictionary_manifest.json"):
+            destination = os.path.join(output_dir, name)
+            if os.path.exists(destination):
+                os.replace(destination, os.path.join(backup, name))
+                saved.append(name)
+        for path, name in zip(paths, names):
+            os.replace(path, os.path.join(output_dir, name))
+            installed.append(name)
+    except OSError:
+        try:
+            for name in reversed(installed):
+                os.remove(os.path.join(output_dir, name))
+            for name in reversed(saved):
+                os.replace(os.path.join(backup, name), os.path.join(output_dir, name))
+        except OSError as error:
+            raise RuntimeError(
+                f"Dictionary rollback failed; original files retained at {backup}"
+            ) from error
+        shutil.rmtree(backup)
+        raise
+    shutil.rmtree(backup)
+    return [os.path.join(output_dir, name) for name in names]
+
+
+def prepare_dictionary_bundle(
+    data_dir: str,
+    output_dir: str,
+    workers: int = 2,
+    topn_builder: str | None = None,
+    defer_topn_conversion: bool = False,
+) -> list[str]:
+    """Generate in isolation, then publish a complete bundle with rollback."""
+    if defer_topn_conversion:
+        if os.path.exists(os.path.join(output_dir, "dictionary_manifest.json")):
+            raise ValueError("Cannot publish intermediate data over an existing runtime bundle")
+    elif not topn_builder or not os.path.isfile(topn_builder):
+        raise ValueError("topn_builder is required to produce the runtime Top-N index")
+    os.makedirs(output_dir, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=".cxxime-dictionary-stage-", dir=output_dir) as staging:
+        generated = _generate_dictionary_bundle(
+            data_dir,
+            staging,
+            workers=workers,
+            topn_builder=topn_builder,
+            defer_topn_conversion=defer_topn_conversion,
+        )
+        return publish_dictionary_files(generated, output_dir)
 
 
 def main():

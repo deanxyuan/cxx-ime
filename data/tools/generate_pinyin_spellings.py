@@ -571,6 +571,41 @@ def load_schema(json_path):
     return validate_schema(schema)
 
 
+def generate_spellings(db_path, schema_path, syllabary=None):
+    """Generate a table; bundle callers reuse their validated private snapshot inventory."""
+    import sqlite3
+    from dict_builder.pinyin_syllables import validate_dictionary
+
+    if syllabary is None:
+        syllabary = validate_dictionary(db_path)
+    schema = load_schema(schema_path)
+    if schema["speller"]["type"] == "shuangpin":
+        script = build_shuangpin_script(syllabary, schema)
+    else:
+        script = Script()
+        for syllable in sorted(syllabary):
+            script.add_syllable(syllable)
+        SpellingAlgebra(parse_rules_from_json(schema_path)).apply(script)
+    rows = [
+        (input_code, spelling.syllable, spelling.type, spelling.credibility)
+        for input_code, spellings in sorted(script.items())
+        for spelling in spellings
+    ]
+    connection = sqlite3.connect(db_path)
+    try:
+        with connection:
+            connection.execute("BEGIN")
+            connection.execute("DROP TABLE IF EXISTS spellings")
+            connection.execute(
+                "CREATE TABLE spellings (input TEXT NOT NULL, syllable TEXT NOT NULL, "
+                "type INTEGER NOT NULL, credibility REAL NOT NULL)"
+            )
+            connection.executemany("INSERT INTO spellings VALUES (?, ?, ?, ?)", rows)
+    finally:
+        connection.close()
+    print(f"Wrote {len(rows)} spellings entries to {db_path}")
+
+
 # Self-test
 if __name__ == "__main__":
     import os
@@ -585,63 +620,7 @@ if __name__ == "__main__":
             print(f"Schema not found: {schema_path}", file=sys.stderr)
             sys.exit(1)
 
-        # Load distinct syllables from dict table
-        import sqlite3
-        conn = sqlite3.connect(db_path)
-        cur = conn.cursor()
-        cur.execute("SELECT DISTINCT syllable_ids FROM dict")
-        syllabary = set()
-        for (sid,) in cur.fetchall():
-            if sid:
-                for s in sid.split(":"):
-                    if s:
-                        syllabary.add(s)
-        conn.close()
-        print(f"Loaded {len(syllabary)} unique syllables")
-
-        schema = load_schema(schema_path)
-        if schema["speller"]["type"] == "shuangpin":
-            script = build_shuangpin_script(syllabary, schema)
-            normal_codes = {
-                input_code
-                for input_code, spellings in script.items()
-                if any(spelling.type == K_NORMAL for spelling in spellings)
-            }
-            collision_count = len(schema["speller"]["expected_collisions"])
-            print(
-                f"Loaded Shuangpin scheme {schema['scheme_id']}: "
-                f"{len(normal_codes)} normal codes, {collision_count} declared collisions"
-            )
-        else:
-            script = Script()
-            for s in sorted(syllabary):
-                script.add_syllable(s)
-            rules = parse_rules_from_json(schema_path)
-            print(f"Loaded {len(rules)} rules from {schema_path}")
-            SpellingAlgebra(rules).apply(script)
-
-        # Write spellings table to SQLite
-        conn = sqlite3.connect(db_path)
-        cur = conn.cursor()
-        cur.execute("DROP TABLE IF EXISTS spellings")
-        cur.execute("""
-            CREATE TABLE spellings (
-                input TEXT NOT NULL,
-                syllable TEXT NOT NULL,
-                type INTEGER NOT NULL,
-                credibility REAL NOT NULL
-            )
-        """)
-        rows = []
-        for input_str, spellings_list in sorted(script.items()):
-            for sp in spellings_list:
-                rows.append((input_str, sp.syllable, sp.type, sp.credibility))
-        cur.executemany(
-            "INSERT INTO spellings (input, syllable, type, credibility) VALUES (?, ?, ?, ?)",
-            rows)
-        conn.commit()
-        print(f"Wrote {len(rows)} spellings entries to {db_path}")
-        conn.close()
+        generate_spellings(db_path, schema_path)
         sys.exit(0)
 
     print("=== Spelling Algebra Self-Test ===")

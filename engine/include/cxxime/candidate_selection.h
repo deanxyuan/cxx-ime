@@ -15,8 +15,8 @@ namespace cxxime {
 
 // Highest-ranked full-span choices kept ahead of segmented-selection candidates.
 inline constexpr std::size_t kLeadingFullSpanCandidateCount = 10;
-// Bounded segmented choices materialized before lower-ranked full-span candidates.
-inline constexpr std::size_t kMaxSegmentedPartialCandidateCount = 32;
+// Each reading boundary keeps its own choices; alternative boundaries do not evict them.
+inline constexpr std::size_t kMaxPartialCandidatesPerBoundary = 32;
 
 enum class CompositionScheme {
     kPinyin,

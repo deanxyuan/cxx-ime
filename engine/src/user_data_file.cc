@@ -138,4 +138,21 @@ bool write_user_data_file_atomically(const std::string& path, const std::string&
     return true;
 }
 
+bool archive_noncanonical_user_data(const std::string& path, const std::string& contents) {
+    const std::string archive_path = path + ".noncanonical";
+    std::string archived;
+    if (!read_user_data_file(archive_path, &archived)) {
+        return false;
+    }
+    if (archived.size() >= contents.size() &&
+        archived.compare(archived.size() - contents.size(), contents.size(), contents) == 0) {
+        return true;
+    }
+    if (!archived.empty() && archived.back() != '\n') {
+        archived.push_back('\n');
+    }
+    archived.append(contents);
+    return write_user_data_file_atomically(archive_path, archived);
+}
+
 } // namespace cxxime

@@ -136,7 +136,8 @@ TEST(TextServicePosition, first_popup_never_publishes_transient_viewport_project
             ASSERT_TRUE(fixture.apply(fixture.key('I'), &eaten));
             probe.wait(true);
             probe.assert_visible_positions_since(first, real);
-            ASSERT_TRUE(fixture.apply(fixture.key(VK_SPACE), &eaten));
+            // This transport fixture has no candidates; Enter commits its raw preedit.
+            ASSERT_TRUE(fixture.apply(fixture.key(VK_RETURN), &eaten));
             probe.wait(false);
             ASSERT_TRUE(!fixture.host.range.text.empty());
             geometry.reset();
@@ -246,7 +247,7 @@ TEST(TextServicePosition, commit_restart_without_caret_recovers_from_a_window_fa
         const auto recovered = probe.wait(true, before, &view.text_rect);
         ASSERT_TRUE(EqualRect(&recovered.caret, &view.text_rect));
         ASSERT_TRUE(!TextServiceTestPeer::caret_poll_pending(fixture.service));
-        ASSERT_TRUE(fixture.apply(fixture.key(VK_SPACE), &eaten));
+        ASSERT_TRUE(fixture.apply(fixture.key(VK_RETURN), &eaten));
         probe.wait(false);
         fixture.host.active_view = &fixture.view;
     }

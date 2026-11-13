@@ -182,10 +182,10 @@ TEST(CompositionLearningService, unreadable_or_oversized_file_degrades_to_empty_
 
 TEST(CompositionLearningService, evicts_low_value_record_when_future_tail_exceeds_limit) {
     const std::string path = temp_path(".tsv");
-    const std::size_t baseline_size = std::string("old\told\told\t1\t1\t\n").size();
+    const std::size_t baseline_size = std::string("old\tjiu\tjiu\t1\t1\t\n").size();
     const std::string extension(cxxime::CompositionLearningService::kMaxFileSize - baseline_size,
                                 'x');
-    ASSERT_TRUE(write_file(path, "old\told\told\t1\t1\t" + extension + "\n"));
+    ASSERT_TRUE(write_file(path, "old\tjiu\tjiu\t1\t1\t" + extension + "\n"));
 
     cxxime::CompositionLearningService service;
     ASSERT_TRUE(service.load(path));
@@ -193,7 +193,7 @@ TEST(CompositionLearningService, evicts_low_value_record_when_future_tail_exceed
     ASSERT_TRUE(service.start());
     ASSERT_TRUE(service.enqueue(learning_event("learned", "huaruijishu")));
     ASSERT_TRUE(service.freeze_and_stop());
-    ASSERT_EQ(service.lookup_candidates("old", 10).size(), static_cast<std::size_t>(0));
+    ASSERT_EQ(service.lookup_candidates("jiu", 10).size(), static_cast<std::size_t>(0));
     ASSERT_EQ(service.lookup_candidates("huaruijishu", 10).size(), static_cast<std::size_t>(1));
     std::ifstream input(path, std::ios::binary | std::ios::ate);
     ASSERT_LE(static_cast<std::uint64_t>(input.tellg()),

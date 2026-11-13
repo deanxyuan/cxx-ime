@@ -422,7 +422,7 @@ TEST(Engine, space_with_candidates_commits) {
     ASSERT_EQ(ctx.take_requested_candidate_selection().value_or(-1), 0);
 }
 
-TEST(Engine, space_no_candidates_dismisses) {
+TEST(Engine, space_no_candidates_preserves_editable_input) {
     cxxime::Context ctx;
     ASSERT_TRUE(ctx.set_preedit("zzz"));
 
@@ -431,9 +431,15 @@ TEST(Engine, space_no_candidates_dismisses) {
     event.is_key_up = false;
 
     cxxime::PinyinProcessor processor;
-    auto result = processor.process_key(event, ctx);
-    ASSERT_EQ(result, cxxime::ProcessResult::ACCEPTED);
-    ASSERT_TRUE(ctx.active_input().empty());
+    const auto revision = ctx.preedit_revision();
+    const auto cursor = ctx.preedit_cursor();
+    for (int repeat = 0; repeat < 3; ++repeat) {
+        ASSERT_EQ(processor.process_key(event, ctx), cxxime::ProcessResult::ACCEPTED);
+        ASSERT_EQ(ctx.active_input(), "zzz");
+        ASSERT_EQ(ctx.preedit_cursor(), cursor);
+        ASSERT_EQ(ctx.preedit_revision(), revision);
+        ASSERT_TRUE(ctx.committed_text.empty());
+    }
 }
 
 TEST(Engine, number_selects_candidate) {

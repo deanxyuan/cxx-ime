@@ -198,11 +198,13 @@ void group_partial_candidates(std::vector<CandidateEntry>& entries,
     }
     std::size_t full_index = leading_full_count;
     std::size_t partial_index = 0;
-    while (partial_index < partials.size()) {
-        entries.push_back(std::move(partials[partial_index++]));
-    }
-    while (full_index < fulls.size()) {
-        entries.push_back(std::move(fulls[full_index++]));
+    while (partial_index < partials.size() || full_index < fulls.size()) {
+        if (partial_index < partials.size()) {
+            entries.push_back(std::move(partials[partial_index++]));
+        }
+        if (full_index < fulls.size()) {
+            entries.push_back(std::move(fulls[full_index++]));
+        }
     }
 }
 

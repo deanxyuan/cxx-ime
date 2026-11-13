@@ -13,6 +13,17 @@ import sys
 import zipfile
 from collections import defaultdict
 
+sys.path.insert(
+    0,
+    os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "data",
+        "tools",
+    ),
+)
+
+from dict_builder.pinyin_syllables import validate_dictionary
+
 # Binary format constants (must match short_code_cache_format.h)
 TOPN_MAGIC = b"CXTOPN\x02\x00"
 HEADER_FMT = "<8sIIIIIII"  # 36 bytes
@@ -148,6 +159,15 @@ def generate_keys(syllable_ids, text, frequency):
         for plen in range(1, max_prefix_length + 1):
             prefix = key[:plen]
             if prefix != key:
+                if len(prefix) == 1:
+                    # A single initial selects syllables by frequency, not by how
+                    # many letters remain (ge must not outrank guo just for length).
+                    offer(
+                        prefix,
+                        ABBR_PREFIX_BASE,
+                        SHORT_KEY_ABBR | SHORT_KEY_PREFIX,
+                    )
+                    continue
                 offer(prefix, prefix_base(flags), flags | SHORT_KEY_PREFIX,
                       proximity_bonus(key, prefix))
 
@@ -215,8 +235,10 @@ def _generate_mixed(syllables):
     return sorted(results)
 
 
-def build_cache(db_path):
+def build_cache(db_path, *, validated=False):
     """Read dict entries from SQLite and build the key -> candidates mapping."""
+    if not validated:
+        validate_dictionary(db_path)
     conn = sqlite3.connect(db_path)
     cursor = conn.execute("SELECT text, code, frequency, syllable_ids FROM dict")
 

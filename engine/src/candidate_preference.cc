@@ -13,6 +13,7 @@
 
 #include <cxxime/input_limits.h>
 #include <cxxime/ordinary_candidate.h>
+#include <cxxime/pinyin_user_code.h>
 #include <cxxime/user_dict_validation.h>
 #include <cxxime/user_data_merge.h>
 
@@ -128,6 +129,7 @@ bool CandidatePreference::load(const std::string& path) {
     }
 
     std::vector<Entry> entries;
+    bool noncanonical = false;
     std::uint64_t sequence = 0;
     std::istringstream input(contents);
     std::string line;
@@ -148,8 +150,16 @@ bool CandidatePreference::load(const std::string& path) {
         entry.sequence = parse_sequence(fields[4]);
         entry.syllables = fields[5];
         trim_trailing_space(entry.syllables);
+        if (kind_ == UserDictKind::PINYIN && !entry.syllables.empty() &&
+            !is_canonical_pinyin_user_code(entry.candidate_code, entry.syllables)) {
+            noncanonical = true;
+            continue;
+        }
         sequence = (std::max)(sequence, entry.sequence);
         entries.push_back(std::move(entry));
+    }
+    if (noncanonical && !archive_noncanonical_user_data(path, contents)) {
+        return false;
     }
 
     std::unique_lock<std::shared_mutex> lock(mutex_);
@@ -200,6 +210,10 @@ bool CandidatePreference::merge_contents_and_save(const std::string& imported,
         entry.sequence = parse_sequence(values[4]);
         entry.syllables = values[5];
         trim_trailing_space(entry.syllables);
+        if (kind_ == UserDictKind::PINYIN && !entry.syllables.empty() &&
+            !is_canonical_pinyin_user_code(entry.candidate_code, entry.syllables)) {
+            return false;
+        }
         sequence = (std::max)(sequence, entry.sequence);
         entries.push_back(std::move(entry));
     }

@@ -15,7 +15,7 @@ SCRIPTS_DIR = os.path.join(
 )
 sys.path.insert(0, SCRIPTS_DIR)
 
-LONG_SYLLABLES = "a:bo:ci:du:e:fa:gu:hu:i:ji:ku:lu:mu:nu:o:pu:qu"
+LONG_SYLLABLES = "a:bo:ci:du:e:fa:gu:hu:yi:ji:ku:lu:mu:nu:o:pu:qu"
 LONG_EXACT = LONG_SYLLABLES.replace(":", "")
 LONG_ABBR = "".join(syllable[0] for syllable in LONG_SYLLABLES.split(":"))
 
@@ -254,6 +254,15 @@ def main():
                 )
             if not valid:
                 print(f"FAIL (ni={ni_texts}, nih={nih_texts}, nhao={nhao_texts})")
+                ok = False
+            else:
+                print("OK")
+
+        if ok:
+            print("Single-initial ranking keeps frequency ahead of spelling length ...", end=" ")
+            n = [candidate[0] for candidate in read_candidates(out_db, "n")]
+            if n.index("high-frequency-ni-prefix") >= n.index("exact-ni"):
+                print(f"FAIL (n={n})")
                 ok = False
             else:
                 print("OK")

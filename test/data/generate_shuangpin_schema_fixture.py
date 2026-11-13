@@ -2,10 +2,8 @@
 
 import argparse
 import os
-import sqlite3
 import sys
 import tempfile
-import zipfile
 
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -13,24 +11,16 @@ DATA_TOOLS = os.path.join(ROOT, "data", "tools")
 sys.path.insert(0, DATA_TOOLS)
 
 from dict_builder.pinyin_spellings import PatriciaTrie
+from dict_builder.pinyin_source_repair import prepare_source
+from dict_builder.pinyin_syllables import validate_dictionary
 from generate_pinyin_spellings import build_shuangpin_script, load_schema
 
 
 def load_syllabary(archive_path):
-    with zipfile.ZipFile(archive_path) as archive, tempfile.TemporaryDirectory() as directory:
-        database_path = archive.extract(archive.namelist()[0], directory)
-        connection = sqlite3.connect(database_path)
-        try:
-            rows = connection.execute("SELECT DISTINCT syllable_ids FROM dict")
-            return {
-                syllable
-                for (value,) in rows
-                if value
-                for syllable in value.split(":")
-                if syllable
-            }
-        finally:
-            connection.close()
+    with tempfile.TemporaryDirectory() as directory:
+        database_path = os.path.join(directory, "pinyin.dict.db")
+        prepare_source(archive_path, database_path)
+        return validate_dictionary(database_path)
 
 
 def main():

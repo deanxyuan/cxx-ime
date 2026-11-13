@@ -45,7 +45,7 @@ class ReverseIndexPipelineTest(unittest.TestCase):
         )
         connection.commit()
         connection.close()
-        runtime_dictionary.build(database_path, dictionary_path)
+        runtime_dictionary.build(database_path, dictionary_path, pinyin=False)
         reverse_index.build(dictionary_path, index_path, chunk_entries=2)
         with open(dictionary_path, "rb") as source:
             string_size = struct.unpack_from("<I", source.read(20), 16)[0]

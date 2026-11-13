@@ -6,30 +6,33 @@ import os
 import sqlite3
 import struct
 
+from .pinyin_syllables import validate_syllables
 
-def build(database_path: str, output_path: str) -> int:
+
+def build(database_path: str, output_path: str, *, validated: bool = False) -> int:
     connection = sqlite3.connect(database_path)
     cursor = connection.cursor()
     cursor.execute("PRAGMA table_info(dict)")
     columns = {row[1] for row in cursor.fetchall()}
     if "syllable_ids" in columns:
-        cursor.execute("SELECT syllable_ids FROM dict ORDER BY syllable_ids")
+        cursor.execute("SELECT code, syllable_ids FROM dict ORDER BY syllable_ids")
     else:
-        cursor.execute("SELECT code FROM dict ORDER BY code")
+        connection.close()
+        raise ValueError("Pinyin dictionary requires explicit syllable_ids")
     rows = cursor.fetchall()
     connection.close()
 
     syllable_ids = {}
     syllabary = []
-    for (encoded,) in rows:
-        if encoded:
-            for syllable in encoded.split(":"):
-                if syllable and syllable not in syllable_ids:
-                    syllable_ids[syllable] = len(syllabary)
-                    syllabary.append(syllable)
+    for code, encoded in rows:
+        parts = encoded.split(":") if validated else validate_syllables(code, encoded)
+        for syllable in parts:
+            if syllable not in syllable_ids:
+                syllable_ids[syllable] = len(syllabary)
+                syllabary.append(syllable)
 
     index_entries = []
-    for entry_index, (encoded,) in enumerate(rows):
+    for entry_index, (_, encoded) in enumerate(rows):
         if not encoded:
             continue
         ids = [syllable_ids[syllable] for syllable in encoded.split(":") if syllable]

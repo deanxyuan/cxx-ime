@@ -6,7 +6,6 @@ import sqlite3
 import sys
 import tempfile
 import unittest
-import zipfile
 from contextlib import closing
 from pathlib import Path
 from unittest import mock
@@ -98,6 +97,8 @@ SCHEMA_CASES = (
 sys.path.insert(0, DATA_TOOLS)
 
 from dict_builder.pinyin_spellings import PatriciaTrie
+from dict_builder.pinyin_source_repair import prepare_source
+from dict_builder.pinyin_syllables import validate_dictionary
 from generate_pinyin_spellings import build_shuangpin_script, load_schema
 from fetch_pinyin_dictionary import create_sqlite_db, parse_rime_dict
 import fetch_pinyin_dictionary as fetcher
@@ -106,20 +107,10 @@ from generate_pinyin_syllable_ids import load_syllables, segment_code, update_sy
 
 def production_syllabary():
     archive_path = os.path.join(ROOT, "data", "pinyin.dict.db.zip")
-    with zipfile.ZipFile(archive_path) as archive, tempfile.TemporaryDirectory() as directory:
-        database_path = archive.extract(archive.namelist()[0], directory)
-        connection = sqlite3.connect(database_path)
-        try:
-            rows = connection.execute("SELECT DISTINCT syllable_ids FROM dict")
-            return {
-                syllable
-                for (value,) in rows
-                if value
-                for syllable in value.split(":")
-                if syllable
-            }
-        finally:
-            connection.close()
+    with tempfile.TemporaryDirectory() as directory:
+        database_path = os.path.join(directory, "pinyin.dict.db")
+        prepare_source(archive_path, database_path)
+        return validate_dictionary(database_path)
 
 
 def serialize_script(script):
@@ -200,7 +191,7 @@ class PinyinSpellingSchemaTest(unittest.TestCase):
                         self.assert_normal_mapping(scheme_id, code, syllable)
 
         invalid = json.loads(json.dumps(self.schemas["microsoft_shuangpin"]))
-        invalid["speller"]["expected_collisions"].pop("lt")
+        invalid["speller"]["expected_collisions"].pop("lo")
         with self.assertRaisesRegex(ValueError, "collisions differ"):
             build_shuangpin_script(self.syllabary, invalid)
 
@@ -279,7 +270,7 @@ class PinyinSourceAnnotationTest(unittest.TestCase):
 
     def test_continuous_code_requires_one_complete_parse(self):
         syllables = load_syllables()
-        self.assertEqual(segment_code("xingu", syllables), ["xin", "gu"])
+        self.assertEqual(segment_code("shuru", syllables), ["shu", "ru"])
         with self.assertRaisesRegex(ValueError, "ambiguous"):
             segment_code("xian", syllables)
         with self.assertRaisesRegex(ValueError, "cannot segment"):
@@ -323,15 +314,15 @@ class PinyinSourceAnnotationTest(unittest.TestCase):
             with closing(sqlite3.connect(path)) as connection, connection:
                 connection.execute(
                     "INSERT INTO dict (text, code, syllable_ids) VALUES (?, ?, ?)",
-                    ("新股", "xingu", "xing::u"),
+                    ("输入", "shuru", "shur::u"),
                 )
             self.assertEqual(update_syllable_ids(path), 1)
             with closing(sqlite3.connect(path)) as connection, connection:
                 self.assertEqual(connection.execute(
                     "SELECT syllable_ids FROM dict ORDER BY id"
-                ).fetchall(), [("xi:an",), ("xin:gu",)])
+                ).fetchall(), [("xi:an",), ("shu:ru",)])
                 connection.execute(
-                    "UPDATE dict SET syllable_ids = NULL WHERE text = ?", ("新股",)
+                    "UPDATE dict SET syllable_ids = NULL WHERE text = ?", ("输入",)
                 )
                 connection.execute(
                     "INSERT INTO dict (text, code) VALUES (?, ?)", ("先", "xian")

@@ -903,8 +903,8 @@ TEST(SegmentedSelection, complete_topn_hit_still_merges_fuzzy_full_candidates) {
     cached_exact.frequency = 100000000;
     cached_exact.source_frequency = 1;
     cached_candidates.push_back(cached_exact);
-    const int cached_prefix_count = static_cast<int>(
-        cxxime::kLeadingFullSpanCandidateCount + cxxime::kMaxSegmentedPartialCandidateCount + 1);
+    const int cached_prefix_count = static_cast<int>(cxxime::kLeadingFullSpanCandidateCount +
+                                                     cxxime::kMaxPartialCandidatesPerBoundary + 1);
     for (int index = 0; index < cached_prefix_count; ++index) {
         const std::string text = "prefix-" + std::to_string(index);
         dictionary_entries.push_back({"zong:tong", text, 3000000 - index});
@@ -972,7 +972,11 @@ TEST(SegmentedSelection, real_dictionary_can_select_wu_then_zong) {
 
     int wu_index = -1;
     int wu_page = -1;
-    for (int page = 0; page < 4 && wu_index < 0; ++page) {
+    const int max_pages = static_cast<int>(
+        (cxxime::kLeadingFullSpanCandidateCount +
+         2 * cxxime::kMaxPartialCandidatesPerBoundary + config.page_size - 1) /
+        config.page_size);
+    for (int page = 0; page < max_pages && wu_index < 0; ++page) {
         const auto& translation = engine.context().translation();
         for (std::size_t index = 0; index < translation.entries.size(); ++index) {
             const auto& entry = translation.entries[index];
@@ -984,7 +988,8 @@ TEST(SegmentedSelection, real_dictionary_can_select_wu_then_zong) {
                 ASSERT_EQ(action->consumed_input_bytes, std::string("wuzong").size());
                 ASSERT_EQ(entry.candidate.text.size(), 6u);
             } else {
-                ASSERT_EQ(action->consumed_input_bytes, 2u);
+                ASSERT_TRUE(action->consumed_input_bytes == 2 ||
+                            action->consumed_input_bytes == std::string("wuzong").size());
             }
             if (entry.candidate.text == "乌" && action->consumed_input_bytes == 2) {
                 wu_index = static_cast<int>(index);
@@ -1002,7 +1007,7 @@ TEST(SegmentedSelection, real_dictionary_can_select_wu_then_zong) {
 
     ASSERT_GE(wu_index, 0);
     ASSERT_GE(wu_page, 0);
-    ASSERT_LT(wu_page, 4);
+    ASSERT_LT(wu_page, max_pages);
     ASSERT_TRUE(engine.select_candidate(wu_index));
     ASSERT_EQ(engine.context().active_input(), "zong");
 
@@ -1256,15 +1261,15 @@ TEST(SegmentedSelection, duplicate_full_text_moves_into_the_partial_group) {
         ASSERT_TRUE(action != nullptr);
         if (index < full_count_on_second_page) {
             ASSERT_EQ(action->consumed_input_bytes, request.input.size());
-        } else if (index < full_count_on_second_page + 3) {
-            ASSERT_LT(action->consumed_input_bytes, request.input.size());
-        } else {
+        } else if (index == full_count_on_second_page + 1) {
             ASSERT_EQ(action->consumed_input_bytes, request.input.size());
+        } else {
+            ASSERT_LT(action->consumed_input_bytes, request.input.size());
         }
     }
     ASSERT_EQ(second.entries[full_count_on_second_page].candidate.text, "较长前段");
-    ASSERT_EQ(second.entries[full_count_on_second_page + 1].candidate.text, "重复甲");
-    ASSERT_EQ(second.entries[full_count_on_second_page + 2].candidate.text, "重复乙");
+    ASSERT_EQ(second.entries[full_count_on_second_page + 2].candidate.text, "重复甲");
+    ASSERT_EQ(second.entries[full_count_on_second_page + 3].candidate.text, "重复乙");
 
     spellings.unload();
     dict.close();

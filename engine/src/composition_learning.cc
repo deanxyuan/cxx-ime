@@ -20,6 +20,7 @@
 #include <cxxime/composition_state.h>
 #include <cxxime/logging.h>
 #include <cxxime/ordinary_candidate.h>
+#include <cxxime/pinyin_user_code.h>
 #include <cxxime/user_dict_validation.h>
 #include <cxxime/user_data_merge.h>
 
@@ -56,6 +57,16 @@ std::string record_key(const CompositionLearningEvent& event) {
 bool valid_event(const CompositionLearningEvent& event) {
     return is_valid_user_dict_text(event.text) && is_valid_user_dict_code(event.code) &&
            !event.syllables.empty() && is_valid_user_dict_syllables(event.syllables);
+}
+
+bool canonical_reading(const std::string& syllables) {
+    std::string code;
+    for (char value : syllables) {
+        if (value != ':') {
+            code.push_back(value);
+        }
+    }
+    return is_canonical_pinyin_user_code(code, syllables);
 }
 
 bool parse_unsigned(const std::string& value, std::uint64_t* parsed) {
@@ -407,6 +418,7 @@ bool CompositionLearningService::load(const std::string& path) {
 
     RecordMap records;
     std::uint64_t sequence = 0;
+    bool noncanonical = false;
     std::istringstream input(contents);
     std::string line;
     while (std::getline(input, line)) {
@@ -430,6 +442,10 @@ bool CompositionLearningService::load(const std::string& path) {
         if (!valid_event(event) || !is_ordinary_candidate_text(event.text)) {
             continue;
         }
+        if (!canonical_reading(event.syllables)) {
+            noncanonical = true;
+            continue;
+        }
         LearningRecord record;
         record.event = std::move(event);
         record.selection_count = static_cast<std::uint32_t>(selection_count);
@@ -437,6 +453,9 @@ bool CompositionLearningService::load(const std::string& path) {
         record.extension_fields.assign(fields.begin() + 5, fields.end());
         sequence = (std::max)(sequence, entry_sequence);
         records[record_key(record.event)] = std::move(record);
+    }
+    if (noncanonical && !archive_noncanonical_user_data(path, contents)) {
+        return false;
     }
     enforce_record_limit(records);
     enforce_file_size_limit(records);
@@ -480,7 +499,8 @@ bool CompositionLearningService::validate_contents(const std::string& contents) 
         if (fields.size() < 5 || !parse_unsigned(fields[3], &selection_count) ||
             selection_count == 0 || selection_count > UINT_MAX ||
             !parse_unsigned(fields[4], &sequence) || sequence == 0 ||
-            !valid_event({fields[0], fields[1], fields[2]})) {
+            !valid_event({fields[0], fields[1], fields[2]}) ||
+            !canonical_reading(fields[2])) {
             return false;
         }
     }

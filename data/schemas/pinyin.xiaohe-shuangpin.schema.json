@@ -56,7 +56,6 @@
             "uai": "k",
             "uan": "r",
             "uang": "l",
-            "ue": "t",
             "ui": "v",
             "un": "y",
             "uo": "o",
@@ -85,10 +84,9 @@
             "x": {"uan": "van", "ue": "ve", "un": "vn"},
             "y": {"uan": "van", "ue": "ve", "un": "vn"}
         },
-        "ignored_syllables": ["0", "1", "f", "g", "i", "l", "n", "r", "u", "v"],
+        "ignored_syllables": ["m", "n", "ng"],
         "expected_collisions": {
-            "lt": ["lue", "lve"],
-            "nt": ["nue", "nve"]
+            "lo": ["lo", "luo"]
         },
         "fuzzy_algebra": [
             "fuzz/^n(.*)/l$1/",

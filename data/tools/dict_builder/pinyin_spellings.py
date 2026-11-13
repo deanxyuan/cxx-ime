@@ -8,6 +8,8 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Deque, Dict, List, Tuple
 
+from .pinyin_syllables import validate_syllables
+
 
 MAGIC = b"CXSPL\x02\x00\x00"
 HEADER_FORMAT = "<8sIIIII"
@@ -184,6 +186,7 @@ def build(database_path: str, output_path: str) -> int:
 
     trie = PatriciaTrie()
     for input_code, syllable, spelling_type, credibility in rows:
+        validate_syllables(syllable, syllable)
         trie.insert(input_code, syllable, spelling_type, credibility)
 
     data = trie.serialize()

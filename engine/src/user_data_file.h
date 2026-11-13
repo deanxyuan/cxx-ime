@@ -14,6 +14,7 @@ bool read_user_data_file(const std::string& path, std::uint64_t max_size,
 bool read_existing_user_data_file(const std::string& path, std::uint64_t max_size,
                                   std::string* contents);
 bool write_user_data_file_atomically(const std::string& path, const std::string& contents);
+bool archive_noncanonical_user_data(const std::string& path, const std::string& contents);
 
 } // namespace cxxime
 
