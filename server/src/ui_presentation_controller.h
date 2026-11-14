@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <string>
 
 #include <cxxime/config.h>
 #include <cxxime/ui_channel.h>
@@ -13,7 +14,7 @@
 class UiPresentationController {
 public:
     using CommandHandler = std::function<void(cxxime::UiEndpointId, const cxxime::UiCommand&)>;
-    using PositionHandler = std::function<void(int, int)>;
+    using ConfigPatchHandler = std::function<void(const std::string&)>;
 
     UiPresentationController();
     ~UiPresentationController();
@@ -22,7 +23,7 @@ public:
     UiPresentationController& operator=(const UiPresentationController&) = delete;
 
     bool start(const std::shared_ptr<const cxxime::Config>& config, CommandHandler command_handler,
-               PositionHandler position_handler);
+               ConfigPatchHandler config_patch_handler);
     void stop();
 
     void present(cxxime::UiEndpointId endpoint, const cxxime::UiPresentationSnapshot* snapshot,

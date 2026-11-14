@@ -267,10 +267,7 @@ bool ServerApp::initialize(const std::string& dict_path, const std::string& conf
             }
             ui_presentation_router_.send_command(endpoint, command);
         },
-        [this](int x, int y) {
-            const std::string patch =
-                "{\"status_window\":{\"x\":" + std::to_string(x) +
-                ",\"y\":" + std::to_string(y) + "}}";
+        [this](const std::string& patch) {
             config_writer_.enqueue_patch(patch);
         });
     if (!ui_controller_started) {

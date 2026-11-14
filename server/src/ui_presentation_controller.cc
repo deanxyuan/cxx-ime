@@ -137,7 +137,7 @@ public:
     ~Impl() { stop(); }
 
     bool start(const std::shared_ptr<const cxxime::Config>& config, CommandHandler command_handler,
-               PositionHandler position_handler) {
+               ConfigPatchHandler config_patch_handler) {
         if (!config) {
             return false;
         }
@@ -159,13 +159,13 @@ public:
         pending_config_ = config;
         trace_enabled_.store(ui_timeline_enabled(*config), std::memory_order_relaxed);
         command_handler_ = std::move(command_handler);
-        position_handler_ = std::move(position_handler);
+        config_patch_handler_ = std::move(config_patch_handler);
         try {
             thread_ = std::thread(&Impl::run, this);
         } catch (...) {
             running_ = false;
             command_handler_ = {};
-            position_handler_ = {};
+            config_patch_handler_ = {};
             close_events();
             return false;
         }
@@ -205,7 +205,7 @@ public:
         clear_visible_candidate_count();
         pending_config_.reset();
         command_handler_ = {};
-        position_handler_ = {};
+        config_patch_handler_ = {};
         close_events();
     }
 
@@ -300,6 +300,17 @@ private:
         }
     }
 
+    void patch_config(const std::string& patch) {
+        ConfigPatchHandler handler;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            handler = config_patch_handler_;
+        }
+        if (handler) {
+            handler(patch);
+        }
+    }
+
     void configure_window_callbacks() {
         candidate_window_.set_candidate_selection_callback([this](std::size_t index) {
             dispatch_command(cxxime::UiCommandType::kSelectCandidate,
@@ -335,6 +346,11 @@ private:
             }
         });
         status_window_.set_menu_command_callback([this](cxxime::ImeMenuCommand command) {
+            if (command == cxxime::ImeMenuCommand::kToggleStatusWindow) {
+                // The visible status window offers Hide, regardless of the host session.
+                patch_config(R"({"status_window":{"enable":false}})");
+                return;
+            }
             dispatch_command(cxxime::UiCommandType::kMenuCommand, 0,
                              static_cast<std::uint32_t>(command));
         });
@@ -343,14 +359,8 @@ private:
         });
         status_window_.set_position_callback([this](int x, int y) {
             reconcile_current_status_window_z_order();
-            PositionHandler handler;
-            {
-                std::lock_guard<std::mutex> lock(mutex_);
-                handler = position_handler_;
-            }
-            if (handler) {
-                handler(x, y);
-            }
+            patch_config("{\"status_window\":{\"x\":" + std::to_string(x) +
+                         ",\"y\":" + std::to_string(y) + "}}");
         });
     }
 
@@ -777,7 +787,7 @@ private:
     HANDLE update_event_ = nullptr;
     std::thread thread_;
     CommandHandler command_handler_;
-    PositionHandler position_handler_;
+    ConfigPatchHandler config_patch_handler_;
     std::shared_ptr<const cxxime::Config> pending_config_;
     std::shared_ptr<const cxxime::Config> current_config_;
     std::optional<RoutedPresentation> pending_snapshot_;
@@ -813,8 +823,8 @@ UiPresentationController::~UiPresentationController() = default;
 
 bool UiPresentationController::start(const std::shared_ptr<const cxxime::Config>& config,
                                      CommandHandler command_handler,
-                                     PositionHandler position_handler) {
-    return impl_->start(config, std::move(command_handler), std::move(position_handler));
+                                     ConfigPatchHandler config_patch_handler) {
+    return impl_->start(config, std::move(command_handler), std::move(config_patch_handler));
 }
 
 void UiPresentationController::stop() { impl_->stop(); }

@@ -317,6 +317,9 @@ add_cxxime_test(ui_presentation_controller_test
     SOURCES
         server/ui_presentation_controller_test.cc
         server/ui_status_visibility_test.cc
+        server/ui_status_menu_test.cc
+        ${CMAKE_SOURCE_DIR}/server/src/config_store.cc
+        ${CMAKE_SOURCE_DIR}/server/src/config_write_coordinator.cc
         ${CMAKE_SOURCE_DIR}/tsf/src/candidate_presentation.cpp
         ${CMAKE_SOURCE_DIR}/server/src/ui_presentation_controller.cc
         ${CMAKE_SOURCE_DIR}/server/src/ui_presentation_router.cc
