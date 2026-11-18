@@ -3,6 +3,7 @@
 #include "engine_response.h"
 
 #include <algorithm>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -60,6 +61,22 @@ bool utf8_to_utf16(const std::string& text, std::wstring* result) {
 }
 
 } // namespace
+
+PreeditDecision DecodedEnginePresentation::preedit_decision(bool inline_preedit,
+                                                            const std::string& preedit_type) const {
+    std::optional<std::wstring> preview_candidate;
+    if (inline_preedit && preedit_type == "preview" && !candidates.items.empty()) {
+        const std::size_t selected =
+            candidates.highlighted >= 0 &&
+                    static_cast<std::size_t>(candidates.highlighted) < candidates.items.size()
+                ? static_cast<std::size_t>(candidates.highlighted)
+                : 0;
+        preview_candidate.emplace();
+        utf8_to_utf16(candidates.items[selected].text, &*preview_candidate);
+    }
+    return decide_preedit(inline_preedit, preedit_type, logical_preedit, display_preedit,
+                          preview_candidate, has_syllable_boundaries);
+}
 
 bool decode_engine_presentation(const cxxime::IPCResponse& response,
                                 DecodedEnginePresentation* presentation) {

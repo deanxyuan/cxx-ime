@@ -20,6 +20,8 @@ struct DecodedEnginePresentation {
     std::size_t display_focused_preedit_end_bytes = 0;
     bool has_syllable_boundaries = false;
     cxxime::CandidatePresentationPage candidates;
+
+    PreeditDecision preedit_decision(bool inline_preedit, const std::string& preedit_type) const;
 };
 
 bool decode_engine_presentation(const cxxime::IPCResponse& response,

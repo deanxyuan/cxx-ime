@@ -102,6 +102,7 @@ private:
                                                      uint32_t continuation_effort,
                                                      bool* sequence_invalidated);
     bool dispatch_candidate_selection(int index, const QueryDeadline& deadline);
+    uint64_t candidate_sequence_version() const;
     bool finalize_selection(const CandidateEntry& entry);
     bool replace_active_input(const ReplaceActiveInputAction& action,
                               const QueryDeadline& deadline);

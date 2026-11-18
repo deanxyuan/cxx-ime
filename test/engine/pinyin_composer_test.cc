@@ -545,7 +545,10 @@ TEST(PinyinComposer, shuangpin_completion_does_not_enable_internal_or_fuzzy_comp
     translator.bind_pinyin(fixture.pinyin_resources, {});
 
     ASSERT_TRUE(find_candidate(translator.translate_page("nih", 0, 10), "你好") != nullptr);
-    for (const auto* input : {"nh", "lih", "xnh", "nil", "nilk"}) {
+    // An internal initial is supported by the graph fallback; normal-path
+    // composition still rejects internal completion and fuzzy substitutions.
+    ASSERT_TRUE(find_candidate(translator.translate_page("nh", 0, 10), "你好") != nullptr);
+    for (const auto* input : {"lih", "xnh", "nil", "nilk"}) {
         const auto page = translator.translate_page(input, 0, 10);
         ASSERT_TRUE(find_candidate(page, "你好") == nullptr);
     }

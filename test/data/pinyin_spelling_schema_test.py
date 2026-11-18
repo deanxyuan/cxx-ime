@@ -224,7 +224,9 @@ class PinyinSpellingSchemaTest(unittest.TestCase):
         for scheme_id, script in self.scripts.items():
             for key in ("f", "g", "i", "l", "n", "r", "u", "v"):
                 with self.subTest(scheme=scheme_id, key=key):
-                    self.assertNotIn(key, script)
+                    self.assertTrue(script.get(key))
+                    self.assertTrue(all(item.type == 2 for item in script[key]))
+                    self.assertTrue(all(item.syllable != key for item in script[key]))
             # Explicit zero-initial mappings remain available.
             if scheme_id in ("microsoft_shuangpin", "sogou_shuangpin"):
                 self.assert_normal_mapping(scheme_id, "o", "o")

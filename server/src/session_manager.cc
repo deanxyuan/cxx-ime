@@ -223,34 +223,37 @@ CandidateStateToken candidate_state_token(const cxxime::Engine& engine) {
 }
 
 bool same_candidate_item(const cxxime::CandidatePresentationItem& left,
-                         const cxxime::CandidatePresentationItem& right) {
-    return left.text == right.text && left.hint == right.hint;
+                         const cxxime::CandidateEntry& right) {
+    return left.text == right.candidate.text && left.hint == right.hint;
 }
 
 bool same_candidate_page(const cxxime::CandidatePresentationPage& left,
-                         const cxxime::CandidatePresentationPage& right) {
+                         const cxxime::TranslationResult& right) {
+    const int known_count = (std::max)(
+        right.extent.known_count, right.page_offset + static_cast<int>(right.entries.size()));
     if (left.page_index != right.page_index || left.page_offset != right.page_offset ||
         left.page_size != right.page_size ||
-        left.extent.known_count != right.extent.known_count ||
+        left.extent.known_count != known_count ||
         left.extent.state != right.extent.state ||
         left.extent.complete != right.extent.complete ||
-        left.highlighted != right.highlighted || left.items.size() != right.items.size()) {
+        left.highlighted != right.highlighted ||
+        left.items.size() != right.entries.size()) {
         return false;
     }
-    return std::equal(left.items.begin(), left.items.end(), right.items.begin(),
+    return std::equal(left.items.begin(), left.items.end(), right.entries.begin(),
                       same_candidate_item);
 }
 
-bool same_candidate_state(const CandidateStateToken& left, const CandidateStateToken& right) {
-    return left.composition_revision == right.composition_revision &&
-           same_candidate_page(left.presentation, right.presentation) &&
-           left.composing == right.composing;
+bool same_candidate_state(const CandidateStateToken& left, const cxxime::Context& right) {
+    return left.composition_revision == right.preedit_revision() &&
+           left.composing == right.is_composing() &&
+           same_candidate_page(left.presentation, right.translation());
 }
 
 bool advance_candidate_revision(SessionEntry& entry, const CandidateStateToken& previous,
                                 bool force = false) {
     if (!(force && previous.composing) &&
-        same_candidate_state(previous, candidate_state_token(*entry.engine))) {
+        same_candidate_state(previous, entry.engine->context())) {
         return false;
     }
     if (entry.candidate_revision != 0 &&

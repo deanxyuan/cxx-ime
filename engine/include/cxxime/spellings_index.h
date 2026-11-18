@@ -77,7 +77,8 @@ public:
 
     // O(k) trie walk: returns all spellings where the stored key is a prefix of `prefix`.
     std::vector<SpellingMatch> prefix_search(std::string_view prefix,
-                                            bool enable_fuzzy = true) const;
+                                             bool enable_fuzzy = true,
+                                             bool enable_abbreviation = true) const;
 
     // Returns spellings whose stored input key is strictly longer than and starts with `prefix`.
     std::vector<SpellingMatch> completion_search(std::string_view prefix,

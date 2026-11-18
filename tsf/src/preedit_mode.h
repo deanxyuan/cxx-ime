@@ -8,7 +8,6 @@
 #include <optional>
 #include <string>
 #include <utility>
-#include <vector>
 
 namespace cxxime_tsf {
 
@@ -65,8 +64,7 @@ inline PreeditText normalize_preedit_text(PreeditText preedit) {
 inline PreeditDecision decide_preedit(bool inline_preedit, const std::string& preedit_type,
                                       PreeditText logical_preedit,
                                       PreeditText display_preedit,
-                                      const std::vector<std::wstring>& candidates,
-                                      int highlighted = 0,
+                                      const std::optional<std::wstring>& preview_candidate,
                                       bool display_has_generated_boundaries = false) {
     PreeditDecision d;
     logical_preedit = normalize_preedit_text(std::move(logical_preedit));
@@ -81,13 +79,9 @@ inline PreeditDecision decide_preedit(bool inline_preedit, const std::string& pr
         d.start_composition = true;
         const bool preview_mode = preedit_type == "preview";
         if (preview_mode) {
-            if (!candidates.empty()) {
-                const size_t selected =
-                    highlighted >= 0 && static_cast<size_t>(highlighted) < candidates.size()
-                        ? static_cast<size_t>(highlighted)
-                        : 0;
-                d.inline_text = logical_preedit.text.substr(
-                    0, logical_preedit.converted_prefix) + candidates[selected];
+            if (preview_candidate) {
+                d.inline_text = logical_preedit.text.substr(0, logical_preedit.converted_prefix) +
+                                *preview_candidate;
                 d.inline_cursor = d.inline_text.size();
                 d.inline_converted_prefix = logical_preedit.converted_prefix;
                 d.inline_focused_start = logical_preedit.converted_prefix;

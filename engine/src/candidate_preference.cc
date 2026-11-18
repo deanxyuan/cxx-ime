@@ -344,6 +344,25 @@ std::vector<Candidate> CandidatePreference::preferred_candidates(const std::stri
     return candidates;
 }
 
+bool CandidatePreference::read_candidate(std::size_t& cursor, Candidate& candidate) const {
+    std::shared_lock<std::shared_mutex> lock(mutex_);
+    candidate = {};
+    if (cursor >= entries_.size()) {
+        return false;
+    }
+    const auto& entry = entries_[cursor++];
+    if (!entry.deleted) {
+        candidate.text = entry.text;
+        candidate.code = entry.candidate_code;
+        candidate.input_code = entry.code;
+        candidate.syllables = entry.syllables;
+        candidate.frequency = preference_score(entry.frequency, sequence_, entry.sequence);
+        candidate.source = CandidateSource::kPinyin;
+        candidate.origin = CandidateOrigin::kLearned;
+    }
+    return true;
+}
+
 std::vector<UserDictEntryInfo> CandidatePreference::query(const std::string& query,
                                                           std::size_t offset, std::size_t limit,
                                                           std::size_t* match_total) const {

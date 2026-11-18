@@ -36,6 +36,8 @@ public:
                                      std::uint64_t expected_version, bool* version_conflict);
 
     std::uint64_t version() const;
+    bool read_entry(std::size_t& key_cursor, std::size_t& entry_cursor,
+                    std::string& input_code, ManualCandidateOrderEntry& entry) const;
 
 private:
     using Orders = std::unordered_map<std::string, std::vector<ManualCandidateOrderEntry>>;
@@ -43,6 +45,7 @@ private:
     static bool validate_orders(const Orders& orders, UserDictKind kind);
     static bool parse_contents(const std::string& contents, UserDictKind kind, Orders* orders);
     static std::string serialize(const Orders& orders);
+    void rebuild_keys_locked();
     bool replace_and_save_locked(const std::string& input_code,
                                  const std::vector<ManualCandidateOrderEntry>& entries);
 
@@ -50,6 +53,7 @@ private:
     mutable std::shared_mutex mutex_;
     std::mutex mutation_mutex_;
     Orders orders_;
+    std::vector<std::string> ordered_keys_;
     std::string path_;
     std::atomic<std::uint64_t> version_{0};
 };

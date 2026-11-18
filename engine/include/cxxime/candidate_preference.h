@@ -46,6 +46,7 @@ public:
     std::size_t entry_count() const;
     std::uint64_t version() const;
     bool dirty() const;
+    bool read_candidate(std::size_t& cursor, Candidate& candidate) const;
 
 private:
     using EntryId = std::uint32_t;

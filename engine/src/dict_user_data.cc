@@ -41,6 +41,82 @@ std::string default_user_dict_path(UserDictKind kind) {
 
 } // namespace
 
+bool Dict::read_personal_candidate(PersonalCandidateSource source,
+                                   const std::vector<std::string>& prefixes,
+                                   PersonalCandidateCursor& cursor, Candidate& candidate) const {
+    if (source == PersonalCandidateSource::kUser) {
+        return user_lexicon_->read_candidate(prefixes, cursor.item, cursor.record, candidate);
+    }
+    if (source == PersonalCandidateSource::kPreference) {
+        return candidate_preference_->read_candidate(cursor.record, candidate);
+    }
+    ManualCandidateOrderEntry entry;
+    std::string code;
+    const std::size_t rank = cursor.item;
+    if (!manual_candidate_order_->read_entry(cursor.record, cursor.item, code, entry)) {
+        return false;
+    }
+    candidate = {};
+    candidate.text = entry.text;
+    candidate.code = entry.code;
+    candidate.syllables = entry.syllables;
+    candidate.input_code = code;
+    candidate.frequency = 2000000000 - static_cast<int>(rank);
+    return true;
+}
+
+void Dict::begin_candidate_resolution(Candidate& candidate,
+                                      CandidateResolutionCursor& cursor) const {
+    cursor = {};
+    cursor.started = true;
+    if (user_lexicon_->contains_candidate_identity(candidate.text, candidate.code,
+                                                   candidate.syllables) ||
+        user_lexicon_->contains_candidate_identity(candidate.text, candidate.code, {})) {
+        cursor.finished = true;
+        cursor.available = true;
+        candidate.origin = CandidateOrigin::kUser;
+        return;
+    }
+    if (!dict_entries_ || candidate.syllables.empty()) {
+        cursor.finished = true;
+        return;
+    }
+    const auto key = [&](const CandidateStoreEntry& entry) {
+        return std::string_view(dict_strings_ + entry.syllable_ids_offset, entry.syllable_ids_len);
+    };
+    const std::string_view target(candidate.syllables);
+    const auto first = std::lower_bound(dict_entries_, dict_entries_ + dict_entry_count_, target,
+                                        [&](const CandidateStoreEntry& entry,
+                                            std::string_view value) { return key(entry) < value; });
+    const auto last =
+        std::upper_bound(first, dict_entries_ + dict_entry_count_, target,
+                         [&](std::string_view value, const CandidateStoreEntry& entry) {
+                             return value < key(entry);
+                         });
+    cursor.next = static_cast<std::size_t>(first - dict_entries_);
+    cursor.end = static_cast<std::size_t>(last - dict_entries_);
+    cursor.finished = cursor.next == cursor.end;
+}
+
+void Dict::advance_candidate_resolution(Candidate& candidate,
+                                        CandidateResolutionCursor& cursor) const {
+    if (cursor.finished || cursor.next >= cursor.end || cursor.end > dict_entry_count_) {
+        cursor.finished = true;
+        return;
+    }
+    Candidate resolved;
+    fill_system_candidate(static_cast<uint32_t>(cursor.next++), resolved, 0);
+    if (resolved.text == candidate.text && resolved.code == candidate.code &&
+        resolved.syllables == candidate.syllables) {
+        cursor.available = true;
+        cursor.finished = true;
+        resolved.frequency = candidate.frequency;
+        resolved.input_code = candidate.input_code;
+        candidate = std::move(resolved);
+    }
+    cursor.finished = cursor.finished || cursor.next == cursor.end;
+}
+
 bool Dict::load_user_dict(const std::string& path) {
     return user_lexicon_->load(path.empty() ? default_user_dict_path(kind_) : path);
 }

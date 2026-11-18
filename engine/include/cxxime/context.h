@@ -92,10 +92,12 @@ public:
     std::optional<CandidateNavigationRequest> take_candidate_navigation();
     bool apply_next_page(TranslationResult&& result, int visible_candidate_count);
     bool apply_previous_page(bool highlight_last = false);
+    bool apply_saved_next_page();
     void update_current_extent(CandidateExtent extent);
     uint32_t begin_candidate_continuation();
     bool candidate_was_published(const CandidateEntry& entry,
                                  int current_visible_count) const;
+    std::vector<CandidateEntry> published_candidates() const;
     void replace_candidate_sequence(TranslationResult&& result);
     void move_to_next_candidate();
     void move_to_previous_candidate();
@@ -125,7 +127,9 @@ private:
     CompositionState composition_;
     CompositionScheme ime_scheme_ = CompositionScheme::kPinyin;
     TranslationResult translation_;
+    std::string translation_input_;
     std::vector<PageHistoryEntry> previous_pages_;
+    std::vector<PageHistoryEntry> following_pages_;
     int highlight_count_after_page_change_ = 0;
     CommitSource commit_source_ = CommitSource::kRawCode;
     CommitLearningPlan commit_learning_plan_;

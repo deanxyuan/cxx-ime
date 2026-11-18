@@ -634,7 +634,12 @@ add_custom_target(shuangpin_schema_fixture DEPENDS
     ${PRODUCTION_SHUANGPIN_SCHEMA_FIXTURES}
 )
 add_cxxime_test(shuangpin_schema_runtime_test
-    SOURCES engine/shuangpin_schema_runtime_test.cc
+    SOURCES
+        engine/shuangpin_schema_runtime_test.cc
+        engine/shuangpin_fallback_test.cc
+        engine/shuangpin_fallback_paging_test.cc
+        engine/shuangpin_fallback_lifecycle_test.cc
+        engine/shuangpin_graph_test.cc
     DEPS cxxime-engine
 )
 add_dependencies(shuangpin_schema_runtime_test shuangpin_schema_fixture)

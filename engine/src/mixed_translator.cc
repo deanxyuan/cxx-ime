@@ -233,13 +233,87 @@ void MixedTranslator::set_candidate_preference(MixedCandidatePreference preferen
     candidate_preference_ = preference;
 }
 
+uint64_t MixedTranslator::query_version() const {
+    uint64_t token = pinyin_translator_.query_version();
+    if (wubi_dict_) {
+        for (uint64_t version : {wubi_dict_->user_dict_version(),
+                                 wubi_dict_->candidate_preference_version(),
+                                 wubi_dict_->manual_candidate_order_version(),
+                                 wubi_dict_->disabled_system_entry_version(),
+                                 static_cast<uint64_t>(reinterpret_cast<uintptr_t>(wubi_dict_))}) {
+            token = (token ^ version) * UINT64_C(1099511628211);
+        }
+    }
+    return (token ^ static_cast<uint64_t>(candidate_preference_)) * UINT64_C(1099511628211);
+}
+
 TranslationResult MixedTranslator::translate(const TranslationRequest& request) {
     TranslationResult result;
     if (request.input.empty() || request.page_size <= 0) {
         return result;
     }
+    const bool fallback = pinyin_translator_.requires_shuangpin_fallback(request.input);
+    const bool resumable = fallback && request.purpose == TranslationPurpose::kComposition;
+    const uint64_t version = resumable ? query_version() : 0;
+    bool invalidated = false;
+    TranslationRequest window_request = request;
+    if (resumable) {
+        invalidated = fallback_window_ && fallback_window_->input == request.input &&
+                      (fallback_window_->version != version ||
+                       fallback_window_->partial != request.policy.allow_partial_selection);
+        if (!fallback_window_ || fallback_window_->input != request.input || invalidated ||
+            fallback_window_->revision != request.input_revision) {
+            fallback_window_.emplace();
+            fallback_window_->input = request.input;
+            fallback_window_->revision = request.input_revision;
+            fallback_window_->version = version;
+            fallback_window_->partial = request.policy.allow_partial_selection;
+            fallback_window_->pending.extent = make_candidate_extent(0, 0, true);
+        }
+        if (invalidated) {
+            window_request.published = nullptr;
+        }
+        auto& pending = fallback_window_->pending;
+        if (window_request.published) {
+            pending.entries.erase(std::remove_if(pending.entries.begin(), pending.entries.end(),
+                                                 [&](const CandidateEntry& entry) {
+                                                     return std::any_of(
+                                                         window_request.published->begin(),
+                                                         window_request.published->end(),
+                                                         [&](const CandidateEntry& previous) {
+                                                             return previous.candidate.text ==
+                                                                    entry.candidate.text;
+                                                         });
+                                                 }),
+                                  pending.entries.end());
+        }
+        if (!pending.entries.empty() || request.work == QueryWork::kRead) {
+            if (request.trace) {
+                request.trace->fallback_buffer_peak = fallback_window_->buffer_peak;
+            }
+            result = pending;
+            result.incremental = true;
+            result.sequence_invalidated = invalidated;
+            result.sequence_version = version;
+            result.page_size = request.page_size;
+            result.extent = make_candidate_extent(static_cast<int>(result.entries.size()),
+                                                  static_cast<int>(result.entries.size()),
+                                                  !pending.extent.complete);
+            if (query_version() != version) {
+                fallback_window_.reset();
+                result.entries.clear();
+                result.extent = make_candidate_extent(0, 0, true);
+                result.highlighted = -1;
+                result.sequence_invalidated = true;
+                result.status = TranslationStatus::kStableDegraded;
+            }
+            return result;
+        }
+    } else if (request.purpose == TranslationPurpose::kComposition) {
+        fallback_window_.reset();
+    }
 
-    if (!request.policy.allow_partial_selection) {
+    if (!request.policy.allow_partial_selection && !fallback) {
         CandidatePage page = translate_page(
             request.input, request.page_index, request.page_size, request.trace,
             request.budget, request.scratch, request.page_offset);
@@ -257,30 +331,41 @@ TranslationResult MixedTranslator::translate(const TranslationRequest& request) 
     }
 
     QueryTrace local_trace;
-    TranslationRequest effective_request = request;
-    if (!effective_request.trace) {
+    TranslationRequest effective_request = window_request;
+    if (!effective_request.trace && !fallback) {
         effective_request.trace = &local_trace;
     }
-    effective_request.trace->deadline_exceeded = false;
-    effective_request.trace->scan_budget_truncated = false;
-    effective_request.trace->topk_truncated = false;
-    effective_request.trace->composition_truncated = false;
+    if (effective_request.trace) {
+        effective_request.trace->deadline_exceeded = false;
+        effective_request.trace->scan_budget_truncated = false;
+        effective_request.trace->topk_truncated = false;
+        effective_request.trace->composition_truncated = false;
+    }
 
     // Each source only needs enough materialized entries to fill the requested mixed prefix.
     // Pinyin owns its full/partial ordering and extends that sequence on later pages.
-    const int need = request.page_offset + request.page_size * 2 + 1;
+    const int need = resumable ? 32 : request.page_offset + request.page_size * 2 + 1;
     TranslationRequest source_request = effective_request;
     source_request.page_index = 0;
     source_request.page_offset = 0;
     source_request.page_size = need;
     source_request.scheme = CompositionScheme::kPinyin;
     TranslationResult pinyin = pinyin_translator_.translate(source_request);
-
+    result.incremental = pinyin.incremental;
+    result.sequence_invalidated = pinyin.sequence_invalidated;
     source_request.scheme = CompositionScheme::kWubi;
     source_request.policy.allow_partial_selection = false;
+    if (resumable) {
+        source_request.page_offset = fallback_window_->wubi_offset;
+    }
     QueryTrace wubi_trace;
     source_request.trace = &wubi_trace;
     TranslationResult wubi = wubi_translator_.translate(source_request);
+    const bool wubi_pending = candidate_extent_may_continue(
+        wubi.extent, source_request.page_offset + static_cast<int>(wubi.entries.size()));
+    if (resumable) {
+        fallback_window_->wubi_offset += static_cast<int>(wubi.entries.size());
+    }
 
     const bool full_span_first = pinyin_translator_.is_complete_full_pinyin_syllable(request.input);
     if (full_span_first &&
@@ -322,9 +407,21 @@ TranslationResult MixedTranslator::translate(const TranslationRequest& request) 
     std::stable_partition(merged.begin(), merged.end(), [&](const CandidateEntry& entry) {
         const auto* action = std::get_if<TextSelectionAction>(&entry.selection);
         return action && action->consumed_input_bytes == request.input.size() &&
-               manually_ordered(request.input, entry);
+               manually_ordered(request.input, entry, fallback);
     });
     group_partial_candidates(merged, request.input.size(), full_span_first);
+    if (result.incremental && !invalidated && !result.sequence_invalidated && request.published) {
+        merged.erase(std::remove_if(merged.begin(), merged.end(),
+                                    [&](const CandidateEntry& entry) {
+                                        return std::any_of(request.published->begin(),
+                                                           request.published->end(),
+                                                           [&](const CandidateEntry& previous) {
+                                                               return previous.candidate.text ==
+                                                                      entry.candidate.text;
+                                                           });
+                                    }),
+                     merged.end());
+    }
 
     if (pinyin.status == TranslationStatus::kFailed &&
         wubi.status == TranslationStatus::kFailed) {
@@ -333,11 +430,41 @@ TranslationResult MixedTranslator::translate(const TranslationRequest& request) 
                wubi.status != TranslationStatus::kSuccess) {
         result.status = TranslationStatus::kStableDegraded;
     }
+    if (resumable) {
+        result.sequence_invalidated = result.sequence_invalidated || invalidated;
+        result.sequence_version = version;
+        result.page_size = request.page_size;
+        result.entries = std::move(merged);
+        const int count = static_cast<int>(result.entries.size());
+        result.extent = make_candidate_extent(count, count,
+                                              !pinyin.extent.complete || wubi_pending ||
+                                                  result.status != TranslationStatus::kSuccess);
+        result.highlighted = result.entries.empty() ? -1 : 0;
+        if (query_version() != version) {
+            fallback_window_.reset();
+            result.entries.clear();
+            result.extent = make_candidate_extent(0, 0, true);
+            result.highlighted = -1;
+            result.sequence_invalidated = true;
+            result.status = TranslationStatus::kStableDegraded;
+        } else {
+            // A bounded unpublished merge window preserves interleaving even
+            // when a phrase or a different consuming action hides a source item.
+            // Context remains the sole owner of previously displayed pages.
+            fallback_window_->pending = result;
+            if (effective_request.trace) {
+                fallback_window_->buffer_peak =
+                    effective_request.trace->fallback_buffer_peak + static_cast<uint32_t>(count);
+                effective_request.trace->fallback_buffer_peak = fallback_window_->buffer_peak;
+            }
+        }
+        return result;
+    }
     result.page_index = request.page_index;
     result.page_offset = request.page_offset;
     result.page_size = request.page_size;
     const int known_count = static_cast<int>(merged.size());
-    const int begin = (std::min)(request.page_offset, known_count);
+    const int begin = result.incremental ? 0 : (std::min)(request.page_offset, known_count);
     const int end = (std::min)(begin + request.page_size, known_count);
     const bool source_incomplete =
         !pinyin.extent.complete || !wubi.extent.complete ||
@@ -520,7 +647,7 @@ bool MixedTranslator::manually_ordered(const std::string& input,
 }
 
 bool MixedTranslator::manually_ordered(const std::string& input,
-                                       const CandidateEntry& entry) const {
+                                       const CandidateEntry& entry, bool resolved_only) const {
     const auto* action = std::get_if<TextSelectionAction>(&entry.selection);
     if (!action || action->consumed_input_bytes > input.size()) {
         return false;
@@ -536,7 +663,19 @@ bool MixedTranslator::manually_ordered(const std::string& input,
             candidate.source == CandidateSource::kPinyin && !variant.input_code.empty()
                 ? variant.input_code
                 : raw_input;
-        if (manually_ordered(ordered_input, candidate)) {
+        if (resolved_only) {
+            // Fallback sources already resolve identities under the shared budget.
+            // Unresolved preferences remain learned candidates, never manual pins.
+            Dict* dictionary =
+                candidate.source == CandidateSource::kPinyin ? pinyin_dict_ : wubi_dict_;
+            if (dictionary &&
+                (candidate.origin == CandidateOrigin::kSystem ||
+                 candidate.origin == CandidateOrigin::kUser) &&
+                dictionary->has_manual_candidate_order(ordered_input, candidate.text,
+                                                       candidate.code, candidate.syllables)) {
+                return true;
+            }
+        } else if (manually_ordered(ordered_input, candidate)) {
             return true;
         }
     }
@@ -546,6 +685,7 @@ bool MixedTranslator::manually_ordered(const std::string& input,
 void MixedTranslator::clear_query_cache() {
     pinyin_translator_.clear_query_cache();
     wubi_translator_.clear_query_cache();
+    fallback_window_.reset();
 }
 
 void MixedTranslator::set_sentence_composition_enabled(bool enabled) {

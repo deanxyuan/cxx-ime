@@ -339,6 +339,7 @@ void Context::update_translation(TranslationResult&& result) {
     const int highlight_count = highlight_count_after_page_change_;
     highlight_count_after_page_change_ = 0;
     translation_ = std::move(result);
+    translation_input_ = active_input();
     if (translation_.extent.complete) {
         continuation_effort_ = 0;
     }
@@ -356,6 +357,7 @@ void Context::update_translation(TranslationResult&& result) {
 
 void Context::clear_translation() {
     translation_ = {};
+    translation_input_.clear();
     requested_navigation_.reset();
     continuation_effort_ = 0;
 }
@@ -363,6 +365,7 @@ void Context::clear_translation() {
 void Context::replace_composition(CompositionState&& state, TranslationResult&& result) {
     composition_ = std::move(state);
     previous_pages_.clear();
+    following_pages_.clear();
     highlight_count_after_page_change_ = 0;
     visible_candidate_count = 0;
     requested_navigation_.reset();
@@ -375,6 +378,7 @@ void Context::reset_pagination() {
     translation_.page_offset = 0;
     visible_candidate_count = 0;
     previous_pages_.clear();
+    following_pages_.clear();
     highlight_count_after_page_change_ = 0;
     requested_navigation_.reset();
     continuation_effort_ = 0;
@@ -429,7 +433,8 @@ bool Context::navigate_candidates(const KeyEvent& event) {
 }
 
 void Context::request_next_page() {
-    if (selectable_candidate_count() <= 0) {
+    if (selectable_candidate_count() <= 0 &&
+        !(translation_.incremental && !translation_.extent.complete)) {
         return;
     }
     requested_navigation_ = {CandidateNavigation::kNextPage, false};
@@ -455,6 +460,7 @@ bool Context::apply_next_page(TranslationResult&& result, int visible_count) {
         return false;
     }
     PageHistoryEntry history;
+    following_pages_.clear();
     history.translation = std::move(translation_);
     history.visible_candidate_count = visible_count;
     history.continuation_effort = continuation_effort_;
@@ -467,11 +473,63 @@ bool Context::apply_previous_page(bool highlight_last) {
     if (previous_pages_.empty()) {
         return false;
     }
+    if (translation_.incremental) {
+        PageHistoryEntry following;
+        following.visible_candidate_count = selectable_candidate_count();
+        following.translation = std::move(translation_);
+        following.continuation_effort = continuation_effort_;
+        following_pages_.push_back(std::move(following));
+    }
     PageHistoryEntry history = std::move(previous_pages_.back());
     highlight_count_after_page_change_ = highlight_last ? history.visible_candidate_count : 0;
     continuation_effort_ = history.continuation_effort;
     previous_pages_.pop_back();
     update_translation(std::move(history.translation));
+    return true;
+}
+
+bool Context::apply_saved_next_page() {
+    if (following_pages_.empty()) {
+        return false;
+    }
+    const int visible = selectable_candidate_count();
+    TranslationResult next = translation_;
+    next.page_index += 1;
+    next.page_offset += visible;
+    next.entries.erase(next.entries.begin(), next.entries.begin() + visible);
+    // A narrower host viewport can leave part of the old page undisplayed.
+    // Reflow retained forward history by absolute offset instead of discarding it.
+    while (next.entries.size() < static_cast<std::size_t>(next.page_size) &&
+           !following_pages_.empty()) {
+        auto& saved = following_pages_.back();
+        const int target = next.page_offset + static_cast<int>(next.entries.size());
+        const int begin = (std::max)(0, target - saved.translation.page_offset);
+        const int available = (std::min)(saved.visible_candidate_count,
+                                         static_cast<int>(saved.translation.entries.size()));
+        const int count =
+            (std::min)(available - begin, next.page_size - static_cast<int>(next.entries.size()));
+        if (count > 0) {
+            next.entries.insert(next.entries.end(), saved.translation.entries.begin() + begin,
+                                saved.translation.entries.begin() + begin + count);
+        }
+        next.extent = saved.translation.extent;
+        if (begin + (std::max)(0, count) >= available) {
+            following_pages_.pop_back();
+        } else {
+            break;
+        }
+    }
+    if (next.entries.empty()) {
+        return false;
+    }
+    next.highlighted = next.entries.empty() ? -1 : 0;
+    PageHistoryEntry current;
+    current.visible_candidate_count = visible;
+    current.translation = std::move(translation_);
+    current.continuation_effort = continuation_effort_;
+    previous_pages_.push_back(std::move(current));
+    continuation_effort_ = 0;
+    update_translation(std::move(next));
     return true;
 }
 
@@ -514,8 +572,25 @@ bool Context::candidate_was_published(const CandidateEntry& entry,
     return page_contains(translation_, current_visible_count);
 }
 
+std::vector<CandidateEntry> Context::published_candidates() const {
+    std::vector<CandidateEntry> published;
+    if (translation_input_ != active_input()) {
+        return published;
+    }
+    const auto append = [&](const TranslationResult& page, int visible) {
+        const int count = (std::min)((std::max)(0, visible), static_cast<int>(page.entries.size()));
+        published.insert(published.end(), page.entries.begin(), page.entries.begin() + count);
+    };
+    for (const auto& history : previous_pages_) {
+        append(history.translation, history.visible_candidate_count);
+    }
+    append(translation_, selectable_candidate_count());
+    return published;
+}
+
 void Context::replace_candidate_sequence(TranslationResult&& result) {
     previous_pages_.clear();
+    following_pages_.clear();
     visible_candidate_count = 0;
     continuation_effort_ = 0;
     update_translation(std::move(result));

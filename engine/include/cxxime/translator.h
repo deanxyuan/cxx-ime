@@ -17,6 +17,8 @@ namespace cxxime {
 
 class ShortCodeCache;
 class CompositionLearningService;
+class ShuangpinFallbackQuery;
+struct ShuangpinGraph;
 struct QueryTrace;
 struct QueryBudget;
 struct QueryScratch;
@@ -27,6 +29,7 @@ public:
     virtual ~ITranslator() = default;
     virtual TranslationResult translate(const TranslationRequest& request) = 0;
     virtual void clear_query_cache() {}
+    virtual uint64_t query_version() const { return 0; }
     virtual void set_sentence_composition_enabled(bool enabled) {}
     virtual void set_candidate_learning_enabled(bool enabled) {}
     virtual void set_composition_learning_service(CompositionLearningService* service) {}
@@ -35,18 +38,22 @@ public:
 // Pinyin translator implementation
 class PinyinTranslator : public ITranslator {
 public:
+    PinyinTranslator();
+    ~PinyinTranslator() override;
     void set_dict(Dict* dict);
     void bind_pinyin(std::shared_ptr<const PinyinResourceSet> resources,
                      PinyinQueryPolicy policy);
     void set_short_cache(const ShortCodeCache* cache) { short_cache_ = cache; }
 
-    void clear_query_cache() override { query_cache_.clear(); }
+    void clear_query_cache() override;
+    uint64_t query_version() const override;
     void set_sentence_composition_enabled(bool enabled) override;
     void set_candidate_learning_enabled(bool enabled) override;
     void set_composition_learning_service(CompositionLearningService* service) override;
 
     TranslationResult translate(const TranslationRequest& request) override;
     bool is_complete_full_pinyin_syllable(const std::string& input) const;
+    bool requires_shuangpin_fallback(const std::string& input) const;
     CandidatePage translate_page(const std::string& pinyin, int page_index = 0,
                                  int page_size = 9, QueryTrace* trace = nullptr,
                                  const QueryBudget* budget = nullptr,
@@ -92,6 +99,15 @@ private:
                            int page_size, const QueryCacheVersions& versions,
                            const CandidatePage& page);
     PinyinSchemeKind pinyin_scheme() const;
+    bool translate_fallback(const TranslationRequest& request, TranslationResult& result);
+    const ShuangpinGraph& shuangpin_graph(const std::string& input) const;
+    mutable std::unique_ptr<ShuangpinGraph> grammar_graph_;
+    mutable std::string grammar_input_;
+    std::unique_ptr<ShuangpinFallbackQuery> fallback_query_;
+    std::string fallback_input_;
+    QueryCacheVersions fallback_versions_;
+    bool fallback_partial_ = false;
+    uint64_t fallback_revision_ = 0;
     Dict* dict_ = nullptr;
     std::shared_ptr<const PinyinResourceSet> pinyin_resources_;
     PinyinQueryPolicy pinyin_query_policy_;

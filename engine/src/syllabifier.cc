@@ -5,10 +5,45 @@
 #include <algorithm>
 #include <queue>
 #include <string_view>
+#include <utility>
 
 #include <cxxime/query_budget.h>
 
 namespace cxxime {
+namespace {
+
+SyllableGraph prefer_complete_spans(SyllableGraph graph) {
+    SyllableGraph selected;
+    std::size_t position = 0;
+    for (;;) {
+        const auto vertex = graph.find(position);
+        if (vertex == graph.end() || vertex->second.empty()) {
+            break;
+        }
+        auto next = vertex->second.end();
+        for (auto group = vertex->second.begin(); group != vertex->second.end(); ++group) {
+            if (std::any_of(group->second.begin(), group->second.end(),
+                            [](const SyllableEdge& edge) { return edge.type <= kFuzzySpelling; })) {
+                next = group;
+            }
+        }
+        if (next == vertex->second.end()) {
+            next = std::find_if(vertex->second.begin(), vertex->second.end(),
+                                [](const auto& group) { return !group.second.empty(); });
+        }
+        if (next == vertex->second.end()) {
+            break;
+        }
+        const std::size_t end = next->first;
+        // The complete spelling chooses the raw span, not its only reading.
+        // Retain same-span completion and fuzzy alternatives allowed by the caller.
+        selected[position].emplace(end, std::move(next->second));
+        position = end;
+    }
+    return selected;
+}
+
+} // namespace
 
 Syllabifier::Syllabifier(const SpellingsIndex& spellings)
     : spellings_(spellings) {}
@@ -36,7 +71,8 @@ SyllableGraph Syllabifier::build_graph(const std::string& input,
         visited[pos] = 1;
 
         std::string_view remaining(input.data() + pos, input.size() - pos);
-        auto matches = spellings_.prefix_search(remaining, options.enable_fuzzy);
+        auto matches =
+            spellings_.prefix_search(remaining, options.enable_fuzzy, options.enable_abbreviation);
 
         for (auto& m : matches) {
             // The trie key is the raw input span. The canonical syllable may have a
@@ -96,6 +132,9 @@ SyllableGraph Syllabifier::build_graph(const std::string& input,
         }
     }
 
+    if (options.prefer_complete_spans) {
+        return prefer_complete_spans(std::move(graph));
+    }
     return graph;
 }
 
@@ -182,11 +221,12 @@ bool Syllabifier::enumerate_paths(
 
 SegmentResult Syllabifier::segment(const std::string& input, const QueryDeadline* deadline,
                                    const SyllabifierOptions& options) const {
-    SegmentResult result;
-    if (input.empty())
-        return result;
+    return segment_graph(build_graph(input, options), deadline, options.collect_path_metadata);
+}
 
-    auto graph = build_graph(input, options);
+SegmentResult Syllabifier::segment_graph(SyllableGraph graph, const QueryDeadline* deadline,
+                                         bool collect_path_metadata) const {
+    SegmentResult result;
     if (graph.empty())
         return result;
 
@@ -232,12 +272,12 @@ SegmentResult Syllabifier::segment(const std::string& input, const QueryDeadline
     uint32_t call_count = 0;
     bool deadline_expired =
         enumerate_paths(graph, 0, farthest, current, scored, deadline,
-                        options.collect_path_metadata, suffix_paths, false, false,
+                        collect_path_metadata, suffix_paths, false, false,
                         call_count);
     if (!deadline_expired) {
         deadline_expired =
             enumerate_paths(graph, 0, farthest, current, scored, deadline,
-                            options.collect_path_metadata, suffix_paths, true, false,
+                            collect_path_metadata, suffix_paths, true, false,
                             call_count);
     }
 

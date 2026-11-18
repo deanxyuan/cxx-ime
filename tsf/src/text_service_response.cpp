@@ -112,15 +112,8 @@ bool TextService::_apply_engine_response(ITfContext* context, const cxxime::IPCR
         }
         ensure_trace_composition_id();
 
-        std::vector<std::wstring> candidate_texts;
-        candidate_texts.reserve(decoded.candidates.items.size());
-        for (const auto& item : decoded.candidates.items) {
-            candidate_texts.push_back(utf8_to_wstring(item.text.c_str()));
-        }
-        const auto decision = cxxime_tsf::decide_preedit(
-            _config.inline_preedit, _config.preedit_type, decoded.logical_preedit,
-            decoded.display_preedit, candidate_texts, decoded.candidates.highlighted,
-            decoded.has_syllable_boundaries);
+        const auto decision =
+            decoded.preedit_decision(_config.inline_preedit, _config.preedit_type);
         const bool ui_element_only = _is_ui_element_only();
         const bool has_candidates = !decoded.candidates.items.empty();
         std::string popup_preedit;

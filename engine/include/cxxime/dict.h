@@ -64,6 +64,33 @@ struct UserLookupStats {
     bool deadline_exceeded = false;
 };
 
+// Opaque positions in this Dict's immutable, sorted syllable index.
+struct SyllableRange {
+    std::size_t begin = 0;
+    std::size_t exact_end = 0;
+    std::size_t end = 0;
+    std::size_t depth = 0;
+};
+
+enum class PersonalCandidateSource {
+    kUser,
+    kPreference,
+    kManual,
+};
+
+struct PersonalCandidateCursor {
+    std::size_t record = 0;
+    std::size_t item = 0;
+};
+
+struct CandidateResolutionCursor {
+    std::size_t next = 0;
+    std::size_t end = 0;
+    bool started = false;
+    bool finished = false;
+    bool available = false;
+};
+
 class Dict {
 public:
     explicit Dict(UserDictKind kind);
@@ -114,6 +141,22 @@ public:
                             std::vector<SpanCandidate>& output,
                             SpanLookupStats& stats) const;
     bool has_prefix(const std::vector<uint32_t>& ids, QueryTrace* trace = nullptr) const;
+    SyllableRange syllable_root() const;
+    // One intersection step; advances allowed_offset even when no child matches.
+    // Caller counts every step against its shared range-operation budget.
+    bool intersect_syllable_range(const SyllableRange& parent,
+                                  const std::vector<uint32_t>& allowed,
+                                  std::size_t& allowed_offset,
+                                  SyllableRange& child, uint32_t& syllable_id) const;
+    bool read_syllable_candidate(const SyllableRange& range, std::size_t& cursor,
+                                 Candidate& candidate) const;
+    bool read_personal_candidate(PersonalCandidateSource source,
+                                 const std::vector<std::string>& prefixes,
+                                 PersonalCandidateCursor& cursor, Candidate& candidate) const;
+    void begin_candidate_resolution(Candidate& candidate,
+                                    CandidateResolutionCursor& cursor) const;
+    void advance_candidate_resolution(Candidate& candidate,
+                                      CandidateResolutionCursor& cursor) const;
     int count(const std::string& code_prefix, QueryTrace* trace = nullptr);
     std::string reverse_lookup(const std::string& text);
     bool add_user_entry(const std::string& text, const std::string& code,

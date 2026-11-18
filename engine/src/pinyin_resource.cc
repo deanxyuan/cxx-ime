@@ -34,12 +34,34 @@ PinyinResourceSet::create(std::string scheme_id, PinyinSchemeKind kind,
 
 SegmentResult PinyinResourceSet::segment(const std::string& input, const QueryDeadline* deadline,
                                          const SyllabifierOptions& options) const {
-    return syllabifier_.segment(input, deadline, options);
+    auto effective = options;
+    effective.prefer_complete_spans = kind_ == PinyinSchemeKind::kShuangpin;
+    if (kind_ == PinyinSchemeKind::kShuangpin) {
+        effective.enable_abbreviation = false;
+    }
+    return syllabifier_.segment(input, deadline, effective);
+}
+
+SegmentResult PinyinResourceSet::segment_graph(SyllableGraph graph, const QueryDeadline* deadline,
+                                               bool collect_path_metadata) const {
+    return syllabifier_.segment_graph(std::move(graph), deadline, collect_path_metadata);
+}
+
+SyllableGraph PinyinResourceSet::build_graph(const std::string& input,
+                                             const SyllabifierOptions& options) const {
+    auto effective = options;
+    effective.prefer_complete_spans = kind_ == PinyinSchemeKind::kShuangpin;
+    return syllabifier_.build_graph(input, effective);
 }
 
 bool PinyinResourceSet::has_fuzzy_path(const std::string& input,
                                        const SyllabifierOptions& options) const {
-    return syllabifier_.has_fuzzy_path(input, options);
+    auto effective = options;
+    effective.prefer_complete_spans = kind_ == PinyinSchemeKind::kShuangpin;
+    if (kind_ == PinyinSchemeKind::kShuangpin) {
+        effective.enable_abbreviation = false;
+    }
+    return syllabifier_.has_fuzzy_path(input, effective);
 }
 
 std::vector<SpellingMatch> PinyinResourceSet::prefix_search(std::string_view input,

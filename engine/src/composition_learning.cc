@@ -42,6 +42,7 @@ using RecordMap = std::unordered_map<std::string, LearningRecord>;
 
 struct PublishedSnapshot {
     std::unordered_map<std::string, std::vector<LearningRecord>> by_code;
+    std::vector<LearningRecord> ordered;
     std::uint64_t sequence = 0;
 };
 
@@ -196,12 +197,17 @@ std::shared_ptr<const PublishedSnapshot> make_snapshot(const RecordMap& records)
     for (const auto& item : records) {
         snapshot->sequence = (std::max)(snapshot->sequence, item.second.sequence);
         snapshot->by_code[item.second.event.code].push_back(item.second);
+        snapshot->ordered.push_back(item.second);
     }
     for (auto& item : snapshot->by_code) {
         std::sort(item.second.begin(), item.second.end(), [](const auto& left, const auto& right) {
             return record_less_valuable(right, left);
         });
     }
+    std::sort(snapshot->ordered.begin(), snapshot->ordered.end(),
+              [](const auto& left, const auto& right) {
+                  return record_key(left.event) < record_key(right.event);
+              });
     return snapshot;
 }
 
@@ -667,6 +673,21 @@ std::vector<Candidate> CompositionLearningService::lookup_candidates(
         }
     }
     return candidates;
+}
+
+bool CompositionLearningService::read_candidate(std::size_t& cursor, Candidate& candidate) const {
+    std::shared_ptr<const PublishedSnapshot> snapshot;
+    {
+        std::lock_guard<std::mutex> lock(impl_->mutex);
+        snapshot = impl_->published;
+    }
+    candidate = {};
+    if (!snapshot || cursor >= snapshot->ordered.size()) {
+        return false;
+    }
+    candidate = candidate_from_record(snapshot->ordered[cursor++], snapshot->sequence);
+    candidate.input_code = candidate.code;
+    return true;
 }
 
 std::uint64_t CompositionLearningService::version() const {

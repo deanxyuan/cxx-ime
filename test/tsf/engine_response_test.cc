@@ -143,4 +143,51 @@ TEST(EngineResponse, rejects_invalid_commit_text_utf8) {
     ASSERT_TRUE(!cxxime_tsf::decode_engine_commit_text(response, &commit_text));
 }
 
+TEST(EngineResponse, preview_selects_only_the_highlighted_candidate_after_the_converted_prefix) {
+    auto response = make_response();
+    response.candidate_count = 2;
+    copy_field(response.candidates[1], u8"\U00020000");
+    for (int highlighted : {0, 1, -1}) {
+        response.highlighted = static_cast<std::uint32_t>(highlighted);
+        cxxime_tsf::DecodedEnginePresentation presentation;
+        ASSERT_TRUE(cxxime_tsf::decode_engine_presentation(response, &presentation));
+        const auto preview = presentation.preedit_decision(true, "preview");
+        const std::wstring expected = highlighted == 1 ? L"华锐\U00020000" : L"华锐技术";
+        ASSERT_EQ(preview.inline_text, expected);
+        ASSERT_EQ(preview.inline_cursor, expected.size());
+        ASSERT_EQ(preview.inline_converted_prefix, std::size_t{2});
+        ASSERT_EQ(preview.inline_focused_start, std::size_t{2});
+        ASSERT_EQ(preview.inline_focused_end, expected.size());
+        ASSERT_TRUE(preview.inline_focus_converted);
+        ASSERT_TRUE(preview.show_preedit_in_popup);
+
+        const auto composition = presentation.preedit_decision(true, "composition");
+        ASSERT_EQ(composition.inline_text, std::wstring(L"华锐jishu"));
+        ASSERT_TRUE(!composition.show_preedit_in_popup);
+        const auto popup = presentation.preedit_decision(false, "preview");
+        ASSERT_TRUE(popup.inline_text.empty());
+        ASSERT_TRUE(!popup.start_composition);
+    }
+    response.candidate_count = 0;
+    cxxime_tsf::DecodedEnginePresentation empty;
+    ASSERT_TRUE(cxxime_tsf::decode_engine_presentation(response, &empty));
+    const auto preview = empty.preedit_decision(true, "preview");
+    ASSERT_EQ(preview.inline_text, std::wstring(L"华锐jishu"));
+    ASSERT_EQ(preview.inline_cursor, preview.inline_text.size());
+    ASSERT_TRUE(!preview.inline_focus_converted);
+}
+
+TEST(EngineResponse, rejects_invalid_utf8_in_an_unselected_candidate_or_hint) {
+    for (bool hint : {false, true}) {
+        auto response = make_response();
+        response.candidate_count = 2;
+        copy_field(response.candidates[1], u8"计数");
+        char* field = hint ? response.candidate_hints[1] : response.candidates[1];
+        field[0] = static_cast<char>(0xff);
+        field[1] = '\0';
+        cxxime_tsf::DecodedEnginePresentation presentation;
+        ASSERT_TRUE(!cxxime_tsf::decode_engine_presentation(response, &presentation));
+    }
+}
+
 RUN_ALL_TESTS()

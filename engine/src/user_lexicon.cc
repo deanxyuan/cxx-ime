@@ -535,14 +535,12 @@ bool UserLexicon::contains_candidate(const std::string& text, const std::string&
 bool UserLexicon::contains_candidate_identity(const std::string& text, const std::string& code,
                                               const std::string& syllables) const {
     std::shared_lock<std::shared_mutex> lock(mutex_);
-    const auto found = text_index_.find(text);
-    if (found == text_index_.end()) {
+    const auto found = entry_index_.find(entry_key(text, code));
+    if (found == entry_index_.end()) {
         return false;
     }
-    return std::any_of(found->second.begin(), found->second.end(), [&](EntryId id) {
-        const Entry& entry = entries_[id];
-        return !entry.deleted && entry.code == code && entry.syllables == syllables;
-    });
+    const Entry& entry = entries_[found->second];
+    return !entry.deleted && entry.syllables == syllables;
 }
 
 std::size_t UserLexicon::entry_count() const {

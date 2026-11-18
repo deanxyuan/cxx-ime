@@ -49,8 +49,11 @@ struct SegmentResult {
 
 struct SyllabifierOptions {
     bool enable_fuzzy = true;
+    bool enable_abbreviation = true;
     bool enable_terminal_completion = false;
     bool collect_path_metadata = false;
+    // Shuangpin grammar: later input cannot split an established complete span.
+    bool prefer_complete_spans = false;
 };
 
 class Syllabifier {
@@ -70,6 +73,9 @@ public:
     // Optional deadline for internal checks during DFS.
     SegmentResult segment(const std::string& input, const QueryDeadline* deadline = nullptr,
                           const SyllabifierOptions& options = {}) const;
+    // Consume an existing build_graph result without repeating spelling lookup.
+    SegmentResult segment_graph(SyllableGraph graph, const QueryDeadline* deadline,
+                                bool collect_path_metadata) const;
     bool has_fuzzy_path(const std::string& input,
                         const SyllabifierOptions& options = {}) const;
 

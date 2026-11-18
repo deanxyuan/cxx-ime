@@ -106,6 +106,44 @@ void update_trace(QueryTrace* trace, const UserLookupStats& stats) {
 
 } // namespace
 
+bool UserLexicon::read_candidate(const std::vector<std::string>& prefixes,
+                                 std::size_t& prefix_cursor, std::size_t& cursor,
+                                 Candidate& candidate) const {
+    std::shared_lock<std::shared_mutex> lock(mutex_);
+    candidate = {};
+    if (prefix_cursor >= prefixes.size()) {
+        return false;
+    }
+    const auto& prefix = prefixes[prefix_cursor];
+    if (cursor == SIZE_MAX) {
+        cursor = static_cast<std::size_t>(
+            std::lower_bound(
+                code_sorted_.begin(), code_sorted_.end(), prefix,
+                [&](EntryId id, const std::string& value) { return entries_[id].code < value; }) -
+            code_sorted_.begin());
+    }
+    if (cursor >= code_sorted_.size() ||
+        entries_[code_sorted_[cursor]].code.compare(0, prefix.size(), prefix) != 0) {
+        ++prefix_cursor;
+        cursor = SIZE_MAX;
+        return true;
+    }
+    const auto& entry = entries_[code_sorted_[cursor++]];
+    if (!entry.deleted) {
+        candidate.text = entry.text;
+        candidate.code = entry.code;
+        candidate.input_code = entry.code;
+        candidate.syllables = entry.syllables;
+        candidate.frequency =
+            score_match(kind_, MatchKind::kExact, entry.code.size(), entry.code.size(),
+                        entry.frequency, sequence_, entry.sequence);
+        candidate.source_frequency = entry.frequency;
+        candidate.source = CandidateSource::kPinyin;
+        candidate.origin = CandidateOrigin::kUser;
+    }
+    return true;
+}
+
 std::vector<Candidate> UserLexicon::lookup_exact(const std::string& code, int limit,
                                                  const QueryBudget& budget, QueryTrace* trace,
                                                  UserLookupStats* stats) const {

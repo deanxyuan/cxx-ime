@@ -94,7 +94,7 @@ void SpellingsIndex::unload() {
 // v2 trie prefix search: O(k) walk
 static std::vector<SpellingMatch> trie_prefix_search(
     const char* nodes, const char* strings, const uint32_t* node_offsets,
-    uint32_t node_count, std::string_view prefix, bool enable_fuzzy) {
+    uint32_t node_count, std::string_view prefix, bool enable_fuzzy, bool enable_abbreviation) {
 
     std::vector<SpellingMatch> results;
     const uint32_t prefix_len = (uint32_t)prefix.size();
@@ -121,7 +121,8 @@ static std::vector<SpellingMatch> trie_prefix_search(
         const char* sp = node + NODE_HEADER_SIZE;
         for (uint8_t i = 0; i < ns; ++i) {
             const int type = *(const uint8_t*)(sp + 8);
-            if (!enable_fuzzy && type == kFuzzySpelling) {
+            if ((!enable_fuzzy && type == kFuzzySpelling) ||
+                (!enable_abbreviation && type == kAbbreviation)) {
                 sp += SPELLING_SIZE;
                 continue;
             }
@@ -260,13 +261,14 @@ static std::vector<SpellingMatch> trie_completion_search(
 }
 
 std::vector<SpellingMatch> SpellingsIndex::prefix_search(std::string_view prefix,
-                                                         bool enable_fuzzy) const {
+                                                         bool enable_fuzzy,
+                                                         bool enable_abbreviation) const {
     if (!data_ || prefix.empty())
         return {};
 
     std::vector<SpellingMatch> results =
         trie_prefix_search(nodes_, strings_, node_offsets_.get(), node_count_, prefix,
-                           enable_fuzzy);
+                           enable_fuzzy, enable_abbreviation);
 
     return results;
 }

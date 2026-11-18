@@ -161,6 +161,7 @@ bool ManualCandidateOrder::load(const std::string& path) {
     const std::uint64_t version = version_token(serialize(loaded));
     std::unique_lock<std::shared_mutex> lock(mutex_);
     orders_ = std::move(loaded);
+    rebuild_keys_locked();
     path_ = path;
     version_.store(version, std::memory_order_release);
     return true;
@@ -190,6 +191,7 @@ bool ManualCandidateOrder::merge_contents_and_save(const std::string& imported,
     }
     std::unique_lock<std::shared_mutex> lock(mutex_);
     orders_ = std::move(next);
+    rebuild_keys_locked();
     version_.store(version_token(merged.contents), std::memory_order_release);
     *result = std::move(merged);
     return true;
@@ -272,12 +274,48 @@ bool ManualCandidateOrder::replace_and_save_locked(
     }
     std::unique_lock<std::shared_mutex> lock(mutex_);
     orders_ = std::move(next);
+    rebuild_keys_locked();
     version_.store(version_token(contents), std::memory_order_release);
     return true;
 }
 
 std::uint64_t ManualCandidateOrder::version() const {
     return version_.load(std::memory_order_acquire);
+}
+
+void ManualCandidateOrder::rebuild_keys_locked() {
+    ordered_keys_.clear();
+    for (const auto& item : orders_) {
+        if (!item.second.empty()) {
+            ordered_keys_.push_back(item.first);
+        }
+    }
+    std::sort(ordered_keys_.begin(), ordered_keys_.end());
+}
+
+bool ManualCandidateOrder::read_entry(std::size_t& key_cursor, std::size_t& entry_cursor,
+                                      std::string& input_code,
+                                      ManualCandidateOrderEntry& entry) const {
+    std::shared_lock<std::shared_mutex> lock(mutex_);
+    if (key_cursor >= ordered_keys_.size()) {
+        return false;
+    }
+    input_code = ordered_keys_[key_cursor];
+    const auto& entries = orders_.at(input_code);
+    if (entry_cursor >= entries.size()) {
+        // A concurrent replacement can shorten this list. The caller will
+        // discard the version-changed window, but the old cursor must be safe.
+        entry = {};
+        ++key_cursor;
+        entry_cursor = 0;
+        return true;
+    }
+    entry = entries[entry_cursor++];
+    if (entry_cursor == entries.size()) {
+        ++key_cursor;
+        entry_cursor = 0;
+    }
+    return true;
 }
 
 bool ManualCandidateOrder::validate_orders(const Orders& orders, UserDictKind kind) {

@@ -262,12 +262,14 @@ TEST(Shuangpin, invalid_tail_does_not_create_or_consume_a_full_span_candidate) {
     ASSERT_TRUE(fixture.initialize());
 
     fixture.type("ni;");
-    ASSERT_TRUE(fixture.engine.context().translation().entries.empty());
+    ASSERT_TRUE(fixture.find("你", 2) != nullptr);
+    ASSERT_TRUE(fixture.find("你", 3) == nullptr);
     ASSERT_TRUE(fixture.engine.translate_for_search("ni;", 10).candidates.empty());
 
     fixture.engine.clear();
     fixture.type("ni;hk");
-    ASSERT_TRUE(fixture.engine.context().translation().entries.empty());
+    ASSERT_TRUE(fixture.find("你", 2) != nullptr);
+    ASSERT_TRUE(fixture.find("你好", 5) == nullptr);
     ASSERT_TRUE(fixture.engine.translate_for_search("ni;hk", 10).candidates.empty());
 }
 

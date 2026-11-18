@@ -21,8 +21,118 @@
 #include "pinyin_path_filter.h"
 #include "pinyin_partial_candidates.h"
 #include "pinyin_query_key.h"
+#include "shuangpin_fallback.h"
 
 namespace cxxime {
+
+PinyinTranslator::PinyinTranslator() = default;
+PinyinTranslator::~PinyinTranslator() = default;
+
+void PinyinTranslator::clear_query_cache() {
+    query_cache_.clear();
+    fallback_query_.reset();
+    fallback_input_.clear();
+    grammar_graph_.reset();
+    grammar_input_.clear();
+}
+
+uint64_t PinyinTranslator::query_version() const {
+    const auto versions = query_cache_versions();
+    uint64_t token = UINT64_C(14695981039346656037);
+    for (uint64_t value :
+         {versions.user_dict, versions.candidate_preference, versions.manual_candidate_order,
+          versions.disabled_system_entry, versions.composition_learning,
+          static_cast<uint64_t>(reinterpret_cast<uintptr_t>(dict_)),
+          static_cast<uint64_t>(reinterpret_cast<uintptr_t>(pinyin_resources_.get())),
+          static_cast<uint64_t>(reinterpret_cast<uintptr_t>(composition_learning_)),
+          static_cast<uint64_t>(pinyin_query_policy_.enable_fuzzy),
+          static_cast<uint64_t>(candidate_learning_enabled_),
+          static_cast<uint64_t>(sentence_composition_enabled_)}) {
+        token = (token ^ value) * UINT64_C(1099511628211);
+    }
+    return token;
+}
+
+const ShuangpinGraph& PinyinTranslator::shuangpin_graph(const std::string& input) const {
+    if (!grammar_graph_ || grammar_input_ != input) {
+        grammar_graph_.reset(new ShuangpinGraph(
+            ShuangpinGraph::build(*pinyin_resources_, input, pinyin_query_policy_.enable_fuzzy)));
+        grammar_input_ = input;
+    }
+    return *grammar_graph_;
+}
+
+bool PinyinTranslator::requires_shuangpin_fallback(const std::string& input) const {
+    return pinyin_resources_ && pinyin_scheme() == PinyinSchemeKind::kShuangpin &&
+           shuangpin_graph(input).fallback;
+}
+
+bool PinyinTranslator::translate_fallback(const TranslationRequest& request,
+                                          TranslationResult& result) {
+    if (!pinyin_resources_ || pinyin_scheme() != PinyinSchemeKind::kShuangpin) {
+        return false;
+    }
+    const auto versions = query_cache_versions();
+    const uint64_t version_before = query_version();
+    const bool same_versions =
+        versions.user_dict == fallback_versions_.user_dict &&
+        versions.candidate_preference == fallback_versions_.candidate_preference &&
+        versions.manual_candidate_order == fallback_versions_.manual_candidate_order &&
+        versions.disabled_system_entry == fallback_versions_.disabled_system_entry &&
+        versions.composition_learning == fallback_versions_.composition_learning;
+    if (request.purpose == TranslationPurpose::kSearch) {
+        const auto& graph = shuangpin_graph(request.input);
+        if (!graph.fallback) {
+            return false;
+        }
+        ShuangpinFallbackQuery isolated(*dict_, graph, false, sentence_composition_enabled_,
+                                        candidate_learning_enabled_, composition_learning_);
+        result = isolated.query(request);
+        result.incremental = false;
+        if (query_version() != version_before) {
+            result.entries.clear();
+            result.highlighted = -1;
+            result.status = TranslationStatus::kStableDegraded;
+            result.extent = make_candidate_extent(0, 0, true);
+        }
+        return true;
+    }
+    const bool invalidated =
+        fallback_query_ && fallback_input_ == request.input &&
+        (!same_versions || fallback_partial_ != request.policy.allow_partial_selection);
+    if (!fallback_query_ || fallback_input_ != request.input || !same_versions ||
+        fallback_revision_ != request.input_revision ||
+        fallback_partial_ != request.policy.allow_partial_selection) {
+        const auto& graph = shuangpin_graph(request.input);
+        fallback_query_.reset();
+        if (!graph.fallback) {
+            return false;
+        }
+        fallback_query_.reset(new ShuangpinFallbackQuery(
+            *dict_, graph, request.policy.allow_partial_selection, sentence_composition_enabled_,
+            candidate_learning_enabled_, composition_learning_));
+        fallback_input_ = request.input;
+        fallback_versions_ = versions;
+        fallback_partial_ = request.policy.allow_partial_selection;
+        fallback_revision_ = request.input_revision;
+    }
+    auto effective = request;
+    if (invalidated) {
+        effective.published = nullptr;
+    }
+    result = fallback_query_->query(effective);
+    result.sequence_invalidated = invalidated;
+    result.sequence_version = version_before;
+    if (query_version() != version_before) {
+        fallback_query_.reset();
+        result.entries.clear();
+        result.highlighted = -1;
+        result.status = TranslationStatus::kStableDegraded;
+        result.extent = make_candidate_extent(0, 0, true);
+        result.sequence_invalidated = true;
+    }
+    return true;
+}
 
 namespace {
 
@@ -167,7 +277,7 @@ static bool contains_ids(const std::vector<std::vector<uint32_t>>& items,
 
 void PinyinTranslator::set_dict(Dict* dict) {
     dict_ = dict;
-    query_cache_.clear();
+    clear_query_cache();
     query_cache_sequence_ = 0;
 }
 
@@ -179,7 +289,7 @@ void PinyinTranslator::bind_pinyin(std::shared_ptr<const PinyinResourceSet> reso
     }
     pinyin_resources_ = std::move(resources);
     pinyin_query_policy_ = policy;
-    query_cache_.clear();
+    clear_query_cache();
 }
 
 PinyinSchemeKind PinyinTranslator::pinyin_scheme() const {
@@ -191,7 +301,7 @@ void PinyinTranslator::set_sentence_composition_enabled(bool enabled) {
         return;
     }
     sentence_composition_enabled_ = enabled;
-    query_cache_.clear();
+    clear_query_cache();
 }
 
 void PinyinTranslator::set_candidate_learning_enabled(bool enabled) {
@@ -199,7 +309,7 @@ void PinyinTranslator::set_candidate_learning_enabled(bool enabled) {
         return;
     }
     candidate_learning_enabled_ = enabled;
-    query_cache_.clear();
+    clear_query_cache();
 }
 
 void PinyinTranslator::set_composition_learning_service(CompositionLearningService* service) {
@@ -207,7 +317,7 @@ void PinyinTranslator::set_composition_learning_service(CompositionLearningServi
         return;
     }
     composition_learning_ = service;
-    query_cache_.clear();
+    clear_query_cache();
 }
 
 bool PinyinTranslator::is_indexable_key(const std::string& pinyin) {
@@ -408,6 +518,20 @@ CandidatePage PinyinTranslator::translate_page(const std::string& pinyin, int pa
 
     int offset = candidate_offset >= 0 ? candidate_offset : page_index * page_size;
     page.page_offset = offset;
+    if (pinyin_scheme() == PinyinSchemeKind::kShuangpin) {
+        TranslationRequest request;
+        request.input = pinyin;
+        request.page_index = page_index;
+        request.page_offset = offset;
+        request.page_size = page_size;
+        request.trace = trace;
+        request.budget = budget;
+        request.purpose = TranslationPurpose::kSearch;
+        TranslationResult fallback;
+        if (translate_fallback(request, fallback)) {
+            return fallback.candidate_page();
+        }
+    }
     int fetch_limit = page_size;
     const int need = offset + fetch_limit + 1;
     const QueryCacheVersions cache_versions = query_cache_versions();
@@ -1064,6 +1188,9 @@ TranslationResult PinyinTranslator::translate(const TranslationRequest& request)
         return result;
     }
 
+    if (translate_fallback(request, result)) {
+        return result;
+    }
     if (!request.policy.allow_partial_selection) {
         CandidatePage page = translate_page(
             request.input, request.page_index, request.page_size, request.trace,

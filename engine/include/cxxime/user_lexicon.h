@@ -70,6 +70,8 @@ public:
     bool contains_text(const std::string& text) const;
     std::size_t entry_count() const;
     std::uint64_t version() const;
+    bool read_candidate(const std::vector<std::string>& prefixes, std::size_t& prefix_cursor,
+                        std::size_t& cursor, Candidate& candidate) const;
 
 private:
     using EntryId = std::uint32_t;

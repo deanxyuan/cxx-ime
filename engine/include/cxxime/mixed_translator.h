@@ -3,6 +3,8 @@
 #ifndef CXXIME_MIXED_TRANSLATOR_H_
 #define CXXIME_MIXED_TRANSLATOR_H_
 
+#include <optional>
+
 #include <cxxime/config.h>
 #include <cxxime/translator.h>
 #include <cxxime/wubi_translator.h>
@@ -27,19 +29,31 @@ public:
                                  QueryScratch* scratch = nullptr,
                                  int candidate_offset = -1);
     void clear_query_cache() override;
+    uint64_t query_version() const override;
     void set_sentence_composition_enabled(bool enabled) override;
     void set_candidate_learning_enabled(bool enabled) override;
     void set_composition_learning_service(CompositionLearningService* service) override;
 
 private:
+    struct FallbackWindow {
+        std::string input;
+        uint64_t revision = 0;
+        uint64_t version = 0;
+        bool partial = false;
+        int wubi_offset = 0;
+        uint32_t buffer_peak = 0;
+        TranslationResult pending;
+    };
     bool manually_ordered(const std::string& input, const Candidate& candidate) const;
-    bool manually_ordered(const std::string& input, const CandidateEntry& entry) const;
+    bool manually_ordered(const std::string& input, const CandidateEntry& entry,
+                          bool resolved_only = false) const;
 
     PinyinTranslator pinyin_translator_;
     WubiTranslator wubi_translator_;
     Dict* pinyin_dict_ = nullptr;
     Dict* wubi_dict_ = nullptr;
     MixedCandidatePreference candidate_preference_ = MixedCandidatePreference::kAuto;
+    std::optional<FallbackWindow> fallback_window_;
 };
 
 } // namespace cxxime

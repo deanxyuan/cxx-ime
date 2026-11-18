@@ -71,6 +71,7 @@ public:
     std::uint64_t version() const;
     std::size_t entry_count() const;
     std::size_t pending_count() const;
+    bool read_candidate(std::size_t& cursor, Candidate& candidate) const;
 
     static constexpr std::size_t kMaxRecordCount = 1024;
     static constexpr std::uint64_t kMaxFileSize = 4ULL * 1024ULL * 1024ULL;

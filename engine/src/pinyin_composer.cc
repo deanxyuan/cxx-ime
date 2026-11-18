@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <deque>
 #include <limits>
 
 #include <cxxime/dict.h>
@@ -36,6 +37,7 @@ struct CompositionNode {
     uint32_t parent = UINT32_MAX;
     uint32_t edge_index = UINT32_MAX;
     uint32_t sequence = 0;
+    bool fuzzy = false;
 };
 
 struct ComposedResult {
@@ -60,6 +62,13 @@ bool node_better(const CompositionNode& left, const CompositionNode& right) {
         return left.segment_count < right.segment_count;
     }
     return left.sequence < right.sequence;
+}
+
+bool graph_node_better(const CompositionNode& left, const CompositionNode& right) {
+    if (left.fuzzy != right.fuzzy) {
+        return !left.fuzzy;
+    }
+    return node_better(left, right);
 }
 
 bool offer_node(std::vector<CompositionNode>& nodes, std::vector<uint32_t>& beam,
@@ -400,6 +409,234 @@ PinyinComposer::compose(const std::string& input, const std::vector<CompositionP
     }
     stats.candidate_count = static_cast<uint32_t>(candidates.size());
     return candidates;
+}
+
+struct PinyinGraphComposition::Impl {
+    const Dict& dict;
+    const bool requires_fuzzy;
+    CompositionLimits limits;
+    std::vector<CompositionWordEdge> words;
+    std::vector<int64_t> scores;
+    std::vector<std::vector<uint32_t>> by_start;
+    std::vector<std::vector<uint32_t>> beams;
+    std::vector<CompositionNode> nodes{1};
+    std::vector<std::string> completed_texts{1};
+    std::vector<std::size_t> expanded{0};
+    std::vector<bool> queued{false};
+    std::deque<uint32_t> pending;
+    std::vector<Candidate> result;
+    std::size_t completed_offset = 0;
+    uint32_t sequence = 0;
+    double log_total_weight;
+    bool sealed = false;
+    bool capped = false;
+    bool sorted = false;
+
+    Impl(const Dict& dictionary, std::size_t size, bool fuzzy_required)
+        : dict(dictionary)
+        , requires_fuzzy(fuzzy_required)
+        , by_start(size)
+        , beams(size + 1)
+        , log_total_weight(std::log2(
+              static_cast<double>((std::max)(uint64_t{1}, dict.composition_weight_total())))) {
+        nodes.reserve(limits.max_nodes);
+        beams[0].push_back(0);
+    }
+
+    void wake(uint32_t index) {
+        if (!queued[index] && nodes[index].end < by_start.size() &&
+            expanded[index] < by_start[nodes[index].end].size()) {
+            pending.push_back(index);
+            queued[index] = true;
+        }
+    }
+
+    void offer(CompositionNode node) {
+        auto& beam = beams[node.end];
+        auto worst = beam.end();
+        std::string text;
+        if (node.end + 1 == beams.size()) {
+            std::vector<uint32_t> chain{node.edge_index};
+            for (uint32_t parent = node.parent; nodes[parent].parent != UINT32_MAX;
+                 parent = nodes[parent].parent) {
+                chain.push_back(nodes[parent].edge_index);
+            }
+            for (auto edge = chain.rbegin(); edge != chain.rend(); ++edge) {
+                text += words[*edge].candidate.text;
+            }
+            if (!candidate_text_fits(text) || dict.is_system_entry_disabled(text)) {
+                return;
+            }
+            worst = std::find_if(beam.begin(), beam.end(),
+                                 [&](uint32_t index) { return completed_texts[index] == text; });
+            if (worst != beam.end() && !graph_node_better(node, nodes[*worst])) {
+                return;
+            }
+        }
+        if (worst == beam.end() && beam.size() == limits.max_beam_width) {
+            worst = std::max_element(beam.begin(), beam.end(), [&](uint32_t a, uint32_t b) {
+                return graph_node_better(nodes[a], nodes[b]);
+            });
+            if (!graph_node_better(node, nodes[*worst])) {
+                return;
+            }
+        }
+        if (nodes.size() == limits.max_nodes) {
+            capped = true;
+            return;
+        }
+        const uint32_t index = static_cast<uint32_t>(nodes.size());
+        // Parents are immutable: later beam replacements must not rewrite the
+        // reading or text of descendants which have already been expanded.
+        nodes.push_back(node);
+        completed_texts.push_back(std::move(text));
+        expanded.push_back(0);
+        queued.push_back(false);
+        if (worst == beam.end()) {
+            beam.push_back(index);
+        } else {
+            *worst = index;
+        }
+        wake(index);
+        // This finite recommendation policy counts usable, distinct complete
+        // texts, not beam nodes or the number of items a host has displayed.
+        capped = beams.back().size() == limits.max_final_candidates &&
+                 (requires_fuzzy ||
+                  std::all_of(beams.back().begin(), beams.back().end(),
+                              [&](uint32_t completed) { return !nodes[completed].fuzzy; }));
+    }
+
+    void rebuild(uint32_t index) {
+        std::vector<uint32_t> chain;
+        for (uint32_t current = index; nodes[current].parent != UINT32_MAX;
+             current = nodes[current].parent) {
+            chain.push_back(nodes[current].edge_index);
+        }
+        Candidate candidate;
+        for (auto item = chain.rbegin(); item != chain.rend(); ++item) {
+            const auto& word = words[*item].candidate;
+            candidate.text += word.text;
+            candidate.code += word.code;
+            if (!candidate.syllables.empty()) {
+                candidate.syllables += ':';
+            }
+            candidate.syllables += word.syllables;
+        }
+        if (!candidate_text_fits(candidate.text) || dict.is_system_entry_disabled(candidate.text) ||
+            std::any_of(result.begin(), result.end(), [&](const Candidate& previous) {
+                return previous.text == candidate.text;
+            })) {
+            return;
+        }
+        candidate.input_code = candidate.code;
+        candidate.origin = CandidateOrigin::kComposed;
+        candidate.source_frequency = nodes[index].weakest_frequency;
+        candidate.frequency = kComposedRankBase - static_cast<int>(result.size());
+        result.push_back(std::move(candidate));
+    }
+};
+
+PinyinGraphComposition::PinyinGraphComposition(const Dict& dict, std::size_t input_size,
+                                               bool requires_fuzzy)
+    : impl_(new Impl(dict, input_size, requires_fuzzy)) {}
+
+PinyinGraphComposition::~PinyinGraphComposition() = default;
+
+void PinyinGraphComposition::add_word(CompositionWordEdge word) {
+    auto& work = *impl_;
+    if (work.sealed || work.capped || word.start >= word.end || word.end >= work.beams.size()) {
+        return;
+    }
+    for (uint32_t index : work.by_start[word.start]) {
+        const auto& previous = work.words[index];
+        if (previous.end == word.end && previous.candidate.text == word.candidate.text &&
+            previous.candidate.syllables == word.candidate.syllables &&
+            (!previous.fuzzy || word.fuzzy)) {
+            return;
+        }
+    }
+    const auto start = word.start;
+    work.by_start[start].push_back(static_cast<uint32_t>(work.words.size()));
+    work.scores.push_back(frequency_score(word.candidate.source_frequency, work.log_total_weight));
+    work.words.push_back(std::move(word));
+    for (uint32_t parent : work.beams[start]) {
+        work.wake(parent);
+    }
+    work.sealed = work.words.size() == work.limits.max_span_candidates;
+}
+
+void PinyinGraphComposition::seal() { impl_->sealed = true; }
+
+bool PinyinGraphComposition::has_work() const {
+    return impl_->sealed || impl_->capped || !impl_->pending.empty();
+}
+
+bool PinyinGraphComposition::reaches(std::size_t position) const {
+    return position < impl_->beams.size() && !impl_->beams[position].empty();
+}
+
+bool PinyinGraphComposition::advance(const QueryDeadline& deadline, uint32_t& work_steps,
+                                     CompositionStats& stats) {
+    auto& work = *impl_;
+    while (!work.pending.empty() && !work.capped) {
+        if (deadline.expired() || work_steps >= 4096) {
+            stats.state_count = static_cast<uint32_t>(work.nodes.size());
+            stats.span_candidate_count = static_cast<uint32_t>(work.words.size());
+            return false;
+        }
+        ++work_steps;
+        const uint32_t parent_index = work.pending.front();
+        const auto parent = work.nodes[parent_index];
+        const auto& beam = work.beams[parent.end];
+        if (work.expanded[parent_index] == work.by_start[parent.end].size() ||
+            std::find(beam.begin(), beam.end(), parent_index) == beam.end()) {
+            work.pending.pop_front();
+            work.queued[parent_index] = false;
+            continue;
+        }
+        const uint32_t edge_index = work.by_start[parent.end][work.expanded[parent_index]++];
+        const auto& word = work.words[edge_index];
+        CompositionNode node;
+        node.end = word.end;
+        node.fuzzy = parent.fuzzy || word.fuzzy;
+        node.segment_count = static_cast<uint16_t>(parent.segment_count + 1);
+        node.weakest_frequency =
+            parent.segment_count == 0
+                ? word.candidate.source_frequency
+                : (std::min)(parent.weakest_frequency, word.candidate.source_frequency);
+        node.aggregate_score = parent.aggregate_score + work.scores[edge_index];
+        node.parent = parent_index;
+        node.edge_index = edge_index;
+        node.sequence = ++work.sequence;
+        work.offer(node);
+    }
+    stats.state_count = static_cast<uint32_t>(work.nodes.size());
+    stats.span_candidate_count = static_cast<uint32_t>(work.words.size());
+    stats.truncated = work.capped || work.words.size() == work.limits.max_span_candidates;
+    if (!work.sealed && !work.capped) {
+        return false;
+    }
+    if (!work.sorted) {
+        auto& completed = work.beams.back();
+        std::sort(completed.begin(), completed.end(), [&](uint32_t left, uint32_t right) {
+            return graph_node_better(work.nodes[left], work.nodes[right]);
+        });
+        work.sorted = true;
+    }
+    while (work.completed_offset < work.beams.back().size() &&
+           work.result.size() < work.limits.max_final_candidates) {
+        if (deadline.expired() || work_steps >= 4096) {
+            return false;
+        }
+        ++work_steps;
+        work.rebuild(work.beams.back()[work.completed_offset++]);
+    }
+    stats.candidate_count = static_cast<uint32_t>(work.result.size());
+    return true;
+}
+
+std::vector<Candidate> PinyinGraphComposition::take_candidates() {
+    return std::move(impl_->result);
 }
 
 } // namespace cxxime

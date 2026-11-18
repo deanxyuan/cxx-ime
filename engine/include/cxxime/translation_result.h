@@ -19,6 +19,16 @@ namespace cxxime {
 struct QueryBudget;
 struct QueryScratch;
 struct QueryTrace;
+struct CandidateEntry;
+
+enum class TranslationPurpose {
+    kComposition,
+    kSearch,
+};
+enum class QueryWork {
+    kAdvance,
+    kRead,
+};
 
 enum class TranslationStatus {
     kSuccess,
@@ -37,6 +47,10 @@ struct TranslationRequest {
     QueryTrace* trace = nullptr;
     const QueryBudget* budget = nullptr;
     QueryScratch* scratch = nullptr;
+    TranslationPurpose purpose = TranslationPurpose::kComposition;
+    QueryWork work = QueryWork::kAdvance;
+    uint64_t input_revision = 0;
+    const std::vector<CandidateEntry>* published = nullptr;
 };
 
 enum class CandidateMatchKind {
@@ -65,6 +79,11 @@ struct TranslationResult {
     CandidateExtent extent;
     int highlighted = -1;
     std::vector<CandidateEntry> entries;
+    // Only resumable Shuangpin fallback returns an unpublished window. Engine
+    // combines it with Context's actual visible history before anchor paging.
+    bool incremental = false;
+    bool sequence_invalidated = false;
+    uint64_t sequence_version = 0;
 
     bool usable() const { return status != TranslationStatus::kFailed; }
 

@@ -562,6 +562,19 @@ def build_shuangpin_script(syllabary, schema):
                     rule.credibility_delta(),
                     [Spelling(syllable)],
                 )
+    initials = sorted(speller["initials"], key=lambda value: (-len(value), value))
+    ignored = set(speller.get("ignored_syllables", []))
+    for syllable in sorted(syllabary):
+        if syllable in ignored:
+            continue
+        initial = next((value for value in initials if syllable.startswith(value)), None)
+        if initial is not None:
+            script.merge(
+                speller["initials"][initial],
+                K_ABBREV,
+                0.0,
+                [Spelling(syllable)],
+            )
     return script
 
 

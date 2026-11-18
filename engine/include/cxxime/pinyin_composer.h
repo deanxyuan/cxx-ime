@@ -5,6 +5,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -51,6 +52,32 @@ struct CompositionStats {
     uint32_t candidate_count = 0;
     bool truncated = false;
     bool deadline_exceeded = false;
+};
+
+struct CompositionWordEdge {
+    uint16_t start = 0;
+    uint16_t end = 0;
+    Candidate candidate;
+    bool fuzzy = false;
+};
+
+// A finite recommendation search. Deadline interruptions preserve the beam and
+// reconstruction cursor; reaching a strategy cap finishes this recommendation set.
+class PinyinGraphComposition {
+public:
+    // requires_fuzzy is a grammar proof: every complete path needs a fuzzy edge.
+    PinyinGraphComposition(const Dict& dict, std::size_t input_size, bool requires_fuzzy = false);
+    ~PinyinGraphComposition();
+    void add_word(CompositionWordEdge word);
+    void seal();
+    bool has_work() const;
+    bool reaches(std::size_t position) const;
+    bool advance(const QueryDeadline& deadline, uint32_t& work_steps, CompositionStats& stats);
+    std::vector<Candidate> take_candidates();
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
 };
 
 class PinyinComposer {

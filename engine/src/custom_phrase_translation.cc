@@ -52,6 +52,8 @@ TranslationResult translate_with_custom_phrases(ITranslator& translator,
         }
     }
     TranslationResult result;
+    result.incremental = translated.incremental;
+    result.sequence_invalidated = translated.sequence_invalidated;
     result.status = translated.usable() ? translated.status : TranslationStatus::kStableDegraded;
     result.page_index = request.page_index;
     result.page_offset = request.page_offset;

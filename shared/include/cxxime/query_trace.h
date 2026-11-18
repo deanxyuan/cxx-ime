@@ -47,6 +47,9 @@ struct QueryTrace {
     uint32_t span_entry_scan_count = 0;
     uint32_t composition_state_count = 0;
     uint32_t composed_candidate_count = 0;
+    uint32_t fallback_buffer_peak = 0;
+    uint32_t fallback_frame_peak = 0;
+    uint32_t fallback_work_steps = 0;
     bool composition_truncated = false;
 
     // Scan counts (items checked, not results returned)

@@ -164,8 +164,8 @@ TEST(SyllabifierCompletion, normal_completion_is_not_hidden_by_other_spelling_so
         cxxime::SyllabifierOptions options;
         options.collect_path_metadata = true;
         const auto uncompleted = resources->segment("l", nullptr, options);
-        ASSERT_EQ(uncompleted.paths.size(), 2u);
-        ASSERT_EQ(uncompleted.paths[1].spelling_types[0], cxxime::kAbbreviation);
+        ASSERT_EQ(uncompleted.paths.size(), 1u);
+        ASSERT_EQ(uncompleted.paths[0].spelling_types[0], cxxime::kNormalSpelling);
         options.enable_terminal_completion = true;
         for (bool fuzzy_enabled : {true, false}) {
             options.enable_fuzzy = fuzzy_enabled;

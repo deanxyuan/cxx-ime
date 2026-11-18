@@ -215,6 +215,7 @@ CandidatePage Engine::translate_for_search(const std::string& input, int limit) 
     request.scheme = scheme_for_mode(mode_);
     request.input = input;
     request.page_size = limit;
+    request.purpose = TranslationPurpose::kSearch;
     request.budget = &budget;
     request.scratch = &scratch;
     return translator_->translate(request).candidate_page();
@@ -621,16 +622,23 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
     if (input_changed) {
         context_.reset_pagination();
     }
+    const bool stale_incremental =
+        context_.translation().incremental && translator_ &&
+        context_.translation().sequence_version != candidate_sequence_version();
     const bool previous_page_requested =
-        navigation && navigation->direction == CandidateNavigation::kPreviousPage;
+        !stale_incremental && navigation &&
+        navigation->direction == CandidateNavigation::kPreviousPage;
     const bool next_page_requested =
-        navigation && navigation->direction == CandidateNavigation::kNextPage;
-    const bool previous_page_applied =
-        !input_changed && previous_page_requested &&
-        context_.apply_previous_page(navigation->highlight_last);
-    CandidateNavigationOutcome navigation_outcome = previous_page_applied
-                                                        ? CandidateNavigationOutcome::kMovedPrevious
-                                                        : CandidateNavigationOutcome::kNone;
+        navigation &&
+        (navigation->direction == CandidateNavigation::kNextPage || stale_incremental);
+    const bool previous_page_applied = !input_changed && previous_page_requested &&
+                                       context_.apply_previous_page(navigation->highlight_last);
+    const bool saved_next_page_applied = !input_changed && !stale_incremental &&
+                                         next_page_requested && context_.apply_saved_next_page();
+    CandidateNavigationOutcome navigation_outcome =
+        previous_page_applied     ? CandidateNavigationOutcome::kMovedPrevious
+        : saved_next_page_applied ? CandidateNavigationOutcome::kMovedNext
+                                  : CandidateNavigationOutcome::kNone;
     uint32_t continuation_effort = 0;
     if (trace_enabled_) {
         t1 = std::chrono::steady_clock::now();
@@ -679,7 +687,8 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
         bool append_raw = context_.composition_scheme() == CompositionScheme::kInlineAscii ||
                                 context_.commit_source() == CommitSource::kRawCodePreserveCase;
         const bool refresh_candidates =
-            !candidate_action_applied && (input_changed || next_page_requested);
+            !candidate_action_applied && !saved_next_page_applied &&
+            (input_changed || next_page_requested);
         if (refresh_candidates) {
             // Skip translate if deadline already expired (e.g. slow ascii_composer/processor)
             if (per_query_deadline.enabled && per_query_deadline.expired()) {
@@ -701,7 +710,23 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
                 const CandidateExtent current_extent = context_.translation().extent;
                 const bool anchored_continuation =
                     context_.composition_scheme() != CompositionScheme::kSymbol;
-                if (visible_count > 0 &&
+                if (stale_incremental) {
+                    auto translated = translate_composition(
+                        context_.composition(), 0, 0, per_query_deadline);
+                    if (translated.usable()) {
+                        context_.replace_candidate_sequence(std::move(translated));
+                    }
+                    navigation_outcome = CandidateNavigationOutcome::kSequenceReset;
+                } else if (visible_count == 0 && context_.translation().incremental &&
+                           !current_extent.complete) {
+                    auto translated = translate_current_composition(per_query_deadline);
+                    if (translated.usable()) {
+                        context_.update_translation(std::move(translated));
+                    }
+                    navigation_outcome = context_.candidate_count() > 0
+                                             ? CandidateNavigationOutcome::kMovedNext
+                                             : CandidateNavigationOutcome::kRetryable;
+                } else if (visible_count > 0 &&
                     candidate_extent_may_continue(current_extent, target_offset)) {
                     continuation_effort = !current_extent.complete
                                               ? context_.begin_candidate_continuation()
@@ -1033,12 +1058,50 @@ TranslationResult Engine::translate_composition(const CompositionState& state,
     request.trace = trace_enabled_ ? &trace_ : nullptr;
     request.budget = &effective_budget;
     request.scratch = &scratch_;
+    request.input_revision = context_.preedit_revision();
+    const uint64_t query_version = candidate_sequence_version();
+    const bool stale_sequence = context_.translation().incremental &&
+                                context_.translation().sequence_version != query_version;
+    auto published = context_.active_input() == request.input && !stale_sequence
+                         ? context_.published_candidates()
+                         : std::vector<CandidateEntry>{};
+    request.published = &published;
     std::size_t converted_text_bytes = 0;
     for (const auto& segment : state.converted_segments()) {
         converted_text_bytes += segment.text.size();
     }
     TranslationResult result = translate_with_custom_phrases(
         *translator_, request, runtime_->custom_phrases().get(), converted_text_bytes);
+    if (result.incremental) {
+        result.sequence_version = query_version;
+        result.sequence_invalidated = result.sequence_invalidated || stale_sequence;
+        if (candidate_sequence_version() != query_version) {
+            translator_->clear_query_cache();
+            result.entries.clear();
+            result.extent = make_candidate_extent(0, 0, true);
+            result.sequence_invalidated = true;
+        }
+        const int unmaterialized =
+            (std::max)(0, result.extent.known_count - static_cast<int>(result.entries.size()));
+        std::vector<CandidateEntry> prefix =
+            result.sequence_invalidated ? std::vector<CandidateEntry>{} : std::move(published);
+        for (auto& entry : result.entries) {
+            if (std::none_of(prefix.begin(), prefix.end(), [&](const CandidateEntry& existing) {
+                    return same_candidate_entry_identity(existing, entry);
+                })) {
+                prefix.push_back(std::move(entry));
+            }
+        }
+        const int count = static_cast<int>(prefix.size());
+        const int begin = (std::min)(page_offset, count);
+        const int end = (std::min)(count, begin + request.page_size);
+        result.entries.assign(std::make_move_iterator(prefix.begin() + begin),
+                              std::make_move_iterator(prefix.begin() + end));
+        result.page_index = page_index;
+        result.page_offset = page_offset;
+        result.extent = make_candidate_extent(count + unmaterialized, end, !result.extent.complete);
+        result.highlighted = result.entries.empty() ? -1 : 0;
+    }
     if (runtime_->config().wubi_code_hint) {
         add_wubi_code_hints(state.active().input, result);
     }
@@ -1072,6 +1135,18 @@ TranslationResult Engine::translate_after_visible_anchor(const QueryDeadline& de
                                                      prefix_limit, continuation_effort);
     if (!prefix.usable()) {
         return unavailable;
+    }
+    if (prefix.sequence_invalidated) {
+        if (sequence_invalidated) {
+            *sequence_invalidated = true;
+        }
+        prefix.page_index = 0;
+        prefix.page_offset = 0;
+        prefix.page_size = runtime_->config().page_size;
+        if (prefix.entries.size() > static_cast<std::size_t>(prefix.page_size)) {
+            prefix.entries.resize(prefix.page_size);
+        }
+        return prefix;
     }
     const auto anchor_position = std::find_if(
         prefix.entries.begin(), prefix.entries.end(),
@@ -1113,6 +1188,8 @@ TranslationResult Engine::translate_after_visible_anchor(const QueryDeadline& de
     const int next_count = (std::min)(runtime_->config().page_size, available_after_anchor);
     TranslationResult next;
     next.status = prefix.status;
+    next.incremental = prefix.incremental;
+    next.sequence_version = prefix.sequence_version;
     next.page_index = context_.page_index() + 1;
     next.page_offset = target_offset;
     next.page_size = runtime_->config().page_size;
@@ -1177,7 +1254,21 @@ bool Engine::replace_active_input(const ReplaceActiveInputAction& action,
     return true;
 }
 
+uint64_t Engine::candidate_sequence_version() const {
+    return ((translator_ ? translator_->query_version() : 0) ^
+            static_cast<uint64_t>(translation_policy_.allow_partial_selection)) *
+           UINT64_C(1099511628211);
+}
+
 bool Engine::dispatch_candidate_selection(int index, const QueryDeadline& deadline) {
+    if (context_.translation().incremental &&
+        context_.translation().sequence_version != candidate_sequence_version()) {
+        auto refreshed = translate_composition(context_.composition(), 0, 0, deadline);
+        context_.replace_candidate_sequence(std::move(refreshed));
+        // The index identifies the previously displayed action, not a new
+        // candidate which happens to occupy the same row after refresh.
+        return false;
+    }
     const CandidateEntry* current = context_.candidate_entry(index);
     if (!current) {
         return false;
