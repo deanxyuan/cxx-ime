@@ -147,8 +147,7 @@ TEST(PinyinBoundaryCandidates, alternative_boundaries_keep_their_candidates_acro
                         const auto& entry = result.entries[index];
                         const auto& action = std::get<cxxime::TextSelectionAction>(entry.selection);
                         const std::size_t position = request.page_offset + index;
-                        const bool expected_full =
-                            position < 10 || (position < 22 && position % 2 == 1);
+                        const bool expected_full = position < 16;
                         ASSERT_EQ(action.consumed_input_bytes == request.input.size(),
                                   expected_full);
                         if (action.consumed_input_bytes < request.input.size()) {

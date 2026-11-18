@@ -385,6 +385,11 @@ PinyinComposer::compose(const std::string& input, const std::vector<CompositionP
             result.aggregate_score = node.aggregate_score;
             result.sequence = ++result_sequence;
             offer_result(results, std::move(result), result_capacity);
+            if (result_capacity == 1) {
+                // Completed nodes are ranked within this path. Other paths
+                // still compete, but rebuilding this path's runners-up is unnecessary.
+                break;
+            }
         }
 
         if (lookup_stats.truncated || node_limit_hit) {
@@ -623,8 +628,9 @@ bool PinyinGraphComposition::advance(const QueryDeadline& deadline, uint32_t& wo
         });
         work.sorted = true;
     }
-    while (work.completed_offset < work.beams.back().size() &&
-           work.result.size() < work.limits.max_final_candidates) {
+    // The search still compares the bounded set of complete paths. Reconstruct
+    // only its best usable sentence; alternatives belong to word selection.
+    while (work.completed_offset < work.beams.back().size() && work.result.empty()) {
         if (deadline.expired() || work_steps >= 4096) {
             return false;
         }

@@ -186,8 +186,8 @@ TEST(ShuangpinFallback, normal_reading_precedes_fuzzy_frequency_in_direct_and_co
         {{"jun:fu:li", "军服里", 100}, {"jun:fu:ni", "军服你", 100000000}},
         {{"jun", "军", 100}, {"fu", "服", 100}, {"li", "里", 100}, {"ni", "你", 100000000}},
     };
-    for (const auto& rows : dictionaries) {
-        test::FallbackFixture fixture(rows);
+    for (bool composed : {false, true}) {
+        test::FallbackFixture fixture(dictionaries[composed ? 1 : 0]);
         fixture.translator.bind_pinyin(fixture.resources, {true});
         const auto result = fixture.query("jfli");
         const auto normal =
@@ -197,8 +197,13 @@ TEST(ShuangpinFallback, normal_reading_precedes_fuzzy_frequency_in_direct_and_co
             std::find_if(result.entries.begin(), result.entries.end(),
                          [](const auto& entry) { return entry.candidate.text == "军服你"; });
         ASSERT_TRUE(normal != result.entries.end());
-        ASSERT_TRUE(fuzzy != result.entries.end());
-        ASSERT_TRUE(normal < fuzzy);
+        if (composed) {
+            ASSERT_EQ(normal->candidate.origin, cxxime::CandidateOrigin::kComposed);
+            ASSERT_TRUE(fuzzy == result.entries.end());
+        } else {
+            ASSERT_TRUE(fuzzy != result.entries.end());
+            ASSERT_TRUE(normal < fuzzy);
+        }
     }
 }
 

@@ -25,7 +25,13 @@ enum class CandidateOrigin {
     kLearned,
     kCache,
     kComposed,
+    kLearnedComposition,
 };
+
+// Both use sentence learning, but only kComposed is a new automatic suggestion.
+inline bool is_composition_origin(CandidateOrigin origin) {
+    return origin == CandidateOrigin::kComposed || origin == CandidateOrigin::kLearnedComposition;
+}
 
 struct Candidate {
     std::string text;

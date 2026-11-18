@@ -109,7 +109,15 @@ TEST(CandidatePosition, cold_fallback_is_bounded_but_not_a_real_confirmation) {
         auto value = presentation();
         const auto fallback = position(500, 100, source);
         value.observe_caret(fallback, 1, at(0));
-        ASSERT_TRUE(!value.settle_caret(at(29)));
+        for (int time : {10, 29}) {
+            value.update_content(cxxime::CandidatePage{}, "codes", 5, 0, 0);
+            if (source == CaretSource::Anchor) {
+                value.observe_caret(fallback, 1, at(time));
+            }
+            ASSERT_TRUE(!value.caret_ready_to_show());
+            ASSERT_TRUE(value.caret_poll_pending());
+            ASSERT_TRUE(!value.settle_caret(at(time)));
+        }
         ASSERT_TRUE(value.settle_caret(at(30)));
         assert_shown(value, fallback);
         ASSERT_TRUE(!value.displayed_caret_confirmed());

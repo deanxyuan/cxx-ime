@@ -495,7 +495,9 @@ TEST(ShuangpinFallbackPaging, generated_recommendations_do_not_depend_on_window_
         cxxime::TranslationRequest request;
         request.input = "jfmi";
         request.budget = &budget;
+        request.policy.allow_partial_selection = true;
         std::vector<cxxime::CandidateEntry> published;
+        std::vector<cxxime::CandidateEntry> full;
         request.published = &published;
         bool exhausted = false;
         for (int window = 0; window < 1000; ++window) {
@@ -506,17 +508,18 @@ TEST(ShuangpinFallbackPaging, generated_recommendations_do_not_depend_on_window_
             ASSERT_TRUE(trace.span_entry_scan_count <= scan_limit);
             ASSERT_TRUE(trace.composition_state_count <= 1024);
             for (auto& entry : result.entries) {
-                ASSERT_EQ(entry.candidate.origin, cxxime::CandidateOrigin::kComposed);
-                ASSERT_EQ(
-                    std::get<cxxime::TextSelectionAction>(entry.selection).consumed_input_bytes,
-                    request.input.size());
+                if (std::get<cxxime::TextSelectionAction>(entry.selection).consumed_input_bytes ==
+                    request.input.size()) {
+                    ASSERT_EQ(entry.candidate.origin, cxxime::CandidateOrigin::kComposed);
+                    full.push_back(entry);
+                }
                 ASSERT_TRUE(
                     std::none_of(published.begin(), published.end(), [&](const auto& previous) {
                         return previous.candidate.text == entry.candidate.text;
                     }));
                 published.push_back(std::move(entry));
             }
-            ASSERT_TRUE(published.size() <= 32);
+            ASSERT_TRUE(full.size() <= 1);
             if (result.extent.complete) {
                 exhausted = true;
                 break;
@@ -537,17 +540,18 @@ TEST(ShuangpinFallbackPaging, generated_recommendations_do_not_depend_on_window_
             }
         }
         ASSERT_TRUE(exhausted);
-        ASSERT_EQ(published.size(), std::size_t{32});
+        ASSERT_EQ(full.size(), std::size_t{1});
+        ASSERT_GT(published.size(), full.size());
         if (reference.empty()) {
-            reference = std::move(published);
+            reference = std::move(full);
         } else {
-            ASSERT_EQ(published.size(), reference.size());
+            ASSERT_EQ(full.size(), reference.size());
             for (std::size_t index = 0; index < reference.size(); ++index) {
                 ASSERT_TRUE(
-                    cxxime::same_candidate_entry_identity(published[index], reference[index]));
-                ASSERT_EQ(published[index].candidate.syllables,
+                    cxxime::same_candidate_entry_identity(full[index], reference[index]));
+                ASSERT_EQ(full[index].candidate.syllables,
                           reference[index].candidate.syllables);
-                ASSERT_EQ(published[index].candidate.frequency,
+                ASSERT_EQ(full[index].candidate.frequency,
                           reference[index].candidate.frequency);
             }
         }
@@ -597,7 +601,7 @@ TEST(ShuangpinFallbackPaging, fuzzy_combinations_do_not_close_the_normal_recomme
         }
         ASSERT_TRUE(exhausted);
         // Abundant high-frequency fuzzy nodes must not stop the search before
-        // 32 distinct normal texts. Without normal words, fuzzy recall survives.
-        ASSERT_EQ(published.size(), std::size_t{32});
+        // the normal search completes. Without normal words, fuzzy recall survives.
+        ASSERT_EQ(published.size(), std::size_t{1});
     }
 }

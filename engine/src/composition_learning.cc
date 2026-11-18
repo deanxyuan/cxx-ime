@@ -223,7 +223,7 @@ Candidate candidate_from_record(const LearningRecord& record, std::uint64_t curr
                           (std::min)(static_cast<int>(record.selection_count), 50000) + recency;
     candidate.source_frequency = candidate.frequency;
     candidate.source = CandidateSource::kPinyin;
-    candidate.origin = CandidateOrigin::kComposed;
+    candidate.origin = CandidateOrigin::kLearnedComposition;
     return candidate;
 }
 
@@ -242,7 +242,7 @@ const CandidateCanonicalVariant* primary_variant(const TextSelectionAction& acti
 void append_preference(CommitLearningPlan& plan, const std::string& text,
                        const std::string& typed_code, const CandidateCanonicalVariant* variant) {
     if (!variant || variant->learning_target == LearningTarget::kNone ||
-        variant->provenance.origin == CandidateOrigin::kComposed) {
+        is_composition_origin(variant->provenance.origin)) {
         return;
     }
     CandidatePreferenceLearningEvent event;
@@ -284,7 +284,7 @@ CommitLearningPlan make_learning_plan(const CompositionState& state,
     bool composition_is_valid =
         include_composition && state.active().scheme == CompositionScheme::kPinyin &&
         (!state.converted_segments().empty() ||
-         (final_variant && final_variant->provenance.origin == CandidateOrigin::kComposed));
+         (final_variant && is_composition_origin(final_variant->provenance.origin)));
     for (const ConvertedSegment& segment : state.converted_segments()) {
         const CandidateCanonicalVariant* variant = primary_variant(segment);
         append_preference(plan, segment.text, segment.raw_input, variant);

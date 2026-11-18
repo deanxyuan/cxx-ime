@@ -5,6 +5,7 @@ add_library(cxxime-engine STATIC
     src/composition_learning.cc
     src/composition_presentation.cc
     src/context.cc
+    src/candidate_order.cc
     src/pinyin_segment_paths.cc
     src/pinyin_segmentor.cc
     src/pinyin_resource.cc

@@ -12,6 +12,8 @@
 #include <cxxime/query_trace.h>
 #include <cxxime/short_code_cache.h>
 
+#include "candidate_order.h"
+
 namespace cxxime {
 
 namespace {
@@ -155,59 +157,6 @@ void append_interleaved(std::vector<CandidateEntry>& output,
     }
 }
 
-void group_partial_candidates(std::vector<CandidateEntry>& entries,
-                              std::size_t full_input_bytes, bool full_span_first) {
-    auto is_partial = [&](const CandidateEntry& entry) {
-        const auto* action = std::get_if<TextSelectionAction>(&entry.selection);
-        return action && action->consumed_input_bytes < full_input_bytes;
-    };
-    if (full_span_first) {
-        const auto predictions =
-            std::stable_partition(entries.begin(), entries.end(), [](const CandidateEntry& entry) {
-                return entry.match_kind != CandidateMatchKind::kPrefix;
-            });
-        std::stable_partition(entries.begin(), predictions,
-                              [&](const CandidateEntry& entry) { return !is_partial(entry); });
-        return;
-    }
-    const std::size_t partial_count =
-        static_cast<std::size_t>(std::count_if(entries.begin(), entries.end(), is_partial));
-    const std::size_t full_count = entries.size() - partial_count;
-    const std::size_t leading_full_count =
-        (std::min)(full_count, kLeadingFullSpanCandidateCount);
-    if (partial_count == 0) {
-        return;
-    }
-
-    std::vector<CandidateEntry> partials;
-    std::vector<CandidateEntry> fulls;
-    partials.reserve(partial_count);
-    fulls.reserve(full_count);
-    for (auto& entry : entries) {
-        if (is_partial(entry)) {
-            partials.push_back(std::move(entry));
-        } else {
-            fulls.push_back(std::move(entry));
-        }
-    }
-
-    entries.clear();
-    entries.reserve(fulls.size() + partials.size());
-    for (std::size_t index = 0; index < leading_full_count; ++index) {
-        entries.push_back(std::move(fulls[index]));
-    }
-    std::size_t full_index = leading_full_count;
-    std::size_t partial_index = 0;
-    while (partial_index < partials.size() || full_index < fulls.size()) {
-        if (partial_index < partials.size()) {
-            entries.push_back(std::move(partials[partial_index++]));
-        }
-        if (full_index < fulls.size()) {
-            entries.push_back(std::move(fulls[full_index++]));
-        }
-    }
-}
-
 } // namespace
 
 void MixedTranslator::set_pinyin_dict(Dict* dict) {
@@ -307,27 +256,10 @@ TranslationResult MixedTranslator::translate(const TranslationRequest& request) 
                 result.sequence_invalidated = true;
                 result.status = TranslationStatus::kStableDegraded;
             }
-            return result;
+            return finish_candidate_order(window_request, std::move(result));
         }
     } else if (request.purpose == TranslationPurpose::kComposition) {
         fallback_window_.reset();
-    }
-
-    if (!request.policy.allow_partial_selection && !fallback) {
-        CandidatePage page = translate_page(
-            request.input, request.page_index, request.page_size, request.trace,
-            request.budget, request.scratch, request.page_offset);
-        result = make_translation_result(std::move(page), request.input.size());
-        const bool incomplete = (request.trace &&
-                                (request.trace->deadline_exceeded ||
-                                 request.trace->scan_budget_truncated ||
-                                 request.trace->composition_truncated)) ||
-                                !result.extent.complete;
-        if (incomplete) {
-            result.status = result.entries.empty() ? TranslationStatus::kFailed
-                                                   : TranslationStatus::kStableDegraded;
-        }
-        return result;
     }
 
     QueryTrace local_trace;
@@ -343,13 +275,14 @@ TranslationResult MixedTranslator::translate(const TranslationRequest& request) 
     }
 
     // Each source only needs enough materialized entries to fill the requested mixed prefix.
-    // Pinyin owns its full/partial ordering and extends that sequence on later pages.
+    // Final full/partial ordering follows source merging and custom phrase shadowing.
     const int need = resumable ? 32 : request.page_offset + request.page_size * 2 + 1;
     TranslationRequest source_request = effective_request;
     source_request.page_index = 0;
     source_request.page_offset = 0;
     source_request.page_size = need;
     source_request.scheme = CompositionScheme::kPinyin;
+    source_request.defer_candidate_order = true;
     TranslationResult pinyin = pinyin_translator_.translate(source_request);
     result.incremental = pinyin.incremental;
     result.sequence_invalidated = pinyin.sequence_invalidated;
@@ -409,7 +342,7 @@ TranslationResult MixedTranslator::translate(const TranslationRequest& request) 
         return action && action->consumed_input_bytes == request.input.size() &&
                manually_ordered(request.input, entry, fallback);
     });
-    group_partial_candidates(merged, request.input.size(), full_span_first);
+    result.order = CandidateOrder::kFullSpanFirst;
     if (result.incremental && !invalidated && !result.sequence_invalidated && request.published) {
         merged.erase(std::remove_if(merged.begin(), merged.end(),
                                     [&](const CandidateEntry& entry) {
@@ -458,24 +391,21 @@ TranslationResult MixedTranslator::translate(const TranslationRequest& request) 
                 effective_request.trace->fallback_buffer_peak = fallback_window_->buffer_peak;
             }
         }
-        return result;
+        return finish_candidate_order(window_request, std::move(result));
     }
     result.page_index = request.page_index;
     result.page_offset = request.page_offset;
     result.page_size = request.page_size;
     const int known_count = static_cast<int>(merged.size());
-    const int begin = result.incremental ? 0 : (std::min)(request.page_offset, known_count);
-    const int end = (std::min)(begin + request.page_size, known_count);
     const bool source_incomplete =
         !pinyin.extent.complete || !wubi.extent.complete ||
         result.status != TranslationStatus::kSuccess;
-    result.extent = make_candidate_extent(known_count, end, source_incomplete);
-    result.entries.assign(std::make_move_iterator(merged.begin() + begin),
-                          std::make_move_iterator(merged.begin() + end));
+    result.extent = make_candidate_extent(known_count, known_count, source_incomplete);
+    result.entries = std::move(merged);
     if (!result.entries.empty()) {
         result.highlighted = 0;
     }
-    return result;
+    return finish_candidate_order(window_request, std::move(result));
 }
 
 CandidatePage MixedTranslator::translate_page(const std::string& input, int page_index,

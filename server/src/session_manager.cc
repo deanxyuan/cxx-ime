@@ -1559,7 +1559,7 @@ cxxime::CandidatePage SessionManager::search_candidates(const std::string& input
     std::vector<cxxime::Candidate> filtered;
     filtered.reserve(page.candidates.size());
     for (auto& candidate : page.candidates) {
-        if (candidate.origin == cxxime::CandidateOrigin::kComposed || candidate.text.empty()) {
+        if (cxxime::is_composition_origin(candidate.origin) || candidate.text.empty()) {
             continue;
         }
 

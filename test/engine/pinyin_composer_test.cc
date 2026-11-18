@@ -418,7 +418,9 @@ TEST(PinyinComposer, normal_paths_do_not_expand_low_frequency_homophones) {
 
     const auto page = translator.translate_page("wahahaha", 0, 10);
     ASSERT_TRUE(find_candidate(page, "哇哈哈哈") != nullptr);
-    ASSERT_TRUE(find_candidate(page, "娃哈哈哈") != nullptr);
+    ASSERT_EQ(page.candidates.size(), 1u);
+    ASSERT_EQ(page.candidates[0].origin, cxxime::CandidateOrigin::kSystem);
+    ASSERT_TRUE(find_candidate(page, "娃哈哈哈") == nullptr);
     ASSERT_TRUE(
         std::none_of(page.candidates.begin(), page.candidates.end(), [](const auto& candidate) {
             return candidate.text.find("瓦") != std::string::npos ||
@@ -465,7 +467,10 @@ TEST(PinyinComposer, terminal_completion_requires_a_normal_prefix_and_matching_t
         ASSERT_EQ(candidate->code, input);
         ASSERT_EQ(candidate->syllables, "ni:hao");
     }
-    ASSERT_TRUE(find_candidate(translator.translate_page("wahahah", 0, 10), "娃哈哈哈") != nullptr);
+    const auto completed_tail = translator.translate_page("wahahah", 0, 10);
+    ASSERT_EQ(completed_tail.candidates.size(), 1u);
+    ASSERT_EQ(completed_tail.candidates[0].text, "娃哈哈好");
+    ASSERT_EQ(completed_tail.candidates[0].syllables, "wa:ha:ha:hao");
     for (const char* input : {"nh", "lih", "nil", "nig", "nihx", "srf"}) {
         const auto page = translator.translate_page(input, 0, 10);
         // Existing dictionary prefix fallbacks may remain; they must not become sentences.
@@ -583,6 +588,68 @@ TEST(PinyinComposer, composed_candidates_do_not_enter_learning_preferences) {
 
     ASSERT_TRUE(!fixture.dictionary.record_candidate_preference(*composed, "aaaaaaa"));
     ASSERT_EQ(fixture.dictionary.candidate_preference_count(), static_cast<size_t>(0));
+}
+
+TEST(PinyinComposer, finite_sentence_search_does_not_leave_phantom_pages) {
+    ComposerFixture fixture;
+    const std::vector<std::string> syllables = {
+        "ni", "hao", "shi", "jie", "zhong", "guo", "ren", "min", "wo", "ai",
+        "ta", "men", "yi",  "er",  "san",   "si",  "wu",  "liu", "qi", "ba",
+    };
+    const std::vector<std::string> words = {
+        "你", "好", "世", "界", "中", "国", "人", "民", "我", "爱",
+        "他", "们", "一", "二", "三", "四", "五", "六", "七", "八",
+    };
+    // Distinct spans exceed the fixed 128-range recommendation budget.
+    std::vector<std::tuple<std::string, std::string, int>> entries;
+    std::vector<std::tuple<std::string, std::string, int, float>> spellings;
+    std::string input;
+    std::string complete_code;
+    std::string complete_text;
+    for (std::size_t start = 0; start < syllables.size(); ++start) {
+        input += syllables[start];
+        if (!complete_code.empty()) {
+            complete_code += ':';
+        }
+        complete_code += syllables[start];
+        complete_text += words[start];
+        spellings.emplace_back(syllables[start], syllables[start], cxxime::kNormalSpelling, 0.0f);
+        std::string code;
+        std::string text;
+        for (std::size_t end = start; end < (std::min)(syllables.size(), start + 8); ++end) {
+            if (!code.empty()) {
+                code += ':';
+            }
+            code += syllables[end];
+            text += words[end];
+            entries.emplace_back(code, text, 100);
+        }
+    }
+    entries.emplace_back(complete_code, complete_text, 10000);
+    ASSERT_TRUE(fixture.initialize(entries, spellings));
+    cxxime::PinyinTranslator translator;
+    translator.set_dict(&fixture.dictionary);
+    translator.bind_pinyin(fixture.pinyin_resources, {});
+    translator.set_candidate_learning_enabled(false);
+    cxxime::QueryTrace trace;
+    cxxime::TranslationRequest request;
+    request.input = input;
+    request.trace = &trace;
+    request.page_size = 3;
+    const auto first = translator.translate(request);
+    ASSERT_TRUE(trace.composition_truncated);
+    ASSERT_TRUE(!trace.deadline_exceeded);
+    ASSERT_TRUE(!trace.scan_budget_truncated);
+    ASSERT_TRUE(first.extent.complete);
+    ASSERT_EQ(first.entries.size(), 1u);
+    ASSERT_EQ(first.entries[0].candidate.text, complete_text);
+    request.published = &first.entries;
+    request.page_offset = 1;
+    request.page_index = 1;
+    const auto tail = translator.translate(request);
+    ASSERT_TRUE(tail.entries.empty());
+    ASSERT_TRUE(tail.extent.complete);
+    ASSERT_TRUE(!cxxime::candidate_extent_may_continue(tail.extent, request.page_offset));
 }
 
 RUN_ALL_TESTS()

@@ -274,7 +274,7 @@ void CandidatePreference::freeze() {
 
 bool CandidatePreference::record(const Candidate& candidate, const std::string& code) {
     if (candidate.text.empty() || code.empty() || candidate.source == CandidateSource::kSymbol ||
-        candidate.origin == CandidateOrigin::kComposed || code.size() > kMaxInputCodeLength ||
+        is_composition_origin(candidate.origin) || code.size() > kMaxInputCodeLength ||
         std::any_of(code.begin(), code.end(), [](char ch) { return ch < 'a' || ch > 'z'; })) {
         return false;
     }

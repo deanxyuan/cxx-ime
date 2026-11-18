@@ -9,6 +9,8 @@
 #include <cxxime/custom_phrases.h>
 #include <cxxime/translator.h>
 
+#include "candidate_order.h"
+
 namespace cxxime {
 
 TranslationResult translate_with_custom_phrases(ITranslator& translator,
@@ -30,11 +32,15 @@ TranslationResult translate_with_custom_phrases(ITranslator& translator,
     ordinary.page_index = 0;
     ordinary.page_offset = 0;
     ordinary.page_size = request.page_offset + request.page_size + static_cast<int>(matches.size());
+    ordinary.defer_candidate_order = true;
     TranslationResult translated = translator.translate(ordinary);
     const bool more = candidate_extent_may_continue(translated.extent,
                                                     static_cast<int>(translated.entries.size()));
     std::vector<CandidateEntry> combined;
     std::unordered_set<std::string> seen;
+    const auto capacity = matches.size() + translated.entries.size();
+    combined.reserve(capacity);
+    seen.reserve(capacity);
     for (const auto& text : matches) {
         Candidate candidate;
         candidate.text = text;
@@ -52,20 +58,18 @@ TranslationResult translate_with_custom_phrases(ITranslator& translator,
         }
     }
     TranslationResult result;
+    result.order = translated.order;
     result.incremental = translated.incremental;
     result.sequence_invalidated = translated.sequence_invalidated;
+    result.sequence_version = translated.sequence_version;
     result.status = translated.usable() ? translated.status : TranslationStatus::kStableDegraded;
     result.page_index = request.page_index;
     result.page_offset = request.page_offset;
     result.page_size = request.page_size;
     const int count = static_cast<int>(combined.size());
-    const int end = (std::min)(count, request.page_offset + request.page_size);
-    for (int index = request.page_offset; index < end; ++index) {
-        result.entries.push_back(std::move(combined[index]));
-    }
-    result.extent = make_candidate_extent(count, end, more || !translated.usable());
-    result.highlighted = result.entries.empty() ? -1 : 0;
-    return result;
+    result.entries = std::move(combined);
+    result.extent = make_candidate_extent(count, count, more || !translated.usable());
+    return finish_candidate_order(request, std::move(result));
 }
 
 } // namespace cxxime

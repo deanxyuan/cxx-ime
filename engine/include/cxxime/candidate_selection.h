@@ -13,8 +13,6 @@
 
 namespace cxxime {
 
-// Highest-ranked full-span choices kept ahead of segmented-selection candidates.
-inline constexpr std::size_t kLeadingFullSpanCandidateCount = 10;
 // Each reading boundary keeps its own choices; alternative boundaries do not evict them.
 inline constexpr std::size_t kMaxPartialCandidatesPerBoundary = 32;
 

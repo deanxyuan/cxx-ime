@@ -473,7 +473,7 @@ bool Context::apply_previous_page(bool highlight_last) {
     if (previous_pages_.empty()) {
         return false;
     }
-    if (translation_.incremental) {
+    if (translation_.incremental || translation_.order != CandidateOrder::kSource) {
         PageHistoryEntry following;
         following.visible_candidate_count = selectable_candidate_count();
         following.translation = std::move(translation_);
@@ -504,8 +504,7 @@ bool Context::apply_saved_next_page() {
         auto& saved = following_pages_.back();
         const int target = next.page_offset + static_cast<int>(next.entries.size());
         const int begin = (std::max)(0, target - saved.translation.page_offset);
-        const int available = (std::min)(saved.visible_candidate_count,
-                                         static_cast<int>(saved.translation.entries.size()));
+        const int available = static_cast<int>(saved.translation.entries.size());
         const int count =
             (std::min)(available - begin, next.page_size - static_cast<int>(next.entries.size()));
         if (count > 0) {
@@ -579,12 +578,21 @@ std::vector<CandidateEntry> Context::published_candidates() const {
     }
     const auto append = [&](const TranslationResult& page, int visible) {
         const int count = (std::min)((std::max)(0, visible), static_cast<int>(page.entries.size()));
-        published.insert(published.end(), page.entries.begin(), page.entries.begin() + count);
+        const int begin = (std::max)(0, static_cast<int>(published.size()) - page.page_offset);
+        if (begin < count) {
+            published.insert(published.end(), page.entries.begin() + begin,
+                             page.entries.begin() + count);
+        }
     };
     for (const auto& history : previous_pages_) {
         append(history.translation, history.visible_candidate_count);
     }
-    append(translation_, selectable_candidate_count());
+    // Retain the fixed page tail even when the host displays fewer rows. Forward
+    // history belongs to this same sequence and must survive a return to page one.
+    append(translation_, static_cast<int>(translation_.entries.size()));
+    for (auto page = following_pages_.rbegin(); page != following_pages_.rend(); ++page) {
+        append(page->translation, static_cast<int>(page->translation.entries.size()));
+    }
     return published;
 }
 

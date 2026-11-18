@@ -57,6 +57,7 @@ add_cxxime_test(engine_test
 add_cxxime_test(segmented_selection_test
     SOURCES
         engine/segmented_selection_test.cc
+        engine/candidate_order_test.cc
         engine/pinyin_single_syllable_test.cc
         engine/pinyin_scoped_candidates_test.cc
         engine/pinyin_terminal_completion_test.cc
@@ -639,6 +640,7 @@ add_cxxime_test(shuangpin_schema_runtime_test
         engine/shuangpin_fallback_test.cc
         engine/shuangpin_fallback_paging_test.cc
         engine/shuangpin_fallback_lifecycle_test.cc
+        engine/pinyin_candidate_order_test.cc
         engine/shuangpin_graph_test.cc
     DEPS cxxime-engine
 )

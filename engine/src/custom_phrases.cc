@@ -77,6 +77,7 @@ bool CustomPhrases::load(const std::string& path) {
     }
     path_ = path;
     std::atomic_store(&entries_, std::make_shared<const Entries>(std::move(entries)));
+    version_.fetch_add(1, std::memory_order_release);
     return true;
 }
 
@@ -89,6 +90,7 @@ bool CustomPhrases::publish(Entries entries) {
         return false;
     }
     std::atomic_store(&entries_, std::move(next));
+    version_.fetch_add(1, std::memory_order_release);
     return true;
 }
 

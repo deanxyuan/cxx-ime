@@ -91,6 +91,8 @@ std::string origin_name(cxxime::CandidateOrigin origin) {
         return "cache";
     case cxxime::CandidateOrigin::kComposed:
         return "composed";
+    case cxxime::CandidateOrigin::kLearnedComposition:
+        return "learned_composition";
     case cxxime::CandidateOrigin::kSystem:
     default:
         return "system";

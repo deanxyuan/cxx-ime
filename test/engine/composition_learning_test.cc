@@ -141,7 +141,17 @@ TEST(CompositionLearningService, persists_and_reloads_valid_records) {
     const auto candidates = reloaded.lookup_candidates("huaruijishu", 10);
     ASSERT_EQ(candidates.size(), static_cast<std::size_t>(1));
     ASSERT_EQ(candidates[0].text, "learned");
-    ASSERT_EQ(candidates[0].origin, cxxime::CandidateOrigin::kComposed);
+    ASSERT_EQ(candidates[0].origin, cxxime::CandidateOrigin::kLearnedComposition);
+    cxxime::CompositionState state;
+    ASSERT_TRUE(state.set_scheme(cxxime::CompositionScheme::kPinyin));
+    ASSERT_TRUE(state.set_active_input("huaruijishu", 11));
+    const auto selected = action("learned", 11,
+                                 pinyin_variant("huaruijishu", "hua:rui:ji:shu",
+                                                candidates[0].origin));
+    const auto plan = cxxime::make_candidate_learning_plan(state, selected);
+    ASSERT_TRUE(plan.candidate_preferences.empty());
+    ASSERT_TRUE(plan.composition.has_value());
+    ASSERT_EQ(plan.composition->text, "learned");
     DeleteFileA(path.c_str());
 }
 
@@ -392,7 +402,7 @@ TEST(CompositionLearningTranslator, successful_save_invalidates_topn_query_cache
     request.policy.allow_partial_selection = true;
     const cxxime::TranslationResult partial = translator.translate(request);
     for (const auto& entry : partial.entries) {
-        if (entry.candidate.origin != cxxime::CandidateOrigin::kComposed) {
+        if (!cxxime::is_composition_origin(entry.candidate.origin)) {
             continue;
         }
         const auto* selection = std::get_if<cxxime::TextSelectionAction>(&entry.selection);

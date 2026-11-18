@@ -570,22 +570,17 @@ void ShuangpinFallbackQuery::form_batch(const TranslationRequest& request) {
         }
         return left.second.candidate.text < right.second.candidate.text;
     });
-    // The same visible policy as ordinary Pinyin: leading complete choices,
-    // then alternate full choices with a round-robin of partial boundaries.
-    std::vector<CandidateEntry> full;
+    // Keep complete words together, followed by the round-robin partial stream.
+    // The outer merge preserves published history before slicing pages.
     std::map<std::pair<int, std::string>, std::vector<CandidateEntry>> groups;
     for (auto& item : ranked) {
         auto& entry = item.second;
         const auto end = std::get<TextSelectionAction>(entry.selection).consumed_input_bytes;
         if (end == graph_.input_size) {
-            full.push_back(std::move(entry));
+            ready_.push_back(std::move(entry));
         } else {
             groups[{-static_cast<int>(end), entry.candidate.code}].push_back(std::move(entry));
         }
-    }
-    std::size_t full_index = 0;
-    while (full_index < (std::min)(full.size(), kLeadingFullSpanCandidateCount)) {
-        ready_.push_back(std::move(full[full_index++]));
     }
     for (std::size_t rank = 0;; ++rank) {
         bool appended = false;
@@ -593,17 +588,11 @@ void ShuangpinFallbackQuery::form_batch(const TranslationRequest& request) {
             if (rank < group.second.size()) {
                 ready_.push_back(std::move(group.second[rank]));
                 appended = true;
-                if (full_index < full.size()) {
-                    ready_.push_back(std::move(full[full_index++]));
-                }
             }
         }
         if (!appended) {
             break;
         }
-    }
-    while (full_index < full.size()) {
-        ready_.push_back(std::move(full[full_index++]));
     }
 }
 

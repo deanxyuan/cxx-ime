@@ -61,24 +61,24 @@ TEST(TextServicePresentation, unavailable_layout_keeps_displayed_anchor_across_r
     probe.wait(false);
 }
 
-TEST(TextServicePresentation, undisplayed_sample_does_not_skip_initial_layout_wait) {
-    Fixture fixture;
-    PresentationProbe probe(fixture);
-    const RECT old = {100, 100, 101, 120};
-    TextServiceTestPeer::cache_caret(fixture.service, old);
-    BOOL eaten = FALSE;
-    ASSERT_TRUE(fixture.apply(fixture.key('N'), &eaten));
-    probe.wait(false);
-    TextServiceTestPeer::cache_caret(fixture.service, old);
-    ASSERT_TRUE(fixture.apply(fixture.key('I'), &eaten));
-    probe.wait(false);
-}
-
 TEST(TextServicePresentation, publishing_settings_does_not_accept_unprocessed_caret_samples) {
     Fixture fixture;
     PresentationProbe probe(fixture);
     BOOL eaten = FALSE;
     ASSERT_TRUE(fixture.apply(fixture.key('N'), &eaten));
+    probe.wait(false);
+    const RECT cached = {120, 100, 121, 120};
+    const auto sample_before_show = TextServiceTestPeer::caret_sample(fixture.service);
+    TextServiceTestPeer::cache_caret(fixture.service, cached);
+    // Publishing settings must not turn an undisplayed cache entry into a position.
+    // The positioning deadline itself is covered with explicit time in CandidatePosition.
+    for (const char* layout : {"vertical", "horizontal"}) {
+        const auto before = probe.snapshot_count();
+        TextServiceTestPeer::set_candidate_layout(fixture.service, layout);
+        probe.wait(false, before);
+        ASSERT_EQ(TextServiceTestPeer::caret_sample(fixture.service), sample_before_show);
+        ASSERT_TRUE(TextServiceTestPeer::caret_poll_pending(fixture.service));
+    }
     const RECT anchor = {100, 100, 101, 120};
     fixture.service.update_candidate_position(
         {anchor, {}, cxxime_tsf::CaretSource::Native}, &fixture.host,
@@ -87,7 +87,6 @@ TEST(TextServicePresentation, publishing_settings_does_not_accept_unprocessed_ca
 
     // A settings snapshot must only read the accepted presentation, not reinterpret a
     // cached rectangle as a newly collected host observation.
-    const RECT cached = {120, 100, 121, 120};
     TextServiceTestPeer::cache_caret(fixture.service, cached);
     const auto sample = TextServiceTestPeer::caret_sample(fixture.service);
     for (const char* layout : {"vertical", "horizontal"}) {

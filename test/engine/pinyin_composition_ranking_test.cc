@@ -5,6 +5,7 @@
 #include <memory>
 #include <string>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 #include <windows.h>
@@ -118,6 +119,8 @@ TEST(PinyinCompositionRanking, common_components_can_outweigh_a_rare_long_word_b
     const auto many = fixture.compose({"zheng", "chang", "shi"});
     const auto one = fixture.compose({"zheng", "chang", "shi"}, 32, 1);
     ASSERT_EQ(many.size(), 2u);
+    ASSERT_EQ(one.size(), 1u);
+    ASSERT_EQ(one[0].text, many[0].text);
     ASSERT_EQ(many[1].text, "正常式");
     ASSERT_EQ(many[0].frequency, one[0].frequency);
     ASSERT_GT(many[0].frequency, many[1].frequency);
@@ -140,6 +143,34 @@ TEST(PinyinCompositionRanking, equal_weight_paths_prefer_fewer_segments_determin
         ASSERT_EQ(results[0].text, "你好");
         ASSERT_EQ(results[1].text, "你号");
     }
+}
+
+TEST(PinyinCompositionRanking, one_graph_suggestion_still_compares_later_better_paths) {
+    RankingFixture fixture;
+    fixture.initialize({{"ni", "你", 1000}, {"hao", "好", 1000}, {"ni:hao", "拟好", 1}});
+    cxxime::PinyinGraphComposition graph(fixture.dictionary, 4);
+    const auto add = [&](uint16_t start, uint16_t end, const char* text, const char* code,
+                         const char* syllables, int frequency) {
+        cxxime::Candidate candidate;
+        candidate.text = text;
+        candidate.code = code;
+        candidate.syllables = syllables;
+        candidate.source_frequency = frequency;
+        graph.add_word({start, end, std::move(candidate), false});
+    };
+    add(0, 4, "拟好", "nihao", "ni:hao", 1);
+    uint32_t work = 0;
+    cxxime::CompositionStats stats;
+    ASSERT_TRUE(!graph.advance({}, work, stats));
+    add(0, 2, "你", "ni", "ni", 1000);
+    add(2, 4, "好", "hao", "hao", 1000);
+    graph.seal();
+    ASSERT_TRUE(graph.advance({}, work, stats));
+    const auto results = graph.take_candidates();
+    ASSERT_EQ(results.size(), 1u);
+    ASSERT_EQ(results[0].text, "你好");
+    ASSERT_EQ(stats.candidate_count, 1u);
+    ASSERT_TRUE(!stats.truncated);
 }
 
 TEST(PinyinCompositionRanking, dictionary_weight_handles_low_values_reopen_and_failure) {

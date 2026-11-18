@@ -3,6 +3,8 @@
 #ifndef CXXIME_CUSTOM_PHRASES_H_
 #define CXXIME_CUSTOM_PHRASES_H_
 
+#include <atomic>
+#include <cstdint>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -30,6 +32,7 @@ public:
     bool export_file(const std::string& path) const;
     bool merge_contents(const std::string& contents, UserDataMergeResult* result);
     static bool validate_contents(const std::string& contents);
+    uint64_t version() const { return version_.load(std::memory_order_acquire); }
 
 private:
     using Entries = std::map<std::string, std::vector<std::string>>;
@@ -40,6 +43,7 @@ private:
     mutable std::mutex mutex_;
     std::string path_;
     std::shared_ptr<const Entries> entries_ = std::make_shared<const Entries>();
+    std::atomic<uint64_t> version_{0};
 };
 
 } // namespace cxxime

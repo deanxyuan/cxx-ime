@@ -188,7 +188,7 @@ TEST(PinyinScopedCandidates, learned_phrases_use_syllables_instead_of_the_shared
     const auto found = std::find_if(exact.begin(), exact.end(),
                                     [](const auto& candidate) { return candidate.text == "熙安"; });
     ASSERT_TRUE(found != exact.end());
-    ASSERT_EQ(found->origin, cxxime::CandidateOrigin::kComposed);
+    ASSERT_EQ(found->origin, cxxime::CandidateOrigin::kLearnedComposition);
     const auto predictions = collect(fixture.translator, cxxime::PinyinLookupScope::kPrefix, 1);
     ASSERT_TRUE(std::any_of(predictions.begin(), predictions.end(), [](const auto& candidate) {
         return candidate.text == "西安城" && candidate.code == "xian";

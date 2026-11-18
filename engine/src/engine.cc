@@ -271,6 +271,14 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
     QueryDeadline per_query_deadline = QueryDeadline::from_now(query_deadline_ms_);
 
     // Let AsciiComposer track modifier key state and update ascii_mode when needed.
+    if ((event.is_key_up || event.keycode == VK_CAPITAL) &&
+        ascii_composer_.get_binding(event.keycode) == AsciiModeSwitchStyle::CANDIDATE &&
+        candidate_sequence_is_stale()) {
+        // A mode switch may end composition, but cannot choose a deleted action.
+        // Without candidates its existing commit policy falls back to raw input.
+        context_.clear_translation();
+        context_.reset_pagination();
+    }
     const bool modifier_binding_applied =
         ascii_composer_.process_key(event, context_);
 
@@ -509,6 +517,14 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
         const bool start_inline = is_inline_ascii_character(*normalized) ||
                                   plain_main_zero || is_numpad_text_key(event.keycode) ||
                                   !has_candidates;
+        if ((!start_inline || (opts.full_shape && !is_numpad_text_key(event.keycode))) &&
+            candidate_sequence_is_stale()) {
+            auto refreshed =
+                translate_composition(context_.composition(), 0, 0, per_query_deadline);
+            context_.replace_candidate_sequence(std::move(refreshed));
+            record_total_us(trace_, total_start, trace_enabled_);
+            return ProcessResult::ACCEPTED;
+        }
         if (opts.full_shape && !is_numpad_text_key(event.keycode)) {
             if (handle_full_shape(event, context_, opts)) {
                 routed_result = ProcessResult::COMMITTED;
@@ -552,6 +568,13 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
                   context_.translation(), runtime_->config(), event.keycode)
             : WubiFifthKeyAction::kNone;
     if (!routed_result && fifth_key_action == WubiFifthKeyAction::kCommitFirstAndRestart) {
+        if (candidate_sequence_is_stale()) {
+            auto refreshed =
+                translate_composition(context_.composition(), 0, 0, per_query_deadline);
+            context_.replace_candidate_sequence(std::move(refreshed));
+            record_total_us(trace_, total_start, trace_enabled_);
+            return ProcessResult::ACCEPTED;
+        }
         const CandidateEntry* first = context_.candidate_entry(0);
         if (first && finalize_selection(*first)) {
             const char restarted_code = static_cast<char>(event.keycode - 'A' + 'a');
@@ -622,19 +645,16 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
     if (input_changed) {
         context_.reset_pagination();
     }
-    const bool stale_incremental =
-        context_.translation().incremental && translator_ &&
-        context_.translation().sequence_version != candidate_sequence_version();
+    const bool stale_sequence = candidate_sequence_is_stale();
     const bool previous_page_requested =
-        !stale_incremental && navigation &&
+        !stale_sequence && navigation &&
         navigation->direction == CandidateNavigation::kPreviousPage;
     const bool next_page_requested =
-        navigation &&
-        (navigation->direction == CandidateNavigation::kNextPage || stale_incremental);
+        stale_sequence || (navigation && navigation->direction == CandidateNavigation::kNextPage);
     const bool previous_page_applied = !input_changed && previous_page_requested &&
                                        context_.apply_previous_page(navigation->highlight_last);
-    const bool saved_next_page_applied = !input_changed && !stale_incremental &&
-                                         next_page_requested && context_.apply_saved_next_page();
+    const bool saved_next_page_applied = !input_changed && !stale_sequence && next_page_requested &&
+                                         context_.apply_saved_next_page();
     CandidateNavigationOutcome navigation_outcome =
         previous_page_applied     ? CandidateNavigationOutcome::kMovedPrevious
         : saved_next_page_applied ? CandidateNavigationOutcome::kMovedNext
@@ -710,7 +730,7 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
                 const CandidateExtent current_extent = context_.translation().extent;
                 const bool anchored_continuation =
                     context_.composition_scheme() != CompositionScheme::kSymbol;
-                if (stale_incremental) {
+                if (stale_sequence) {
                     auto translated = translate_composition(
                         context_.composition(), 0, 0, per_query_deadline);
                     if (translated.usable()) {
@@ -987,6 +1007,10 @@ std::pair<std::string, CommitSource> Engine::take_commit_text_with_source() {
 }
 
 std::pair<std::string, CommitSource> Engine::commit_composition_with_source() {
+    if (candidate_sequence_is_stale()) {
+        context_.clear_translation();
+        context_.reset_pagination();
+    }
     auto result = context_.commit_with_source();
     apply_commit_learning_plan();
     ascii_composer_.finish_temporary_ascii();
@@ -1059,9 +1083,14 @@ TranslationResult Engine::translate_composition(const CompositionState& state,
     request.budget = &effective_budget;
     request.scratch = &scratch_;
     request.input_revision = context_.preedit_revision();
-    const uint64_t query_version = candidate_sequence_version();
-    const bool stale_sequence = context_.translation().incremental &&
-                                context_.translation().sequence_version != query_version;
+    const uint64_t query_version = candidate_sequence_version(true);
+    const uint64_t membership_version = candidate_sequence_version(false);
+    const bool stale_sequence = candidate_sequence_is_stale();
+    if (stale_sequence && context_.translation().incremental) {
+        // Custom phrase changes are outside translator-owned source versions.
+        // Restart their bounded pending windows too when rebuilding the sequence.
+        translator_->clear_query_cache();
+    }
     auto published = context_.active_input() == request.input && !stale_sequence
                          ? context_.published_candidates()
                          : std::vector<CandidateEntry>{};
@@ -1075,7 +1104,7 @@ TranslationResult Engine::translate_composition(const CompositionState& state,
     if (result.incremental) {
         result.sequence_version = query_version;
         result.sequence_invalidated = result.sequence_invalidated || stale_sequence;
-        if (candidate_sequence_version() != query_version) {
+        if (candidate_sequence_version(true) != query_version) {
             translator_->clear_query_cache();
             result.entries.clear();
             result.extent = make_candidate_extent(0, 0, true);
@@ -1101,6 +1130,17 @@ TranslationResult Engine::translate_composition(const CompositionState& state,
         result.page_offset = page_offset;
         result.extent = make_candidate_extent(count + unmaterialized, end, !result.extent.complete);
         result.highlighted = result.entries.empty() ? -1 : 0;
+    }
+    if (!result.incremental && result.order != CandidateOrder::kSource) {
+        result.sequence_version = membership_version;
+        result.validation_version = query_version;
+        result.sequence_invalidated = stale_sequence;
+        if (candidate_sequence_version(false) != membership_version) {
+            result.entries.clear();
+            result.extent = make_candidate_extent(0, 0, true);
+            result.status = TranslationStatus::kFailed;
+            result.sequence_invalidated = true;
+        }
     }
     if (runtime_->config().wubi_code_hint) {
         add_wubi_code_hints(state.active().input, result);
@@ -1189,7 +1229,9 @@ TranslationResult Engine::translate_after_visible_anchor(const QueryDeadline& de
     TranslationResult next;
     next.status = prefix.status;
     next.incremental = prefix.incremental;
-    next.sequence_version = prefix.sequence_version;
+    next.order = prefix.order;
+next.sequence_version = prefix.sequence_version;
+next.validation_version = prefix.validation_version;
     next.page_index = context_.page_index() + 1;
     next.page_offset = target_offset;
     next.page_size = runtime_->config().page_size;
@@ -1254,15 +1296,84 @@ bool Engine::replace_active_input(const ReplaceActiveInputAction& action,
     return true;
 }
 
-uint64_t Engine::candidate_sequence_version() const {
-    return ((translator_ ? translator_->query_version() : 0) ^
-            static_cast<uint64_t>(translation_policy_.allow_partial_selection)) *
-           UINT64_C(1099511628211);
+uint64_t Engine::candidate_sequence_version(bool incremental) const {
+    if (incremental) {
+        uint64_t version = ((translator_ ? translator_->query_version() : 0) ^
+                            static_cast<uint64_t>(translation_policy_.allow_partial_selection)) *
+                           UINT64_C(1099511628211);
+        if (runtime_ && runtime_->custom_phrases()) {
+            version = (version ^ runtime_->custom_phrases()->version()) * UINT64_C(1099511628211);
+        }
+        return version;
+    }
+    // Ordinary queries preserve their published prefix across ranking changes.
+    // Removing user/system entries instead invalidates selectable actions and history.
+    uint64_t version = static_cast<uint64_t>(translation_policy_.allow_partial_selection);
+    if (runtime_) {
+        for (const Dict* dict : {&runtime_->pinyin_dict(), runtime_->wubi_dict()}) {
+            if (dict) {
+                version = (version ^ dict->user_dict_version()) * UINT64_C(1099511628211);
+                version =
+                    (version ^ dict->disabled_system_entry_version()) * UINT64_C(1099511628211);
+            }
+        }
+    }
+    return version;
+}
+
+bool Engine::candidate_sequence_is_stale() {
+    auto& sequence = context_.translation();
+    if (!sequence.incremental && sequence.order == CandidateOrder::kSource) {
+        return false;
+    }
+    if (sequence.sequence_version != candidate_sequence_version(sequence.incremental)) {
+        return true;
+    }
+    if (sequence.incremental) {
+        return false;
+    }
+    const uint64_t source_version = candidate_sequence_version(true);
+    if (sequence.validation_version == source_version) {
+        return false;
+    }
+    const auto& phrases = runtime_->custom_phrases();
+    const auto current_phrases =
+        phrases ? phrases->lookup(context_.active_input()) : std::vector<std::string>{};
+    // Only source changes pay for walking the fixed history. Ranking updates
+    // retain valid actions; deleted learned/custom choices invalidate the sequence.
+    for (const auto& entry : context_.published_candidates()) {
+        if (entry.candidate.source == CandidateSource::kCustomPhrase) {
+            if (std::find(current_phrases.begin(), current_phrases.end(), entry.candidate.text) ==
+                current_phrases.end()) {
+                return true;
+            }
+        } else if (entry.candidate.origin == CandidateOrigin::kLearned) {
+            const auto* action = std::get_if<TextSelectionAction>(&entry.selection);
+            if (!action || action->primary_variant >= action->variants.size()) {
+                return true;
+            }
+            const auto& primary = action->variants[action->primary_variant];
+            const Dict* dict = primary.provenance.source == CandidateSource::kWubi
+                                   ? runtime_->wubi_dict()
+                                   : &runtime_->pinyin_dict();
+            const std::string code =
+                primary.input_code.empty()
+                    ? context_.active_input().substr(0, action->consumed_input_bytes)
+                    : primary.input_code;
+            if (!dict || !dict->has_candidate_preference(action->text, code)) {
+                return true;
+            }
+        }
+    }
+    if (candidate_sequence_version(true) != source_version) {
+        return true;
+    }
+    sequence.validation_version = source_version;
+    return false;
 }
 
 bool Engine::dispatch_candidate_selection(int index, const QueryDeadline& deadline) {
-    if (context_.translation().incremental &&
-        context_.translation().sequence_version != candidate_sequence_version()) {
+    if (candidate_sequence_is_stale()) {
         auto refreshed = translate_composition(context_.composition(), 0, 0, deadline);
         context_.replace_candidate_sequence(std::move(refreshed));
         // The index identifies the previously displayed action, not a new

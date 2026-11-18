@@ -467,7 +467,7 @@ TEST(PinyinSingleSyllable, typing_more_and_backspacing_change_selection_scope) {
     engine.finalize();
 }
 
-TEST(PinyinSingleSyllable, moved_anchor_is_retried_until_its_new_position_is_queried) {
+TEST(PinyinSingleSyllable, manual_reorder_keeps_the_published_anchor_without_retry) {
     SyllableFixture fixture;
     cxxime::Config config;
     config.page_size = 1;
@@ -490,22 +490,15 @@ TEST(PinyinSingleSyllable, moved_anchor_is_retried_until_its_new_position_is_que
     const std::string order_path = temporary_file();
     ASSERT_TRUE(fixture.dict->load_manual_candidate_order(order_path));
     ASSERT_TRUE(fixture.dict->replace_manual_candidate_order_and_save("yao", order));
-    bool retried = false;
-    for (int attempt = 0; attempt < 8 && engine.context().page_index() == 0; ++attempt) {
-        ASSERT_EQ(engine.process_key(key(VK_NEXT)), cxxime::ProcessResult::ACCEPTED);
-        if (engine.context().page_index() == 0) {
-            ASSERT_EQ(engine.last_trace().navigation_outcome,
-                      cxxime::CandidateNavigationOutcome::kRetryable);
-            ASSERT_EQ(engine.context().highlighted(), 0);
-            ASSERT_TRUE(cxxime::same_candidate_entry_identity(*engine.context().candidate_entry(0),
-                                                              published));
-            retried = true;
-        }
-    }
-    ASSERT_TRUE(retried);
+    ASSERT_EQ(engine.process_key(key(VK_NEXT)), cxxime::ProcessResult::ACCEPTED);
+    ASSERT_EQ(engine.last_trace().navigation_outcome,
+              cxxime::CandidateNavigationOutcome::kMovedNext);
     ASSERT_EQ(engine.context().page_index(), 1);
     ASSERT_TRUE(
         !cxxime::same_candidate_entry_identity(*engine.context().candidate_entry(0), published));
+    ASSERT_EQ(engine.process_key(key(VK_PRIOR)), cxxime::ProcessResult::ACCEPTED);
+    ASSERT_TRUE(
+        cxxime::same_candidate_entry_identity(*engine.context().candidate_entry(0), published));
     engine.finalize();
     DeleteFileA(order_path.c_str());
 }

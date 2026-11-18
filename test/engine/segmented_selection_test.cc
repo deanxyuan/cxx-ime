@@ -903,8 +903,7 @@ TEST(SegmentedSelection, complete_topn_hit_still_merges_fuzzy_full_candidates) {
     cached_exact.frequency = 100000000;
     cached_exact.source_frequency = 1;
     cached_candidates.push_back(cached_exact);
-    const int cached_prefix_count = static_cast<int>(cxxime::kLeadingFullSpanCandidateCount +
-                                                     cxxime::kMaxPartialCandidatesPerBoundary + 1);
+    const int cached_prefix_count = static_cast<int>(cxxime::kMaxPartialCandidatesPerBoundary + 11);
     for (int index = 0; index < cached_prefix_count; ++index) {
         const std::string text = "prefix-" + std::to_string(index);
         dictionary_entries.push_back({"zong:tong", text, 3000000 - index});
@@ -939,10 +938,10 @@ TEST(SegmentedSelection, complete_topn_hit_still_merges_fuzzy_full_candidates) {
 
     cxxime::TranslationRequest request;
     request.input = "zong";
-    request.page_size = static_cast<int>(cxxime::kLeadingFullSpanCandidateCount);
+    request.page_size = 10;
     request.policy.allow_partial_selection = true;
     const cxxime::TranslationResult result = translator.translate(request);
-    ASSERT_EQ(result.entries.size(), cxxime::kLeadingFullSpanCandidateCount);
+    ASSERT_EQ(result.entries.size(), 10u);
     ASSERT_EQ(result.entries[0].candidate.text, "exact");
     ASSERT_EQ(result.entries[1].candidate.text, "fuzzy");
 
@@ -972,8 +971,10 @@ TEST(SegmentedSelection, real_dictionary_can_select_wu_then_zong) {
 
     int wu_index = -1;
     int wu_page = -1;
+    // Complete dictionary choices now precede partial choices. Bound traversal
+    // by the source size, not by the old alternating positions of partials.
     const int max_pages = static_cast<int>(
-        (cxxime::kLeadingFullSpanCandidateCount +
+        (dict->count("") + 1 +
          2 * cxxime::kMaxPartialCandidatesPerBoundary + config.page_size - 1) /
         config.page_size);
     for (int page = 0; page < max_pages && wu_index < 0; ++page) {
@@ -984,7 +985,7 @@ TEST(SegmentedSelection, real_dictionary_can_select_wu_then_zong) {
             ASSERT_TRUE(action != nullptr);
             const std::size_t global_position =
                 static_cast<std::size_t>(translation.page_offset) + index;
-            if (global_position < cxxime::kLeadingFullSpanCandidateCount) {
+            if (global_position == 0) {
                 ASSERT_EQ(action->consumed_input_bytes, std::string("wuzong").size());
                 ASSERT_EQ(entry.candidate.text.size(), 6u);
             } else {
@@ -1059,7 +1060,7 @@ TEST(SegmentedSelection, real_dictionary_middle_deletion_reparses_nhao) {
     dict->close();
 }
 
-TEST(SegmentedSelection, partial_group_follows_all_available_leading_full_candidates) {
+TEST(SegmentedSelection, partial_choices_follow_complete_words_without_extra_scans) {
     const std::string dict_path = make_temp_file("sgp");
     const std::string spellings_path = make_temp_file("sgq");
     ASSERT_TRUE(cxxime::Dict::create_test_dict(
@@ -1097,10 +1098,9 @@ TEST(SegmentedSelection, partial_group_follows_all_available_leading_full_candid
     ASSERT_EQ(first.entries.size(), 3u);
     for (std::size_t index = 0; index < first.entries.size(); ++index) {
         ASSERT_EQ(first.entries[index].candidate.text, full_span.candidates[index].text);
-        const auto* action =
-            std::get_if<cxxime::TextSelectionAction>(&first.entries[index].selection);
-        ASSERT_TRUE(action != nullptr);
-        ASSERT_EQ(action->consumed_input_bytes, request.input.size());
+        ASSERT_EQ(std::get<cxxime::TextSelectionAction>(first.entries[index].selection)
+                      .consumed_input_bytes,
+                  request.input.size());
     }
 
     request.page_index = 1;
@@ -1108,15 +1108,13 @@ TEST(SegmentedSelection, partial_group_follows_all_available_leading_full_candid
     const cxxime::TranslationResult second = translator.translate(request);
     ASSERT_EQ(second.entries.size(), 3u);
     ASSERT_EQ(second.entries[0].candidate.text, full_span.candidates[3].text);
-    const auto* remaining_full =
-        std::get_if<cxxime::TextSelectionAction>(&second.entries[0].selection);
-    ASSERT_TRUE(remaining_full != nullptr);
-    ASSERT_EQ(remaining_full->consumed_input_bytes, request.input.size());
+    ASSERT_EQ(std::get<cxxime::TextSelectionAction>(second.entries[0].selection)
+                  .consumed_input_bytes,
+              request.input.size());
     for (std::size_t index = 1; index < second.entries.size(); ++index) {
-        const auto* action =
-            std::get_if<cxxime::TextSelectionAction>(&second.entries[index].selection);
-        ASSERT_TRUE(action != nullptr);
-        ASSERT_LT(action->consumed_input_bytes, request.input.size());
+        ASSERT_LT(std::get<cxxime::TextSelectionAction>(second.entries[index].selection)
+                      .consumed_input_bytes,
+                  request.input.size());
     }
 
     translator.clear_query_cache();
@@ -1126,8 +1124,7 @@ TEST(SegmentedSelection, partial_group_follows_all_available_leading_full_candid
     cxxime::TranslationRequest full_only_request = request;
     full_only_request.page_index = 0;
     full_only_request.page_offset = 0;
-    full_only_request.page_size =
-        static_cast<int>(cxxime::kLeadingFullSpanCandidateCount + 1);
+    full_only_request.page_size = 11;
     full_only_request.policy.allow_partial_selection = false;
     full_only_request.budget = &constrained;
     full_only_request.trace = &full_only_trace;
@@ -1154,7 +1151,7 @@ TEST(SegmentedSelection, partial_group_follows_all_available_leading_full_candid
     DeleteFileA(spellings_path.c_str());
 }
 
-TEST(SegmentedSelection, single_candidate_pages_use_the_fixed_global_boundary) {
+TEST(SegmentedSelection, page_sizes_preserve_the_same_full_partial_sequence) {
     SegmentedFixture fixture;
     ASSERT_TRUE(fixture.initialize(true, 12));
 
@@ -1195,12 +1192,14 @@ TEST(SegmentedSelection, single_candidate_pages_use_the_fixed_global_boundary) {
         ASSERT_EQ(single_pages[index].second, seven_item_pages[index].second);
     }
 
-    ASSERT_GT(single_pages.size(), cxxime::kLeadingFullSpanCandidateCount);
-    for (std::size_t index = 0; index < cxxime::kLeadingFullSpanCandidateCount; ++index) {
-        ASSERT_EQ(single_pages[index].second, std::string("huaruijishu").size());
+    ASSERT_EQ(single_pages.size(), 16u);
+    for (std::size_t index = 0; index < single_pages.size(); ++index) {
+        if (index < 13) {
+            ASSERT_EQ(single_pages[index].second, std::string("huaruijishu").size());
+        } else {
+            ASSERT_LT(single_pages[index].second, std::string("huaruijishu").size());
+        }
     }
-    ASSERT_LT(single_pages[cxxime::kLeadingFullSpanCandidateCount].second,
-              std::string("huaruijishu").size());
 }
 
 TEST(SegmentedSelection, duplicate_full_text_moves_into_the_partial_group) {
@@ -1243,33 +1242,27 @@ TEST(SegmentedSelection, duplicate_full_text_moves_into_the_partial_group) {
     request.policy.allow_partial_selection = true;
     const cxxime::TranslationResult first = translator.translate(request);
     ASSERT_EQ(first.entries.size(), 7u);
-    for (const auto& entry : first.entries) {
-        const auto* action = std::get_if<cxxime::TextSelectionAction>(&entry.selection);
-        ASSERT_TRUE(action != nullptr);
-        ASSERT_EQ(action->consumed_input_bytes, request.input.size());
+    for (std::size_t index = 0; index < first.entries.size(); ++index) {
+        const auto& action = std::get<cxxime::TextSelectionAction>(first.entries[index].selection);
+        ASSERT_EQ(action.consumed_input_bytes, request.input.size());
     }
 
     request.page_index = 1;
     request.page_offset = 7;
     const cxxime::TranslationResult second = translator.translate(request);
     ASSERT_EQ(second.entries.size(), 7u);
-    const std::size_t full_count_on_second_page =
-        cxxime::kLeadingFullSpanCandidateCount - static_cast<std::size_t>(request.page_offset);
     for (std::size_t index = 0; index < second.entries.size(); ++index) {
-        const auto* action =
-            std::get_if<cxxime::TextSelectionAction>(&second.entries[index].selection);
-        ASSERT_TRUE(action != nullptr);
-        if (index < full_count_on_second_page) {
-            ASSERT_EQ(action->consumed_input_bytes, request.input.size());
-        } else if (index == full_count_on_second_page + 1) {
-            ASSERT_EQ(action->consumed_input_bytes, request.input.size());
+        const auto consumed = std::get<cxxime::TextSelectionAction>(second.entries[index].selection)
+                                  .consumed_input_bytes;
+        if (index < 4) {
+            ASSERT_EQ(consumed, request.input.size());
         } else {
-            ASSERT_LT(action->consumed_input_bytes, request.input.size());
+            ASSERT_LT(consumed, request.input.size());
         }
     }
-    ASSERT_EQ(second.entries[full_count_on_second_page].candidate.text, "较长前段");
-    ASSERT_EQ(second.entries[full_count_on_second_page + 2].candidate.text, "重复甲");
-    ASSERT_EQ(second.entries[full_count_on_second_page + 3].candidate.text, "重复乙");
+    ASSERT_EQ(second.entries[4].candidate.text, "较长前段");
+    ASSERT_EQ(second.entries[5].candidate.text, "重复甲");
+    ASSERT_EQ(second.entries[6].candidate.text, "重复乙");
 
     spellings.unload();
     dict.close();
@@ -1384,7 +1377,7 @@ TEST(SegmentedSelection, mixed_prefix_order_does_not_replace_the_full_span_first
     DeleteFileA(order_path.c_str());
 }
 
-TEST(SegmentedSelection, mixed_places_partial_after_the_fixed_leading_full_boundary) {
+TEST(SegmentedSelection, mixed_keeps_complete_words_together_across_pages) {
     SegmentedFixture fixture;
     ASSERT_TRUE(fixture.initialize(true, 12));
 
@@ -1399,25 +1392,28 @@ TEST(SegmentedSelection, mixed_places_partial_after_the_fixed_leading_full_bound
 
     const cxxime::TranslationResult first = translator.translate(request);
     ASSERT_EQ(first.entries.size(), 5u);
-    for (const auto& entry : first.entries) {
-        const auto* action = std::get_if<cxxime::TextSelectionAction>(&entry.selection);
-        ASSERT_TRUE(action != nullptr);
-        ASSERT_EQ(action->consumed_input_bytes, request.input.size());
+    for (std::size_t index = 0; index < first.entries.size(); ++index) {
+        const auto& action = std::get<cxxime::TextSelectionAction>(first.entries[index].selection);
+        ASSERT_EQ(action.consumed_input_bytes, request.input.size());
     }
-
     request.page_index = 2;
-    request.page_offset = static_cast<int>(cxxime::kLeadingFullSpanCandidateCount);
+    request.page_offset = 10;
     const cxxime::TranslationResult partial_page = translator.translate(request);
-    ASSERT_TRUE(!partial_page.entries.empty());
-    const auto* partial =
-        std::get_if<cxxime::TextSelectionAction>(&partial_page.entries[0].selection);
-    ASSERT_TRUE(partial != nullptr);
-    ASSERT_LT(partial->consumed_input_bytes, request.input.size());
+    ASSERT_EQ(partial_page.entries.size(), 5u);
+    for (std::size_t index = 0; index < partial_page.entries.size(); ++index) {
+        const auto& action =
+            std::get<cxxime::TextSelectionAction>(partial_page.entries[index].selection);
+        const auto consumed = action.consumed_input_bytes;
+        if (index < 3) {
+            ASSERT_EQ(consumed, request.input.size());
+        } else {
+            ASSERT_LT(consumed, request.input.size());
+        }
+    }
 }
 
-TEST(SegmentedSelection, mixed_groups_all_partials_after_available_full_candidates) {
+TEST(SegmentedSelection, mixed_page_boundary_keeps_the_last_complete_word_before_partials) {
     SegmentedFixture fixture;
-    // Fewer than the fixed leading allowance: all available full candidates stay first.
     ASSERT_TRUE(fixture.initialize(true, 6));
 
     cxxime::MixedTranslator translator;
@@ -1430,32 +1426,22 @@ TEST(SegmentedSelection, mixed_groups_all_partials_after_available_full_candidat
     request.policy.allow_partial_selection = true;
 
     const cxxime::TranslationResult first = translator.translate(request);
-    for (const auto& entry : first.entries) {
-        const auto* action = std::get_if<cxxime::TextSelectionAction>(&entry.selection);
-        ASSERT_TRUE(action != nullptr);
-        ASSERT_EQ(action->consumed_input_bytes, request.input.size());
-    }
-
+    ASSERT_EQ(first.entries.size(), 3u);
+    ASSERT_EQ(std::get<cxxime::TextSelectionAction>(first.entries[1].selection)
+                  .consumed_input_bytes,
+              request.input.size());
     request.page_index = 2;
     request.page_offset = 6;
-    const cxxime::TranslationResult boundary_page = translator.translate(request);
-    ASSERT_EQ(boundary_page.entries.size(), 3u);
-    const auto* final_full =
-        std::get_if<cxxime::TextSelectionAction>(&boundary_page.entries[0].selection);
-    ASSERT_TRUE(final_full != nullptr);
-    ASSERT_EQ(final_full->consumed_input_bytes, request.input.size());
-    for (std::size_t index = 1; index < boundary_page.entries.size(); ++index) {
-        const auto* action =
-            std::get_if<cxxime::TextSelectionAction>(&boundary_page.entries[index].selection);
-        ASSERT_TRUE(action != nullptr);
-        ASSERT_LT(action->consumed_input_bytes, request.input.size());
+    const cxxime::TranslationResult tail = translator.translate(request);
+    ASSERT_EQ(tail.entries.size(), 3u);
+    ASSERT_EQ(std::get<cxxime::TextSelectionAction>(tail.entries[0].selection)
+                  .consumed_input_bytes,
+              request.input.size());
+    for (std::size_t index = 1; index < tail.entries.size(); ++index) {
+        ASSERT_LT(std::get<cxxime::TextSelectionAction>(tail.entries[index].selection)
+                      .consumed_input_bytes,
+                  request.input.size());
     }
-    ASSERT_TRUE(std::any_of(boundary_page.entries.begin(), boundary_page.entries.end(),
-                            [&](const auto& entry) {
-                                const auto* action =
-                                    std::get_if<cxxime::TextSelectionAction>(&entry.selection);
-                                return action && action->consumed_input_bytes == 3;
-                            }));
 }
 
 TEST(SegmentedSelection, mixed_wubi_first_does_not_hide_later_pinyin_partial) {
@@ -1498,49 +1484,29 @@ TEST(SegmentedSelection, mixed_wubi_first_does_not_hide_later_pinyin_partial) {
     request.policy.allow_partial_selection = true;
     const cxxime::TranslationResult first = translator.translate(request);
     ASSERT_EQ(first.entries.size(), static_cast<std::size_t>(kPageSize));
-    for (const auto& entry : first.entries) {
-        const auto* action = std::get_if<cxxime::TextSelectionAction>(&entry.selection);
-        ASSERT_TRUE(action != nullptr);
-        ASSERT_EQ(action->consumed_input_bytes, request.input.size());
+    ASSERT_EQ(first.entries[0].candidate.source, cxxime::CandidateSource::kWubi);
+    for (std::size_t index = 0; index < first.entries.size(); ++index) {
+        const auto& action = std::get<cxxime::TextSelectionAction>(first.entries[index].selection);
+        ASSERT_EQ(action.consumed_input_bytes, request.input.size());
     }
-
-    request.page_index = 1;
-    request.page_offset = kPageSize;
-    const cxxime::TranslationResult second = translator.translate(request);
-    ASSERT_EQ(second.entries.size(), static_cast<std::size_t>(kPageSize));
-    for (std::size_t index = 0;
-         index < cxxime::kLeadingFullSpanCandidateCount - static_cast<std::size_t>(kPageSize);
-         ++index) {
-        const auto* action =
-            std::get_if<cxxime::TextSelectionAction>(&second.entries[index].selection);
-        ASSERT_TRUE(action != nullptr);
-        ASSERT_EQ(action->consumed_input_bytes, request.input.size());
-    }
-    const std::size_t first_partial_index =
-        cxxime::kLeadingFullSpanCandidateCount - static_cast<std::size_t>(kPageSize);
-    const auto* first_partial =
-        std::get_if<cxxime::TextSelectionAction>(&second.entries[first_partial_index].selection);
-    ASSERT_TRUE(first_partial != nullptr);
-    ASSERT_LT(first_partial->consumed_input_bytes, request.input.size());
-
     request.page_size = 1;
-    for (std::size_t offset = 0; offset < cxxime::kLeadingFullSpanCandidateCount; ++offset) {
-        request.page_index = static_cast<int>(offset);
-        request.page_offset = static_cast<int>(offset);
+    for (int offset = 0; offset < kPageSize; ++offset) {
+        request.page_index = offset;
+        request.page_offset = offset;
         const cxxime::TranslationResult page = translator.translate(request);
         ASSERT_EQ(page.entries.size(), 1u);
-        const auto* full = std::get_if<cxxime::TextSelectionAction>(&page.entries[0].selection);
-        ASSERT_TRUE(full != nullptr);
-        ASSERT_EQ(full->consumed_input_bytes, request.input.size());
+        ASSERT_TRUE(cxxime::same_candidate_entry_identity(page.entries[0], first.entries[offset]));
     }
-    request.page_index = static_cast<int>(cxxime::kLeadingFullSpanCandidateCount);
-    request.page_offset = static_cast<int>(cxxime::kLeadingFullSpanCandidateCount);
-    const cxxime::TranslationResult single_partial_page = translator.translate(request);
-    ASSERT_EQ(single_partial_page.entries.size(), 1u);
-    const auto* single_partial =
-        std::get_if<cxxime::TextSelectionAction>(&single_partial_page.entries[0].selection);
-    ASSERT_TRUE(single_partial != nullptr);
-    ASSERT_LT(single_partial->consumed_input_bytes, request.input.size());
+
+    request.page_size = 7;
+    request.page_index = 1;
+    request.page_offset = 7;
+    const auto second = translator.translate(request);
+    ASSERT_EQ(second.entries.size(), 7u);
+    ASSERT_EQ(second.entries[6].candidate.text, "乌总");
+    ASSERT_EQ(
+        std::get<cxxime::TextSelectionAction>(second.entries[6].selection).consumed_input_bytes,
+        3u);
 
     spellings.unload();
     pinyin.close();
