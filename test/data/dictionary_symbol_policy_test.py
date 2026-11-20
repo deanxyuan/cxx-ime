@@ -228,31 +228,41 @@ class FilteringTest(unittest.TestCase):
 
         def wubi_worker(db, output, ranking_source):
             self.assertEqual([r[1] for r in read_rows(db)], ["词"])
-            self.assertEqual(Path(ranking_source), pinyin_archive)
+            self.assertEqual(
+                [r[1] for r in read_rows(ranking_source)],
+                ["词", "\U0001f4a1"],
+            )
             return []
 
-        for workers in (1, 2):
-            with mock.patch.object(
+        def run_tasks(tasks, workers):
+            return [path for task, args in tasks for path in task(*args)]
+
+        with (
+            mock.patch.object(
                 bundle,
                 "prepare_pinyin_dictionary",
                 side_effect=pinyin_worker,
-            ):
-                with mock.patch.object(
-                    bundle,
-                    "prepare_wubi_dictionary",
-                    side_effect=wubi_worker,
-                ):
-                    output = self.root / f"out{workers}"
-                    bundle.prepare_dictionary_bundle(
-                        str(self.root), str(output), workers=workers,
-                        defer_topn_conversion=True,
-                    )
-                    self.assertEqual(
-                        (self.root / "symbols.json").read_text(encoding="utf-8"),
-                        (output / "symbols.json").read_text(encoding="utf-8"),
-                    )
-                    self.assertEqual(pinyin_archive.read_bytes(), original_archive)
-                    self.assertEqual(self.pinyin.read_bytes(), b"stale unpacked database")
+            ),
+            mock.patch.object(
+                bundle,
+                "prepare_wubi_dictionary",
+                side_effect=wubi_worker,
+            ),
+            mock.patch.object(bundle, "_run_dictionary_tasks", side_effect=run_tasks),
+        ):
+            output = self.root / "out"
+            bundle.prepare_dictionary_bundle(
+                str(self.root),
+                str(output),
+                workers=1,
+                defer_topn_conversion=True,
+            )
+            self.assertEqual(
+                (self.root / "symbols.json").read_text(encoding="utf-8"),
+                (output / "symbols.json").read_text(encoding="utf-8"),
+            )
+            self.assertEqual(pinyin_archive.read_bytes(), original_archive)
+            self.assertEqual(self.pinyin.read_bytes(), b"stale unpacked database")
 
 
 if __name__ == "__main__":

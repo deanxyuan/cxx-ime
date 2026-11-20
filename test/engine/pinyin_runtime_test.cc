@@ -123,6 +123,7 @@ TEST(PinyinRuntime, shared_resources_keep_fuzzy_policy_per_engine) {
     ASSERT_TRUE(pinyin_resources != nullptr);
 
     cxxime::Config fuzzy_config;
+    fuzzy_config.fuzzy_pinyin = true;
     fuzzy_config.page_size = 10;
     cxxime::Config exact_config = fuzzy_config;
     exact_config.fuzzy_pinyin = false;

@@ -16,6 +16,7 @@ TEST(PinyinSchemeRuntime, concurrent_snapshots_and_session_binding_keep_runtime_
     {
         SharedResources resources;
         auto full = std::make_shared<cxxime::Config>();
+        full->fuzzy_pinyin = true;
         full->page_size = 7;
         auto shuangpin = std::make_shared<cxxime::Config>(*full);
         shuangpin->pinyin_scheme = "microsoft_shuangpin";
@@ -88,6 +89,7 @@ TEST(PinyinSchemeRuntime, concurrent_session_creation_and_scheme_switching) {
     {
         SessionManager manager;
         auto full = std::make_shared<cxxime::Config>();
+        full->fuzzy_pinyin = true;
         auto shuangpin = std::make_shared<cxxime::Config>(*full);
         shuangpin->pinyin_scheme = "microsoft_shuangpin";
         shuangpin->fuzzy_pinyin = false;
@@ -134,6 +136,7 @@ TEST(PinyinSchemeRuntime, same_scheme_config_reuses_resources_without_mutating_o
     {
         SharedResources resources;
         auto initial_config = std::make_shared<cxxime::Config>();
+        initial_config->fuzzy_pinyin = true;
         ASSERT_TRUE(resources.load(dict_path, initial_config));
         const SharedResourceSnapshot before = resources.snapshot();
 
@@ -163,6 +166,7 @@ TEST(PinyinSchemeRuntime, dictionary_reload_invalidates_prepared_runtime) {
     {
         SharedResources resources;
         auto initial_config = std::make_shared<cxxime::Config>();
+        initial_config->fuzzy_pinyin = true;
         ASSERT_TRUE(resources.load(dict_path, initial_config));
 
         auto next_config = std::make_shared<cxxime::Config>(*initial_config);
@@ -320,6 +324,7 @@ TEST(SessionIntegration, pinyin_scheme_switch_reuses_large_shared_resources) {
                                              });
     {
         auto full_pinyin = std::make_shared<cxxime::Config>();
+        full_pinyin->fuzzy_pinyin = true;
         SharedResources resources;
         ASSERT_TRUE(resources.load(dict_path, full_pinyin));
         const SharedResourceSnapshot before = resources.snapshot();

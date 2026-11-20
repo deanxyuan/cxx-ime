@@ -464,23 +464,37 @@ class BundlePublicationTest(unittest.TestCase):
             (output / "user-notes.txt").write_bytes(b"unrelated")
             replace = bundle.os.replace
 
-            def fail_once(source, destination):
-                if Path(source) == stage / "pinyin.dict.idx":
-                    raise OSError("injected publication failure")
-                return replace(source, destination)
+            for error_type in (OSError, KeyboardInterrupt):
+                for source_dir in (output, stage):
+                    for after_move in (False, True):
+                        with self.subTest(
+                            error=error_type,
+                            source=source_dir.name,
+                            after_move=after_move,
+                        ):
+                            def fail_once(source, destination):
+                                if Path(source) == source_dir / "pinyin.dict.idx":
+                                    if after_move:
+                                        replace(source, destination)
+                                    raise error_type("injected publication failure")
+                                return replace(source, destination)
 
-            with mock.patch.object(bundle.os, "replace", side_effect=fail_once):
-                with self.assertRaisesRegex(OSError, "injected"):
-                    bundle.publish_dictionary_files(
-                        [str(stage / name) for name in names],
-                        str(output),
-                    )
-            for name in names:
-                self.assertEqual(
-                    (output / name).read_bytes(),
-                    b"old " + name.encode(),
-                )
-                (stage / name).write_bytes(b"new " + name.encode())
+                            with mock.patch.object(
+                                bundle.os,
+                                "replace",
+                                side_effect=fail_once,
+                            ):
+                                with self.assertRaisesRegex(error_type, "injected"):
+                                    bundle.publish_dictionary_files(
+                                        [str(stage / name) for name in names],
+                                        str(output),
+                                    )
+                            for name in names:
+                                self.assertEqual(
+                                    (output / name).read_bytes(),
+                                    b"old " + name.encode(),
+                                )
+                                (stage / name).write_bytes(b"new " + name.encode())
             self.assertEqual(
                 (output / "user-notes.txt").read_bytes(),
                 b"unrelated",

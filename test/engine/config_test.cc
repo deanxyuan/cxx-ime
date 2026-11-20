@@ -28,6 +28,7 @@ TEST(Config, defaults) {
     ASSERT_TRUE(!cfg.candidate_learning);
     ASSERT_EQ(cfg.mixed_candidate_preference, cxxime::MixedCandidatePreference::kAuto);
     ASSERT_EQ(cfg.pinyin_scheme, "full_pinyin");
+    ASSERT_TRUE(!cfg.fuzzy_pinyin);
     ASSERT_TRUE(!cfg.input_mode_switch_shortcut.enabled());
     ASSERT_TRUE(!cfg.activate_ime_shortcut.enabled());
     ASSERT_TRUE(!cfg.initial_full_shape);
@@ -125,6 +126,7 @@ TEST(Config, json_round_trip_preserves_wubi_options_and_candidate_learning) {
     saved.wubi_restart_on_fifth_after_miss = false;
     saved.wubi_code_hint = true;
     saved.candidate_learning = true;
+    saved.fuzzy_pinyin = true;
     saved.mixed_candidate_preference = cxxime::MixedCandidatePreference::kWubi;
 
     cxxime::Config loaded;
@@ -134,6 +136,7 @@ TEST(Config, json_round_trip_preserves_wubi_options_and_candidate_learning) {
     ASSERT_TRUE(!loaded.wubi_restart_on_fifth_after_miss);
     ASSERT_TRUE(loaded.wubi_code_hint);
     ASSERT_TRUE(loaded.candidate_learning);
+    ASSERT_TRUE(loaded.fuzzy_pinyin);
     ASSERT_EQ(loaded.mixed_candidate_preference, cxxime::MixedCandidatePreference::kWubi);
 }
 
@@ -282,6 +285,7 @@ TEST(Config, runtime_snapshot_round_trip) {
 TEST(Config, production_runtime_snapshot_fits_control_payload) {
     cxxime::Config config;
     ASSERT_TRUE(config.load(std::string(CXXIME_DATA_DIR) + "default.json"));
+    ASSERT_TRUE(!config.fuzzy_pinyin);
     ASSERT_TRUE(config.load_themes(std::string(CXXIME_DATA_DIR) + "themes.json"));
 
     const std::string snapshot = config.to_runtime_json();

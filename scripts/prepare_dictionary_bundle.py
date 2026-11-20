@@ -13,12 +13,13 @@
 from __future__ import annotations
 
 import argparse
-import concurrent.futures
 import datetime
 import hashlib
 import json
+import multiprocessing
 import os
 import shutil
+import signal
 import struct
 import subprocess
 import sys
@@ -44,6 +45,8 @@ from dict_builder import (
     build_pinyin_syllable_index,
     build_reverse_index,
     build_runtime_dictionary,
+    build_wubi_prefix_index,
+    copy_source_database,
 )
 from dict_builder.pinyin_syllables import validate_dictionary
 from dict_builder.pinyin_source_repair import prepare_source
@@ -65,39 +68,6 @@ def find_source(data_dir: str, name: str) -> str | None:
     if os.path.isfile(db):
         return db
     return None
-
-
-def run_build_runtime_dictionary(
-    db_path: str,
-    output_prefix: str,
-    skip_idx: bool = False,
-    spellings_only: bool = False,
-    dict_only: bool = False,
-    wubi_prefix_index: bool = False,
-    wubi_ranking_source: str | None = None,
-    wubi_ranking_baseline: str | None = None,
-    wubi_ranking_overrides: str | None = None,
-) -> None:
-    """Convert a SQLite dictionary to runtime files."""
-    script = os.path.join(DATA_TOOLS, "build_runtime_dictionary.py")
-    cmd = [sys.executable, script, "--input", db_path, "--output", output_prefix]
-    if spellings_only:
-        cmd.append("--spellings-only")
-    if dict_only:
-        cmd.append("--dict-only")
-    if skip_idx:
-        cmd.append("--skip-idx")
-    if wubi_prefix_index:
-        cmd.append("--wubi-prefix-index")
-        if not wubi_ranking_source:
-            raise RuntimeError("Wubi prefix index requires a ranking source")
-        cmd.extend(["--wubi-ranking-source", wubi_ranking_source])
-        if wubi_ranking_baseline:
-            cmd.extend(["--wubi-ranking-baseline", wubi_ranking_baseline])
-        if wubi_ranking_overrides:
-            cmd.extend(["--wubi-ranking-overrides", wubi_ranking_overrides])
-    print(f"  Building binary dicts: {os.path.basename(output_prefix)}.*")
-    subprocess.run(cmd, check=True, capture_output=False)
 
 
 def verify_generated_text_file(generated_path: str, expected_path: str) -> None:
@@ -253,14 +223,13 @@ def prepare_wubi_dictionary(
     """Prepare wubi86 binary dictionary files."""
     print("--- Wubi86 dictionary ---")
     output_prefix = os.path.join(output_dir, "wubi86")
-    run_build_runtime_dictionary(
-        db_path,
-        output_prefix,
-        dict_only=True,
-        wubi_prefix_index=True,
-        wubi_ranking_source=ranking_source,
-        wubi_ranking_baseline=WUBI_RANKING_BASELINE,
-        wubi_ranking_overrides=WUBI_RANKING_OVERRIDES,
+    build_runtime_dictionary(db_path, output_prefix + ".dict.bin", pinyin=False)
+    build_wubi_prefix_index(
+        output_prefix + ".dict.bin",
+        output_prefix + ".dict.idx",
+        ranking_source,
+        WUBI_RANKING_BASELINE,
+        WUBI_RANKING_OVERRIDES,
     )
     reverse_index_path = output_prefix + ".reverse.idx"
     build_reverse_index(output_prefix + ".dict.bin", reverse_index_path)
@@ -269,6 +238,35 @@ def prepare_wubi_dictionary(
         output_prefix + ".dict.idx",
         reverse_index_path,
     ]
+
+
+def _initialize_dictionary_worker() -> None:
+    # The coordinator handles Ctrl+C and reaps workers before removing staging files.
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+
+
+def _run_dictionary_tasks(tasks, workers: int) -> list[str]:
+    generated = []
+    # Spawn is safe while package.py also has native builds running in threads.
+    # Even one worker needs its own process: cancellation must release open databases.
+    pool = multiprocessing.get_context("spawn").Pool(
+        processes=workers,
+        initializer=_initialize_dictionary_worker,
+    )
+    try:
+        results = [pool.apply_async(task, args) for task, args in tasks]
+        for result in results:
+            while not result.ready():
+                # Bounded waits allow Python to dispatch Ctrl+C on Windows.
+                result.wait(timeout=0.1)
+            generated.extend(result.get())
+        pool.close()
+        pool.join()
+    except BaseException:
+        pool.terminate()
+        pool.join()
+        raise
+    return generated
 
 
 def _generate_dictionary_bundle(
@@ -300,18 +298,14 @@ def _generate_dictionary_bundle(
         )
         print("Dictionary symbol filtering: " + json.dumps(stats))
         syllabary = validate_dictionary(pinyin_db)
+        # Ranking uses the original corpus, not repaired or symbol-filtered records.
+        ranking_source = os.path.join(tmpdir, "ranking-pinyin.dict.db")
+        copy_source_database(pinyin_source, ranking_source)
         tasks = [
             (prepare_pinyin_dictionary, (pinyin_db, output_dir, syllabary)),
-            (prepare_wubi_dictionary, (wubi_db, output_dir, pinyin_source)),
+            (prepare_wubi_dictionary, (wubi_db, output_dir, ranking_source)),
         ]
-        if workers == 1:
-            for task, args in tasks:
-                generated.extend(task(*args))
-        else:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
-                futures = [executor.submit(task, *args) for task, args in tasks]
-                for future in futures:
-                    generated.extend(future.result())
+        generated.extend(_run_dictionary_tasks(tasks, workers))
         symbols_output = os.path.join(output_dir, "symbols.json")
         shutil.copy2(symbols, symbols_output)
         generated.append(symbols_output)
@@ -342,17 +336,21 @@ def publish_dictionary_files(generated: list[str], output_dir: str) -> list[str]
         for name in sorted(names, key=lambda name: name != "dictionary_manifest.json"):
             destination = os.path.join(output_dir, name)
             if os.path.exists(destination):
-                os.replace(destination, os.path.join(backup, name))
                 saved.append(name)
+                os.replace(destination, os.path.join(backup, name))
         for path, name in zip(paths, names):
-            os.replace(path, os.path.join(output_dir, name))
             installed.append(name)
-    except OSError:
+            os.replace(path, os.path.join(output_dir, name))
+    except BaseException:
         try:
             for name in reversed(installed):
-                os.remove(os.path.join(output_dir, name))
+                destination = os.path.join(output_dir, name)
+                if os.path.exists(destination):
+                    os.remove(destination)
             for name in reversed(saved):
-                os.replace(os.path.join(backup, name), os.path.join(output_dir, name))
+                original = os.path.join(backup, name)
+                if os.path.exists(original):
+                    os.replace(original, os.path.join(output_dir, name))
         except OSError as error:
             raise RuntimeError(
                 f"Dictionary rollback failed; original files retained at {backup}"
@@ -431,6 +429,9 @@ def main():
             workers=args.workers,
             topn_builder=args.topn_builder,
         )
+    except KeyboardInterrupt:
+        print("Dictionary preparation canceled.", file=sys.stderr)
+        return 130
     except subprocess.CalledProcessError as e:
         print(f"ERROR: subprocess failed: {e}", file=sys.stderr)
         return 1

@@ -16,14 +16,17 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
+import contextlib
 import json
 import os
 import re
 import shutil
+import signal
 import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 
 from dictionary_bundle_layout import PINYIN_SPELLING_FILES
@@ -50,9 +53,38 @@ def step(msg: str) -> None:
     print(f"\n{msg}")
 
 
-def run(cmd: list[str], **kwargs) -> None:
+def run(cmd: list[str], cancel_event: threading.Event | None = None, **kwargs) -> None:
     """Run a command, raising on failure."""
-    subprocess.run(cmd, check=True, **kwargs)
+    if cancel_event is None:
+        subprocess.run(cmd, check=True, **kwargs)
+        return
+    if cancel_event.is_set():
+        raise concurrent.futures.CancelledError()
+
+    # Own the process even when cancellation races with its creation.
+    if os.name != "nt":
+        kwargs["start_new_session"] = True
+    with subprocess.Popen(cmd, **kwargs) as process:
+        while process.poll() is None:
+            if cancel_event.wait(timeout=0.1):
+                if os.name == "nt":
+                    subprocess.run(
+                        ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        check=False,
+                    )
+                else:
+                    try:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                process.wait()
+                raise concurrent.futures.CancelledError()
+        if cancel_event.is_set():
+            raise concurrent.futures.CancelledError()
+        if process.returncode:
+            raise subprocess.CalledProcessError(process.returncode, cmd)
 
 
 def default_job_count() -> int:
@@ -77,9 +109,23 @@ def timed_call(fn, *args, **kwargs):
     return time.perf_counter() - start, result
 
 
+@contextlib.contextmanager
+def parallel_builds(workers: int):
+    """Cancel native builds before the executor waits for its worker threads."""
+    cancel_event = threading.Event()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
+        try:
+            yield executor, cancel_event
+        except BaseException:
+            cancel_event.set()
+            raise
+
+
 def wait_task(name: str, future: concurrent.futures.Future) -> float:
     """Wait for a package task and print a clear failure label."""
     try:
+        while not future.done():
+            concurrent.futures.wait([future], timeout=0.1)
         elapsed, _ = future.result()
         print(f"  {name}: {format_duration(elapsed)}")
         return elapsed
@@ -342,6 +388,7 @@ def build(
     target: str | None = None,
     jobs: int = 1,
     host_diagnostics: bool = False,
+    cancel_event: threading.Event | None = None,
 ) -> None:
     """Configure and build the project."""
     print(f"Building {config} with PRODUCTION=ON...")
@@ -382,7 +429,7 @@ def build(
     configure_env = os.environ.copy()
     configure_env["CXXIME_BUILD_CONFIG"] = config
     try:
-        run(cmake_args, env=configure_env)
+        run(cmake_args, cancel_event=cancel_event, env=configure_env)
     except subprocess.CalledProcessError as error:
         raise RuntimeError(
             f"CMake configuration failed (exit {error.returncode}).\n"
@@ -394,7 +441,7 @@ def build(
             "  (CMakeConfigureLog.yaml or CMakeError.log/CMakeOutput.log)."
         ) from error
     try:
-        run(build_cmd)
+        run(build_cmd, cancel_event=cancel_event)
     except subprocess.CalledProcessError as error:
         raise RuntimeError(
             f"Compilation failed (exit {error.returncode}); see the compiler error above.\n"
@@ -410,6 +457,7 @@ def build_x86_platform_modules(
     instance: str | None = None,
     jobs: int = 1,
     host_diagnostics: bool = False,
+    cancel_event: threading.Event | None = None,
 ) -> None:
     """Build the 32-bit in-process IME modules with a platform-aware generator."""
     build(
@@ -424,6 +472,7 @@ def build_x86_platform_modules(
         target="cxxime-platform-modules",
         jobs=jobs,
         host_diagnostics=host_diagnostics,
+        cancel_event=cancel_event,
     )
 
 
@@ -1051,12 +1100,10 @@ def main():
     timings.append(("prepare distribution", time.perf_counter() - stage_start))
 
     build_futures: list[tuple[str, concurrent.futures.Future]] = []
-    dict_future: concurrent.futures.Future | None = None
     build_count = 0 if args.skip_build else (1 if args.skip_x86_tsf else 2)
-    package_workers = build_count + (0 if args.skip_dict else 1)
-    package_workers = max(1, package_workers)
+    package_workers = max(1, build_count)
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=package_workers) as executor:
+    with parallel_builds(package_workers) as (executor, cancel_event):
         if args.skip_build:
             step("[2/9] Skipping build (--skip-build).")
             print(f"  Using existing binaries in {build_dir}.")
@@ -1084,6 +1131,7 @@ def main():
                     instance=instance,
                     jobs=x64_jobs,
                     host_diagnostics=args.host_diag,
+                    cancel_event=cancel_event,
                 ),
             ))
             if not args.skip_x86_tsf:
@@ -1099,6 +1147,7 @@ def main():
                         instance=instance,
                         jobs=x86_jobs,
                         host_diagnostics=args.host_diag,
+                        cancel_event=cancel_event,
                     ),
                 ))
 
@@ -1108,14 +1157,21 @@ def main():
         else:
             step("[3/9] Starting dictionary preparation...")
             print(f"  Dictionary workers: {args.dict_workers}")
-            dict_future = executor.submit(timed_call, prepare_dictionaries, args.dict_workers)
+            # Keep the coordinator on the main thread so Ctrl+C can stop its workers.
+            try:
+                elapsed, _ = timed_call(prepare_dictionaries, args.dict_workers)
+            except Exception as error:
+                print(f"  ERROR: dictionary preparation failed: {error}", file=sys.stderr)
+                sys.exit(1)
+            print(f"  dictionary preparation: {format_duration(elapsed)}")
+            timings.append(("dictionary preparation", elapsed))
 
         # 2. Wait for build output before copying binaries.
         step("[4/9] Waiting for build outputs...")
         for name, future in build_futures:
             timings.append((name, wait_task(name, future)))
 
-        # 3. Copy files while dictionary preparation continues.
+        # 3. Copy files after the build and dictionary tasks have completed.
         step("[5/9] Preparing package files...")
         stage_start = time.perf_counter()
         print("  Copying binaries...")
@@ -1130,13 +1186,6 @@ def main():
         print("  Copying config and themes...")
         copy_config(host_diagnostics=args.host_diag)
         timings.append(("copy package files", time.perf_counter() - stage_start))
-
-        if dict_future is not None:
-            print("  Waiting for dictionaries...")
-            timings.append((
-                "dictionary preparation",
-                wait_task("dictionary preparation", dict_future),
-            ))
 
         stage_start = time.perf_counter()
         finalize_topn_data(build_dir, config)
@@ -1196,4 +1245,8 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\nPackaging canceled.", file=sys.stderr)
+        sys.exit(130)

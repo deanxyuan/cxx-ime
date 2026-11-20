@@ -527,6 +527,11 @@ target_link_libraries(session_manager_integration_test PRIVATE cxxime-ui comctl3
 
 find_package(Python3 3.10 COMPONENTS Interpreter REQUIRED)
 add_test(
+    NAME package_cancellation_test
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/scripts/package_cancellation_test.py
+)
+add_test(
     NAME build_entry_test
     COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/scripts/build_entry_test.py ${CMAKE_COMMAND}
