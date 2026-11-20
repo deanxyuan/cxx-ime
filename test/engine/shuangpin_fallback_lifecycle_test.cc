@@ -255,13 +255,13 @@ TEST(ShuangpinFallbackLifecycle, unresolved_history_does_not_gain_manual_priorit
     ASSERT_EQ(result.entries[1].candidate.frequency, 1);
 }
 
-TEST(ShuangpinFallbackLifecycle, word_limit_finishes_and_preserves_a_polyphonic_complete_text) {
+TEST(ShuangpinFallbackLifecycle, polyphonic_complete_text_keeps_its_best_reading_until_sealed) {
     test::FallbackFixture fixture({{"zhong", "重", 100}});
     cxxime::PinyinGraphComposition composition(*fixture.dict, 16);
     cxxime::CompositionStats stats;
     bool finished = false;
-    // Eight ambiguous readings produce 256 distinct canonical word edges for
-    // one visible text. They cannot satisfy the distinct-text completion cap.
+    // Many canonical readings share one visible text and one bounded beam slot.
+    // Later better readings must remain eligible until this position finishes.
     for (int alternative = 0; alternative < 256; ++alternative) {
         std::string readings;
         for (int syllable = 0; syllable < 8; ++syllable) {
@@ -274,57 +274,16 @@ TEST(ShuangpinFallbackLifecycle, word_limit_finishes_and_preserves_a_polyphonic_
             composition_word(0, 16, "重重重重重重重重", readings, 100 + alternative));
         uint32_t steps = 0;
         finished = composition.advance({}, steps, stats);
-        if (finished) {
-            break;
-        }
+        ASSERT_TRUE(!finished);
     }
-    ASSERT_TRUE(finished);
-    ASSERT_TRUE(stats.truncated);
+    composition.seal();
+    uint32_t steps = 0;
+    ASSERT_TRUE(composition.advance({}, steps, stats));
+    ASSERT_TRUE(!stats.truncated);
     ASSERT_EQ(stats.span_candidate_count, 256u);
-    ASSERT_TRUE(stats.state_count < 1024);
+    ASSERT_EQ(stats.state_count, 2u);
     const auto result = composition.take_candidates();
     ASSERT_EQ(result.size(), std::size_t{1});
     ASSERT_EQ(result.front().text, "重重重重重重重重");
     ASSERT_EQ(result.front().syllables, "zhong:zhong:zhong:zhong:zhong:zhong:zhong:zhong");
-}
-
-TEST(ShuangpinFallbackLifecycle, node_limit_finishes_without_discarding_an_existing_complete_text) {
-    test::FallbackFixture fixture({{"jun:fu:mi", "军服迷", 100}});
-    cxxime::PinyinGraphComposition composition(*fixture.dict, 6);
-    cxxime::CompositionStats stats;
-    composition.add_word(composition_word(0, 6, "军服迷", "jun:fu:mi", 100));
-    uint32_t steps = 0;
-    ASSERT_TRUE(!composition.advance({}, steps, stats));
-    const std::vector<std::string> initials = {
-        "ji", "jia", "jian", "jiang", "jiao", "jie", "jin", "jing",
-    };
-    const std::vector<std::string> finals = {"fa", "fan", "fang", "fei"};
-    for (int index = 0; index < 32; ++index) {
-        const auto readings = initials[index / 4] + ':' + finals[index % 4];
-        composition.add_word(composition_word(0, 2, "前缀" + std::to_string(index), readings, 100));
-        steps = 0;
-        ASSERT_TRUE(!composition.advance({}, steps, stats));
-    }
-    bool finished = false;
-    // Better continuations keep replacing the intermediate beam. Already
-    // referenced parents remain immutable, so total nodes eventually reach the
-    // strategy cap even though only one complete text exists at the final end.
-    for (int index = 0; index < 32; ++index) {
-        const auto readings = initials[index / 4] + ':' + finals[index % 4];
-        composition.add_word(
-            composition_word(2, 4, "续段" + std::to_string(index), readings, 100 + 100 * index));
-        steps = 0;
-        finished = composition.advance({}, steps, stats);
-        if (finished) {
-            break;
-        }
-    }
-    ASSERT_TRUE(finished);
-    ASSERT_TRUE(stats.truncated);
-    ASSERT_EQ(stats.state_count, 1024u);
-    ASSERT_TRUE(stats.span_candidate_count < 256);
-    const auto result = composition.take_candidates();
-    ASSERT_EQ(result.size(), std::size_t{1});
-    ASSERT_EQ(result.front().text, "军服迷");
-    ASSERT_EQ(result.front().syllables, "jun:fu:mi");
 }

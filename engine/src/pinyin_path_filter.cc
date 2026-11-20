@@ -68,7 +68,10 @@ bool is_repeated_short_code_path(const std::string& input, const SegmentedPath& 
     }
 
     size_t suffix_begin = path.syllables.size();
-    while (suffix_begin > 0 && path.spelling_types[suffix_begin - 1] == kAbbreviation) {
+    while (suffix_begin > 0 &&
+           (path.spelling_types[suffix_begin - 1] == kAbbreviation ||
+            (suffix_begin == path.syllables.size() &&
+             path.spelling_types[suffix_begin - 1] == kCompletionSpelling))) {
         --suffix_begin;
     }
     if (path.syllables.size() - suffix_begin < 2) {

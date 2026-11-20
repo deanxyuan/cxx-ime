@@ -1463,54 +1463,39 @@ TEST(SegmentedSelection, mixed_wubi_first_does_not_hide_later_pinyin_partial) {
     }
     ASSERT_TRUE(cxxime::Dict::create_test_dict(wubi_path, wubi_entries));
 
-    cxxime::Dict pinyin{cxxime::UserDictKind::PINYIN};
-    cxxime::Dict wubi{cxxime::UserDictKind::WUBI};
-    cxxime::SpellingsIndex spellings;
-    ASSERT_TRUE(pinyin.open_dict(pinyin_path));
-    ASSERT_TRUE(wubi.open_dict(wubi_path));
-    ASSERT_TRUE(spellings.load(spellings_path));
-    auto pinyin_resources = cxxime::PinyinResourceSet::create(
-        "full_pinyin", cxxime::PinyinSchemeKind::kFullPinyin, spellings_path);
-    ASSERT_TRUE(pinyin_resources != nullptr);
-    cxxime::MixedTranslator translator;
-    translator.set_pinyin_dict(&pinyin);
-    translator.set_wubi_dict(&wubi);
-    translator.bind_pinyin(pinyin_resources, {});
-
-    cxxime::TranslationRequest request;
-    request.scheme = cxxime::CompositionScheme::kMixed;
-    request.input = "wuzg";
-    request.page_size = kPageSize;
-    request.policy.allow_partial_selection = true;
-    const cxxime::TranslationResult first = translator.translate(request);
-    ASSERT_EQ(first.entries.size(), static_cast<std::size_t>(kPageSize));
-    ASSERT_EQ(first.entries[0].candidate.source, cxxime::CandidateSource::kWubi);
-    for (std::size_t index = 0; index < first.entries.size(); ++index) {
-        const auto& action = std::get<cxxime::TextSelectionAction>(first.entries[index].selection);
-        ASSERT_EQ(action.consumed_input_bytes, request.input.size());
+    cxxime::Engine engine;
+    cxxime::Config config;
+    config.page_size = kPageSize;
+    config.candidate_learning = false;
+    ASSERT_TRUE(test::initialize_engine(engine, pinyin_path, config, spellings_path, wubi_path));
+    engine.switch_mode(cxxime::InputMode::MIXED);
+    engine.set_partial_selection_enabled(true);
+    engine.set_query_deadline_ms(0);
+    for (char key : std::string("wuzg")) {
+        ASSERT_EQ(engine.process_key(make_key(key - 'a' + 'A')), cxxime::ProcessResult::ACCEPTED);
     }
-    request.page_size = 1;
-    for (int offset = 0; offset < kPageSize; ++offset) {
-        request.page_index = offset;
-        request.page_offset = offset;
-        const cxxime::TranslationResult page = translator.translate(request);
-        ASSERT_EQ(page.entries.size(), 1u);
-        ASSERT_TRUE(cxxime::same_candidate_entry_identity(page.entries[0], first.entries[offset]));
+    const auto first = engine.context().translation().entries;
+    ASSERT_EQ(first.size(), static_cast<std::size_t>(kPageSize));
+    ASSERT_EQ(first[0].candidate.source, cxxime::CandidateSource::kWubi);
+    for (const auto& entry : first) {
+        ASSERT_EQ(std::get<cxxime::TextSelectionAction>(entry.selection).consumed_input_bytes, 4u);
     }
-
-    request.page_size = 7;
-    request.page_index = 1;
-    request.page_offset = 7;
-    const auto second = translator.translate(request);
-    ASSERT_EQ(second.entries.size(), 7u);
-    ASSERT_EQ(second.entries[6].candidate.text, "乌总");
-    ASSERT_EQ(
-        std::get<cxxime::TextSelectionAction>(second.entries[6].selection).consumed_input_bytes,
-        3u);
-
-    spellings.unload();
-    pinyin.close();
-    wubi.close();
+    engine.process_key(make_key(VK_NEXT), {}, kPageSize);
+    const auto second = engine.context().translation().entries;
+    ASSERT_EQ(second.size(), 7u);
+    ASSERT_EQ(second[6].candidate.text, "乌总");
+    ASSERT_EQ(std::get<cxxime::TextSelectionAction>(second[6].selection).consumed_input_bytes, 3u);
+    engine.process_key(make_key(VK_PRIOR), {}, kPageSize);
+    const auto& restored = engine.context().translation().entries;
+    ASSERT_EQ(restored.size(), first.size());
+    for (std::size_t index = 0; index < first.size(); ++index) {
+        ASSERT_TRUE(cxxime::same_candidate_entry_identity(restored[index], first[index]));
+    }
+    engine.process_key(make_key(VK_NEXT), {}, kPageSize);
+    ASSERT_TRUE(engine.select_candidate(6));
+    ASSERT_EQ(engine.context().active_input(), "g");
+    ASSERT_TRUE(engine.get_commit_text().empty());
+    engine.finalize();
     DeleteFileA(pinyin_path.c_str());
     DeleteFileA(spellings_path.c_str());
     DeleteFileA(wubi_path.c_str());

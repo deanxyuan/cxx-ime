@@ -45,14 +45,105 @@ SyllableGraph prefer_complete_spans(SyllableGraph graph) {
 
 } // namespace
 
+void SpellingQueryCache::clear() {
+    index_ = nullptr;
+    input_.clear();
+    view_size_ = 0;
+    entries_.clear();
+    lookup_count_ = 0;
+    reuse_count_ = 0;
+}
+
+void SpellingQueryCache::prepare(const SpellingsIndex& index, const std::string& input) {
+    const bool same = index_ == &index && input_ == input;
+    const bool previous = index_ == &index && input.size() + 1 == input_.size() &&
+                          input_.compare(0, input.size(), input) == 0;
+    if (same || previous) {
+        view_size_ = input.size();
+        return;
+    }
+    const bool appended = index_ == &index && input.size() == input_.size() + 1 &&
+                          input.compare(0, input_.size(), input_) == 0;
+    if (!appended) {
+        clear();
+    } else {
+        for (auto& entry : entries_) {
+            if (entry.can_extend) {
+                entry.previous_prefixes = std::move(entry.prefixes);
+                entry.previous_prefix_size = entry.prefix_size;
+                entry.prefix_size = 0;
+            }
+            entry.previous_completions = std::move(entry.completions);
+            entry.previous_completion_size = entry.completion_size;
+            entry.completion_size = 0;
+        }
+    }
+    index_ = &index;
+    input_ = input;
+    view_size_ = input.size();
+    entries_.resize(input.size());
+}
+
+const std::vector<SpellingMatch>& SpellingQueryCache::prefixes(std::size_t position) {
+    auto& entry = entries_[position];
+    const bool previous = view_size_ != input_.size();
+    if (previous && entry.previous_prefix_size == view_size_) {
+        ++reuse_count_;
+        return entry.previous_prefixes;
+    }
+    if (entry.prefix_size != 0 && entry.prefix_size <= view_size_ &&
+        (!entry.can_extend || entry.prefix_size == view_size_)) {
+        ++reuse_count_;
+        return entry.prefixes;
+    }
+    const std::string_view suffix(input_.data() + position, view_size_ - position);
+    ++lookup_count_;
+    if (previous) {
+        entry.previous_prefixes = index_->prefix_search(suffix);
+        entry.previous_prefix_size = view_size_;
+        return entry.previous_prefixes;
+    }
+    entry.prefixes = index_->prefix_search(suffix, true, true, &entry.can_extend);
+    entry.prefix_size = view_size_;
+    return entry.prefixes;
+}
+
+const std::vector<SpellingMatch>& SpellingQueryCache::completions(std::size_t position) {
+    auto& entry = entries_[position];
+    const bool previous = view_size_ != input_.size();
+    auto& size = previous ? entry.previous_completion_size : entry.completion_size;
+    auto& matches = previous ? entry.previous_completions : entry.completions;
+    if (size == view_size_) {
+        ++reuse_count_;
+        return matches;
+    }
+    size = view_size_;
+    // Closing a prefix only proves emptiness for that input and later appends.
+    // A previous shorter view may still have terminal completions.
+    if (entry.prefix_size != 0 && entry.prefix_size <= view_size_ && !entry.can_extend) {
+        matches.clear();
+        ++reuse_count_;
+    } else {
+        const std::string_view suffix(input_.data() + position, view_size_ - position);
+        matches = index_->completion_search(suffix, true);
+        ++lookup_count_;
+    }
+    return matches;
+}
+
 Syllabifier::Syllabifier(const SpellingsIndex& spellings)
     : spellings_(spellings) {}
 
 SyllableGraph Syllabifier::build_graph(const std::string& input,
-                                       const SyllabifierOptions& options) const {
+                                       const SyllabifierOptions& options,
+                                       SpellingQueryCache* cache) const {
     SyllableGraph graph;
     if (input.empty() || !spellings_.has_spellings())
         return graph;
+
+    if (cache) {
+        cache->prepare(spellings_, input);
+    }
 
     // BFS with priority queue (pos, spelling_type)
     // Corresponds to librime syllabifier.cc BuildSyllableGraph
@@ -69,12 +160,21 @@ SyllableGraph Syllabifier::build_graph(const std::string& input,
         if (visited[pos])
             continue;
         visited[pos] = 1;
+        if (pos == input.size()) {
+            continue;
+        }
 
         std::string_view remaining(input.data() + pos, input.size() - pos);
-        auto matches =
-            spellings_.prefix_search(remaining, options.enable_fuzzy, options.enable_abbreviation);
+        const auto uncached = cache ? std::vector<SpellingMatch>{}
+                                    : spellings_.prefix_search(remaining, options.enable_fuzzy,
+                                                               options.enable_abbreviation);
+        const auto& matches = cache ? cache->prefixes(pos) : uncached;
 
-        for (auto& m : matches) {
+        for (const auto& m : matches) {
+            if ((!options.enable_fuzzy && m.type == kFuzzySpelling) ||
+                (!options.enable_abbreviation && m.type == kAbbreviation)) {
+                continue;
+            }
             // The trie key is the raw input span. The canonical syllable may have a
             // different length for fuzzy spellings and Shuangpin zero initials.
             if (m.input_key_len == 0 || m.input_key_len > remaining.size()) {
@@ -104,10 +204,14 @@ SyllableGraph Syllabifier::build_graph(const std::string& input,
             }
             const std::string_view remaining(input.data() + position,
                                              end_position - position);
-            auto completions = spellings_.completion_search(remaining, options.enable_fuzzy);
+            const auto uncached =
+                cache ? std::vector<SpellingMatch>{}
+                      : spellings_.completion_search(remaining, options.enable_fuzzy);
+            const auto& completions = cache ? cache->completions(position) : uncached;
             auto& edges = graph[position][end_position];
             for (const auto& completion : completions) {
-                if (completion.type >= kAbbreviation) {
+                if (completion.type >= kAbbreviation ||
+                    (!options.enable_fuzzy && completion.type == kFuzzySpelling)) {
                     continue;
                 }
                 const auto existing = std::find_if(
@@ -220,8 +324,10 @@ bool Syllabifier::enumerate_paths(
 }
 
 SegmentResult Syllabifier::segment(const std::string& input, const QueryDeadline* deadline,
-                                   const SyllabifierOptions& options) const {
-    return segment_graph(build_graph(input, options), deadline, options.collect_path_metadata);
+                                   const SyllabifierOptions& options,
+                                   SpellingQueryCache* cache) const {
+    return segment_graph(build_graph(input, options, cache), deadline,
+                         options.collect_path_metadata);
 }
 
 SegmentResult Syllabifier::segment_graph(SyllableGraph graph, const QueryDeadline* deadline,
@@ -311,8 +417,9 @@ SegmentResult Syllabifier::segment_graph(SyllableGraph graph, const QueryDeadlin
 }
 
 bool Syllabifier::has_fuzzy_path(const std::string& input,
-                                 const SyllabifierOptions& options) const {
-    const SyllableGraph graph = build_graph(input, options);
+                                 const SyllabifierOptions& options,
+                                 SpellingQueryCache* cache) const {
+    const SyllableGraph graph = build_graph(input, options, cache);
     std::vector<uint8_t> reachable_without_fuzzy(input.size() + 1, 0);
     std::vector<uint8_t> reachable_with_fuzzy(input.size() + 1, 0);
     reachable_without_fuzzy[0] = 1;

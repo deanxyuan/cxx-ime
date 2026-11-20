@@ -56,6 +56,39 @@ struct SyllabifierOptions {
     bool prefer_complete_spans = false;
 };
 
+// Unfiltered trie facts for one active input. Graph views never modify these
+// entries; a closed prefix cannot gain another match when a character is appended.
+class SpellingQueryCache {
+public:
+    void clear();
+    std::size_t lookup_count() const { return lookup_count_; }
+    std::size_t reuse_count() const { return reuse_count_; }
+
+private:
+    friend class Syllabifier;
+    struct Entry {
+        std::vector<SpellingMatch> prefixes;
+        std::vector<SpellingMatch> completions;
+        std::vector<SpellingMatch> previous_prefixes;
+        std::vector<SpellingMatch> previous_completions;
+        std::size_t prefix_size = 0;
+        std::size_t completion_size = 0;
+        std::size_t previous_prefix_size = 0;
+        std::size_t previous_completion_size = 0;
+        bool can_extend = true;
+    };
+    void prepare(const SpellingsIndex& index, const std::string& input);
+    const std::vector<SpellingMatch>& prefixes(std::size_t position);
+    const std::vector<SpellingMatch>& completions(std::size_t position);
+
+    const SpellingsIndex* index_ = nullptr;
+    std::string input_;
+    std::size_t view_size_ = 0;
+    std::vector<Entry> entries_;
+    std::size_t lookup_count_ = 0;
+    std::size_t reuse_count_ = 0;
+};
+
 class Syllabifier {
 public:
     Syllabifier(const Syllabifier&) = delete;
@@ -66,18 +99,20 @@ public:
     // Build syllable graph from input.
     // Corresponds to librime BuildSyllableGraph.
     SyllableGraph build_graph(const std::string& input,
-                              const SyllabifierOptions& options = {}) const;
+                              const SyllabifierOptions& options = {},
+                              SpellingQueryCache* cache = nullptr) const;
 
     // Segment input into syllable paths, sorted by quality.
     // Best (all-normal) paths first, then fuzzy, then abbreviation.
     // Optional deadline for internal checks during DFS.
     SegmentResult segment(const std::string& input, const QueryDeadline* deadline = nullptr,
-                          const SyllabifierOptions& options = {}) const;
+                          const SyllabifierOptions& options = {},
+                          SpellingQueryCache* cache = nullptr) const;
     // Consume an existing build_graph result without repeating spelling lookup.
     SegmentResult segment_graph(SyllableGraph graph, const QueryDeadline* deadline,
                                 bool collect_path_metadata) const;
-    bool has_fuzzy_path(const std::string& input,
-                        const SyllabifierOptions& options = {}) const;
+    bool has_fuzzy_path(const std::string& input, const SyllabifierOptions& options = {},
+                        SpellingQueryCache* cache = nullptr) const;
 
 private:
     friend class PinyinResourceSet;

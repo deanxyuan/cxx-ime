@@ -33,6 +33,7 @@ TranslationResult translate_with_custom_phrases(ITranslator& translator,
     ordinary.page_offset = 0;
     ordinary.page_size = request.page_offset + request.page_size + static_cast<int>(matches.size());
     ordinary.defer_candidate_order = true;
+    ordinary.suppress_graph_composition = true;
     TranslationResult translated = translator.translate(ordinary);
     const bool more = candidate_extent_may_continue(translated.extent,
                                                     static_cast<int>(translated.entries.size()));

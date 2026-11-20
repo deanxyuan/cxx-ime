@@ -27,8 +27,9 @@ add_library(cxxime-engine STATIC
     src/wubi_prefix_index.cc
     src/spellings_index.cc
     src/syllabifier.cc
-    src/shuangpin_graph.cc
-    src/shuangpin_fallback.cc
+    src/pinyin_input_graph.cc
+    src/pinyin_continuation.cc
+    src/pinyin_graph_query.cc
     src/pinyin_composer.cc
     src/pinyin_path_filter.cc
     src/pinyin_partial_candidates.cc

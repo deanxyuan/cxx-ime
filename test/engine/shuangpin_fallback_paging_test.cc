@@ -8,7 +8,7 @@
 #include <cxxime/custom_phrases.h>
 #include <cxxime/mixed_translator.h>
 #include <cxxime/query_trace.h>
-#include <cxxime/shuangpin_graph.h>
+#include <cxxime/pinyin_input_graph.h>
 
 #include "support/shuangpin_fallback_fixture.h"
 
@@ -469,7 +469,7 @@ TEST(ShuangpinFallbackPaging, personal_resolution_obeys_the_shared_scan_budget) 
 TEST(ShuangpinFallbackPaging, composition_does_not_require_single_character_dictionary_entries) {
     test::FallbackFixture fixture({{"jun:fu", "军服", 200}, {"mi:ma", "密码", 100}});
     const std::string input = "jfmima";
-    const auto graph = cxxime::ShuangpinGraph::build(*fixture.resources, input, false);
+    const auto graph = cxxime::PinyinInputGraph::build(*fixture.resources, input, false);
     ASSERT_TRUE(graph.fallback);
     ASSERT_TRUE(!graph.align({}, "jun:fu:mi:ma", input.size()).empty());
     const auto result = fixture.query(input, false);
@@ -567,7 +567,7 @@ TEST(ShuangpinFallbackPaging, fuzzy_combinations_do_not_close_the_normal_recomme
         rows.emplace_back("ni", "你", 100000000);
         test::FallbackFixture fixture(rows);
         fixture.translator.bind_pinyin(fixture.resources, {true});
-        const auto graph = cxxime::ShuangpinGraph::build(*fixture.resources, "jfli", true);
+        const auto graph = cxxime::PinyinInputGraph::build(*fixture.resources, "jfli", true);
         ASSERT_TRUE(graph.fallback);
         const auto normal = graph.align({}, "jun:fu:li", 4);
         const auto fuzzy = graph.align({}, "jun:fu:ni", 4);

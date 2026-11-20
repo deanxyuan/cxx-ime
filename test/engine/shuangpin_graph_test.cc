@@ -5,13 +5,14 @@
 #include <utility>
 #include <vector>
 
-#include <cxxime/shuangpin_graph.h>
+#include <cxxime/pinyin_input_graph.h>
 
 #include "support/shuangpin_fallback_fixture.h"
 
 namespace {
 
-void expect_boundaries(const cxxime::ShuangpinGraph& graph, const std::vector<uint16_t>& lengths) {
+void expect_boundaries(const cxxime::PinyinInputGraph& graph,
+                       const std::vector<uint16_t>& lengths) {
     ASSERT_EQ(graph.edges.size(), lengths.size());
     std::size_t position = 0;
     for (uint16_t length : lengths) {
@@ -37,12 +38,13 @@ TEST(ShuangpinGraph, appended_initials_preserve_complete_pairs_in_every_scheme) 
         for (bool fuzzy : {false, true}) {
             for (std::size_t size = 1; size <= expected.size(); ++size) {
                 const auto input = std::string("minimijf").substr(0, size);
-                expect_boundaries(cxxime::ShuangpinGraph::build(*fixture.resources, input, fuzzy),
+                expect_boundaries(cxxime::PinyinInputGraph::build(*fixture.resources, input, fuzzy),
                                   expected[size - 1]);
             }
             // A trailing initial can still become a complete pair; earlier pairs stay fixed.
-            expect_boundaries(cxxime::ShuangpinGraph::build(*fixture.resources, "minimijm", fuzzy),
-                              {2, 2, 2, 2});
+            expect_boundaries(
+                cxxime::PinyinInputGraph::build(*fixture.resources, "minimijm", fuzzy),
+                {2, 2, 2, 2});
         }
     }
 }
@@ -51,9 +53,10 @@ TEST(ShuangpinGraph, zero_initial_boundaries_apply_before_normal_and_fallback_qu
     for (const auto& scheme : {test::fallback_schemes().front(), test::fallback_schemes().back()}) {
         test::FallbackFixture fixture({{"o", "哦", 1}}, scheme);
         for (bool fuzzy : {false, true}) {
-            expect_boundaries(cxxime::ShuangpinGraph::build(*fixture.resources, "o", fuzzy), {1});
-            expect_boundaries(cxxime::ShuangpinGraph::build(*fixture.resources, "oo", fuzzy), {2});
-            const auto graph = cxxime::ShuangpinGraph::build(*fixture.resources, "ooa", fuzzy);
+            expect_boundaries(cxxime::PinyinInputGraph::build(*fixture.resources, "o", fuzzy), {1});
+            expect_boundaries(cxxime::PinyinInputGraph::build(*fixture.resources, "oo", fuzzy),
+                              {2});
+            const auto graph = cxxime::PinyinInputGraph::build(*fixture.resources, "ooa", fuzzy);
             ASSERT_TRUE(!graph.fallback);
             expect_boundaries(graph, {2, 1});
             const auto paths = graph.align({}, "o:a", 3, 32);
@@ -65,7 +68,7 @@ TEST(ShuangpinGraph, zero_initial_boundaries_apply_before_normal_and_fallback_qu
             ASSERT_TRUE(graph.align({}, "o", 1).empty());
             ASSERT_TRUE(!graph.align({}, "o", 2).empty());
             // Covering a later b must not steal the second o from the established pair.
-            const auto blocked = cxxime::ShuangpinGraph::build(*fixture.resources, "ooab", fuzzy);
+            const auto blocked = cxxime::PinyinInputGraph::build(*fixture.resources, "ooab", fuzzy);
             expect_boundaries(blocked, {2});
             cxxime::SyllabifierOptions options;
             options.enable_fuzzy = fuzzy;
@@ -81,7 +84,7 @@ TEST(ShuangpinGraph, zero_initial_boundaries_apply_before_normal_and_fallback_qu
             ASSERT_EQ(exact.size(), std::size_t{1});
             ASSERT_EQ(exact.at(0).begin()->first, std::size_t{2});
             // Choosing a complete span must not remove allowed same-span completion readings.
-            const auto single = cxxime::ShuangpinGraph::build(*fixture.resources, "o", fuzzy);
+            const auto single = cxxime::PinyinInputGraph::build(*fixture.resources, "o", fuzzy);
             ASSERT_TRUE(std::any_of(
                 single.edges.at(0).at(1).begin(), single.edges.at(0).at(1).end(),
                 [](const auto& edge) { return edge.type == cxxime::kCompletionSpelling; }));
@@ -91,7 +94,7 @@ TEST(ShuangpinGraph, zero_initial_boundaries_apply_before_normal_and_fallback_qu
 
 TEST(ShuangpinGraph, dictionary_misses_cannot_change_the_left_to_right_boundaries) {
     test::FallbackFixture fixture({{"jun:fu:ni", "军服你", 1000000}}, test::fallback_schemes()[1]);
-    const auto selected = cxxime::ShuangpinGraph::build(*fixture.resources, "jfni", false);
+    const auto selected = cxxime::PinyinInputGraph::build(*fixture.resources, "jfni", false);
     ASSERT_TRUE(selected.fallback);
     expect_boundaries(selected, {1, 2, 1});
     ASSERT_TRUE(!selected.align({}, "jun:fiao:chi", 4).empty());
@@ -114,7 +117,7 @@ TEST(ShuangpinGraph, mapped_initials_are_independent_of_fuzzy_and_ignored_fragme
                 return match.syllable == mapping.first;
             }));
         }
-        const auto graph = cxxime::ShuangpinGraph::build(*fixture.resources, "jf", false);
+        const auto graph = cxxime::PinyinInputGraph::build(*fixture.resources, "jf", false);
         ASSERT_TRUE(graph.fallback);
         ASSERT_TRUE(!graph.align({}, "jun:fu", 2).empty());
         ASSERT_TRUE(graph.align({}, "jun:fu", 1).empty());
@@ -135,7 +138,7 @@ TEST(ShuangpinGraph, normal_graph_segmentation_preserves_paths_and_display_bound
         test::FallbackFixture fixture({{"ni:hao", "你好", 100}}, scheme);
         for (bool fuzzy : {false, true}) {
             for (const std::string input : {"ni", "nih", "nihk"}) {
-                auto graph = cxxime::ShuangpinGraph::build(*fixture.resources, input, fuzzy);
+                auto graph = cxxime::PinyinInputGraph::build(*fixture.resources, input, fuzzy);
                 ASSERT_TRUE(!graph.fallback);
                 cxxime::SyllabifierOptions options;
                 options.enable_fuzzy = fuzzy;

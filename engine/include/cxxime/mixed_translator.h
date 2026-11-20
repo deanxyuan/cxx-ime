@@ -40,6 +40,7 @@ private:
         uint64_t revision = 0;
         uint64_t version = 0;
         bool partial = false;
+        bool complete_wubi_source = false;
         int wubi_offset = 0;
         uint32_t buffer_peak = 0;
         TranslationResult pending;

@@ -111,6 +111,7 @@ public:
                           const std::string& prefix_index_path);
     void close();   // saves user dict before closing
     bool is_open() const;
+    uint64_t dictionary_generation() const { return dictionary_generation_; }
     UserDictKind kind() const { return kind_; }
 
     // Low-level
@@ -148,6 +149,7 @@ public:
                                   const std::vector<uint32_t>& allowed,
                                   std::size_t& allowed_offset,
                                   SyllableRange& child, uint32_t& syllable_id) const;
+    // Read a raw record. Callers filter the final visible candidate, not composition components.
     bool read_syllable_candidate(const SyllableRange& range, std::size_t& cursor,
                                  Candidate& candidate) const;
     bool read_personal_candidate(PersonalCandidateSource source,
@@ -293,6 +295,7 @@ private:
                                   CandidateSource source, Candidate* candidate) const;
 
     const UserDictKind kind_;
+    uint64_t dictionary_generation_ = 0;
     char* dict_data_ = nullptr;         // heap-allocated buffer
     size_t dict_data_size_ = 0;
     const CandidateStoreEntry* dict_entries_ = nullptr;

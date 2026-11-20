@@ -7,6 +7,7 @@
 #include <climits>
 #include <functional>
 #include <iterator>
+#include <optional>
 #include <utility>
 
 #include <cxxime/composition_learning.h>
@@ -22,118 +23,26 @@
 #include "pinyin_path_filter.h"
 #include "pinyin_partial_candidates.h"
 #include "pinyin_query_key.h"
-#include "shuangpin_fallback.h"
+#include "pinyin_graph_query.h"
 
 namespace cxxime {
 
-PinyinTranslator::PinyinTranslator() = default;
-PinyinTranslator::~PinyinTranslator() = default;
+struct PinyinTranslator::InputSession {
+    std::string input;
+    uint64_t revision = 0;
+    uint64_t version = 0;
+    SpellingQueryCache spellings;
+    std::unique_ptr<PinyinInputGraph> previous_graph;
+    std::optional<SegmentedPath> previous_path;
+};
 
-void PinyinTranslator::clear_query_cache() {
-    query_cache_.clear();
-    fallback_query_.reset();
-    fallback_input_.clear();
-    grammar_graph_.reset();
-    grammar_input_.clear();
-}
-
-uint64_t PinyinTranslator::query_version() const {
-    const auto versions = query_cache_versions();
-    uint64_t token = UINT64_C(14695981039346656037);
-    for (uint64_t value :
-         {versions.user_dict, versions.candidate_preference, versions.manual_candidate_order,
-          versions.disabled_system_entry, versions.composition_learning,
-          static_cast<uint64_t>(reinterpret_cast<uintptr_t>(dict_)),
-          static_cast<uint64_t>(reinterpret_cast<uintptr_t>(pinyin_resources_.get())),
-          static_cast<uint64_t>(reinterpret_cast<uintptr_t>(composition_learning_)),
-          static_cast<uint64_t>(pinyin_query_policy_.enable_fuzzy),
-          static_cast<uint64_t>(candidate_learning_enabled_),
-          static_cast<uint64_t>(sentence_composition_enabled_)}) {
-        token = (token ^ value) * UINT64_C(1099511628211);
-    }
-    return token;
-}
-
-const ShuangpinGraph& PinyinTranslator::shuangpin_graph(const std::string& input) const {
-    if (!grammar_graph_ || grammar_input_ != input) {
-        grammar_graph_.reset(new ShuangpinGraph(
-            ShuangpinGraph::build(*pinyin_resources_, input, pinyin_query_policy_.enable_fuzzy)));
-        grammar_input_ = input;
-    }
-    return *grammar_graph_;
-}
-
-bool PinyinTranslator::requires_shuangpin_fallback(const std::string& input) const {
-    return pinyin_resources_ && pinyin_scheme() == PinyinSchemeKind::kShuangpin &&
-           shuangpin_graph(input).fallback;
-}
-
-bool PinyinTranslator::translate_fallback(const TranslationRequest& request,
-                                          TranslationResult& result) {
-    if (!pinyin_resources_ || pinyin_scheme() != PinyinSchemeKind::kShuangpin) {
-        return false;
-    }
-    const auto versions = query_cache_versions();
-    const uint64_t version_before = query_version();
-    const bool same_versions =
-        versions.user_dict == fallback_versions_.user_dict &&
-        versions.candidate_preference == fallback_versions_.candidate_preference &&
-        versions.manual_candidate_order == fallback_versions_.manual_candidate_order &&
-        versions.disabled_system_entry == fallback_versions_.disabled_system_entry &&
-        versions.composition_learning == fallback_versions_.composition_learning;
-    if (request.purpose == TranslationPurpose::kSearch) {
-        const auto& graph = shuangpin_graph(request.input);
-        if (!graph.fallback) {
-            return false;
-        }
-        ShuangpinFallbackQuery isolated(*dict_, graph, false, sentence_composition_enabled_,
-                                        candidate_learning_enabled_, composition_learning_);
-        result = isolated.query(request);
-        result.incremental = false;
-        if (query_version() != version_before) {
-            result.entries.clear();
-            result.highlighted = -1;
-            result.status = TranslationStatus::kStableDegraded;
-            result.extent = make_candidate_extent(0, 0, true);
-        }
-        return true;
-    }
-    const bool invalidated =
-        fallback_query_ && fallback_input_ == request.input &&
-        (!same_versions || fallback_partial_ != request.policy.allow_partial_selection);
-    if (!fallback_query_ || fallback_input_ != request.input || !same_versions ||
-        fallback_revision_ != request.input_revision ||
-        fallback_partial_ != request.policy.allow_partial_selection) {
-        const auto& graph = shuangpin_graph(request.input);
-        fallback_query_.reset();
-        if (!graph.fallback) {
-            return false;
-        }
-        fallback_query_.reset(new ShuangpinFallbackQuery(
-            *dict_, graph, request.policy.allow_partial_selection, sentence_composition_enabled_,
-            candidate_learning_enabled_, composition_learning_));
-        fallback_input_ = request.input;
-        fallback_versions_ = versions;
-        fallback_partial_ = request.policy.allow_partial_selection;
-        fallback_revision_ = request.input_revision;
-    }
-    auto effective = request;
-    if (invalidated) {
-        effective.published = nullptr;
-    }
-    result = fallback_query_->query(effective);
-    result.sequence_invalidated = invalidated;
-    result.sequence_version = version_before;
-    if (query_version() != version_before) {
-        fallback_query_.reset();
-        result.entries.clear();
-        result.highlighted = -1;
-        result.status = TranslationStatus::kStableDegraded;
-        result.extent = make_candidate_extent(0, 0, true);
-        result.sequence_invalidated = true;
-    }
-    return true;
-}
+struct PinyinTranslator::SentenceSession {
+    std::string input;
+    uint64_t revision = 0;
+    uint64_t version = 0;
+    std::optional<CandidateContinuation> continuation;
+    std::unique_ptr<PinyinGraphQuery> query;
+};
 
 namespace {
 
@@ -149,12 +58,31 @@ constexpr int kAbbreviationPrefixBase = 30000000;
 constexpr int kMixedPrefixBase = 20000000;
 constexpr int kMaxRankedSourceFrequency = 99999900;
 
+bool is_repeated_short_graph(const PinyinInputGraph& graph) {
+    return graph.full_pinyin && graph.input.size() >= 2 &&
+           graph.input.back() == graph.input[graph.input.size() - 2] &&
+           is_repeated_short_code_path(graph.input, graph.display_path({}, 0));
+}
+
 enum class PathMatchTier {
     kNormal,
     kFuzzy,
     kAbbreviation,
     kMixed,
     kCompletion,
+};
+
+struct CompositionPathSpec {
+    size_t id_sequence_index = 0;
+    const SegmentedPath* segmented_path = nullptr;
+    CompositionPathKind kind = CompositionPathKind::kNormal;
+    uint16_t rank = 0;
+};
+
+struct IndexedShuangpinPath {
+    std::string key;
+    PathMatchTier tier = PathMatchTier::kNormal;
+    std::size_t syllable_count = 0;
 };
 
 PathMatchTier classify_path(const SegmentedPath& path) {
@@ -209,21 +137,6 @@ void rank_fallback_candidate(Candidate& candidate, PathMatchTier tier,
     candidate.frequency = base + (std::min)(source_frequency, kMaxRankedSourceFrequency) / 100;
 }
 
-struct CompositionPathSpec {
-    size_t id_sequence_index = 0;
-    const SegmentedPath* segmented_path = nullptr;
-    CompositionPathKind kind = CompositionPathKind::kNormal;
-    uint16_t rank = 0;
-};
-
-struct IndexedShuangpinPath {
-    std::string key;
-    PathMatchTier tier = PathMatchTier::kNormal;
-    std::size_t syllable_count = 0;
-};
-
-} // namespace
-
 // Linear dedup helpers — cheaper than hash set for small collections (≤128)
 static bool contains_text(const std::vector<Candidate>& items, const std::string& text) {
     for (auto& c : items)
@@ -274,6 +187,258 @@ static bool contains_ids(const std::vector<std::vector<uint32_t>>& items,
     for (auto& v : items)
         if (v == ids) return true;
     return false;
+}
+
+} // namespace
+
+PinyinTranslator::PinyinTranslator() = default;
+PinyinTranslator::~PinyinTranslator() = default;
+
+void PinyinTranslator::clear_query_cache() {
+    query_cache_.clear();
+    sentence_session_.reset();
+    fallback_query_.reset();
+    fallback_input_.clear();
+    grammar_graph_.reset();
+    grammar_input_.clear();
+    input_session_.reset();
+}
+
+uint64_t PinyinTranslator::query_version() const {
+    const auto versions = query_cache_versions();
+    uint64_t token = UINT64_C(14695981039346656037);
+    for (uint64_t value :
+         {versions.user_dict, versions.candidate_preference, versions.manual_candidate_order,
+          versions.disabled_system_entry, versions.composition_learning,
+          static_cast<uint64_t>(reinterpret_cast<uintptr_t>(dict_)),
+          dict_ ? dict_->dictionary_generation() : uint64_t{0},
+          static_cast<uint64_t>(reinterpret_cast<uintptr_t>(pinyin_resources_.get())),
+          static_cast<uint64_t>(reinterpret_cast<uintptr_t>(composition_learning_)),
+          static_cast<uint64_t>(pinyin_query_policy_.enable_fuzzy),
+          static_cast<uint64_t>(candidate_learning_enabled_),
+          static_cast<uint64_t>(sentence_composition_enabled_)}) {
+        token = (token ^ value) * UINT64_C(1099511628211);
+    }
+    return token;
+}
+
+void PinyinTranslator::prepare_input_session(const TranslationRequest& request) {
+    if (!pinyin_resources_ || request.purpose != TranslationPurpose::kComposition ||
+        request.work != QueryWork::kAdvance) {
+        return;
+    }
+    const auto version = query_version();
+    if (input_session_ && input_session_->input == request.input &&
+        input_session_->revision == request.input_revision && input_session_->version == version) {
+        return;
+    }
+    const auto* previous = request.continuation;
+    const bool appended = input_session_ && previous && input_session_->version == version &&
+                          input_session_->revision + 1 == request.input_revision &&
+                          input_session_->input == previous->input &&
+                          request.input.size() == previous->input.size() + 1 &&
+                          request.input.compare(0, previous->input.size(), previous->input) == 0;
+    if (appended) {
+        input_session_->previous_graph = std::move(grammar_graph_);
+        input_session_->previous_path.reset();
+        grammar_input_.clear();
+    } else {
+        input_session_.reset(new InputSession);
+    }
+    input_session_->input = request.input;
+    input_session_->revision = request.input_revision;
+    input_session_->version = version;
+}
+
+const SegmentedPath* PinyinTranslator::continuation_path(const CandidateContinuation* previous) {
+    if (!input_session_ || !previous ||
+        input_session_->input.size() != previous->input.size() + 1 ||
+        input_session_->input.compare(0, previous->input.size(), previous->input) != 0) {
+        return nullptr;
+    }
+    if (!input_session_->previous_path) {
+        const auto* old = input_session_->previous_graph.get();
+        PinyinInputGraph forced;
+        if (!old || old->input != previous->input || !old->fallback) {
+            forced = PinyinInputGraph::build(*pinyin_resources_, previous->input,
+                                             pinyin_query_policy_.enable_fuzzy, true,
+                                             &input_session_->spellings);
+            old = &forced;
+        }
+        auto paths = old->align(previous->candidate.code, previous->candidate.syllables,
+                                previous->input.size());
+        input_session_->previous_path = paths.empty() ? SegmentedPath{} : std::move(paths.front());
+    }
+    return &*input_session_->previous_path;
+}
+
+const PinyinInputGraph& PinyinTranslator::input_graph(const std::string& input) const {
+    if (!grammar_graph_ || grammar_input_ != input) {
+        grammar_graph_.reset(new PinyinInputGraph(PinyinInputGraph::build(
+            *pinyin_resources_, input, pinyin_query_policy_.enable_fuzzy, false,
+            input_session_ && input_session_->input == input ? &input_session_->spellings
+                                                             : nullptr)));
+        grammar_input_ = input;
+    }
+    return *grammar_graph_;
+}
+
+bool PinyinTranslator::requires_graph_query(const std::string& input) const {
+    if (!pinyin_resources_) {
+        return false;
+    }
+    if (fallback_query_ && !fallback_supplemental_ && fallback_input_ == input &&
+        fallback_version_ == query_version()) {
+        return true;
+    }
+    if (grammar_graph_ && grammar_input_ == input) {
+        return grammar_graph_->fallback && !prefers_ordinary_query(*grammar_graph_);
+    }
+    // This predicate is also used by read/search requests. Do not replace the
+    // active composition's grammar cache just to inspect another input.
+    const auto graph =
+        PinyinInputGraph::build(*pinyin_resources_, input, pinyin_query_policy_.enable_fuzzy);
+    return graph.fallback && !prefers_ordinary_query(graph);
+}
+
+bool PinyinTranslator::prefers_ordinary_query(const PinyinInputGraph& graph) const {
+    if (!graph.full_pinyin) {
+        return false;
+    }
+    if (is_repeated_short_graph(graph)) {
+        return true;
+    }
+    // Keep established Top-N and personal-word ranking when they already supply
+    // a real complete reading. Predictions alone must not suppress composition.
+    const auto indexed = lookup_indexed_fast(graph.input, 32, nullptr);
+    return std::any_of(
+        indexed.candidates.begin(), indexed.candidates.end(), [&](const Candidate& candidate) {
+            const auto paths = graph.align(candidate.code, candidate.syllables, graph.input_size);
+            return !paths.empty();
+        });
+}
+
+bool PinyinTranslator::has_complete_reading(const std::string& input,
+                                            const std::vector<CandidateEntry>& entries) const {
+    if (entries.empty()) {
+        return false;
+    }
+    PinyinInputGraph local_graph;
+    const PinyinInputGraph* graph = grammar_input_ == input ? grammar_graph_.get() : nullptr;
+    if (!graph) {
+        local_graph =
+            PinyinInputGraph::build(*pinyin_resources_, input, pinyin_query_policy_.enable_fuzzy);
+        graph = &local_graph;
+    }
+    return std::any_of(entries.begin(), entries.end(), [&](const CandidateEntry& entry) {
+        return !graph->align(entry.candidate.code, entry.candidate.syllables, input.size()).empty();
+    });
+}
+
+bool PinyinTranslator::translate_fallback(const TranslationRequest& request,
+                                          TranslationResult& result, bool force_abbreviation) {
+    if (!pinyin_resources_) {
+        return false;
+    }
+    const uint64_t version = query_version();
+    const auto* continuation = request.purpose == TranslationPurpose::kComposition &&
+                                       request.work == QueryWork::kAdvance
+                                   ? request.continuation
+                                   : nullptr;
+    if (!force_abbreviation && request.purpose == TranslationPurpose::kComposition &&
+        fallback_query_ && fallback_supplemental_ && fallback_input_ == request.input &&
+        fallback_revision_ == request.input_revision && fallback_version_ == version) {
+        return false;
+    }
+    const bool same_target = fallback_query_ && fallback_input_ == request.input &&
+                             fallback_revision_ == request.input_revision &&
+                             fallback_version_ == version &&
+                             fallback_partial_ == request.policy.allow_partial_selection &&
+                             fallback_suppress_composition_ == request.suppress_graph_composition;
+    if (request.purpose == TranslationPurpose::kSearch) {
+        auto graph = PinyinInputGraph::build(*pinyin_resources_, request.input,
+                                             pinyin_query_policy_.enable_fuzzy, force_abbreviation);
+        if (!graph.fallback || (!force_abbreviation && prefers_ordinary_query(graph))) {
+            return false;
+        }
+        PinyinGraphQuery isolated(*dict_, std::move(graph), false,
+                                  sentence_composition_enabled_ &&
+                                      !request.suppress_graph_composition,
+                                  candidate_learning_enabled_, composition_learning_);
+        result = isolated.query(request);
+        result.incremental = false;
+    } else if (request.work == QueryWork::kRead) {
+        if (same_target) {
+            result = fallback_query_->query(request);
+        } else {
+            const auto graph =
+                PinyinInputGraph::build(*pinyin_resources_, request.input,
+                                        pinyin_query_policy_.enable_fuzzy, force_abbreviation);
+            if (!graph.fallback || (!force_abbreviation && prefers_ordinary_query(graph))) {
+                return false;
+            }
+            result.incremental = true;
+            result.status = TranslationStatus::kStableDegraded;
+            result.extent = make_candidate_extent(0, 0, true);
+        }
+    } else {
+        const bool invalidated =
+            fallback_query_ && fallback_input_ == request.input &&
+            (fallback_version_ != version ||
+             fallback_partial_ != request.policy.allow_partial_selection ||
+             fallback_suppress_composition_ != request.suppress_graph_composition);
+        if (!same_target) {
+            PinyinInputGraph forced_graph;
+            const PinyinInputGraph* graph = nullptr;
+            if (force_abbreviation) {
+                forced_graph = PinyinInputGraph::build(
+                    *pinyin_resources_, request.input, pinyin_query_policy_.enable_fuzzy, true,
+                    input_session_ ? &input_session_->spellings : nullptr);
+                graph = &forced_graph;
+            } else {
+                graph = &input_graph(request.input);
+            }
+            if (!graph->fallback || (!force_abbreviation && prefers_ordinary_query(*graph))) {
+                // A changed real composition must not leave an old resumable query alive.
+                fallback_query_.reset();
+                fallback_input_.clear();
+                return false;
+            }
+            auto prefix = PinyinContinuation::build(
+                *pinyin_resources_, *graph, pinyin_query_policy_.enable_fuzzy, continuation,
+                continuation_path(continuation));
+            auto query_graph = force_abbreviation ? std::move(forced_graph) : *graph;
+            fallback_query_.reset(new PinyinGraphQuery(
+                *dict_, std::move(query_graph), request.policy.allow_partial_selection,
+                sentence_composition_enabled_ && !request.suppress_graph_composition,
+                candidate_learning_enabled_, composition_learning_, std::move(prefix),
+                PinyinGraphQueryMode::kCandidates));
+            fallback_input_ = request.input;
+            fallback_version_ = version;
+            fallback_partial_ = request.policy.allow_partial_selection;
+            fallback_revision_ = request.input_revision;
+            fallback_suppress_composition_ = request.suppress_graph_composition;
+            fallback_supplemental_ = force_abbreviation;
+        }
+        auto effective = request;
+        if (invalidated) {
+            effective.published = nullptr;
+        }
+        result = fallback_query_->query(effective);
+        result.sequence_invalidated = invalidated;
+    }
+    result.sequence_version = version;
+    if (query_version() != version) {
+        if (request.purpose == TranslationPurpose::kComposition &&
+            request.work == QueryWork::kAdvance) {
+            fallback_query_.reset();
+        }
+        result.entries.clear();
+        result.extent = make_candidate_extent(0, 0, true);
+        result.sequence_invalidated = true;
+        result.status = TranslationStatus::kStableDegraded;
+    }
+    return true;
 }
 
 void PinyinTranslator::set_dict(Dict* dict) {
@@ -395,6 +560,7 @@ PinyinTranslator::IndexedFastResult PinyinTranslator::lookup_indexed_fast(
 PinyinTranslator::QueryCacheVersions PinyinTranslator::query_cache_versions() const {
     QueryCacheVersions versions;
     if (dict_) {
+        versions.dictionary = dict_->dictionary_generation();
         versions.user_dict = dict_->user_dict_version();
         versions.candidate_preference =
             candidate_learning_enabled_ ? dict_->candidate_preference_version() : 0;
@@ -419,6 +585,7 @@ bool PinyinTranslator::lookup_query_cache(const std::string& input, int page_ind
             entry.page_index == page_index &&
             entry.candidate_offset == candidate_offset &&
             entry.page_size == page_size &&
+            entry.dictionary_generation == versions.dictionary &&
             entry.user_dict_version == versions.user_dict &&
             entry.candidate_preference_version == versions.candidate_preference &&
             entry.manual_candidate_order_version == versions.manual_candidate_order &&
@@ -457,7 +624,8 @@ void PinyinTranslator::store_query_cache(const std::string& input, int page_inde
         return;
 
     const QueryCacheVersions current_versions = query_cache_versions();
-    if (current_versions.user_dict != versions.user_dict ||
+    if (current_versions.dictionary != versions.dictionary ||
+        current_versions.user_dict != versions.user_dict ||
         current_versions.candidate_preference != versions.candidate_preference ||
         current_versions.manual_candidate_order != versions.manual_candidate_order ||
         current_versions.disabled_system_entry != versions.disabled_system_entry ||
@@ -469,6 +637,7 @@ void PinyinTranslator::store_query_cache(const std::string& input, int page_inde
             entry.page_index == page_index &&
             entry.candidate_offset == candidate_offset &&
             entry.page_size == page_size &&
+            entry.dictionary_generation == versions.dictionary &&
             entry.user_dict_version == versions.user_dict &&
             entry.candidate_preference_version == versions.candidate_preference &&
             entry.manual_candidate_order_version == versions.manual_candidate_order &&
@@ -494,6 +663,7 @@ void PinyinTranslator::store_query_cache(const std::string& input, int page_inde
     entry.page_index = page_index;
     entry.candidate_offset = candidate_offset;
     entry.page_size = page_size;
+    entry.dictionary_generation = versions.dictionary;
     entry.user_dict_version = versions.user_dict;
     entry.candidate_preference_version = versions.candidate_preference;
     entry.manual_candidate_order_version = versions.manual_candidate_order;
@@ -507,32 +677,40 @@ void PinyinTranslator::store_query_cache(const std::string& input, int page_inde
 CandidatePage PinyinTranslator::translate_page(const std::string& pinyin, int page_index,
                                                int page_size, QueryTrace* trace,
                                                const QueryBudget* budget, QueryScratch* scratch,
-                                               int candidate_offset,
-                                               bool require_runtime_paths,
+                                               int candidate_offset, bool require_runtime_paths,
                                                PinyinLookupScope scope) {
+    const int offset = candidate_offset >= 0 ? candidate_offset : page_index * page_size;
+    if (scope != PinyinLookupScope::kAll) {
+        return lookup_sources(pinyin, page_index, page_size, trace, budget, scratch, offset,
+                              require_runtime_paths, scope);
+    }
+    TranslationRequest request;
+    request.input = pinyin;
+    request.page_index = page_index;
+    request.page_offset = offset;
+    request.page_size = page_size;
+    request.trace = trace;
+    request.budget = budget;
+    request.scratch = scratch;
+    request.policy.allow_partial_selection = false;
+    request.purpose = TranslationPurpose::kSearch;
+    return translate_impl(request, require_runtime_paths).candidate_page();
+}
+
+CandidatePage PinyinTranslator::lookup_sources(const std::string& pinyin, int page_index,
+                                               int page_size, QueryTrace* trace,
+                                               const QueryBudget* budget, QueryScratch* scratch,
+                                               int candidate_offset, bool require_runtime_paths,
+                                               PinyinLookupScope scope,
+                                               SpellingQueryCache* spellings) {
     CandidatePage page;
     page.page_index = page_index;
     page.page_size = page_size;
-
-    if (!dict_ || !dict_->is_open() || pinyin.empty())
+    if (!dict_ || !dict_->is_open() || pinyin.empty()) {
         return page;
-
-    int offset = candidate_offset >= 0 ? candidate_offset : page_index * page_size;
-    page.page_offset = offset;
-    if (pinyin_scheme() == PinyinSchemeKind::kShuangpin) {
-        TranslationRequest request;
-        request.input = pinyin;
-        request.page_index = page_index;
-        request.page_offset = offset;
-        request.page_size = page_size;
-        request.trace = trace;
-        request.budget = budget;
-        request.purpose = TranslationPurpose::kSearch;
-        TranslationResult fallback;
-        if (translate_fallback(request, fallback)) {
-            return fallback.candidate_page();
-        }
     }
+    const int offset = candidate_offset >= 0 ? candidate_offset : page_index * page_size;
+    page.page_offset = offset;
     int fetch_limit = page_size;
     const int need = offset + fetch_limit + 1;
     const QueryCacheVersions cache_versions = query_cache_versions();
@@ -619,7 +797,6 @@ CandidatePage PinyinTranslator::translate_page(const std::string& pinyin, int pa
     // Need enough paths for fuzzy spellings — abbreviation-heavy graphs can
     // produce hundreds of paths before non-abbreviation paths appear.
     static constexpr size_t kMaxPaths = 64;
-    static constexpr size_t kMaxCompositionPaths = 8;
     static constexpr size_t kMaxIndexedShuangpinPaths = 8;
     auto rank_shuangpin_path = [&](const std::string& query_key,
                                    std::vector<Candidate>& candidates) {
@@ -650,10 +827,9 @@ CandidatePage PinyinTranslator::translate_page(const std::string& pinyin, int pa
     bool deadline_hit = false;
     SegmentResult segment_result;
     SegmentResult completion_result;
-    bool completion_attempted = false;
     std::vector<CompositionPathSpec> composition_specs;
     if (sentence_composition_enabled_) {
-        composition_specs.reserve(kMaxCompositionPaths + 1);
+        composition_specs.reserve(1);
     }
     if (pinyin_resources_) {
         // Check deadline before syllabifier (it can be slow on long inputs)
@@ -667,7 +843,7 @@ CandidatePage PinyinTranslator::translate_page(const std::string& pinyin, int pa
                 pinyin_scheme() == PinyinSchemeKind::kShuangpin;
             options.collect_path_metadata = true;
             segment_result = pinyin_resources_->segment(
-                pinyin, budget ? &budget->deadline : nullptr, options);
+                pinyin, budget ? &budget->deadline : nullptr, options, spellings);
             id_sequences.reserve(std::min(segment_result.paths.size(), kMaxPaths) + 1);
             path_tiers.reserve(std::min(segment_result.paths.size(), kMaxPaths) + 1);
             path_query_keys.reserve(std::min(segment_result.paths.size(), kMaxPaths) + 1);
@@ -690,24 +866,12 @@ CandidatePage PinyinTranslator::translate_page(const std::string& pinyin, int pa
                 }
 
                 if (sentence_composition_enabled_) {
-                    const bool duplicate_composition_path = std::any_of(
-                        composition_specs.begin(), composition_specs.end(),
-                        [&](const auto& spec) {
-                            return id_sequences[spec.id_sequence_index] ==
-                                   id_sequences[id_index];
-                        });
                     const bool normal_composition_path =
                         pinyin_scheme() == PinyinSchemeKind::kShuangpin
                             ? is_shuangpin_composition_path(pinyin, segmented_path)
                             : is_normal_composition_path(pinyin, segmented_path);
                     if (normal_composition_path) {
                         has_normal_composition_path = true;
-                        if (!duplicate_composition_path &&
-                            composition_specs.size() < kMaxCompositionPaths) {
-                            composition_specs.push_back({id_index, &segmented_path,
-                                                        CompositionPathKind::kNormal,
-                                                        static_cast<uint16_t>(i)});
-                        }
                     } else if (pinyin_scheme() == PinyinSchemeKind::kFullPinyin &&
                                !has_repeated_short_path &&
                                is_repeated_short_code_path(pinyin, segmented_path)) {
@@ -836,9 +1000,8 @@ CandidatePage PinyinTranslator::translate_page(const std::string& pinyin, int pa
         completion_options.enable_fuzzy = pinyin_query_policy_.enable_fuzzy;
         completion_options.enable_terminal_completion = true;
         completion_options.collect_path_metadata = true;
-        completion_attempted = true;
-        completion_result = pinyin_resources_->segment(
-            pinyin, budget ? &budget->deadline : nullptr, completion_options);
+        completion_result = pinyin_resources_->segment(pinyin, budget ? &budget->deadline : nullptr,
+                                                       completion_options, spellings);
         if (completion_result.deadline_exceeded) {
             deadline_hit = true;
             if (trace) {
@@ -993,50 +1156,6 @@ CandidatePage PinyinTranslator::translate_page(const std::string& pinyin, int pa
     const bool can_compose = scope != PinyinLookupScope::kPrefix && sentence_composition_enabled_ &&
                              !defer_composition && sorted.size() < static_cast<size_t>(need) &&
                              !(budget && budget->deadline.expired());
-    if (can_compose && scope == PinyinLookupScope::kAll && sorted.empty() && pinyin_resources_ &&
-        pinyin_scheme() == PinyinSchemeKind::kFullPinyin &&
-        composition_specs.size() < kMaxCompositionPaths) {
-        // Keep dictionary matching authoritative. Completion only supplies missing sentences,
-        // and shares the existing composition budget rather than starting a second composer.
-        if (!completion_attempted) {
-            SyllabifierOptions options;
-            options.enable_fuzzy = pinyin_query_policy_.enable_fuzzy;
-            options.enable_terminal_completion = true;
-            options.collect_path_metadata = true;
-            completion_result =
-                pinyin_resources_->segment(pinyin, budget ? &budget->deadline : nullptr, options);
-        }
-        if (completion_result.deadline_exceeded) {
-            deadline_hit = true;
-            if (trace) {
-                trace->deadline_exceeded = true;
-                trace->truncated = true;
-            }
-        } else {
-            for (size_t i = 0; i < completion_result.paths.size() && i < kMaxPaths &&
-                               composition_specs.size() < kMaxCompositionPaths;
-                 ++i) {
-                const auto& path = completion_result.paths[i];
-                if (!is_normal_composition_path(pinyin, path) ||
-                    path.spelling_types.back() != kCompletionSpelling) {
-                    continue;
-                }
-                const bool duplicate = std::any_of(
-                    composition_specs.begin(), composition_specs.end(), [&](const auto& spec) {
-                        return spec.segmented_path->syllables == path.syllables;
-                    });
-                if (duplicate) {
-                    continue;
-                }
-                const size_t id_index = add_path(path.syllables, PathMatchTier::kCompletion);
-                if (id_index != SIZE_MAX) {
-                    composition_specs.push_back({id_index, &path,
-                                                 CompositionPathKind::kTerminalCompletion,
-                                                 static_cast<uint16_t>(i)});
-                }
-            }
-        }
-    }
     if (can_compose && !composition_specs.empty() && !deadline_hit) {
         std::vector<CompositionPath> composition_paths;
         composition_paths.reserve(composition_specs.size());
@@ -1182,14 +1301,146 @@ bool PinyinTranslator::is_complete_full_pinyin_syllable(const std::string& input
     });
 }
 
+PinyinTranslator::SentenceSession*
+PinyinTranslator::prepare_sentence_query(const TranslationRequest& request,
+                                         std::unique_ptr<SentenceSession>& isolated) {
+    if (!pinyin_resources_ || !sentence_composition_enabled_) {
+        return nullptr;
+    }
+    const uint64_t version = query_version();
+    const bool search = request.purpose == TranslationPurpose::kSearch;
+    const bool same_target = sentence_session_ && sentence_session_->input == request.input &&
+                             sentence_session_->revision == request.input_revision &&
+                             sentence_session_->version == version;
+    if (!search && same_target) {
+        return sentence_session_.get();
+    }
+    if (request.work == QueryWork::kRead) {
+        return nullptr;
+    }
+    std::unique_ptr<SentenceSession> session(new SentenceSession);
+    session->input = request.input;
+    session->revision = request.input_revision;
+    session->version = version;
+    if (!search && request.continuation) {
+        session->continuation = *request.continuation;
+    }
+    if (search) {
+        isolated = std::move(session);
+        return isolated.get();
+    }
+    sentence_session_ = std::move(session);
+    return sentence_session_.get();
+}
+
+TranslationResult PinyinTranslator::query_sentence(SentenceSession& session,
+                                                   const TranslationRequest& request) {
+    if (!session.query && request.work == QueryWork::kAdvance) {
+        // Search also uses the sentence producer, but owns an isolated session.
+        const bool active = &session == sentence_session_.get() && input_session_ &&
+                            input_session_->input == request.input &&
+                            input_session_->revision == request.input_revision &&
+                            input_session_->version == query_version();
+        auto graph = grammar_graph_ && grammar_input_ == request.input
+                         ? *grammar_graph_
+                         : PinyinInputGraph::build(*pinyin_resources_, request.input,
+                                                   pinyin_query_policy_.enable_fuzzy, false,
+                                                   active ? &input_session_->spellings : nullptr);
+        const auto* previous = session.continuation ? &*session.continuation : nullptr;
+        auto continuation =
+            PinyinContinuation::build(*pinyin_resources_, graph, pinyin_query_policy_.enable_fuzzy,
+                                      previous, active ? continuation_path(previous) : nullptr);
+        const bool compose = !is_repeated_short_graph(graph);
+        session.query.reset(new PinyinGraphQuery(*dict_, std::move(graph), false, compose, false,
+                                                 nullptr, std::move(continuation),
+                                                 PinyinGraphQueryMode::kSentence));
+    }
+    if (session.query) {
+        return session.query->query(request);
+    }
+    TranslationResult pending;
+    pending.extent = make_candidate_extent(0, 0, true);
+    pending.status = TranslationStatus::kStableDegraded;
+    return pending;
+}
+
+void PinyinTranslator::merge_sentence_candidate(const TranslationRequest& request,
+                                                Candidate candidate,
+                                                std::vector<Candidate>& merged) const {
+    const auto duplicate =
+        std::find_if(merged.begin(), merged.end(),
+                     [&](const Candidate& existing) { return existing.text == candidate.text; });
+    if (duplicate != merged.end()) {
+        if (duplicate->origin != CandidateOrigin::kLearned ||
+            !candidate_rank_before(candidate, *duplicate)) {
+            return;
+        }
+    }
+    std::vector<std::string> query_codes;
+    if (pinyin_scheme() == PinyinSchemeKind::kShuangpin) {
+        for (const auto& item : merged) {
+            const auto& code = item.input_code.empty() ? item.code : item.input_code;
+            if (std::find(query_codes.begin(), query_codes.end(), code) == query_codes.end()) {
+                query_codes.push_back(code);
+            }
+        }
+    }
+    if (duplicate != merged.end()) {
+        // A generated reading can resolve a previously unavailable history item.
+        merged.erase(duplicate);
+    }
+    if (candidate_learning_enabled_ && dict_->candidate_preference_count() != 0) {
+        std::vector<Candidate> sentence;
+        sentence.push_back(std::move(candidate));
+        const auto& query_code = pinyin_scheme() == PinyinSchemeKind::kFullPinyin
+                                     ? request.input
+                                     : sentence.front().input_code;
+        dict_->apply_candidate_preferences(
+            query_code, CandidateSource::kPinyin, sentence, 1,
+            [&](const Candidate& preference) { return preference.text == sentence.front().text; });
+        candidate = std::move(sentence.front());
+    }
+    merged.push_back(std::move(candidate));
+    if (pinyin_scheme() == PinyinSchemeKind::kShuangpin) {
+        const auto& code = merged.back().input_code;
+        if (std::find(query_codes.begin(), query_codes.end(), code) == query_codes.end()) {
+            query_codes.push_back(code);
+        }
+    }
+    sort_candidates_by_score(merged);
+
+    // Apply the existing manual-order policy after all ordinary full-span
+    // candidates exist, including a generated sentence that could not resolve earlier.
+    const int limit = static_cast<int>(merged.size());
+    if (pinyin_scheme() == PinyinSchemeKind::kFullPinyin) {
+        dict_->apply_manual_candidate_order(request.input, CandidateSource::kPinyin, merged, limit);
+    } else {
+        for (auto code = query_codes.rbegin(); code != query_codes.rend(); ++code) {
+            dict_->apply_manual_candidate_order(*code, CandidateSource::kPinyin, merged, limit,
+                                                *code);
+        }
+    }
+}
+
 TranslationResult PinyinTranslator::translate(const TranslationRequest& request) {
+    return translate_impl(request);
+}
+
+TranslationResult PinyinTranslator::translate_impl(const TranslationRequest& request,
+                                                   bool force_runtime_paths) {
     TranslationResult result;
     if (!dict_ || !dict_->is_open() || request.input.empty() || request.page_size <= 0) {
-        result.status = dict_ && dict_->is_open() ? TranslationStatus::kSuccess
-                                                  : TranslationStatus::kFailed;
+        result.status =
+            dict_ && dict_->is_open() ? TranslationStatus::kSuccess : TranslationStatus::kFailed;
         return result;
     }
 
+    prepare_input_session(request);
+    SpellingQueryCache* spellings = request.purpose == TranslationPurpose::kComposition &&
+                                            request.work == QueryWork::kAdvance && input_session_ &&
+                                            input_session_->input == request.input
+                                        ? &input_session_->spellings
+                                        : nullptr;
     if (translate_fallback(request, result)) {
         if (request.purpose == TranslationPurpose::kSearch) {
             return result;
@@ -1207,31 +1458,129 @@ TranslationResult PinyinTranslator::translate(const TranslationRequest& request)
     effective_request.trace->topk_truncated = false;
     effective_request.trace->composition_truncated = false;
 
-    const bool full_span_first = request.policy.allow_partial_selection &&
-                                 is_complete_full_pinyin_syllable(request.input);
+    // Capture the old visible prefix before a budget stop can update Context.
+    // Read/search requests cannot replace the active composition's state.
+    std::unique_ptr<SentenceSession> isolated_sentence;
+    auto* sentence = prepare_sentence_query(request, isolated_sentence);
+
+    const bool full_span_first =
+        request.policy.allow_partial_selection && is_complete_full_pinyin_syllable(request.input);
     // Preserve the existing minimum source window independently of visible ordering.
     const int fetch_count = (std::max)(request.page_offset + request.page_size + 1, 11);
     const bool require_runtime_paths =
-        pinyin_resources_ && pinyin_query_policy_.enable_fuzzy &&
-        pinyin_resources_->has_fuzzy_path(request.input);
-    CandidatePage full =
-        translate_page(request.input, 0, fetch_count, effective_request.trace, request.budget,
-                       request.scratch, 0, require_runtime_paths,
-                       full_span_first ? PinyinLookupScope::kExact : PinyinLookupScope::kAll);
-    std::vector<CandidateEntry> merged;
-    merged.reserve(full.candidates.size() + kMaxPartialCandidatesPerBoundary);
-    for (auto& candidate : full.candidates) {
-        merged.push_back(make_text_candidate_entry(std::move(candidate), request.input.size()));
-        if (full_span_first) {
-            merged.back().match_kind = CandidateMatchKind::kExact;
-        }
-    }
+        force_runtime_paths || (pinyin_resources_ && pinyin_query_policy_.enable_fuzzy &&
+                                pinyin_resources_->has_fuzzy_path(request.input, {}, spellings));
+    const auto& initial_trace = *effective_request.trace;
+    const uint64_t initial_dictionary_work =
+        static_cast<uint64_t>(initial_trace.exact_scan_count) + initial_trace.prefix_scan_count +
+        initial_trace.span_entry_scan_count + initial_trace.span_query_count;
+    const uint32_t initial_user_work = initial_trace.user_scan_count;
+    CandidatePage full = lookup_sources(
+        request.input, 0, fetch_count, effective_request.trace, request.budget, request.scratch, 0,
+        require_runtime_paths,
+        full_span_first ? PinyinLookupScope::kExact : PinyinLookupScope::kAll, spellings);
     const bool full_query_incomplete = effective_request.trace->deadline_exceeded ||
                                        effective_request.trace->scan_budget_truncated ||
                                        !full.extent.complete;
     if (full_query_incomplete) {
-        result.status = merged.empty() ? TranslationStatus::kFailed
-                                       : TranslationStatus::kStableDegraded;
+        result.status = TranslationStatus::kStableDegraded;
+    }
+    const bool has_sentence =
+        std::any_of(full.candidates.begin(), full.candidates.end(), [](const Candidate& candidate) {
+            return candidate.origin == CandidateOrigin::kComposed;
+        });
+    const bool can_compose = !full_query_incomplete && pinyin_resources_ &&
+                             sentence_composition_enabled_ && !request.suppress_graph_composition &&
+                             !has_sentence &&
+                             full.candidates.size() < static_cast<std::size_t>(fetch_count);
+    QueryBudget remaining = request.budget ? *request.budget : QueryBudget{};
+    if (can_compose) {
+        const auto& used = *effective_request.trace;
+        const uint64_t total_dictionary_work = static_cast<uint64_t>(used.exact_scan_count) +
+                                               used.prefix_scan_count + used.span_entry_scan_count +
+                                               used.span_query_count;
+        const uint64_t dictionary_work = total_dictionary_work >= initial_dictionary_work
+                                             ? total_dictionary_work - initial_dictionary_work
+                                             : total_dictionary_work;
+        const uint32_t user_work = used.user_scan_count >= initial_user_work
+                                       ? used.user_scan_count - initial_user_work
+                                       : used.user_scan_count;
+        remaining.max_prefix_scan =
+            dictionary_work >= remaining.max_prefix_scan
+                ? 0
+                : remaining.max_prefix_scan - static_cast<uint32_t>(dictionary_work);
+        remaining.max_user_scan =
+            user_work >= remaining.max_user_scan ? 0 : remaining.max_user_scan - user_work;
+        const uint64_t composition_start_work =
+            static_cast<uint64_t>(used.span_entry_scan_count) + used.span_query_count;
+        if (sentence) {
+            auto sentence_request = effective_request;
+            sentence_request.budget = &remaining;
+            sentence_request.page_index = 0;
+            sentence_request.page_offset = 0;
+            sentence_request.page_size = 1;
+            sentence_request.purpose = TranslationPurpose::kComposition;
+            sentence_request.published = nullptr;
+            auto composed = query_sentence(*sentence, sentence_request);
+            for (auto& entry : composed.entries) {
+                merge_sentence_candidate(request, std::move(entry.candidate), full.candidates);
+            }
+            if (!composed.extent.complete) {
+                result.status = TranslationStatus::kStableDegraded;
+            }
+        } else if (request.work == QueryWork::kRead) {
+            result.status = TranslationStatus::kStableDegraded;
+        }
+        const uint64_t composition_work =
+            static_cast<uint64_t>(effective_request.trace->span_entry_scan_count) +
+            effective_request.trace->span_query_count - composition_start_work;
+        remaining.max_prefix_scan =
+            composition_work >= remaining.max_prefix_scan
+                ? 0
+                : remaining.max_prefix_scan - static_cast<uint32_t>(composition_work);
+    }
+    std::vector<CandidateEntry> merged;
+    merged.reserve(full.candidates.size() + kMaxPartialCandidatesPerBoundary);
+    for (auto& candidate : full.candidates) {
+        merged.push_back(make_text_candidate_entry(std::move(candidate), request.input.size()));
+        if (full_span_first && merged.back().candidate.origin != CandidateOrigin::kComposed) {
+            merged.back().match_kind = CandidateMatchKind::kExact;
+        }
+    }
+    if (can_compose) {
+        // A normal spelling graph can be grammatical but have no dictionary
+        // sentence. Only after it is exhausted may mixed abbreviations compete.
+        const bool need_abbreviations = pinyin_scheme() == PinyinSchemeKind::kFullPinyin &&
+                                        result.status == TranslationStatus::kSuccess &&
+                                        !has_complete_reading(request.input, merged);
+        auto fallback_request = effective_request;
+        if (sentence && sentence->continuation) {
+            fallback_request.continuation = &*sentence->continuation;
+        }
+        fallback_request.budget = &remaining;
+        // Ordinary queries retain their own partial-word and prediction pagination.
+        // This query supplements complete matches instead of replacing that sequence.
+        fallback_request.policy.allow_partial_selection = false;
+        TranslationResult fallback;
+        if (need_abbreviations && translate_fallback(fallback_request, fallback, true)) {
+            for (auto& entry : merged) {
+                entry.match_kind = CandidateMatchKind::kPrefix;
+            }
+            for (auto& entry : fallback.entries) {
+                auto existing =
+                    std::find_if(merged.begin(), merged.end(), [&](const auto& previous) {
+                        return previous.candidate.text == entry.candidate.text;
+                    });
+                if (existing == merged.end()) {
+                    merged.push_back(std::move(entry));
+                } else {
+                    *existing = std::move(entry);
+                }
+            }
+            if (!fallback.extent.complete) {
+                result.status = TranslationStatus::kStableDegraded;
+            }
+        }
     }
     const std::size_t full_count = merged.size();
     const bool full_sequence_finished =
@@ -1250,8 +1599,8 @@ TranslationResult PinyinTranslator::translate(const TranslationRequest& request)
         merged.size() < static_cast<std::size_t>(fetch_count)) {
         QueryTrace prediction_trace;
         CandidatePage predictions =
-            translate_page(request.input, 0, fetch_count, &prediction_trace, request.budget,
-                           nullptr, 0, true, PinyinLookupScope::kPrefix);
+            lookup_sources(request.input, 0, fetch_count, &prediction_trace, request.budget,
+                           nullptr, 0, true, PinyinLookupScope::kPrefix, spellings);
         for (auto& candidate : predictions.candidates) {
             const bool duplicate =
                 std::any_of(merged.begin(), merged.end(), [&](const CandidateEntry& entry) {

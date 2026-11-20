@@ -10,6 +10,7 @@
 #include <vector>
 
 #include <cxxime/candidate.h>
+#include <cxxime/spelling_quality.h>
 
 namespace cxxime {
 
@@ -59,14 +60,15 @@ struct CompositionWordEdge {
     uint16_t end = 0;
     Candidate candidate;
     bool fuzzy = false;
+    SpellingQuality quality;
 };
 
-// A finite recommendation search. Deadline interruptions preserve the beam and
-// reconstruction cursor; reaching a strategy cap finishes this recommendation set.
+// A bounded beam per raw position. Supply words in start-position order and
+// drain their queued work before supplying words from the next position.
+// Deadline interruptions preserve both the beam and reconstruction cursor.
 class PinyinGraphComposition {
 public:
-    // requires_fuzzy is a grammar proof: every complete path needs a fuzzy edge.
-    PinyinGraphComposition(const Dict& dict, std::size_t input_size, bool requires_fuzzy = false);
+    PinyinGraphComposition(const Dict& dict, std::size_t input_size);
     ~PinyinGraphComposition();
     void add_word(CompositionWordEdge word);
     void seal();

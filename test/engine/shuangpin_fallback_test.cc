@@ -7,7 +7,7 @@
 
 #include <cxxime/composition_learning.h>
 #include <cxxime/query_trace.h>
-#include <cxxime/shuangpin_graph.h>
+#include <cxxime/pinyin_input_graph.h>
 
 #include "support/shuangpin_fallback_fixture.h"
 
@@ -17,7 +17,7 @@ TEST(ShuangpinFallback, all_schemes_mix_initials_with_complete_syllables_and_com
                                       scheme);
         // The same left-to-right parse is valid in all four schemas. In
         // contrast, Xiaohe can parse jfni as j'fn'i because fn also spells fiao.
-        const auto graph = cxxime::ShuangpinGraph::build(*fixture.resources, "jfmi", false);
+        const auto graph = cxxime::PinyinInputGraph::build(*fixture.resources, "jfmi", false);
         ASSERT_TRUE(graph.fallback);
         const auto paths = graph.align({}, "jun:fu:mi", 4);
         ASSERT_EQ(paths.size(), std::size_t{1});
@@ -57,7 +57,7 @@ TEST(ShuangpinFallback, normal_pair_wins_even_over_high_frequency_initial_words)
     fixture.type("jn");
     ASSERT_TRUE(fixture.find("今", 2) != nullptr);
     ASSERT_TRUE(fixture.find("军你", 2) == nullptr);
-    ASSERT_TRUE(!cxxime::ShuangpinGraph::build(*fixture.resources, "jn", false).fallback);
+    ASSERT_TRUE(!cxxime::PinyinInputGraph::build(*fixture.resources, "jn", false).fallback);
 }
 
 TEST(ShuangpinFallback, illegal_middle_preserves_suffix_and_empty_space_does_not_commit) {
@@ -108,7 +108,7 @@ TEST(ShuangpinFallback, personal_word_uses_the_longest_matching_partial_endpoint
     const std::string input = "oo;";
     test::FallbackFixture fixture({{"ni", "你", 100}});
     ASSERT_TRUE(fixture.dict->add_user_entry("哦", "o", "o"));
-    const auto graph = cxxime::ShuangpinGraph::build(*fixture.resources, input, false);
+    const auto graph = cxxime::PinyinInputGraph::build(*fixture.resources, input, false);
     ASSERT_TRUE(graph.fallback);
     ASSERT_TRUE(graph.align({}, "o", 1).empty());
     ASSERT_TRUE(!graph.align({}, "o", 2).empty());
@@ -134,7 +134,7 @@ TEST(ShuangpinFallback, a_dense_short_prefix_does_not_starve_the_longer_selectio
     }
     rows.emplace_back("jun:fu", "军服", 1);
     test::FallbackFixture fixture(rows);
-    const auto graph = cxxime::ShuangpinGraph::build(*fixture.resources, "jf;", false);
+    const auto graph = cxxime::PinyinInputGraph::build(*fixture.resources, "jf;", false);
     ASSERT_TRUE(graph.fallback);
     ASSERT_TRUE(!graph.align({}, "jun", 1).empty());
     ASSERT_TRUE(!graph.align({}, "jun:fu", 2).empty());
@@ -335,7 +335,7 @@ TEST(ShuangpinFallback, many_ranges_and_small_scan_windows_progress_with_bounded
         cxxime::QueryTrace trace;
         request.trace = &trace;
         auto result = fixture.translator.translate(request);
-        ASSERT_TRUE(trace.span_query_count <= 128);
+        ASSERT_TRUE(trace.span_query_count <= budget.max_prefix_scan);
         ASSERT_TRUE(trace.span_entry_scan_count <= 5);
         ASSERT_TRUE(trace.fallback_buffer_peak <= 7 * 32);
         ASSERT_TRUE(trace.fallback_frame_peak <= 4 * 3);
@@ -417,6 +417,39 @@ TEST(ShuangpinFallback, zero_initial_selection_uses_the_established_pair_and_kee
     ASSERT_EQ(fixture.engine.context().composition().converted_segments().front().raw_input, "oo");
 }
 
+TEST(ShuangpinFallback, appending_initials_keeps_the_previous_text_across_word_boundaries) {
+    for (const auto& scheme : test::fallback_schemes()) {
+        test::FallbackFixture fixture({{"wo", "我", 90000},
+                                       {"jiu", "就", 80000},
+                                       {"jiu:fan", "就范", 50000},
+                                       {"jing:fang", "警方", 900000}},
+                                      scheme);
+        fixture.type("woj");
+        ASSERT_TRUE(fixture.engine.context().candidate(0) != nullptr);
+        ASSERT_EQ(fixture.engine.context().candidate(0)->text, "我就");
+        fixture.type("f");
+        ASSERT_EQ(fixture.engine.context().candidate(0)->text, "我就范");
+        fixture.press(VK_SPACE);
+        ASSERT_EQ(fixture.engine.get_commit_text(), "我就范");
+        ASSERT_TRUE(!fixture.engine.context().is_composing());
+    }
+}
+
+TEST(ShuangpinFallback, completing_normal_spelling_keeps_dictionary_predictions) {
+    for (const auto& scheme : test::fallback_schemes()) {
+        test::FallbackFixture fixture({{"ni:hao", "你好", 10000}}, scheme);
+        fixture.type("n");
+        ASSERT_TRUE(fixture.engine.context().candidate(0) != nullptr);
+        ASSERT_EQ(fixture.engine.context().candidate(0)->text, "你好");
+        fixture.type("i");
+        ASSERT_TRUE(fixture.engine.context().candidate(0) != nullptr);
+        ASSERT_EQ(fixture.engine.context().candidate(0)->text, "你好");
+        fixture.press(VK_SPACE);
+        ASSERT_EQ(fixture.engine.get_commit_text(), "你好");
+        ASSERT_TRUE(!fixture.engine.context().is_composing());
+    }
+}
+
 TEST(ShuangpinFallback, real_dictionary_appending_keys_keeps_boundaries_and_full_first_choices) {
     auto dict = std::make_shared<cxxime::Dict>(cxxime::UserDictKind::PINYIN);
     ASSERT_TRUE(dict->open_dict(std::string(CXXIME_DATA_DIR) + "pinyin.dict.bin"));
@@ -466,7 +499,10 @@ TEST(ShuangpinFallback, real_dictionary_appending_keys_keeps_boundaries_and_full
                 const auto* action =
                     std::get_if<cxxime::TextSelectionAction>(&entries.front().selection);
                 ASSERT_TRUE(action != nullptr);
-                ASSERT_EQ(action->consumed_input_bytes, size);
+                ASSERT_EQ(action->consumed_input_bytes, size)
+                    << "scheme=" << scheme.id << "fuzzy=" << fuzzy
+                    << "input=" << input.substr(0, size)
+                    << "candidate=" << entries.front().candidate.text;
                 const auto presentation = cxxime::derive_composition_presentation(
                     engine.context().composition(), resources.get(), size, true,
                     entries.front().candidate.syllables, true, fuzzy);

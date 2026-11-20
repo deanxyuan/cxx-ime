@@ -340,6 +340,11 @@ void Context::update_translation(TranslationResult&& result) {
     highlight_count_after_page_change_ = 0;
     translation_ = std::move(result);
     translation_input_ = active_input();
+    translation_revision_ = preedit_revision();
+    translation_source_version_ = translation_.validation_version;
+    translation_cursor_ = preedit_cursor();
+    translation_converted_count_ = composition_.converted_segments().size();
+    translation_scheme_ = composition_scheme();
     if (translation_.extent.complete) {
         continuation_effort_ = 0;
     }
@@ -434,7 +439,7 @@ bool Context::navigate_candidates(const KeyEvent& event) {
 
 void Context::request_next_page() {
     if (selectable_candidate_count() <= 0 &&
-        !(translation_.incremental && !translation_.extent.complete)) {
+        !(translation_.usable() && !translation_.extent.complete)) {
         return;
     }
     requested_navigation_ = {CandidateNavigation::kNextPage, false};
@@ -594,6 +599,29 @@ std::vector<CandidateEntry> Context::published_candidates() const {
         append(page->translation, static_cast<int>(page->translation.entries.size()));
     }
     return published;
+}
+
+std::optional<CandidateContinuation>
+Context::candidate_continuation(uint64_t source_version) const {
+    if (translation_input_.empty() || translation_revision_ + 1 != preedit_revision() ||
+        translation_cursor_ != translation_input_.size() ||
+        preedit_cursor() != active_input().size() ||
+        active_input().size() != translation_input_.size() + 1 ||
+        active_input().compare(0, translation_input_.size(), translation_input_) != 0 ||
+        translation_scheme_ != composition_scheme() ||
+        translation_source_version_ != source_version ||
+        translation_converted_count_ != composition_.converted_segments().size()) {
+        return std::nullopt;
+    }
+    const auto* entry = candidate_entry(translation_.highlighted);
+    if (!entry || entry->candidate.source != CandidateSource::kPinyin) {
+        return std::nullopt;
+    }
+    const auto* action = std::get_if<TextSelectionAction>(&entry->selection);
+    if (!action || action->consumed_input_bytes != translation_input_.size()) {
+        return std::nullopt;
+    }
+    return CandidateContinuation{translation_input_, entry->candidate};
 }
 
 void Context::replace_candidate_sequence(TranslationResult&& result) {

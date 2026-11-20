@@ -1,6 +1,6 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
-#include "shuangpin_fallback.h"
+#include "pinyin_graph_query.h"
 
 #include <algorithm>
 #include <iterator>
@@ -36,25 +36,76 @@ std::string join_readings(const SegmentedPath& path) {
     return result;
 }
 
-bool requires_fuzzy_spelling(const ShuangpinGraph& graph) {
-    // Stable Shuangpin boundaries form a single chain. A mandatory fuzzy span
-    // rules out a nonfuzzy complete sentence, regardless of dictionary ranking.
-    for (const auto& vertex : graph.edges) {
-        for (const auto& group : vertex.second) {
-            if (!group.second.empty() &&
-                std::all_of(group.second.begin(), group.second.end(), [](const SyllableEdge& edge) {
-                    return edge.type == kFuzzySpelling || edge.type == kFuzzyCompletionSpelling;
-                })) {
-                return true;
+bool word_better(const CompositionWordEdge& left, const CompositionWordEdge& right) {
+    if (left.quality.better_than(right.quality)) {
+        return true;
+    }
+    if (right.quality.better_than(left.quality)) {
+        return false;
+    }
+    if (left.candidate.source_frequency != right.candidate.source_frequency) {
+        return left.candidate.source_frequency > right.candidate.source_frequency;
+    }
+    return left.candidate.syllables < right.candidate.syllables;
+}
+
+struct SpellingSelection {
+    const PinyinInputGraph& graph;
+    const PinyinContinuation* continuation;
+    std::vector<SpellingQuality> costs;
+    std::vector<bool> reachable;
+
+    bool allowed(std::size_t start, std::size_t end, const SyllableEdge& edge) const {
+        return !continuation || continuation->accepts_spelling(start, end, edge.syllable);
+    }
+
+    SpellingSelection(const PinyinInputGraph& source, const PinyinContinuation* prefix,
+                      bool preferred)
+        : graph(source)
+        , continuation(prefix) {
+        if (!preferred) {
+            return;
+        }
+        costs.resize(graph.input_size + 1);
+        reachable.resize(graph.input_size + 1, false);
+        reachable.back() = true;
+        for (auto vertex = graph.edges.rbegin(); vertex != graph.edges.rend(); ++vertex) {
+            const auto start = vertex->first;
+            for (const auto& group : vertex->second) {
+                if (!reachable[group.first]) {
+                    continue;
+                }
+                for (const auto& edge : group.second) {
+                    if (!allowed(start, group.first, edge)) {
+                        continue;
+                    }
+                    auto cost = costs[group.first];
+                    cost += graph.quality(edge);
+                    if (!reachable[start] || cost.better_than(costs[start])) {
+                        costs[start] = cost;
+                        reachable[start] = true;
+                    }
+                }
             }
         }
     }
-    return false;
-}
+
+    bool accepts(std::size_t start, std::size_t end, const SyllableEdge& edge) const {
+        if (!allowed(start, end, edge)) {
+            return false;
+        }
+        if (costs.empty()) {
+            return true;
+        }
+        auto cost = costs[end];
+        cost += graph.quality(edge);
+        return reachable[end] && !costs[start].better_than(cost);
+    }
+};
 
 } // namespace
 
-struct ShuangpinFallbackQuery::Window {
+struct PinyinGraphQuery::Window {
     struct RangeMemo {
         SyllableRange parent;
         const std::vector<uint32_t>* ids;
@@ -67,11 +118,23 @@ struct ShuangpinFallbackQuery::Window {
     QueryBudget budget;
     std::vector<RangeMemo> memo;
     uint32_t ranges = 0;
+    uint32_t range_limit = 128;
     uint32_t scans = 0;
     uint32_t personal_scans = 0;
     uint32_t steps = 0;
+    uint32_t next_deadline_step = 0;
+    bool deadline_expired = false;
 
-    bool available() const { return steps < 4096 && !budget.deadline.expired(); }
+    bool available() {
+        if (steps >= 4096 || deadline_expired) {
+            return false;
+        }
+        if (budget.deadline.enabled && steps >= next_deadline_step) {
+            deadline_expired = budget.deadline.expired();
+            next_deadline_step = steps + (std::max)(uint32_t{1}, budget.deadline.check_interval);
+        }
+        return !deadline_expired;
+    }
 
     bool can_scan() const { return scans < (std::min)(uint32_t{2048}, budget.max_prefix_scan); }
 
@@ -87,7 +150,7 @@ struct ShuangpinFallbackQuery::Window {
                 return true;
             }
         }
-        if (ranges == 128) {
+        if (ranges == range_limit) {
             return false;
         }
         const std::size_t before = offset;
@@ -100,25 +163,32 @@ struct ShuangpinFallbackQuery::Window {
     }
 };
 
-struct ShuangpinFallbackQuery::MatchingGraph {
+struct PinyinGraphQuery::MatchingGraph {
     struct Option {
         uint32_t id;
         std::size_t end;
         bool fuzzy;
         std::size_t tier;
+        SpellingQuality quality;
+        bool complete;
     };
     struct Vertex {
         std::array<std::vector<uint32_t>, 4> ids;
         std::vector<Option> options;
     };
     std::vector<Vertex> vertices;
+    const PinyinContinuation* continuation = nullptr;
 
-    static Vertex vertex(const Dict& dict, const ShuangpinGraph& graph, std::size_t raw) {
+    static Vertex vertex(const Dict& dict, const PinyinInputGraph& graph, std::size_t raw,
+                         const SpellingSelection& selection) {
         Vertex result;
         const auto vertex = graph.edges.find(raw);
         if (vertex != graph.edges.end()) {
             for (const auto& group : vertex->second) {
                 for (const auto& edge : group.second) {
+                    if (!selection.accepts(raw, group.first, edge)) {
+                        continue;
+                    }
                     const uint32_t id = dict.syllable_to_id(edge.syllable);
                     if (id != UINT32_MAX) {
                         const bool fuzzy =
@@ -127,7 +197,10 @@ struct ShuangpinFallbackQuery::MatchingGraph {
                                                  : edge.type == kAbbreviation       ? 2
                                                  : edge.type == kCompletionSpelling ? 1
                                                                                     : 0;
-                        result.options.push_back({id, group.first, fuzzy, tier});
+                        const bool complete =
+                            edge.type == kNormalSpelling || edge.type == kFuzzySpelling;
+                        result.options.push_back(
+                            {id, group.first, fuzzy, tier, graph.quality(edge), complete});
                         result.ids[tier].push_back(id);
                     }
                 }
@@ -145,7 +218,8 @@ struct ShuangpinFallbackQuery::MatchingGraph {
                 if (left.id != right.id) {
                     return left.id < right.id;
                 }
-                return left.end != right.end ? left.end > right.end : left.fuzzy < right.fuzzy;
+                return left.end != right.end ? left.end > right.end
+                                             : left.complete > right.complete;
             });
         result.options.erase(std::unique(result.options.begin(), result.options.end(),
                                          [](const auto& left, const auto& right) {
@@ -156,14 +230,18 @@ struct ShuangpinFallbackQuery::MatchingGraph {
         return result;
     }
 
-    MatchingGraph(const Dict& dict, const ShuangpinGraph& graph) {
+    MatchingGraph(const Dict& dict, const PinyinInputGraph& graph,
+                  const PinyinContinuation* prefix = nullptr, bool preferred = false)
+        : continuation(prefix) {
+        const SpellingSelection selection(graph, prefix, preferred);
+        vertices.reserve(graph.input_size + 1);
         for (std::size_t raw = 0; raw <= graph.input_size; ++raw) {
-            vertices.push_back(vertex(dict, graph, raw));
+            vertices.push_back(vertex(dict, graph, raw, selection));
         }
     }
 };
 
-struct ShuangpinFallbackQuery::Traversal {
+struct PinyinGraphQuery::Traversal {
     enum class Step {
         kDone,
         kBlocked,
@@ -180,12 +258,15 @@ struct ShuangpinFallbackQuery::Traversal {
         std::size_t option = 0;
         std::size_t tier = 0;
         bool fuzzy = false;
+        SpellingQuality quality;
+        bool complete_syllable = false;
     };
 
     std::size_t start;
     int direct_mode = 0;
     std::size_t target_end = SIZE_MAX;
     bool result_fuzzy = false;
+    SpellingQuality result_quality;
     std::vector<Frame> stack;
 
     static Frame frame(SyllableRange range, std::size_t raw) {
@@ -203,7 +284,7 @@ struct ShuangpinFallbackQuery::Traversal {
         stack.push_back(frame(dict.syllable_root(), position));
     }
 
-    Step step(const Dict& dict, const ShuangpinGraph& graph, const MatchingGraph& matching,
+    Step step(const Dict& dict, const PinyinInputGraph& graph, const MatchingGraph& matching,
               bool best_only, Window& window, Candidate& candidate, std::size_t& end) {
         candidate = {};
         if (stack.empty()) {
@@ -216,14 +297,30 @@ struct ShuangpinFallbackQuery::Traversal {
             (direct_mode == 2 && current.raw != target_end)) {
             current.record = current.range.exact_end;
         }
+        const bool completed_tail_word =
+            matching.continuation && matching.continuation->completes_tail &&
+            current.raw == graph.input_size && current.complete_syllable;
         if (current.record < current.range.exact_end) {
             if (!window.can_scan()) {
                 return Step::kBlocked;
             }
             ++window.scans;
             dict.read_syllable_candidate(current.range, current.record, candidate);
+            if (direct_mode != 0 && dict.is_system_entry_disabled(candidate.text)) {
+                candidate = {};
+            }
             end = current.raw;
             result_fuzzy = current.fuzzy;
+            result_quality = current.quality;
+            if (!candidate.text.empty() && matching.continuation) {
+                // A newly completed syllable can finish a real word spanning
+                // the old tail (e.g. yong + yuan). Earlier separate words stay
+                // protected; an incomplete initial cannot reopen them.
+                if (!completed_tail_word &&
+                    !matching.continuation->accepts(start, end, candidate.text)) {
+                    candidate = {};
+                }
+            }
             if (best_only && !candidate.text.empty()) {
                 current.record = current.range.exact_end;
             }
@@ -248,8 +345,12 @@ struct ShuangpinFallbackQuery::Traversal {
                 }
                 const auto child = current.child;
                 const bool fuzzy = current.fuzzy || option.fuzzy;
+                auto quality = current.quality;
+                quality += option.quality;
                 stack.push_back(frame(child, option.end));
                 stack.back().fuzzy = fuzzy;
+                stack.back().quality = quality;
+                stack.back().complete_syllable = option.complete;
                 return Step::kAdvanced;
             }
             if (option.id > current.child_id) {
@@ -279,21 +380,33 @@ struct ShuangpinFallbackQuery::Traversal {
     }
 };
 
-ShuangpinFallbackQuery::ShuangpinFallbackQuery(Dict& dict, ShuangpinGraph graph, bool partial,
-                                               bool compose, bool learn,
-                                               CompositionLearningService* learning)
+PinyinGraphQuery::PinyinGraphQuery(Dict& dict, PinyinInputGraph graph, bool partial, bool compose,
+                                   bool learn, CompositionLearningService* learning,
+                                   PinyinContinuation continuation, PinyinGraphQueryMode mode)
     : dict_(dict)
     , graph_(std::move(graph))
     , partial_(partial)
     , compose_(compose)
     , learn_(learn)
     , learning_(learning)
-    , matching_(new MatchingGraph(dict_, graph_))
-    , direct_(new Traversal(dict_, 0, 1)) {
+    , matching_(mode == PinyinGraphQueryMode::kCandidates ? new MatchingGraph(dict_, graph_)
+                                                          : nullptr)
+    , direct_(mode == PinyinGraphQueryMode::kCandidates ? new Traversal(dict_, 0, 1) : nullptr) {
+    if (!continuation.text.empty()) {
+        continuation_.reset(new PinyinContinuation(std::move(continuation)));
+    }
     done_[2] = !learn_;
     done_[4] = !learn_ || !learning_;
     done_[5] = !compose_ || graph_.reachable_end != graph_.input_size;
     done_[6] = !partial_;
+    if (mode == PinyinGraphQueryMode::kSentence) {
+        std::fill(done_.begin(), done_.begin() + 5, true);
+        done_[6] = true;
+        if (!done_[5]) {
+            start_composition(graph_.full_pinyin);
+        }
+        return;
+    }
     if (partial_) {
         std::vector<bool> reachable(graph_.input_size + 1, false);
         reachable[0] = true;
@@ -332,17 +445,34 @@ ShuangpinFallbackQuery::ShuangpinFallbackQuery(Dict& dict, ShuangpinGraph graph,
     }
     personal_prefixes_ = std::move(prefixes);
     if (!done_[5]) {
-        composition_.reset(new PinyinGraphComposition(dict_, graph_.input_size,
-                                                      requires_fuzzy_spelling(graph_)));
-        for (std::size_t position = 0; position < graph_.reachable_end; ++position) {
-            word_cursors_.emplace_back(new Traversal(dict_, position));
-        }
+        start_composition(graph_.full_pinyin);
     }
 }
 
-ShuangpinFallbackQuery::~ShuangpinFallbackQuery() = default;
+PinyinGraphQuery::~PinyinGraphQuery() = default;
 
-bool ShuangpinFallbackQuery::step_system(std::size_t source, Window& window) {
+void PinyinGraphQuery::start_composition(bool preferred_spellings) {
+    composition_preferred_ = preferred_spellings;
+    if (continuation_ || preferred_spellings) {
+        preferred_matching_.reset(
+            new MatchingGraph(dict_, graph_, continuation_.get(), preferred_spellings));
+    } else {
+        preferred_matching_.reset();
+        if (!matching_) {
+            matching_.reset(new MatchingGraph(dict_, graph_));
+        }
+    }
+    composition_.reset(new PinyinGraphComposition(dict_, graph_.input_size));
+    position_words_.clear();
+    position_words_.resize(graph_.input_size + 1);
+    word_position_ = 0;
+    word_cursors_.clear();
+    for (std::size_t position = 0; position < graph_.reachable_end; ++position) {
+        word_cursors_.emplace_back(new Traversal(dict_, position));
+    }
+}
+
+bool PinyinGraphQuery::step_system(std::size_t source, Window& window) {
     Candidate candidate;
     std::size_t end = 0;
     auto step = Traversal::Step::kDone;
@@ -359,26 +489,28 @@ bool ShuangpinFallbackQuery::step_system(std::size_t source, Window& window) {
     }
     if (step == Traversal::Step::kDone) {
         done_[source] = true;
-        return false;
+        return graph_.full_pinyin;
     }
     if (step == Traversal::Step::kBlocked) {
         return false;
     }
     if (!candidate.text.empty() && (partial_ || end == graph_.input_size)) {
-        candidate.input_code = candidate.code;
+        candidate.input_code = graph_.full_pinyin ? graph_.input.substr(0, end) : candidate.code;
+        complete_source_ = complete_source_ || end == graph_.input_size;
         candidate.frequency =
             60000000 + (std::min)((std::max)(0, candidate.source_frequency), 99999900) / 100;
-        buffers_[source].push_back(make_text_candidate_entry(std::move(candidate), end));
+        auto entry = make_text_candidate_entry(std::move(candidate), end);
+        buffers_[source].push_back(std::move(entry));
     }
     return true;
 }
 
-bool ShuangpinFallbackQuery::step_personal(std::size_t source, Window& window) {
+bool PinyinGraphQuery::step_personal(std::size_t source, Window& window) {
     auto& pending = personal_resolution_[source - 1];
     if (!pending.entry.candidate.text.empty()) {
         auto& candidate = pending.entry.candidate;
         if (!pending.cursor.started) {
-            if (window.ranges == 128) {
+            if (window.ranges == window.range_limit) {
                 return false;
             }
             ++window.ranges;
@@ -400,6 +532,8 @@ bool ShuangpinFallbackQuery::step_personal(std::size_t source, Window& window) {
                 }
                 auto& action = std::get<TextSelectionAction>(pending.entry.selection);
                 action.variants[action.primary_variant] = canonical_variant(candidate);
+                complete_source_ =
+                    complete_source_ || action.consumed_input_bytes == graph_.input_size;
                 buffers_[source].push_back(std::move(pending.entry));
             }
             pending = {};
@@ -420,32 +554,40 @@ bool ShuangpinFallbackQuery::step_personal(std::size_t source, Window& window) {
                                             personal_prefixes_, personal_[source - 1], candidate);
     if (!read) {
         done_[source] = true;
-        return false;
+        return graph_.full_pinyin;
     }
     if (candidate.text.empty() || (source != 3 && candidate.origin != CandidateOrigin::kUser &&
                                    dict_.is_system_entry_disabled(candidate.text))) {
         return true;
     }
-    if ((source == 2 || source == 3) && candidate.input_code != candidate.code) {
+    if (!graph_.full_pinyin && (source == 2 || source == 3) &&
+        candidate.input_code != candidate.code) {
         return true;
     }
     std::vector<std::size_t> endpoints;
+    if (graph_.full_pinyin && graph_.reachable_end == graph_.input_size) {
+        endpoints.push_back(graph_.input_size);
+    }
     if (partial_) {
         for (std::size_t end = (std::min)(graph_.reachable_end, graph_.input_size - 1); end > 0;
              --end) {
             endpoints.push_back(end);
         }
     }
-    if (graph_.reachable_end == graph_.input_size) {
+    if (!graph_.full_pinyin && graph_.reachable_end == graph_.input_size) {
         endpoints.push_back(graph_.input_size);
     }
     for (std::size_t end : endpoints) {
+        if (graph_.full_pinyin && (source == 2 || source == 3) &&
+            candidate.input_code != graph_.input.substr(0, end)) {
+            continue;
+        }
         auto paths = graph_.align(candidate.code, candidate.syllables, end, kBatchSize);
         if (paths.empty()) {
             continue;
         }
         candidate.syllables = join_readings(paths.front());
-        candidate.input_code = candidate.code;
+        candidate.input_code = graph_.full_pinyin ? graph_.input.substr(0, end) : candidate.code;
         auto entry = make_text_candidate_entry(candidate, end);
         auto& action = std::get<TextSelectionAction>(entry.selection);
         for (std::size_t index = 1; index < paths.size(); ++index) {
@@ -455,6 +597,7 @@ bool ShuangpinFallbackQuery::step_personal(std::size_t source, Window& window) {
         if (source == 2 || source == 3) {
             pending.entry = std::move(entry);
         } else {
+            complete_source_ = complete_source_ || end == graph_.input_size;
             buffers_[source].push_back(std::move(entry));
         }
         // Follow visible-text arbitration: prefer a continuing action, then
@@ -464,11 +607,99 @@ bool ShuangpinFallbackQuery::step_personal(std::size_t source, Window& window) {
     return true;
 }
 
-bool ShuangpinFallbackQuery::step_composition(Window& window) {
+void PinyinGraphQuery::offer_position_word(CompositionWordEdge word) {
+    // Retain alternatives independently for each raw endpoint: short frequent
+    // words cannot consume the space reserved for longer valid words.
+    constexpr std::size_t kWordsPerSpan = 4;
+    auto& words = position_words_[word.end];
+    const auto same = std::find_if(words.begin(), words.end(), [&](const auto& previous) {
+        return previous.candidate.text == word.candidate.text &&
+               previous.candidate.syllables == word.candidate.syllables;
+    });
+    if (same != words.end()) {
+        if (!word_better(word, *same)) {
+            return;
+        }
+        *same = std::move(word);
+    } else {
+        words.push_back(std::move(word));
+    }
+    std::stable_sort(words.begin(), words.end(), word_better);
+    if (words.size() > kWordsPerSpan) {
+        words.resize(kWordsPerSpan);
+    }
+}
+
+bool PinyinGraphQuery::step_position_words(Window& window) {
+    while (word_position_ < word_cursors_.size() && !composition_->reaches(word_position_)) {
+        ++word_position_;
+    }
+    if (word_position_ == word_cursors_.size()) {
+        composition_->seal();
+        word_cursors_.clear();
+        return true;
+    }
+    auto& cursor = word_cursors_[word_position_];
+    Candidate candidate;
+    std::size_t end = 0;
+    const auto& matching = preferred_matching_ ? *preferred_matching_ : *matching_;
+    const auto step = cursor->step(dict_, graph_, matching, true, window, candidate, end);
+    if (step == Traversal::Step::kBlocked) {
+        return false;
+    }
+    if (!candidate.text.empty()) {
+        offer_position_word({static_cast<uint16_t>(word_position_), static_cast<uint16_t>(end),
+                             std::move(candidate), cursor->result_fuzzy, cursor->result_quality});
+    }
+    if (step == Traversal::Step::kDone) {
+        // Only dictionary exhaustion finalizes a position. A query-window stop
+        // keeps both the cursor and these retained words intact.
+        for (auto& words : position_words_) {
+            for (auto& word : words) {
+                composition_->add_word(std::move(word));
+            }
+            words.clear();
+        }
+        ++word_position_;
+    }
+    return true;
+}
+
+bool PinyinGraphQuery::step_composition(Window& window) {
+    if (graph_.full_pinyin) {
+        if (complete_source_) {
+            done_[5] = true;
+            composition_.reset();
+            word_cursors_.clear();
+            return true;
+        }
+        if (std::any_of(done_.begin(), done_.begin() + 5, [](bool done) { return !done; })) {
+            return false;
+        }
+    }
     if (composition_->has_work()) {
         ++window.steps;
         if (composition_->advance(window.budget.deadline, window.steps, composition_stats_)) {
-            for (auto& candidate : composition_->take_candidates()) {
+            auto candidates = composition_->take_candidates();
+            if (candidates.empty() && (composition_preferred_ || continuation_)) {
+                // Spelling quality outranks frequency, but grammar alone cannot
+                // prove dictionary coverage. Retry the full graph on failure,
+                // within the same work/deadline ledger and resumable query.
+                window.memo.clear();
+                if (composition_preferred_) {
+                    start_composition(false);
+                } else {
+                    preferred_matching_.reset();
+                    continuation_.reset();
+                    start_composition(graph_.full_pinyin);
+                }
+                return true;
+            }
+            for (auto& candidate : candidates) {
+                if (graph_.full_pinyin) {
+                    candidate.input_code = graph_.input;
+                    candidate.code = graph_.input;
+                }
                 buffers_[5].push_back(
                     make_text_candidate_entry(std::move(candidate), graph_.input_size));
             }
@@ -478,35 +709,10 @@ bool ShuangpinFallbackQuery::step_composition(Window& window) {
         }
         return true;
     }
-    bool pending = false;
-    for (std::size_t attempt = 0; attempt < word_cursors_.size(); ++attempt) {
-        auto& cursor = word_cursors_[word_position_++ % word_cursors_.size()];
-        if (cursor->stack.empty() || !composition_->reaches(cursor->start)) {
-            continue;
-        }
-        pending = true;
-        Candidate candidate;
-        std::size_t end = 0;
-        if (cursor->step(dict_, graph_, *matching_, true, window, candidate, end) ==
-            Traversal::Step::kBlocked) {
-            --word_position_;
-            return false;
-        }
-        if (!candidate.text.empty()) {
-            composition_->add_word({static_cast<uint16_t>(cursor->start),
-                                    static_cast<uint16_t>(end), std::move(candidate),
-                                    cursor->result_fuzzy});
-        }
-        return true;
-    }
-    if (!pending) {
-        composition_->seal();
-        word_cursors_.clear();
-    }
-    return !pending;
+    return step_position_words(window);
 }
 
-void ShuangpinFallbackQuery::form_batch(const TranslationRequest& request) {
+void PinyinGraphQuery::form_batch(const TranslationRequest& request) {
     const auto is_fuzzy = [&](const CandidateEntry& entry) {
         const auto end = std::get<TextSelectionAction>(entry.selection).consumed_input_bytes;
         const auto paths = graph_.align(entry.candidate.code, entry.candidate.syllables, end);
@@ -596,7 +802,19 @@ void ShuangpinFallbackQuery::form_batch(const TranslationRequest& request) {
     }
 }
 
-TranslationResult ShuangpinFallbackQuery::query(const TranslationRequest& request) {
+TranslationResult PinyinGraphQuery::query(const TranslationRequest& request) {
+    if (request.work == QueryWork::kRead) {
+        TranslationResult result;
+        result.incremental = request.purpose == TranslationPurpose::kComposition;
+        result.entries = ready_;
+        result.page_size = request.page_size;
+        const bool pending =
+            std::any_of(done_.begin(), done_.end(), [](bool done) { return !done; });
+        const int count = static_cast<int>(result.entries.size());
+        result.extent = make_candidate_extent(count, count, pending);
+        result.status = pending ? TranslationStatus::kStableDegraded : TranslationStatus::kSuccess;
+        return result;
+    }
     ready_.erase(
         std::remove_if(ready_.begin(), ready_.end(),
                        [&](const CandidateEntry& entry) { return was_published(request, entry); }),
@@ -605,6 +823,7 @@ TranslationResult ShuangpinFallbackQuery::query(const TranslationRequest& reques
     if (request.budget) {
         window.budget = *request.budget;
     }
+    window.range_limit = window.budget.max_prefix_scan;
     const bool search = request.purpose == TranslationPurpose::kSearch;
     std::vector<CandidateEntry> collected;
     auto effective = request;
@@ -617,7 +836,9 @@ TranslationResult ShuangpinFallbackQuery::query(const TranslationRequest& reques
             std::size_t idle = 0;
             while (window.available() && idle < done_.size()) {
                 const std::size_t source = next_source_++ % done_.size();
-                if (done_[source] || buffers_[source].size() >= kBatchSize) {
+                if (done_[source] || buffers_[source].size() >= kBatchSize ||
+                    (source == 5 && request.graph_composition_pending) ||
+                    (graph_.full_pinyin && source == 6 && !done_[5])) {
                     ++idle;
                     continue;
                 }
@@ -630,7 +851,7 @@ TranslationResult ShuangpinFallbackQuery::query(const TranslationRequest& reques
                         buffered += buffer.size();
                     }
                     buffer_peak_ = (std::max)(buffer_peak_, static_cast<uint32_t>(buffered));
-                    std::size_t frames = direct_->stack.size();
+                    std::size_t frames = direct_ ? direct_->stack.size() : 0;
                     for (const auto& cursor : partial_words_) {
                         frames += cursor->stack.size();
                     }
@@ -641,8 +862,8 @@ TranslationResult ShuangpinFallbackQuery::query(const TranslationRequest& reques
                 }
                 idle = advanced ? 0 : idle + 1;
             }
-            if (!done_[5] && composition_->has_work() && window.steps < 4096 &&
-                !window.budget.deadline.expired()) {
+            if (!done_[5] && !request.graph_composition_pending && composition_->has_work() &&
+                window.steps < 4096 && !window.budget.deadline.expired()) {
                 // Finishing already queued beam work needs no additional dictionary
                 // reads; exhausting the range ledger must not postpone this work.
                 step_composition(window);

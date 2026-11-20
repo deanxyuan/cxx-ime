@@ -94,7 +94,8 @@ void SpellingsIndex::unload() {
 // v2 trie prefix search: O(k) walk
 static std::vector<SpellingMatch> trie_prefix_search(
     const char* nodes, const char* strings, const uint32_t* node_offsets,
-    uint32_t node_count, std::string_view prefix, bool enable_fuzzy, bool enable_abbreviation) {
+    uint32_t node_count, std::string_view prefix, bool enable_fuzzy, bool enable_abbreviation,
+    bool* can_extend) {
 
     std::vector<SpellingMatch> results;
     const uint32_t prefix_len = (uint32_t)prefix.size();
@@ -108,8 +109,12 @@ static std::vector<SpellingMatch> trie_prefix_search(
         uint8_t ns = *(const uint8_t*)(node + 8);
         uint8_t nc = *(const uint8_t*)(node + 9);
 
-        if (prefix_pos + key_len > prefix_len)
+        if (prefix_pos + key_len > prefix_len) {
+            if (can_extend) {
+                *can_extend = true;
+            }
             break;
+        }
 
         const char* key = strings + *(const uint32_t*)(node);
         if (key_len > 0 && std::memcmp(key, prefix_data + prefix_pos, key_len) != 0)
@@ -136,8 +141,12 @@ static std::vector<SpellingMatch> trie_prefix_search(
             sp += SPELLING_SIZE;
         }
 
-        if (prefix_pos >= prefix_len)
+        if (prefix_pos >= prefix_len) {
+            if (can_extend) {
+                *can_extend = nc != 0;
+            }
             break;
+        }
 
         // Find child
         uint8_t next_char = (uint8_t)prefix_data[prefix_pos];
@@ -262,13 +271,17 @@ static std::vector<SpellingMatch> trie_completion_search(
 
 std::vector<SpellingMatch> SpellingsIndex::prefix_search(std::string_view prefix,
                                                          bool enable_fuzzy,
-                                                         bool enable_abbreviation) const {
+                                                         bool enable_abbreviation,
+                                                         bool* can_extend) const {
+    if (can_extend) {
+        *can_extend = false;
+    }
     if (!data_ || prefix.empty())
         return {};
 
     std::vector<SpellingMatch> results =
         trie_prefix_search(nodes_, strings_, node_offsets_.get(), node_count_, prefix,
-                           enable_fuzzy, enable_abbreviation);
+                           enable_fuzzy, enable_abbreviation, can_extend);
 
     return results;
 }

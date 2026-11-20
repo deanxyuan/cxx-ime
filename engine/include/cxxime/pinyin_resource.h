@@ -39,12 +39,14 @@ public:
     bool has_spellings() const { return spellings_.has_spellings(); }
 
     SegmentResult segment(const std::string& input, const QueryDeadline* deadline = nullptr,
-                          const SyllabifierOptions& options = {}) const;
+                          const SyllabifierOptions& options = {},
+                          SpellingQueryCache* cache = nullptr) const;
     SegmentResult segment_graph(SyllableGraph graph, const QueryDeadline* deadline,
                                 bool collect_path_metadata) const;
-    bool has_fuzzy_path(const std::string& input, const SyllabifierOptions& options = {}) const;
-    SyllableGraph build_graph(const std::string& input,
-                              const SyllabifierOptions& options = {}) const;
+    bool has_fuzzy_path(const std::string& input, const SyllabifierOptions& options = {},
+                        SpellingQueryCache* cache = nullptr) const;
+    SyllableGraph build_graph(const std::string& input, const SyllabifierOptions& options = {},
+                              SpellingQueryCache* cache = nullptr) const;
     std::vector<SpellingMatch> prefix_search(std::string_view input,
                                              bool enable_fuzzy = true) const;
     std::vector<SpellingMatch> completion_search(std::string_view input,

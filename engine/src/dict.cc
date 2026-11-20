@@ -272,6 +272,7 @@ bool Dict::open_dict_with_aux(const std::string& bin_path,
 }
 
 void Dict::unload_dict() {
+    ++dictionary_generation_;
     unload_id_index();
     short_cache_.unload();
     wubi_prefix_index_.reset();

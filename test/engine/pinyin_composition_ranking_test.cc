@@ -241,6 +241,27 @@ TEST(PinyinCompositionRanking, learning_merges_preserve_order_and_relegate_unava
     ASSERT_EQ(learned.candidates[0].text, "正常式好");
     translator.set_candidate_learning_enabled(false);
     ASSERT_EQ(translator.translate_page(input, 0, 7).candidates[0].text, "正常是好");
+
+    // A history item absent from the dictionary can become a valid generated sentence.
+    obsolete.text = "正常是好";
+    ASSERT_TRUE(fixture.dictionary.record_candidate_preference(obsolete, input));
+    translator.set_candidate_learning_enabled(true);
+    const auto resolved = translator.translate_page(input, 0, 7);
+    ASSERT_EQ(resolved.candidates[0].text, "正常式好");
+    ASSERT_EQ(resolved.candidates[1].text, "正常是好");
+    ASSERT_EQ(resolved.candidates[1].origin, cxxime::CandidateOrigin::kComposed);
+    ASSERT_GT(resolved.candidates[1].frequency, baseline.candidates[0].frequency);
+
+    TempFile manual;
+    ASSERT_TRUE(fixture.dictionary.load_manual_candidate_order(manual.path));
+    for (const std::string text : {"正常式好", "正常是好"}) {
+        cxxime::ManualCandidateOrderEntry pinned;
+        pinned.text = text;
+        pinned.code = input;
+        pinned.syllables = "zheng:chang:shi:hao";
+        ASSERT_TRUE(fixture.dictionary.replace_manual_candidate_order_and_save(input, {pinned}));
+        ASSERT_EQ(translator.translate_page(input, 0, 7).candidates[0].text, text);
+    }
 }
 
 TEST(PinyinCompositionRanking, dictionary_personal_and_manual_choices_still_precede_composition) {
@@ -272,6 +293,9 @@ TEST(PinyinCompositionRanking, dictionary_personal_and_manual_choices_still_prec
     ASSERT_EQ(translator.translate_page(input, 0, 7).candidates[0].text, "正常式");
     translator.set_candidate_learning_enabled(false);
     ASSERT_EQ(translator.translate_page(input, 0, 7).candidates[0].text, "正常式");
+    entry.text = "正常是";
+    ASSERT_TRUE(fixture.dictionary.replace_manual_candidate_order_and_save(input, {entry}));
+    ASSERT_EQ(translator.translate_page(input, 0, 7).candidates[0].text, "正常是");
 }
 
 TEST(PinyinCompositionRanking, personal_prefix_order_does_not_depend_on_learning) {

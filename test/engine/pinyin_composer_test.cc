@@ -11,6 +11,7 @@
 
 #include <cxxime/composition_learning.h>
 #include <cxxime/dict.h>
+#include <cxxime/engine.h>
 #include <cxxime/pinyin_composer.h>
 #include <cxxime/pinyin_resource.h>
 #include <cxxime/query_budget.h>
@@ -18,9 +19,15 @@
 #include <cxxime/spellings_index.h>
 #include <cxxime/translator.h>
 
+#include "support/test_runtime.h"
 #include "support/testutil.h"
 
 namespace {
+
+// Canonical readings, displayed text and source frequency.
+using DictionaryEntry = std::tuple<std::string, std::string, int>;
+// Typed spelling, canonical syllable, spelling kind and credibility.
+using SpellingEntry = std::tuple<std::string, std::string, int, float>;
 
 std::string make_temp_path(const char* prefix) {
     char directory[MAX_PATH] = {};
@@ -249,14 +256,16 @@ TEST(PinyinComposer, partial_results_survive_an_incomplete_full_query) {
     request.page_offset = 20;
     const auto unavailable_page = translator.translate(request);
     ASSERT_TRUE(unavailable_page.entries.empty());
-    ASSERT_EQ(unavailable_page.status, cxxime::TranslationStatus::kFailed);
+    ASSERT_EQ(unavailable_page.status, cxxime::TranslationStatus::kStableDegraded);
+    ASSERT_TRUE(!unavailable_page.extent.complete);
 
     request.page_offset = 0;
     budget.deadline.enabled = true;
     budget.deadline.expires_at = cxxime::QueryDeadline::Clock::time_point::min();
     const auto expired = translator.translate(request);
     ASSERT_TRUE(expired.entries.empty());
-    ASSERT_EQ(expired.status, cxxime::TranslationStatus::kFailed);
+    ASSERT_EQ(expired.status, cxxime::TranslationStatus::kStableDegraded);
+    ASSERT_TRUE(!expired.extent.complete);
     ASSERT_TRUE(trace.deadline_exceeded);
 }
 
@@ -336,6 +345,7 @@ TEST(PinyinComposer, composes_complete_and_repeated_short_code_paths) {
             {"ni", "你", 9500},
             {"ha", "哈", 9000},
             {"ha", "蛤", 100},
+            {"hao", "好", 10000},
             {"ha:ha", "哈哈", 8000},
             {"ha:ha", "蛤蛤", 50},
             {"ha:ha:ha:ha:ha", "哈哈哈哈哈", 400},
@@ -344,6 +354,8 @@ TEST(PinyinComposer, composes_complete_and_repeated_short_code_paths) {
             {"a", "a", cxxime::kNormalSpelling, 0.0f},
             {"ni", "ni", cxxime::kNormalSpelling, 0.0f},
             {"h", "ha", cxxime::kAbbreviation, -1.0f},
+            {"h", "hao", cxxime::kAbbreviation, -1.0f},
+            {"hao", "hao", cxxime::kNormalSpelling, 0.0f},
             {"ha", "ha", cxxime::kNormalSpelling, 0.0f},
         }));
 
@@ -378,7 +390,6 @@ TEST(PinyinComposer, composes_complete_and_repeated_short_code_paths) {
     const auto* prefixed_candidate = find_candidate(prefixed_repeat, "你哈哈");
     ASSERT_TRUE(prefixed_candidate != nullptr);
     ASSERT_TRUE(prefixed_candidate->origin == cxxime::CandidateOrigin::kComposed);
-    ASSERT_EQ(trace.composition_repeated_short_path_count, 1u);
 
     const std::string long_repeat_input = "ni" + std::string(23, 'h');
     std::string long_repeat_text = "你";
@@ -428,7 +439,7 @@ TEST(PinyinComposer, normal_paths_do_not_expand_low_frequency_homophones) {
         }));
 }
 
-TEST(PinyinComposer, terminal_completion_requires_a_normal_prefix_and_matching_tail) {
+TEST(PinyinComposer, completion_and_abbreviation_require_valid_raw_mappings) {
     ComposerFixture fixture;
     ASSERT_TRUE(fixture.initialize(
         {
@@ -471,7 +482,9 @@ TEST(PinyinComposer, terminal_completion_requires_a_normal_prefix_and_matching_t
     ASSERT_EQ(completed_tail.candidates.size(), 1u);
     ASSERT_EQ(completed_tail.candidates[0].text, "娃哈哈好");
     ASSERT_EQ(completed_tail.candidates[0].syllables, "wa:ha:ha:hao");
-    for (const char* input : {"nh", "lih", "nil", "nig", "nihx", "srf"}) {
+    ASSERT_TRUE(find_candidate(translator.translate_page("nh", 0, 10), "你好") != nullptr);
+    ASSERT_TRUE(find_candidate(translator.translate_page("srf", 0, 10), "是人法") != nullptr);
+    for (const char* input : {"nig", "nihx"}) {
         const auto page = translator.translate_page(input, 0, 10);
         // Existing dictionary prefix fallbacks may remain; they must not become sentences.
         ASSERT_TRUE(std::none_of(page.candidates.begin(), page.candidates.end(),
@@ -479,6 +492,14 @@ TEST(PinyinComposer, terminal_completion_requires_a_normal_prefix_and_matching_t
                                      return candidate.origin == cxxime::CandidateOrigin::kComposed;
                                  }))
             << input;
+    }
+    for (bool fuzzy : {false, true}) {
+        cxxime::PinyinQueryPolicy policy;
+        policy.enable_fuzzy = fuzzy;
+        translator.bind_pinyin(fixture.pinyin_resources, policy);
+        for (const char* input : {"lih", "nil"}) {
+            ASSERT_EQ(find_candidate(translator.translate_page(input), "你好") != nullptr, fuzzy);
+        }
     }
 }
 
@@ -533,7 +554,7 @@ TEST(PinyinComposer, complete_sentence_is_authoritative_until_it_cannot_be_displ
     DeleteFileA(disabled_path.c_str());
 }
 
-TEST(PinyinComposer, shuangpin_completion_does_not_enable_internal_or_fuzzy_composition) {
+TEST(PinyinComposer, shuangpin_composition_respects_terminal_boundaries_and_fuzzy_setting) {
     ComposerFixture fixture;
     ASSERT_TRUE(fixture.initialize({{"ni", "你", 9000}, {"hao", "好", 8000}},
                                    {
@@ -550,20 +571,23 @@ TEST(PinyinComposer, shuangpin_completion_does_not_enable_internal_or_fuzzy_comp
     translator.bind_pinyin(fixture.pinyin_resources, {});
 
     ASSERT_TRUE(find_candidate(translator.translate_page("nih", 0, 10), "你好") != nullptr);
-    // An internal initial is supported by the graph fallback; normal-path
-    // composition still rejects internal completion and fuzzy substitutions.
+    // Internal initials are valid, but an internal terminal-completion edge is not.
     ASSERT_TRUE(find_candidate(translator.translate_page("nh", 0, 10), "你好") != nullptr);
-    for (const auto* input : {"lih", "xnh", "nil", "nilk"}) {
-        const auto page = translator.translate_page(input, 0, 10);
-        ASSERT_TRUE(find_candidate(page, "你好") == nullptr);
-    }
+    ASSERT_TRUE(find_candidate(translator.translate_page("xnh"), "你好") == nullptr);
 
-    // Fuzzy completion still finds dictionary entries when enabled; it cannot compose.
+    // Ordinary and fallback sentences follow the same user-facing fuzzy switch.
     for (bool fuzzy_enabled : {false, true}) {
         cxxime::PinyinQueryPolicy policy;
         policy.enable_fuzzy = fuzzy_enabled;
         translator.bind_pinyin(fixture.pinyin_resources, policy);
-        ASSERT_TRUE(find_candidate(translator.translate_page("nil", 0, 10), "你好") == nullptr);
+        for (const auto* input : {"lih", "nilk"}) {
+            ASSERT_EQ(find_candidate(translator.translate_page(input), "你好") != nullptr,
+                      fuzzy_enabled)
+                << "input=" << input;
+        }
+        // Both li and lk complete l; the stronger ni reading wins the one sentence slot.
+        ASSERT_EQ(find_candidate(translator.translate_page("nil"), "你你") != nullptr,
+                  fuzzy_enabled);
         const auto partial = translator.translate_page("l", 0, 10);
         ASSERT_EQ(find_candidate(partial, "好") != nullptr, fuzzy_enabled);
     }
@@ -600,7 +624,7 @@ TEST(PinyinComposer, finite_sentence_search_does_not_leave_phantom_pages) {
         "你", "好", "世", "界", "中", "国", "人", "民", "我", "爱",
         "他", "们", "一", "二", "三", "四", "五", "六", "七", "八",
     };
-    // Distinct spans exceed the fixed 128-range recommendation budget.
+    // Many subspans must not create duplicate sentences or phantom subsequent pages.
     std::vector<std::tuple<std::string, std::string, int>> entries;
     std::vector<std::tuple<std::string, std::string, int, float>> spellings;
     std::string input;
@@ -637,7 +661,7 @@ TEST(PinyinComposer, finite_sentence_search_does_not_leave_phantom_pages) {
     request.trace = &trace;
     request.page_size = 3;
     const auto first = translator.translate(request);
-    ASSERT_TRUE(trace.composition_truncated);
+    ASSERT_TRUE(!trace.composition_truncated);
     ASSERT_TRUE(!trace.deadline_exceeded);
     ASSERT_TRUE(!trace.scan_budget_truncated);
     ASSERT_TRUE(first.extent.complete);
@@ -650,6 +674,74 @@ TEST(PinyinComposer, finite_sentence_search_does_not_leave_phantom_pages) {
     ASSERT_TRUE(tail.entries.empty());
     ASSERT_TRUE(tail.extent.complete);
     ASSERT_TRUE(!cxxime::candidate_extent_may_continue(tail.extent, request.page_offset));
+}
+
+TEST(PinyinComposer, empty_ordinary_page_resumes_through_engine_navigation) {
+    const std::vector<std::string> syllables = {
+        "a",  "ai", "an", "ao", "ba", "bi", "bo", "bu", "ca", "ci", "cu", "da",
+        "di", "du", "fa", "fo", "ga", "ge", "gu", "ha", "he", "hu", "ji", "ju",
+    };
+    const std::vector<std::string> characters = {
+        "啊", "爱", "安", "奥", "八", "比", "波", "不", "擦", "次", "粗", "大",
+        "低", "都", "发", "佛", "嘎", "个", "古", "哈", "和", "湖", "机", "局",
+    };
+    std::vector<DictionaryEntry> entries;
+    std::vector<SpellingEntry> spellings;
+    std::string input;
+    // Distinct segmentation texts keep the beam populated. The real production
+    // work window must pause; no wall-clock delay or test-only budget hook is used.
+    for (std::size_t start = 0; start < syllables.size(); ++start) {
+        input += syllables[start];
+        spellings.emplace_back(syllables[start], syllables[start], cxxime::kNormalSpelling, 0.0f);
+        std::string reading;
+        std::string text;
+        for (std::size_t end = start; end < syllables.size(); ++end) {
+            if (!reading.empty()) {
+                reading += ':';
+            }
+            reading += syllables[end];
+            text += characters[start];
+            if (start != 0 || end + 1 != syllables.size()) {
+                entries.emplace_back(reading, text, 1000);
+            }
+        }
+    }
+    ComposerFixture fixture;
+    ASSERT_TRUE(fixture.initialize(entries, spellings));
+    cxxime::Config config;
+    config.pinyin_scheme = "full_pinyin";
+    config.candidate_learning = false;
+    cxxime::Engine engine;
+    ASSERT_TRUE(
+        test::initialize_engine(engine, fixture.dictionary_path, config, fixture.spellings_path));
+    engine.set_query_deadline_ms(0);
+    engine.set_partial_selection_enabled(false);
+    ASSERT_TRUE(engine.context().set_preedit(input.substr(0, input.size() - 1)));
+    cxxime::KeyEvent last_key;
+    last_key.keycode = input.back() - 'a' + 'A';
+    engine.process_key(last_key);
+    ASSERT_EQ(engine.context().candidate_count(), 0);
+    ASSERT_TRUE(!engine.context().translation().incremental);
+    ASSERT_TRUE(!engine.context().translation().extent.complete);
+    cxxime::KeyEvent key;
+    key.keycode = VK_NEXT;
+    for (int attempt = 0; attempt < 100 && engine.context().candidate_count() == 0; ++attempt) {
+        engine.process_key(key);
+        ASSERT_EQ(engine.context().page_index(), 0);
+        ASSERT_EQ(engine.context().page_offset(), 0);
+    }
+    ASSERT_TRUE(engine.context().candidate(0) != nullptr);
+    const auto expected = engine.context().candidate(0)->text;
+    const auto& action =
+        std::get<cxxime::TextSelectionAction>(engine.context().candidate_entry(0)->selection);
+    ASSERT_EQ(action.consumed_input_bytes, input.size());
+    key.keycode = VK_PRIOR;
+    engine.process_key(key);
+    ASSERT_EQ(engine.context().page_index(), 0);
+    ASSERT_TRUE(engine.select_candidate(0));
+    ASSERT_EQ(engine.get_commit_text(), expected);
+    ASSERT_TRUE(engine.context().active_input().empty());
+    engine.finalize();
 }
 
 RUN_ALL_TESTS()

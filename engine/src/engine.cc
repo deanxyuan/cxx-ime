@@ -737,8 +737,7 @@ ProcessResult Engine::process_key(const KeyEvent& event, const OutputOptions& op
                         context_.replace_candidate_sequence(std::move(translated));
                     }
                     navigation_outcome = CandidateNavigationOutcome::kSequenceReset;
-                } else if (visible_count == 0 && context_.translation().incremental &&
-                           !current_extent.complete) {
+                } else if (visible_count == 0 && !current_extent.complete) {
                     auto translated = translate_current_composition(per_query_deadline);
                     if (translated.usable()) {
                         context_.update_translation(std::move(translated));
@@ -1095,12 +1094,17 @@ TranslationResult Engine::translate_composition(const CompositionState& state,
                          ? context_.published_candidates()
                          : std::vector<CandidateEntry>{};
     request.published = &published;
+    const auto continuation = !stale_sequence && state.active().input == context_.active_input()
+                                  ? context_.candidate_continuation(query_version)
+                                  : std::nullopt;
+    request.continuation = continuation ? &*continuation : nullptr;
     std::size_t converted_text_bytes = 0;
     for (const auto& segment : state.converted_segments()) {
         converted_text_bytes += segment.text.size();
     }
     TranslationResult result = translate_with_custom_phrases(
         *translator_, request, runtime_->custom_phrases().get(), converted_text_bytes);
+    result.validation_version = query_version;
     if (result.incremental) {
         result.sequence_version = query_version;
         result.sequence_invalidated = result.sequence_invalidated || stale_sequence;
@@ -1133,7 +1137,6 @@ TranslationResult Engine::translate_composition(const CompositionState& state,
     }
     if (!result.incremental && result.order != CandidateOrder::kSource) {
         result.sequence_version = membership_version;
-        result.validation_version = query_version;
         result.sequence_invalidated = stale_sequence;
         if (candidate_sequence_version(false) != membership_version) {
             result.entries.clear();

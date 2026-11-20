@@ -38,6 +38,7 @@ struct CompositionNode {
     uint32_t edge_index = UINT32_MAX;
     uint32_t sequence = 0;
     bool fuzzy = false;
+    SpellingQuality quality;
 };
 
 struct ComposedResult {
@@ -65,6 +66,12 @@ bool node_better(const CompositionNode& left, const CompositionNode& right) {
 }
 
 bool graph_node_better(const CompositionNode& left, const CompositionNode& right) {
+    if (left.quality.better_than(right.quality)) {
+        return true;
+    }
+    if (right.quality.better_than(left.quality)) {
+        return false;
+    }
     if (left.fuzzy != right.fuzzy) {
         return !left.fuzzy;
     }
@@ -418,7 +425,6 @@ PinyinComposer::compose(const std::string& input, const std::vector<CompositionP
 
 struct PinyinGraphComposition::Impl {
     const Dict& dict;
-    const bool requires_fuzzy;
     CompositionLimits limits;
     std::vector<CompositionWordEdge> words;
     std::vector<int64_t> scores;
@@ -434,17 +440,15 @@ struct PinyinGraphComposition::Impl {
     uint32_t sequence = 0;
     double log_total_weight;
     bool sealed = false;
-    bool capped = false;
     bool sorted = false;
 
-    Impl(const Dict& dictionary, std::size_t size, bool fuzzy_required)
+    Impl(const Dict& dictionary, std::size_t size)
         : dict(dictionary)
-        , requires_fuzzy(fuzzy_required)
         , by_start(size)
         , beams(size + 1)
         , log_total_weight(std::log2(
               static_cast<double>((std::max)(uint64_t{1}, dict.composition_weight_total())))) {
-        nodes.reserve(limits.max_nodes);
+        nodes.reserve(1 + size * limits.max_beam_width);
         beams[0].push_back(0);
     }
 
@@ -459,24 +463,17 @@ struct PinyinGraphComposition::Impl {
     void offer(CompositionNode node) {
         auto& beam = beams[node.end];
         auto worst = beam.end();
-        std::string text;
-        if (node.end + 1 == beams.size()) {
-            std::vector<uint32_t> chain{node.edge_index};
-            for (uint32_t parent = node.parent; nodes[parent].parent != UINT32_MAX;
-                 parent = nodes[parent].parent) {
-                chain.push_back(nodes[parent].edge_index);
-            }
-            for (auto edge = chain.rbegin(); edge != chain.rend(); ++edge) {
-                text += words[*edge].candidate.text;
-            }
-            if (!candidate_text_fits(text) || dict.is_system_entry_disabled(text)) {
-                return;
-            }
-            worst = std::find_if(beam.begin(), beam.end(),
-                                 [&](uint32_t index) { return completed_texts[index] == text; });
-            if (worst != beam.end() && !graph_node_better(node, nodes[*worst])) {
-                return;
-            }
+        // Equal text at one raw position has the same possible suffixes.
+        // Retain its best score instead of spending the beam on re-segmentations.
+        std::string text = completed_texts[node.parent] + words[node.edge_index].candidate.text;
+        if (!candidate_text_fits(text) ||
+            (node.end + 1 == beams.size() && dict.is_system_entry_disabled(text))) {
+            return;
+        }
+        worst = std::find_if(beam.begin(), beam.end(),
+                             [&](uint32_t index) { return completed_texts[index] == text; });
+        if (worst != beam.end() && !graph_node_better(node, nodes[*worst])) {
+            return;
         }
         if (worst == beam.end() && beam.size() == limits.max_beam_width) {
             worst = std::max_element(beam.begin(), beam.end(), [&](uint32_t a, uint32_t b) {
@@ -486,8 +483,12 @@ struct PinyinGraphComposition::Impl {
                 return;
             }
         }
-        if (nodes.size() == limits.max_nodes) {
-            capped = true;
+        if (worst != beam.end()) {
+            // A position is expanded only after all earlier positions are final.
+            // This target slot has no descendants yet, so replacing it is safe.
+            const uint32_t index = *worst;
+            nodes[index] = node;
+            completed_texts[index] = std::move(text);
             return;
         }
         const uint32_t index = static_cast<uint32_t>(nodes.size());
@@ -497,18 +498,8 @@ struct PinyinGraphComposition::Impl {
         completed_texts.push_back(std::move(text));
         expanded.push_back(0);
         queued.push_back(false);
-        if (worst == beam.end()) {
-            beam.push_back(index);
-        } else {
-            *worst = index;
-        }
+        beam.push_back(index);
         wake(index);
-        // This finite recommendation policy counts usable, distinct complete
-        // texts, not beam nodes or the number of items a host has displayed.
-        capped = beams.back().size() == limits.max_final_candidates &&
-                 (requires_fuzzy ||
-                  std::all_of(beams.back().begin(), beams.back().end(),
-                              [&](uint32_t completed) { return !nodes[completed].fuzzy; }));
     }
 
     void rebuild(uint32_t index) {
@@ -527,7 +518,8 @@ struct PinyinGraphComposition::Impl {
             }
             candidate.syllables += word.syllables;
         }
-        if (!candidate_text_fits(candidate.text) || dict.is_system_entry_disabled(candidate.text) ||
+        if (candidate.syllables.find(':') == std::string::npos ||
+            !candidate_text_fits(candidate.text) || dict.is_system_entry_disabled(candidate.text) ||
             std::any_of(result.begin(), result.end(), [&](const Candidate& previous) {
                 return previous.text == candidate.text;
             })) {
@@ -541,22 +533,22 @@ struct PinyinGraphComposition::Impl {
     }
 };
 
-PinyinGraphComposition::PinyinGraphComposition(const Dict& dict, std::size_t input_size,
-                                               bool requires_fuzzy)
-    : impl_(new Impl(dict, input_size, requires_fuzzy)) {}
+PinyinGraphComposition::PinyinGraphComposition(const Dict& dict, std::size_t input_size)
+    : impl_(new Impl(dict, input_size)) {}
 
 PinyinGraphComposition::~PinyinGraphComposition() = default;
 
 void PinyinGraphComposition::add_word(CompositionWordEdge word) {
     auto& work = *impl_;
-    if (work.sealed || work.capped || word.start >= word.end || word.end >= work.beams.size()) {
+    if (work.sealed || word.start >= word.end || word.end >= work.beams.size()) {
         return;
     }
     for (uint32_t index : work.by_start[word.start]) {
         const auto& previous = work.words[index];
         if (previous.end == word.end && previous.candidate.text == word.candidate.text &&
             previous.candidate.syllables == word.candidate.syllables &&
-            (!previous.fuzzy || word.fuzzy)) {
+            (!previous.fuzzy || word.fuzzy) &&
+            !word.quality.better_than(previous.quality)) {
             return;
         }
     }
@@ -567,13 +559,12 @@ void PinyinGraphComposition::add_word(CompositionWordEdge word) {
     for (uint32_t parent : work.beams[start]) {
         work.wake(parent);
     }
-    work.sealed = work.words.size() == work.limits.max_span_candidates;
 }
 
 void PinyinGraphComposition::seal() { impl_->sealed = true; }
 
 bool PinyinGraphComposition::has_work() const {
-    return impl_->sealed || impl_->capped || !impl_->pending.empty();
+    return impl_->sealed || !impl_->pending.empty();
 }
 
 bool PinyinGraphComposition::reaches(std::size_t position) const {
@@ -583,8 +574,19 @@ bool PinyinGraphComposition::reaches(std::size_t position) const {
 bool PinyinGraphComposition::advance(const QueryDeadline& deadline, uint32_t& work_steps,
                                      CompositionStats& stats) {
     auto& work = *impl_;
-    while (!work.pending.empty() && !work.capped) {
-        if (deadline.expired() || work_steps >= 4096) {
+    uint32_t next_deadline_step = work_steps;
+    const auto exhausted = [&]() {
+        if (work_steps >= 4096) {
+            return true;
+        }
+        if (deadline.enabled && work_steps >= next_deadline_step) {
+            next_deadline_step = work_steps + (std::max)(uint32_t{1}, deadline.check_interval);
+            return deadline.expired();
+        }
+        return false;
+    };
+    while (!work.pending.empty()) {
+        if (exhausted()) {
             stats.state_count = static_cast<uint32_t>(work.nodes.size());
             stats.span_candidate_count = static_cast<uint32_t>(work.words.size());
             return false;
@@ -604,6 +606,8 @@ bool PinyinGraphComposition::advance(const QueryDeadline& deadline, uint32_t& wo
         CompositionNode node;
         node.end = word.end;
         node.fuzzy = parent.fuzzy || word.fuzzy;
+        node.quality = parent.quality;
+        node.quality += word.quality;
         node.segment_count = static_cast<uint16_t>(parent.segment_count + 1);
         node.weakest_frequency =
             parent.segment_count == 0
@@ -617,8 +621,7 @@ bool PinyinGraphComposition::advance(const QueryDeadline& deadline, uint32_t& wo
     }
     stats.state_count = static_cast<uint32_t>(work.nodes.size());
     stats.span_candidate_count = static_cast<uint32_t>(work.words.size());
-    stats.truncated = work.capped || work.words.size() == work.limits.max_span_candidates;
-    if (!work.sealed && !work.capped) {
+    if (!work.sealed) {
         return false;
     }
     if (!work.sorted) {
@@ -631,7 +634,7 @@ bool PinyinGraphComposition::advance(const QueryDeadline& deadline, uint32_t& wo
     // The search still compares the bounded set of complete paths. Reconstruct
     // only its best usable sentence; alternatives belong to word selection.
     while (work.completed_offset < work.beams.back().size() && work.result.empty()) {
-        if (deadline.expired() || work_steps >= 4096) {
+        if (exhausted()) {
             return false;
         }
         ++work_steps;

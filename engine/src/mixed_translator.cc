@@ -201,7 +201,35 @@ TranslationResult MixedTranslator::translate(const TranslationRequest& request) 
     if (request.input.empty() || request.page_size <= 0) {
         return result;
     }
-    const bool fallback = pinyin_translator_.requires_shuangpin_fallback(request.input);
+    if (request.work == QueryWork::kRead && request.purpose == TranslationPurpose::kComposition &&
+        fallback_window_) {
+        const uint64_t version = query_version();
+        const bool same_target = fallback_window_->input == request.input &&
+                                 fallback_window_->revision == request.input_revision;
+        const bool invalidated =
+            same_target && (fallback_window_->version != version ||
+                            fallback_window_->partial != request.policy.allow_partial_selection);
+        if (invalidated) {
+            fallback_window_->pending = {};
+            fallback_window_->pending.extent = make_candidate_extent(0, 0, true);
+            fallback_window_->version = version;
+            fallback_window_->partial = request.policy.allow_partial_selection;
+            fallback_window_->wubi_offset = 0;
+            fallback_window_->complete_wubi_source = false;
+        }
+        if (same_target && !invalidated) {
+            result = fallback_window_->pending;
+        } else {
+            result.status = TranslationStatus::kStableDegraded;
+            result.extent = make_candidate_extent(0, 0, true);
+        }
+        result.incremental = true;
+        result.sequence_version = version;
+        result.sequence_invalidated = invalidated;
+        result.order = CandidateOrder::kFullSpanFirst;
+        return finish_candidate_order(request, std::move(result));
+    }
+    const bool fallback = pinyin_translator_.requires_graph_query(request.input);
     const bool resumable = fallback && request.purpose == TranslationPurpose::kComposition;
     const uint64_t version = resumable ? query_version() : 0;
     bool invalidated = false;
@@ -283,22 +311,36 @@ TranslationResult MixedTranslator::translate(const TranslationRequest& request) 
     source_request.page_size = need;
     source_request.scheme = CompositionScheme::kPinyin;
     source_request.defer_candidate_order = true;
-    TranslationResult pinyin = pinyin_translator_.translate(source_request);
-    result.incremental = pinyin.incremental;
-    result.sequence_invalidated = pinyin.sequence_invalidated;
-    source_request.scheme = CompositionScheme::kWubi;
-    source_request.policy.allow_partial_selection = false;
-    if (resumable) {
-        source_request.page_offset = fallback_window_->wubi_offset;
-    }
     QueryTrace wubi_trace;
-    source_request.trace = &wubi_trace;
-    TranslationResult wubi = wubi_translator_.translate(source_request);
+    auto wubi_request = source_request;
+    wubi_request.scheme = CompositionScheme::kWubi;
+    wubi_request.policy.allow_partial_selection = false;
+    wubi_request.trace = &wubi_trace;
+    if (resumable) {
+        wubi_request.page_offset = fallback_window_->wubi_offset;
+    }
+    TranslationResult wubi = wubi_translator_.translate(wubi_request);
     const bool wubi_pending = candidate_extent_may_continue(
-        wubi.extent, source_request.page_offset + static_cast<int>(wubi.entries.size()));
+        wubi.extent, wubi_request.page_offset + static_cast<int>(wubi.entries.size()));
     if (resumable) {
         fallback_window_->wubi_offset += static_cast<int>(wubi.entries.size());
     }
+    const bool complete_word =
+        std::any_of(wubi.entries.begin(), wubi.entries.end(), [&](const CandidateEntry& entry) {
+            const auto* action = std::get_if<TextSelectionAction>(&entry.selection);
+            return action && action->consumed_input_bytes == request.input.size() &&
+                   entry.candidate.code == request.input &&
+                   entry.match_kind != CandidateMatchKind::kPrefix;
+        });
+    if (resumable) {
+        fallback_window_->complete_wubi_source |= complete_word;
+    }
+    source_request.suppress_graph_composition |=
+        complete_word || (resumable && fallback_window_->complete_wubi_source);
+    source_request.graph_composition_pending |= wubi_pending;
+    TranslationResult pinyin = pinyin_translator_.translate(source_request);
+    result.incremental = pinyin.incremental;
+    result.sequence_invalidated = pinyin.sequence_invalidated;
 
     const bool full_span_first = pinyin_translator_.is_complete_full_pinyin_syllable(request.input);
     if (full_span_first &&

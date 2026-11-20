@@ -69,6 +69,10 @@ add_cxxime_test(composition_learning_test
     SOURCES engine/composition_learning_test.cc
     DEPS cxxime-engine cxxime-test-topn-data
 )
+add_cxxime_test(pinyin_mixed_abbreviation_test
+    SOURCES engine/pinyin_mixed_abbreviation_test.cc
+    DEPS cxxime-engine
+)
 add_cxxime_test(segmentor_test SOURCES engine/segmentor_test.cc DEPS cxxime-engine)
 add_cxxime_test(syllabifier_completion_test
     SOURCES engine/syllabifier_completion_test.cc
@@ -642,9 +646,11 @@ add_cxxime_test(shuangpin_schema_runtime_test
         engine/shuangpin_fallback_lifecycle_test.cc
         engine/pinyin_candidate_order_test.cc
         engine/shuangpin_graph_test.cc
+        engine/pinyin_query_reuse_test.cc
     DEPS cxxime-engine
 )
 add_dependencies(shuangpin_schema_runtime_test shuangpin_schema_fixture)
+target_include_directories(shuangpin_schema_runtime_test PRIVATE ${CMAKE_SOURCE_DIR}/engine/src)
 target_compile_definitions(shuangpin_schema_runtime_test PRIVATE
     CXXIME_SYNTHETIC_SHUANGPIN_PATH="${SHUANGPIN_SCHEMA_FIXTURE}"
     CXXIME_MICROSOFT_SHUANGPIN_PATH="${MICROSOFT_SHUANGPIN_SCHEMA_FIXTURE}"

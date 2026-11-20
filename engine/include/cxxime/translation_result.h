@@ -21,6 +21,12 @@ struct QueryScratch;
 struct QueryTrace;
 struct CandidateEntry;
 
+// Previous visible choice, borrowed only during a tail-append translation.
+struct CandidateContinuation {
+    std::string input;
+    Candidate candidate;
+};
+
 enum class TranslationPurpose {
     kComposition,
     kSearch,
@@ -51,8 +57,13 @@ struct TranslationRequest {
     QueryWork work = QueryWork::kAdvance;
     uint64_t input_revision = 0;
     const std::vector<CandidateEntry>* published = nullptr;
+    const CandidateContinuation* continuation = nullptr;
     // Source merges and custom phrases must finish before ordering and slicing.
     bool defer_candidate_order = false;
+    // The outer source merge already has an applicable complete word/phrase.
+    bool suppress_graph_composition = false;
+    // Another source has not finished ruling out an applicable complete word.
+    bool graph_composition_pending = false;
 };
 
 enum class CandidateOrder {
@@ -87,7 +98,7 @@ struct TranslationResult {
     int highlighted = -1;
     std::vector<CandidateEntry> entries;
     CandidateOrder order = CandidateOrder::kSource;
-    // Only resumable Shuangpin fallback returns an unpublished window. Engine
+    // Resumable input-graph queries return an unpublished window. Engine
     // combines it with Context's actual visible history before anchor paging.
     bool incremental = false;
     bool sequence_invalidated = false;

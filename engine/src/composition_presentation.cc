@@ -7,8 +7,8 @@
 #include <vector>
 
 #include <cxxime/input_limits.h>
+#include <cxxime/pinyin_input_graph.h>
 #include <cxxime/pinyin_resource.h>
-#include <cxxime/shuangpin_graph.h>
 
 namespace cxxime {
 
@@ -45,13 +45,20 @@ CompositionPresentation derive_composition_presentation(const CompositionState& 
     presentation.cursor_bytes = presentation.converted_prefix_bytes + state.active().cursor;
 
     std::vector<std::size_t> boundaries;
-    ShuangpinGraph shuangpin;
-    if (pinyin_resources && show_syllable_boundaries &&
-        pinyin_resources->kind() == PinyinSchemeKind::kShuangpin) {
-        shuangpin = ShuangpinGraph::build(*pinyin_resources, state.active().input, enable_fuzzy);
+    PinyinInputGraph graph;
+    if (pinyin_resources && show_syllable_boundaries) {
+        graph = PinyinInputGraph::build(*pinyin_resources, state.active().input, enable_fuzzy);
+        if (!graph.fallback && graph.full_pinyin && !preferred_syllables.empty() &&
+            graph.align({}, preferred_syllables, focused_input_bytes).empty()) {
+            auto expanded = PinyinInputGraph::build(*pinyin_resources, state.active().input,
+                                                    enable_fuzzy, true);
+            if (!expanded.align({}, preferred_syllables, focused_input_bytes).empty()) {
+                graph = std::move(expanded);
+            }
+        }
     }
-    if (shuangpin.fallback) {
-        const auto path = shuangpin.display_path(preferred_syllables, focused_input_bytes);
+    if (graph.fallback) {
+        const auto path = graph.display_path(preferred_syllables, focused_input_bytes);
         std::size_t position = 0;
         for (uint16_t length : path.input_lengths) {
             position += length;
@@ -66,8 +73,8 @@ CompositionPresentation derive_composition_presentation(const CompositionState& 
         options.collect_path_metadata = true;
         const SegmentResult segmented =
             pinyin_resources->kind() == PinyinSchemeKind::kShuangpin && terminal_completion &&
-                    !shuangpin.edges.empty()
-                ? pinyin_resources->segment_graph(std::move(shuangpin.edges), nullptr, true)
+                    !graph.edges.empty()
+                ? pinyin_resources->segment_graph(std::move(graph.edges), nullptr, true)
                 : pinyin_resources->segment(state.active().input, nullptr, options);
         std::vector<std::string> preferred_path;
         std::size_t begin = 0;

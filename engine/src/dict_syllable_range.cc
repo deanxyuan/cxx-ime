@@ -57,10 +57,6 @@ bool Dict::read_syllable_candidate(const SyllableRange& range, std::size_t& curs
         return false;
     }
     fill_system_candidate(id_index_[cursor++].index, candidate, 0);
-    // A disabled first homophone does not terminate the range.
-    if (is_system_entry_disabled(candidate.text)) {
-        candidate = {};
-    }
     return true;
 }
 

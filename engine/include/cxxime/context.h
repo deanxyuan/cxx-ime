@@ -98,6 +98,7 @@ public:
     bool candidate_was_published(const CandidateEntry& entry,
                                  int current_visible_count) const;
     std::vector<CandidateEntry> published_candidates() const;
+    std::optional<CandidateContinuation> candidate_continuation(uint64_t source_version) const;
     void replace_candidate_sequence(TranslationResult&& result);
     void move_to_next_candidate();
     void move_to_previous_candidate();
@@ -128,6 +129,11 @@ private:
     CompositionScheme ime_scheme_ = CompositionScheme::kPinyin;
     TranslationResult translation_;
     std::string translation_input_;
+    uint64_t translation_revision_ = 0;
+    uint64_t translation_source_version_ = 0;
+    std::size_t translation_cursor_ = 0;
+    std::size_t translation_converted_count_ = 0;
+    CompositionScheme translation_scheme_ = CompositionScheme::kPinyin;
     std::vector<PageHistoryEntry> previous_pages_;
     std::vector<PageHistoryEntry> following_pages_;
     int highlight_count_after_page_change_ = 0;
