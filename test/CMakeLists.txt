@@ -227,6 +227,10 @@ add_cxxime_test(ipc_test
         ipc/ipc_compatibility_test.cc
     DEPS cxxime-ipc
 )
+add_cxxime_test(settings_foreground_test
+    SOURCES ipc/settings_foreground_test.cc
+    DEPS cxxime-ipc
+)
 add_cxxime_test(wubi_test SOURCES engine/wubi_test.cc DEPS cxxime-engine)
 add_cxxime_test(wubi_prefix_query_test
     SOURCES engine/wubi_prefix_query_test.cc
@@ -442,6 +446,10 @@ add_cxxime_test(settings_launcher_util_test
 )
 target_include_directories(settings_launcher_util_test PRIVATE
     ${CMAKE_SOURCE_DIR}/shared/src
+)
+add_cxxime_test(settings_activation_test
+    SOURCES shared/settings_activation_test.cc
+    DEPS cxxime-shared imm32
 )
 
 add_cxxime_test(installer_lock_test

@@ -12,6 +12,7 @@
 #include <cxxime/control_client.h>
 #include <cxxime/data_path.h>
 #include <cxxime/pinyin_scheme.h>
+#include <cxxime/settings_launcher.h>
 
 #include "cxxime_resource_ids.h"
 #include "editor_app_internal.h"
@@ -63,10 +64,7 @@ int EditorApp::run(HINSTANCE hInst,
         if (instance.error() == ERROR_SHARING_VIOLATION) {
             HWND existing = FindWindowW(kSettingsWindowClass, kSettingsWindowTitle);
             if (existing) {
-                PostMessageW(existing, settings_navigate_message(),
-                             static_cast<WPARAM>(initialPanel), 0);
-                ShowWindow(existing, SW_RESTORE);
-                SetForegroundWindow(GetLastActivePopup(existing));
+                request_settings_activation(existing, initialPanel);
             } else {
                 MessageBoxW(nullptr, L"设置正在打开，请稍候。", L"CxxIME 设置", MB_OK);
             }
@@ -107,7 +105,7 @@ int EditorApp::run(HINSTANCE hInst,
                                 CW_USEDEFAULT, CW_USEDEFAULT, S(700), S(450),
                                 nullptr, nullptr, hInst, &app);
     if (!app.hwnd_) return 1;
-    ShowWindow(app.hwnd_, SW_SHOW);
+    activate_settings_window(app.hwnd_);
     UpdateWindow(app.hwnd_);
 
     MSG msg;
@@ -435,7 +433,10 @@ LRESULT CALLBACK EditorApp::wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
     const UINT navigate_message = settings_navigate_message();
     if (navigate_message != 0 && msg == navigate_message) {
-        a->show_panel(static_cast<int>(wp));
+        if (IsWindowEnabled(hwnd)) {
+            a->show_panel(static_cast<int>(wp));
+        }
+        activate_settings_window(hwnd);
         return 0;
     }
 

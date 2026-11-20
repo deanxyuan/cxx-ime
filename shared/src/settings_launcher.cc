@@ -113,22 +113,55 @@ HWND find_settings_window(const std::wstring& path) {
     }
 }
 
-bool activate_existing_settings(const std::wstring& path, SettingsPanel panel) {
-    HWND window = find_settings_window(path);
-    if (!window) {
+} // namespace
+
+bool request_settings_activation(HWND window, SettingsPanel panel) {
+    DWORD process_id = 0;
+    const UINT message = RegisterWindowMessageW(kSettingsNavigateMessage);
+    if (!message || !GetWindowThreadProcessId(window, &process_id) || !process_id) {
+        CXXIME_LOG(L"settings_request result=0 error=%lu", GetLastError());
         return false;
     }
-
-    const UINT message = RegisterWindowMessageW(kSettingsNavigateMessage);
-    if (message != 0) {
-        PostMessageW(window, message, static_cast<WPARAM>(panel), 0);
+    if (!AllowSetForegroundWindow(process_id)) {
+        CXXIME_LOG(L"settings_grant pid=%lu result=0 error=%lu", process_id, GetLastError());
     }
-    ShowWindow(window, SW_RESTORE);
-    SetForegroundWindow(window);
-    return true;
+    const BOOL queued = PostMessageW(window, message, static_cast<WPARAM>(panel), 0);
+    CXXIME_LOG(L"settings_request pid=%lu queued=%d error=%lu", process_id, queued,
+               queued ? ERROR_SUCCESS : GetLastError());
+    return queued != FALSE;
 }
 
-} // namespace
+bool activate_settings_window(HWND window) {
+    if (!IsWindow(window)) {
+        return false;
+    }
+    // Restoring the owner can replace its last-active popup with the owner itself.
+    HWND target = GetLastActivePopup(window);
+    if (IsIconic(window)) {
+        ShowWindow(window, SW_RESTORE);
+    } else if (!IsWindowVisible(window)) {
+        ShowWindow(window, SW_SHOWNOACTIVATE);
+    }
+
+    DWORD process_id = 0;
+    GetWindowThreadProcessId(target, &process_id);
+    // GetLastActivePopup already restricts the result to this owner's windows.
+    // GA_ROOTOWNER would reject owned overlapped dialogs without WS_POPUP.
+    if (!IsWindowVisible(target) || !IsWindowEnabled(target) ||
+        process_id != GetCurrentProcessId()) {
+        target = IsWindowEnabled(window) ? window : nullptr;
+    }
+    const BOOL activated = target ? SetForegroundWindow(target) : FALSE;
+    const HWND foreground = GetForegroundWindow();
+    const bool success = activated != FALSE && foreground == target;
+    CXXIME_LOG(L"settings_activate target=%p result=%d foreground=%p", target, activated,
+               foreground);
+    if (!success) {
+        FLASHWINFO flash = {sizeof(flash), window, FLASHW_TRAY, 3, 0};
+        FlashWindowEx(&flash);
+    }
+    return success;
+}
 
 bool open_settings(SettingsPanel panel) {
     InstallationExclusion exclusion;
@@ -142,8 +175,8 @@ bool open_settings(SettingsPanel panel) {
         CXXIME_LOG(L"%s", L"settings_launch result=0 reason=active_path_unavailable");
         return false;
     }
-    if (activate_existing_settings(path, panel)) {
-        return true;
+    if (HWND window = find_settings_window(path)) {
+        return request_settings_activation(window, panel);
     }
 
     std::wstring command_line;
@@ -157,14 +190,24 @@ bool open_settings(SettingsPanel panel) {
     STARTUPINFOW startup_info = {};
     startup_info.cb = sizeof(startup_info);
     PROCESS_INFORMATION process_info = {};
-    if (!CreateProcessW(path.c_str(), mutable_command_line, nullptr, nullptr, FALSE, 0, nullptr,
-                        nullptr, &startup_info, &process_info)) {
+    if (!CreateProcessW(path.c_str(), mutable_command_line, nullptr, nullptr, FALSE,
+                        CREATE_SUSPENDED, nullptr, nullptr, &startup_info, &process_info)) {
         CXXIME_LOG(L"settings_launch result=0 error=%lu", GetLastError());
         return false;
     }
+    // The child must receive permission before it can show its first window.
+    if (!AllowSetForegroundWindow(process_info.dwProcessId)) {
+        CXXIME_LOG(L"settings_grant pid=%lu result=0 error=%lu", process_info.dwProcessId,
+                   GetLastError());
+    }
+    const bool resumed = ResumeThread(process_info.hThread) != static_cast<DWORD>(-1);
+    if (!resumed) {
+        CXXIME_LOG(L"settings_launch result=0 reason=resume error=%lu", GetLastError());
+        TerminateProcess(process_info.hProcess, ERROR_PROCESS_ABORTED);
+    }
     CloseHandle(process_info.hProcess);
     CloseHandle(process_info.hThread);
-    return true;
+    return resumed;
 }
 
 } // namespace cxxime

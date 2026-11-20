@@ -14,6 +14,8 @@
 
 #include <windows.h>
 
+#include <cxxime/logging.h>
+
 namespace cxxime {
 
 namespace {
@@ -134,6 +136,15 @@ bool IpcClient::send_request(const IPCRequest& request, IPCResponse& response) {
         }
 
         HANDLE pipe = (HANDLE)pipe_handle_;
+
+        if (request.command == IPCCommand::OPEN_SETTINGS) {
+            ULONG server_pid = 0;
+            if (!GetNamedPipeServerProcessId(pipe, &server_pid) || !server_pid ||
+                !AllowSetForegroundWindow(server_pid)) {
+                CXXIME_LOG(L"settings_server_grant pid=%lu result=0 error=%lu", server_pid,
+                           GetLastError());
+            }
+        }
 
         IPCWireHeader request_header = {};
         request_header.payload_size = sizeof(IPCRequest);
