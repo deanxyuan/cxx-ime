@@ -47,10 +47,7 @@ struct HostImePrivateApiSnapshot {
 HostImePrivateApiSnapshot inspect_host_ime_private_api(
     const HostImePrivateApiRequest& request);
 
-bool host_ime_manager_message_method_matches(uintptr_t module, uint32_t image_size,
-                                             uintptr_t method);
-bool host_ime_window_message_method_matches(uintptr_t module, uint32_t image_size,
-                                            uintptr_t method);
+bool host_ime_method_is_executable(uintptr_t module, uint32_t image_size, uintptr_t method);
 bool host_ime_classification_method_matches(uintptr_t module, uint32_t image_size,
                                             uintptr_t method);
 bool host_ime_candidate_notify_method_matches(uintptr_t module, uint32_t image_size,

@@ -1,21 +1,21 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
 #include "tsf_host_classification_message.h"
-#include "tsf_host_ime_private_api.h"
-#include "tsf_imm_mode.h"
-
-#include "host_compatibility/host_classification_compatibility.h"
-#include "host_compatibility/host_ime_private_api.h"
-
-#include <cxxime/host_trace.h>
-
-#include <imm.h>
 
 #include <cstdint>
 #include <cstdio>
 #include <initializer_list>
 #include <string>
 #include <utility>
+
+#include <imm.h>
+
+#include <cxxime/host_trace.h>
+
+#include "host_compatibility/host_classification_compatibility.h"
+#include "host_compatibility/host_ime_private_api.h"
+#include "tsf_host_ime_private_api.h"
+#include "tsf_imm_mode.h"
 
 namespace cxxime_tsf {
 namespace {
@@ -288,8 +288,8 @@ void inspect_host_classification_message_gate(const MSG& message,
         imemanager_base, manager_vtable, imemanager_identity.image_size);
     fields["manager_message_method_rva"] = module_rva(
         imemanager_base, manager_method, imemanager_identity.image_size);
-    fields["manager_message_method_matches"] =
-        host_ime_manager_message_method_matches(
+    fields["manager_message_method_executable"] =
+        host_ime_method_is_executable(
             imemanager_base, imemanager_identity.image_size, manager_method);
     fields["manager_gate_60"] = manager_gate_60 != 0;
     fields["manager_gate_61"] = manager_gate_61 != 0;
@@ -332,8 +332,8 @@ void inspect_host_classification_message_gate(const MSG& message,
         imemanager_base, window_vtable, imemanager_identity.image_size);
     fields["window_message_method_rva"] = module_rva(
         imemanager_base, window_message_method, imemanager_identity.image_size);
-    fields["window_message_method_matches"] =
-        host_ime_window_message_method_matches(
+    fields["window_message_method_executable"] =
+        host_ime_method_is_executable(
             imemanager_base, imemanager_identity.image_size,
             window_message_method);
     fields["active_hwnd"] = reinterpret_cast<uintptr_t>(active_hwnd);
@@ -343,7 +343,7 @@ void inspect_host_classification_message_gate(const MSG& message,
     fields["auxiliary_input_handler"] = auxiliary_input_handler;
     const bool window_gate_ready =
         window_state_read &&
-        host_ime_window_message_method_matches(
+        host_ime_method_is_executable(
             imemanager_base, imemanager_identity.image_size,
             window_message_method) &&
         active_hwnd == message.hwnd &&
@@ -421,7 +421,7 @@ void inspect_host_classification_message_gate(const MSG& message,
     fields["effective_classification_code"] = effective_classification_code;
     const bool manager_gate_ready =
         manager_state_read &&
-        host_ime_manager_message_method_matches(
+        host_ime_method_is_executable(
             imemanager_base, imemanager_identity.image_size, manager_method) &&
         private_api.manager_called && private_api.manager_initialized &&
         private_api.manager_enabled;

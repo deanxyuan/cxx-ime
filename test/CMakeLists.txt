@@ -117,6 +117,11 @@ add_cxxime_test(keyboard_shortcut_test
 )
 add_cxxime_test(layout_test SOURCES ui/layout_test.cc DEPS cxxime-ui)
 add_cxxime_test(preedit_mode_test SOURCES tsf/preedit_mode_test.cc)
+add_cxxime_test(host_ime_private_api_test
+    SOURCES
+        tsf/host_ime_private_api_test.cc
+        ${CMAKE_SOURCE_DIR}/tsf/src/host_compatibility/host_ime_private_api.cc
+)
 add_cxxime_test(preedit_edit_test SOURCES engine/preedit_edit_test.cc DEPS cxxime-engine)
 add_cxxime_test(edit_target_test SOURCES tsf/edit_target_test.cc DEPS cxxime-shared)
 target_sources(edit_target_test PRIVATE

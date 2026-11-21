@@ -2,9 +2,9 @@
 
 #include "host_compatibility/host_classification_runtime.h"
 
-#include "host_compatibility/host_ime_private_api.h"
-
 #include <cwchar>
+
+#include "host_compatibility/host_ime_private_api.h"
 
 namespace cxxime_tsf {
 namespace {
@@ -198,12 +198,12 @@ HostClassificationCompatibilitySnapshot inspect_host_classification_runtime() {
         ? private_api.classification
         : raw_classification;
     snapshot.manager_gate_ready =
-        host_ime_manager_message_method_matches(
+        host_ime_method_is_executable(
             imemanager_base, imemanager_identity.image_size, manager_method) &&
         private_api.manager_called && private_api.manager_initialized &&
         private_api.manager_enabled;
     snapshot.window_gate_ready =
-        host_ime_window_message_method_matches(
+        host_ime_method_is_executable(
             imemanager_base, imemanager_identity.image_size,
             window_message_method) &&
         window_message_enabled != 0 && current_process_owns_window(active_hwnd);
