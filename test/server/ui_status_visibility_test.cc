@@ -15,6 +15,7 @@
 #include <cxxime/ui_channel.h>
 #include <cxxime/window_position.h>
 
+#include "support/candidate_geometry_probe.h"
 #include "support/dpi_testutil.h"
 #include "support/testutil.h"
 #include "support/window_transition_probe.h"
@@ -153,6 +154,23 @@ TEST(UiStatusVisibility, queued_snapshots_cannot_show_over_a_different_foregroun
     test::foreground_sample.store(replacement.window);
     StatusController fixture;
     test::WindowTransitionProbe probe(fixture.status);
+    auto& snapshot = fixture.snapshot;
+    snapshot.ownership = cxxime::UiOwnership::kExternal;
+    snapshot.flags |= cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kCandidateVisible) |
+                      cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kHasCaret) |
+                      cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kHasCandidates);
+    snapshot.candidate_page.count = 1;
+    snapshot.candidate_page.total = 1;
+    snapshot.candidate_known_count = 1;
+    snapshot.candidate_page.candidates[0].text_length = 1;
+    snapshot.candidate_page.candidates[0].text[0] = 'a';
+    RECT host_rect = {};
+    ASSERT_TRUE(GetWindowRect(replacement.window, &host_rect));
+    snapshot.caret = {host_rect.left + 20, host_rect.top + 20, host_rect.left + 21,
+                      host_rect.top + 40};
+    const HWND candidate = find_ui_window(L"CxxIMECandidateWindow");
+    ASSERT_TRUE(candidate != nullptr);
+    test::CandidateGeometryProbe geometry(candidate);
     for (bool windowless : {false, true}) {
         fixture.snapshot.target_window =
             windowless ? 0 : reinterpret_cast<std::uint64_t>(original.window);
@@ -168,6 +186,21 @@ TEST(UiStatusVisibility, queued_snapshots_cannot_show_over_a_different_foregroun
     fixture.snapshot.target_window = reinterpret_cast<std::uint64_t>(destroyed);
     fixture.apply(reinterpret_cast<std::uintptr_t>(replacement.window), probe);
     probe.expect(0, 0);
+    // Even a matching sampled foreground is unusable once its HWND is destroyed.
+    fixture.snapshot.target_window = 0;
+    test::foreground_sample.store(destroyed);
+    fixture.apply(reinterpret_cast<std::uintptr_t>(destroyed), probe);
+    probe.expect(0, 0);
+    ASSERT_TRUE(!IsWindowVisible(candidate));
+    geometry.assert_hidden();
+
+    // A fresh windowless request for the current host must recover normally.
+    test::foreground_sample.store(replacement.window);
+    ++fixture.snapshot.target_generation;
+    fixture.apply(reinterpret_cast<std::uintptr_t>(replacement.window), probe);
+    ASSERT_TRUE(IsWindowVisible(candidate));
+    ASSERT_TRUE(GetWindow(candidate, GW_OWNER) == nullptr);
+    probe.expect(1, 0);
 }
 
 TEST(UiStatusVisibility, fullscreen_edit_then_owned_popups_never_show_status) {

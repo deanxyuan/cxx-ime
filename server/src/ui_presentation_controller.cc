@@ -512,8 +512,13 @@ private:
             !has_flag(current, cxxime::UiSnapshotFlag::kTsfLocalCandidate);
         applied.candidate_visible = applied.candidate_requested;
         if (applied.candidate_visible) {
+            // A windowless view uses its validated foreground host's screen space.
+            // Use the captured host, not a fresh foreground sample or a new TSF owner.
+            const std::uint64_t coordinate_window = current.target_window != 0
+                                                        ? current.target_window
+                                                        : presentation->foreground_window;
             applied.caret_transformed =
-                transform_caret_to_physical(current.target_window, &applied.caret);
+                transform_caret_to_physical(coordinate_window, &applied.caret);
             applied.candidate_visible = applied.caret_transformed;
         }
         if (!applied.candidate_visible) {

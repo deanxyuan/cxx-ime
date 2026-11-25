@@ -590,8 +590,15 @@ TEST(UiPresentationController, foreign_dpi_caret_moves_without_wrong_frames_or_h
     test::ScopedDpiAwarenessContext dpi;
     const auto caller_context = GetThreadDpiAwarenessContext();
     std::vector<UINT> monitor_dpis;
-    for (int awareness : {1, 0, 2}) {
+    const int awareness_modes[] = {1, 0, 2};
+    // Run the same geometry checks with and without a TSF view HWND for each mode.
+    for (int scenario = 0; scenario < 6; ++scenario) {
+        const int awareness = awareness_modes[scenario % 3];
+        const bool windowless = scenario >= 3;
         ControllerFixture fixture(awareness);
+        if (windowless) {
+            fixture.snapshot.target_window = 0;
+        }
         ShowWindow(fixture.host.candidate, SW_HIDE);
         fixture.snapshot.flags &=
             ~cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kTsfLocalCandidate);
@@ -668,6 +675,8 @@ TEST(UiPresentationController, foreign_dpi_caret_moves_without_wrong_frames_or_h
                     cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kCandidateVisible);
                 fixture.present();
                 ASSERT_TRUE(IsWindowVisible(candidate));
+                ASSERT_EQ(GetWindow(candidate, GW_OWNER),
+                          windowless ? nullptr : fixture.host.owner);
                 if (awareness == 2 && step == 0) {
                     monitor_dpis.push_back(GetDpiForWindow(candidate));
                 }
