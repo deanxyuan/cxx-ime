@@ -282,6 +282,11 @@ add_cxxime_test(candidate_quality_test
 add_cxxime_test(status_window_test SOURCES ui/status_window_test.cc DEPS cxxime-ui)
 set_tests_properties(status_window_test PROPERTIES RUN_SERIAL TRUE)
 add_cxxime_test(window_position_test SOURCES ui/window_position_test.cc DEPS cxxime-ui)
+add_cxxime_test(coordinate_conversion_test
+    SOURCES ui/coordinate_conversion_test.cc
+    DEPS dwmapi
+)
+target_include_directories(coordinate_conversion_test PRIVATE ${CMAKE_SOURCE_DIR}/ui/include)
 add_cxxime_test(benchmark_test SOURCES engine/benchmark_test.cc DEPS cxxime-engine)
 add_cxxime_test(short_cache_test
     SOURCES engine/short_cache_test.cc

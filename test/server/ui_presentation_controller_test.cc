@@ -1,15 +1,20 @@
 // Copyright (c) 2026 CxxIME Contributors. Apache License 2.0.
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <cstring>
 #include <functional>
+#include <iostream>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include <windows.h>
 
 #include <cxxime/candidate_window.h>
+#include <cxxime/window_position.h>
 
 #include "candidate_presentation.h"
 #include "support/candidate_geometry_probe.h"
@@ -84,8 +89,13 @@ void send_message(HWND window, UINT message, WPARAM wp, LPARAM lp) {
 
 // The real candidate lives in a second process, like a TSF-local presenter. Its
 // message loop is independent of the server controller's UI thread and the test.
-int run_candidate_host() {
-    test::ScopedDpiAwarenessContext dpi;
+int run_candidate_host(int awareness) {
+    const DPI_AWARENESS_CONTEXT contexts[] = {
+        DPI_AWARENESS_CONTEXT_UNAWARE,
+        DPI_AWARENESS_CONTEXT_SYSTEM_AWARE,
+        DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+    };
+    test::ScopedDpiAwarenessContext dpi(contexts[awareness]);
     const HWND owner =
         CreateWindowExW(WS_EX_NOACTIVATE, L"STATIC", L"Candidate test host", WS_OVERLAPPEDWINDOW,
                         50, 50, 400, 200, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
@@ -118,7 +128,7 @@ int run_candidate_host() {
 
 class CandidateHost {
 public:
-    CandidateHost() {
+    explicit CandidateHost(int awareness = 2) {
         job_ = CreateJobObjectW(nullptr, nullptr);
         ASSERT_TRUE(job_ != nullptr);
         JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits = {};
@@ -128,6 +138,11 @@ public:
         wchar_t executable[MAX_PATH] = {};
         ASSERT_TRUE(GetModuleFileNameW(nullptr, executable, MAX_PATH) != 0);
         std::wstring command = L"\"" + std::wstring(executable) + L"\" --candidate-host";
+        if (awareness == 1) {
+            command += L" --system-dpi";
+        } else if (awareness == 0) {
+            command += L" --unaware";
+        }
         STARTUPINFOW startup = {};
         startup.cb = sizeof(startup);
         ASSERT_TRUE(CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE,
@@ -158,7 +173,8 @@ private:
 
 class ControllerFixture {
 public:
-    ControllerFixture() {
+    explicit ControllerFixture(int awareness = 2)
+        : host(awareness) {
         test::foreground_sample.store(host.owner);
         auto config = std::make_shared<cxxime::Config>();
         config->render_backend = "gdi";
@@ -541,11 +557,164 @@ TEST(UiPresentationTarget,
         host.owner);
 }
 
+TEST(UiPresentationController, empty_view_uses_compatible_root_coordinates) {
+    test::ScopedDpiAwarenessContext dpi;
+    ControllerFixture fixture;
+    const HWND view =
+        CreateWindowExW(0, L"STATIC", L"Empty input site", WS_CHILD, 0, 0, 0, 0, fixture.host.owner,
+                        nullptr, GetModuleHandleW(nullptr), nullptr);
+    ASSERT_TRUE(view != nullptr);
+    ASSERT_EQ(GetAncestor(view, GA_ROOT), fixture.host.owner);
+    ASSERT_TRUE(presentation_windows_share_coordinates(view, fixture.host.owner));
+    POINT caret = {60, 60};
+    ASSERT_TRUE(ClientToScreen(fixture.host.owner, &caret));
+    fixture.snapshot.caret = {caret.x, caret.y, caret.x + 1, caret.y + 20};
+    RECT converted = {};
+    ASSERT_TRUE(!cxxime::logical_screen_rect_to_physical(view, fixture.snapshot.caret, &converted));
+    ShowWindow(fixture.host.candidate, SW_HIDE);
+    fixture.snapshot.flags &= ~cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kTsfLocalCandidate);
+    fixture.snapshot.target_window = reinterpret_cast<std::uint64_t>(view);
+    fixture.present();
+    const HWND candidate = find_window(GetCurrentProcessId(), L"CxxIMECandidateWindow");
+    ASSERT_TRUE(IsWindowVisible(candidate));
+    RECT bounds = {};
+    ASSERT_TRUE(GetWindowRect(candidate, &bounds));
+    ASSERT_EQ(bounds.left, caret.x);
+    ASSERT_EQ(bounds.top, caret.y + 20 + 4);
+    fixture.snapshot.flags &= ~cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kCandidateVisible);
+    fixture.present();
+    ASSERT_TRUE(DestroyWindow(view));
+}
+
+TEST(UiPresentationController, foreign_dpi_caret_moves_without_wrong_frames_or_hiding) {
+    test::ScopedDpiAwarenessContext dpi;
+    const auto caller_context = GetThreadDpiAwarenessContext();
+    std::vector<UINT> monitor_dpis;
+    for (int awareness : {1, 0, 2}) {
+        ControllerFixture fixture(awareness);
+        ShowWindow(fixture.host.candidate, SW_HIDE);
+        fixture.snapshot.flags &=
+            ~cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kTsfLocalCandidate);
+        {
+            test::ScopedDpiAwarenessContext source(
+                GetWindowDpiAwarenessContext(fixture.host.owner));
+            RECT bounds = {};
+            ASSERT_TRUE(GetWindowRect(fixture.host.owner, &bounds));
+            const LONG x = bounds.left + (bounds.right - bounds.left) / 2;
+            const LONG y = bounds.top + (bounds.bottom - bounds.top) / 2;
+            fixture.snapshot.caret = {x, y, x + 1, y + 20};
+        }
+        fixture.present();
+        const HWND candidate = find_window(GetCurrentProcessId(), L"CxxIMECandidateWindow");
+        ASSERT_TRUE(candidate != nullptr);
+
+        std::vector<MONITORINFO> monitors;
+        ASSERT_TRUE(EnumDisplayMonitors(
+            nullptr, nullptr,
+            [](HMONITOR monitor, HDC, LPRECT, LPARAM parameter) -> BOOL {
+                MONITORINFO info = {sizeof(info)};
+                if (!GetMonitorInfoW(monitor, &info)) {
+                    return FALSE;
+                }
+                reinterpret_cast<std::vector<MONITORINFO>*>(parameter)->push_back(info);
+                return TRUE;
+            },
+            reinterpret_cast<LPARAM>(&monitors)));
+        for (const auto& monitor : monitors) {
+            const RECT area = monitor.rcWork;
+            const int width = (area.right - area.left) * 2 / 3;
+            const int height = (area.bottom - area.top) * 2 / 3;
+            ASSERT_TRUE(SetWindowPos(fixture.host.owner, nullptr, area.left + 20, area.top + 20,
+                                     width, height, SWP_NOACTIVATE | SWP_NOZORDER));
+            send_message(fixture.host.owner, WM_NULL, 0, 0);
+            RECT physical = {};
+            ASSERT_TRUE(GetWindowRect(fixture.host.owner, &physical));
+            RECT logical = {};
+            {
+                test::ScopedDpiAwarenessContext source(
+                    GetWindowDpiAwarenessContext(fixture.host.owner));
+                ASSERT_TRUE(GetWindowRect(fixture.host.owner, &logical));
+            }
+            const LONG logical_width = logical.right - logical.left;
+            const LONG logical_height = logical.bottom - logical.top;
+            const LONG physical_width = physical.right - physical.left;
+            const LONG physical_height = physical.bottom - physical.top;
+            // Independent oracle: corresponding window bounds in the two contexts.
+            // Do not call the conversion under test to construct expected coordinates.
+            const auto physical_x = [&](LONG x) {
+                return physical.left + MulDiv(x - logical.left, physical_width, logical_width);
+            };
+            const auto physical_y = [&](LONG y) {
+                return physical.top + MulDiv(y - logical.top, physical_height, logical_height);
+            };
+            fixture.snapshot.flags &=
+                ~cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kCandidateVisible);
+            fixture.present();
+            const int fractions[] = {1, 4, 1};
+            for (int step = 0; step < 3; ++step) {
+                const LONG x = logical.left + logical_width * fractions[step] / 5;
+                const LONG y = logical.top + logical_height / 3;
+                fixture.snapshot.caret = {x, y, x + 1, y + 20};
+                RECT converted = {};
+                ASSERT_TRUE(cxxime::logical_screen_rect_to_physical(
+                    fixture.host.owner, fixture.snapshot.caret, &converted));
+                ASSERT_TRUE(
+                    AreDpiAwarenessContextsEqual(caller_context, GetThreadDpiAwarenessContext()));
+                ASSERT_TRUE(std::abs(converted.left - physical_x(x)) <= 1);
+                ASSERT_TRUE(std::abs(converted.bottom - physical_y(y + 20)) <= 1);
+
+                test::CandidateGeometryProbe geometry(candidate);
+                fixture.snapshot.flags |=
+                    cxxime::ui_snapshot_flag(cxxime::UiSnapshotFlag::kCandidateVisible);
+                fixture.present();
+                ASSERT_TRUE(IsWindowVisible(candidate));
+                if (awareness == 2 && step == 0) {
+                    monitor_dpis.push_back(GetDpiForWindow(candidate));
+                }
+                RECT final_rect = {};
+                ASSERT_TRUE(GetWindowRect(candidate, &final_rect));
+                const LONG expected_left =
+                    (std::max)(monitor.rcMonitor.left,
+                                (std::min)(physical_x(x),
+                                            monitor.rcMonitor.right -
+                                                (final_rect.right - final_rect.left)));
+                ASSERT_TRUE(std::abs(final_rect.left - expected_left) <= 1);
+                const LONG expected_top = physical_y(y + 20) + 4;
+                ASSERT_TRUE(std::abs(final_rect.top - expected_top) <= 1);
+                // The barrier in present() precedes this synchronous paint; capture
+                // every visible geometry, including those before the final paint.
+                send_message(candidate, WM_PAINT, 0, 0);
+                geometry.assert_visible_geometry(final_rect);
+                unsigned shows = 0;
+                for (const auto& event : geometry.events()) {
+                    ASSERT_EQ(event.flags & SWP_HIDEWINDOW, 0u);
+                    shows += (event.flags & SWP_SHOWWINDOW) != 0;
+                }
+                ASSERT_EQ(shows, step == 0 ? 1u : 0u);
+            }
+        }
+    }
+    ASSERT_TRUE(!monitor_dpis.empty());
+    if (*std::min_element(monitor_dpis.begin(), monitor_dpis.end()) ==
+        *std::max_element(monitor_dpis.begin(), monitor_dpis.end())) {
+        std::cout << "  No mixed-scale monitors available: real mixed-scale coverage not run; "
+                     "deterministic coverage is in coordinate_conversion_test.\n";
+    }
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
     if (argc == 2 && std::strcmp(argv[1], "--candidate-host") == 0) {
-        return run_candidate_host();
+        return run_candidate_host(2);
+    }
+    if (argc == 3 && std::strcmp(argv[1], "--candidate-host") == 0 &&
+        std::strcmp(argv[2], "--system-dpi") == 0) {
+        return run_candidate_host(1);
+    }
+    if (argc == 3 && std::strcmp(argv[1], "--candidate-host") == 0 &&
+        std::strcmp(argv[2], "--unaware") == 0) {
+        return run_candidate_host(0);
     }
     return test::RunAllTests();
 }

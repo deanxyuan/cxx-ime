@@ -34,6 +34,9 @@ CandidateWindowPlacement calculate_candidate_window_position(
     const RECT& caret_rect, int width, int height, int caret_gap,
     const RECT& monitor_rect, CandidatePlacementSide previous_side);
 
+// Source is a screen rectangle in window's logical coordinate space. On success,
+// result receives physical screen coordinates; on failure it remains unchanged.
+// The calling thread's DPI context is restored before returning.
 bool logical_screen_rect_to_physical(HWND window, const RECT& source, RECT* result);
 bool rect_covers_monitor(const RECT& rect, const RECT& monitor_rect);
 bool is_fullscreen_window(HWND window);

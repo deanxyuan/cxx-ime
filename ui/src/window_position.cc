@@ -8,6 +8,8 @@
 
 #include <dwmapi.h>
 
+#include "dpi_awareness.h"
+
 namespace {
 
 bool transform_point(HWND window, const POINT& source, POINT* result) {
@@ -26,17 +28,12 @@ bool logical_client_bounds(HWND window, RECT* bounds) {
         return false;
     }
 
-    POINT physical_top_left = {client.left, client.top};
-    POINT physical_bottom_right = {client.right - 1, client.bottom - 1};
-    if (!ClientToScreen(window, &physical_top_left) ||
-        !ClientToScreen(window, &physical_bottom_right)) {
-        return false;
-    }
-
-    POINT logical_top_left = physical_top_left;
-    POINT logical_bottom_right = physical_bottom_right;
-    if (!PhysicalToLogicalPointForPerMonitorDPI(window, &logical_top_left) ||
-        !PhysicalToLogicalPointForPerMonitorDPI(window, &logical_bottom_right)) {
+    // The caller has adopted the source window's context: these are already
+    // logical screen coordinates, so an inverse DPI conversion would scale twice.
+    POINT logical_top_left = {client.left, client.top};
+    POINT logical_bottom_right = {client.right - 1, client.bottom - 1};
+    if (!ClientToScreen(window, &logical_top_left) ||
+        !ClientToScreen(window, &logical_bottom_right)) {
         return false;
     }
 
@@ -280,6 +277,17 @@ bool logical_screen_rect_to_physical(HWND window, const RECT& source, RECT* resu
         return false;
     }
 
+    const auto source_context = GetWindowDpiAwarenessContext(window);
+    if (!source_context) {
+        return false;
+    }
+    // Windows checks point bounds in the calling thread's coordinate space,
+    // even though the conversion itself uses the source HWND's DPI transform.
+    ScopedDpiAwarenessContext dpi_context(source_context);
+    if (!dpi_context.entered()) {
+        return false;
+    }
+
     const POINT source_top_left = {source.left, source.top};
     const POINT source_bottom_right = {source.right, source.bottom};
     POINT transformed_top_left = {};
@@ -295,8 +303,8 @@ bool logical_screen_rect_to_physical(HWND window, const RECT& source, RECT* resu
         return true;
     }
 
-    // The Win32 conversion rejects points outside the source client area. Derive the
-    // transform from an intersecting client point so a partially clipped caret stays usable.
+    // Windows can reject out-of-window endpoints. Derive the transform from an
+    // intersecting client point so a partially clipped caret stays usable.
     POINT source_anchor = {};
     POINT transformed_anchor = {};
     if (!find_transform_anchor(window, source, &source_anchor, &transformed_anchor)) {

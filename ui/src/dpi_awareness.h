@@ -18,6 +18,7 @@ public:
             SetThreadDpiAwarenessContext(previous_);
         }
     }
+    bool entered() const { return previous_ != nullptr; }
 
 private:
     DPI_AWARENESS_CONTEXT previous_ = nullptr;

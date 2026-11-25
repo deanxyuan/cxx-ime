@@ -7,6 +7,19 @@
 
 #include <windows.h>
 
+// A root fallback may reuse a view's logical rectangle only in the same DPI space.
+inline bool presentation_windows_share_coordinates(HWND view, HWND root) {
+    const auto view_context = GetWindowDpiAwarenessContext(view);
+    const auto root_context = GetWindowDpiAwarenessContext(root);
+    if (!view_context || !root_context ||
+        !AreDpiAwarenessContextsEqual(view_context, root_context)) {
+        return false;
+    }
+    const UINT view_dpi = GetDpiForWindow(view);
+    const UINT root_dpi = GetDpiForWindow(root);
+    return view_dpi != 0 && view_dpi == root_dpi;
+}
+
 // A windowless view is supported, but its producer must belong to the foreground
 // process. HWND-backed embedded views may belong to a different process.
 inline HWND presentation_foreground(std::uint64_t target_window, std::uint32_t process_id) {

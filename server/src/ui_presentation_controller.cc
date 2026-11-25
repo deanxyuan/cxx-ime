@@ -88,7 +88,7 @@ bool transform_caret_to_physical(std::uint64_t source_window, RECT* caret) {
     // UWP input sites can reject cross-process DPI conversion even while their
     // foreground root remains a valid screen-coordinate conversion target.
     const HWND root = hwnd ? GetAncestor(hwnd, GA_ROOT) : nullptr;
-    if (root == hwnd || !caret ||
+    if (root == hwnd || !caret || !presentation_windows_share_coordinates(hwnd, root) ||
         !cxxime::logical_screen_rect_to_physical(root, *caret, &transformed)) {
         return false;
     }
